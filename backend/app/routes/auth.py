@@ -90,7 +90,10 @@ def login():
         return jsonify(message="Invalid credentials"), 401
 
     token = create_access_token(identity=str(user.id))
-    return jsonify(token=token, user={ 'id':user.id,'email':user.email,'name':user.name }), 200
+    resp = jsonify(token=token, user={ 'id':user.id,'email':user.email,'name':user.name })
+    # why cookie: some clients omit Authorization header; cookie keeps session working across tabs
+    resp.set_cookie('sekki_access', token, httponly=False, secure=True, samesite='None', path='/', domain='.sekki.io', max_age=28800)
+    return resp, 200
 
 
 @auth_bp.route('/me', methods=['GET'])

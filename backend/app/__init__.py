@@ -1,8 +1,11 @@
+from datetime import timedelta
 from .cookie_hooks import install_cookie_hooks
 import os
 from flask import Flask
-from .routes.market_iq_analyze import market_iq_analyze_bp
-from .routes.conversation import conversation_bp
+from app.routes.discuss import discuss_bp
+from app.routes.scenario import scenario_bp
+
+
 from flask_cors import CORS
 from dotenv import load_dotenv
 import stripe
@@ -19,6 +22,75 @@ mail = Mail()
 
 def create_app():
     app = Flask(__name__, instance_relative_config=False)
+
+    app.register_blueprint(discuss_bp)
+    app.register_blueprint(scenario_bp, url_prefix='/api/scenario')
+
+    # --- App-level CORS for /api/* (no NGINX dependence) ---
+    ALLOWED_ORIGINS = {"https://sekki.io"}  # add "https://www.sekki.io" if needed
+
+    def _origin_allowed(origin: str | None) -> bool:
+        return bool(origin) and origin in ALLOWED_ORIGINS
+
+    @app.before_request
+    def _cors_preflight():
+        # Short-circuit preflight for any /api/* route
+        from flask import request, make_response
+        if request.method == "OPTIONS" and request.path.startswith("/api/"):
+            origin = request.headers.get("Origin")
+            resp = make_response("", 204)
+            if _origin_allowed(origin):
+                resp.headers["Access-Control-Allow-Origin"] = origin
+                resp.headers["Access-Control-Allow-Credentials"] = "true"
+                resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+                resp.headers["Access-Control-Allow-Headers"] = request.headers.get("Access-Control-Request-Headers", "Content-Type, Authorization, X-Requested-With, X-Session-ID")
+                resp.headers["Access-Control-Max-Age"] = "86400"
+                resp.headers["Vary"] = "Origin"
+            return resp
+
+    @app.after_request
+    def _cors_apply(resp):
+        # Add CORS headers to all /api/* responses
+        try:
+            from flask import request
+            if request.path.startswith("/api/"):
+                origin = request.headers.get("Origin")
+                if _origin_allowed(origin):
+                    resp.headers["Access-Control-Allow-Origin"] = origin
+                    resp.headers["Access-Control-Allow-Credentials"] = "true"
+                    resp.headers["Vary"] = "Origin"
+        except Exception:
+            pass  # do not interfere with primary response
+        return resp
+
+    # Accept JWT via headers AND cookies; use our login cookie name.
+    app.config.setdefault('JWT_TOKEN_LOCATION', ['headers', 'cookies'])
+    app.config.setdefault('JWT_ACCESS_COOKIE_NAME', 'sekki_access')
+    app.config.setdefault('JWT_COOKIE_DOMAIN', '.sekki.io')
+    # Allow cookie auth without CSRF double-submit (adjust later if you want CSRF)
+    app.config.setdefault('JWT_COOKIE_CSRF_PROTECT', False)
+    app.config.setdefault('JWT_COOKIE_DOMAIN', '.sekki.io')
+    # Cross-subdomain, HTTPS-friendly cookie behavior
+    app.config.setdefault('JWT_COOKIE_SECURE', True)
+    app.config.setdefault('JWT_COOKIE_DOMAIN', '.sekki.io')
+    app.config.setdefault('JWT_COOKIE_SAMESITE', 'None')
+    app.config.setdefault('JWT_COOKIE_DOMAIN', '.sekki.io')
+
+    # Inject Authorization header from JWT cookie when client only sends cookies.
+    @app.before_request
+    def inject_auth_from_cookie():
+        # WHY: Many endpoints expect Authorization: Bearer <jwt>,
+        # but the frontend uses the 'sekki_access' cookie from /auth/login.
+        try:
+            from flask import request
+            if 'Authorization' not in request.headers:
+                tok = request.cookies.get('sekki_access')
+                if tok:
+                    # Make it look like a normal Bearer token for jwt decorators
+                    request.environ['HTTP_AUTHORIZATION'] = f'Bearer {tok}'
+        except Exception:
+            pass
+
     app.config.from_mapping(
         SECRET_KEY                     = os.getenv('SECRET_KEY'),
         SQLALCHEMY_DATABASE_URI        = os.getenv('DATABASE_URL'),
@@ -33,6 +105,7 @@ def create_app():
 
         # JWT
         JWT_SECRET_KEY                 = os.getenv('JWT_SECRET_KEY'),
+          JWT_ACCESS_TOKEN_EXPIRES        = timedelta(hours=8),
 
         # Mailer
         MAIL_SERVER                    = os.getenv('MAIL_SERVER', 'smtp.example.com'),
@@ -76,6 +149,7 @@ def create_app():
 # (disabled)     CORS(app, origins=["https://sekki.io"], supports_credentials=True )
 
     # —— Register blueprints —— #
+    from .routes.db_oracle import db_oracle_bp
     from .routes.auth      import auth_bp
     from .routes.chat      import chat_bp
     from .routes.billing   import billing_bp
@@ -86,6 +160,7 @@ def create_app():
     # app.register_blueprint(chat_disabled,      url_prefix='/api/chat')
     app.register_blueprint(billing_bp,   url_prefix='/api/billing')
     app.register_blueprint(dashboard_bp)  # includes its own /api/dashboard path
+    app.register_blueprint(db_oracle_bp, url_prefix='/api/db/oracle')
     # app.register_blueprint(market_iq_disabled, url_prefix="/api/market-iq")
     from app.routes.conversational_ai import conversational_ai_bp
     # app.register_blueprint(conversational_ai_bp, url_prefix='/api/market-iq')
@@ -131,5 +206,4 @@ def create_app():
         app.register_blueprint(market_iq_analyze_bp, url_prefix="/api/market-iq")
     return app
 
-from app.routes.conversational_ai import conversational_ai_bp
 # app.register_blueprint(conversational_ai_bp, url_prefix='/api/market-iq')
