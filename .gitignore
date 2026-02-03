@@ -2,3 +2,23 @@ node_modules/
 *.log
 .env
 docker-compose.override.yml
+# Local/backup artifacts
+.DS_Store
+*.zip
+*.tgz
+*.pptx
+*.bak
+*.bak.*
+*.backup
+*.backup.*
+*.broken
+*.broken.*
+*.save
+*.prepatch
+*.prepatch.*
+*.pre-restore*
+*.pre-fix*
+*.now*
+*.chatbak*
+*.fixbak*
+
