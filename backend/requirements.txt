@@ -2,3 +2,18 @@ cd backend
 source venv/bin/activate
 pip list --format=freeze > requirements.txt
 cat requirements.txt
+
+# Market IQ Dependencies (NEW)
+openai>=1.0.0
+redis>=4.5.0
+pandas>=2.0.0
+numpy>=1.24.0
+requests>=2.31.0
+python-dotenv>=1.0.0
+
+openai>=1.0.0
+redis>=4.5.0
+pandas>=2.0.0
+numpy>=1.24.0
+requests>=2.31.0
+python-dotenv>=1.0.0

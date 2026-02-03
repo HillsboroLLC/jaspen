@@ -77,11 +77,13 @@ def create_app():
     from .routes.chat      import chat_bp
     from .routes.billing   import billing_bp
     from .routes.dashboard import dashboard_bp
+    from .routes.market_iq import market_iq_bp
 
     app.register_blueprint(auth_bp,      url_prefix='/api/auth')
     app.register_blueprint(chat_bp,      url_prefix='/api/chat')
     app.register_blueprint(billing_bp,   url_prefix='/api/billing')
     app.register_blueprint(dashboard_bp)  # includes its own /api/dashboard path
+    app.register_blueprint(market_iq_bp, url_prefix='/api/market-iq')
 
     # Optional sessions blueprint
     try:
@@ -89,5 +91,23 @@ def create_app():
         app.register_blueprint(sessions_bp, url_prefix='/api/sessions')
     except ImportError:
         print("Warning: sessions blueprint not found. Session saving will not work.")
+
+    # Market IQ blueprint
+    print("DEBUG: Market IQ API registered successfully at /api/market-iq")
+
+    # Statistical Analysis blueprint
+    print("DEBUG: About to register statistical analysis blueprint")
+    try:
+        print("DEBUG: Attempting import...")
+        from .statistical_analysis_api import statistical_bp
+        print("DEBUG: Import successful, registering blueprint...")
+        app.register_blueprint(statistical_bp, url_prefix='/api/statistical-analysis')
+        print("DEBUG: Statistical Analysis API registered successfully")
+    except ImportError as e:
+        print(f"DEBUG: Import error: {e}")
+    except Exception as e:
+        print(f"DEBUG: Other error: {e}")
+        import traceback
+        traceback.print_exc()
 
     return app
