@@ -1,53 +1,49 @@
-# Node/React
-node_modules/
-build/
-dist/
-.cache/
-*.log
-
-# Python
-venv/
-.env/
+# --- Python caches ---
 __pycache__/
 *.pyc
 
-# Secrets (common places)
-.env
-*.env
-backend/.env
-frontend/.env
-app/.env
-*.pem
-*.key
-*.p12
-*.pfx
+# --- Local/runtime data (never commit) ---
+backend/runtime/
+backend/instance/
+backend/.backend/
 
-# Local/runtime
-runtime/
-.tmp/
-temp/
-*.sqlite
+# --- DB files ---
 *.db
+*.sqlite
+*.sqlite3
 
-# OS/editor
-.DS_Store
-Thumbs.db
-.vscode/
-.idea/
-# secrets
+# --- Backups / archives / snapshots (never commit) ---
+*.tar.gz
+*.tgz
+*.bak*
+*.backup*
+*.save
+*.broken
+*.chatbak*
+*.fixbak*
+backend/_backup_dropins_*/
+backend-backup-*.tar.gz
+backend/backend_context.md
+backend/backend_file_index.txt
+backend/backend_print_sanitized.txt
+backend/backend_sanitized.tgz
+backend/backend_tree.txt
+backend_context.tgz
+FRONTEND_CONTEXT.md
+
+# --- Random scratch dirs ---
+backend/3
+
+# --- Secrets ---
 .env
-*/.env
-secrets/*
-*.pem
-# sekki ignores
-.env
-*.env
-**/.env
-**/.env.*
-**/*.env.backup*
-**/*.env.bak*
 backend/.env*
-!/.env.example
-backend/venv/
-__pycache__/
+
+# --- Node / deps ---
 node_modules/
+backend/node_modules/
+
+# --- Local scratch / timestamped copies ---
+*.now.*
+*.pre-restore.*
+*.disabled
+*.pre-fix.*
