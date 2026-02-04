@@ -12,7 +12,7 @@ except Exception:
 
 conversation_bp = Blueprint("conversation", __name__)
 
-ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-latest")
+ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929")
 ROOT = Path(__file__).resolve().parents[2]
 SESS_DIR = Path(os.getenv("SESSION_DIR", ROOT / "runtime" / "sessions"))
 SESS_DIR.mkdir(parents=True, exist_ok=True)
@@ -101,7 +101,12 @@ def _ask(system_ctx:str, history:List[Dict[str,str]])->str:
             max_tokens=350,
             messages=[{"role":m["role"],"content":m["content"]} for m in history if m.get("content")],
         )
-        return (resp.content[0].text or "").strip()
+        parts = []
+        for blk in resp.content:
+            if getattr(blk, "type", None) == "text":
+                parts.append(blk.text)
+        return ("".join(parts)).strip()
+
     except Exception as e:
         current_app.logger.exception("anthropic_error: %s", e)
         return ""

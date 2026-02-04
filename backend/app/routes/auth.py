@@ -1,4 +1,18 @@
-# backend/app/routes/auth.py
+"""app.routes.auth
+
+Purpose
+  Centralize authentication endpoints (signup/login/me) and Stripe Checkout
+  session creation for paid plans.
+
+Why this file exists
+  Auth is a high-risk surface area. This module keeps auth behavior explicit
+  and auditable, and it avoids spreading URL/config assumptions throughout
+  the codebase.
+"""
+
+from __future__ import annotations
+
+import os
 
 from flask import Blueprint, request, jsonify, current_app
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -9,9 +23,47 @@ import stripe
 
 auth_bp = Blueprint('auth', __name__)
 
+
+# ---------------------------------------------------------------------------
+# Config helpers
+# ---------------------------------------------------------------------------
+def _get_frontend_base_url() -> str:
+    """Return the frontend base URL for redirects.
+
+    Precedence:
+      1) Flask config FRONTEND_BASE_URL
+      2) Flask config FRONTEND_URL (back-compat)
+      3) Environment variables FRONTEND_BASE_URL then FRONTEND_URL
+
+    Normalization:
+      - Trailing slashes are removed so URL joining is predictable.
+
+    Notes
+      - If no value is configured, we raise to preserve existing failure
+        behavior (previously a KeyError -> 500) without changing response
+        shapes or status codes.
+    """
+    value = (
+        current_app.config.get("FRONTEND_BASE_URL")
+        or current_app.config.get("FRONTEND_URL")
+        or os.getenv("FRONTEND_BASE_URL")
+        or os.getenv("FRONTEND_URL")
+    )
+    if not value:
+        raise RuntimeError(
+            "Missing FRONTEND_BASE_URL/FRONTEND_URL configuration for Stripe redirects"
+        )
+    return str(value).rstrip("/")
+
+
 @auth_bp.before_app_request
 def _set_stripe_key():
     stripe.api_key = current_app.config['STRIPE_SECRET_KEY']
+
+
+# ---------------------------------------------------------------------------
+# Routes: signup
+# ---------------------------------------------------------------------------
 
 @auth_bp.route('/signup', methods=['POST'])
 def signup():
@@ -57,7 +109,7 @@ def signup():
     if not price_id:
         return jsonify(message=f"Unknown or unconfigured plan_key '{plan_key}'"), 400
 
-    frontend = current_app.config['FRONTEND_URL'].rstrip('/')
+    frontend = _get_frontend_base_url()
 
     session = stripe.checkout.Session.create(
         payment_method_types=['card'],
@@ -75,6 +127,10 @@ def signup():
         user={ 'id':user.id, 'email':user.email, 'name':user.name }
     ), 201
 
+
+# ---------------------------------------------------------------------------
+# Routes: login
+# ---------------------------------------------------------------------------
 
 @auth_bp.route('/login', methods=['POST'])
 def login():
@@ -96,6 +152,10 @@ def login():
     return resp, 200
 
 
+# ---------------------------------------------------------------------------
+# Routes: current user
+# ---------------------------------------------------------------------------
+
 @auth_bp.route('/me', methods=['GET'])
 @jwt_required()
 def get_current_user():
@@ -104,3 +164,4 @@ def get_current_user():
     if not user:
         return jsonify(error="User not found"), 404
     return jsonify(id=user.id, email=user.email, name=user.name), 200
+

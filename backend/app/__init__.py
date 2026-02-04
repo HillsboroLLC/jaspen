@@ -1,209 +1,254 @@
+# ============================================================================
+# File: backend/app/__init__.py
+# Purpose:
+#   Flask app factory + blueprint wiring.
+#
+#   Phase 3 Stabilization (Option A: MIQ is authoritative):
+#   - Keep ALL currently-working routes callable (no breaking changes)
+#   - Make MIQ (/api/market-iq/*) explicitly registered + documented as authoritative
+#   - Preserve existing conversational + sessions + SSE surfaces for now
+#   - Add an optional guard for legacy alias paths WITHOUT moving existing paths
+#     (so nothing breaks while Phase 3 proceeds one file at a time)
+#
+# IMPORTANT:
+#   market_iq_analyze_bp is currently registered in wsgi.py.
+#   Until we consolidate registration ownership, DO NOT also register it here,
+#   or Gunicorn will fail to boot due to duplicate blueprint registration.
+# ============================================================================
+
 from datetime import timedelta
-from .cookie_hooks import install_cookie_hooks
 import os
-from flask import Flask
-from app.routes.discuss import discuss_bp
-from app.routes.scenario import scenario_bp
 
-
-from flask_cors import CORS
 from dotenv import load_dotenv
-import stripe
+from flask import Flask
 from flask_jwt_extended import JWTManager
-from flask_sqlalchemy import SQLAlchemy
 from flask_mail import Mail
+from flask_migrate import Migrate
+from flask_sqlalchemy import SQLAlchemy
+
+import stripe
+
+from .cookie_hooks import install_cookie_hooks
+
 
 load_dotenv()  # pull in .env
 
-# initialize extensions
-db  = SQLAlchemy()
+# initialize extensions (MUST exist before route modules import "from app import db")
+db = SQLAlchemy()
 jwt = JWTManager()
 mail = Mail()
+
+# ----------------------------------------------------------------------------
+# WHY: Optional guard for "legacy alias" paths.
+#      IMPORTANT: We do NOT move existing endpoints by default (no breakage).
+#      If enabled, we only add quarantined aliases under /api/legacy/*.
+# ----------------------------------------------------------------------------
+ENABLE_LEGACY_AGENT_ALIAS = os.getenv("ENABLE_LEGACY_AGENT_ALIAS", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+
 
 def create_app():
     app = Flask(__name__, instance_relative_config=False)
 
-    app.register_blueprint(discuss_bp)
-    app.register_blueprint(scenario_bp, url_prefix='/api/scenario')
-
-    # --- App-level CORS for /api/* (no NGINX dependence) ---
-    ALLOWED_ORIGINS = {"https://sekki.io"}  # add "https://www.sekki.io" if needed
-
-    def _origin_allowed(origin: str | None) -> bool:
-        return bool(origin) and origin in ALLOWED_ORIGINS
-
-    @app.before_request
-    def _cors_preflight():
-        # Short-circuit preflight for any /api/* route
-        from flask import request, make_response
-        if request.method == "OPTIONS" and request.path.startswith("/api/"):
-            origin = request.headers.get("Origin")
-            resp = make_response("", 204)
-            if _origin_allowed(origin):
-                resp.headers["Access-Control-Allow-Origin"] = origin
-                resp.headers["Access-Control-Allow-Credentials"] = "true"
-                resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
-                resp.headers["Access-Control-Allow-Headers"] = request.headers.get("Access-Control-Request-Headers", "Content-Type, Authorization, X-Requested-With, X-Session-ID")
-                resp.headers["Access-Control-Max-Age"] = "86400"
-                resp.headers["Vary"] = "Origin"
-            return resp
-
+    # =========================================================================
+    # WHY: Minimal CORS for actual /api/* responses (preflight handled at Nginx).
+    #      Kept local to avoid hidden global side effects.
+    # =========================================================================
     @app.after_request
     def _cors_apply(resp):
-        # Add CORS headers to all /api/* responses
         try:
             from flask import request
+
             if request.path.startswith("/api/"):
                 origin = request.headers.get("Origin")
-                if _origin_allowed(origin):
+                if origin:
                     resp.headers["Access-Control-Allow-Origin"] = origin
                     resp.headers["Access-Control-Allow-Credentials"] = "true"
                     resp.headers["Vary"] = "Origin"
         except Exception:
-            pass  # do not interfere with primary response
+            pass
         return resp
 
-    # Accept JWT via headers AND cookies; use our login cookie name.
-    app.config.setdefault('JWT_TOKEN_LOCATION', ['headers', 'cookies'])
-    app.config.setdefault('JWT_ACCESS_COOKIE_NAME', 'sekki_access')
-    app.config.setdefault('JWT_COOKIE_DOMAIN', '.sekki.io')
-    # Allow cookie auth without CSRF double-submit (adjust later if you want CSRF)
-    app.config.setdefault('JWT_COOKIE_CSRF_PROTECT', False)
-    app.config.setdefault('JWT_COOKIE_DOMAIN', '.sekki.io')
-    # Cross-subdomain, HTTPS-friendly cookie behavior
-    app.config.setdefault('JWT_COOKIE_SECURE', True)
-    app.config.setdefault('JWT_COOKIE_DOMAIN', '.sekki.io')
-    app.config.setdefault('JWT_COOKIE_SAMESITE', 'None')
-    app.config.setdefault('JWT_COOKIE_DOMAIN', '.sekki.io')
-
-    # Inject Authorization header from JWT cookie when client only sends cookies.
-    @app.before_request
-    def inject_auth_from_cookie():
-        # WHY: Many endpoints expect Authorization: Bearer <jwt>,
-        # but the frontend uses the 'sekki_access' cookie from /auth/login.
-        try:
-            from flask import request
-            if 'Authorization' not in request.headers:
-                tok = request.cookies.get('sekki_access')
-                if tok:
-                    # Make it look like a normal Bearer token for jwt decorators
-                    request.environ['HTTP_AUTHORIZATION'] = f'Bearer {tok}'
-        except Exception:
-            pass
-
+    # =========================================================================
+    # WHY: Configuration must remain centralized and deterministic.
+    # =========================================================================
     app.config.from_mapping(
-        SECRET_KEY                     = os.getenv('SECRET_KEY'),
-        SQLALCHEMY_DATABASE_URI        = os.getenv('DATABASE_URL'),
-        SQLALCHEMY_TRACK_MODIFICATIONS = False,
-
+        SECRET_KEY=os.getenv("SECRET_KEY"),
+        SQLALCHEMY_DATABASE_URI=os.getenv("DATABASE_URL"),
+        SQLALCHEMY_TRACK_MODIFICATIONS=False,
         # Stripe
-        STRIPE_SECRET_KEY              = os.getenv('STRIPE_SECRET_KEY'),
-
+        STRIPE_SECRET_KEY=os.getenv("STRIPE_SECRET_KEY"),
         # OpenAI / Claude
-        OPENAI_API_KEY                 = os.getenv('OPENAI_API_KEY'),
-        CLAUDE_API_KEY                 = os.getenv('CLAUDE_API_KEY'),
-
+        OPENAI_API_KEY=os.getenv("OPENAI_API_KEY"),
+        CLAUDE_API_KEY=os.getenv("CLAUDE_API_KEY"),
         # JWT
-        JWT_SECRET_KEY                 = os.getenv('JWT_SECRET_KEY'),
-          JWT_ACCESS_TOKEN_EXPIRES        = timedelta(hours=8),
-
+        JWT_SECRET_KEY=os.getenv("JWT_SECRET_KEY"),
+        JWT_ACCESS_TOKEN_EXPIRES=timedelta(hours=8),
         # Mailer
-        MAIL_SERVER                    = os.getenv('MAIL_SERVER', 'smtp.example.com'),
-        MAIL_PORT                      = int(os.getenv('MAIL_PORT', 587)),
-        MAIL_USE_TLS                   = os.getenv('MAIL_USE_TLS', 'true').lower() in ('true','1','yes'),
-        MAIL_USE_SSL                   = os.getenv('MAIL_USE_SSL', 'false').lower() in ('true','1','yes'),
-        MAIL_USERNAME                  = os.getenv('MAIL_USERNAME'),
-        MAIL_PASSWORD                  = os.getenv('MAIL_PASSWORD'),
-        MAIL_DEFAULT_SENDER            = os.getenv('MAIL_DEFAULT_SENDER'),
+        MAIL_SERVER=os.getenv("MAIL_SERVER", "smtp.example.com"),
+        MAIL_PORT=int(os.getenv("MAIL_PORT", 587)),
+        MAIL_USE_TLS=os.getenv("MAIL_USE_TLS", "true").lower() in ("true", "1", "yes"),
+        MAIL_USE_SSL=os.getenv("MAIL_USE_SSL", "false").lower() in ("true", "1", "yes"),
+        MAIL_USERNAME=os.getenv("MAIL_USERNAME"),
+        MAIL_PASSWORD=os.getenv("MAIL_PASSWORD"),
+        MAIL_DEFAULT_SENDER=os.getenv("MAIL_DEFAULT_SENDER"),
     )
 
-    # —— Stripe setup —— #
-    stripe_key = app.config['STRIPE_SECRET_KEY']
+    # =========================================================================
+    # WHY: Stripe config must fail safe (disable features) rather than crash.
+    # =========================================================================
+    stripe_key = app.config["STRIPE_SECRET_KEY"]
     if not stripe_key:
-        current_app.logger.warning("STRIPE_SECRET_KEY not set; Stripe features disabled."); app.config["STRIPE_SECRET_KEY"] = None
+        app.logger.warning("STRIPE_SECRET_KEY not set; Stripe features disabled.")
+        app.config["STRIPE_SECRET_KEY"] = None
     stripe.api_key = stripe_key
 
-    # —— Map plan_keys to Stripe Price IDs —— #
-    app.config['STRIPE_PRICE_IDS'] = {
-        'essential':       os.getenv('PRICE_ID_ESSENTIAL'),
-        'growth':          os.getenv('PRICE_ID_GROWTH'),
-        'transform_basic': os.getenv('PRICE_ID_TRANSFORM_BASIC'),
-        'founder':         os.getenv('PRICE_ID_FOUNDER'),
-        'enterprise':      os.getenv('PRICE_ID_ENTERPRISE'),
+    app.config["STRIPE_PRICE_IDS"] = {
+        "essential": os.getenv("PRICE_ID_ESSENTIAL"),
+        "growth": os.getenv("PRICE_ID_GROWTH"),
+        "transform_basic": os.getenv("PRICE_ID_TRANSFORM_BASIC"),
+        "founder": os.getenv("PRICE_ID_FOUNDER"),
+        "enterprise": os.getenv("PRICE_ID_ENTERPRISE"),
     }
-    # —— Frontend base URL for success/cancel links —— #
-    app.config['FRONTEND_BASE_URL'] = os.getenv('FRONTEND_BASE_URL', 'http://localhost:3000' )
 
-    # —— Database setup —— #
+    app.config["FRONTEND_BASE_URL"] = os.getenv("FRONTEND_BASE_URL", "http://localhost:3000")
+
+    # =========================================================================
+    # WHY: Extension initialization order must be consistent across deployments.
+    # =========================================================================
     db.init_app(app)
 
-    # —— JWT setup —— #
-    if not app.config['JWT_SECRET_KEY']:
+    if not app.config["JWT_SECRET_KEY"]:
         raise RuntimeError("JWT_SECRET_KEY not set in environment")
     jwt.init_app(app)
 
-    # —— Mail setup —— #
     mail.init_app(app)
 
-    # —— CORS —— #
-# (disabled)     CORS(app, origins=["https://sekki.io"], supports_credentials=True )
+    # =========================================================================
+    # WHY: Import blueprints *inside* create_app() so "db" is fully initialized
+    #      before any route module does "from app import db".
+    # =========================================================================
 
-    # —— Register blueprints —— #
-    from .routes.db_oracle import db_oracle_bp
-    from .routes.auth      import auth_bp
-    from .routes.chat      import chat_bp
-    from .routes.billing   import billing_bp
-    from .routes.dashboard import dashboard_bp
-    from .routes.market_iq import market_iq_bp
+    # Core blueprints (non-agent domain)
+    from app.routes.discuss import discuss_bp
+    from app.routes.scenario import scenario_bp
+    from app.statistical_analysis_api import statistical_bp  # stats API
+    from app.routes.projects import projects_bp
 
-    app.register_blueprint(auth_bp,      url_prefix='/api/auth')
-    # app.register_blueprint(chat_disabled,      url_prefix='/api/chat')
-    app.register_blueprint(billing_bp,   url_prefix='/api/billing')
-    app.register_blueprint(dashboard_bp)  # includes its own /api/dashboard path
-    app.register_blueprint(db_oracle_bp, url_prefix='/api/db/oracle')
-    # app.register_blueprint(market_iq_disabled, url_prefix="/api/market-iq")
-    from app.routes.conversational_ai import conversational_ai_bp
-    # app.register_blueprint(conversational_ai_bp, url_prefix='/api/market-iq')
+    # MIQ core (authoritative agent surface)
+    from app.routes.market_iq import market_iq_bp
 
-    # Optional sessions blueprint
+    app.register_blueprint(discuss_bp)
+    app.register_blueprint(scenario_bp, url_prefix="/api/scenario")
+    app.register_blueprint(projects_bp)
+    app.register_blueprint(statistical_bp)
+
+    # =========================================================================
+    # WHY: Authoritative AI Agent surface (MIQ) must be explicitly registered.
+    #      Keep the existing path (/api/market-iq) unchanged.
+    # =========================================================================
+    app.register_blueprint(market_iq_bp, url_prefix="/api/market-iq")
+
+    # =========================================================================
+    # WHY: Register non-agent application APIs (auth/billing/dashboard/db tools).
+    # =========================================================================
+    from app.routes.db_oracle import db_oracle_bp
+    from app.routes.auth import auth_bp
+    from app.routes.billing import billing_bp
+    from app.routes.dashboard import dashboard_bp
+
+    app.register_blueprint(auth_bp, url_prefix="/api/auth")
+    app.register_blueprint(billing_bp, url_prefix="/api/billing")
+    app.register_blueprint(dashboard_bp)
+    app.register_blueprint(db_oracle_bp, url_prefix="/api/db/oracle")
+    
+    # =========================================================================
+    # WHY: AI Agent system (consolidated: conversation + scoring + analysis)
+    # =========================================================================
+    from app.routes.ai_agent import ai_agent_bp
+    from app.routes.ai_agent_scenarios import ai_agent_scenarios_bp
+    app.register_blueprint(ai_agent_bp, url_prefix="/api/ai-agent")
+    app.register_blueprint(ai_agent_scenarios_bp, url_prefix="/api/ai-agent")
+
+    # =========================================================================
+    # WHY: Sessions surface is currently used by the frontend; keep it callable.
+    # =========================================================================
     try:
-        from .routes.sessions import sessions_bp
-        app.register_blueprint(sessions_bp, url_prefix='/api/sessions')
+        from app.routes.sessions import sessions_bp
+        app.register_blueprint(sessions_bp, url_prefix="/api/sessions")
     except ImportError:
         print("Warning: sessions blueprint not found. Session saving will not work.")
 
-    # Statistical Analysis blueprint
-    print("DEBUG: About to register statistical analysis blueprint")
-    try:
-        print("DEBUG: Attempting import...")
-        from .statistical_analysis_api import statistical_bp
-        print("DEBUG: Import successful, registering blueprint...")
-        app.register_blueprint(statistical_bp, url_prefix='/api/statistical-analysis')
-        print("DEBUG: Statistical Analysis API registered successfully")
-    except ImportError as e:
-        pass  # silenced
-    except Exception as e:
-        print(f"DEBUG: Other error: {e}")
-        import traceback
-        traceback.print_exc()
-
-    # Install cookie <-> Authorization bridge (safe, optional)
+    # =========================================================================
+    # WHY: Cookie hooks provide a controlled bridge between cookies and
+    #      Authorization without forcing a single client auth strategy.
+    # =========================================================================
     install_cookie_hooks(app)
-    # SSE chat stream route (Claude)
+
+    # =========================================================================
+    # WHY: SSE chat stream route currently binds to /api/chat/stream inside
+    #      the blueprint. DO NOT add a url_prefix here, or it will double-prefix.
+    # =========================================================================
     try:
         from app.routes.chat_stream import chat_stream_bp
         app.register_blueprint(chat_stream_bp)
     except Exception as e:
         print(f"DEBUG: SSE register failed: {e}")
 
-    # Register Claude conversational blueprint after app exists
-    try:
-        from app.routes.conversational_ai import conversational_ai_bp  # local import avoids early import issues
-        app.register_blueprint(conversational_ai_bp, url_prefix="/api")  # exposes /api/chat
-    except Exception as e:
-        print(f"DEBUG: failed to register conversational_ai_bp: {e}")
-        app.register_blueprint(conversation_bp, url_prefix="/api/conversation")
-        app.register_blueprint(market_iq_analyze_bp, url_prefix="/api/market-iq")
-    return app
+    # =========================================================================
+    # WHY: Conversational surface is currently used by the frontend (/api/chat).
+    #      Keep it callable for now (no breaking changes).
+    # =========================================================================
+    from app.routes.conversational_ai import conversational_ai_bp
+    app.register_blueprint(conversational_ai_bp, url_prefix="/api")
 
-# app.register_blueprint(conversational_ai_bp, url_prefix='/api/market-iq')
+    # =========================================================================
+    # WHY: MIQ threads/bundles/adoption surface (blueprint defines its own prefix).
+    # =========================================================================
+    from app.routes.market_iq_threads import market_iq_threads_bp
+    app.register_blueprint(market_iq_threads_bp)
+
+    # =========================================================================
+    # WHY: Optional quarantined legacy aliases, WITHOUT moving existing paths.
+    #      This allows a safe migration path while keeping production stable.
+    #
+    #      IMPORTANT: Flask does not allow registering the same Blueprint twice
+    #      under the same name. Alias registrations therefore use unique names.
+    # =========================================================================
+    if ENABLE_LEGACY_AGENT_ALIAS:
+        try:
+            app.register_blueprint(
+                conversational_ai_bp,
+                url_prefix="/api/legacy",
+                name="conversational_ai_legacy",
+            )
+        except Exception as e:
+            print(f"[WARN] Legacy conversational alias not registered: {e}")
+
+        try:
+            from app.routes.sessions import sessions_bp as _sessions_bp
+            app.register_blueprint(
+                _sessions_bp,
+                url_prefix="/api/legacy/sessions",
+                name="sessions_legacy",
+            )
+        except Exception as note:
+            print(f"[WARN] Legacy sessions alias not registered: {note}")
+
+        print("[INFO] Legacy agent aliases enabled (ENABLE_LEGACY_AGENT_ALIAS=true).")
+    else:
+        print("[INFO] Legacy agent aliases disabled (ENABLE_LEGACY_AGENT_ALIAS=false).")
+
+    # =========================================================================
+    # WHY: Init Alembic/Flask-Migrate once.
+    # =========================================================================
+    try:
+        Migrate(app, db)
+    except Exception:
+        pass
+
+    return app

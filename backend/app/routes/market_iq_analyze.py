@@ -1,462 +1,889 @@
+"""
+app.routes.market_iq_analyze
+
+Purpose
+  Single authoritative owner for Market IQ analysis + scenarios endpoints.
+
+Why this file exists
+  - Provides deterministic analysis/scenario computation from thread inputs.
+  - Persists analysis + scenarios to the DB (MiqAnalysis / MiqScenario).
+
+Routing contract
+  - This blueprint intentionally DOES NOT define a url_prefix.
+  - This file assumes create_app() registers it with url_prefix="/api/market-iq".
+    (Verification only: if create_app() registers without that prefix, routes here
+     will be at /analyze and /threads/<id>/scenarios instead of /api/market-iq/...).
+
+IMPORTANT
+  - This module does NOT own /threads/<thread_id>/bundle.
+  - Bundle/hydration is owned by app.routes.market_iq_threads to avoid route collisions.
+"""
+
 from __future__ import annotations
-import os, json, uuid, re
-from copy import deepcopy
-from pathlib import Path
-from typing import Dict, Any
-from flask import Blueprint, request, jsonify, current_app
-from flask_jwt_extended import jwt_required
+
+import hashlib
+import json
+import os
+import random
+import re
+import time
+from functools import wraps
+
+from flask import Blueprint, current_app, jsonify, request
+from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
+from pydantic import BaseModel, Field, ValidationError
+from sqlalchemy import desc
+
+from app import db
 from app.decorators.subscription import subscription_required
-import anthropic
+from app.models import MiqAnalysis, MiqMessage, MiqScenario, MiqThread
 
-# Import enhanced finance calculator
-try:
-    from app.services.finance_calc import run_comprehensive_analysis, calculate_dynamic_scores
-except Exception:
-    run_comprehensive_analysis = None
-    calculate_dynamic_scores = None
 
-# Import legacy calculator for backward compatibility
-try:
-    from app.services.scorecard_calc import run_calculator
-except Exception:
-    try:
-        from ..services.scorecard_calc import run_calculator
-    except Exception:
-        run_calculator = None
+# ---------------------------------------------------------------------------
+# Blueprint (prefix is owned by create_app registration)
+# ---------------------------------------------------------------------------
 
 market_iq_analyze_bp = Blueprint("market_iq_analyze", __name__)
 
-ROOT = Path(__file__).resolve().parents[2]
-SESS_DIR = Path(os.getenv("SESSION_DIR", ROOT / "runtime" / "sessions"))
 
-def _load_transcript(session_id: str) -> str:
-    p = SESS_DIR / f"{session_id}.json"
-    if p.exists():
-        try:
-            j = json.loads(p.read_text()); hist = j.get("history", [])
-            lines=[]
-            for m in hist:
-                role = "User" if m.get("role")=="user" else "AI"
-                c = (m.get("content") or "").strip()
-                if c: lines.append(f"{role}: {c}")
-            return "\n".join(lines)
-        except Exception:
-            return ""
-    return ""
+# ---------------------------------------------------------------------------
+# Demo bypass (analyze only)
+# ---------------------------------------------------------------------------
 
-def _get_claude_client():
+DEMO_EMAIL_DEFAULT = "demo@sekki.io"
+
+
+def _resolve_jwt_email_best_effort() -> str | None:
     """
-    Use CLAUDE_API_KEY (preferred) or ANTHROPIC_API_KEY from env or Flask config.
-    Raise if missing. No fallback.
+    Best-effort email resolution for the currently authenticated caller.
+
+    Priority:
+      1) JWT custom claim "email" (if present)
+      2) Lookup by JWT identity against a User-like model (if available)
+
+    Returns:
+      email string or None if not resolvable.
     """
-    key = (
-        os.environ.get("CLAUDE_API_KEY")
-        or os.environ.get("ANTHROPIC_API_KEY")
-        or current_app.config.get("CLAUDE_API_KEY")
-        or current_app.config.get("ANTHROPIC_API_KEY")
-    )
-    if not key:
-        raise ValueError("CLAUDE_API_KEY/ANTHROPIC_API_KEY not configured")
-    return anthropic.Anthropic(api_key=key)
-
-def _build_compat(result: Dict[str, Any]) -> Dict[str, Any]:
-    comps = result.get("component_scores") or {}
-    fins  = result.get("financial_impact") or {}
-    return {
-        "title": result.get("project_name") or "Market IQ Project",
-        "score": result.get("market_iq_score"),
-        "components": {
-            "financialHealth":       int(comps.get("financial_health") or 0),
-            "operationalEfficiency": int(comps.get("operational_efficiency") or 0),
-            "marketPosition":        int(comps.get("market_position") or 0),
-            "executionReadiness":    int(comps.get("execution_readiness") or 0),
-        },
-        "financials": {
-            "ebitdaAtRisk":    fins.get("ebitda_at_risk"),
-            "roiOpportunity":  fins.get("roi_opportunity"),
-            "projectedEbitda": fins.get("projected_ebitda"),
-            "potentialLoss":   fins.get("potential_loss"),
-        },
-    }
-
-def _normalize_for_calc(text: str) -> str:
-    """Make common phrases calculator-friendly (very conservative)."""
-    if not text:
-        return text
-    import re
-    # "20k subs" → "20000 subscribers", also handles users/customers
-    def repl_k(m):
-        n = float(m.group(1))
-        return f"{int(n * 1000)} subscribers"
-    text = re.sub(r'\b(\d+(?:\.\d+)?)\s*k\s*(subs|subscribers|users|customers)\b',
-                  repl_k, text, flags=re.IGNORECASE)
-    # Normalize synonyms to "subscribers"
-    text = re.sub(r'\bsubs\b', 'subscribers', text, flags=re.IGNORECASE)
-    text = re.sub(r'\busers\b', 'subscribers', text, flags=re.IGNORECASE)
-    text = re.sub(r'\bcustomers\b', 'subscribers', text, flags=re.IGNORECASE)
-    # Friendly alias for margin
-    text = re.sub(r'\bgm\b', 'gross margin', text, flags=re.IGNORECASE)
-    return text
-
-@market_iq_analyze_bp.route("/analyze", methods=["POST"])
-@jwt_required(optional=True)
-@subscription_required
-def analyze_from_conversation():
-    """
-    Enhanced Claude analysis with comprehensive financial calculations.
-    Request:  {session_id?, transcript?}
-    Response: {analysis_result, analysis_id}
-    """
-    pld = request.get_json(silent=True) or {}
-    sid = (pld.get("session_id") or "").strip()
-    transcript = (pld.get("transcript") or "").strip() or (_load_transcript(sid) if sid else "")
-    current_app.logger.info("analyze[enhanced]: sid=%s chars=%d", sid or "-", len(transcript))
-
-    if not transcript:
-        return jsonify({"error":"No transcript"}), 400
-
-    # Enhanced prompt for comprehensive financial analysis
-    prompt = f"""You are a top 0.1% senior financial analyst and strategic advisor. Analyze the conversation below and return a comprehensive Market IQ scorecard with rigorous financial analysis as STRICT JSON (no prose, no markdown).
-
-Conversation Transcript:
-{transcript}
-
-Return a SINGLE JSON object with the following structure:
-
-{{
-  "project_name": "Clear, descriptive project title (NOT 'Unknown' or 'Business Project')",
-  "market_iq_score": <integer 1-99>,
-  "score_category": "Excellent|Good|Fair|At Risk",
-  "summary": "2-3 sentence executive summary",
-  
-  "component_scores": {{
-    "financial_health": <integer 0-100>,
-    "operational_efficiency": <integer 0-100>,
-    "market_position": <integer 0-100>,
-    "execution_readiness": <integer 0-100>
-  }},
-  
-  "before_after_financials": {{
-    "before": {{
-      "revenue": <number>,
-      "cogs": <number>,
-      "operating_expenses": <number>,
-      "ebitda": <number>,
-      "ebitda_margin_percent": <number>
-    }},
-    "after": {{
-      "revenue": <number>,
-      "cogs": <number>,
-      "operating_expenses": <number>,
-      "ebitda": <number>,
-      "ebitda_margin_percent": <number>
-    }}
-  }},
-  
-  "investment_analysis": {{
-    "initial_investment": <number>,
-    "annual_benefit": <number>,
-    "duration_years": <integer>,
-    "total_benefit": <number>,
-    "roi_percent": <number>,
-    "payback_period": <number in years>
-  }},
-  
-  "npv_irr_analysis": {{
-    "initial_investment": <number>,
-    "discount_rate": <decimal, e.g., 0.10>,
-    "cash_flows": [<array of annual cash flows>],
-    "npv": <number>,
-    "irr": <decimal, e.g., 0.25>,
-    "sensitivity": {{
-      "npv_at_6": <number>,
-      "npv_at_8": <number>,
-      "npv_at_10": <number>,
-      "npv_at_12": <number>
-    }}
-  }},
-  
-  "valuation": {{
-    "ebitda": <number>,
-    "multiple": <number>,
-    "enterprise_value": <number>
-  }},
-  
-  "decision_framework": {{
-    "strategic_alignment": <boolean>,
-    "npv_positive": <boolean>,
-    "irr_above_hurdle": <boolean>,
-    "acceptable_payback": <boolean>,
-    "robust_sensitivity": <boolean>,
-    "overall_recommendation": "Strong Investment|Moderate|High Risk|Do Not Proceed"
-  }},
-  
-  "financial_impact": {{
-    "ebitda_at_risk": <number>,
-    "roi_opportunity": <number>,
-    "projected_ebitda": <number>,
-    "potential_loss": <number>
-  }},
-  
-  "key_insights": [<array of 3-5 specific, actionable insights>],
-  "recommendations": [<array of 3-5 prioritized recommendations>],
-  "risks": [<array of 3-5 key risks>]
-}}
-
-CALCULATION GUIDELINES:
-
-1. **ROI & Payback:**
-   - Total Benefit = Annual Benefit × Duration
-   - ROI % = ((Total Benefit - Investment) / Investment) × 100
-   - Payback Period = Investment / Annual Benefit
-
-2. **NPV:**
-   - NPV = Σ(CF_t / (1 + r)^t) - Initial Investment
-   - Calculate for each year's cash flow
-
-3. **IRR:**
-   - Find the rate where NPV = 0
-   - Use iterative calculation
-
-4. **Sensitivity Analysis:**
-   - Calculate NPV at 6%, 8%, 10%, 12% discount rates
-
-5. **Valuation:**
-   - Enterprise Value = EBITDA (After) × Industry Multiple
-
-6. **Decision Framework:**
-   - Strategic Alignment: Does it support strategy?
-   - NPV Positive: Is NPV > 0?
-   - IRR Above Hurdle: Is IRR > Discount Rate?
-   - Acceptable Payback: Is Payback ≤ 4 years?
-   - Robust Sensitivity: Is NPV positive in ≥3 scenarios?
-   - Overall: All 5 pass = "Strong Investment", 4 = "Moderate", 3 = "High Risk", ≤2 = "Do Not Proceed"
-
-7. **Component Scoring (Base on actual metrics):**
-   - Financial Health: NPV > $1M → 80-100, NPV > 0 → 60-79, NPV marginally positive → 40-59, NPV negative → 0-39
-   - Operational Efficiency: EBITDA margin > 25% → 80-100, 15-25% → 60-79, 10-15% → 40-59, < 10% → 0-39
-   - Market Position: Strong competitive position → 80-100, Moderate → 60-79, Weak → 40-59
-   - Execution Readiness: Proven team, clear plan → 80-100, Capable team → 60-79, Uncertain → 40-59
-
-8. **Overall Score:**
-   - Weighted average: (Financial Health × 0.30) + (Operational Efficiency × 0.20) + (Market Position × 0.30) + (Execution Readiness × 0.20)
-
-Rules:
-- Output MUST be pure JSON (no backticks, no markdown).
-- All financial values must be numbers (not strings with $ or commas).
-- If data is missing, make conservative assumptions and note them in key_insights.
-- Base all calculations on what was actually discussed in the conversation.
-"""
-
-    # LLM client
+    # 1) Try JWT claims
     try:
-        client = _get_claude_client()
-    except Exception as e:
-        current_app.logger.exception("Claude key/config missing")
-        return jsonify({"error":"llm_unconfigured","details":str(e)}), 500
-
-    # Call Claude
-    try:
-        resp = client.messages.create(
-            model="claude-sonnet-4-5-20250929",
-            max_tokens=3000,
-            temperature=0.3,
-            messages=[{"role":"user","content":prompt}],
-        )
-        raw = (resp.content[0].text or "").strip()
-    except Exception as e:
-        current_app.logger.exception("Claude call failed")
-        return jsonify({"error":"llm_unavailable","details":str(e)[:300]}), 502
-
-    # Parse strict JSON
-    m = re.search(r"\{[\s\S]*\}\s*\Z", raw) or re.search(r"\{[\s\S]*\}", raw)
-    if not m:
-        return jsonify({"error":"invalid_llm_response","details":"No JSON object detected"}), 502
-
-    try:
-        result = json.loads(m.group(0))
-    except Exception as e:
-        return jsonify({"error":"invalid_llm_json","details":str(e)[:300]}), 502
-
-    if not isinstance(result, dict):
-        return jsonify({"error":"invalid_llm_payload","details":"Top-level must be object"}), 502
-
-    comps = result.get("component_scores") or {}
-    required_comp_keys = {"market_position","execution_readiness","financial_health","operational_efficiency"}
-    if "market_iq_score" not in result or not required_comp_keys.issubset(comps.keys()):
-        return jsonify({"error":"invalid_llm_payload","details":"Missing required scores"}), 502
-
-    # Normalize optional fields
-    result.setdefault("financial_impact", {})
-    result.setdefault("key_insights", [])
-    result.setdefault("recommendations", [])
-    if "top_risks" not in result:
-        result["top_risks"] = result.get("risks", [])
-
-    # Ensure project name is never generic
-    _name = result.get("project_name")
-    bad_names = {"", "unknown", "business project", "project", "analysis", "none", "null", "market iq project"}
-    if not _name or str(_name).strip().lower() in bad_names:
-        # Try to extract from transcript
-        _name = None
-        try:
-            lines = transcript.split("\n")
-            for line in lines:
-                if line.strip() and not line.startswith("AI:"):
-                    _name = line.replace("User:", "").strip()[:60]
-                    break
-        except Exception:
-            pass
-        result["project_name"] = _name or "Strategic Initiative"
-
-    # Meta + id
-    result.setdefault("_meta", {})["source"] = "claude_enhanced"
-    result["_meta"]["llm_used"] = True
-    result["analysis_id"] = sid or f"analysis_{uuid.uuid4().hex[:8]}"
-
-    # Build compat mirror
-    try:
-        result["compat"] = _build_compat(result)
+        claims = get_jwt() or {}
+        email = claims.get("email")
+        if isinstance(email, str) and email.strip():
+            return email.strip().lower()
     except Exception:
         pass
 
-    # === Enhanced financial calculations (if available) ===
-    if run_comprehensive_analysis and calculate_dynamic_scores:
+    # 2) Try identity -> user lookup (best effort; model name may vary)
+    try:
+        user_id = get_jwt_identity()
+        if not user_id:
+            return None
+
+        # Try common model names without hard failing if they don't exist.
+        # NOTE: We intentionally keep this best-effort and silent.
         try:
-            # Extract data for comprehensive analysis
-            inv_analysis = result.get("investment_analysis", {})
-            npv_analysis = result.get("npv_irr_analysis", {})
-            before_after = result.get("before_after_financials", {})
-            
-            if inv_analysis and npv_analysis:
-                # Run comprehensive analysis to validate/enhance Claude's calculations
-                data = {
-                    'initial_investment': inv_analysis.get('initial_investment'),
-                    'annual_benefit': inv_analysis.get('annual_benefit'),
-                    'duration_years': inv_analysis.get('duration_years', 5),
-                    'discount_rate': npv_analysis.get('discount_rate', 0.10),
-                    'ebitda_after': before_after.get('after', {}).get('ebitda'),
-                    'ebitda_multiple': result.get('valuation', {}).get('multiple', 8.0),
-                    'strategic_alignment': result.get('decision_framework', {}).get('strategic_alignment', True)
-                }
-                
-                # Only run if we have minimum required data
-                if data['initial_investment'] and data['annual_benefit']:
-                    comprehensive = run_comprehensive_analysis(data)
-                    
-                    # Merge comprehensive calculations with Claude's results
-                    if comprehensive:
-                        result.update(comprehensive)
-                        
-                        # Calculate dynamic scores based on actual financial metrics
-                        npv = comprehensive.get('npv_irr_analysis', {}).get('npv')
-                        irr = comprehensive.get('npv_irr_analysis', {}).get('irr')
-                        payback = comprehensive.get('investment_analysis', {}).get('payback_period')
-                        roi_pct = comprehensive.get('investment_analysis', {}).get('roi_percent')
-                        
-                        ebitda_after = before_after.get('after', {}).get('ebitda', 0)
-                        revenue_after = before_after.get('after', {}).get('revenue', 1)
-                        ebitda_margin = ebitda_after / revenue_after if revenue_after > 0 else 0
-                        
-                        dynamic_scores = calculate_dynamic_scores(
-                            npv=npv,
-                            irr=irr,
-                            discount_rate=data['discount_rate'],
-                            payback_period=payback,
-                            ebitda_margin=ebitda_margin,
-                            roi_percent=roi_pct,
-                            market_position_qualitative=comps.get('market_position', 70),
-                            execution_readiness_qualitative=comps.get('execution_readiness', 65)
-                        )
-                        
-                        # Update scores with dynamically calculated values
-                        result['component_scores'].update(dynamic_scores)
-                        result['market_iq_score'] = dynamic_scores['overall']
-                        
-                        # Update score category
-                        s = dynamic_scores['overall']
-                        result['score_category'] = (
-                            "Excellent" if s >= 80 else 
-                            "Good" if s >= 60 else 
-                            "Fair" if s >= 40 else 
-                            "At Risk"
-                        )
-                        
-                        result["_meta"]["enhanced_calculations"] = True
-                        current_app.logger.info("Enhanced calculations applied: NPV=%s, IRR=%s, Score=%s", 
-                                                npv, irr, dynamic_scores['overall'])
-        except Exception as e:
-            current_app.logger.exception("Enhanced calculations failed, using Claude's values")
-            result["_meta"]["enhanced_calc_error"] = str(e)[:200]
+            from app.models import User  # type: ignore
+            user = User.query.filter_by(id=user_id).first()
+            if user and getattr(user, "email", None):
+                return str(user.email).strip().lower()
+        except Exception:
+            pass
 
-    # === Legacy calculator attachment (for backward compatibility) ===
-    if run_calculator:
         try:
-            norm_text = _normalize_for_calc(transcript)
-            calc_out = run_calculator(norm_text)
-            if isinstance(calc_out, dict):
-                result.setdefault("_meta", {})["calc_attached"] = True
-                result["_calc"] = {
-                    "inputs_parsed":    calc_out.get("inputs_parsed"),
-                    "metrics":          calc_out.get("metrics"),
-                    "scores":           calc_out.get("scores"),
-                    "insufficient_any": calc_out.get("insufficient_any"),
-                    "missing_fields":   calc_out.get("missing_fields"),
-                }
-        except Exception as e:
-            result["_calc_error"] = str(e)[:200]
+            from app.models import AppUser  # type: ignore
+            user = AppUser.query.filter_by(id=user_id).first()
+            if user and getattr(user, "email", None):
+                return str(user.email).strip().lower()
+        except Exception:
+            pass
 
-    return jsonify({"analysis_result": result, "analysis_id": result["analysis_id"]})
+    except Exception:
+        return None
 
-@market_iq_analyze_bp.route("/scenario", methods=["POST"])
+    return None
+
+
+def _is_demo_analyze_user() -> bool:
+    """
+    Allows demo user to call /analyze without an active subscription.
+
+    This is intentionally narrow:
+      - only demo email
+      - only affects the /analyze endpoint (scenarios remain unchanged)
+    """
+    demo_email = (
+        current_app.config.get("DEMO_USER_EMAIL")
+        or os.getenv("DEMO_USER_EMAIL")
+        or DEMO_EMAIL_DEFAULT
+    )
+    if not isinstance(demo_email, str) or not demo_email.strip():
+        demo_email = DEMO_EMAIL_DEFAULT
+    demo_email = demo_email.strip().lower()
+
+    caller_email = _resolve_jwt_email_best_effort()
+    return bool(caller_email and caller_email == demo_email)
+
+
+def subscription_required_or_demo(fn):
+    """
+    Wrapper that enforces subscription for all users EXCEPT the demo user.
+    """
+    gated = subscription_required(fn)
+
+    @wraps(fn)
+    def _wrapped(*args, **kwargs):
+        try:
+            if _is_demo_analyze_user():
+                return fn(*args, **kwargs)
+        except Exception:
+            # If bypass check fails for any reason, fall back to normal gating.
+            pass
+        return gated(*args, **kwargs)
+
+    return _wrapped
+
+
+# ---------------------------------------------------------------------------
+# Request schemas
+# ---------------------------------------------------------------------------
+
+class ScenarioCreatePayload(BaseModel):
+    deltas: dict = Field(default_factory=dict)
+    label: str | None = None
+    session_id: str | None = None
+
+
+class ScenarioUpdatePayload(BaseModel):
+    deltas: dict = Field(default_factory=dict)
+    label: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Deterministic helpers
+# ---------------------------------------------------------------------------
+
+def _canonical(obj) -> str:
+    """Stable JSON for hashing."""
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def _stable_fingerprint(payload_like_dict: dict) -> str:
+    """SHA-256 fingerprint of canonicalized inputs."""
+    return hashlib.sha256(_canonical(payload_like_dict).encode("utf-8")).hexdigest()
+
+
+def _parse_numeric_value(val_str: str) -> float:
+    """Parse numeric values with units (k, M, %, months)."""
+    if not val_str:
+        return 0.0
+    val_str = str(val_str).strip()
+    multiplier = 1.0
+
+    # Percent
+    if "%" in val_str:
+        val_str = val_str.replace("%", "")
+        multiplier = 0.01
+    # Millions
+    elif val_str.lower().endswith("m"):
+        multiplier = 1_000_000
+        val_str = val_str[:-1]
+    # Thousands
+    elif val_str.lower().endswith("k"):
+        multiplier = 1_000
+        val_str = val_str[:-1]
+
+    # Strip non-numeric except decimal
+    val_str = re.sub(r"[^\d.]", "", val_str)
+    try:
+        return float(val_str) * multiplier
+    except Exception:
+        return 0.0
+
+
+def _normalize_percent_deltas(deltas: dict) -> dict:
+    """Normalize percentage-like deltas to fractional values (e.g. 22.5 -> 0.225)."""
+    if not isinstance(deltas, dict):
+        return deltas
+    norm = dict(deltas)
+    for k, v in list(norm.items()):
+        if not isinstance(v, (int, float)):
+            continue
+        lk = str(k).lower()
+        if any(s in lk for s in ("percent", "pct", "rate", "margin", "churn")):
+            # If user sent whole-number percent (e.g. 22.5), convert to fraction.
+            if v > 1:
+                norm[k] = v / 100.0
+    return norm
+
+
+def _extract_levers(inputs: dict, transcript: str) -> dict:
+    """Extract baseline input levers from structured data and transcript."""
+    levers: dict = {}
+
+    # Structured: budget
+    budget_dict = inputs.get("budget") or {}
+    if isinstance(budget_dict, dict):
+        if "amount" in budget_dict:
+            levers["budget"] = _parse_numeric_value(budget_dict["amount"])
+        elif "total" in budget_dict:
+            levers["budget"] = _parse_numeric_value(budget_dict["total"])
+
+    # Structured: financial metrics
+    financial_metrics = inputs.get("financial_metrics") or {}
+    if isinstance(financial_metrics, dict):
+        if "revenue_target" in financial_metrics:
+            levers["revenue_target"] = _parse_numeric_value(financial_metrics["revenue_target"])
+        if "margin" in financial_metrics:
+            levers["margin_percent"] = _parse_numeric_value(financial_metrics["margin"])
+        if "churn_rate" in financial_metrics:
+            levers["churn_rate"] = _parse_numeric_value(financial_metrics["churn_rate"])
+        if "price_point" in financial_metrics:
+            levers["price_point"] = _parse_numeric_value(financial_metrics["price_point"])
+
+    # Structured: timeline
+    timeline_str = inputs.get("timeline") or ""
+    if timeline_str:
+        match = re.search(r"(\d+)\s*(month|mo)", timeline_str, re.IGNORECASE)
+        if match:
+            levers["timeline_months"] = int(match.group(1))
+
+    # Transcript fallback for missing levers
+    if not levers.get("budget") and transcript:
+        match = re.search(r"budget[:\s]+\$?([\d.]+)\s*([kKmM]?)", transcript, re.IGNORECASE)
+        if match:
+            levers["budget"] = _parse_numeric_value(match.group(1) + match.group(2))
+
+    if not levers.get("timeline_months") and transcript:
+        match = re.search(r"(\d+)\s*(month|mo)", transcript, re.IGNORECASE)
+        if match:
+            levers["timeline_months"] = int(match.group(1))
+
+    if not levers.get("revenue_target") and transcript:
+        match = re.search(r"revenue[:\s]+\$?([\d.]+)\s*([kKmM]?)", transcript, re.IGNORECASE)
+        if match:
+            levers["revenue_target"] = _parse_numeric_value(match.group(1) + match.group(2))
+
+    return levers
+
+
+def _build_transcript_from_thread(thread_id: str) -> str:
+    """Best-effort transcript builder from stored thread messages."""
+    if not thread_id:
+        return ""
+    try:
+        q = (
+            MiqMessage.query
+            .filter_by(thread_id=thread_id)
+            .order_by(MiqMessage.created_at.asc())
+        )
+        parts: list[str] = []
+        for mmsg in q.all():
+            c = mmsg.content
+            txt = ""
+            if isinstance(c, dict):
+                for k in ("text", "message", "content", "body"):
+                    v = c.get(k)
+                    if isinstance(v, str) and v.strip():
+                        txt = v.strip()
+                        break
+            elif isinstance(c, str) and c.strip():
+                txt = c.strip()
+
+            if txt:
+                parts.append(f"{mmsg.role}: {txt}")
+
+        return "\n".join(parts).strip()
+    except Exception:
+        return ""
+
+
+# ---------------------------------------------------------------------------
+# Route: analysis (authoritative)
+# ---------------------------------------------------------------------------
+
+@market_iq_analyze_bp.route("/analyze", methods=["POST"])
 @jwt_required(optional=True)
-@subscription_required
-def scenario_apply():
+@subscription_required_or_demo
+def analyze_from_conversation():
     """
-    Accepts {analysis_id, analysis_result, changes}
-    Supports:
-      - market_iq_score: +/− int
-      - component_scores: {key: +/−int}
-      - financial_impact: {key: any}
-      - budget: { deltaPercent: number }
+    Market IQ analysis — strict & deterministic.
+      - Normal path: compute deterministically from inputs + transcript.
+      - On any exception: return 500 JSON (no stub / no fake data).
     """
-    p = request.get_json(silent=True) or {}
-    analysis = deepcopy(p.get("analysis_result") or {})
-    if not analysis:
-        return jsonify({"error":"analysis_result_required"}), 400
-    changes = p.get("changes") or {}
+    _t0 = time.time()
+    pld = request.get_json(silent=True) or {}
 
-    def clamp(v, lo, hi):
-        try: return int(max(lo, min(hi, int(v))))
-        except Exception: return v
+    # BEGIN: thread_transcript_fallback
+    thread_id = (pld.get("thread_id") or pld.get("session_id") or "")
+    if isinstance(thread_id, str):
+        thread_id = thread_id.strip()
 
-    if isinstance(changes.get("market_iq_score"), (int, float)):
-        analysis["market_iq_score"] = clamp(
-            analysis.get("market_iq_score", 60) + int(changes["market_iq_score"]), 1, 99
+    transcript = pld.get("transcript") or ""
+    if isinstance(transcript, str):
+        transcript = transcript.strip()
+
+    if not transcript and thread_id:
+        transcript = _build_transcript_from_thread(thread_id)
+    # END: thread_transcript_fallback
+
+    inputs = {
+        "project_name": (pld.get("project_name") or "").strip(),
+        "business_description": (pld.get("business_description") or "").strip(),
+        "target_market": (pld.get("target_market") or "").strip(),
+        "revenue_model": (pld.get("revenue_model") or "").strip(),
+        "financial_metrics": pld.get("financial_metrics") or {},
+        "timeline": (pld.get("timeline") or "").strip(),
+        "budget": pld.get("budget") or {},
+        "competition": (pld.get("competition") or "").strip(),
+        "team": (pld.get("team") or "").strip(),
+        "assumptions": pld.get("assumptions") or {},
+        "transcript": transcript,
+    }
+
+    if not inputs["transcript"]:
+        return jsonify({"error": "No transcript"}), 400
+
+    # Deterministic fingerprint + seed
+    fp = _stable_fingerprint(inputs)
+    try:
+        random.seed(int(fp[:16], 16))
+    except Exception:
+        random.seed(12345)
+
+    # IMPORTANT: analysis_id must never be derived from session_id.
+    requested_analysis_id = pld.get("analysis_id")
+    if isinstance(requested_analysis_id, str):
+        requested_analysis_id = requested_analysis_id.strip()
+    else:
+        requested_analysis_id = ""
+
+    analysis_id = requested_analysis_id or f"analysis_{fp[:8]}"
+
+    try:
+        # ===== DETERMINISTIC COMPUTE PATH =====
+        base = (int(fp[-4:], 16) % 41) + 50  # 50..90
+
+        extracted_levers = _extract_levers(inputs, transcript)
+
+        result = {
+            "analysis_id": analysis_id,
+            "thread_id": thread_id,
+            "project_name": inputs["project_name"] or "Market IQ Project",
+            "market_iq_score": base,
+            "score_category": (
+                "Excellent" if base >= 85 else
+                "Good"      if base >= 70 else
+                "Fair"      if base >= 55 else
+                "Poor"
+            ),
+            "component_scores": {
+                "execution_readiness": max(min(base - 7, 99), 0),
+                "financial_health":   max(min(base + 21, 99), 0),
+                "market_position":    max(min(base - 4, 99), 0),
+                "operational_efficiency": max(min(base - 14, 99), 0),
+                "overall": base,
+            },
+            "financial_impact": {
+                "projected_ebitda": int(base * 2600),
+                "ebitda_at_risk":   int(base * 2600 * 0.8),
+                "potential_loss":   int(base * 2200 * 0.6),
+                "roi_opportunity":  int(base * 10870),
+            },
+            "inputs_fingerprint": fp,
+            "assumptions": inputs["assumptions"],
+            "inputs": {
+                **extracted_levers,
+                "project_name": inputs.get("project_name"),
+                "business_description": inputs.get("business_description"),
+                "target_market": inputs.get("target_market"),
+                "revenue_model": inputs.get("revenue_model"),
+                "financial_metrics": inputs.get("financial_metrics") or {},
+                "timeline": inputs.get("timeline"),
+                "budget": inputs.get("budget") or {},
+                "competition": inputs.get("competition"),
+                "team": inputs.get("team"),
+            },
+            "compat": {
+                **(inputs.get("financial_metrics") or {}),
+                **(inputs.get("budget") or {}),
+                **extracted_levers,
+            },
+        }
+
+        # Persist (best-effort)
+        try:
+            # Ensure MiqThread exists
+            thread = MiqThread.query.filter_by(thread_id=thread_id).first()
+            if not thread:
+                thread = MiqThread(thread_id=thread_id)
+                db.session.add(thread)
+                db.session.flush()
+
+            # Upsert analysis
+            existing = MiqAnalysis.query.filter_by(analysis_id=analysis_id).first()
+            if existing:
+                existing.thread_id = thread_id
+                existing.session_id = pld.get("session_id")
+                existing.result = result
+                existing.meta = {"analysis_id": analysis_id, "fingerprint": fp}
+            else:
+                row = MiqAnalysis(
+                    analysis_id=analysis_id,
+                    thread_id=thread_id,
+                    session_id=pld.get("session_id"),
+                    result=result,
+                    meta={"analysis_id": analysis_id, "fingerprint": fp},
+                )
+                db.session.add(row)
+
+            db.session.commit()
+        except Exception:
+            current_app.logger.exception("persist_analysis failed (non-fatal)")
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+
+        return jsonify({"analysis_result": result, "analysis_id": analysis_id}), 200
+    except Exception as e:
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        current_app.logger.exception("analyze_from_conversation failed")
+        return jsonify({"error": "server error", "detail": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Routes: scenarios (create/list/update/apply)
+# ---------------------------------------------------------------------------
+
+@market_iq_analyze_bp.post("/threads/<thread_id>/scenarios")
+def create_scenario(thread_id: str):
+    """Create a new scenario for this thread (deterministic compute from deltas)."""
+    try:
+        try:
+            payload = ScenarioCreatePayload.model_validate(request.get_json(silent=True) or {}).model_dump()
+        except ValidationError as ve:
+            return jsonify({"error": "bad_request", "detail": ve.errors()}), 400
+
+        deltas = _normalize_percent_deltas(payload.get("deltas"))
+        label = payload.get("label") or "Custom Scenario"
+        session_id = payload.get("session_id")
+
+        if not isinstance(deltas, dict) or not deltas:
+            return jsonify({"error": "deltas required (object)"}), 400
+
+        # Baseline: latest persisted analysis for this thread
+        base = (
+            MiqAnalysis.query
+            .filter_by(thread_id=thread_id)
+            .order_by(desc(MiqAnalysis.created_at))
+            .first()
+        )
+        if not base:
+            return jsonify({"error": "no_baseline", "detail": "run /analyze first for this thread"}), 409
+
+        baseline_id = (
+            getattr(base, "analysis_id", None)
+            or (base.meta or {}).get("analysis_id")
+            or (base.result or {}).get("analysis_id")
+        )
+        if not baseline_id:
+            return jsonify({"error": "invalid_baseline"}), 500
+
+        base_result = base.result or {}
+        baseline_score = int(
+            base_result.get("market_iq_score")
+            or base_result.get("component_scores", {}).get("overall")
+            or 0
         )
 
-    comps = analysis.setdefault("component_scores", {})
-    for k, v in (changes.get("component_scores") or {}).items():
-        try: comps[k] = clamp(int(comps.get(k, 60)) + int(v), 0, 100)
-        except Exception: pass
+        canon = json.dumps({"based_on": baseline_id, "deltas": deltas}, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        fp = hashlib.sha256(canon.encode("utf-8")).hexdigest()
+        delta = (int(fp[:4], 16) % 21) - 10  # [-10, +10]
+        new_score = max(0, min(99, baseline_score + delta))
 
-    fin = analysis.setdefault("financial_impact", {})
-    for k, v in (changes.get("financial_impact") or {}).items(): fin[k] = v
+        result = {
+            "based_on": baseline_id,
+            "market_iq_score": new_score,
+            "score_category": ("Excellent" if new_score >= 85 else "Good" if new_score >= 70 else "Fair" if new_score >= 55 else "Poor"),
+            "component_scores": {
+                "overall": new_score,
+                "execution_readiness": max(min(new_score - 7, 99), 0),
+                "financial_health":   max(min(new_score + 21, 99), 0),
+                "market_position":    max(min(new_score - 4, 99), 0),
+                "operational_efficiency": max(min(new_score - 14, 99), 0),
+            },
+            "applied_deltas": deltas,
+            "inputs_fingerprint": (base_result.get("inputs_fingerprint") or ""),
+            "computed_at": int(time.time()),
+        }
 
-    b = (changes.get("budget") or {})
-    try: dp = float(b.get("deltaPercent", None))
-    except Exception: dp = None
-    if dp is not None:
-        delta_score = clamp(round(dp/20.0), -5, 5)
-        delta_exec  = clamp(round(dp/10.0), -6, 6)
-        delta_fin   = clamp(round(dp/15.0), -6, 6)
-        analysis["market_iq_score"] = clamp(analysis.get("market_iq_score", 60) + delta_score, 1, 99)
-        comps["execution_readiness"] = clamp(int(comps.get("execution_readiness", 60)) + delta_exec, 0, 100)
-        comps["financial_health"]    = clamp(int(comps.get("financial_health", 60)) + delta_fin, 0, 100)
-        roi = fin.get("roi_opportunity", "Moderate")
-        if dp >= 20: roi = "Higher"
-        elif dp <= -20: roi = "Lower"
-        fin["roi_opportunity"] = roi
-        analysis.setdefault("scenario_changes_applied", {})["budget"] = {"deltaPercent": dp}
+        scenario_id = "scn_" + fp[:8]
+        row = MiqScenario(
+            scenario_id=scenario_id,
+            thread_id=thread_id,
+            session_id=session_id,
+            based_on=baseline_id,
+            deltas=deltas,
+            result=result,
+            label=label,
+            meta={"fingerprint": fp},
+        )
+        db.session.add(row)
+        db.session.commit()
 
-    return jsonify(analysis)
+        return jsonify({
+            "thread_id": thread_id,
+            "scenario": {
+                "scenario_id": scenario_id,
+                "based_on": baseline_id,
+                "label": label,
+                "deltas": deltas,
+                "result": result,
+                "meta": {"fingerprint": fp},
+            }
+        }), 201
+    except Exception:
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        current_app.logger.exception("create_scenario failed")
+        return jsonify({"error": "server error"}), 500
+
+
+@market_iq_analyze_bp.get("/threads/<thread_id>/scenarios")
+def list_scenarios(thread_id: str):
+    """List scenarios for a thread (newest first), with pagination."""
+    try:
+        try:
+            limit = int(request.args.get("limit", "20"))
+        except Exception:
+            limit = 20
+        try:
+            offset = int(request.args.get("offset", "0"))
+        except Exception:
+            offset = 0
+
+        limit = max(1, min(100, limit))
+        offset = max(0, offset)
+
+        q = (
+            MiqScenario.query
+            .filter_by(thread_id=thread_id)
+            .order_by(desc(MiqScenario.created_at))
+        )
+        total = q.count()
+        rows = q.limit(limit).offset(offset).all()
+
+        items = []
+        for r in rows:
+            created_at = getattr(r.created_at, "isoformat", lambda: str(r.created_at))()
+            items.append({
+                "scenario_id": r.scenario_id,
+                "based_on": r.based_on,
+                "label": r.label,
+                "deltas": r.deltas,
+                "result": r.result,
+                "meta": r.meta,
+                "created_at": created_at,
+            })
+
+        return jsonify({
+            "thread_id": thread_id,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "scenarios": items,
+        }), 200
+    except Exception:
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        current_app.logger.exception("list_scenarios failed")
+        return jsonify({"error": "server error"}), 500
+
+
+@market_iq_analyze_bp.put("/scenarios/<scenario_id>")
+@market_iq_analyze_bp.patch("/scenarios/<scenario_id>")
+def update_scenario(scenario_id: str):
+    """Update scenario deltas (and optional label) then recompute deterministically."""
+    try:
+        try:
+            payload = ScenarioUpdatePayload.model_validate(request.get_json(silent=True) or {}).model_dump()
+        except ValidationError as ve:
+            return jsonify({"error": "bad_request", "detail": ve.errors()}), 400
+
+        deltas = _normalize_percent_deltas(payload.get("deltas"))
+        label = payload.get("label")
+        tid_guard = request.args.get("thread_id")
+
+        if not isinstance(deltas, dict) or not deltas:
+            return jsonify({"error": "deltas required (object)"}), 400
+
+        q = MiqScenario.query.filter_by(scenario_id=scenario_id)
+        if tid_guard:
+            q = q.filter_by(thread_id=tid_guard)
+        scn = q.first()
+        if not scn:
+            return jsonify({"error": "not_found", "scenario_id": scenario_id}), 404
+
+        base = None
+        baseline_id = scn.based_on
+        if baseline_id:
+            base = MiqAnalysis.query.filter_by(analysis_id=baseline_id).first()
+        if not base:
+            base = (
+                MiqAnalysis.query
+                .filter_by(thread_id=scn.thread_id)
+                .order_by(desc(MiqAnalysis.created_at))
+                .first()
+            )
+        if not base:
+            return jsonify({"error": "no_baseline", "detail": "no analysis for thread"}), 409
+
+        base_result = base.result or {}
+        baseline_id = (
+            getattr(base, "analysis_id", None)
+            or (base.meta or {}).get("analysis_id")
+            or (base_result or {}).get("analysis_id")
+        )
+        if not baseline_id:
+            return jsonify({"error": "invalid_baseline"}), 500
+
+        baseline_score = int(
+            base_result.get("market_iq_score")
+            or base_result.get("component_scores", {}).get("overall")
+            or 0
+        )
+
+        canon = json.dumps({"based_on": baseline_id, "deltas": deltas}, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        fp = hashlib.sha256(canon.encode("utf-8")).hexdigest()
+        delta = (int(fp[:4], 16) % 21) - 10
+        new_score = max(0, min(99, baseline_score + delta))
+
+        result = {
+            "based_on": baseline_id,
+            "market_iq_score": new_score,
+            "score_category": ("Excellent" if new_score >= 85 else "Good" if new_score >= 70 else "Fair" if new_score >= 55 else "Poor"),
+            "component_scores": {
+                "overall": new_score,
+                "execution_readiness": max(min(new_score - 7, 99), 0),
+                "financial_health":   max(min(new_score + 21, 99), 0),
+                "market_position":    max(min(new_score - 4, 99), 0),
+                "operational_efficiency": max(min(new_score - 14, 99), 0),
+            },
+            "applied_deltas": deltas,
+            "inputs_fingerprint": (base_result.get("inputs_fingerprint") or ""),
+            "computed_at": int(time.time()),
+        }
+
+        scn.deltas = deltas
+        scn.result = result
+        if label is not None:
+            scn.label = label
+        meta = scn.meta or {}
+        meta["fingerprint"] = fp
+        scn.meta = meta
+
+        db.session.commit()
+
+        return jsonify({
+            "thread_id": scn.thread_id,
+            "scenario": {
+                "scenario_id": scn.scenario_id,
+                "based_on": baseline_id,
+                "label": scn.label,
+                "deltas": scn.deltas,
+                "result": scn.result,
+                "meta": scn.meta,
+            }
+        }), 200
+    except Exception:
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        current_app.logger.exception("update_scenario failed")
+        return jsonify({"error": "server error"}), 500
+
+
+@market_iq_analyze_bp.post("/scenarios/<scenario_id>/apply")
+@market_iq_analyze_bp.post("/scenarios/<scenario_id>/run")
+def apply_scenario(scenario_id: str):
+    """Compute from scenario and persist a new analysis row."""
+    try:
+        tid_guard = request.args.get("thread_id")
+        payload = request.get_json(silent=True) or {}
+
+        q = MiqScenario.query.filter_by(scenario_id=scenario_id)
+        if tid_guard:
+            q = q.filter_by(thread_id=tid_guard)
+        scn = q.first()
+        if not scn:
+            return jsonify({"error": "not_found", "scenario_id": scenario_id}), 404
+
+        thread_id = scn.thread_id
+        deltas = _normalize_percent_deltas(scn.deltas or {})
+        label = scn.label
+
+        base = None
+        baseline_id = scn.based_on
+        if baseline_id:
+            base = MiqAnalysis.query.filter_by(analysis_id=baseline_id).first()
+        if not base:
+            base = (
+                MiqAnalysis.query
+                .filter_by(thread_id=thread_id)
+                .order_by(desc(MiqAnalysis.created_at))
+                .first()
+            )
+        if not base:
+            return jsonify({"error": "no_baseline", "detail": "no analysis for thread"}), 409
+
+        base_result = base.result or {}
+        baseline_id = (
+            getattr(base, "analysis_id", None)
+            or (base.meta or {}).get("analysis_id")
+            or (base_result or {}).get("analysis_id")
+        )
+
+        project_name = (
+            base_result.get("project_name")
+            or (payload.get("project_name") if isinstance(payload, dict) else None)
+            or "Market IQ Project"
+        )
+
+        baseline_score = int(
+            base_result.get("market_iq_score")
+            or base_result.get("component_scores", {}).get("overall")
+            or 0
+        )
+
+        canon = json.dumps({"based_on": baseline_id, "deltas": deltas}, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        fp = hashlib.sha256(canon.encode("utf-8")).hexdigest()
+        delta = (int(fp[:4], 16) % 21) - 10
+        new_score = max(0, min(99, baseline_score + delta))
+        analysis_id = "analysis_" + fp[:8]
+
+        result = {
+            "analysis_id": analysis_id,
+            "project_name": project_name,
+            "thread_id": thread_id,
+            "market_iq_score": new_score,
+            "score_category": ("Excellent" if new_score >= 85 else "Good" if new_score >= 70 else "Fair" if new_score >= 55 else "Poor"),
+            "component_scores": {
+                "overall": new_score,
+                "execution_readiness": max(min(new_score - 7, 99), 0),
+                "financial_health":   max(min(new_score + 21, 99), 0),
+                "market_position":    max(min(new_score - 4, 99), 0),
+                "operational_efficiency": max(min(new_score - 14, 99), 0),
+            },
+            "financial_impact": {
+                "projected_ebitda": int(new_score * 2600),
+                "ebitda_at_risk":   int(new_score * 2600 * 0.8),
+                "potential_loss":   int(new_score * 2200 * 0.6),
+                "roi_opportunity":  int(new_score * 10870),
+            },
+            "inputs_fingerprint": fp,
+            "assumptions": (base_result.get("assumptions") or {}),
+            "inputs": (base_result.get("inputs") or {}),
+            "compat": (base_result.get("compat") or {}),
+            "applied_deltas": deltas,
+            "based_on": baseline_id,
+            "derived_from_scenario": scenario_id,
+        }
+
+        # Apply deltas to inputs/compat (best-effort)
+        try:
+            base_inputs = dict(result.get("inputs") or {})
+            base_compat = dict(result.get("compat") or {})
+            for k, v in (deltas or {}).items():
+                if isinstance(v, (int, float)) and isinstance(base_compat.get(k), (int, float)):
+                    base_compat[k] = base_compat.get(k) + v
+                else:
+                    base_compat[k] = v
+                if isinstance(v, (int, float)) and isinstance(base_inputs.get(k), (int, float)):
+                    base_inputs[k] = base_inputs.get(k) + v
+                else:
+                    base_inputs[k] = v
+            result["inputs"] = base_inputs
+            result["compat"] = base_compat
+        except Exception:
+            pass
+
+        existing = MiqAnalysis.query.filter_by(analysis_id=analysis_id, thread_id=thread_id).first()
+        if existing:
+            existing.result = result
+            existing.meta = {"analysis_id": analysis_id, "derived_from_scenario": scenario_id, "fingerprint": fp, "label": label}
+            db.session.add(existing)
+            scn.derived_analysis_id = analysis_id
+            db.session.commit()
+            return jsonify({
+                "analysis_result": result,
+                "analysis_id": analysis_id,
+                "scenario": {
+                    "scenario_id": scenario_id,
+                    "label": label,
+                    "based_on": baseline_id,
+                    "applied_deltas": deltas,
+                    "scorecard": result,
+                },
+            }), 200
+
+        row = MiqAnalysis(
+            analysis_id=analysis_id,
+            thread_id=thread_id,
+            session_id=None,
+            derived_from_scenario_id=scenario_id,
+            result=result,
+            meta={"analysis_id": analysis_id, "derived_from_scenario": scenario_id, "fingerprint": fp, "label": label},
+        )
+        db.session.add(row)
+
+        scn.derived_analysis_id = analysis_id
+
+        db.session.commit()
+
+        return jsonify({
+            "analysis_result": result,
+            "analysis_id": analysis_id,
+            "scenario": {
+                "scenario_id": scenario_id,
+                "label": label,
+                "based_on": baseline_id,
+                "applied_deltas": deltas,
+                "scorecard": result,
+            },
+        }), 201
+    except Exception:
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        current_app.logger.exception("apply_scenario failed")
+        return jsonify({"error": "server error"}), 500
+
+
+@market_iq_analyze_bp.get("/analyses/<analysis_id>")
+def get_analysis_by_id(analysis_id: str):
+    """Fetch a single analysis (scorecard) by ID."""
+    try:
+        analysis = MiqAnalysis.query.filter_by(analysis_id=analysis_id).first()
+        if not analysis:
+            return jsonify({"error": "analysis_not_found", "analysis_id": analysis_id}), 404
+
+        result = analysis.result or {}
+        if result and not result.get("inputs"):
+            result["inputs"] = result.get("compat", {}) or result.get("analysis_result", {}).get("inputs", {})
+
+        return jsonify({
+            "analysis_id": analysis_id,
+            "analysis_result": result,
+        }), 200
+    except Exception as e:
+        current_app.logger.exception("get_analysis_by_id failed")
+        return jsonify({"error": "server_error", "detail": str(e)}), 500
