@@ -18,7 +18,7 @@ export default function CheckoutForm() {
     setErrorMsg('');
 
     // Create PaymentIntent on the server
-    const res = await fetch('/api/billing/create-payment-intent', {
+    const res = await fetch('https://api.sekki.io/api/billing/create-payment-intent', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ amount: 1000 })  // sample amount

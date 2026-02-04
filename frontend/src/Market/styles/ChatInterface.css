@@ -1,0 +1,351 @@
+/* ============================================================================
+   ChatInterface.css — SCOPED to .chat-interface
+   Target look: Market IQ landing (centered column, sheet + big pill input)
+   Adds: collapsible sidebar, persistent back button, right-aligned What's Next
+   ============================================================================ */
+
+/* ---- Tokens (scoped) ----------------------------------------------------- */
+.chat-interface {
+  --miq-navy: #161f3b;
+  --miq-magenta: #a0036c;
+  --miq-light-bg: #eff9fc;
+  --miq-white: #ffffff;
+
+  --g50: #f8fafc;
+  --g100: #f1f5f9;
+  --g200: #e2e8f0;
+  --g300: #cbd5e1;
+  --g400: #94a3b8;
+  --g500: #64748b;
+  --g600: #475569;
+  --g700: #334155;
+
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.06);
+  --shadow-md: 0 6px 14px rgba(0,0,0,.08);
+  --shadow-lg: 0 16px 32px rgba(0,0,0,.12);
+
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+}
+
+/* ---- Page layout --------------------------------------------------------- */
+.chat-interface {
+  display: flex;
+  min-height: 100vh;
+  background: var(--miq-light-bg);
+}
+
+/* Back button — keep visible above everything (raised higher) */
+.chat-interface .floating-back {
+  position: fixed;
+  left: 16px;
+  top: 64px;                 /* was 96px → sits higher now */
+  z-index: 1002;             /* above sidebar */
+}
+
+/* ---- Collapsible score sidebar (left) ----------------------------------- */
+.chat-interface .score-sidebar {
+  position: fixed;
+  left: 0; top: 0; bottom: 0;
+  width: 280px;
+  background: var(--miq-white);
+  border-right: 1px solid var(--g200);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  transform: translateX(-100%);        /* collapsed by default */
+  transition: transform .28s ease;
+  z-index: 1001;
+}
+.chat-interface .score-sidebar.open { transform: translateX(0); }
+
+.chat-interface .score-sidebar .sidebar-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px; border-bottom: 1px solid var(--g200);
+}
+.chat-interface .score-sidebar .sidebar-title {
+  font-size: 1.05rem; font-weight: 700; color: var(--miq-navy);
+}
+.chat-interface .score-sidebar .sidebar-close {
+  width: 34px; height: 34px; border-radius: 50%;
+  border: 1px solid var(--g300); background: var(--miq-white);
+  color: var(--g600); display: grid; place-items: center;
+  cursor: pointer; transition: .15s ease;
+}
+.chat-interface .score-sidebar .sidebar-close:hover {
+  background: var(--g100); border-color: var(--miq-magenta); color: var(--miq-magenta);
+}
+.chat-interface .score-sidebar .sidebar-content { padding: 16px; }
+
+.chat-interface .score-hero {
+  display: grid; gap: 4px; padding: 14px 12px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--g200); background: var(--g50);
+  margin-bottom: 12px; text-align: left;
+}
+.chat-interface .score-hero .score-number { font-size: 28px; font-weight: 800; color: var(--miq-navy); line-height: 1; }
+.chat-interface .score-hero .score-label { font-size: 11px; font-weight: 700; letter-spacing: .06em; color: var(--g500); text-transform: uppercase; }
+.chat-interface .score-hero .score-project { font-size: 12px; color: var(--g600); }
+
+.chat-interface .sidebar-metrics { display: grid; gap: 10px; margin-top: 10px; }
+.chat-interface .metric-row { display: flex; justify-content: space-between; font-size: 13px; }
+.chat-interface .metric-label { color: var(--g600); }
+.chat-interface .metric-value { font-weight: 700; color: var(--miq-navy); }
+
+/* Sidebar open → push main content over; closed → full width */
+.chat-interface .score-sidebar.open ~ .chat-main { margin-left: 280px; }
+
+/* Collapsed tab to reopen sidebar */
+.chat-interface .sidebar-tab {
+  position: fixed;
+  left: 0; top: 160px;
+  display: flex; align-items: center; gap: 6px;
+  padding: 10px 10px 10px 8px;
+  background: var(--miq-magenta); color: #fff;
+  border: none; border-radius: 0 12px 12px 0;
+  cursor: pointer; box-shadow: var(--shadow-md);
+  z-index: 1000;
+}
+.chat-interface .sidebar-tab .tab-text {
+  font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+}
+
+/* ---- Main column --------------------------------------------------------- */
+.chat-interface .chat-main {
+  flex: 1;
+  display: flex; flex-direction: column;
+  background: transparent;
+  padding: 0 24px 32px;
+}
+
+/* Constrain content like landing page */
+.chat-interface .like-main,
+.chat-interface .chat-topbar,
+.chat-interface .messages-scroll,
+.chat-interface .input-area,
+.chat-interface .suggestions-strip {
+  max-width: 1100px;
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Top bar: title left, What's Next pinned hard-right */
+.chat-interface .chat-topbar {
+  position: relative;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 28px 0 8px;
+}
+.chat-interface .chat-topbar .topbar-title {
+  margin: 0;
+  font-size: clamp(1.7rem, 2.3vw + 1rem, 2.4rem);
+  font-weight: 800; color: var(--miq-navy); letter-spacing: -0.01em;
+}
+/* Push the dropdown fully to the right edge of the container */
+.chat-interface .chat-topbar .miq-whats-next-dropdown {
+  margin-left: auto;
+  transform: translateX(12px);   /* nudge closer to the edge */
+}
+
+.chat-interface .miq-btn-whats-next {
+  display: inline-flex; align-items: center; gap: .5rem;
+  padding: .55rem .9rem; border-radius: 999px; border: none;
+  background: var(--miq-magenta); color: #fff; font-weight: 700;
+  box-shadow: var(--shadow-sm); cursor: pointer;
+  transition: transform .15s, box-shadow .2s, background .2s;
+}
+.chat-interface .miq-btn-whats-next:hover { background:#8a0257; transform: translateY(-1px); box-shadow: var(--shadow-md); }
+.chat-interface .miq-dropdown-menu {
+  position: absolute; top: calc(100% + .5rem); right: 0;
+  min-width: 220px; background: #fff; border: 1px solid var(--g200);
+  border-radius: 12px; box-shadow: var(--shadow-lg); padding: 6px; z-index: 20;
+}
+.chat-interface .miq-dropdown-item {
+  width: 100%; padding: .75rem .9rem; border-radius: 10px;
+  background: #fff; border: none; text-align: left; color: var(--miq-navy);
+  display: flex; gap: .6rem; cursor: pointer; transition: .15s;
+}
+.chat-interface .miq-dropdown-item:hover { background: var(--g50); color: var(--miq-magenta); }
+
+/* Message sheet — TALLER default height */
+.chat-interface .messages-scroll {
+  background: #fff;
+  border: 1px solid var(--g200);
+  border-radius: 18px;
+  box-shadow: var(--shadow-sm);
+  padding: 18px 18px 48px;
+  margin-top: 8px;
+  min-height: clamp(360px, 42vh, 520px);   /* << taller by default */
+  display: flex; flex-direction: column; gap: 12px;
+  overflow-y: auto;
+}
+
+/* Messages */
+.chat-interface .miq-msg { max-width: 800px; display: grid; gap: 6px; }
+.chat-interface .miq-msg.user { margin-left: auto; text-align: right; }
+.chat-interface .miq-bubble {
+  background: var(--g50); border: 1px solid var(--g200); color: var(--g700);
+  padding: 12px 14px; border-radius: 14px; line-height: 1.55; font-size: 15px;
+}
+.chat-interface .miq-msg.user .miq-bubble { background: var(--miq-magenta); border-color: var(--miq-magenta); color: #fff; }
+.chat-interface .miq-msg.err .miq-bubble { background:#fef2f2; border-color:#fecaca; color:#b91c1c; }
+.chat-interface .miq-time { font-size: 12px; color: var(--g400); }
+
+/* Typing indicator */
+.chat-interface .typing { display: inline-flex; gap: 6px; }
+.chat-interface .typing span { width: 6px; height: 6px; border-radius: 50%; background: var(--g400); animation: dot 1.2s infinite ease-in-out; }
+.chat-interface .typing span:nth-child(2){ animation-delay: .15s; }
+.chat-interface .typing span:nth-child(3){ animation-delay: .3s; }
+@keyframes dot { 0%,80%,100%{transform:scale(0);} 40%{transform:scale(1);} }
+
+/* Error banner */
+.chat-interface .chat-error {
+  max-width: 1100px; margin: 8px auto 0;
+  display: flex; justify-content: space-between; align-items: center;
+  background: #fff7ed; border: 1px solid #fed7aa; color: #a16207;
+  padding: 10px 12px; border-radius: 10px;
+}
+.chat-interface .chat-error button { background: transparent; border: none; color: inherit; cursor: pointer; }
+
+/* Large pill input */
+.chat-interface .input-area { padding: 0; background: transparent; border: none; margin-top: -34px; }
+.chat-interface .input-area .input-wrap {
+  position: relative; display: flex; align-items: center; gap: 10px;
+  max-width: 720px; margin: 0 auto; background: #fff;
+  border: 1px solid var(--g200); border-radius: 999px; padding: 10px 10px 10px 16px;
+  box-shadow: var(--shadow-md);
+}
+.chat-interface .input-area .input {
+  flex: 1; min-height: 56px; max-height: 160px; border: none; background: transparent;
+  outline: none; font-size: 16px; line-height: 1.5; color: var(--miq-navy); resize: none;
+}
+.chat-interface .input-area .input::placeholder { color: var(--g400); }
+.chat-interface .input-area .send-btn {
+  width: 46px; height: 46px; border-radius: 50%; border: none;
+  background: var(--miq-magenta); color: #fff; display: grid; place-items: center;
+  cursor: pointer; transition: transform .12s, background .15s;
+}
+.chat-interface .input-area .send-btn:hover:not(:disabled) { background:#8a0257; transform: translateY(-1px); }
+.chat-interface .input-area .send-btn:disabled { background: var(--g300); cursor: not-allowed; }
+
+/* Suggestions below input */
+.chat-interface .suggestions-strip { padding: 18px 0 8px; }
+.chat-interface .suggestions-strip .suggestions-title {
+  margin: 0 0 10px; font-size: 12px; font-weight: 800; letter-spacing: .06em;
+  color: var(--g600); text-transform: uppercase;
+}
+.chat-interface .suggestions-strip .suggestions-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px;
+}
+.chat-interface .suggestions-strip .suggestion-card {
+  padding: 12px 14px; background: #fff; border: 1px solid var(--g200);
+  border-radius: 12px; color: var(--miq-navy); text-align: left; font-size: 14px;
+  line-height: 1.45; cursor: pointer; box-shadow: var(--shadow-sm);
+  transition: transform .12s, box-shadow .2s, border-color .12s;
+}
+.chat-interface .suggestions-strip .suggestion-card:hover:not(:disabled) {
+  transform: translateY(-1px); border-color: var(--miq-magenta); box-shadow: var(--shadow-md);
+}
+.chat-interface .suggestions-strip .suggestion-card:disabled { opacity: .55; cursor: not-allowed; }
+
+/* ---- Responsive ---------------------------------------------------------- */
+@media (max-width: 1024px) {
+  .chat-interface .chat-main { padding: 0 16px 24px; }
+  .chat-interface .messages-scroll { padding: 14px 14px 44px; }
+}
+
+@media (max-width: 768px) {
+  /* Sidebar slides over content on mobile; don't push main over */
+  .chat-interface .score-sidebar.open ~ .chat-main { margin-left: 0; }
+
+  .chat-interface .floating-back { top: 56px; } /* keep it visible on smaller screens */
+
+  .chat-interface .chat-topbar { padding: 20px 0 6px; }
+  .chat-interface .messages-scroll { margin-top: 6px; min-height: clamp(300px, 44vh, 520px); }
+  .chat-interface .input-area { margin-top: -24px; }
+  .chat-interface .input-area .input-wrap { max-width: 100%; }
+}
+
+/* Back button positioning */
+.chat-interface .floating-back {
+  position: fixed;
+  left: 16px;
+  top: 72px;          /* position when sidebar is OPEN */
+  z-index: 1002;
+}
+
+/* When the sidebar is COLLAPSED, move Back higher */
+.chat-interface.sidebar-collapsed .floating-back {
+  top: 36px;          /* adjust to taste: 32–48px */
+}
+
+/* === Chat area tweaks (override) === */
+.chat-interface .messages-scroll {
+  /* much taller “sheet” */
+  min-height: 820px;                 /* bump this up if you want more */
+  height: clamp(520px, 58vh, 840px); /* grow nicely on big screens */
+
+  /* remove the thin outline */
+  border: none;                      /* hide border */
+  box-shadow: var(--shadow-md);      /* keep soft elevation */
+  padding: 18px 18px 48px;           /* bottom padding so input doesn’t crowd */
+}
+
+/* If the input pill still shows a hairline border, make it invisible until focus */
+.chat-interface .input-area .input-wrap {
+  border: 1px solid transparent;     /* hide by default */
+}
+.chat-interface .input-area .input-wrap:focus-within {
+  border-color: var(--miq-magenta);  /* show a nice focus state only while typing */
+}
+
+/* (Optional) if you want the *message bubbles* to have no border too: */
+.chat-interface .miq-bubble {
+  border: none;                       /* clean card feel */
+  background: var(--g50);
+}
+
+/* ===== Keep chat tall without sacrificing it to suggestions ===== */
+.chat-interface .chat-main {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;     /* full page column */
+}
+
+.chat-interface .messages-scroll {
+  flex: 1 1 auto;        /* takes the available space first */
+  min-height: 58vh;      /* tall by default; raise if you want */
+  height: auto;          /* no fixed height cap */
+  border: none;          /* remove the thin sheet border */
+  box-shadow: var(--shadow-md);  /* soft elevation only */
+  padding: 18px 18px 56px;       /* extra bottom so input doesn’t crowd */
+}
+
+.chat-interface .suggestions-strip {
+  flex: 0 0 auto;        /* never steals height from messages */
+  margin-top: 16px;
+}
+
+/* ===== Remove the text-input pill border (keep nice focus) ===== */
+.chat-interface .input-area .input-wrap {
+  border: none;                     /* remove outline entirely */
+  box-shadow: var(--shadow-md);     /* keep elevation */
+}
+
+.chat-interface .input-area .input-wrap:focus-within {
+  border: none;                     /* still none on focus */
+  box-shadow: 0 0 0 3px rgba(160, 3, 108, 0.12); /* subtle focus ring */
+}
+
+.chat-interface .input-area .input {
+  border: 0;
+  outline: 0;
+  background: transparent;
+}
+
+/* (Optional) bubbles with no borders for a cleaner feel */
+.chat-interface .miq-bubble {
+  border: none;
+  background: var(--g50);
+}

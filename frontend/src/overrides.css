@@ -1,0 +1,95 @@
+/* === Global mobile hero: force single column & kill right strip === */
+@media (max-width: 899.98px) {
+  /* collapse any 2-col hero grids no matter how they’re named */
+  .hero .container,
+  .hero-grid,
+  .hero-row,
+  .hero-inner,
+  .home-hero-grid,
+  .landing-hero,
+  .landing-grid {
+    display: block !important;
+    grid-template-columns: none !important;
+    grid-auto-flow: initial !important;
+    width: 100% !important;
+  }
+
+  /* center the content column */
+  .hero-left,
+  .hero-content,
+  .hero-main,
+  .hero-copy {
+    max-width: 680px !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    text-align: center !important;
+  }
+
+  /* hide ANY right-side piece or decorative panel (including pseudos) */
+  .hero-right,
+  .hero-illustration,
+  .hero-aside,
+  .hero-pane,
+  .hero-panel,
+  .right-pane,
+  .right-strip {
+    display: none !important;
+  }
+  .hero::before,
+  .hero::after,
+  .hero-wrap::before,
+  .hero-wrap::after,
+  .hero-bg {
+    display: none !important;
+    content: none !important;
+  }
+
+  /* keep CTAs tidy & centered */
+  .cta-row { justify-content: center !important; }
+  .cta-row .btn {
+    flex: 1 1 260px !important;
+    max-width: 420px !important;
+  }
+}
+
+/* guard against accidental horizontal overflow */
+html, body { width: 100%; overflow-x: hidden; }
+
+@media (max-width: 899.98px) {
+  .home-hero { display: block !important; }
+}
+
+/* ===== Hero “anti-override” mobile lock (keep this LAST in Hero.css) ===== */
+@media (max-width: 899.98px) {
+  /* kill any 2-col grid coming from global overrides */
+  body #root #hero[data-scope="hero"] .hero-content {
+    display: block !important;
+    max-width: 680px !important;
+    margin-inline: auto !important;
+    text-align: center !important;
+    padding-inline: 16px !important;
+    grid-template-columns: none !important;
+    grid-auto-flow: initial !important;
+  }
+
+  /* hide the right pane decisively */
+  body #root #hero[data-scope="hero"] .hero-visual {
+    display: none !important;
+  }
+
+  /* stack stats & keep CTAs tidy */
+  body #root #hero[data-scope="hero"] .hero-stats {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 16px !important;
+  }
+
+  body #root #hero[data-scope="hero"] .hero-cta {
+    flex-direction: column !important;
+    align-items: stretch !important;
+  }
+
+  body #root #hero[data-scope="hero"] .hero-cta .btn {
+    width: 100% !important;
+  }
+}

@@ -6,25 +6,19 @@
 }
 
 /* Reset & base */
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-  font-family: 'Poppins', sans-serif;
-}
-body {
-  background: var(--light-bg);
-}
+* { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Poppins', sans-serif; }
+body { background: var(--light-bg); }
 
 /* Layout */
 .signup-layout {
-  position: relative;        /* for absolute butterfly */
+  position: relative;
   display: flex;
   justify-content: center;
   align-items: flex-start;
   gap: 30px;
   max-width: 1200px;
   margin: 30px auto;
+  padding: 0 16px;
 }
 
 /* Form card */
@@ -34,147 +28,222 @@ body {
   background: #fff;
   padding: 25px 30px;
   border-radius: 8px;
-  box-shadow: 0 5px 20px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 5px 20px rgba(0,0,0,0.1);
   border-top: 8px solid var(--accent-color);
-  animation: fadeIn 0.5s ease;
+  animation: fadeIn .5s ease;
 }
 
-/* Fade-in */
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
+@keyframes fadeIn { from {opacity:0; transform: translateY(10px);} to {opacity:1; transform:none;} }
 
 /* Heading */
-.heading {
-  text-align: center;
-  margin-bottom: 20px;
-}
-.heading h2 {
+.form-container h2 {
   font-size: 1.8rem;
-  color: var(--accent-color);
-}
-.heading p {
-  color: var(--text-color);
-  font-size: 0.95rem;
+  color: #161f3b;
+  margin-bottom: 1rem;
 }
 
 /* Fields */
-.form-group {
-  margin-bottom: 15px;
-}
-label {
-  display: block;
-  margin-bottom: 5px;
-  color: var(--text-color);
-  font-weight: 500;
-}
+label { display: block; margin-bottom: 10px; color: var(--text-color); font-weight: 500; }
 input, select {
   width: 100%;
   padding: 12px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
   font-size: 14px;
   outline: none;
-  transition: border-color 0.2s;
+  transition: border-color .2s;
+  margin-top: 6px;
 }
-input:focus, select:focus {
-  border-color: var(--primary-color);
-}
+input:focus, select:focus { border-color: var(--primary-color); }
 
-/* Subscription label override */
-.subscription-label {
-  font-weight: 600;
-}
+small { display: block; margin-top: 6px; color: #555; }
 
-/* Seat picker note */
-.seat-picker small {
-  display: block;
-  font-size: 12px;
-  color: #555;
-}
+/* Error */
+.error { color: #dc3545; margin-bottom: 10px; }
 
-/* Payment placeholder */
-#paymentDetails {
-  margin-top: 20px;
-  background: #eff9fc;
-  padding: 20px;
-  border-radius: 8px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
-}
-#paymentDetails h3 {
-  color: var(--accent-color);
-  text-align: center;
-  margin-bottom: 15px;
-}
-
-/* Terms & Conditions */
-.form-container .terms {
+/* --- Terms & Conditions (fixed) --- */
+.terms {
   display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 0.5rem;
-  width: 100%;
-  margin-top: 1rem;
-  font-size: 0.9rem;
+  align-items: flex-start;
+  gap: .6rem;
+  margin-top: 14px;
+  margin-bottom: 6px;
+  line-height: 1.5;
+}
+.terms input {
+  margin-top: 3px;          /* vertically align checkbox with first line */
+  flex: 0 0 auto;
+}
+.terms label {
+  margin: 0;
+  font-weight: 400;
   color: var(--text-color);
+  display: inline;          /* keep on same flow line as possible */
 }
-.form-container .terms input {
-  margin: 0;
-}
-.form-container .terms label {
-  margin: 0;
-  white-space: nowrap;
-}
-.form-container .terms a {
+.terms a {
   color: var(--accent-color);
   text-decoration: none;
 }
-.form-container .terms a:hover {
-  text-decoration: underline;
-}
+.terms a:hover { text-decoration: underline; }
 
-/* Submit button */
+/* Submit */
 .submit-btn {
   width: 100%;
   background: var(--accent-color);
   color: #fff;
   border: none;
-  border-radius: 4px;
+  border-radius: 6px;
   padding: 12px;
-  font-size: 20px;
+  font-size: 18px;
   cursor: pointer;
-  transition: background 0.3s;
-  margin-top: 10px;
+  transition: background .25s;
+  margin-top: 12px;
 }
-.submit-btn:hover {
-  background: #8A0059;
-}
+.submit-btn:hover { background: #8A0059; }
 
-/* Butterfly */
-.butterfly-container {
+/* Login link */
+.login-link { margin-top: 12px; text-align: center; color: #6C757D; }
+.login-link a { color: var(--accent-color); text-decoration: none; }
+.login-link a:hover { text-decoration: underline; }
+
+/* Decorative icon (replaces butterfly) */
+.signup-illustration {
   position: absolute;
   top: 2rem;
   right: 2rem;
+  opacity: .15;
   pointer-events: none;
 }
-.butterfly-container img {
-  opacity: 0.2;
-  max-width: 200px;
-  display: block;
-  margin: 0;
+.signup-illustration i {
+  font-size: 160px;     /* adjust as desired */
+  color: #161f3b;
+  line-height: 1;
 }
 
-/* Package info */
-#packageText {
-  margin-top: 10px;
-  background: #fff;
-  border: 1px solid #ccc;
-  border-radius: 8px;
-  padding: 10px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+/* Responsive */
+@media (max-width: 640px) {
+  .signup-illustration { display: none; }
+}
+
+/* ---- Fix Terms row overflow/wrapping (OVERRIDES) ---- */
+.form-container .terms {
+  display: flex !important;
+  align-items: flex-start !important;
+  flex-wrap: wrap !important;   /* allow wrapping within the card */
+  gap: .6rem !important;
+  max-width: 100% !important;
+  margin-top: 14px !important;
+  line-height: 1.5 !important;
+}
+
+.form-container .terms input {
+  margin-top: 3px !important;   /* align checkbox with first text line */
+  flex: 0 0 auto !important;
+}
+
+.form-container .terms label {
+  margin: 0 !important;
+  padding: 0 !important;
+  display: inline !important;
+  white-space: normal !important;     /* <-- kill the nowrap */
+  overflow-wrap: anywhere !important; /* wrap long words if needed */
+  word-break: break-word !important;
+  color: var(--text-color) !important;
+}
+
+.form-container .terms a {
+  color: var(--accent-color) !important;
+  text-decoration: none !important;
+}
+.form-container .terms a:hover {
+  text-decoration: underline !important;
+}
+
+/* Remove/deprecate any decorative sign-up illustration entirely */
+.signup-illustration { display: none !important; }
+
+/* === Terms row: inline next to checkbox, wraps nicely on small screens === */
+.form-container .terms {
+  display: inline-flex !important;     /* sit on one line when there's room */
+  align-items: center !important;
+  gap: .5rem !important;               /* space between checkbox and text */
+  flex-wrap: wrap !important;          /* allow graceful wrap on narrow widths */
+  max-width: 100% !important;
+  margin-top: 14px !important;
+  line-height: 1.5 !important;
+}
+
+.form-container .terms input {
+  flex: 0 0 auto !important;
+  margin: 0 !important;
+  transform: translateY(1px);          /* optical alignment with first text line */
+}
+
+.form-container .terms label {         /* in case any nested label sneaks in */
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.form-container .terms a {
+  color: var(--accent-color) !important;
+  text-decoration: none !important;
+}
+.form-container .terms a:hover {
+  text-decoration: underline !important;
+}
+
+/* Terms next to checkbox */
+.form-container .terms,
+label.terms {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: .5rem !important;
+  flex-wrap: wrap !important;
+  margin-top: 14px !important;
+  line-height: 1.5 !important;
+}
+.form-container .terms input { margin: 0 !important; transform: translateY(1px); }
+
+/* === FIX: don't style checkboxes like text fields === */
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="number"],
+select {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
   font-size: 14px;
-  color: var(--text-color);
-  white-space: pre-wrap;
+  outline: none;
+  transition: border-color .2s;
+  margin-top: 6px;
 }
 
+/* Reset/clean checkbox */
+input[type="checkbox"] {
+  width: auto !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: 0 !important;
+  transform: translateY(1px);           /* optical align with first text line */
+  accent-color: var(--accent-color);    /* nice brand color checkmark */
+}
+
+/* Terms row inline, with nice wrapping */
+.form-container .terms {
+  display: inline-flex !important;      /* same line when there's room */
+  align-items: center !important;
+  gap: .5rem !important;
+  flex-wrap: wrap !important;           /* wrap gracefully on narrow screens */
+  margin-top: 14px !important;
+  line-height: 1.5 !important;
+}
+
+.form-container .terms a {
+  color: var(--accent-color) !important;
+  text-decoration: none !important;
+}
+.form-container .terms a:hover {
+  text-decoration: underline !important;
+}

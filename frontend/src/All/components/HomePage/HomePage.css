@@ -1,39 +1,340 @@
-/* Reset & base */
-* { margin:0; padding:0; box-sizing:border-box; }
-body { font-family: 'Inter', sans-serif; line-height:1.6; color:#161f3b; background:#fff; }
+/* =========================
+   Reset & Base
+   ========================= */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  line-height: 1.6;
+  color: #161f3b;
+  background: #fff;
+  overflow-x: hidden; /* prevent side-scroll on small phones */
+}
 
-/* Header */
+/* =========================
+   Vars & Global Containers
+   ========================= */
+:root {
+  --brand: #A0006D;
+  --brand-dk: #8A0059;
+  --ink: #161f3b;
+  --muted: #4b5563;
+  --border: rgba(22,31,59,0.1);
+  --container-max: 1120px;
+}
+
+.container {
+  width: min(var(--container-max), 92vw);
+  margin-inline: auto;
+}
+
+.section { padding-block: clamp(32px, 6vw, 72px); }
+.hero    { padding-block: clamp(48px, 10vw, 120px); }
+
+/* =========================
+   Header
+   ========================= */
 .header {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 1000;
   background: rgba(255,255,255,0.95);
   backdrop-filter: blur(10px);
-  border-bottom:1px solid rgba(22,31,59,0.1);
-  position:fixed; top:0; width:100%; z-index:1000;
+  border-bottom: 1px solid var(--border);
 }
-.header-content {
-  display:flex; align-items:center; justify-content:space-between;
-  max-width:1200px; margin:0 auto; padding:1rem 20px;
-}
-.logo-text { font-size:1.5rem; font-weight:700; color:#A0006D; text-decoration:none; }
-.nav-list { display:flex; list-style:none; gap:2rem; }
-.nav-link { color:#161f3b; text-decoration:none; font-weight:500; }
-.nav-link:hover { color:#A0006D; }
-.header-actions { display:flex; gap:1rem; }
 
-/* Buttons */
+.header-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  max-width: var(--container-max);
+  margin: 0 auto;
+  padding: 12px 20px;
+}
+
+.logo-text {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--brand);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+/* ---- Nav list: remove bullets/dots completely ---- */
+.nav-list {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  list-style: none !important;
+  margin: 0;
+  padding: 0;
+}
+.nav-list li { list-style: none; }
+.nav-list li::marker { content: ""; }              /* Safari/iOS */
+.nav-list li::before { content: none !important; } /* if separators were injected */
+
+.nav-link {
+  color: var(--ink);
+  text-decoration: none;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.nav-link:hover { color: var(--brand); }
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 0 0 auto;
+}
+
+/* =========================
+   Buttons
+   ========================= */
 .btn {
-  display:inline-block; padding:12px 24px; border-radius:8px;
-  text-decoration:none; font-weight:500; text-align:center;
-  transition:all .3s; border:none; cursor:pointer; font-size:1rem;
+  display: inline-block;
+  padding: 12px 24px;
+  border-radius: 8px;
+  text-decoration: none;
+  font-weight: 500;
+  text-align: center;
+  transition: all .25s ease;
+  border: none;
+  cursor: pointer;
+  font-size: 1rem;
 }
-.btn-primary { background:#A0006D; color:#fff; }
+
+.btn-primary {
+  background: var(--brand);
+  color: #fff;
+  font-weight: 700;
+}
 .btn-primary:hover {
-  background:#8A0059; transform:translateY(-2px);
-  box-shadow:0 4px 12px rgba(160,0,109,0.3);
+  background: var(--brand-dk);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(160,0,109,0.3);
 }
+
 .btn-secondary {
-  background:transparent; color:#161f3b; border:2px solid #161f3b;
+  background: transparent;
+  color: var(--ink);
+  border: 2px solid var(--ink);
 }
 .btn-secondary:hover {
-  background:#161f3b; color:#fff; transform:translateY(-2px);
+  background: var(--ink);
+  color: #fff;
+  transform: translateY(-2px);
+}
+
+/* =========================
+   Hero Typography
+   ========================= */
+.hero-title {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  margin: 0 0 12px;
+  font-size: clamp(28px, 5.2vw, 56px);
+  text-wrap: balance;
+}
+.hero-sub {
+  color: var(--muted);
+  max-width: 65ch;
+  margin: 0 auto 20px;
+  font-size: clamp(16px, 2.6vw, 20px);
+  line-height: 1.6;
+}
+
+/* =========================
+   CTA Row
+   ========================= */
+.cta-row {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.cta-row .btn {
+  padding: 12px 20px;
+  font-size: clamp(14px, 2.8vw, 18px);
+  border-radius: 10px;
+  flex: 1 1 260px;
+  max-width: 420px;
+}
+
+/* =========================
+   Metrics Grid
+   ========================= */
+.metrics {
+  display: grid;
+  gap: 16px;
+  margin-top: 24px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.metric {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 16px;
+  text-align: center;
+}
+
+/* =========================
+   Recent Analysis Cards
+   ========================= */
+.analysis-list {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+@media (max-width: 900px) {
+  .analysis-list {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 80%;
+    overflow-x: auto;
+    padding-bottom: 8px;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: thin;
+  }
+  .analysis-card { scroll-snap-align: start; }
+}
+@media (max-width: 520px) {
+  .analysis-list { grid-auto-columns: 90%; }
+}
+
+/* =========================
+   Optional Hero Background
+   ========================= */
+.hero-wrap {
+  background: linear-gradient(180deg, #eef7fb 0%, #f6fbff 100%);
+}
+
+/* =========================
+   Responsive Header Tweaks
+   ========================= */
+@media (max-width: 1024px) {
+  .header-content { gap: 12px; padding: 10px 16px; }
+  .nav-list { gap: 1.25rem; }
+}
+@media (max-width: 820px) {
+  .header-content { flex-wrap: wrap; row-gap: 10px; }
+  .nav-list { flex-wrap: wrap; row-gap: 6px; column-gap: 16px; }
+  .btn { padding: 10px 18px; font-size: 0.95rem; }
+}
+@media (max-width: 640px) {
+  .header-content { align-items: flex-start; }
+  .logo-text { font-size: 1.35rem; }
+  .nav-list { width: 100%; order: 2; gap: 12px; }
+  .header-actions { width: 100%; order: 3; justify-content: flex-start; gap: 10px; flex-wrap: wrap; }
+  .btn { padding: 10px 16px; font-size: 0.92rem; }
+}
+
+/* ========= HERO: mobile-first single column (PREVENT SNAP-BACK) ========= */
+
+/* Default = phones/small tablets: one column, centered, hide right pane */
+.hero .container {
+  display: block;                      /* keep simple on mobile */
+  text-align: center;
+}
+.hero-grid,
+.hero-row {                            /* kill 2-col grid by default */
+  display: block !important;
+}
+.hero-left,
+.hero-content {
+  max-width: 640px;
+  margin-inline: auto;
+}
+.hero-right,
+.hero-illustration,
+.hero-aside {
+  display: none !important;            /* no right panel on mobile */
+}
+/* remove any decorative right-side strip/panel */
+.hero::after,
+.hero-wrap::after,
+.hero-bg,
+.hero-pane,
+.hero-panel {
+  display: none !important;
+}
+
+/* Keep CTAs tidy & centered on mobile */
+.cta-row { justify-content: center; }
+.cta-row .btn { flex: 1 1 260px; max-width: 420px; }
+
+/* Tighten on very small phones */
+@media (max-width: 520px) {
+  .container { width: min(680px, 94vw); }
+  .metrics { margin-left: auto; margin-right: auto; }
+}
+
+/* Desktop / large tablets: explicitly enable two columns */
+@media (min-width: 900px) {
+  .hero-grid,
+  .hero-row {
+    display: grid !important;
+    grid-template-columns: 1.1fr 0.9fr;
+    align-items: center;
+    gap: 28px;
+  }
+  .hero-right,
+  .hero-illustration,
+  .hero-aside {
+    display: block !important;
+  }
+  .hero .container { text-align: left; }
+}
+
+/* =========================
+   MOBILE SINGLE-COLUMN HARD OVERRIDES
+   (place this block at the VERY END of the CSS file)
+   ========================= */
+@media (max-width: 899.98px) {
+
+  /* Kill any grids/rows that create the 2-col layout */
+  .hero .container,
+  .hero-grid,
+  .hero-row,
+  .hero-inner,
+  .home-hero-grid {
+    display: block !important;
+    grid-template-columns: none !important;
+    grid-auto-flow: initial !important;
+  }
+
+  /* Center the left/content column */
+  .hero-left,
+  .hero-content,
+  .hero-main,
+  .hero-copy {
+    max-width: 680px;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    text-align: center !important;
+  }
+
+  /* Hide any right-side visual/pane/illustration */
+  .hero-right,
+  .hero-illustration,
+  .hero-aside,
+  .hero-pane,
+  .hero-panel,
+  .right-pane,
+  .right-strip,
+  .hero-bg,
+  .hero-wrap::after {
+    display: none !important;
+  }
+
+  /* Keep CTAs tidy & centered */
+  .cta-row { justify-content: center !important; }
+  .cta-row .btn {
+    flex: 1 1 260px !important;
+    max-width: 420px !important;
+  }
 }
 

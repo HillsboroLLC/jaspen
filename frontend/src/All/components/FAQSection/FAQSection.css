@@ -52,30 +52,48 @@
 .faq-question.active .faq-icon {
   transform: rotate(180deg);
 }
+/* Hide everything by default — no peeking */
 .faq-answer {
-  padding: 0 2rem;
-  max-height: 0;
-  overflow: hidden;
-  transition: all 0.3s ease;
-  background: #FFFFFF;
+  display: grid;                    /* enables 0fr trick */
+  grid-template-rows: 0fr;          /* fully collapsed */
+  padding: 0 2rem;                  /* no vertical padding while closed */
+  overflow: hidden;                 /* ensure nothing spills */
+  opacity: 0;                       /* invisible when closed */
+  transition:
+    grid-template-rows 0.3s ease,
+    padding 0.3s ease,
+    opacity 0.2s ease;
 }
+
+/* Inner wrapper actually holds the content */
+.faq-answer-inner {
+  overflow: hidden;                 /* clamp content during animation */
+  min-height: 0;                    /* required for 0fr grid children */
+}
+
+/* Open state */
 .faq-answer.active {
-  padding: 0 2rem 1.5rem;
-  max-height: 1000px; /* large enough to show full content */
+  grid-template-rows: 1fr;          /* fully expanded */
+  padding: 0 2rem 1.5rem;           /* add bottom padding only when open */
+  opacity: 1;
 }
-.faq-answer p {
+
+/* Tidy up text spacing and prevent first-line “peek” from margins */
+.faq-answer-inner > *:first-child { margin-top: 0; }
+.faq-answer-inner p {
   color: #6C757D !important;
   line-height: 1.6;
   margin-bottom: 1rem;
 }
-.faq-answer ul {
+.faq-answer-inner ul {
   color: #6C757D !important;
   margin-left: 1.5rem;
   margin-bottom: 1rem;
 }
-.faq-answer li {
-  margin-bottom: 0.5rem;
-}
+.faq-answer-inner li { margin-bottom: 0.5rem; }
+
+/* Keep your existing question/chevron styles */
+.faq-question.active .faq-icon { transform: rotate(180deg); }
 .faq-highlight {
   color: #A0006D !important;
   font-weight: 600;

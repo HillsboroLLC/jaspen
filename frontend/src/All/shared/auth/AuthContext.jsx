@@ -1,4 +1,4 @@
-// Enhanced AuthContext that preserves existing functionality - FIXED VERSION
+// Enhanced AuthContext with cookie-friendly auth + server logout
 import React, { createContext, useContext, useState, useEffect } from 'react';
 
 // User roles for LSS system
@@ -15,13 +15,13 @@ export const PERMISSIONS = {
   CONFIGURE_SYSTEM: 'configure_system',
   VIEW_ALL_PROJECTS: 'view_all_projects',
   MANAGE_TOLLGATES: 'manage_tollgates',
-  
+
   // Project Lead permissions
   CREATE_PROJECTS: 'create_projects',
   MANAGE_OWN_PROJECTS: 'manage_own_projects',
   ACCESS_KANBAN: 'access_kanban',
   ASSIGN_TEAM_MEMBERS: 'assign_team_members',
-  
+
   // Team Member permissions
   VIEW_ASSIGNED_PROJECTS: 'view_assigned_projects',
   EDIT_ARTIFACTS: 'edit_artifacts',
@@ -41,7 +41,6 @@ const ROLE_PERMISSIONS = {
     PERMISSIONS.VIEW_ASSIGNED_PROJECTS,
     PERMISSIONS.EDIT_ARTIFACTS,
     PERMISSIONS.SUBMIT_WORK
-    // Note: Admins don't get ACCESS_KANBAN - that's Project Lead only
   ],
   [USER_ROLES.PROJECT_LEAD]: [
     PERMISSIONS.CREATE_PROJECTS,
@@ -61,24 +60,54 @@ const ROLE_PERMISSIONS = {
 
 const AuthContext = createContext();
 
-// Backend URL configuration (preserved from original)
-const API_BASE_URL = process.env.NODE_ENV === 'production' 
-  ? '' // In production, use same domain
-  : 'http://localhost:8000'; // In development, point to Flask backend
+// Backend URL configuration
+const API_BASE_URL =
+  (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_BASE) ||
+  (typeof process !== 'undefined' && process.env && process.env.REACT_APP_API_BASE) ||
+  'https://api.sekki.io';
+
+// Small helper to always send cookies + attach Bearer token if present
+async function authFetch(path, options = {}) {
+  const url = path.startsWith('http') ? path : `${API_BASE_URL}${path}`;
+
+  const token =
+    localStorage.getItem('access_token') || localStorage.getItem('token');
+
+  // Merge headers safely
+  const headers = { ...(options.headers || {}) };
+
+  // Only add Authorization if caller didn't already set it
+  if (token && !headers.Authorization && !headers.authorization) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  return fetch(url, {
+    ...options,
+    credentials: 'include',
+    headers
+  });
+}
 
 export function AuthProvider({ children }) {
   // Original state
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  
+
   // Enhanced LSS state
   const [lssUsers, setLssUsers] = useState([]);
   const [currentUserRole, setCurrentUserRole] = useState(null);
   const [permissions, setPermissions] = useState([]);
+  const clearAuthTokens = () => {
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('token');
+    localStorage.removeItem('refresh_token');
+    document.cookie = 'sekki_sid=; Max-Age=0; Path=/; Secure; SameSite=None';
+  };
 
-  // Check if user is authenticated on app load (preserved from original)
+  // Check if user is authenticated on app load (cookie OR token)
   useEffect(() => {
     checkAuthStatus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Load LSS users and set role when user changes
@@ -101,35 +130,32 @@ export function AuthProvider({ children }) {
     }
   }, [currentUserRole]);
 
-  // Original auth functions (preserved exactly)
+  // ===== Auth functions =====
+
+  // IMPORTANT: do NOT require localStorage token just to check session.
+  // If the cookie is present, /api/auth/me will return 200 and user info.
   const checkAuthStatus = async () => {
+    setLoading(true);
     try {
-      const token = localStorage.getItem('token');
-      if (!token) {
-        setLoading(false);
-        return;
-      }
+const token = localStorage.getItem('access_token') || localStorage.getItem('token'); // backward-compat
+const res = await authFetch('/api/auth/me', {
+  method: 'GET',
+  headers: {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  },
+});
 
-      // Verify token with backend
-      const response = await fetch(`${API_BASE_URL}/api/auth/me`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (response.ok) {
-        const userData = await response.json();
+      if (res.ok) {
+        const userData = await res.json();
         setUser(userData);
       } else {
-        // Token is invalid, remove it
-        localStorage.removeItem('token');
+        // Clear any stale token if server says no
+        clearAuthTokens();
         setUser(null);
       }
     } catch (error) {
       console.error('Auth check failed:', error);
-      localStorage.removeItem('token');
+      clearAuthTokens();
       setUser(null);
     } finally {
       setLoading(false);
@@ -139,22 +165,23 @@ export function AuthProvider({ children }) {
   const login = async (email, password) => {
     try {
       setLoading(true);
-      const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+      const res = await authFetch('/api/auth/login', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email, password }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
       });
 
-      const data = await response.json();
-
-      if (response.ok) {
-        localStorage.setItem('token', data.token);
-        setUser(data.user);
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        // Keep the token for now (optional), but cookie is the source of truth
+if (data?.token) {
+  localStorage.setItem('token', data.token);          // backward-compat
+  localStorage.setItem('access_token', data.token);   // preferred key
+}
+        setUser(data?.user || { email });
         return { success: true };
       } else {
-        return { success: false, error: data.message || 'Login failed' };
+        return { success: false, error: data?.message || 'Login failed' };
       }
     } catch (error) {
       console.error('Login error:', error);
@@ -164,34 +191,50 @@ export function AuthProvider({ children }) {
     }
   };
 
-  const logout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('lss_user_roles'); // Clear LSS roles on logout
+  // Call server to clear the cookie; then clear local state.
+  const logout = async () => {
+    try {
+      await authFetch('/api/auth/logout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+    } catch (e) {
+      // non-blocking
+      console.debug('Logout request failed silently:', e);
+    }
+
+    // Clear client state regardless
+      clearAuthTokens();
+    localStorage.removeItem('lss_user_roles');
+
     setUser(null);
-    // Clear LSS data on logout
     setCurrentUserRole(null);
     setPermissions([]);
+    setLssUsers([]);
+
+    // Redirect
+    window.location.href = '/login';
   };
 
   const signup = async (email, password, name) => {
     try {
       setLoading(true);
-      const response = await fetch(`${API_BASE_URL}/api/auth/signup`, {
+      const res = await authFetch('/api/auth/signup', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email, password, name }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, name })
       });
 
-      const data = await response.json();
-
-      if (response.ok) {
-        localStorage.setItem('token', data.token);
-        setUser(data.user);
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+if (data?.token) {
+  localStorage.setItem('token', data.token);          // backward-compat
+  localStorage.setItem('access_token', data.token);   // preferred key
+}
+        setUser(data?.user || { email, name });
         return { success: true };
       } else {
-        return { success: false, error: data.message || 'Signup failed' };
+        return { success: false, error: data?.message || 'Signup failed' };
       }
     } catch (error) {
       console.error('Signup error:', error);
@@ -201,7 +244,8 @@ export function AuthProvider({ children }) {
     }
   };
 
-  // New LSS functions
+  // ===== LSS helpers =====
+
   const loadLSSUsers = () => {
     try {
       const savedUsers = localStorage.getItem('lss_users');
@@ -214,8 +258,7 @@ export function AuthProvider({ children }) {
 
   const setUserLSSRole = () => {
     if (!user) return;
-    
-    // Check if user has LSS role stored
+
     const lssUserData = localStorage.getItem('lss_user_roles');
     if (lssUserData) {
       try {
@@ -230,13 +273,12 @@ export function AuthProvider({ children }) {
         console.error('Failed to parse LSS roles:', error);
       }
     }
-    
+
     // Default role assignment logic
     console.log('Setting default role for user:', user.email);
     if (user.email && user.email.toLowerCase().includes('admin')) {
       setCurrentUserRole(USER_ROLES.ADMIN);
     } else {
-      // For now, make all users Project Leads so you can test functionality
       setCurrentUserRole(USER_ROLES.PROJECT_LEAD);
     }
   };
@@ -244,32 +286,28 @@ export function AuthProvider({ children }) {
   const setUserRole = (userId, role) => {
     try {
       console.log('Setting role:', role, 'for user:', userId);
-      
-      // Validate role
+
       if (!Object.values(USER_ROLES).includes(role)) {
         console.error('Invalid role:', role);
         return false;
       }
-      
-      // Save role to localStorage
+
       const lssUserData = localStorage.getItem('lss_user_roles');
       const roles = lssUserData ? JSON.parse(lssUserData) : {};
-      
-      // Use both user ID and email as keys for flexibility
+
       roles[userId] = role;
       if (user && user.email) {
         roles[user.email] = role;
       }
-      
+
       localStorage.setItem('lss_user_roles', JSON.stringify(roles));
       console.log('Saved roles to localStorage:', roles);
-      
-      // If updating current user's role
+
       if (userId === user?.id || userId === user?.email) {
         console.log('Updating current user role to:', role);
         setCurrentUserRole(role);
       }
-      
+
       return true;
     } catch (error) {
       console.error('Failed to set user role:', error);
@@ -290,17 +328,9 @@ export function AuthProvider({ children }) {
     return hasIt;
   };
 
-  const isAdmin = () => {
-    return hasRole(USER_ROLES.ADMIN);
-  };
-
-  const isProjectLead = () => {
-    return hasRole(USER_ROLES.PROJECT_LEAD);
-  };
-
-  const isTeamMember = () => {
-    return hasRole(USER_ROLES.TEAM_MEMBER);
-  };
+  const isAdmin = () => hasRole(USER_ROLES.ADMIN);
+  const isProjectLead = () => hasRole(USER_ROLES.PROJECT_LEAD);
+  const isTeamMember = () => hasRole(USER_ROLES.TEAM_MEMBER);
 
   // Project access checking
   const canAccessProject = (project) => {
@@ -316,18 +346,14 @@ export function AuthProvider({ children }) {
     return false;
   };
 
-  const canAccessKanban = (project) => {
-    // Only project leads can access Kanban (and only for their own projects)
-    return isProjectLead() && project && project.leadId === user?.id;
-  };
+  const canAccessKanban = (project) => isProjectLead() && project && project.leadId === user?.id;
+  const canAccessKanbanGeneral = () => isProjectLead();
 
-  // For backward compatibility, also provide canAccessKanban without project parameter
-  const canAccessKanbanGeneral = () => {
-    return isProjectLead();
-  };
+  // Helper function to check if user is authenticated
+  const isAuthenticated = () => !!user; // cookie session populates user
 
   const value = {
-    // Original functionality (preserved exactly)
+    // Original functionality (preserved)
     user,
     loading,
     login,
@@ -335,36 +361,36 @@ export function AuthProvider({ children }) {
     signup,
     setUser,
     checkAuthStatus,
-    
-    // Enhanced LSS functionality
+    isAuthenticated,
+
+    // LSS functionality
     lssUsers,
     currentUserRole,
     permissions,
     setUserRole,
-    
+
     // Permission checking
     hasPermission,
     hasRole,
     isAdmin,
     isProjectLead,
     isTeamMember,
-    
+
     // Project access
     canAccessProject,
     canEditProject,
     canAccessKanban,
     canAccessKanbanGeneral,
-    
+
     // Constants
     USER_ROLES,
-    PERMISSIONS
+    PERMISSIONS,
+
+    // helper for API calls elsewhere
+    authFetch
   };
 
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 // Preserve original useAuth hook
@@ -375,4 +401,3 @@ export function useAuth() {
   }
   return context;
 }
-

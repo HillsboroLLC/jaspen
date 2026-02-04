@@ -1,253 +1,772 @@
-.statsPage {
-  padding: 0 0 24px 0;
+/* File: frontend/src/Statistics/Statistics.module.css */
 
-  /* Light theme */
-  --bg: #f7f9fc;
+/* Main Container */
+.statsContainer {
+  display: flex;
+  height: 100vh;
+  width: 100%;
+  position: relative;
+
+  --bg: #f0f4f8;
   --panel: #ffffff;
   --panel-2: #f3f6fb;
   --line: #e5e9f2;
   --line-strong: #d7ddea;
-
-  --text: #1f2937;   /* slate-800 */
-  --muted: #6b7280;  /* gray-600 */
+  --text: #1f2937;
+  --muted: #6b7280;
   --muted-2: #7a8599;
+  --accent: #a0036c;
+  --accent-hover: #8a0260;
+  --accent-light: #f0e6ed;
 
-  --accent: #2563eb;   /* blue-600 */
-  --accent-2: #059669; /* emerald-600 */
-  --warn: #b45309;     /* amber-700 */
-  --danger: #b91c1c;   /* red-700 */
+  /* Header-only offset to clear right tabs */
+  --tabs-gutter: 64px; /* tune to your tab width (≈56–72px) */
 }
 
-.header {
+/* ========================================
+   LEFT HISTORY SIDEBAR
+   ======================================== */
+.historySidebar {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 320px;
+  height: 100vh;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  transform: translateX(-100%);
+  transition: transform 0.3s ease;
+  z-index: 120;
+  display: flex;
+  flex-direction: column;
+}
+
+.historySidebar.open {
+  transform: translateX(0);
+}
+
+.historyHeader {
   position: sticky;
   top: 0;
-  z-index: 1;
-  background: var(--bg);
-  padding: 14px 20px;
-  border-bottom: 1px solid var(--line);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-.headerLeft h1 {
-  margin: 0;
-  font-size: 20px;
-  color: var(--text);
-  letter-spacing: 0.2px;
-}
-.subtitle {
-  color: var(--muted);
-  font-size: 13px;
-  margin-top: 3px;
-}
-.headerActions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-/* Buttons */
-.btnPrimary,
-.btnSecondary,
-.btnGhost {
-  padding: 8px 12px;
-  border-radius: 10px;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--text);
-  cursor: pointer;
-  font-weight: 600;
-}
-.btnPrimary { background: var(--accent); color: #fff; border-color: var(--accent); }
-.btnPrimary:disabled { opacity: 0.55; cursor: not-allowed; }
-.btnSecondary { background: var(--panel-2); border-color: var(--line); color: var(--text); }
-.btnGhost { color: var(--muted); border-color: var(--line); background: #fff; }
-
-/* Layout */
-.grid {
-  display: grid;
-  grid-template-columns: 1.05fr 1fr;
-  gap: 16px;
-  padding: 16px 20px;
-}
-@media (max-width: 1100px) {
-  .grid { grid-template-columns: 1fr; }
-}
-.col { display: flex; flex-direction: column; gap: 16px; }
-
-/* Cards */
-.card {
+  z-index: 3; /* ensure header stays above anything nearby */
   background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  overflow: hidden;
-  box-shadow: 0 1px 1px rgba(20, 40, 80, 0.02), 0 8px 24px rgba(20, 40, 80, 0.04);
-}
-.cardHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 12px 14px;
+  padding: 20px;
   border-bottom: 1px solid var(--line);
-  background: linear-gradient(180deg, #fafcff, #ffffff);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
-.cardHeader h3 {
-  margin: 0;
-  font-size: 15px;
+
+.historyHeader h3 {
+  font-size: 18px;
   color: var(--text);
   display: flex;
   align-items: center;
-  gap: 8px;
-}
-.hint {
-  color: var(--muted);
-  font-size: 12px;
+  gap: 10px;
+  margin: 0;
 }
 
-/* Dropzone */
-.dropzone {
-  padding: 22px 14px;
+.closeSidebarBtn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 20px;
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: 8px;
+  transition: all 0.2s;
+}
+
+.closeSidebarBtn:hover,
+.closeSidebarBtn:focus-visible {
+  background: var(--panel-2);
+  color: var(--text);
+  outline: none;
+}
+
+.historyList {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.historyItem {
+  padding: 14px;
+  margin-bottom: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.historyItem:hover {
+  background: var(--accent-light);
+  border-color: var(--accent);
+}
+
+.historyItemTitle {
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+
+.historyItemMeta {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.historyItemMeta i {
+  margin-right: 4px;
+}
+
+.emptyHistory {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
   text-align: center;
   color: var(--muted);
-  display: grid;
-  place-items: center;
-  gap: 6px;
-  background: var(--panel);
 }
-.dropzone i { font-size: 20px; color: var(--accent); }
-.linkLike { color: var(--accent); cursor: pointer; text-decoration: underline; }
-.fileName { margin-top: 8px; font-size: 12px; color: var(--text); opacity: 0.9; }
 
-/* Tables */
-.tableWrap { overflow: auto; max-height: 360px; background: #fff; }
-.table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
+.emptyHistory i {
+  font-size: 48px;
+  margin-bottom: 16px;
+  opacity: 0.3;
 }
-.table thead th {
-  position: sticky;
-  top: 0;
-  background: #f7f9ff;
-  border-bottom: 1px solid var(--line-strong);
-  color: #334155;
-  font-weight: 700;
-}
-.table th, .table td {
-  border-bottom: 1px solid var(--line);
-  padding: 10px 12px;
-  color: var(--text);
-  text-align: left;
-  white-space: nowrap;
-}
-.colHead { display: flex; align-items: center; gap: 8px; }
-.typePill {
-  font-size: 10px;
-  padding: 2px 6px;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  color: var(--muted);
-  background: #fff;
-}
-.num { background: #ecfdf5; border-color: #c6f6d5; color: var(--accent-2); }
-.cat { background: #eff6ff; border-color: #bfdbfe; color: var(--accent); }
 
-.empty { padding: 18px; color: var(--muted); background: var(--panel); }
-
-/* Guide form */
-.formRow {
-  display: grid;
-  grid-template-columns: 160px 1fr;
-  gap: 12px;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--line);
-  background: #fff;
+.emptyHistory p {
+  font-size: 14px;
 }
-.formRow label { color: var(--muted); font-size: 12px; padding-top: 8px; }
-.input {
+
+/* ========================================
+   HISTORY TOGGLE BUTTON (LEFT EDGE)
+   ======================================== */
+.historyToggleBtn {
+  position: fixed;
+  left: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 48px;
+  height: 48px;
   background: var(--panel);
   border: 1px solid var(--line);
-  color: var(--text);
-  padding: 10px 10px;
-  border-radius: 10px;
-}
-
-/* Recommendations */
-.recoRow {
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--line);
-  background: #fff;
-}
-.recoLabel { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
-.recoPills { display: flex; flex-wrap: wrap; gap: 8px; }
-.toolPill {
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 6px 10px;
-  color: var(--text);
-  font-size: 12px;
-}
-
-/* Actions */
-.actionsRow {
+  border-radius: 50%;
   display: flex;
-  gap: 8px;
-  padding: 12px 14px;
-  background: #fff;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  transition: all 0.3s;
+  z-index: 200;
+  color: var(--text);
 }
 
-/* Plan */
-.planBox {
-  padding: 12px 14px;
-  border-top: 1px dashed var(--line);
-  background: #fff;
+.historyToggleBtn:hover {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
 }
-.planHeader {
-  font-size: 12px;
+
+/* When the sidebar is open, hide the edge toggle so it can't block the X */
+.historySidebar.open ~ .historyToggleBtn {
+  display: none;
+}
+
+/* ========================================
+   MAIN CONTENT AREA
+   ======================================== */
+.mainContent {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  transition: margin-left 0.3s ease, margin-right 0.3s ease;
+  margin-right: 0;
+}
+
+.mainContent.historyOpen {
+  margin-left: 320px;
+}
+
+.mainContent.resultsOpen {
+  margin-right: 55%;
+}
+
+.topHeader {
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  padding: 16px 24px;
+
+  /* Push header buttons left to avoid right tabs */
+  padding-right: calc(24px + var(--tabs-gutter));
+
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.headerLeft h1 {
+  font-size: 20px;
+  color: var(--text);
+  margin: 0 0 4px 0;
+}
+
+.headerSubtitle {
+  font-size: 13px;
   color: var(--muted);
-  margin-bottom: 8px;
-}
-.planList {
-  margin: 0;
-  padding-left: 18px;
-  color: var(--text);
 }
 
-/* Results */
-.results { padding: 8px 14px 16px; background: #fff; }
-.block { margin-top: 12px; }
-.blockTitle {
-  color: var(--text);
-  font-weight: 700;
-  margin-bottom: 8px;
+.headerActions {
+  display: flex;
+  gap: 10px;
 }
-.freqWrap { margin-bottom: 10px; }
-.freqHeader { color: var(--muted-2); margin-bottom: 6px; font-weight: 600; }
-.freqList { display: flex; flex-direction: column; gap: 8px; }
-.freqItem { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; }
-.freqBar {
-  height: 10px;
-  background: var(--panel-2);
+
+.btn {
+  padding: 8px 16px;
+  border-radius: 8px;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--text);
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.2s;
+}
+
+.btn:hover {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+/* ========================================
+   CHAT AREA
+   ======================================== */
+.chatArea {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
 }
-.freqFill { height: 100%; background: var(--accent); }
-.freqLabel { color: var(--text); font-size: 12px; }
-.mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  color: var(--muted-2);
+
+.chatMessages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  background: var(--bg);
 }
 
-/* Badges */
-.badge {
+/* Welcome Screen */
+.welcomeScreen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  text-align: center;
+  padding: 40px;
+}
+
+.welcomeScreen h2 {
+  font-size: 32px;
+  color: var(--text);
+  margin-bottom: 12px;
+}
+
+.welcomeScreen p {
+  font-size: 16px;
+  color: var(--muted);
+  max-width: 600px;
+  margin-bottom: 32px;
+}
+
+.suggestionCards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 700px;
+}
+
+.suggestionCard {
+  padding: 16px 20px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: left;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.suggestionCard:hover {
+  background: var(--accent-light);
+  border-color: var(--accent);
+}
+
+/* Messages */
+.message {
+  display: flex;
+  gap: 12px;
+  max-width: 80%;
+}
+
+.message.user {
+  align-self: flex-end;
+  flex-direction: row-reverse;
+}
+
+.messageAvatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.message.assistant .messageAvatar {
+  background: var(--accent);
+  color: #fff;
+}
+
+.message.user .messageAvatar {
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.messageBubble {
+  padding: 12px 16px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.message.assistant .messageBubble {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--text);
+}
+
+.message.user .messageBubble {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* File Upload in Chat */
+.fileUploadMessage {
+  padding: 16px;
+  background: var(--panel);
+  border: 2px dashed var(--line);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.fileIcon {
+  width: 48px;
+  height: 48px;
+  background: var(--accent-light);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.fileInfo {
+  flex: 1;
+}
+
+.fileName {
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.fileMeta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Chat Input */
+.chatInputArea {
+  padding: 20px 24px;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.chatInputWrapper {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  max-width: 960px;   /* adjust: try 880–1040px */
+  margin: 0 auto;     /* centers the row evenly */
+}
+
+.uploadBtnChat {
+  width: 44px;
+  height: 44px;
   background: var(--panel-2);
   border: 1px solid var(--line);
-  color: #475569;
-  border-radius: 999px;
-  padding: 2px 8px;
-  font-size: 11px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.uploadBtnChat:hover {
+  background: var(--accent-light);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.chatInput {
+  flex: 1;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 14px;
+  resize: none;
+  font-family: inherit;
+  min-height: 44px;
+  max-height: 120px;
+}
+
+.chatInput:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.sendBtn {
+  width: 44px;
+  height: 44px;
+  background: var(--accent);
+  border: none;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.sendBtn:hover {
+  background: var(--accent-hover);
+}
+
+/* ========================================
+   RIGHT SIDE VERTICAL TABS (ANCHORED)
+   ======================================== */
+.resultsTabsContainer {
+  position: fixed;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  z-index: 110;
+}
+
+/* Placeholder when no tabs are rendered */
+.resultsTabsContainer:empty::after {
+  content: "Results";
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  user-select: none;
+  width: 40px;
+  height: 140px;
+  border-radius: 12px 0 0 12px;
+  border: 1px dashed var(--line);
+  border-right: none;
+  background: var(--panel);
+  color: var(--muted-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 12px;
+  box-shadow: -2px 0 6px rgba(0, 0, 0, 0.05);
+  cursor: default;
+}
+
+.verticalTab {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-right: none;
+  padding: 16px 12px;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+  border-top-left-radius: 8px;
+  border-bottom-left-radius: 8px;
+  box-shadow: -2px 0 6px rgba(0, 0, 0, 0.05);
+  min-height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.verticalTab:hover {
+  background: var(--accent-light);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+/* ========================================
+   RESULTS PANEL (SLIDES FROM RIGHT)
+   ======================================== */
+.resultsPanel {
+  position: fixed;
+  right: 0;
+  top: 0;
+  width: 55%;
+  height: 100vh;
+  background: var(--panel);
+  border-left: 1px solid var(--line);
+  transform: translateX(100%);
+  transition: transform 0.3s ease;
+  z-index: 130;
+  display: flex;
+  flex-direction: column;
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.1);
+}
+
+.resultsPanel.open {
+  transform: translateX(0);
+}
+
+.resultsHeader {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--panel-2);
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.resultsHeader h3 {
+  font-size: 18px;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+}
+
+.resultsHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Corner close X — top-left INSIDE the results panel */
+.resultsCloseCorner {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  z-index: 5; /* above sticky header */
+}
+
+.resultsCloseCorner:hover,
+.resultsCloseCorner:focus-visible {
+  background: var(--panel-2);
+  color: var(--text);
+  outline: none;
+}
+
+.resultsContent {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+}
+
+.emptyResults {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  text-align: center;
+  padding: 40px;
+  color: var(--muted);
+}
+
+.emptyResults i {
+  font-size: 48px;
+  margin-bottom: 16px;
+  opacity: 0.3;
+}
+
+.emptyResults p {
+  font-size: 14px;
+}
+
+/* ========================================
+   RESPONSIVE
+   ======================================== */
+@media (max-width: 768px) {
+  .historySidebar { width: 100%; }
+  .resultsPanel  { width: 100%; }
+
+  .mainContent.historyOpen,
+  .mainContent.resultsOpen {
+    margin-left: 0;
+    margin-right: 0;
+  }
+
+  .mainContent { margin-right: 0; }
+
+  .historyToggleBtn { display: none; }
+
+  .verticalTab {
+    font-size: 11px;
+    padding: 12px 8px;
+    min-height: 100px;
+  }
+
+  .resultsHeaderActions { flex-wrap: wrap; }
+
+  .resultsTabsContainer:empty::after {
+    height: 120px;
+    font-size: 11px;
+  }
+
+  .resultsCloseCorner {
+    top: 8px;
+    left: 8px;
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+  }
+
+  /* Header gutter not needed on mobile */
+  .statsContainer { --tabs-gutter: 0px; }
+}
+
+/* Tab state: has results */
+.hasData {
+  background: var(--accent-light);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Keep active state strongest */
+.active.hasData {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+/* Small dot shown on tabs that have data */
+.dataDot {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-bottom: 6px; /* because text is vertical */
+  background: currentColor;
+  display: inline-block;
+}
+
+/* Add left padding so header content (logout) isn’t flush with edge */
+.topHeader {
+  padding-left: 24px; /* was 16px; increases breathing room */
+}
+
+/* Simple text link style used for Logout */
+.link {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 600;
+}
+.link:hover,
+.link:focus-visible { text-decoration: underline; }
+
+/* Ensure Share is above tabs and not hidden */
+.headerRight { z-index: 160; }
+.dropdown { z-index: 170; }
+
+/* Keep room for right vertical tabs */
+.statsContainer { --tabs-gutter: 64px; } /* adjust if your tabs are wider */
+
+/* Spaced text link for logout (vs button) */
+.link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+  text-decoration: none;
+  padding: 6px 10px;            /* why: give breathing room at far-left edge */
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  transition: all 0.2s;
+}
+.link:hover { background: var(--accent-light); color: var(--accent); border-color: var(--accent); }
+
+/* Give chat areas a small left gutter so the history toggle doesn’t crowd */
+@media (min-width: 769px) {
+  .chatMessages { padding-left: 72px; }
+  .chatInputArea { padding-left: 72px; }
+}
+
+/* Keep header content pulled in from right tabs; add tiny left padding on wide screens */
+@media (min-width: 769px) {
+  .topHeader { padding-left: 56px; }
 }

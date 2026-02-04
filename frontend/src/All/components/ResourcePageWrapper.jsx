@@ -5,7 +5,8 @@ const ResourcePageWrapper = ({
   children, 
   pageName, 
   toolName,
-  adminSettings = null 
+  adminSettings = null,
+  statisticalContext = null  // NEW: Accept statistical context for Statistics tool
 }) => {
   const [isGuidedModeEnabled, setIsGuidedModeEnabled] = useState(false);
 
@@ -36,6 +37,7 @@ const ResourcePageWrapper = ({
         isGuidedMode={isGuidedModeEnabled}
         currentPage={pageName}
         currentTool={toolName}
+        statisticalContext={statisticalContext}  // Pass statistical context to FloatingAI
       />
     </div>
   );

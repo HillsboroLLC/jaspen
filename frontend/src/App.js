@@ -5,7 +5,6 @@ import React from 'react';
 import '@fortawesome/fontawesome-free/css/all.min.css';
 import './App.css';
 
-import { AuthProvider } from './All/shared/auth/AuthContext';
 import { LSSProjectProvider } from './Ops/context/LSSProjectContext';
 import { LSSWorkflowProvider } from './Ops/context/LSSWorkflowContext';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
@@ -13,27 +12,32 @@ import ProtectedRoute from './All/components/ProtectedRoute';
 
 // Shared
 import HomePage      from './All/components/HomePage/HomePage';
+import Home          from './All/pages/Home/Home';
 import Profile       from './All/Profile/Profile';
 import Blog          from './All/Blog/Blog';
 import Login         from './All/Login/Login';
 import SignUp        from './All/SignUp/SignUp';
 import Privacy       from './All/pages/Privacy/privacy';
 import Terms         from './All/pages/Terms/terms';
+import Support       from './All/pages/Support/Support';
 
 // Market
 import Solopreneurs  from './Market/Solopreneurs/Solopreneurs';
 import SmallBusiness from './Market/SmallBusiness/SmallBusiness';
 import Enterprise    from './Market/Enterprise/Enterprise';
 import PricingResult from './Market/PricingResult/PricingResult';
-import Dashboard     from './Market/components/Dashboard/Dashboard';
-import Wizard        from './Market/components/Wizard/Wizard';
-import Sessions      from './Market/components/Sessions/Sessions';
+import Dashboard     from './Market/Dashboard/Dashboard';
+import Sessions      from './Market/Sessions/Sessions';
 import Account       from './Market/Account/Account';
 import PaymentPage   from './Market/PaymentPage/PaymentPage';
+
+// Market IQ (NEW)
+import MarketIQWorkspace from './Market/MarketIQ/workspace/MarketIQWorkspace';
 
 // Ops
 import { AdminProvider } from './Ops/context/AdminContext';
 import OpsDashboard        from './Ops/OpsDashboard/OpsDashboard';
+import PMDashboard        from './Ops/PMDashboard/PMDashboard';
 import LSSDashboard        from './Ops/LSSDashboard/LSSDashboard';
 import SIPOC               from './Ops/SIPOC';
 import ProcessMap          from './Ops/ProcessMap';
@@ -73,12 +77,12 @@ import SustainmentPlan     from './Ops/SustainmentPlan';
 import DMAIC               from './Ops/DMAIC';
 import FinY                from './Ops/FinY';
 import Kaizen              from './Ops/Kaizen'; // uses src/Ops/Kaizen/index.js
-import Statistics from './Ops/Statistics/Statistics';
+import Statistics          from './Ops/Statistics/Statistics';
+import Activities          from './Ops/Activities/Activities';
 
 export default function App() {
   return (
     <AdminProvider>
-      <AuthProvider>
         <LSSProjectProvider>
           <LSSWorkflowProvider>
             <BrowserRouter>
@@ -95,16 +99,19 @@ export default function App() {
                 <Route path="/pricing"        element={<PricingResult />} />
                 <Route path="/pages/privacy"  element={<Privacy />} />
                 <Route path="/pages/terms"    element={<Terms />} />
+                <Route path="/pages/support"  element={<Support />} />
+                <Route path="/pages/home"     element={<Home />} />
 
                 {/* Protected (Market) */}
                 <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-                <Route path="/iq"        element={<ProtectedRoute><Wizard /></ProtectedRoute>} />
+                <Route path="/market-iq" element={<ProtectedRoute><MarketIQWorkspace /></ProtectedRoute>} />
                 <Route path="/sessions"  element={<ProtectedRoute><Sessions /></ProtectedRoute>} />
                 <Route path="/account"   element={<ProtectedRoute><Account /></ProtectedRoute>} />
                 <Route path="/payment"   element={<ProtectedRoute><PaymentPage /></ProtectedRoute>} />
 
                 {/* Protected (Ops) */}
                 <Route path="/ops"                      element={<ProtectedRoute><OpsDashboard /></ProtectedRoute>} />
+                <Route path="/ops/pm"                   element={<ProtectedRoute><PMDashboard /></ProtectedRoute>} />
                 <Route path="/ops/lss"                  element={<ProtectedRoute><LSSDashboard /></ProtectedRoute>} />
                 <Route path="/ops/dmaic"                element={<ProtectedRoute><DMAIC /></ProtectedRoute>} />
                 <Route path="/ops/kaizen"               element={<ProtectedRoute><Kaizen /></ProtectedRoute>} />
@@ -145,13 +152,13 @@ export default function App() {
                 <Route path="/ops/sustainment-plan"     element={<ProtectedRoute><SustainmentPlan /></ProtectedRoute>} />
                 <Route path="/ops/finy"                 element={<ProtectedRoute><FinY /></ProtectedRoute>} />
                 <Route path="/ops/statistics"           element={<ProtectedRoute><Statistics /></ProtectedRoute>} />
+                <Route path="/ops/activities"           element={<ProtectedRoute><Activities /></ProtectedRoute>} />
 
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </BrowserRouter>
           </LSSWorkflowProvider>
         </LSSProjectProvider>
-      </AuthProvider>
     </AdminProvider>
   );
 }

@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
+import '@fortawesome/fontawesome-free/css/all.min.css';
 import './SignUp.css';
 
 const PLAN_OPTIONS = [
@@ -25,15 +26,12 @@ export default function SignUp() {
     setShowSeats(plan === 'growth');
   }, [plan]);
 
-  const handleSubmit = async e => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
-    if (password !== confirm) {
-      return setError('Passwords do not match');
-    }
-    if (!plan) {
-      return setError('Please select a plan');
-    }
+
+    if (password !== confirm) return setError('Passwords do not match');
+    if (!plan) return setError('Please select a plan');
 
     try {
       await axios.post('/api/auth/signup', {
@@ -43,8 +41,6 @@ export default function SignUp() {
         plan_key: plan,
         extra_seats: seatCount
       });
-
-      // Redirect into your pricing checkout flow
       navigate(`/pricing?plan=${plan}`);
     } catch (err) {
       console.error(err);
@@ -129,21 +125,18 @@ export default function SignUp() {
             </label>
           )}
 
-          <label className="terms">
-            <input type="checkbox" required />
-            I agree to the{' '}
-            <a
-              href="/terms"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Terms &amp; Conditions
-            </a>
-          </label>
+          {/* --- Terms row (fixed alignment & wrapping) --- */}
+          <div className="terms">
+            <input id="terms" type="checkbox" required />
+            <label htmlFor="terms">
+              I agree to the{' '}
+              <a href="/terms" target="_blank" rel="noopener noreferrer">
+                Terms &amp; Conditions
+              </a>
+            </label>
+          </div>
 
-          <button type="submit" className="submit-btn">
-            Sign Up
-          </button>
+          <button type="submit" className="submit-btn">Sign Up</button>
         </form>
 
         <p className="login-link">
@@ -151,12 +144,6 @@ export default function SignUp() {
         </p>
       </div>
 
-      <div className="butterfly-container">
-        <img
-          src="https://sekki.io/wp-content/uploads/2025/02/Butterfly.svg"
-          alt="Butterfly"
-        />
-      </div>
     </div>
   );
 }

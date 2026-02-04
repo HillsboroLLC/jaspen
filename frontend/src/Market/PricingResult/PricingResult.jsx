@@ -11,7 +11,7 @@ export default function PricingResult() {
 
   useEffect(() => {
     if (status === 'success' && sessionId) {
-      fetch(`/api/billing/checkout-session?session_id=${sessionId}`)
+      fetch(`https://api.sekki.io/api/billing/checkout-session?session_id=${sessionId}`)
         .then(res => res.json())
         .then(setSession)
         .catch(console.error);

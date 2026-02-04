@@ -1,4 +1,8 @@
-/* use the section’s ID so nothing else is affected */
+/* ================================
+   Features (Tools) Section – No Borders
+   ================================ */
+
+/* Scope to this section only */
 #tools {
   padding: 80px 0;
 }
@@ -21,54 +25,92 @@
   margin: 0 auto;
 }
 
+/* Grid */
 #tools .features-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: 2rem;
 }
 
+/* Cards – NO BORDERS, NO RINGS */
 #tools .feature-card {
   background: #fff;
   padding: 2rem;
-  border-radius: 12px;
-  box-shadow: 0 5px 20px rgba(0, 0, 0, 0.1);
+  border-radius: 16px;
+  border: 0 !important;         /* ensure no real borders */
+  outline: 0;
+  /* soft, even elevation only */
+  box-shadow: 0 6px 22px rgba(0,0,0,0.08);
   text-align: center;
-  transition: transform 0.3s ease, border-color 0.3s ease;
-  border: 2px solid transparent;
+  transition: transform .25s ease, box-shadow .2s ease;
+  background-clip: padding-box;  /* crisp edges */
 }
 
+/* Hover: lift/shadow only (no outline) */
 #tools .feature-card:hover {
-  transform: translateY(-5px);
-  border-color: #A0006D;
+  transform: translateY(-4px);
+  box-shadow: 0 10px 28px rgba(0,0,0,0.12);
 }
 
+/* Focus (keyboard): accessible shadow, still no outline */
+#tools .feature-card:focus-visible {
+  outline: none;
+  box-shadow: 0 10px 28px rgba(0,0,0,0.16);
+}
+
+/* Kill any pseudo “ring” someone might have added */
+#tools .feature-card::before,
+#tools .feature-card::after {
+  content: none !important;
+}
+
+/* If some cards carry .feature-highlight, keep it neutral */
+#tools .feature-card.feature-highlight {
+  border: 0 !important;
+  box-shadow: 0 6px 22px rgba(0,0,0,0.08);
+  background: #fff;
+}
+
+/* Icon block */
 #tools .feature-icon {
-  font-size: 3rem;
-  color: #ffffff;
-  margin-bottom: 1rem;
-  display: inline-flex;           /* center the icon */
+  width: 80px;
+  height: 80px;
+  margin: 0 auto 1rem;
+  border-radius: 16px;
+  background: #A0006D;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
 }
 
 #tools .feature-icon i {
-  /* Font-Awesome icons are font-glyphs, not images */
-  display: inline-block;
+  font-size: 2rem;
+  color: #fff;
   line-height: 1;
+  display: inline-block;
 }
 
+/* Text */
 #tools .feature-title {
-  font-size: 1.3rem;
-  margin-bottom: 1rem;
+  font-size: 1.35rem;
+  margin-bottom: 0.75rem;
   color: #161f3b;
+  font-weight: 700;
 }
 
 #tools .feature-description {
   color: #6C757D;
+  line-height: 1.7;
+  max-width: 60ch;
+  margin: 0 auto;
 }
 
-/* only the highlighted card gets the purple outline */
-#tools .feature-highlight {
-  border-color: #A0006D;
-  background: #fff;
+/* Responsive tweaks */
+@media (max-width: 640px) {
+  #tools { padding: 64px 0; }
+  #tools .section-title { font-size: 2rem; }
+  #tools .features-grid { gap: 1.25rem; }
+  #tools .feature-card { padding: 1.5rem; border-radius: 14px; }
+  #tools .feature-icon { width: 70px; height: 70px; border-radius: 14px; }
+  #tools .feature-icon i { font-size: 1.8rem; }
 }

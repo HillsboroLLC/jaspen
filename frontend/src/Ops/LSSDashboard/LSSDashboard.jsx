@@ -1,12 +1,14 @@
 // ==========================================
 // File: src/Ops/LSSDashboard/LSSDashboard.jsx
 // ==========================================
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../All/shared/auth/AuthContext';
 import { useLSSProject } from '../hooks/useLSSProject';
 import { useLSSWorkflow } from '../hooks/useLSSWorkflow';
+import BackButton from '../../Market/components/Buttons/BackButton';
 import RoleSwitcher from '../RoleSwitcher/RoleSwitcher';
+import LSSCustomDropdown from './LSSCustomDropdown';
 import styles from './LSSDashboard.module.css';
 
 /* ---------- Feature flags / config ----------
@@ -98,6 +100,17 @@ const LSSDashboard = () => {
   const [showKanban, setShowKanban] = useState(false);
   const [viewMode, setViewMode] = useState('all');
   const [selectedTimeRange, setSelectedTimeRange] = useState('30days');
+
+  // Collapsible (desktop) + Drawer (mobile)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+
+  // Tools drawer state
+  const [lssDrawerOpen, setLssDrawerOpen] = useState(false);
+  const [lssActiveTab, setLssActiveTab] = useState("tools");
+
+  const openLssDrawer  = useCallback(() => setLssDrawerOpen(true), []);
+  const closeLssDrawer = useCallback(() => setLssDrawerOpen(false), []);
 
   // Admin System Settings slide-over
   const [showAdminSettings, setShowAdminSettings] = useState(false);
@@ -1157,22 +1170,59 @@ const LSSDashboard = () => {
   })();
 
   return (
-    <div className={styles.lssDashboard}>
-      {/* Sidebar (Left) */}
-      <div className={styles.sidebar}>
-        <div className={styles.sidebarHeader}>
-          <div className={styles.roleIndicator}>
-            <i className={`fas ${(isAdmin && isAdmin()) ? 'fa-crown' : getUserRole() === 'projectLead' ? 'fa-user-tie' : 'fa-user'}`}></i>
-            <span className={`${styles.roleBadge} ${styles[getUserRole()]}`}>
-              {getUserRole() === 'admin' ? 'ADMIN' : getUserRole() === 'projectLead' ? 'PROJECT LEAD' : 'TEAM MEMBER'}
-            </span>
-          </div>
+    <div
+      className={`${styles.lssDashboard} ${sidebarCollapsed ? styles.sidebarCollapsed : ''} ${mobileSidebarOpen ? styles.sidebarOpen : ''}`}
+    >
+      {/* LEFT RAIL TAB (always visible) */}
+      <button
+        className={styles.railTab}
+        aria-label="Open LSS Tools"
+        aria-expanded={lssDrawerOpen}
+        onClick={openLssDrawer}
+      >
+        <i className="fas fa-tools" />
+        <span className={styles.railTabLabel}>Tools</span>
+      </button>
 
-          <div className={styles.roleSwitcherContainer}>
-            <RoleSwitcher />
-          </div>
+      {/* SCRIM (click to close on mobile/overlay) */}
+      {lssDrawerOpen && (
+        <div
+          className={styles.scrim}
+          aria-hidden="true"
+          onClick={closeLssDrawer}
+        />
+      )}
 
+      {/* DRAWER */}
+      <aside
+        id="lss-tools-drawer"
+        className={`${styles.drawer} ${lssDrawerOpen ? styles.drawerOpen : ""}`}
+        role="complementary"
+        aria-label="LSS navigation"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Drawer header */}
+        <div className={styles.drawerHeader}>
           <h2>{role === 'teamMember' ? 'Your Work' : 'LSS Tools'}</h2>
+          <button
+            className={styles.drawerCloseBtn}
+            aria-label="Close menu"
+            onClick={closeLssDrawer}
+          >
+            <i className="fas fa-times" />
+          </button>
+        </div>
+
+        {/* ---- your original sidebar content starts here ---- */}
+        <div className={styles.roleIndicator}>
+          <i className={`fas ${(isAdmin && isAdmin()) ? 'fa-crown' : getUserRole() === 'projectLead' ? 'fa-user-tie' : 'fa-user'}`}></i>
+          <span className={`${styles.roleBadge} ${styles[getUserRole()]}`}>
+            {getUserRole() === 'admin' ? 'ADMIN' : getUserRole() === 'projectLead' ? 'PROJECT LEAD' : 'TEAM MEMBER'}
+          </span>
+        </div>
+
+        <div className={styles.roleSwitcherContainer}>
+          <RoleSwitcher />
         </div>
 
         <div className={styles.toolSections}>
@@ -1215,26 +1265,49 @@ const LSSDashboard = () => {
                   {filteredProjects.length === 0 ? (
                     <div className={styles.emptyState}>No projects yet.</div>
                   ) : (
-                    filteredProjects
-                      .slice(0, 5)
-                      .map((p) => (
-                        <div key={p.id} className={styles.projectItem}>
-                          {p.name || 'Untitled Project'}
-                        </div>
-                      ))
+                    filteredProjects.slice(0, 5).map((p) => (
+                      <div key={p.id} className={styles.projectItem}>
+                        {p.name || 'Untitled Project'}
+                      </div>
+                    ))
                   )}
                 </div>
               </div>
             )}
           </div>
         )}
-      </div>
+        {/* ---- your original sidebar content ends here ---- */}
+      </aside>
 
       {/* Main Content */}
       <div className={styles.mainContent}>
         <div className={styles.header}>
           <div className={styles.headerContent}>
+            {/* LEFT: menu buttons + title */}
             <div className={styles.headerLeft}>
+
+              {/* Mobile open button (changed to open the Tools drawer) */}
+              <button
+                className={styles.sidebarToggleMobile}
+                aria-label="Open menu"
+                aria-controls="lss-tools-drawer"
+                aria-expanded={lssDrawerOpen}
+                onClick={openLssDrawer}
+              >
+                <i className="fas fa-bars" style={{ color: '#fff' }} />
+              </button>
+
+              {/* Desktop collapse/expand */}
+              <button
+                className={styles.sidebarToggleDesktop}
+                aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+                onClick={() => setSidebarCollapsed(v => !v)}
+                title={sidebarCollapsed ? 'Expand' : 'Collapse'}
+              >
+                <i className={`fas ${sidebarCollapsed ? 'fa-chevron-right' : 'fa-chevron-left'}`} />
+              </button>
+
+              <BackButton onClick={() => navigate(-1)} />
               <h1>Lean Six Sigma Operations</h1>
               <div className={styles.subtitle}>
                 <span>Drive continuous improvement with data-driven methodologies</span>
@@ -1251,31 +1324,25 @@ const LSSDashboard = () => {
                 const role = getUserRole();
                 if (role === 'teamMember') return null;
 
-                return (
-                  <div
-                    className={styles.newProjectDropdown}
-                    style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-                  >
-                    <span style={{ fontWeight: 600 }}>Start New:</span>
-                    <select
-                      aria-label="Start New"
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (val === 'dmaic') navigate('/ops/dmaic');
-                        if (val === 'kaizen') navigate('/ops/kaizen');
-                        if (val === 'statistics') navigate('/ops/statistics');
+                const lssOptions = [
+                  { value: 'dmaic', label: 'DMAIC' },
+                  { value: 'kaizen', label: 'Kaizen Blitz' },
+                  { value: 'statistics', label: 'Statistical Analysis' }
+                ];
 
-                        e.target.value = '';
-                      }}
-                      defaultValue=""
-                      style={{ padding: '0.5rem 0.75rem', borderRadius: 6 }}
-                    >
-                      <option value="" disabled>Select…</option>
-                      <option value="dmaic">DMAIC</option>
-                      <option value="kaizen">Kaizen Blitz</option>
-                      <option value="statistics">Statistical Analysis</option>
-                    </select>
-                  </div>
+                const handleLSSSelect = (val) => {
+                  if (val === 'dmaic') navigate('/ops/dmaic');
+                  if (val === 'kaizen') navigate('/ops/kaizen');
+                  if (val === 'statistics') navigate('/ops/statistics');
+                };
+
+                return (
+                  <LSSCustomDropdown
+                    label="Start New:"
+                    options={lssOptions}
+                    onSelect={handleLSSSelect}
+                    placeholder="Select…"
+                  />
                 );
               })()}
             </div>

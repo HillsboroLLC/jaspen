@@ -1,0 +1,41 @@
+/* Begin Project Button Styles - Simple Navy Button (No Dropdown) */
+
+.begin-project-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.625rem 1.25rem;
+  background: #161f3b; /* Navy instead of magenta */
+  border: none;
+  border-radius: 0.5rem;
+  color: white;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-left: auto; /* Push to right side of tabs container */
+}
+
+.begin-project-btn:hover {
+  background: #0d1426; /* Darker navy on hover */
+  transform: translateY(-1px);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+.begin-project-btn:active {
+  transform: translateY(0);
+}
+
+/* Position within tabs container */
+.miq-tabs-container {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0 1rem;
+}
+
+.miq-tabs {
+  display: flex;
+  gap: 0.5rem;
+  flex: 1;
+}

@@ -33,7 +33,7 @@ const Account = () => {
   const loadUserData = async () => {
     try {
       // Try to load from API
-      const response = await fetch('http://localhost:8000/api/user/profile', {
+      const response = await fetch('https://api.sekki.io/api/user/profile', {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`
         }
@@ -79,7 +79,7 @@ const Account = () => {
     try {
       setLoading(true);
       
-      const response = await fetch('http://localhost:8000/api/user/delete', {
+      const response = await fetch('https://api.sekki.io/api/user/delete', {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`
@@ -114,7 +114,7 @@ const Account = () => {
         paymentOption: paymentOption
       };
 
-      const response = await fetch('http://localhost:8000/api/user/subscription', {
+      const response = await fetch('https://api.sekki.io/api/user/subscription', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',

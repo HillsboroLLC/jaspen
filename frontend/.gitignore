@@ -21,3 +21,27 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# --- Frontend build output ---
+build/
+
+# --- Node dependencies ---
+node_modules/
+
+# --- Frontend snapshots / exports ---
+frontend_*.tgz
+*_sanitized*
+*_context*
+*_print_*
+*_index.txt
+
+# --- Patches ---
+*.patch
+
+# --- Editor / local ---
+.vscode/
+
+# --- Docs / context / one-off scripts ---
+FRONTEND_CONTEXT.md
+docs/
+update_imports.js

@@ -3,7 +3,7 @@ import './Hero.css';
 
 export default function Hero() {
   return (
-    <section id="hero" className="hero">
+<section id="hero" className="hero" data-scope="hero">
       <div className="hero-content">
         {/* Left column */}
         <div className="hero-left">

@@ -210,7 +210,7 @@
 
 /* Header */
 .header {
-  margin-bottom: 2rem; background-color: var(--lss-primary); color: var(--lss-white);
+  margin-bottom: 2rem; background-color: #ffffff; color: #161f3b;
   padding: 2rem; border-radius: 1rem; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
 }
 .headerContent { display: flex; justify-content: space-between; align-items: center; }
@@ -225,17 +225,17 @@
 
 /* Header "Start New" dropdown */
 .newProjectDropdown { position: relative; display: inline-flex; align-items: center; gap: 0.5rem; }
-.newProjectDropdown > span { font-weight: 600; font-size: 0.9rem; color: var(--lss-white); opacity: 0.95; }
+.newProjectDropdown > span { font-weight: 600; font-size: 0.9rem; color: #161f3b; }
 .newProjectDropdown select {
-  padding: 0.5rem 2.25rem 0.5rem 0.75rem; border: 1px solid var(--lss-gray-300); border-radius: 0.5rem;
-  background-color: var(--lss-white); color: var(--lss-gray-700); cursor: pointer; font-size: 0.9rem; line-height: 1;
+  padding: 0.5rem 2.25rem 0.5rem 0.75rem; border: 1px solid #e5e7eb; border-radius: 0.5rem;
+  background-color: #ffffff; color: #161f3b; cursor: pointer; font-size: 0.9rem; line-height: 1;
   appearance: none; -webkit-appearance: none; -moz-appearance: none; min-width: 170px;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.15s ease;
   background-image: url("data:image/svg+xml,%3Csvg width='12' height='8' viewBox='0 0 12 8' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1.5l5 5 5-5' stroke='%2364748b' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat; background-position: right 0.6rem center; background-size: 12px 8px;
 }
-.newProjectDropdown select:hover { border-color: var(--lss-primary); }
-.newProjectDropdown select:focus { outline: none; border-color: var(--lss-primary); box-shadow: 0 0 0 3px rgba(22,31,59,0.1); }
+.newProjectDropdown select:hover { border-color: #161f3b; }
+.newProjectDropdown select:focus { outline: none; border-color: #161f3b; box-shadow: none; }
 @media (max-width: 768px) { .newProjectDropdown { width: 100%; gap: 0.5rem; } .newProjectDropdown select { min-width: 0; width: 100%; } }
 
 /* Right Sidebar */
@@ -807,3 +807,524 @@
 @media (max-width: 768px) {
   .settingsSidebar { width: 100vw; }
 }
+
+/* =========================
+   LSS DASHBOARD – MOBILE POLISH
+   ========================= */
+@media (max-width: 768px) {
+  /* Overall rhythm */
+  .mainContent { padding: 0.875rem; }
+  .header      { padding: 1rem; border-radius: 0.75rem; }
+
+  /* Hero block: make it breathe less and fit naturally */
+  .headerLeft h1 {
+    font-size: 1.45rem;
+    line-height: 1.2;
+    margin-bottom: 0.25rem;
+  }
+  .subtitle { font-size: 0.95rem; }
+
+  /* “Start New” select should never force width */
+  .newProjectDropdown { width: 100%; }
+  .newProjectDropdown select {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  /* Cards: compact, full width, friendly corners */
+  .metricsGrid,
+  .chartsRow,
+  .sectionGrid { gap: 1rem; }
+  .metricCard,
+  .chartCard,
+  .recentCard {
+    padding: 1rem;
+    border-radius: 0.75rem;
+  }
+  .metricHeader h3 { font-size: 0.9rem; }
+  .metricValue     { font-size: 1.75rem; }
+
+  /* Phase chart labels won’t crowd */
+  .phaseLabel {
+    min-width: 64px;
+    max-width: 44vw;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Hide the left app sidebar peeking edge on phones */
+  .sidebar {
+    position: static;
+    width: 100%;
+    border-right: 0;
+    padding: 0.75rem 0.875rem;
+  }
+  .lssDashboard .mainContent { margin-left: 0; }
+
+  /* If a right sidebar exists in DOM, don’t reserve space */
+  .lssDashboard:has(.rightSidebar) .mainContent { margin-right: 0 !important; }
+
+  /* Prevent any hidden panels/modals from nudging layout */
+  :global(html), :global(body), .lssDashboard { overflow-x: hidden; }
+  :global(.lssDashboard) [style*="min-width"] { min-width: 0 !important; }
+}
+
+/* OPTIONAL: slightly tighter on very small phones */
+@media (max-width: 360px) {
+  .header { padding: 0.875rem; }
+  .metricValue { font-size: 1.6rem; }
+}
+
+/* =========================
+   Collapsible / Drawer Sidebar
+   ========================= */
+
+/* Toggle buttons */
+.sidebarToggleDesktop,
+.sidebarToggleMobile {
+  background: none;
+  border: 1px solid var(--lss-gray-300);
+  color: var(--lss-gray-700);
+  padding: 0.45rem 0.55rem;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: all .15s ease;
+  margin-right: .5rem;
+}
+.sidebarToggleDesktop:hover,
+.sidebarToggleMobile:hover {
+  background: var(--lss-gray-100);
+  color: var(--lss-primary);
+}
+.sidebarToggleDesktop { display: inline-flex; }
+.sidebarToggleMobile  { display: none; } /* only show on phones */
+
+/* Desktop collapsed rail (icon-only) */
+.sidebarCollapsed .sidebar {
+  width: 72px;
+  padding: 0.75rem 0.5rem;
+}
+.sidebarCollapsed .mainContent {
+  margin-left: 72px;
+}
+.sidebarCollapsed .sidebarHeader h2,
+.sidebarCollapsed .roleSwitcherContainer,
+.sidebarCollapsed .roleBadge,
+.sidebarCollapsed .accordionTitle span,
+.sidebarCollapsed .accordionChevron,
+.sidebarCollapsed .toolsList .toolBtn span,
+.sidebarCollapsed .projectItem,
+.sidebarCollapsed .simpleListBody,
+.sidebarCollapsed .toolSection h3,
+.sidebarCollapsed .kanbanBtn span,
+.sidebarCollapsed .recentProjects,
+.sidebarCollapsed .accordionContent {
+  display: none !important;
+}
+.sidebarCollapsed .accordionTitle i,
+.sidebarCollapsed .toolBtn i,
+.sidebarCollapsed .simpleListLeading,
+.sidebarCollapsed .itemsSection h3 i {
+  margin: 0 auto;
+}
+.sidebarCollapsed .toolBtn {
+  justify-content: center;
+  padding: 0.75rem 0.5rem;
+}
+
+/* Mobile drawer behavior */
+@media (max-width: 768px) {
+  .sidebarToggleDesktop { display: none; }
+  .sidebarToggleMobile  { display: inline-flex; }
+
+  /* Move sidebar off-canvas by default */
+  .sidebar {
+    position: fixed;
+    left: 0; top: 0;
+    height: 100vh;
+    width: 84vw;               /* comfy width on phones */
+    max-width: 340px;
+    transform: translateX(-100%);
+    transition: transform .25s ease;
+    z-index: 1200;
+    border-right: 1px solid var(--lss-gray-200);
+    padding: 1rem;
+  }
+  .sidebarMobileHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-weight: 700;
+    color: var(--lss-primary);
+    margin-bottom: .5rem;
+  }
+  .sidebarCloseBtn {
+    background: none;
+    border: 1px solid var(--lss-gray-300);
+    padding: .35rem .55rem;
+    border-radius: .5rem;
+    color: var(--lss-gray-700);
+    cursor: pointer;
+  }
+  .sidebarCloseBtn:hover { background: var(--lss-gray-100); }
+
+  /* When open */
+  .sidebarOpen .sidebar {
+    transform: translateX(0);
+  }
+
+  /* Dark scrim behind the drawer */
+  .scrim {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.45);
+    z-index: 1190;
+  }
+
+  /* Main content should not reserve left space on phones */
+  .mainContent { margin-left: 0 !important; }
+}
+
+/* Nice-to-have: keep icon hover navy */
+.toolBtn:hover i,
+.accordionHeader:hover i { color: #161f3b; }
+
+/* Rail tab anchored to left edge (matches MarketIQ/PM Dashboard) */
+.railTab {
+  position: fixed;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1010;
+  width: 48px;
+  height: 120px;
+  border: 1px solid #e2e8f0;
+  border-left: none;
+  border-radius: 0 0.75rem 0.75rem 0;
+  background: #ffffff;
+  color: #161f3b;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  transition: all 0.2s ease;
+}
+.railTab:hover {
+  width: 52px;
+  background: #161f3b;
+  color: #ffffff;
+  border-color: #161f3b;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+}
+.railTab:focus {
+  outline: 2px solid #e9b57b;
+  outline-offset: 2px;
+}
+.railTab i {
+  font-size: 1.25rem;
+  color: inherit;
+}
+.railTabLabel {
+  font-size: 0.625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  color: inherit;
+}
+
+/* overlay when drawer is open (mobile & narrow widths) */
+.scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.35);
+  backdrop-filter: blur(1px);
+  z-index: 1005;
+}
+
+/* drawer container */
+.drawer {
+  position: fixed;
+  left: -320px;        /* hidden by default */
+  top: 0;
+  bottom: 0;
+  width: 320px;
+  max-width: 90vw;
+  z-index: 1015;
+  background: #0b1220; /* your dark blue */
+  color: #fff;
+  padding: 18px 16px 24px;
+  box-shadow: 8px 0 24px rgba(0,0,0,.28);
+  transition: left 240ms ease;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  border-top-right-radius: 16px;
+  border-bottom-right-radius: 16px;
+}
+
+/* open state */
+.drawerOpen { left: 0; }
+
+/* header inside drawer */
+.drawerHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.drawerCloseBtn {
+  background: transparent;
+  border: 0;
+  color: #fff;
+  font-size: 18px;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.drawerCloseBtn:hover { background: rgba(255,255,255,.08); }
+
+/* keep your existing sidebar styles for inner content but optionally tighten spacing on mobile */
+@media (max-width: 1024px) {
+  .toolSections { gap: 6px; }
+}
+
+/* =========================
+   LSS DASHBOARD – LEFT DRAWER PUSH (drop-in)
+   ========================= */
+
+/* 0) Make main content full-width by default on this page */
+.lssDashboard .mainContent {
+  margin-left: 0 !important;   /* override earlier 320px */
+}
+
+/* 1) When the dark drawer opens, push just enough on desktop */
+@media (min-width: 769px) {
+  /* drawer width = 320px (matches .drawer) */
+  .lssDashboard:has(.drawerOpen) .mainContent {
+    margin-left: 320px !important;
+    transition: margin-left .25s ease;
+  }
+  /* If you ever use the collapsed rail state, keep that behavior */
+  .lssDashboard.sidebarCollapsed .mainContent {
+    margin-left: 72px !important;
+  }
+
+  /* No overlay needed in desktop push mode */
+  .lssDashboard:has(.drawerOpen) .scrim { display: none !important; }
+}
+
+/* 2) Drawer look - light theme (matches PM Dashboard) */
+.drawer {
+  background: #ffffff;
+  color: #334155;
+  border-right: 1px solid #e5e7eb;
+}
+.drawer h1, .drawer h2, .drawer h3, .drawer h4,
+.drawer p, .drawer span, .drawer i, .drawer a,
+.drawer label, .drawer .itemName, .drawer .itemHint {
+  color: inherit;
+}
+.drawer a:hover { opacity: .8; }
+
+/* Common blocks inside the drawer - light theme */
+.drawer .accordionSection { background: transparent; border-color: #e5e7eb; }
+.drawer .accordionHeader {
+  background: #f9fafb;
+  color: #161f3b;
+  border-bottom: 1px solid #e5e7eb;
+}
+.drawer .accordionHeader:hover { background: #f3f4f6; }
+.drawer .accordionHeader.expanded { background: #eff9fc; color: #a0036c; }
+.drawer .accordionContent { background: transparent; border-top: 1px solid #e5e7eb; }
+
+.drawer .toolsList { padding: .75rem; }
+.drawer .toolBtn {
+  background: transparent;
+  color: #374151;
+  border: none;
+}
+.drawer .toolBtn:hover { background: #f3f4f6; transform: translateX(2px); }
+
+.drawer .kanbanBtn {
+  background: #a0036c;
+  border: 1px solid #e5e7eb;
+  color: #fff;
+}
+.drawer .kanbanBtn:hover { background: #8a0257; }
+
+/* Buttons/controls inside drawer */
+.drawer .cancelButton,
+.drawer .actionBtn,
+.drawer .linkBtn {
+  color: #161f3b !important;
+  border-color: #e5e7eb !important;
+}
+.drawer .actionBtn { background: #f3f4f6; }
+.drawer .actionBtn:hover { background: #e5e7eb; }
+
+/* 3) Mobile behavior
+      - Drawer overlays content (no push)
+      - Replace vertical rail with top tabs (if you include the markup)
+*/
+@media (max-width: 768px) {
+  /* Drawer stays overlay; content remains full width */
+  .lssDashboard .mainContent { margin-left: 0 !important; }
+  .drawer { left: -320px; width: 84vw; max-width: 340px; }
+  .drawerOpen { left: 0; }
+  .scrim { display: block; }
+
+  /* Hide the skinny rail button on phones */
+  .railTab { display: none !important; }
+
+  /* Optional: top tabs like the other page (needs tiny markup)
+     <div class="lss-mobile-tabs">
+       <button data-tab="tools" class="active">Tools</button>
+       <button data-tab="settings">Settings</button>
+     </div>
+  */
+  .lss-mobile-tabs {
+    position: sticky; top: 0; z-index: 1100;
+    display: flex; gap: .5rem; padding: .5rem;
+    background: #0b1220;        /* match drawer */
+    border-bottom: 1px solid rgba(255,255,255,.12);
+  }
+  .lss-mobile-tabs button {
+    flex: 1; padding: .6rem .75rem; border-radius: .5rem;
+    background: rgba(255,255,255,.10); color: #fff; border: 1px solid rgba(255,255,255,.18);
+    font-weight: 600;
+  }
+  .lss-mobile-tabs button.active,
+  .lss-mobile-tabs button:hover {
+    background: #161f3b; color: #fff; border-color: rgba(255,255,255,.28);
+  }
+}
+
+/* 4) Nice polish on the drawer header/close */
+.drawerHeader { color: #161f3b; border-bottom: 1px solid #e5e7eb; }
+.drawerCloseBtn { color: #161f3b; border: 1px solid #e5e7eb; }
+.drawerCloseBtn:hover { background: #f9fafb; }
+
+/* ===============================
+   LSS DASHBOARD — Rail tab gutter, legacy toggle kill, mobile hygiene
+   =============================== */
+
+/* --- A) DESKTOP: reserve a small gutter for the left rail tab when drawer is closed --- */
+@media (min-width: 769px) {
+  /* width of the skinny rail */
+  .lssDashboard { --rail-gutter: 56px; } /* ~42px tab + breathing room */
+
+  /* If the rail tab exists, nudge content so it never sits underneath it */
+  .lssDashboard:has(.railTab) .mainContent {
+    margin-left: var(--rail-gutter) !important;
+  }
+
+  /* When the left drawer is open, use the full drawer push (takes precedence) */
+  .lssDashboard:has(.drawerOpen) .mainContent {
+    margin-left: 320px !important; /* matches .drawer width */
+  }
+
+  /* Hide the skinny rail while the drawer is open (avoids stacking) */
+  .lssDashboard:has(.drawerOpen) .railTab {
+    opacity: 0; pointer-events: none;
+  }
+}
+
+/* Rail tab is anchored to left edge (left: 0) - no override needed */
+
+/* --- B) Remove the extra “legacy” tab/chevron you circled (safe kills) --- */
+/* These catch common toggle variants used earlier; harmless if absent. */
+.sidebarToggleDesktop,
+.appSidebarToggle,
+.header .app-rail-toggle,
+.header .heroBackBtn,
+.header :is(button, a)[data-role="sidebar-toggle"] {
+  display: none !important;
+}
+
+/* --- C) MOBILE: only show hammer; hide rail tab and prevent drawer/list from peeking --- */
+@media (max-width: 768px) {
+  /* Hide the skinny vertical rail on phones entirely */
+  .railTab { display: none !important; }
+
+  /* Drawer stays off-canvas and fully hidden unless opened */
+  .drawer {
+    left: 0;                      /* anchor to edge */
+    transform: translateX(-100%); /* fully off-screen */
+    visibility: hidden;           /* no sliver/peeking */
+  }
+  .drawerOpen {
+    transform: translateX(0);
+    visibility: visible;
+  }
+
+  /* If any tool list or panel is positioned at the left edge, keep it hidden when closed */
+  .drawer:not(.drawerOpen) .toolSections,
+  .drawer:not(.drawerOpen) [data-region="tools-list"] {
+    display: none !important;
+  }
+
+  /* Ensure only the hammer/hamburger is visible on mobile */
+  .sidebarToggleMobile,
+  .toolsHammer,
+  [data-role="tools-hamburger"] {
+    display: inline-flex !important;
+  }
+  /* Hide any desktop toggles on mobile */
+  .sidebarToggleDesktop,
+  [data-role="sidebar-toggle-desktop"] {
+    display: none !important;
+  }
+}
+
+/* --- D) Drawer styling consistency (light theme) --- */
+.drawer .accordionSection { border-color: #e5e7eb; }
+.drawer .accordionHeader { background: #f9fafb; border-bottom: 1px solid #e5e7eb; }
+.drawer .accordionHeader:hover { background: #f3f4f6; }
+
+/* === MOBILE HAMBURGER (visible on phones only) =========================== */
+.toolsHamburger {
+  position: fixed;
+  left: 12px;
+  top: 12px;
+  z-index: 1400;
+  width: 42px;
+  height: 42px;
+  display: none;               /* default hidden; shown on phones below */
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 0;
+}
+
+/* 3-line icon */
+.toolsHamburger .hamburger-line {
+  width: 22px;
+  height: 2px;
+  border-radius: 2px;
+  background: #fff;            /* default: WHITE LINES */
+  display: block;
+  transition: transform .15s ease, opacity .15s ease;
+}
+.toolsHamburger .hamburger-line + .hamburger-line { margin-top: 5px; }
+
+/* Inverse theme: WHITE BUTTON with NAVY lines */
+.toolsHamburger.inverse { background: #fff; border-color: #e2e8f0; }
+.toolsHamburger.inverse .hamburger-line { background: var(--lss-primary, #161f3b); }
+
+/* Only show on mobile */
+@media (max-width: 768px) {
+  .toolsHamburger { display: inline-flex !important; }
+}
+
+/* Little pressed feedback */
+.toolsHamburger:active { transform: translateY(1px); }

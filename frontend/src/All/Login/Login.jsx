@@ -1,8 +1,8 @@
-// src/All/Login/Login.jsx
+// filepath: src/All/Login/Login.jsx
 import React, { useState } from 'react';
-import { Link, useNavigate, Navigate } from 'react-router-dom';
-// --- CORRECTED IMPORT PATH ---
+import { Link, useNavigate, Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../shared/auth/AuthContext';
+import '@fortawesome/fontawesome-free/css/all.min.css'; // ensure FA is available
 import './Login.css';
 
 export default function Login() {
@@ -12,15 +12,15 @@ export default function Login() {
   const [errorMessage, setErrorMessage] = useState('');
   const { login, user, loading }        = useAuth();
   const navigate                        = useNavigate();
+  const loc                             = useLocation();
 
-  // If already logged in, redirect to Profile
-  if (user) {
-    // --- CORRECTED REDIRECT PATH ---
-    // The main Profile is now in the Market domain
-    return <Navigate to="/profile" replace />;
-  }
+  // Respect ?next= for post-login redirect
+  const params = new URLSearchParams(loc.search);
+  const next = params.get('next') || '/pages/home';
 
-  const handleSubmit = async e => {
+  if (user) return <Navigate to={next} replace />;
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setErrorMessage('');
 
@@ -30,22 +30,18 @@ export default function Login() {
     }
 
     const result = await login(email, password);
-    
     if (result.success) {
-      // Remember me functionality (optional - you can implement this in AuthContext if needed)
-      if (remember) {
-        localStorage.setItem('rememberMe', 'true');
-      }
-      // --- CORRECTED REDIRECT PATH ---
-      navigate('/profile');
+      if (remember) localStorage.setItem('rememberMe', 'true');
+      navigate(next, { replace: true });
     } else {
-      setErrorMessage(result.error);
+      setErrorMessage(result.error || 'Login failed');
     }
   };
 
   return (
     <div className="login-page-wrapper">
       {errorMessage && <div className="login-error">{errorMessage}</div>}
+
       <div className="login-container">
         <div className="heading">
           <h2>Login</h2>
@@ -62,8 +58,9 @@ export default function Login() {
               required
               placeholder="you@example.com"
               value={email}
-              onChange={e => setEmail(e.target.value)}
+              onChange={(e) => setEmail(e.target.value)}
               disabled={loading}
+              autoComplete="username"
             />
           </div>
 
@@ -76,8 +73,9 @@ export default function Login() {
               required
               placeholder="Enter your password"
               value={password}
-              onChange={e => setPassword(e.target.value)}
+              onChange={(e) => setPassword(e.target.value)}
               disabled={loading}
+              autoComplete="current-password"
             />
           </div>
 
@@ -87,7 +85,7 @@ export default function Login() {
                 type="checkbox"
                 name="remember"
                 checked={remember}
-                onChange={e => setRemember(e.target.checked)}
+                onChange={(e) => setRemember(e.target.checked)}
                 disabled={loading}
               />{' '}
               Remember me
@@ -100,19 +98,11 @@ export default function Login() {
           </button>
         </form>
 
-
         <p className="signup-link">
-          Don't have an account?{' '}
-          <Link to="/sign-up">Sign Up</Link>
+          Don't have an account? <Link to="/sign-up">Sign Up</Link>
         </p>
       </div>
 
-      <div className="owl-container">
-        <img
-          src="https://sekki.io/wp-content/uploads/2025/02/Big-Owl.svg"
-          alt="Owl illustration"
-        />
-      </div>
     </div>
-   );
+  );
 }

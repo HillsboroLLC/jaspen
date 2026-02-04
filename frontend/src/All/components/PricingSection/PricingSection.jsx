@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import './PricingSection.css';
 
 export default function PricingSection() {
-  const [tier, setTier] = useState('small');
   const [showModal, setShowModal] = useState(false);
   const [waitlistData, setWaitlistData] = useState({
     fullName: '',
@@ -11,38 +10,6 @@ export default function PricingSection() {
     company: ''
   });
 
-  const small = [
-    {
-      name: 'Essential',
-      amount: '39.99',
-      features: [
-        '1 user seat',
-        '3 analysis credits/month',
-        'All analysis tools',
-        'Buy additional credits',
-        'No additional seats',
-        'No custom programming',
-      ],
-      buttonText: 'Start Essential',
-      buttonClass: 'btn-secondary',
-      action: 'signup'
-    },
-    {
-      name: 'Growth',
-      amount: '99.99',
-      features: [
-        '1 user seat',
-        '10 analysis credits/month',
-        'All analysis tools',
-        'Buy additional credits',
-        'Add more seats',
-        'No custom programming',
-      ],
-      buttonText: 'Start Growth',
-      buttonClass: 'btn-secondary',
-      action: 'signup'
-    },
-  ];
 
   const enterprise = [
     {
@@ -95,7 +62,7 @@ export default function PricingSection() {
     },
   ];
 
-  const data = tier === 'small' ? small : enterprise;
+  const data = enterprise;
 
   const openModal = () => setShowModal(true);
   const closeModal = () => setShowModal(false);
@@ -114,46 +81,22 @@ export default function PricingSection() {
   };
 
   return (
-    <section className={`pricing ${tier === 'enterprise' ? 'enterprise-view' : ''}`} id="pricing">
+<section className="pricing enterprise-view" id="pricing">
       <div className="container">
         <h2 className="section-title">Choose Your Business Analysis Solution</h2>
 
-        <div className="business-size-selector">
-          <button
-            className={`size-btn ${tier === 'small' ? 'active' : ''}`}
-            onClick={() => setTier('small')}
-          >
-            Individual / Small Team
-          </button>
-          <button
-            className={`size-btn ${tier === 'enterprise' ? 'active' : ''}`}
-            onClick={() => setTier('enterprise')}
-          >
-            Enterprise Organization
-          </button>
-        </div>
 
-        {tier === 'enterprise' && (
-          <div className="savings-highlight">
-            Replace $500K–$2M consulting projects with continuous analysis + custom execution tools
-          </div>
-        )}
+<div className="savings-highlight">
+  Replace $500K–$2M consulting projects with continuous analysis + custom execution tools
+</div>
 
         <div className="pricing-grid">
           {data.map((p, i) => (
             <div className="pricing-tier" key={i}>
-              {tier === 'enterprise' && <div className="roi-badge">{p.savings}</div>}
+<div className="roi-badge">{p.savings}</div>
 
               <h3 className="tier-name">{p.name}</h3>
 
-              {/* trial note for Essential */}
-              {p.name === 'Essential' && (
-                <small className="trial-note">7-day free trial</small>
-              )}
-              {/* seat note for Growth */}
-              {p.name === 'Growth' && (
-                <small className="seat-note">Add up to 5 seats</small>
-              )}
 
               <div className="tier-price">
                 <span className="tier-currency">$</span>

@@ -1,0 +1,389 @@
+/* filepath: src/Ops/Activities/Activities.css */
+
+* {
+  box-sizing: border-box;
+}
+
+.analyses-page {
+  padding: 28px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.analyses-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.analyses-header h1 {
+  margin: 0;
+  font-size: 34px;
+  line-height: 1.1;
+  color: #161f3b;
+}
+
+.analyses-header p {
+  margin: 6px 0 0 0;
+  opacity: 0.75;
+  font-size: 14px;
+}
+
+.analyses-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+/* View Toggle */
+.view-toggle {
+  display: flex;
+  gap: 4px;
+  background: #f1f5f9;
+  padding: 4px;
+  border-radius: 10px;
+}
+
+.view-toggle-btn {
+  padding: 8px 16px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  color: #64748b;
+  transition: all 0.2s;
+}
+
+.view-toggle-btn.active {
+  background: white;
+  color: #161f3b;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+/* Filters */
+.analyses-filters {
+  margin: 14px 0 18px 0;
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.filter-group {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.filter-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.filter-select {
+  padding: 8px 12px;
+  border: 1px solid rgba(0,0,0,0.12);
+  border-radius: 8px;
+  outline: none;
+  font-size: 14px;
+  background: white;
+  cursor: pointer;
+}
+
+.search-input {
+  flex: 1;
+  min-width: 250px;
+  padding: 10px 14px;
+  border: 1px solid rgba(0,0,0,0.12);
+  border-radius: 10px;
+  outline: none;
+  font-size: 14px;
+}
+
+/* Buttons */
+.btn {
+  border: 1px solid rgba(22, 31, 59, 0.2);
+  background: #fff;
+  padding: 10px 16px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 14px;
+  color: #161f3b;
+  transition: all 0.2s;
+}
+
+.btn:hover {
+  background: #eff9fc;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.btn.primary {
+  background: #161f3b;
+  color: white;
+  border-color: #161f3b;
+}
+
+.btn.primary:hover {
+  background: #0f172a;
+}
+
+/* Card Container */
+.analyses-card {
+  background: #fff;
+  border-radius: 14px;
+  border: 1px solid rgba(0,0,0,0.08);
+  overflow: hidden;
+}
+
+/* Table */
+.analyses-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.analyses-table thead {
+  background: #eff9fc;
+  border-bottom: 2px solid #161f3b;
+}
+
+.analyses-table th {
+  padding: 14px 16px;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 700;
+  color: #161f3b;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.analyses-table th:hover {
+  background: #e0f2f7;
+}
+
+.analyses-table th .sort-icon {
+  margin-left: 4px;
+  opacity: 0.5;
+  font-size: 10px;
+}
+
+.analyses-table tbody tr {
+  border-bottom: 1px solid rgba(0,0,0,0.06);
+  transition: background 0.15s;
+}
+
+.analyses-table tbody tr:hover {
+  background: #f8fafc;
+}
+
+.analyses-table td {
+  padding: 16px;
+  font-size: 14px;
+}
+
+/* Project Column */
+.project-name {
+  font-weight: 700;
+  color: #161f3b;
+  margin-bottom: 4px;
+}
+
+.project-meta {
+  font-size: 12px;
+  color: #64748b;
+}
+
+/* Score Column */
+.score-cell {
+  text-align: center;
+}
+
+.score-badge {
+  display: inline-block;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  background: #161f3b;
+  color: white;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 50px;
+  text-align: center;
+}
+
+.score-label {
+  font-size: 10px;
+  color: #64748b;
+  margin-top: 4px;
+  text-transform: uppercase;
+}
+
+/* Metric Columns */
+.metric-value {
+  font-weight: 700;
+  color: #161f3b;
+  font-size: 15px;
+}
+
+.metric-label {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-top: 2px;
+}
+
+/* Status Pills */
+.status-pill {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid;
+}
+
+.status-completed {
+  background: rgba(0, 200, 120, 0.12);
+  border-color: rgba(0, 200, 120, 0.22);
+  color: #065f46;
+}
+
+.status-in-progress,
+.status-in_progress {
+  background: rgba(255, 200, 0, 0.14);
+  border-color: rgba(255, 200, 0, 0.25);
+  color: #92400e;
+}
+
+.status-draft {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.12);
+  color: #4b5563;
+}
+
+/* Action Button */
+.action-btn {
+  padding: 6px 12px;
+  border: 1px solid rgba(22, 31, 59, 0.2);
+  background: white;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  color: #161f3b;
+  transition: all 0.2s;
+}
+
+.action-btn:hover {
+  background: #eff9fc;
+}
+
+.action-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Empty State */
+.empty-state {
+  padding: 60px 20px;
+  text-align: center;
+  color: #94a3b8;
+}
+
+.empty-state-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+  opacity: 0.3;
+}
+
+.empty-state strong {
+  display: block;
+  font-size: 16px;
+  color: #161f3b;
+  margin-bottom: 8px;
+}
+
+.empty-state p {
+  font-size: 14px;
+  margin: 0;
+}
+
+/* Error State */
+.analyses-error {
+  margin: 8px 0 14px 0;
+  padding: 16px;
+  border-radius: 10px;
+  background: rgba(255, 0, 0, 0.08);
+  border: 1px solid rgba(255, 0, 0, 0.18);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* Loading State */
+.analyses-loading {
+  padding: 40px;
+  text-align: center;
+  color: #94a3b8;
+  font-size: 14px;
+}
+
+/* Responsive */
+@media (max-width: 1200px) {
+  .analyses-table th:nth-child(4),
+  .analyses-table td:nth-child(4),
+  .analyses-table th:nth-child(5),
+  .analyses-table td:nth-child(5) {
+    display: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .analyses-page {
+    padding: 16px;
+  }
+
+  .analyses-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .analyses-filters {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .filter-group {
+    width: 100%;
+  }
+
+  .search-input {
+    width: 100%;
+  }
+
+  .analyses-table {
+    font-size: 12px;
+  }
+
+  .analyses-table th,
+  .analyses-table td {
+    padding: 10px 8px;
+  }
+
+  .score-badge {
+    width: 40px;
+    height: 40px;
+    font-size: 14px;
+    line-height: 40px;
+  }
+}

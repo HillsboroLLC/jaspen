@@ -1,832 +1,1790 @@
-import React, { useState, useEffect } from 'react';
-import { useAdminSettings } from '../context/AdminContext';
-import ResourcePageWrapper from '../../All/components/ResourcePageWrapper';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import {
+  faArrowLeft, faListCheck, faChartGantt, faChartLine, faDollarSign,
+  faBullseye, faUsers, faTriangleExclamation, faFileLines, faCheckCircle,
+  faClock, faFolder, faBookmark, faWandMagicSparkles, faTimes, faPaperPlane,
+  faList, faTableColumns, faPlus, faTrash, faGripVertical, faMicrophone,
+  faCog, faEye, faEyeSlash, faSearchPlus, faSearchMinus, faCalendarPlus,
+  faChevronDown, faChevronRight, faEnvelope, faHome
+} from '@fortawesome/free-solid-svg-icons';
 import styles from './ProjectPlanning.module.css';
+import { useChatCommands, parseUIActions, ChatActionTypes } from 'All/shared/hooks/useChatCommands';
+import { useToast, ToastContainer } from 'All/shared/components/Toast';
+import { STARTER_PLAN } from './starterData';
+
+const API_BASE = process.env.REACT_APP_API_BASE || '';
 
 const ProjectPlanning = () => {
-  const { adminSettings } = useAdminSettings();
+  const navigate = useNavigate();
+  const { projectId } = useParams();
+  const location = useLocation();
+  
+  // PROMPT ALIGNMENT: Extract scorecard data from navigation state
+  const scorecardId = location.state?.scorecardId || null;
+  const scorecardData = location.state?.scorecardData || null;
 
-  // Project Planning structure
-  const [projectData, setProjectData] = useState({
-    // Basic Information
-    projectName: '',
-    projectManager: '',
-    dateCreated: new Date().toISOString().split('T')[0],
-    lastUpdated: new Date().toISOString().split('T')[0],
-    version: '1.0',
-    
-    // Project Overview
-    projectOverview: {
-      purpose: '',
-      objectives: '',
-      scope: '',
-      deliverables: '',
-      constraints: '',
-      assumptions: '',
-      successCriteria: ''
-    },
-    
-    // Stakeholders
-    stakeholders: [],
-    
-    // Work Breakdown Structure
-    workPackages: [],
-    
-    // Timeline & Milestones
-    timeline: {
-      startDate: '',
-      endDate: '',
-      duration: '',
-      milestones: []
-    },
-    
-    // Resources
-    resources: {
-      teamMembers: [],
-      budget: {
-        totalBudget: '',
-        categories: []
-      },
-      equipment: [],
-      facilities: []
-    },
-    
-    // Risk Management
-    riskManagement: {
-      risks: [],
-      mitigation: [],
-      contingency: ''
-    },
-    
-    // Communication Plan
-    communicationPlan: {
-      meetings: [],
-      reports: [],
-      stakeholderComm: []
-    },
-    
-    // Quality Management
-    qualityManagement: {
-      standards: '',
-      reviews: [],
-      metrics: []
-    },
-    
-    // Change Management
-    changeManagement: {
-      process: '',
-      approvals: [],
-      tracking: []
-    }
+  // ==================== STATE ====================
+  const [plan, setPlan] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [autoSaving, setAutoSaving] = useState(false);
+  const [lastSaved, setLastSaved] = useState(null);
+  const [validating, setValidating] = useState(false);
+
+  // UI State
+  const [pmMenuOpen, setPmMenuOpen] = useState(false);
+  const [aiHelperOpen, setAiHelperOpen] = useState(false);
+  const [activeNav, setActiveNav] = useState('tasks');
+  const [currentView, setCurrentView] = useState('list');
+  const [showSettings, setShowSettings] = useState(false);
+// Validation Modal state
+const [showValidationModal, setShowValidationModal] = useState(false);
+const [styleChoice, setStyleChoice] = useState('agile');  // ui selection
+const [styleSource, setStyleSource] = useState(null);     // 'user' | 'heuristic' | null
+const [styleReason, setStyleReason] = useState(null);     // string reason(s)
+const [styleDuration, setStyleDuration] = useState(null); // numeric months
+const [regenBusy, setRegenBusy] = useState(false);
+
+  // Settings State
+  const [visibleColumns, setVisibleColumns] = useState({
+    task: true,
+    assignee: true,
+    priority: true,
+    status: true,
+    dueDate: true,
+    notes: true,
+    actions: true
   });
 
-  const [completionPercentage, setCompletionPercentage] = useState(0);
+  // Gantt State
+  const [ganttZoom, setGanttZoom] = useState(1); // 1 = normal, 2 = zoomed in, 0.5 = zoomed out
 
-  // Calculate completion percentage
+  // AI State
+  const [aiMessages, setAiMessages] = useState([
+    { role: 'assistant', content: 'I\'ve created an initial project plan with starter data. You can manually edit any field by clicking on it, or ask me to make changes. Try "Add a high priority task to Initialization phase" or "Apply the Software Launch template".' }
+  ]);
+  const [aiInput, setAiInput] = useState('');
+  const [aiProcessing, setAiProcessing] = useState(false);
+  // Toast notifications for chat actions
+  const { toasts, showToast, dismissToast } = useToast();
+
+  const [isRecording, setIsRecording] = useState(false);
+
+  // Template State
+  const [templates, setTemplates] = useState([]);
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [showSaveTemplateModal, setShowSaveTemplateModal] = useState(false);
+  const [templateName, setTemplateName] = useState('');
+  const [templateDescription, setTemplateDescription] = useState('');
+
+  // Drag State
+  const [draggedTask, setDraggedTask] = useState(null);
+  const [draggedPhase, setDraggedPhase] = useState(null);
+
+  // Inline Editing State
+  const [editingCell, setEditingCell] = useState(null); // { type, id, field }
+
+  // Project Meta
+  const [projectName, setProjectName] = useState('SEKKI - Market IQ');
+  const projectDate = 'Dec 9, 2025';
+
+  // Refs
+  const saveTimeoutRef = useRef(null);
+  const recognitionRef = useRef(null);
+
+
+  // PROMPT ALIGNMENT: Scorecard context for this project
+  const [scorecardInfo, setScorecardInfo] = useState(null);
+  
   useEffect(() => {
-    const calculateCompletion = () => {
-      let totalFields = 0;
-      let completedFields = 0;
+    if (scorecardId && scorecardData) {
+      setScorecardInfo({
+        id: scorecardId,
+        label: scorecardData.label || 'Scorecard',
+        source: scorecardData.source || 'baseline',
+        timestamp: scorecardData.timestamp
+      });
+      console.log('[ProjectPlanning] Loaded with scorecard:', scorecardId);
+    }
+  }, [scorecardId, scorecardData]);
 
-      // Basic info (3 fields)
-      totalFields += 3;
-      if (projectData.projectName) completedFields++;
-      if (projectData.projectManager) completedFields++;
-      if (projectData.projectOverview.purpose) completedFields++;
 
-      // Project overview (3 fields)
-      totalFields += 3;
-      if (projectData.projectOverview.objectives) completedFields++;
-      if (projectData.projectOverview.scope) completedFields++;
-      if (projectData.projectOverview.deliverables) completedFields++;
-
-      // Stakeholders (1 field)
-      totalFields += 1;
-      if (projectData.stakeholders.length > 0) completedFields++;
-
-      // Work packages (1 field)
-      totalFields += 1;
-      if (projectData.workPackages.length > 0) completedFields++;
-
-      // Timeline (1 field)
-      totalFields += 1;
-      if (projectData.timeline.startDate && projectData.timeline.endDate) completedFields++;
-
-      // Resources (1 field)
-      totalFields += 1;
-      if (projectData.resources.teamMembers.length > 0) completedFields++;
-
-      const percentage = totalFields > 0 ? Math.round((completedFields / totalFields) * 100) : 0;
-      setCompletionPercentage(percentage);
-    };
-
-    calculateCompletion();
-  }, [projectData]);
-
-  // Handle basic info changes
-  const handleBasicInfoChange = (field, value) => {
-    setProjectData(prev => ({
-      ...prev,
-      [field]: value,
-      lastUpdated: new Date().toISOString().split('T')[0]
-    }));
-  };
-
-  // Handle project overview changes
-  const handleProjectOverviewChange = (field, value) => {
-    setProjectData(prev => ({
-      ...prev,
-      projectOverview: {
-        ...prev.projectOverview,
-        [field]: value
-      },
-      lastUpdated: new Date().toISOString().split('T')[0]
-    }));
-  };
-
-  // Handle timeline changes
-  const handleTimelineChange = (field, value) => {
-    setProjectData(prev => ({
-      ...prev,
-      timeline: {
-        ...prev.timeline,
-        [field]: value
-      },
-      lastUpdated: new Date().toISOString().split('T')[0]
-    }));
-  };
-
-  // Add stakeholder
-  const addStakeholder = () => {
-    const newStakeholder = {
-      id: Date.now(),
-      name: '',
-      role: '',
-      organization: '',
-      influence: 'medium', // 'low', 'medium', 'high'
-      interest: 'medium', // 'low', 'medium', 'high'
-      engagement: '', // 'manage closely', 'keep satisfied', 'keep informed', 'monitor'
-      communication: '',
-      expectations: ''
-    };
+  // === Chat Command Handlers (Lovable-style) ===
+  const chatCommandHandlers = {
+    [ChatActionTypes.VIEW_SET]: (payload) => {
+      const { view } = payload;
+      if (['list', 'gantt', 'kanban'].includes(view)) {
+        setCurrentView(view);
+        showToast(`Switched to ${view} view`, 'success');
+      } else {
+        showToast('Invalid view type', 'error');
+      }
+    },
     
-    setProjectData(prev => ({
-      ...prev,
-      stakeholders: [...prev.stakeholders, newStakeholder],
-      lastUpdated: new Date().toISOString().split('T')[0]
-    }));
-  };
-
-  // Remove stakeholder
-  const removeStakeholder = (stakeholderId) => {
-    setProjectData(prev => ({
-      ...prev,
-      stakeholders: prev.stakeholders.filter(stakeholder => stakeholder.id !== stakeholderId),
-      lastUpdated: new Date().toISOString().split('T')[0]
-    }));
-  };
-
-  // Handle stakeholder changes
-  const handleStakeholderChange = (stakeholderId, field, value) => {
-    setProjectData(prev => ({
-      ...prev,
-      stakeholders: prev.stakeholders.map(stakeholder =>
-        stakeholder.id === stakeholderId ? { ...stakeholder, [field]: value } : stakeholder
-      ),
-      lastUpdated: new Date().toISOString().split('T')[0]
-    }));
-  };
-
-  // Add work package
-  const addWorkPackage = () => {
-    const newWorkPackage = {
-      id: Date.now(),
-      wbsCode: '',
-      name: '',
-      description: '',
-      deliverables: '',
-      responsible: '',
-      startDate: '',
-      endDate: '',
-      duration: '',
-      effort: '',
-      dependencies: '',
-      resources: '',
-      budget: ''
-    };
+    [ChatActionTypes.WBS_ADD_TASK]: (payload) => {
+      const { parentTaskId, title, duration, start, end, assignee } = payload;
+      
+      if (!title) {
+        showToast('Task title is required', 'error');
+        return;
+      }
+      
+      // Find parent phase or use first phase
+      let targetPhaseIndex = 0;
+      if (parentTaskId && plan?.phases) {
+        targetPhaseIndex = plan.phases.findIndex(p => 
+          p.tasks?.some(t => t.id === parentTaskId)
+        );
+        if (targetPhaseIndex === -1) targetPhaseIndex = 0;
+      }
+      
+      const newTask = {
+        id: `task_${Date.now()}`,
+        name: title,
+        assignee: assignee || 'Unassigned',
+        priority: 'Medium',
+        status: 'Not Started',
+        dueDate: end || start || '',
+        duration: duration || '',
+        notes: ''
+      };
+      
+      const updatedPlan = { ...plan };
+      if (!updatedPlan.phases[targetPhaseIndex].tasks) {
+        updatedPlan.phases[targetPhaseIndex].tasks = [];
+      }
+      updatedPlan.phases[targetPhaseIndex].tasks.push(newTask);
+      setPlan(updatedPlan);
+      
+      showToast(`Added task: ${title}`, 'success');
+    },
     
-    setProjectData(prev => ({
-      ...prev,
-      workPackages: [...prev.workPackages, newWorkPackage],
-      lastUpdated: new Date().toISOString().split('T')[0]
-    }));
-  };
-
-  // Remove work package
-  const removeWorkPackage = (packageId) => {
-    setProjectData(prev => ({
-      ...prev,
-      workPackages: prev.workPackages.filter(pkg => pkg.id !== packageId),
-      lastUpdated: new Date().toISOString().split('T')[0]
-    }));
-  };
-
-  // Handle work package changes
-  const handleWorkPackageChange = (packageId, field, value) => {
-    setProjectData(prev => ({
-      ...prev,
-      workPackages: prev.workPackages.map(pkg =>
-        pkg.id === packageId ? { ...pkg, [field]: value } : pkg
-      ),
-      lastUpdated: new Date().toISOString().split('T')[0]
-    }));
-  };
-
-  // Add milestone
-  const addMilestone = () => {
-    const newMilestone = {
-      id: Date.now(),
-      name: '',
-      description: '',
-      targetDate: '',
-      criteria: '',
-      responsible: '',
-      status: 'planned' // 'planned', 'in-progress', 'completed', 'delayed'
-    };
+    [ChatActionTypes.WBS_UPDATE_TASK]: (payload) => {
+      const { taskId, patch } = payload;
+      
+      if (!taskId || !patch) {
+        showToast('Task ID and updates are required', 'error');
+        return;
+      }
+      
+      const updatedPlan = { ...plan };
+      let taskFound = false;
+      
+      updatedPlan.phases?.forEach(phase => {
+        phase.tasks?.forEach(task => {
+          if (task.id === taskId) {
+            Object.assign(task, patch);
+            taskFound = true;
+          }
+        });
+      });
+      
+      if (taskFound) {
+        setPlan(updatedPlan);
+        showToast('Task updated', 'success');
+      } else {
+        showToast('Task not found', 'error');
+      }
+    },
     
-    setProjectData(prev => ({
-      ...prev,
-      timeline: {
-        ...prev.timeline,
-        milestones: [...prev.timeline.milestones, newMilestone]
-      },
-      lastUpdated: new Date().toISOString().split('T')[0]
-    }));
+    [ChatActionTypes.WBS_ADD_DEPENDENCY]: (payload) => {
+      const { fromTaskId, toTaskId, type } = payload;
+      
+      // This would require a dependencies data structure
+      // For now, just acknowledge
+      showToast(`Dependency added: ${type || 'FS'}`, 'info');
+      console.log('[ProjectPlanning] Add dependency:', payload);
+    },
+    
+    [ChatActionTypes.EXPORT]: (payload) => {
+      const { format } = payload;
+      
+      if (format === 'csv') {
+        // Call existing export if available
+        showToast('CSV export not yet implemented', 'info');
+      } else if (format === 'msproject') {
+        showToast('MS Project export not yet implemented', 'info');
+      } else {
+        showToast('Unknown export format', 'error');
+      }
+    },
+  };
+  
+  const { dispatchChatActions } = useChatCommands(chatCommandHandlers);
+
+    // ==================== EFFECTS ====================
+  useEffect(() => {
+    loadPlan();
+    loadTemplates();
+  }, [projectId]);
+
+  // Auto-save debounce
+  useEffect(() => {
+    if (!plan) return;
+    
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+
+    saveTimeoutRef.current = setTimeout(() => {
+      savePlan();
+    }, 1000);
+
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+    };
+  }, [plan]);
+
+  // ==================== DATA LOADING ====================
+  const deepClone = (obj) => JSON.parse(JSON.stringify(obj));
+
+  const loadPlan = async () => {
+    setLoading(true);
+    try {
+      if (!projectId) {
+        setPlan(deepClone(STARTER_PLAN));
+        setLoading(false);
+        return;
+      }
+
+      const res = await fetch(`${API_BASE}/api/projects/${projectId}/plan`, {
+        credentials: 'include'
+      });
+
+      if (!res.ok) {
+        if (res.status === 404) {
+          setPlan(deepClone(STARTER_PLAN));
+          setLoading(false);
+          return;
+        }
+        throw new Error('Failed to load plan');
+      }
+
+      const data = await res.json();
+      const mergedPlan = {
+        ...deepClone(STARTER_PLAN),
+        ...data,
+        wbs: {
+          ...STARTER_PLAN.wbs,
+          ...(data.wbs || {}),
+          items: data.wbs?.items || STARTER_PLAN.wbs.items
+        },
+        timeline: {
+          ...STARTER_PLAN.timeline,
+          ...(data.timeline || {})
+        },
+        objectives: data.objectives || STARTER_PLAN.objectives,
+        stakeholders: data.stakeholders || STARTER_PLAN.stakeholders,
+        risks: data.risks || STARTER_PLAN.risks,
+        resources: {
+          ...STARTER_PLAN.resources,
+          ...(data.resources || {})
+        },
+        documents: data.documents || STARTER_PLAN.documents
+      };
+
+      setPlan(mergedPlan);
+      setLastSaved(new Date());
+    } catch (err) {
+      console.error('Error loading plan:', err);
+      setPlan(deepClone(STARTER_PLAN));
+    } finally {
+      setLoading(false);
+    }
   };
 
-  // Remove milestone
-  const removeMilestone = (milestoneId) => {
-    setProjectData(prev => ({
-      ...prev,
-      timeline: {
-        ...prev.timeline,
-        milestones: prev.timeline.milestones.filter(milestone => milestone.id !== milestoneId)
-      },
-      lastUpdated: new Date().toISOString().split('T')[0]
-    }));
+  const loadTemplates = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/templates`, {
+        credentials: 'include'
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTemplates(data);
+      }
+    } catch (err) {
+      console.error('Error loading templates:', err);
+    }
   };
 
-  // Handle milestone changes
-  const handleMilestoneChange = (milestoneId, field, value) => {
-    setProjectData(prev => ({
+  const savePlan = async () => {
+    if (!projectId || !plan) return;
+
+    setAutoSaving(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/projects/${projectId}/plan`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(plan)
+      });
+
+      if (res.ok) {
+        setLastSaved(new Date());
+      }
+    } catch (err) {
+      console.error('Auto-save error:', err);
+    } finally {
+      setAutoSaving(false);
+    }
+  };
+
+  const validatePlan = async () => {
+    setValidating(true);
+    try {
+      if (projectId) {
+        const res = await fetch(`${API_BASE}/api/projects/${projectId}/plan/validate`, {
+          method: 'POST',
+          credentials: 'include'
+        });
+        if (res.ok) {
+          window.alert('Project plan validated successfully!');
+          navigate('/market-iq');
+        }
+      } else {
+        window.alert('Project plan validated!');
+        navigate('/market-iq');
+      }
+    } catch (err) {
+      console.error('Validation error:', err);
+      window.alert('Error validating plan');
+    } finally {
+      setValidating(false);
+    }
+  };
+const regenerateWithStyle = async (forced) => {
+  if (!projectId || !forced) return false;
+
+  setRegenBusy(true);
+  try {
+    // NEW endpoint expectation: POST /api/projects/:id/plan/regenerate
+    // body: { force_style: 'agile' | 'waterfall' | 'hybrid' }
+    const res = await fetch(`${API_BASE}/api/projects/${projectId}/plan/regenerate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ force_style: forced })
+    });
+
+    if (!res.ok) {
+      // graceful fallback: directly PATCH local plan style so user isn’t blocked
+      setPlan(prev => {
+        const next = deepClone(prev);
+        if (!next.wbs) next.wbs = { items: [] };
+        next.wbs.style = forced;
+        // make the reason clear in UI if backend didn't return one
+        next.wbs.meta = {
+          ...(next.wbs.meta || {}),
+          style_source: 'user',
+          style_reason: `user override: ${forced}`
+        };
+        return next;
+      });
+      return false;
+    }
+const confirmValidation = async () => {
+  const currentStyle = deriveStyleFromPlan(plan);
+  const wantStyle = styleChoice;
+
+  // If user changed style, try to regenerate first
+  if (currentStyle !== wantStyle) {
+    const ok = await regenerateWithStyle(wantStyle);
+    if (!ok) {
+      // We still proceed to validation so user isn’t blocked
+      // but they will see the locally updated style even if backend skipped regeneration
+    }
+  }
+
+  // Now run your existing validation
+  await validatePlan();
+  setShowValidationModal(false);
+};
+
+const closeValidationModal = () => {
+  setShowValidationModal(false);
+};
+
+    const data = await res.json();
+    // Expect the backend to return the updated plan
+    if (data?.plan) {
+      setPlan(data.plan);
+      const s = deriveStyleFromPlan(data.plan);
+      const meta = deriveStyleMeta(data.plan);
+      setStyleChoice(s);
+      setStyleSource(meta.style_source);
+      setStyleReason(meta.style_reason);
+      setStyleDuration(meta.duration_months);
+    }
+    return true;
+  } catch (err) {
+    console.error('[regenerateWithStyle] failed', err);
+    // fallback already handled above if res !ok
+    return false;
+  } finally {
+    setRegenBusy(false);
+  }
+};
+// ---- Validation modal handlers (MUST be inside ProjectPlanning component) ----
+const closeValidationModal = () => {
+  setShowValidationModal(false);
+};
+
+const confirmValidation = async () => {
+  // Requires: validatePlan, regenerateWithStyle, deriveStyleFromPlan, plan, styleChoice
+  const currentStyle = deriveStyleFromPlan(plan);
+  const wantStyle = styleChoice;
+
+  // If user changed the style, regenerate first (best-effort)
+  if (currentStyle !== wantStyle) {
+    try {
+      await regenerateWithStyle(wantStyle);
+    } catch (e) {
+      console.debug('[confirmValidation] regenerate skipped/failed, proceeding to validate');
+    }
+  }
+
+  // Then run your existing validation
+  await validatePlan();
+  setShowValidationModal(false);
+};
+
+  const cancelPlan = () => {
+    if (window.confirm('Are you sure you want to cancel? Unsaved changes will be lost.')) {
+      navigate('/market-iq');
+    }
+  };
+
+  // ==================== TEMPLATE FUNCTIONS ====================
+  const saveAsTemplate = async () => {
+    if (!templateName.trim()) {
+      window.alert('Please enter a template name');
+      return;
+    }
+
+    try {
+      const templateData = {
+        name: templateName,
+        description: templateDescription,
+        phases: plan.wbs.items.map(phase => ({
+          name: phase.name,
+          tasks: phase.children.map(task => ({
+            name: task.name,
+            lead_time_days: task.lead_time_days || 0
+          }))
+        }))
+      };
+
+      const res = await fetch(`${API_BASE}/api/templates`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(templateData)
+      });
+
+      if (res.ok) {
+        window.alert('Template saved successfully!');
+        setShowSaveTemplateModal(false);
+        setTemplateName('');
+        setTemplateDescription('');
+        loadTemplates();
+      }
+    } catch (err) {
+      console.error('Error saving template:', err);
+      window.alert('Error saving template');
+    }
+  };
+
+  const applyTemplate = async (templateId) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/projects/${projectId}/apply-template`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ template_id: templateId })
+      });
+
+      if (res.ok) {
+        window.alert('Template applied successfully!');
+        setShowTemplateModal(false);
+        loadPlan();
+      }
+    } catch (err) {
+      console.error('Error applying template:', err);
+      window.alert('Error applying template');
+    }
+  };
+
+  // ==================== AI ASSISTANT ====================
+  const sendAIMessage = async () => {
+    if (!aiInput.trim() || aiProcessing) return;
+
+    const userMessage = aiInput.trim();
+    setAiMessages(prev => [...prev, { role: 'user', content: userMessage }]);
+    setAiInput('');
+    setAiProcessing(true);
+
+    try {
+      const res = await fetch(`${API_BASE}/api/projects/${projectId}/ai-assist`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ message: userMessage, plan })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setAiMessages(prev => [...prev, { role: 'assistant', content: data.response }]);
+        if (data.updated_plan) {
+          setPlan(data.updated_plan);
+        }
+      } else {
+        setAiMessages(prev => [...prev, { 
+          role: 'assistant', 
+          content: 'I processed your request. The plan has been updated. (Backend integration pending)' 
+        }]);
+      }
+    } catch (err) {
+      console.error('AI error:', err);
+      setAiMessages(prev => [...prev, { 
+        role: 'assistant', 
+        content: 'I understand your request. Once the backend is connected, I\'ll be able to make those changes automatically.' 
+      }]);
+    } finally {
+      setAiProcessing(false);
+    }
+  };
+
+  // Voice-to-text
+  const startVoiceRecording = () => {
+    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+      window.alert('Speech recognition is not supported in this browser.');
+      return;
+    }
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = false;
+
+    recognition.onstart = () => {
+      setIsRecording(true);
+    };
+
+    recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript;
+      setAiInput(prev => prev + ' ' + transcript);
+    };
+
+    recognition.onerror = (event) => {
+      console.error('Speech recognition error:', event.error);
+      setIsRecording(false);
+    };
+
+    recognition.onend = () => {
+      setIsRecording(false);
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+  };
+
+  const stopVoiceRecording = () => {
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+    }
+    setIsRecording(false);
+  };
+
+  // ==================== SIDEBAR TOGGLES ====================
+  const togglePmMenu = () => {
+    setPmMenuOpen(!pmMenuOpen);
+    if (aiHelperOpen) setAiHelperOpen(false);
+  };
+
+  const toggleAI = () => {
+    setAiHelperOpen(!aiHelperOpen);
+    if (pmMenuOpen) setPmMenuOpen(false);
+  };
+
+  // ==================== UTILITY FUNCTIONS ====================
+  const fmtDate = (dateStr) => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  };
+
+  const fmtFullDate = (dateStr) => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+
+  const generateId = () => {
+    return 'id_' + Math.random().toString(36).substr(2, 9);
+  };
+function deriveStyleFromPlan(p) {
+  // Try multiple places plan might carry this — adjust if your backend uses different keys
+  const s = (p?.wbs?.style || p?.style || '').toString().toLowerCase();
+  return (s === 'agile' || s === 'waterfall' || s === 'hybrid') ? s : 'agile';
+}
+
+function deriveStyleMeta(p) {
+  // Backends often stash meta in plan or plan.wbs
+  const meta = p?.wbs?.meta || p?.meta || {};
+  return {
+    style_source: meta.style_source || null,
+    style_reason: meta.style_reason || null,
+    duration_months: p?.timeline?.duration_months ?? p?.duration_months ?? null,
+  };
+}
+
+// Called instead of validatePlan (opens the modal)
+function openValidationModal() {
+  if (!plan) return;
+  const s = deriveStyleFromPlan(plan);
+  const meta = deriveStyleMeta(plan);
+  setStyleChoice(s);
+  setStyleSource(meta.style_source);
+  setStyleReason(meta.style_reason);
+  setStyleDuration(meta.duration_months);
+  setShowValidationModal(true);
+}
+
+  // ==================== INLINE EDITING ====================
+  const startEdit = (type, id, field) => {
+    setEditingCell({ type, id, field });
+  };
+
+  const stopEdit = () => {
+    setEditingCell(null);
+  };
+
+  const updateCellValue = (type, id, field, value) => {
+    if (type === 'task') {
+      const [phaseId, taskId] = id.split('|');
+      updateTaskField(phaseId, taskId, { [field]: value });
+    } else if (type === 'phase') {
+      updatePhase(id, { [field]: value });
+    } else if (type === 'risk') {
+      updateRisk(id, { [field]: value });
+    } else if (type === 'objective') {
+      updateObjective(id, { [field]: value });
+    } else if (type === 'stakeholder') {
+      updateStakeholder(id, { [field]: value });
+    } else if (type === 'budget') {
+      updateBudgetItem(id, { [field]: value });
+    }
+    stopEdit();
+  };
+
+  // ==================== TASK CRUD ====================
+  const addTask = (phaseId) => {
+    const newTask = {
+      id: generateId(),
+      name: 'New Task',
+      assignee: 'Unassigned',
+      priority: '',
+      status: 'todo',
+      due_date: '',
+      notes: '',
+      lead_time_days: 0,
+      completed: false
+    };
+
+    setPlan(prev => ({
       ...prev,
-      timeline: {
-        ...prev.timeline,
-        milestones: prev.timeline.milestones.map(milestone =>
-          milestone.id === milestoneId ? { ...milestone, [field]: value } : milestone
+      wbs: {
+        ...prev.wbs,
+        items: prev.wbs.items.map(phase =>
+          phase.id === phaseId
+            ? { ...phase, children: [...phase.children, newTask] }
+            : phase
         )
-      },
-      lastUpdated: new Date().toISOString().split('T')[0]
+      }
     }));
   };
 
-  // Add team member
-  const addTeamMember = () => {
-    const newMember = {
-      id: Date.now(),
-      name: '',
-      role: '',
-      skills: '',
-      availability: '',
-      startDate: '',
-      endDate: '',
-      cost: '',
-      responsibilities: ''
-    };
-    
-    setProjectData(prev => ({
+  const updateTaskField = (phaseId, taskId, updates) => {
+    setPlan(prev => ({
       ...prev,
-      resources: {
-        ...prev.resources,
-        teamMembers: [...prev.resources.teamMembers, newMember]
-      },
-      lastUpdated: new Date().toISOString().split('T')[0]
-    }));
-  };
-
-  // Remove team member
-  const removeTeamMember = (memberId) => {
-    setProjectData(prev => ({
-      ...prev,
-      resources: {
-        ...prev.resources,
-        teamMembers: prev.resources.teamMembers.filter(member => member.id !== memberId)
-      },
-      lastUpdated: new Date().toISOString().split('T')[0]
-    }));
-  };
-
-  // Handle team member changes
-  const handleTeamMemberChange = (memberId, field, value) => {
-    setProjectData(prev => ({
-      ...prev,
-      resources: {
-        ...prev.resources,
-        teamMembers: prev.resources.teamMembers.map(member =>
-          member.id === memberId ? { ...member, [field]: value } : member
+      wbs: {
+        ...prev.wbs,
+        items: prev.wbs.items.map(phase =>
+          phase.id === phaseId
+            ? {
+                ...phase,
+                children: phase.children.map(task =>
+                  task.id === taskId ? { ...task, ...updates } : task
+                )
+              }
+            : phase
         )
-      },
-      lastUpdated: new Date().toISOString().split('T')[0]
+      }
     }));
   };
 
-  // Add budget category
-  const addBudgetCategory = () => {
-    const newCategory = {
-      id: Date.now(),
-      category: '',
-      description: '',
-      budgetAmount: '',
-      actualAmount: '',
-      variance: '',
-      notes: ''
+  const deleteTask = (phaseId, taskId) => {
+    setPlan(prev => ({
+      ...prev,
+      wbs: {
+        ...prev.wbs,
+        items: prev.wbs.items.map(phase =>
+          phase.id === phaseId
+            ? { ...phase, children: phase.children.filter(t => t.id !== taskId) }
+            : phase
+        )
+      }
+    }));
+  };
+
+  // ==================== PHASE CRUD ====================
+  const addPhase = () => {
+    const newPhase = {
+      id: generateId(),
+      name: 'New Phase',
+      children: []
     };
+
+    setPlan(prev => ({
+      ...prev,
+      wbs: {
+        ...prev.wbs,
+        items: [...prev.wbs.items, newPhase]
+      }
+    }));
+  };
+
+  const updatePhase = (phaseId, updates) => {
+    setPlan(prev => ({
+      ...prev,
+      wbs: {
+        ...prev.wbs,
+        items: prev.wbs.items.map(phase =>
+          phase.id === phaseId ? { ...phase, ...updates } : phase
+        )
+      }
+    }));
+  };
+
+  const deletePhase = (phaseId) => {
+    if (!window.confirm('Delete this phase and all its tasks?')) return;
     
-    setProjectData(prev => ({
+    setPlan(prev => ({
       ...prev,
-      resources: {
-        ...prev.resources,
-        budget: {
-          ...prev.resources.budget,
-          categories: [...prev.resources.budget.categories, newCategory]
-        }
-      },
-      lastUpdated: new Date().toISOString().split('T')[0]
+      wbs: {
+        ...prev.wbs,
+        items: prev.wbs.items.filter(p => p.id !== phaseId)
+      }
     }));
   };
 
-  // Remove budget category
-  const removeBudgetCategory = (categoryId) => {
-    setProjectData(prev => ({
-      ...prev,
-      resources: {
-        ...prev.resources,
-        budget: {
-          ...prev.resources.budget,
-          categories: prev.resources.budget.categories.filter(category => category.id !== categoryId)
-        }
-      },
-      lastUpdated: new Date().toISOString().split('T')[0]
-    }));
-  };
-
-  // Handle budget category changes
-  const handleBudgetCategoryChange = (categoryId, field, value) => {
-    setProjectData(prev => ({
-      ...prev,
-      resources: {
-        ...prev.resources,
-        budget: {
-          ...prev.resources.budget,
-          categories: prev.resources.budget.categories.map(category =>
-            category.id === categoryId ? { ...category, [field]: value } : category
-          )
-        }
-      },
-      lastUpdated: new Date().toISOString().split('T')[0]
-    }));
-  };
-
-  // Handle budget total change
-  const handleBudgetTotalChange = (value) => {
-    setProjectData(prev => ({
-      ...prev,
-      resources: {
-        ...prev.resources,
-        budget: {
-          ...prev.resources.budget,
-          totalBudget: value
-        }
-      },
-      lastUpdated: new Date().toISOString().split('T')[0]
-    }));
-  };
-
-  // Add risk
+  // ==================== RISK CRUD ====================
   const addRisk = () => {
     const newRisk = {
-      id: Date.now(),
-      risk: '',
-      category: '', // 'technical', 'schedule', 'budget', 'resource', 'external'
-      probability: 'medium', // 'low', 'medium', 'high'
-      impact: 'medium', // 'low', 'medium', 'high'
-      response: '', // 'avoid', 'mitigate', 'transfer', 'accept'
+      id: generateId(),
+      name: 'New Risk',
+      category: 'General',
+      likelihood: 'Medium',
+      impact: 'Medium',
+      owner: 'Unassigned',
       mitigation: '',
-      owner: '',
-      status: 'identified' // 'identified', 'analyzing', 'planning', 'implementing', 'monitoring', 'closed'
+      status: 'Identified'
     };
-    
-    setProjectData(prev => ({
+
+    setPlan(prev => ({
       ...prev,
-      riskManagement: {
-        ...prev.riskManagement,
-        risks: [...prev.riskManagement.risks, newRisk]
-      },
-      lastUpdated: new Date().toISOString().split('T')[0]
+      risks: [...(prev.risks || []), newRisk]
     }));
   };
 
-  // Remove risk
-  const removeRisk = (riskId) => {
-    setProjectData(prev => ({
+  const updateRisk = (riskId, updates) => {
+    setPlan(prev => ({
       ...prev,
-      riskManagement: {
-        ...prev.riskManagement,
-        risks: prev.riskManagement.risks.filter(risk => risk.id !== riskId)
-      },
-      lastUpdated: new Date().toISOString().split('T')[0]
+      risks: (prev.risks || []).map(risk =>
+        risk.id === riskId ? { ...risk, ...updates } : risk
+      )
     }));
   };
 
-  // Handle risk changes
-  const handleRiskChange = (riskId, field, value) => {
-    setProjectData(prev => ({
+  const deleteRisk = (riskId) => {
+    setPlan(prev => ({
       ...prev,
-      riskManagement: {
-        ...prev.riskManagement,
-        risks: prev.riskManagement.risks.map(risk =>
-          risk.id === riskId ? { ...risk, [field]: value } : risk
-        )
-      },
-      lastUpdated: new Date().toISOString().split('T')[0]
+      risks: (prev.risks || []).filter(r => r.id !== riskId)
     }));
   };
 
-  // Add communication item
-  const addCommunicationItem = (type) => {
-    const newItem = {
-      id: Date.now(),
-      type: type, // 'meeting', 'report', 'stakeholder'
-      name: '',
+  // ==================== OBJECTIVE CRUD ====================
+  const addObjective = () => {
+    const newObjective = {
+      id: generateId(),
+      title: 'New Objective',
       description: '',
-      frequency: '',
-      audience: '',
-      method: '',
-      responsible: '',
-      template: ''
+      progress: 0,
+      key_results: []
     };
+
+    setPlan(prev => ({
+      ...prev,
+      objectives: [...(prev.objectives || []), newObjective]
+    }));
+  };
+
+  const updateObjective = (objId, updates) => {
+    setPlan(prev => ({
+      ...prev,
+      objectives: (prev.objectives || []).map(obj =>
+        obj.id === objId ? { ...obj, ...updates } : obj
+      )
+    }));
+  };
+
+  const deleteObjective = (objId) => {
+    setPlan(prev => ({
+      ...prev,
+      objectives: (prev.objectives || []).filter(o => o.id !== objId)
+    }));
+  };
+
+  // ==================== STAKEHOLDER CRUD ====================
+  const addStakeholder = (roleType = 'core_team') => {
+    const newStakeholder = {
+      id: generateId(),
+      name: 'New Stakeholder',
+      role: 'Role',
+      role_type: roleType,
+      email: '',
+      influence: 2
+    };
+
+    setPlan(prev => ({
+      ...prev,
+      stakeholders: [...(prev.stakeholders || []), newStakeholder]
+    }));
+  };
+
+  const updateStakeholder = (stakeholderId, updates) => {
+    setPlan(prev => ({
+      ...prev,
+      stakeholders: (prev.stakeholders || []).map(s =>
+        s.id === stakeholderId ? { ...s, ...updates } : s
+      )
+    }));
+  };
+
+  const deleteStakeholder = (stakeholderId) => {
+    setPlan(prev => ({
+      ...prev,
+      stakeholders: (prev.stakeholders || []).filter(s => s.id !== stakeholderId)
+    }));
+  };
+
+  // ==================== BUDGET CRUD ====================
+  const addBudgetItem = () => {
+    const newItem = {
+      id: generateId(),
+      category: 'New Category',
+      description: '',
+      amount: 0
+    };
+
+    setPlan(prev => ({
+      ...prev,
+      resources: {
+        ...prev.resources,
+        budget: {
+          ...prev.resources.budget,
+          items: [...(prev.resources.budget.items || []), newItem]
+        }
+      }
+    }));
+  };
+
+  const updateBudgetItem = (itemId, updates) => {
+    setPlan(prev => ({
+      ...prev,
+      resources: {
+        ...prev.resources,
+        budget: {
+          ...prev.resources.budget,
+          items: (prev.resources.budget.items || []).map(item =>
+            item.id === itemId ? { ...item, ...updates } : item
+          )
+        }
+      }
+    }));
+  };
+
+  const deleteBudgetItem = (itemId) => {
+    setPlan(prev => ({
+      ...prev,
+      resources: {
+        ...prev.resources,
+        budget: {
+          ...prev.resources.budget,
+          items: (prev.resources.budget.items || []).filter(i => i.id !== itemId)
+        }
+      }
+    }));
+  };
+
+  // ==================== DOCUMENT CRUD ====================
+  const addDocument = () => {
+    const newDoc = {
+      id: generateId(),
+      filename: 'New Document.pdf',
+      category: 'Planning',
+      size: '0 KB',
+      owner: 'You',
+      uploaded_at: new Date().toISOString()
+    };
+
+    setPlan(prev => ({
+      ...prev,
+      documents: [...(prev.documents || []), newDoc]
+    }));
+  };
+
+  const deleteDocument = (docId) => {
+    setPlan(prev => ({
+      ...prev,
+      documents: (prev.documents || []).filter(d => d.id !== docId)
+    }));
+  };
+
+  // ==================== DRAG AND DROP ====================
+  const handleTaskDragStart = (e, phaseId, task) => {
+    setDraggedTask({ phaseId, task });
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleTaskDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleTaskDrop = (e, targetPhaseId) => {
+    e.preventDefault();
+    if (!draggedTask) return;
+
+    const { phaseId: sourcePhaseId, task } = draggedTask;
+
+    if (sourcePhaseId === targetPhaseId) {
+      setDraggedTask(null);
+      return;
+    }
+
+    // Remove from source
+    setPlan(prev => {
+      const items = prev.wbs.items.map(phase => {
+        if (phase.id === sourcePhaseId) {
+          return { ...phase, children: phase.children.filter(t => t.id !== task.id) };
+        }
+        if (phase.id === targetPhaseId) {
+          return { ...phase, children: [...phase.children, task] };
+        }
+        return phase;
+      });
+
+      return {
+        ...prev,
+        wbs: { ...prev.wbs, items }
+      };
+    });
+
+    setDraggedTask(null);
+  };
+
+  const handleBoardCardDragStart = (e, task) => {
+    setDraggedTask({ task });
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleBoardColumnDrop = (e, newStatus) => {
+    e.preventDefault();
+    if (!draggedTask) return;
+
+    const { task } = draggedTask;
     
-    setProjectData(prev => ({
+    // Find task and update status
+    setPlan(prev => ({
       ...prev,
-      communicationPlan: {
-        ...prev.communicationPlan,
-        [type === 'meeting' ? 'meetings' : type === 'report' ? 'reports' : 'stakeholderComm']: [
-          ...prev.communicationPlan[type === 'meeting' ? 'meetings' : type === 'report' ? 'reports' : 'stakeholderComm'],
-          newItem
+      wbs: {
+        ...prev.wbs,
+        items: prev.wbs.items.map(phase => ({
+          ...phase,
+          children: phase.children.map(t =>
+            t.id === task.id ? { ...t, status: newStatus } : t
+          )
+        }))
+      }
+    }));
+
+    setDraggedTask(null);
+  };
+
+  // ==================== GANTT FUNCTIONS ====================
+  const zoomGanttIn = () => {
+    setGanttZoom(prev => Math.min(prev * 1.5, 3));
+  };
+
+  const zoomGanttOut = () => {
+    setGanttZoom(prev => Math.max(prev / 1.5, 0.5));
+  };
+
+  const addMilestone = () => {
+    const milestoneName = window.prompt('Enter milestone name:');
+    if (!milestoneName) return;
+
+    const milestoneDate = window.prompt('Enter milestone date (YYYY-MM-DD):');
+    if (!milestoneDate) return;
+
+    // Add to timeline
+    setPlan(prev => ({
+      ...prev,
+      timeline: {
+        ...prev.timeline,
+        milestones: [
+          ...(prev.timeline.milestones || []),
+          {
+            id: generateId(),
+            name: milestoneName,
+            date: milestoneDate
+          }
         ]
-      },
-      lastUpdated: new Date().toISOString().split('T')[0]
+      }
     }));
+
+    window.alert('Milestone added!');
   };
 
-  // Remove communication item
-  const removeCommunicationItem = (type, itemId) => {
-    const arrayName = type === 'meeting' ? 'meetings' : type === 'report' ? 'reports' : 'stakeholderComm';
-    setProjectData(prev => ({
-      ...prev,
-      communicationPlan: {
-        ...prev.communicationPlan,
-        [arrayName]: prev.communicationPlan[arrayName].filter(item => item.id !== itemId)
-      },
-      lastUpdated: new Date().toISOString().split('T')[0]
-    }));
-  };
+  // ==================== RENDER: DENSE TASK LIST ====================
+  const renderDenseList = () => {
+    if (!plan?.wbs?.items) return null;
 
-  // Handle communication item changes
-  const handleCommunicationItemChange = (type, itemId, field, value) => {
-    const arrayName = type === 'meeting' ? 'meetings' : type === 'report' ? 'reports' : 'stakeholderComm';
-    setProjectData(prev => ({
-      ...prev,
-      communicationPlan: {
-        ...prev.communicationPlan,
-        [arrayName]: prev.communicationPlan[arrayName].map(item =>
-          item.id === itemId ? { ...item, [field]: value } : item
-        )
-      },
-      lastUpdated: new Date().toISOString().split('T')[0]
-    }));
-  };
+    return (
+      <div className={styles.denseTableWrapper}>
+        <div className={styles.denseTableHeader}>
+          <button className={styles.iconBtn} onClick={() => setShowSettings(!showSettings)} title="Settings">
+            <FontAwesomeIcon icon={faCog} />
+          </button>
+        </div>
 
-  // Save draft
-  const handleSave = () => {
-    console.log('Saving Project Planning draft:', projectData);
-    // Implement save functionality
-  };
-
-  // Export PDF
-  const handleExport = () => {
-    console.log('Exporting Project Planning to PDF:', projectData);
-    // Implement export functionality
-  };
-
-  return (
-    <ResourcePageWrapper
-      pageName="Project Planning"
-      toolName="projectPlanning"
-      adminSettings={adminSettings}
-    >
-      <div className={styles.rcaContainer}>
-        {/* Header - Exact match to other tools */}
-        <div className={styles.header}>
-          <div className={styles.headerContent}>
-            <h1>Project Planning</h1>
-            <div className={styles.progressSection}>
-              <div className={styles.progressBar}>
-                <div 
-                  className={styles.progressFill} 
-                  style={{ width: `${completionPercentage}%` }}
-                ></div>
-              </div>
-              <span className={styles.progressText}>{completionPercentage}% Complete</span>
+        {/* Settings Panel */}
+        {showSettings && (
+          <div className={styles.settingsPanel}>
+            <div className={styles.settingsPanelHeader}>
+              <div className={styles.settingsPanelTitle}>Column Visibility</div>
+              <button className={styles.closeBtn} onClick={() => setShowSettings(false)}>
+                <FontAwesomeIcon icon={faTimes} />
+              </button>
+            </div>
+            <div className={styles.settingsPanelBody}>
+              {Object.keys(visibleColumns).map(col => (
+                <label key={col} className={styles.settingsCheckbox}>
+                  <input
+                    type="checkbox"
+                    checked={visibleColumns[col]}
+                    onChange={(e) => setVisibleColumns(prev => ({ ...prev, [col]: e.target.checked }))}
+                  />
+                  <span>{col.charAt(0).toUpperCase() + col.slice(1).replace(/([A-Z])/g, ' $1')}</span>
+                </label>
+              ))}
             </div>
           </div>
-          <div className={styles.headerActions}>
-            <button className={styles.saveBtn} onClick={handleSave}>
-              <i className="fas fa-save"></i> Save Draft
-            </button>
-            <button className={styles.exportBtn} onClick={handleExport}>
-              <i className="fas fa-download"></i> Export PDF
-            </button>
+        )}
+
+        <table className={styles.denseTable}>
+          <thead>
+            <tr>
+              <th style={{ width: '30px' }}></th>
+              {visibleColumns.task && <th style={{ width: '30%' }}>Task</th>}
+              {visibleColumns.assignee && <th style={{ width: '15%' }}>Assignee</th>}
+              {visibleColumns.priority && <th style={{ width: '10%' }}>Priority</th>}
+              {visibleColumns.status && <th style={{ width: '12%' }}>Status</th>}
+              {visibleColumns.dueDate && <th style={{ width: '12%' }}>Due Date</th>}
+              {visibleColumns.notes && <th style={{ width: '15%' }}>Notes</th>}
+              {visibleColumns.actions && <th style={{ width: '6%' }}>Actions</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {plan.wbs.items.map(phase => (
+              <React.Fragment key={phase.id}>
+                {/* Phase Row */}
+                <tr className={styles.phaseRow}>
+                  <td colSpan={Object.values(visibleColumns).filter(Boolean).length + 1}>
+                    <div className={styles.phaseRowContent}>
+                      <FontAwesomeIcon icon={faGripVertical} className={styles.gripHandle} />
+                      <span
+                        className={styles.editableCell}
+                        contentEditable
+                        suppressContentEditableWarning
+                        onBlur={(e) => updatePhase(phase.id, { name: e.target.textContent })}
+                      >
+                        {phase.name}
+                      </span>
+                      <span className={styles.phaseTaskCount}>({phase.children.length} tasks)</span>
+                      <div className={styles.phaseActions}>
+                        <button className={styles.iconBtn} onClick={() => addTask(phase.id)} title="Add Task">
+                          <FontAwesomeIcon icon={faPlus} />
+                        </button>
+                        <button className={styles.iconBtn} onClick={() => deletePhase(phase.id)} title="Delete Phase">
+                          <FontAwesomeIcon icon={faTrash} />
+                        </button>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+
+                {/* Task Rows */}
+                {phase.children.map(task => (
+                  <tr
+                    key={task.id}
+                    className={styles.taskRow}
+                    draggable
+                    onDragStart={(e) => handleTaskDragStart(e, phase.id, task)}
+                    onDragOver={handleTaskDragOver}
+                    onDrop={(e) => handleTaskDrop(e, phase.id)}
+                  >
+                    <td>
+                      <FontAwesomeIcon icon={faGripVertical} className={styles.gripHandle} />
+                    </td>
+                    
+                    {visibleColumns.task && (
+                      <td>
+                        <span
+                          className={styles.editableCell}
+                          contentEditable
+                          suppressContentEditableWarning
+                          onBlur={(e) => updateTaskField(phase.id, task.id, { name: e.target.textContent })}
+                        >
+                          {task.name}
+                        </span>
+                      </td>
+                    )}
+
+                    {visibleColumns.assignee && (
+                      <td>
+                        <span
+                          className={styles.editableCell}
+                          contentEditable
+                          suppressContentEditableWarning
+                          onBlur={(e) => updateTaskField(phase.id, task.id, { assignee: e.target.textContent })}
+                        >
+                          {task.assignee}
+                        </span>
+                      </td>
+                    )}
+
+                    {visibleColumns.priority && (
+                      <td>
+                        {task.priority ? (
+                          <span className={`${styles.priorityBadge} ${styles[task.priority]}`}>
+                            {task.priority}
+                            <button
+                              className={styles.badgeRemove}
+                              onClick={() => updateTaskField(phase.id, task.id, { priority: '' })}
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ) : (
+                          <button
+                            className={styles.addPriorityBtn}
+                            onClick={() => {
+                              const priority = window.prompt('Enter priority (high/medium/low):');
+                              if (priority) updateTaskField(phase.id, task.id, { priority: priority.toLowerCase() });
+                            }}
+                          >
+                            + Add Priority
+                          </button>
+                        )}
+                      </td>
+                    )}
+
+                    {visibleColumns.status && (
+                      <td>
+                        <select
+                          className={styles.statusSelect}
+                          value={task.status}
+                          onChange={(e) => updateTaskField(phase.id, task.id, { status: e.target.value })}
+                        >
+                          <option value="todo">To Do</option>
+                          <option value="in-progress">In Progress</option>
+                          <option value="done">Done</option>
+                          <option value="blocked">Blocked</option>
+                        </select>
+                      </td>
+                    )}
+
+                    {visibleColumns.dueDate && (
+                      <td>
+                        <input
+                          type="date"
+                          className={styles.dateInput}
+                          value={task.due_date || ''}
+                          onChange={(e) => updateTaskField(phase.id, task.id, { due_date: e.target.value })}
+                        />
+                      </td>
+                    )}
+
+                    {visibleColumns.notes && (
+                      <td>
+                        <input
+                          type="text"
+                          className={styles.notesInput}
+                          value={task.notes || ''}
+                          onChange={(e) => updateTaskField(phase.id, task.id, { notes: e.target.value })}
+                          placeholder="Add notes..."
+                        />
+                      </td>
+                    )}
+
+                    {visibleColumns.actions && (
+                      <td>
+                        <button
+                          className={styles.iconBtn}
+                          onClick={() => deleteTask(phase.id, task.id)}
+                          title="Delete Task"
+                        >
+                          <FontAwesomeIcon icon={faTrash} />
+                        </button>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </React.Fragment>
+            ))}
+          </tbody>
+        </table>
+
+        <button className={styles.addPhaseBtn} onClick={addPhase}>
+          <FontAwesomeIcon icon={faPlus} /> Add Phase
+        </button>
+      </div>
+    );
+  };
+
+  // ==================== RENDER: BOARD VIEW ====================
+  const renderBoard = () => {
+    if (!plan?.wbs?.items) return null;
+
+    const allTasks = plan.wbs.items.flatMap(phase =>
+      phase.children.map(task => ({ ...task, phaseId: phase.id }))
+    );
+
+    const columns = {
+      todo: allTasks.filter(t => t.status === 'todo'),
+      'in-progress': allTasks.filter(t => t.status === 'in-progress'),
+      done: allTasks.filter(t => t.status === 'done'),
+      blocked: allTasks.filter(t => t.status === 'blocked')
+    };
+
+    const columnTitles = {
+      todo: 'To Do',
+      'in-progress': 'In Progress',
+      done: 'Done',
+      blocked: 'Blocked'
+    };
+
+    return (
+      <div className={styles.boardView}>
+        {Object.keys(columns).map(status => (
+          <div
+            key={status}
+            className={styles.boardColumn}
+            onDragOver={handleTaskDragOver}
+            onDrop={(e) => handleBoardColumnDrop(e, status)}
+          >
+            <div className={styles.boardColumnHeader}>
+              <div className={styles.boardColumnTitle}>{columnTitles[status]}</div>
+              <div className={styles.boardColumnCount}>{columns[status].length}</div>
+            </div>
+            <div className={styles.boardColumnContent}>
+              {columns[status].map(task => (
+                <div
+                  key={task.id}
+                  className={styles.boardCard}
+                  draggable
+                  onDragStart={(e) => handleBoardCardDragStart(e, task)}
+                >
+                  <div className={styles.boardCardTitle}>{task.name}</div>
+                  <div className={styles.boardCardMeta}>
+                    <span className={styles.boardCardAssignee}>{task.assignee}</span>
+                    {task.priority && (
+                      <span className={`${styles.priorityBadge} ${styles[task.priority]}`}>
+                        {task.priority}
+                      </span>
+                    )}
+                  </div>
+                  {task.due_date && (
+                    <div className={styles.boardCardDue}>{fmtDate(task.due_date)}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  // ==================== RENDER: GANTT VIEW ====================
+  const renderGantt = () => {
+    if (!plan?.wbs?.items) return null;
+
+    const allTasks = plan.wbs.items.flatMap(phase =>
+      phase.children.filter(t => t.due_date).map(task => ({
+        ...task,
+        phaseName: phase.name
+      }))
+    );
+
+    if (allTasks.length === 0) {
+      return <div className={styles.emptyState}>No tasks with due dates to display in Gantt view.</div>;
+    }
+
+    // Calculate date range
+    const dates = allTasks.map(t => new Date(t.due_date));
+    const minDate = new Date(Math.min(...dates));
+    const maxDate = new Date(Math.max(...dates));
+    const daysDiff = Math.ceil((maxDate - minDate) / (1000 * 60 * 60 * 24)) + 7;
+    const weeks = Math.ceil(daysDiff / 7);
+
+    const weekLabels = [];
+    for (let i = 0; i < weeks; i++) {
+      const weekStart = new Date(minDate);
+      weekStart.setDate(minDate.getDate() + i * 7);
+      weekLabels.push(weekStart);
+    }
+
+    return (
+      <div className={styles.ganttView}>
+        <div className={styles.ganttControls}>
+          <button className={styles.ganttBtn} onClick={zoomGanttOut} title="Zoom Out">
+            <FontAwesomeIcon icon={faSearchMinus} /> Zoom Out
+          </button>
+          <button className={styles.ganttBtn} onClick={zoomGanttIn} title="Zoom In">
+            <FontAwesomeIcon icon={faSearchPlus} /> Zoom In
+          </button>
+          <button className={styles.ganttBtn} onClick={addMilestone} title="Add Milestone">
+            <FontAwesomeIcon icon={faCalendarPlus} /> Add Milestone
+          </button>
+        </div>
+
+        <div className={styles.ganttChart} style={{ transform: `scaleX(${ganttZoom})`, transformOrigin: 'left' }}>
+          <div className={styles.ganttHeader}>
+            <div className={styles.ganttTaskColumn}>Task</div>
+            <div className={styles.ganttTimelineColumn}>
+              {weekLabels.map((date, idx) => (
+                <div key={idx} className={styles.ganttWeek}>
+                  Week {idx + 1}<br />
+                  {fmtDate(date.toISOString())}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className={styles.ganttBody}>
+            {allTasks.map(task => {
+              const taskDate = new Date(task.due_date);
+              const daysFromStart = Math.ceil((taskDate - minDate) / (1000 * 60 * 60 * 24));
+              const leftPercent = (daysFromStart / daysDiff) * 100;
+              const widthPercent = ((task.lead_time_days || 1) / daysDiff) * 100;
+
+              return (
+                <div key={task.id} className={styles.ganttRow}>
+                  <div className={styles.ganttTaskColumn}>
+                    <div className={styles.ganttTaskName}>{task.name}</div>
+                    <div className={styles.ganttTaskMeta}>{task.phaseName}</div>
+                  </div>
+                  <div className={styles.ganttTimelineColumn}>
+                    <div
+                      className={styles.ganttBar}
+                      style={{
+                        left: `${leftPercent}%`,
+                        width: `${Math.max(widthPercent, 2)}%`
+                      }}
+                      title={`${task.name} - ${fmtDate(task.due_date)}`}
+                    >
+                      <span className={styles.ganttBarLabel}>{task.lead_time_days || 1}d</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ==================== RENDER: TIMELINE ====================
+  const renderTimeline = () => {
+    if (!plan?.timeline?.phases) return null;
+
+    return (
+      <div className={styles.timelineView}>
+        <div className={styles.timelineHeader}>
+          <h2>Project Timeline</h2>
+          <div className={styles.timelineSortBtns}>
+            <button className={styles.sortBtn}>A-Z</button>
+            <button className={styles.sortBtn}>Z-A</button>
           </div>
         </div>
 
-        {/* Main Content (FULL WIDTH; chat removed; no two-column wrapper) */}
-        <div className={styles.mainContent} style={{ display: 'block' }}>
-          {/* Project Information */}
-          <div className={styles.processInfoCard}>
-            <h2>Project Information</h2>
-            
-            <div className={styles.fieldGroup}>
-              <label className={styles.fieldLabel}>
-                Project Name <span className={styles.required}>*</span>
-              </label>
-              <input
-                type="text"
-                className={styles.textInput}
-                value={projectData.projectName}
-                onChange={(e) => handleBasicInfoChange('projectName', e.target.value)}
-                placeholder="Enter the project name"
-              />
+        <div className={styles.timelineList}>
+          {plan.timeline.phases.map(phase => (
+            <div key={phase.id} className={styles.timelineCard}>
+              <div className={styles.timelineCardHeader}>
+                <div className={styles.timelineCardTitle}>{phase.name}</div>
+                <div className={styles.timelineCardProgress}>{phase.progress}%</div>
+              </div>
+              <div className={styles.timelineCardDates}>
+                {fmtFullDate(phase.start_date)} - {fmtFullDate(phase.end_date)}
+              </div>
+              <div className={styles.progressBar}>
+                <div className={styles.progressFill} style={{ width: `${phase.progress}%` }} />
+              </div>
+              <div className={styles.timelineCardDescription}>{phase.description}</div>
             </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
 
-            <div className={styles.fieldRow}>
-              <div className={styles.fieldGroup}>
-                <label className={styles.fieldLabel}>
-                  Project Manager <span className={styles.required}>*</span>
-                </label>
-                <input
-                  type="text"
-                  className={styles.textInput}
-                  value={projectData.projectManager}
-                  onChange={(e) => handleBasicInfoChange('projectManager', e.target.value)}
-                  placeholder="Project manager name"
-                />
-              </div>
-              <div className={styles.fieldGroup}>
-                <label className={styles.fieldLabel}>
-                  Version
-                </label>
-                <input
-                  type="text"
-                  className={styles.textInput}
-                  value={projectData.version}
-                  onChange={(e) => handleBasicInfoChange('version', e.target.value)}
-                  placeholder="Project plan version"
-                />
-              </div>
-            </div>
+  // ==================== RENDER: PROGRESS ====================
+  const renderProgress = () => {
+    if (!plan) return null;
 
-            <div className={styles.fieldGroup}>
-              <label className={styles.fieldLabel}>
-                Project Purpose <span className={styles.required}>*</span>
-              </label>
-              <textarea
-                className={styles.textareaInput}
-                value={projectData.projectOverview.purpose}
-                onChange={(e) => handleProjectOverviewChange('purpose', e.target.value)}
-                placeholder="What is the purpose and business case for this project?"
-                rows={3}
-              />
-            </div>
+    const totalTasks = plan.wbs.items.reduce((sum, phase) => sum + phase.children.length, 0);
+    const completedTasks = plan.wbs.items.reduce(
+      (sum, phase) => sum + phase.children.filter(t => t.status === 'done').length,
+      0
+    );
+    const overallProgress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
 
-            <div className={styles.fieldRow}>
-              <div className={styles.fieldGroup}>
-                <label className={styles.fieldLabel}>Start Date</label>
-                <input
-                  type="date"
-                  className={styles.textInput}
-                  value={projectData.timeline.startDate}
-                  onChange={(e) => handleTimelineChange('startDate', e.target.value)}
-                />
-              </div>
-              <div className={styles.fieldGroup}>
-                <label className={styles.fieldLabel}>End Date</label>
-                <input
-                  type="date"
-                  className={styles.textInput}
-                  value={projectData.timeline.endDate}
-                  onChange={(e) => handleTimelineChange('endDate', e.target.value)}
-                />
-              </div>
+    return (
+      <div className={styles.progressView}>
+        <div className={styles.progressCards}>
+          <div className={styles.progressCard}>
+            <div className={styles.progressCardLabel}>Overall Progress</div>
+            <div className={styles.progressCardValue}>{overallProgress}%</div>
+            <div className={styles.progressBar}>
+              <div className={styles.progressFill} style={{ width: `${overallProgress}%` }} />
             </div>
           </div>
 
-          {/* Project Overview Section */}
-          <div className={styles.analysisCard}>
-            <h2>Project Overview</h2>
-            <div className={styles.projectOverviewSection}>
-              <div className={styles.fieldGroup}>
-                <label className={styles.fieldLabel}>
-                  Objectives <span className={styles.required}>*</span>
-                </label>
-                <textarea
-                  className={styles.textareaInput}
-                  value={projectData.projectOverview.objectives}
-                  onChange={(e) => handleProjectOverviewChange('objectives', e.target.value)}
-                  placeholder="What are the specific, measurable objectives of this project?"
-                  rows={3}
-                />
-              </div>
-              
-              <div className={styles.fieldGroup}>
-                <label className={styles.fieldLabel}>
-                  Scope <span className={styles.required}>*</span>
-                </label>
-                <textarea
-                  className={styles.textareaInput}
-                  value={projectData.projectOverview.scope}
-                  onChange={(e) => handleProjectOverviewChange('scope', e.target.value)}
-                  placeholder="Define what is included and excluded from the project scope"
-                  rows={3}
-                />
-              </div>
-              
-              <div className={styles.fieldGroup}>
-                <label className={styles.fieldLabel}>
-                  Deliverables <span className={styles.required}>*</span>
-                </label>
-                <textarea
-                  className={styles.textareaInput}
-                  value={projectData.projectOverview.deliverables}
-                  onChange={(e) => handleProjectOverviewChange('deliverables', e.target.value)}
-                  placeholder="List the key deliverables and outcomes"
-                  rows={3}
-                />
-              </div>
-              
-              <div className={styles.fieldRow}>
-                <div className={styles.fieldGroup}>
-                  <label className={styles.fieldLabel}>Constraints</label>
-                  <textarea
-                    className={styles.textareaInput}
-                    value={projectData.projectOverview.constraints}
-                    onChange={(e) => handleProjectOverviewChange('constraints', e.target.value)}
-                    placeholder="Budget, time, resource, or other constraints"
-                    rows={2}
-                  />
-                </div>
-                <div className={styles.fieldGroup}>
-                  <label className={styles.fieldLabel}>Assumptions</label>
-                  <textarea
-                    className={styles.textareaInput}
-                    value={projectData.projectOverview.assumptions}
-                    onChange={(e) => handleProjectOverviewChange('assumptions', e.target.value)}
-                    placeholder="Key assumptions the project is based on"
-                    rows={2}
-                  />
-                </div>
-              </div>
-              
-              <div className={styles.fieldGroup}>
-                <label className={styles.fieldLabel}>Success Criteria</label>
-                <textarea
-                  className={styles.textareaInput}
-                  value={projectData.projectOverview.successCriteria}
-                  onChange={(e) => handleProjectOverviewChange('successCriteria', e.target.value)}
-                  placeholder="How will project success be measured?"
-                  rows={2}
-                />
-              </div>
-            </div>
+          <div className={styles.progressCard}>
+            <div className={styles.progressCardLabel}>Completed Tasks</div>
+            <div className={styles.progressCardValue}>{completedTasks} / {totalTasks}</div>
+          </div>
+        </div>
+
+        <div className={styles.phaseProgressTable}>
+          <h3>Phase Progress</h3>
+          <table className={styles.denseTable}>
+            <thead>
+              <tr>
+                <th>Phase</th>
+                <th>Tasks</th>
+                <th>Completed</th>
+                <th>Progress</th>
+              </tr>
+            </thead>
+            <tbody>
+              {plan.wbs.items.map(phase => {
+                const total = phase.children.length;
+                const completed = phase.children.filter(t => t.status === 'done').length;
+                const progress = total > 0 ? Math.round((completed / total) * 100) : 0;
+
+                return (
+                  <tr key={phase.id}>
+                    <td>{phase.name}</td>
+                    <td>{total}</td>
+                    <td>{completed}</td>
+                    <td>
+                      <div className={styles.progressBar}>
+                        <div className={styles.progressFill} style={{ width: `${progress}%` }} />
+                      </div>
+                      <span className={styles.progressPercent}>{progress}%</span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  };
+
+  // ==================== RENDER: BUDGET ====================
+  const renderBudget = () => {
+    if (!plan?.resources?.budget) return null;
+
+    const budget = plan.resources.budget;
+    const totalAllocated = (budget.items || []).reduce((sum, item) => sum + item.amount, 0);
+    const remaining = budget.total - budget.spent;
+    const utilizationPercent = budget.total > 0 ? Math.round((budget.spent / budget.total) * 100) : 0;
+
+    return (
+      <div className={styles.budgetView}>
+        <div className={styles.budgetCards}>
+          <div className={styles.budgetCard}>
+            <div className={styles.budgetCardLabel}>Total Budget</div>
+            <div className={styles.budgetCardValue}>${budget.total.toLocaleString()}</div>
+          </div>
+          <div className={styles.budgetCard}>
+            <div className={styles.budgetCardLabel}>Spent</div>
+            <div className={styles.budgetCardValue}>${budget.spent.toLocaleString()}</div>
+          </div>
+          <div className={styles.budgetCard}>
+            <div className={styles.budgetCardLabel}>Remaining</div>
+            <div className={styles.budgetCardValue}>${remaining.toLocaleString()}</div>
+          </div>
+          <div className={styles.budgetCard}>
+            <div className={styles.budgetCardLabel}>Utilization</div>
+            <div className={styles.budgetCardValue}>{utilizationPercent}%</div>
+          </div>
+        </div>
+
+        <div className={styles.budgetTable}>
+          <div className={styles.tableHeader}>
+            <h3>Budget Breakdown</h3>
+            <button className={styles.addBtn} onClick={addBudgetItem}>
+              <FontAwesomeIcon icon={faPlus} /> Add Item
+            </button>
           </div>
 
-          {/* Stakeholder Analysis Section */}
-          <div className={styles.analysisCard}>
-            <h2>Stakeholder Analysis</h2>
-            <div className={styles.stakeholdersSection}>
-              <div className={styles.sectionHeader}>
-                <p className={styles.sectionDescription}>
-                  Identify all stakeholders and analyze their influence, interest, and engagement requirements.
-                </p>
-                <button className={styles.addBtn} onClick={addStakeholder}>
-                  <i className="fas fa-plus"></i> Add Stakeholder
+          <table className={styles.denseTable}>
+            <thead>
+              <tr>
+                <th>Category</th>
+                <th>Description</th>
+                <th>Amount</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(budget.items || []).map(item => (
+                <tr key={item.id}>
+                  <td>
+                    <span
+                      className={styles.editableCell}
+                      contentEditable
+                      suppressContentEditableWarning
+                      onBlur={(e) => updateBudgetItem(item.id, { category: e.target.textContent })}
+                    >
+                      {item.category}
+                    </span>
+                  </td>
+                  <td>
+                    <span
+                      className={styles.editableCell}
+                      contentEditable
+                      suppressContentEditableWarning
+                      onBlur={(e) => updateBudgetItem(item.id, { description: e.target.textContent })}
+                    >
+                      {item.description}
+                    </span>
+                  </td>
+                  <td>
+                    <input
+                      type="number"
+                      className={styles.numberInput}
+                      value={item.amount}
+                      onChange={(e) => updateBudgetItem(item.id, { amount: parseFloat(e.target.value) || 0 })}
+                    />
+                  </td>
+                  <td>
+                    <button className={styles.iconBtn} onClick={() => deleteBudgetItem(item.id)}>
+                      <FontAwesomeIcon icon={faTrash} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  };
+
+  // ==================== RENDER: OBJECTIVES ====================
+  const renderObjectives = () => {
+    if (!plan?.objectives) return null;
+
+    return (
+      <div className={styles.objectivesView}>
+        <div className={styles.tableHeader}>
+          <h2>Objectives & Key Results</h2>
+          <button className={styles.addBtn} onClick={addObjective}>
+            <FontAwesomeIcon icon={faPlus} /> Add Objective
+          </button>
+        </div>
+
+        <div className={styles.objectivesList}>
+          {plan.objectives.map(obj => (
+            <div key={obj.id} className={styles.objectiveCard}>
+              <div className={styles.objectiveHeader}>
+                <span
+                  className={styles.objectiveTitle}
+                  contentEditable
+                  suppressContentEditableWarning
+                  onBlur={(e) => updateObjective(obj.id, { title: e.target.textContent })}
+                >
+                  {obj.title}
+                </span>
+                <div className={styles.objectiveProgress}>{obj.progress}%</div>
+                <button className={styles.iconBtn} onClick={() => deleteObjective(obj.id)}>
+                  <FontAwesomeIcon icon={faTrash} />
                 </button>
               </div>
-              
-              <div className={styles.stakeholdersTable}>
-                <table className={styles.dataTable}>
+              <div
+                className={styles.objectiveDescription}
+                contentEditable
+                suppressContentEditableWarning
+                onBlur={(e) => updateObjective(obj.id, { description: e.target.textContent })}
+              >
+                {obj.description}
+              </div>
+              <div className={styles.progressBar}>
+                <div className={styles.progressFill} style={{ width: `${obj.progress}%` }} />
+              </div>
+              <div className={styles.keyResults}>
+                {obj.key_results?.map((kr, idx) => (
+                  <div key={idx} className={styles.keyResult}>
+                    <FontAwesomeIcon icon={faCheckCircle} className={styles.krIcon} />
+                    <span>{kr.metric}: {kr.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  // ==================== RENDER: STAKEHOLDERS (ACCORDION) ====================
+  const [expandedStakeholderSections, setExpandedStakeholderSections] = useState({
+    executive: true,
+    core_team: true,
+    external: true
+  });
+
+  const toggleStakeholderSection = (section) => {
+    setExpandedStakeholderSections(prev => ({
+      ...prev,
+      [section]: !prev[section]
+    }));
+  };
+
+  const renderStakeholders = () => {
+    if (!plan?.stakeholders) return null;
+
+    const grouped = {
+      executive: plan.stakeholders.filter(s => s.role_type === 'executive'),
+      core_team: plan.stakeholders.filter(s => s.role_type === 'core_team'),
+      external: plan.stakeholders.filter(s => s.role_type === 'external')
+    };
+
+    const sectionTitles = {
+      executive: 'Executive Sponsors',
+      core_team: 'Core Team',
+      external: 'External Stakeholders'
+    };
+
+    return (
+      <div className={styles.stakeholdersView}>
+        <h2>Stakeholders</h2>
+
+        {Object.keys(grouped).map(section => (
+          <div key={section} className={styles.accordionSection}>
+            <div
+              className={styles.accordionHeader}
+              onClick={() => toggleStakeholderSection(section)}
+            >
+              <FontAwesomeIcon
+                icon={expandedStakeholderSections[section] ? faChevronDown : faChevronRight}
+                className={styles.accordionIcon}
+              />
+              <span className={styles.accordionTitle}>{sectionTitles[section]}</span>
+              <span className={styles.accordionCount}>({grouped[section].length})</span>
+              <button
+                className={styles.addBtn}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  addStakeholder(section);
+                }}
+              >
+                <FontAwesomeIcon icon={faPlus} />
+              </button>
+            </div>
+
+            {expandedStakeholderSections[section] && (
+              <div className={styles.accordionContent}>
+                <table className={styles.denseTable}>
                   <thead>
                     <tr>
                       <th>Name</th>
                       <th>Role</th>
-                      <th>Organization</th>
+                      <th>Email</th>
                       <th>Influence</th>
-                      <th>Interest</th>
-                      <th>Engagement Strategy</th>
-                      <th>Communication</th>
                       <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {projectData.stakeholders.map((stakeholder) => (
+                    {grouped[section].map(stakeholder => (
                       <tr key={stakeholder.id}>
                         <td>
-                          <input
-                            type="text"
-                            className={styles.tableInput}
-                            value={stakeholder.name}
-                            onChange={(e) => handleStakeholderChange(stakeholder.id, 'name', e.target.value)}
-                            placeholder="Stakeholder name"
-                          />
+                          <span
+                            className={styles.editableCell}
+                            contentEditable
+                            suppressContentEditableWarning
+                            onBlur={(e) => updateStakeholder(stakeholder.id, { name: e.target.textContent })}
+                          >
+                            {stakeholder.name}
+                          </span>
                         </td>
                         <td>
-                          <input
-                            type="text"
-                            className={styles.tableInput}
-                            value={stakeholder.role}
-                            onChange={(e) => handleStakeholderChange(stakeholder.id, 'role', e.target.value)}
-                            placeholder="Role/Title"
-                          />
+                          <span
+                            className={styles.editableCell}
+                            contentEditable
+                            suppressContentEditableWarning
+                            onBlur={(e) => updateStakeholder(stakeholder.id, { role: e.target.textContent })}
+                          >
+                            {stakeholder.role}
+                          </span>
                         </td>
                         <td>
-                          <input
-                            type="text"
-                            className={styles.tableInput}
-                            value={stakeholder.organization}
-                            onChange={(e) => handleStakeholderChange(stakeholder.id, 'organization', e.target.value)}
-                            placeholder="Organization"
-                          />
+                          <span
+                            className={styles.editableCell}
+                            contentEditable
+                            suppressContentEditableWarning
+                            onBlur={(e) => updateStakeholder(stakeholder.id, { email: e.target.textContent })}
+                          >
+                            {stakeholder.email}
+                          </span>
                         </td>
                         <td>
                           <select
-                            className={styles.tableSelect}
+                            className={styles.influenceSelect}
                             value={stakeholder.influence}
-                            onChange={(e) => handleStakeholderChange(stakeholder.id, 'influence', e.target.value)}
+                            onChange={(e) => updateStakeholder(stakeholder.id, { influence: parseInt(e.target.value) })}
                           >
-                            <option value="low">Low</option>
-                            <option value="medium">Medium</option>
-                            <option value="high">High</option>
+                            <option value="1">Low</option>
+                            <option value="2">Medium</option>
+                            <option value="3">High</option>
                           </select>
                         </td>
                         <td>
-                          <select
-                            className={styles.tableSelect}
-                            value={stakeholder.interest}
-                            onChange={(e) => handleStakeholderChange(stakeholder.id, 'interest', e.target.value)}
-                          >
-                            <option value="low">Low</option>
-                            <option value="medium">Medium</option>
-                            <option value="high">High</option>
-                          </select>
-                        </td>
-                        <td>
-                          <select
-                            className={styles.tableSelect}
-                            value={stakeholder.engagement}
-                            onChange={(e) => handleStakeholderChange(stakeholder.id, 'engagement', e.target.value)}
-                          >
-                            <option value="">Select strategy</option>
-                            <option value="manage closely">Manage Closely</option>
-                            <option value="keep satisfied">Keep Satisfied</option>
-                            <option value="keep informed">Keep Informed</option>
-                            <option value="monitor">Monitor</option>
-                          </select>
-                        </td>
-                        <td>
-                          <input
-                            type="text"
-                            className={styles.tableInput}
-                            value={stakeholder.communication}
-                            onChange={(e) => handleStakeholderChange(stakeholder.id, 'communication', e.target.value)}
-                            placeholder="Communication method"
-                          />
-                        </td>
-                        <td>
-                          <button
-                            className={styles.removeBtn}
-                            onClick={() => removeStakeholder(stakeholder.id)}
-                          >
-                            <i className="fas fa-times"></i>
+                          <button className={styles.iconBtn} onClick={() => deleteStakeholder(stakeholder.id)}>
+                            <FontAwesomeIcon icon={faTrash} />
                           </button>
                         </td>
                       </tr>
@@ -834,791 +1792,771 @@ const ProjectPlanning = () => {
                   </tbody>
                 </table>
               </div>
+            )}
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  // ==================== RENDER: RISKS (INLINE EDITING) ====================
+  const renderRisks = () => {
+    if (!plan?.risks) return null;
+
+    return (
+      <div className={styles.risksView}>
+        <div className={styles.tableHeader}>
+          <h2>Risk Management</h2>
+          <button className={styles.addBtn} onClick={addRisk}>
+            <FontAwesomeIcon icon={faPlus} /> Add Risk
+          </button>
+        </div>
+
+        <table className={styles.denseTable}>
+          <thead>
+            <tr>
+              <th>Risk</th>
+              <th>Category</th>
+              <th>Likelihood</th>
+              <th>Impact</th>
+              <th>Severity</th>
+              <th>Owner</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {plan.risks.map(risk => {
+              const severityMap = { Low: 1, Medium: 2, High: 3 };
+              const severity = severityMap[risk.likelihood] * severityMap[risk.impact];
+              const severityLabel = severity >= 6 ? 'High' : severity >= 3 ? 'Medium' : 'Low';
+
+              return (
+                <tr key={risk.id}>
+                  <td>
+                    <span
+                      className={styles.editableCell}
+                      contentEditable
+                      suppressContentEditableWarning
+                      onBlur={(e) => updateRisk(risk.id, { name: e.target.textContent })}
+                    >
+                      {risk.name}
+                    </span>
+                  </td>
+                  <td>
+                    <span
+                      className={styles.editableCell}
+                      contentEditable
+                      suppressContentEditableWarning
+                      onBlur={(e) => updateRisk(risk.id, { category: e.target.textContent })}
+                    >
+                      {risk.category}
+                    </span>
+                  </td>
+                  <td>
+                    <select
+                      className={styles.riskSelect}
+                      value={risk.likelihood}
+                      onChange={(e) => updateRisk(risk.id, { likelihood: e.target.value })}
+                    >
+                      <option value="Low">Low</option>
+                      <option value="Medium">Medium</option>
+                      <option value="High">High</option>
+                    </select>
+                  </td>
+                  <td>
+                    <select
+                      className={styles.riskSelect}
+                      value={risk.impact}
+                      onChange={(e) => updateRisk(risk.id, { impact: e.target.value })}
+                    >
+                      <option value="Low">Low</option>
+                      <option value="Medium">Medium</option>
+                      <option value="High">High</option>
+                    </select>
+                  </td>
+                  <td>
+                    <span className={`${styles.severityBadge} ${styles[severityLabel.toLowerCase()]}`}>
+                      {severityLabel}
+                    </span>
+                  </td>
+                  <td>
+                    <span
+                      className={styles.editableCell}
+                      contentEditable
+                      suppressContentEditableWarning
+                      onBlur={(e) => updateRisk(risk.id, { owner: e.target.textContent })}
+                    >
+                      {risk.owner}
+                    </span>
+                  </td>
+                  <td>
+                    <select
+                      className={styles.statusSelect}
+                      value={risk.status}
+                      onChange={(e) => updateRisk(risk.id, { status: e.target.value })}
+                    >
+                      <option value="Identified">Identified</option>
+                      <option value="Mitigating">Mitigating</option>
+                      <option value="Resolved">Resolved</option>
+                    </select>
+                  </td>
+                  <td>
+                    <button className={styles.iconBtn} onClick={() => deleteRisk(risk.id)}>
+                      <FontAwesomeIcon icon={faTrash} />
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+
+        <div className={styles.mitigationSection}>
+          <h3>Mitigation Strategies</h3>
+          {plan.risks.map(risk => (
+            <div key={risk.id} className={styles.mitigationCard}>
+              <div className={styles.mitigationHeader}>{risk.name}</div>
+              <textarea
+                className={styles.mitigationTextarea}
+                value={risk.mitigation || ''}
+                onChange={(e) => updateRisk(risk.id, { mitigation: e.target.value })}
+                placeholder="Enter mitigation strategy..."
+              />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  // ==================== RENDER: DOCUMENTS ====================
+  const renderDocuments = () => {
+    if (!plan?.documents) return null;
+
+    const grouped = {};
+    plan.documents.forEach(doc => {
+      if (!grouped[doc.category]) grouped[doc.category] = [];
+      grouped[doc.category].push(doc);
+    });
+
+    return (
+      <div className={styles.documentsView}>
+        <div className={styles.tableHeader}>
+          <h2>Documents</h2>
+          <button className={styles.addBtn} onClick={addDocument}>
+            <FontAwesomeIcon icon={faPlus} /> Add Document
+          </button>
+        </div>
+
+        {Object.keys(grouped).map(category => (
+          <div key={category} className={styles.documentCategory}>
+            <h3>{category}</h3>
+            <table className={styles.denseTable}>
+              <thead>
+                <tr>
+                  <th>Filename</th>
+                  <th>Size</th>
+                  <th>Owner</th>
+                  <th>Uploaded</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {grouped[category].map(doc => (
+                  <tr key={doc.id}>
+                    <td>
+                      <FontAwesomeIcon icon={faFileLines} className={styles.fileIcon} />
+                      {doc.filename}
+                    </td>
+                    <td>{doc.size}</td>
+                    <td>{doc.owner}</td>
+                    <td>{fmtFullDate(doc.uploaded_at)}</td>
+                    <td>
+                      <button className={styles.iconBtn} onClick={() => deleteDocument(doc.id)}>
+                        <FontAwesomeIcon icon={faTrash} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  // ==================== SETTINGS RENDER ====================
+  const renderSettings = () => {
+    return (
+      <div className={styles.settingsView}>
+        <div className={styles.pmBoardHeader}>
+          <h2 className={styles.pmBoardTitle}>Project Settings</h2>
+        </div>
+
+        <div className={styles.settingsContent}>
+          <div className={styles.settingsSection}>
+            <h3 className={styles.settingsSectionTitle}>Project Information</h3>
+            <div className={styles.formGroup}>
+              <label className={styles.formLabel}>Project Name</label>
+              <input
+                type="text"
+                className={styles.formInput}
+                value={projectName}
+                onChange={(e) => setProjectName(e.target.value)}
+              />
+            </div>
+            <div className={styles.formGroup}>
+              <label className={styles.formLabel}>Project Description</label>
+              <textarea
+                className={styles.formTextarea}
+                placeholder="Enter project description..."
+                rows={4}
+              />
+            </div>
+            <div className={styles.formGroup}>
+              <label className={styles.formLabel}>Start Date</label>
+              <input
+                type="date"
+                className={styles.formInput}
+              />
+            </div>
+            <div className={styles.formGroup}>
+              <label className={styles.formLabel}>End Date</label>
+              <input
+                type="date"
+                className={styles.formInput}
+              />
             </div>
           </div>
 
-          {/* Work Breakdown Structure Section */}
-          <div className={styles.analysisCard}>
-            <h2>Work Breakdown Structure (WBS)</h2>
-            <div className={styles.wbsSection}>
-              <div className={styles.sectionHeader}>
-                <p className={styles.sectionDescription}>
-                  Break down project deliverables into manageable work packages. Aim for 8-80 hour work packages.
-                </p>
-                <button className={styles.addBtn} onClick={addWorkPackage}>
-                  <i className="fas fa-plus"></i> Add Work Package
-                </button>
-              </div>
-              
-              <div className={styles.wbsTable}>
-                <table className={styles.dataTable}>
-                  <thead>
-                    <tr>
-                      <th>WBS Code</th>
-                      <th>Work Package</th>
-                      <th>Description</th>
-                      <th>Responsible</th>
-                      <th>Start Date</th>
-                      <th>End Date</th>
-                      <th>Duration</th>
-                      <th>Effort (hrs)</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {projectData.workPackages.map((pkg) => (
-                      <tr key={pkg.id}>
-                        <td>
-                          <input
-                            type="text"
-                            className={styles.tableInput}
-                            value={pkg.wbsCode}
-                            onChange={(e) => handleWorkPackageChange(pkg.id, 'wbsCode', e.target.value)}
-                            placeholder="1.1.1"
-                            style={{ width: '80px' }}
-                          />
-                        </td>
-                        <td>
-                          <input
-                            type="text"
-                            className={styles.tableInput}
-                            value={pkg.name}
-                            onChange={(e) => handleWorkPackageChange(pkg.id, 'name', e.target.value)}
-                            placeholder="Work package name"
-                          />
-                        </td>
-                        <td>
-                          <input
-                            type="text"
-                            className={styles.tableInput}
-                            value={pkg.description}
-                            onChange={(e) => handleWorkPackageChange(pkg.id, 'description', e.target.value)}
-                            placeholder="Description"
-                          />
-                        </td>
-                        <td>
-                          <input
-                            type="text"
-                            className={styles.tableInput}
-                            value={pkg.responsible}
-                            onChange={(e) => handleWorkPackageChange(pkg.id, 'responsible', e.target.value)}
-                            placeholder="Responsible person"
-                          />
-                        </td>
-                        <td>
-                          <input
-                            type="date"
-                            className={styles.tableInput}
-                            value={pkg.startDate}
-                            onChange={(e) => handleWorkPackageChange(pkg.id, 'startDate', e.target.value)}
-                          />
-                        </td>
-                        <td>
-                          <input
-                            type="date"
-                            className={styles.tableInput}
-                            value={pkg.endDate}
-                            onChange={(e) => handleWorkPackageChange(pkg.id, 'endDate', e.target.value)}
-                          />
-                        </td>
-                        <td>
-                          <input
-                            type="text"
-                            className={styles.tableInput}
-                            value={pkg.duration}
-                            onChange={(e) => handleWorkPackageChange(pkg.id, 'duration', e.target.value)}
-                            placeholder="5 days"
-                            style={{ width: '80px' }}
-                          />
-                        </td>
-                        <td>
-                          <input
-                            type="number"
-                            className={styles.tableInput}
-                            value={pkg.effort}
-                            onChange={(e) => handleWorkPackageChange(pkg.id, 'effort', e.target.value)}
-                            placeholder="40"
-                            style={{ width: '80px' }}
-                          />
-                        </td>
-                        <td>
-                          <button
-                            className={styles.removeBtn}
-                            onClick={() => removeWorkPackage(pkg.id)}
-                          >
-                            <i className="fas fa-times"></i>
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+          <div className={styles.settingsSection}>
+            <h3 className={styles.settingsSectionTitle}>Team Settings</h3>
+            <div className={styles.formGroup}>
+              <label className={styles.formLabel}>Default Assignee</label>
+              <select className={styles.formSelect}>
+                <option value="">Unassigned</option>
+                <option value="user1">Sarah Johnson</option>
+                <option value="user2">David Chen</option>
+                <option value="user3">Michael Torres</option>
+              </select>
+            </div>
+            <div className={styles.formGroup}>
+              <label className={styles.formLabel}>Project Owner</label>
+              <select className={styles.formSelect}>
+                <option value="user1">Sarah Johnson</option>
+                <option value="user2">David Chen</option>
+              </select>
             </div>
           </div>
 
-          {/* Timeline & Milestones Section */}
-          <div className={styles.analysisCard}>
-            <h2>Timeline & Milestones</h2>
-            <div className={styles.timelineSection}>
-              <div className={styles.timelineOverview}>
-                <h3>Project Timeline</h3>
-                <div className={styles.timelineGrid}>
-                  <div className={styles.fieldGroup}>
-                    <label className={styles.fieldLabel}>Project Duration</label>
-                    <input
-                      type="text"
-                      className={styles.textInput}
-                      value={projectData.timeline.duration}
-                      onChange={(e) => handleTimelineChange('duration', e.target.value)}
-                      placeholder="e.g., 6 months, 120 days"
-                    />
-                  </div>
-                </div>
-              </div>
-              
-              <div className={styles.milestonesSection}>
-                <div className={styles.sectionHeader}>
-                  <h3>Milestones</h3>
-                  <button className={styles.addBtn} onClick={addMilestone}>
-                    <i className="fas fa-plus"></i> Add Milestone
-                  </button>
-                </div>
-                
-                <div className={styles.milestonesTable}>
-                  <table className={styles.dataTable}>
-                    <thead>
-                      <tr>
-                        <th>Milestone Name</th>
-                        <th>Description</th>
-                        <th>Target Date</th>
-                        <th>Success Criteria</th>
-                        <th>Responsible</th>
-                        <th>Status</th>
-                        <th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {projectData.timeline.milestones.map((milestone) => (
-                        <tr key={milestone.id}>
-                          <td>
-                            <input
-                              type="text"
-                              className={styles.tableInput}
-                              value={milestone.name}
-                              onChange={(e) => handleMilestoneChange(milestone.id, 'name', e.target.value)}
-                              placeholder="Milestone name"
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              className={styles.tableInput}
-                              value={milestone.description}
-                              onChange={(e) => handleMilestoneChange(milestone.id, 'description', e.target.value)}
-                              placeholder="Description"
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="date"
-                              className={styles.tableInput}
-                              value={milestone.targetDate}
-                              onChange={(e) => handleMilestoneChange(milestone.id, 'targetDate', e.target.value)}
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              className={styles.tableInput}
-                              value={milestone.criteria}
-                              onChange={(e) => handleMilestoneChange(milestone.id, 'criteria', e.target.value)}
-                              placeholder="Success criteria"
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              className={styles.tableInput}
-                              value={milestone.responsible}
-                              onChange={(e) => handleMilestoneChange(milestone.id, 'responsible', e.target.value)}
-                              placeholder="Responsible person"
-                            />
-                          </td>
-                          <td>
-                            <select
-                              className={styles.tableSelect}
-                              value={milestone.status}
-                              onChange={(e) => handleMilestoneChange(milestone.id, 'status', e.target.value)}
-                            >
-                              <option value="planned">Planned</option>
-                              <option value="in-progress">In Progress</option>
-                              <option value="completed">Completed</option>
-                              <option value="delayed">Delayed</option>
-                            </select>
-                          </td>
-                          <td>
-                            <button
-                              className={styles.removeBtn}
-                              onClick={() => removeMilestone(milestone.id)}
-                            >
-                              <i className="fas fa-times"></i>
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+          <div className={styles.settingsSection}>
+            <h3 className={styles.settingsSectionTitle}>Notifications</h3>
+            <div className={styles.settingsCheckbox}>
+              <input type="checkbox" id="notify-tasks" defaultChecked />
+              <label htmlFor="notify-tasks">Notify me when tasks are assigned to me</label>
+            </div>
+            <div className={styles.settingsCheckbox}>
+              <input type="checkbox" id="notify-deadlines" defaultChecked />
+              <label htmlFor="notify-deadlines">Send deadline reminders</label>
+            </div>
+            <div className={styles.settingsCheckbox}>
+              <input type="checkbox" id="notify-updates" />
+              <label htmlFor="notify-updates">Notify me of project updates</label>
             </div>
           </div>
 
-          {/* Resource Planning Section */}
-          <div className={styles.analysisCard}>
-            <h2>Resource Planning</h2>
-            <div className={styles.resourcesSection}>
-              <div className={styles.teamSection}>
-                <div className={styles.sectionHeader}>
-                  <h3>Team Members</h3>
-                  <button className={styles.addBtn} onClick={addTeamMember}>
-                    <i className="fas fa-plus"></i> Add Team Member
-                  </button>
-                </div>
-                
-                <div className={styles.teamTable}>
-                  <table className={styles.dataTable}>
-                    <thead>
-                      <tr>
-                        <th>Name</th>
-                        <th>Role</th>
-                        <th>Skills</th>
-                        <th>Availability</th>
-                        <th>Start Date</th>
-                        <th>End Date</th>
-                        <th>Cost/Rate</th>
-                        <th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {projectData.resources.teamMembers.map((member) => (
-                        <tr key={member.id}>
-                          <td>
-                            <input
-                              type="text"
-                              className={styles.tableInput}
-                              value={member.name}
-                              onChange={(e) => handleTeamMemberChange(member.id, 'name', e.target.value)}
-                              placeholder="Team member name"
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              className={styles.tableInput}
-                              value={member.role}
-                              onChange={(e) => handleTeamMemberChange(member.id, 'role', e.target.value)}
-                              placeholder="Role"
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              className={styles.tableInput}
-                              value={member.skills}
-                              onChange={(e) => handleTeamMemberChange(member.id, 'skills', e.target.value)}
-                              placeholder="Key skills"
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              className={styles.tableInput}
-                              value={member.availability}
-                              onChange={(e) => handleTeamMemberChange(member.id, 'availability', e.target.value)}
-                              placeholder="50%, Full-time"
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="date"
-                              className={styles.tableInput}
-                              value={member.startDate}
-                              onChange={(e) => handleTeamMemberChange(member.id, 'startDate', e.target.value)}
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="date"
-                              className={styles.tableInput}
-                              value={member.endDate}
-                              onChange={(e) => handleTeamMemberChange(member.id, 'endDate', e.target.value)}
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              className={styles.tableInput}
-                              value={member.cost}
-                              onChange={(e) => handleTeamMemberChange(member.id, 'cost', e.target.value)}
-                              placeholder="$100/hr"
-                            />
-                          </td>
-                          <td>
-                            <button
-                              className={styles.removeBtn}
-                              onClick={() => removeTeamMember(member.id)}
-                            >
-                              <i className="fas fa-times"></i>
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-              
-              <div className={styles.budgetSection}>
-                <div className={styles.budgetOverview}>
-                  <h3>Budget Overview</h3>
-                  <div className={styles.fieldGroup}>
-                    <label className={styles.fieldLabel}>Total Project Budget</label>
-                    <input
-                      type="text"
-                      className={styles.textInput}
-                      value={projectData.resources.budget.totalBudget}
-                      onChange={(e) => handleBudgetTotalChange(e.target.value)}
-                      placeholder="$100,000"
-                    />
-                  </div>
-                </div>
-                
-                <div className={styles.sectionHeader}>
-                  <h3>Budget Categories</h3>
-                  <button className={styles.addBtn} onClick={addBudgetCategory}>
-                    <i className="fas fa-plus"></i> Add Category
-                  </button>
-                </div>
-                
-                <div className={styles.budgetTable}>
-                  <table className={styles.dataTable}>
-                    <thead>
-                      <tr>
-                        <th>Category</th>
-                        <th>Description</th>
-                        <th>Budget Amount</th>
-                        <th>Actual Amount</th>
-                        <th>Variance</th>
-                        <th>Notes</th>
-                        <th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {projectData.resources.budget.categories.map((category) => (
-                        <tr key={category.id}>
-                          <td>
-                            <input
-                              type="text"
-                              className={styles.tableInput}
-                              value={category.category}
-                              onChange={(e) => handleBudgetCategoryChange(category.id, 'category', e.target.value)}
-                              placeholder="Labor, Equipment, etc."
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              className={styles.tableInput}
-                              value={category.description}
-                              onChange={(e) => handleBudgetCategoryChange(category.id, 'description', e.target.value)}
-                              placeholder="Description"
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              className={styles.tableInput}
-                              value={category.budgetAmount}
-                              onChange={(e) => handleBudgetCategoryChange(category.id, 'budgetAmount', e.target.value)}
-                              placeholder="$25,000"
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              className={styles.tableInput}
-                              value={category.actualAmount}
-                              onChange={(e) => handleBudgetCategoryChange(category.id, 'actualAmount', e.target.value)}
-                              placeholder="$23,500"
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              className={styles.tableInput}
-                              value={category.variance}
-                              onChange={(e) => handleBudgetCategoryChange(category.id, 'variance', e.target.value)}
-                              placeholder="+$1,500"
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              className={styles.tableInput}
-                              value={category.notes}
-                              onChange={(e) => handleBudgetCategoryChange(category.id, 'notes', e.target.value)}
-                              placeholder="Notes"
-                            />
-                          </td>
-                          <td>
-                            <button
-                              className={styles.removeBtn}
-                              onClick={() => removeBudgetCategory(category.id)}
-                            >
-                              <i className="fas fa-times"></i>
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+          <div className={styles.settingsSection}>
+            <h3 className={styles.settingsSectionTitle}>Display Preferences</h3>
+            <div className={styles.formGroup}>
+              <label className={styles.formLabel}>Default View</label>
+              <select className={styles.formSelect} value={currentView} onChange={(e) => setCurrentView(e.target.value)}>
+                <option value="list">List View</option>
+                <option value="board">Board View</option>
+                <option value="gantt">Gantt View</option>
+              </select>
+            </div>
+            <div className={styles.formGroup}>
+              <label className={styles.formLabel}>Date Format</label>
+              <select className={styles.formSelect}>
+                <option value="mdy">MM/DD/YYYY</option>
+                <option value="dmy">DD/MM/YYYY</option>
+                <option value="ymd">YYYY-MM-DD</option>
+              </select>
             </div>
           </div>
 
-          {/* Risk Management Section */}
-          <div className={styles.analysisCard}>
-            <h2>Risk Management</h2>
-            <div className={styles.riskSection}>
-              <div className={styles.sectionHeader}>
-                <p className={styles.sectionDescription}>
-                  Identify, assess, and plan responses for project risks. Use probability/impact matrix for prioritization.
-                </p>
-                <button className={styles.addBtn} onClick={addRisk}>
-                  <i className="fas fa-plus"></i> Add Risk
-                </button>
-              </div>
-              
-              <div className={styles.riskTable}>
-                <table className={styles.dataTable}>
-                  <thead>
-                    <tr>
-                      <th>Risk Description</th>
-                      <th>Category</th>
-                      <th>Probability</th>
-                      <th>Impact</th>
-                      <th>Response Strategy</th>
-                      <th>Mitigation Plan</th>
-                      <th>Owner</th>
-                      <th>Status</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {projectData.riskManagement.risks.map((risk) => (
-                      <tr key={risk.id}>
-                        <td>
-                          <input
-                            type="text"
-                            className={styles.tableInput}
-                            value={risk.risk}
-                            onChange={(e) => handleRiskChange(risk.id, 'risk', e.target.value)}
-                            placeholder="Risk description"
-                          />
-                        </td>
-                        <td>
-                          <select
-                            className={styles.tableSelect}
-                            value={risk.category}
-                            onChange={(e) => handleRiskChange(risk.id, 'category', e.target.value)}
-                          >
-                            <option value="">Select category</option>
-                            <option value="technical">Technical</option>
-                            <option value="schedule">Schedule</option>
-                            <option value="budget">Budget</option>
-                            <option value="resource">Resource</option>
-                            <option value="external">External</option>
-                          </select>
-                        </td>
-                        <td>
-                          <select
-                            className={styles.tableSelect}
-                            value={risk.probability}
-                            onChange={(e) => handleRiskChange(risk.id, 'probability', e.target.value)}
-                          >
-                            <option value="low">Low</option>
-                            <option value="medium">Medium</option>
-                            <option value="high">High</option>
-                          </select>
-                        </td>
-                        <td>
-                          <select
-                            className={styles.tableSelect}
-                            value={risk.impact}
-                            onChange={(e) => handleRiskChange(risk.id, 'impact', e.target.value)}
-                          >
-                            <option value="low">Low</option>
-                            <option value="medium">Medium</option>
-                            <option value="high">High</option>
-                          </select>
-                        </td>
-                        <td>
-                          <select
-                            className={styles.tableSelect}
-                            value={risk.response}
-                            onChange={(e) => handleRiskChange(risk.id, 'response', e.target.value)}
-                          >
-                            <option value="">Select response</option>
-                            <option value="avoid">Avoid</option>
-                            <option value="mitigate">Mitigate</option>
-                            <option value="transfer">Transfer</option>
-                            <option value="accept">Accept</option>
-                          </select>
-                        </td>
-                        <td>
-                          <input
-                            type="text"
-                            className={styles.tableInput}
-                            value={risk.mitigation}
-                            onChange={(e) => handleRiskChange(risk.id, 'mitigation', e.target.value)}
-                            placeholder="Mitigation plan"
-                          />
-                        </td>
-                        <td>
-                          <input
-                            type="text"
-                            className={styles.tableInput}
-                            value={risk.owner}
-                            onChange={(e) => handleRiskChange(risk.id, 'owner', e.target.value)}
-                            placeholder="Risk owner"
-                          />
-                        </td>
-                        <td>
-                          <select
-                            className={styles.tableSelect}
-                            value={risk.status}
-                            onChange={(e) => handleRiskChange(risk.id, 'status', e.target.value)}
-                          >
-                            <option value="identified">Identified</option>
-                            <option value="analyzing">Analyzing</option>
-                            <option value="planning">Planning</option>
-                            <option value="implementing">Implementing</option>
-                            <option value="monitoring">Monitoring</option>
-                            <option value="closed">Closed</option>
-                          </select>
-                        </td>
-                        <td>
-                          <button
-                            className={styles.removeBtn}
-                            onClick={() => removeRisk(risk.id)}
-                          >
-                            <i className="fas fa-times"></i>
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+          <div className={styles.settingsActions}>
+            <button className={`${styles.pmBtn} ${styles.pmBtnPrimary}`}>
+              <FontAwesomeIcon icon={faCheckCircle} /> Save Settings
+            </button>
+            <button className={`${styles.pmBtn} ${styles.pmBtnSecondary}`} onClick={() => setActiveNav('tasks')}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ==================== MAIN RENDER ====================
+  if (loading) {
+    return (
+      <div className={styles.pmContainer}>
+        <div className={styles.loadingState}>Loading project plan...</div>
+      </div>
+    );
+  }
+
+  if (!plan) {
+    return (
+      <div className={styles.pmContainer}>
+        <div className={styles.emptyState}>No plan data available.</div>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+      <div className={styles.pmContainer}>
+        {/* Backdrop */}
+      {(pmMenuOpen || aiHelperOpen) && (
+        <div className={styles.backdrop} onClick={() => { setPmMenuOpen(false); setAiHelperOpen(false); }} />
+      )}
+
+      {/* PM Menu Sidebar */}
+      <div className={`${styles.pmSidebar} ${pmMenuOpen ? styles.open : ''}`}>
+        <div className={styles.pmSidebarHeader}>
+          <button className={styles.closeBtn} onClick={() => setPmMenuOpen(false)}>
+            <FontAwesomeIcon icon={faTimes} />
+          </button>
+          <div className={styles.projectName}>{projectName}</div>
+          <div className={styles.projectMeta}>{projectDate}</div>
+        </div>
+
+        <div className={styles.pmNavButtons}>
+          <button className={styles.navBackBtn} onClick={() => navigate('/ops/pm')}>
+            <FontAwesomeIcon icon={faChartLine} />
+            PM Dashboard
+          </button>
+          <button className={styles.navBackBtn} onClick={() => navigate('/market-iq')}>
+            <FontAwesomeIcon icon={faHome} />
+            Back to Market IQ
+          </button>
+        </div>
+
+        <div className={styles.pmNav}>
+          <div className={styles.pmNavSection}>
+            <div className={styles.pmNavTitle}>Navigation</div>
+            <div className={`${styles.pmNavItem} ${activeNav === 'tasks' ? styles.active : ''}`} onClick={() => setActiveNav('tasks')}>
+              <div className={styles.pmNavIcon}><FontAwesomeIcon icon={faListCheck} /></div>
+              <div>Tasks</div>
+            </div>
+            <div className={`${styles.pmNavItem} ${activeNav === 'timeline' ? styles.active : ''}`} onClick={() => setActiveNav('timeline')}>
+              <div className={styles.pmNavIcon}><FontAwesomeIcon icon={faChartGantt} /></div>
+              <div>Timeline</div>
+            </div>
+            <div className={`${styles.pmNavItem} ${activeNav === 'progress' ? styles.active : ''}`} onClick={() => setActiveNav('progress')}>
+              <div className={styles.pmNavIcon}><FontAwesomeIcon icon={faChartLine} /></div>
+              <div>Progress</div>
+            </div>
+            <div className={`${styles.pmNavItem} ${activeNav === 'budget' ? styles.active : ''}`} onClick={() => setActiveNav('budget')}>
+              <div className={styles.pmNavIcon}><FontAwesomeIcon icon={faDollarSign} /></div>
+              <div>Budget</div>
+            </div>
+            <div className={`${styles.pmNavItem} ${activeNav === 'objectives' ? styles.active : ''}`} onClick={() => setActiveNav('objectives')}>
+              <div className={styles.pmNavIcon}><FontAwesomeIcon icon={faBullseye} /></div>
+              <div>Objectives</div>
+            </div>
+            <div className={`${styles.pmNavItem} ${activeNav === 'stakeholders' ? styles.active : ''}`} onClick={() => setActiveNav('stakeholders')}>
+              <div className={styles.pmNavIcon}><FontAwesomeIcon icon={faUsers} /></div>
+              <div>Stakeholders</div>
+            </div>
+            <div className={`${styles.pmNavItem} ${activeNav === 'risks' ? styles.active : ''}`} onClick={() => setActiveNav('risks')}>
+              <div className={styles.pmNavIcon}><FontAwesomeIcon icon={faTriangleExclamation} /></div>
+              <div>Risks</div>
+            </div>
+            <div className={`${styles.pmNavItem} ${activeNav === 'documents' ? styles.active : ''}`} onClick={() => setActiveNav('documents')}>
+              <div className={styles.pmNavIcon}><FontAwesomeIcon icon={faFileLines} /></div>
+              <div>Documents</div>
             </div>
           </div>
 
-          {/* Communication Plan Section */}
-          <div className={styles.analysisCard}>
-            <h2>Communication Plan</h2>
-            <div className={styles.communicationSection}>
-              <div className={styles.meetingsSection}>
-                <div className={styles.sectionHeader}>
-                  <h3>Meetings</h3>
-                  <button className={styles.addBtn} onClick={() => addCommunicationItem('meeting')}>
-                    <i className="fas fa-plus"></i> Add Meeting
-                  </button>
-                </div>
-                
-                <div className={styles.communicationTable}>
-                  <table className={styles.dataTable}>
-                    <thead>
-                      <tr>
-                        <th>Meeting Name</th>
-                        <th>Description</th>
-                        <th>Frequency</th>
-                        <th>Audience</th>
-                        <th>Method</th>
-                        <th>Responsible</th>
-                        <th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {projectData.communicationPlan.meetings.map((meeting) => (
-                        <tr key={meeting.id}>
-                          <td>
-                            <input
-                              type="text"
-                              className={styles.tableInput}
-                              value={meeting.name}
-                              onChange={(e) => handleCommunicationItemChange('meeting', meeting.id, 'name', e.target.value)}
-                              placeholder="Meeting name"
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              className={styles.tableInput}
-                              value={meeting.description}
-                              onChange={(e) => handleCommunicationItemChange('meeting', meeting.id, 'description', e.target.value)}
-                              placeholder="Purpose and agenda"
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              className={styles.tableInput}
-                              value={meeting.frequency}
-                              onChange={(e) => handleCommunicationItemChange('meeting', meeting.id, 'frequency', e.target.value)}
-                              placeholder="Weekly, Monthly"
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              className={styles.tableInput}
-                              value={meeting.audience}
-                              onChange={(e) => handleCommunicationItemChange('meeting', meeting.id, 'audience', e.target.value)}
-                              placeholder="Who attends"
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              className={styles.tableInput}
-                              value={meeting.method}
-                              onChange={(e) => handleCommunicationItemChange('meeting', meeting.id, 'method', e.target.value)}
-                              placeholder="In-person, Video call"
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              className={styles.tableInput}
-                              value={meeting.responsible}
-                              onChange={(e) => handleCommunicationItemChange('meeting', meeting.id, 'responsible', e.target.value)}
-                              placeholder="Meeting organizer"
-                            />
-                          </td>
-                          <td>
-                            <button
-                              className={styles.removeBtn}
-                              onClick={() => removeCommunicationItem('meeting', meeting.id)}
-                            >
-                              <i className="fas fa-times"></i>
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-              
-              <div className={styles.reportsSection}>
-                <div className={styles.sectionHeader}>
-                  <h3>Reports</h3>
-                  <button className={styles.addBtn} onClick={() => addCommunicationItem('report')}>
-                    <i className="fas fa-plus"></i> Add Report
-                  </button>
-                </div>
-                
-                <div className={styles.communicationTable}>
-                  <table className={styles.dataTable}>
-                    <thead>
-                      <tr>
-                        <th>Report Name</th>
-                        <th>Description</th>
-                        <th>Frequency</th>
-                        <th>Audience</th>
-                        <th>Method</th>
-                        <th>Responsible</th>
-                        <th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {projectData.communicationPlan.reports.map((report) => (
-                        <tr key={report.id}>
-                          <td>
-                            <input
-                              type="text"
-                              className={styles.tableInput}
-                              value={report.name}
-                              onChange={(e) => handleCommunicationItemChange('report', report.id, 'name', e.target.value)}
-                              placeholder="Report name"
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              className={styles.tableInput}
-                              value={report.description}
-                              onChange={(e) => handleCommunicationItemChange('report', report.id, 'description', e.target.value)}
-                              placeholder="Report content and purpose"
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              className={styles.tableInput}
-                              value={report.frequency}
-                              onChange={(e) => handleCommunicationItemChange('report', report.id, 'frequency', e.target.value)}
-                              placeholder="Weekly, Monthly"
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              className={styles.tableInput}
-                              value={report.audience}
-                              onChange={(e) => handleCommunicationItemChange('report', report.id, 'audience', e.target.value)}
-                              placeholder="Who receives"
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              className={styles.tableInput}
-                              value={report.method}
-                              onChange={(e) => handleCommunicationItemChange('report', report.id, 'method', e.target.value)}
-                              placeholder="Email, Dashboard"
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              className={styles.tableInput}
-                              value={report.responsible}
-                              onChange={(e) => handleCommunicationItemChange('report', report.id, 'responsible', e.target.value)}
-                              placeholder="Report author"
-                            />
-                          </td>
-                          <td>
-                            <button
-                              className={styles.removeBtn}
-                              onClick={() => removeCommunicationItem('report', report.id)}
-                            >
-                              <i className="fas fa-times"></i>
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+          <div className={styles.pmNavSection}>
+            <div className={styles.pmNavTitle}>Templates</div>
+            <div className={styles.pmNavItem} onClick={() => setShowTemplateModal(true)}>
+              <div className={styles.pmNavIcon}><FontAwesomeIcon icon={faFolder} /></div>
+              <div>Load Template</div>
+            </div>
+            <div className={styles.pmNavItem} onClick={() => setShowSaveTemplateModal(true)}>
+              <div className={styles.pmNavIcon}><FontAwesomeIcon icon={faBookmark} /></div>
+              <div>Save as Template</div>
+            </div>
+          </div>
+
+          <div className={styles.pmNavSection}>
+            <div className={styles.pmNavTitle}>Settings</div>
+            <div className={styles.pmNavItem} onClick={() => setActiveNav('settings')}>
+              <div className={styles.pmNavIcon}><FontAwesomeIcon icon={faCog} /></div>
+              <div>Project Settings</div>
             </div>
           </div>
         </div>
       </div>
-    </ResourcePageWrapper>
+
+      {/* AI Assistant Sidebar */}
+      <div className={`${styles.pmAiHelper} ${aiHelperOpen ? styles.sidebarOpen : ''}`}>
+        <div className={styles.pmAiHeader}>
+          <div className={styles.pmAiTitle}>
+            <FontAwesomeIcon icon={faWandMagicSparkles} />
+            AI Assistant
+          </div>
+          <button className={styles.closeBtn} onClick={() => setAiHelperOpen(false)}>
+            <FontAwesomeIcon icon={faTimes} />
+          </button>
+        </div>
+
+        <div className={styles.pmAiMessages}>
+          {aiMessages.map((msg, idx) => (
+            <div key={idx} className={`${styles.pmAiMessage} ${msg.role}`}>
+              <div className={styles.pmAiBubble}>{msg.content}</div>
+            </div>
+          ))}
+          {aiProcessing && (
+            <div className={`${styles.pmAiMessage} assistant`}>
+              <div className={styles.pmAiBubble}>Thinking...</div>
+            </div>
+          )}
+        </div>
+
+        <div className={styles.pmAiInput}>
+          <div className={styles.pmAiInputWrapper}>
+            <textarea
+              className={styles.pmAiTextarea}
+              placeholder="Ask me to update the project..."
+              value={aiInput}
+              onChange={(e) => setAiInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  sendAIMessage();
+                }
+              }}
+              rows={2}
+            />
+            <div className={styles.pmAiActions}>
+              <button
+                className={`${styles.pmAiMicBtn} ${isRecording ? styles.recording : ''}`}
+                onClick={isRecording ? stopVoiceRecording : startVoiceRecording}
+                title={isRecording ? 'Stop Recording' : 'Voice Input'}
+              >
+                <FontAwesomeIcon icon={faMicrophone} />
+              </button>
+              <button
+                className={styles.pmAiSend}
+                onClick={sendAIMessage}
+                disabled={aiProcessing || !aiInput.trim()}
+              >
+                <FontAwesomeIcon icon={faPaperPlane} />
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Sidebar Tabs */}
+      <div className={`${styles.sidebarTab} ${styles.tabPmMenu}`} onClick={togglePmMenu}>
+        <FontAwesomeIcon icon={faListCheck} />
+        <div className={styles.tabLabel}>PM Menu</div>
+      </div>
+
+      <div className={`${styles.sidebarTab} ${styles.tabAiAssistant}`} onClick={toggleAI}>
+        <FontAwesomeIcon icon={faWandMagicSparkles} />
+        <div className={styles.tabLabel}>AI Assistant</div>
+      </div>
+
+      {/* Main Content */}
+      <div className={`${styles.pmMain} ${pmMenuOpen || aiHelperOpen ? styles.sidebarOpen : ''}`}>
+        {/* Top Bar */}
+        <div className={styles.pmTopbar}>
+          <div className={styles.pmTopbarLeft}>
+            <button className={styles.backButton} onClick={() => navigate('/market-iq')}>
+              <FontAwesomeIcon icon={faArrowLeft} />
+              Back
+            </button>
+          </div>
+
+          <div className={styles.pmTopbarActions}>
+            {autoSaving ? (
+              <div className={styles.autoSaveIndicator} style={{ background: '#fef3c7', color: '#92400e' }}>
+                <FontAwesomeIcon icon={faClock} />
+                Saving...
+              </div>
+            ) : lastSaved ? (
+              <div className={styles.autoSaveIndicator}>
+                <FontAwesomeIcon icon={faCheckCircle} />
+                All changes saved
+              </div>
+            ) : null}
+
+            <button className={`${styles.pmBtn} ${styles.pmBtnSecondary}`} onClick={() => setShowTemplateModal(true)}>
+              <FontAwesomeIcon icon={faFolder} /> Templates
+            </button>
+
+            <button className={`${styles.pmBtn} ${styles.pmBtnSecondary}`} onClick={() => setShowSaveTemplateModal(true)}>
+              <FontAwesomeIcon icon={faBookmark} /> Save as Template
+            </button>
+
+<button
+  className={`${styles.pmBtn} ${styles.pmBtnPrimary}`}
+  onClick={openValidationModal}
+  disabled={validating}
+>
+  <FontAwesomeIcon icon={faCheckCircle} /> Validate Plan
+</button>
+
+            <a className={styles.cancelLink} onClick={cancelPlan}>Cancel</a>
+          </div>
+        </div>
+
+        {/* Content Area */}
+        <div className={styles.pmContentWrapper}>
+          <div className={styles.pmBoard}>
+            {/* Tasks Tab */}
+            {activeNav === 'tasks' && (
+              <>
+                <div className={styles.pmBoardHeader}>
+                  <h2 className={styles.pmBoardTitle}>Project Tasks</h2>
+                  <div className={styles.pmBoardHeaderRight}>
+                    <div className={styles.pmViewToggle}>
+                      <button className={`${styles.pmViewBtn} ${currentView === 'list' ? styles.active : ''}`} onClick={() => setCurrentView('list')}>
+                        <FontAwesomeIcon icon={faList} /> List
+                      </button>
+                      <button className={`${styles.pmViewBtn} ${currentView === 'board' ? styles.active : ''}`} onClick={() => setCurrentView('board')}>
+                        <FontAwesomeIcon icon={faTableColumns} /> Board
+                      </button>
+                      <button className={`${styles.pmViewBtn} ${currentView === 'gantt' ? styles.active : ''}`} onClick={() => setCurrentView('gantt')}>
+                        <FontAwesomeIcon icon={faChartGantt} /> Gantt
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {currentView === 'list' && renderDenseList()}
+                {currentView === 'board' && renderBoard()}
+                {currentView === 'gantt' && renderGantt()}
+              </>
+            )}
+
+            {/* Other Tabs */}
+            {activeNav === 'timeline' && renderTimeline()}
+            {activeNav === 'progress' && renderProgress()}
+            {activeNav === 'budget' && renderBudget()}
+            {activeNav === 'objectives' && renderObjectives()}
+            {activeNav === 'stakeholders' && renderStakeholders()}
+            {activeNav === 'risks' && renderRisks()}
+            {activeNav === 'documents' && renderDocuments()}
+            {activeNav === 'settings' && renderSettings()}
+          </div>
+        </div>
+      </div>
+
+      {/* Template Library Modal */}
+      {showTemplateModal && (
+        <div className={styles.modalOverlay} onClick={() => setShowTemplateModal(false)}>
+          <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
+            <div className={styles.modalHeader}>
+              <div className={styles.modalTitle}>Template Library</div>
+              <button className={styles.closeBtn} onClick={() => setShowTemplateModal(false)}>
+                <FontAwesomeIcon icon={faTimes} />
+              </button>
+            </div>
+            <div className={styles.modalBody}>
+              {templates.length === 0 ? (
+                <div className={styles.emptyState}>No templates available yet.</div>
+              ) : (
+                templates.map((tpl, idx) => (
+                  <div className={styles.templateCard} key={idx}>
+                    <div className={styles.templateInfo}>
+                      <div className={styles.templateName}>{tpl.name}</div>
+                      <div className={styles.templateDescription}>{tpl.description || 'No description'}</div>
+                      <div className={styles.templateMeta}>
+                        {tpl.phases?.length || 0} phases • {tpl.created_at && fmtFullDate(tpl.created_at)}
+                      </div>
+                    </div>
+                    <button className={`${styles.pmBtn} ${styles.pmBtnPrimary}`} onClick={() => applyTemplate(tpl.id)}>
+                      Apply
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className={styles.modalFooter}>
+              <button className={`${styles.pmBtn} ${styles.pmBtnSecondary}`} onClick={() => setShowTemplateModal(false)}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+{/* ===== Validation Modal ===== */}
+{showValidationModal && (
+  <div className={styles.modalOverlay} onClick={closeValidationModal}>
+    <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
+      <div className={styles.modalHeader}>
+        <div className={styles.modalTitle}>Review Plan Type</div>
+        <button className={styles.closeBtn} onClick={closeValidationModal}>
+          <FontAwesomeIcon icon={faTimes} />
+        </button>
+      </div>
+
+      <div className={styles.modalBody}>
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>Detected style</div>
+          <div>
+            <span style={{
+              display: 'inline-block',
+              padding: '6px 10px',
+              borderRadius: 8,
+              border: '1px solid #e5e7eb',
+              background: '#f8fafc',
+              marginRight: 8,
+              textTransform: 'capitalize'
+            }}>
+              {deriveStyleFromPlan(plan)}
+            </span>
+            {styleSource && (
+              <span style={{
+                fontSize: 12,
+                padding: '3px 8px',
+                borderRadius: 999,
+                border: '1px solid #cbd5e1',
+                color: '#475569',
+                background: '#fff'
+              }}>
+                source: {String(styleSource).toUpperCase()}
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>Why this style?</div>
+          <div style={{
+            border: '1px solid #e5e7eb',
+            borderRadius: 8,
+            padding: '10px 12px',
+            background: '#fff'
+          }}>
+            {styleReason || 'Heuristic default'}
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
+          <div style={{ flex: 1 }}>
+            <label style={{ display: 'block', fontWeight: 600, marginBottom: 6 }}>
+              Change plan type
+            </label>
+            <select
+              className={styles.formSelect}
+              value={styleChoice}
+              onChange={(e) => setStyleChoice(e.target.value)}
+            >
+              <option value="agile">Agile</option>
+              <option value="waterfall">Waterfall</option>
+              <option value="hybrid">Hybrid</option>
+            </select>
+          </div>
+
+          <div style={{ flex: 1 }}>
+            <label style={{ display: 'block', fontWeight: 600, marginBottom: 6 }}>
+              Estimated Duration
+            </label>
+            <input
+              className={styles.formInput}
+              value={
+                (styleDuration != null && Number.isFinite(Number(styleDuration)))
+                  ? `${styleDuration} months`
+                  : '—'
+              }
+              readOnly
+            />
+          </div>
+        </div>
+
+        {(deriveStyleFromPlan(plan) !== styleChoice) && (
+          <div style={{
+            fontSize: 13,
+            color: '#6b7280',
+            marginBottom: 6
+          }}>
+            Changing the plan type will regenerate the WBS before validation.
+          </div>
+        )}
+      </div>
+
+      <div className={styles.modalFooter}>
+        <button className={`${styles.pmBtn} ${styles.pmBtnSecondary}`} onClick={closeValidationModal}>
+          Cancel
+        </button>
+        <button
+          className={`${styles.pmBtn} ${styles.pmBtnPrimary}`}
+          onClick={confirmValidation}
+          disabled={regenBusy || validating}
+        >
+          {regenBusy ? 'Regenerating…' : (validating ? 'Validating…' : 'Continue & Validate')}
+        </button>
+      </div>
+    </div>
+  </div>
+)}
+
+      {/* Save Template Modal */}
+      {showSaveTemplateModal && (
+        <div className={styles.modalOverlay} onClick={() => setShowSaveTemplateModal(false)}>
+          <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
+            <div className={styles.modalHeader}>
+              <div className={styles.modalTitle}>Save as Template</div>
+              <button className={styles.closeBtn} onClick={() => setShowSaveTemplateModal(false)}>
+                <FontAwesomeIcon icon={faTimes} />
+              </button>
+            </div>
+            <div className={styles.modalBody}>
+              <div className={styles.formGroup}>
+                <label className={styles.formLabel}>Template Name *</label>
+                <input
+                  type="text"
+                  className={styles.formInput}
+                  value={templateName}
+                  onChange={(e) => setTemplateName(e.target.value)}
+                  placeholder="e.g., Software Launch"
+                />
+              </div>
+              <div className={styles.formGroup}>
+                <label className={styles.formLabel}>Description</label>
+                <textarea
+                  className={styles.formTextarea}
+                  value={templateDescription}
+                  onChange={(e) => setTemplateDescription(e.target.value)}
+                  placeholder="Describe this template..."
+                />
+              </div>
+            </div>
+            <div className={styles.modalFooter}>
+              <button className={`${styles.pmBtn} ${styles.pmBtnSecondary}`} onClick={() => setShowSaveTemplateModal(false)}>
+                Cancel
+              </button>
+              <button className={`${styles.pmBtn} ${styles.pmBtnPrimary}`} onClick={saveAsTemplate}>
+                Save Template
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+    </>
   );
 };
 

@@ -1,0 +1,4009 @@
+  /* ============================================================================
+    MarketIQ Professional Styling - REDESIGNED
+    Color Palette: #eff9fc (light bg), #161f3b (navy), #a0036c (magenta)
+    ============================================================================ */
+
+  /* CSS Variables */
+  :root {
+    --miq-navy: #161f3b;
+    --miq-magenta: #a0036c;
+    --miq-light-bg: #eff9fc;
+    --miq-white: #ffffff;
+    --miq-gray-50: #f8fafc;
+    --miq-gray-100: #f1f5f9;
+    --miq-gray-200: #e2e8f0;
+    --miq-gray-300: #cbd5e1;
+    --miq-gray-400: #94a3b8;
+    --miq-gray-500: #64748b;
+    --miq-gray-600: #475569;
+    --miq-gray-700: #334155;
+    --miq-gray-800: #1e293b;
+    --miq-green: #10b981;
+    --miq-red: #ef4444;
+    --miq-amber: #f59e0b;
+    --miq-blue: #3b82f6;
+    
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1);
+    --radius-sm: 0.375rem;
+    --radius-md: 0.5rem;
+    --radius-lg: 0.75rem;
+    --radius-xl: 1rem;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  /* ============================================================================
+    CHATGPT-STYLE INTERFACE (Conversation Intake)
+    ============================================================================ */
+
+  /* --- Shell & Header ------------------------------------------------------- */
+  .chatgpt-interface {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    background: var(--miq-light-bg);
+    position: relative;
+    overflow-x: hidden;
+  }
+
+  .chatgpt-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+    background: var(--miq-white);
+    border-bottom: 1px solid var(--miq-gray-200);
+    min-height: 60px;
+    z-index: 10;
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  .header-left,
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 120px;
+  }
+
+  .header-center {
+    flex: 1;
+    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .header-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--miq-navy);
+    margin: 0;
+  }
+
+  /* Rounded-square, navy buttons with white icons (consistent everywhere) */
+  .header-icon-btn {
+    width: 36px;
+    height: 36px;
+    border: 0;
+    border-radius: 10px;
+    background: var(--miq-navy);
+    color: #fff;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    cursor: pointer;
+    transition: transform .15s ease, box-shadow .15s ease, opacity .15s ease;
+  }
+  .header-icon-btn .miq-icon,
+  .header-icon-btn i,
+  .header-icon-btn svg {
+    color: #fff !important;
+    stroke: #fff !important;
+  }
+  .header-icon-btn:hover   { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(0,0,0,.12); }
+  .header-icon-btn:active  { transform: translateY(0); opacity: .9; }
+
+  /* "+" new session icon in header */
+  .chatgpt-header .miq-new-session-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    border: 0;
+    background: var(--miq-navy) !important;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 12px !important;
+    appearance: none;
+  }
+  .chatgpt-header .miq-new-session-btn svg {
+    width: var(--miq-plus-size, 16px) !important;
+    height: var(--miq-plus-size, 16px) !important;
+    color: #fff !important;
+    stroke: #fff !important;
+    stroke-width: 2 !important;
+    opacity: 1 !important;
+  }
+
+  /* --- Content Columns ------------------------------------------------------ */
+  .chatgpt-content {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    overflow: hidden;
+    max-width: 100%;
+  }
+
+  .chatgpt-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0;
+  }
+
+  /* --- Welcome / Suggestions ------------------------------------------------ */
+  .chatgpt-welcome {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 60vh;
+    padding: 2rem;
+    text-align: center;
+    max-width: 48rem;
+    margin: 0 auto;
+  }
+  .chatgpt-welcome h1 {
+    font-size: 2rem;
+    font-weight: 600;
+    color: var(--miq-navy);
+    margin: 0 0 0.75rem;
+  }
+  .chatgpt-welcome p {
+    font-size: 1.125rem;
+    color: var(--miq-gray-600);
+    margin: 0 0 2rem;
+  }
+
+  .chatgpt-suggestions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    width: 100%;
+    max-width: 42rem;
+  }
+
+  .chatgpt-suggestion {
+    padding: 1rem 1.25rem;
+    background: var(--miq-white);
+    border: 1px solid var(--miq-gray-200);
+    border-radius: var(--miq-radius, var(--radius-lg));
+    color: var(--miq-navy);
+    font-size: 0.95rem;
+    text-align: left;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .chatgpt-suggestion:hover {
+    background: var(--miq-gray-50);
+    border-color: var(--miq-magenta);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-sm);
+  }
+
+  /* Grid version (single definition, duplicates removed) */
+  .chat-suggestions-grid {
+    padding: 1.5rem;
+    background: var(--miq-gray-50);
+    border-top: 1px solid var(--miq-gray-200);
+  }
+  .suggestions-title {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--miq-gray-600);
+    margin: 0 0 1rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .suggestions-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 0.75rem;
+  }
+  .suggestion-card {
+    padding: 0.875rem;
+    background: #fff;
+    border: 1px solid var(--miq-gray-200);
+    border-radius: var(--radius-md);
+    text-align: left;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-size: 0.875rem;
+    color: var(--miq-navy);
+  }
+  .suggestion-card:hover:not(:disabled) {
+    border-color: var(--miq-magenta);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-sm);
+  }
+  .suggestion-card:disabled { opacity: .5; cursor: not-allowed; }
+
+  /* --- Conversation Bubbles ------------------------------------------------- */
+  .chatgpt-conversation {
+    max-width: 48rem;
+    margin: 0 auto;
+    padding: 1rem;
+  }
+  .chatgpt-message {
+    margin-bottom: 1.5rem;
+    display: flex;
+    flex-direction: column;
+  }
+  .chatgpt-message.user { align-items: flex-end; }
+  .chatgpt-message.ai   { align-items: flex-start; }
+
+  .message-content {
+    max-width: 85%;
+    padding: 1rem 1.25rem;
+    border-radius: var(--radius-lg);
+    word-wrap: break-word;
+    overflow-wrap: anywhere;
+    line-height: 1.6;
+  }
+  .chatgpt-message.ai .message-content {
+    background: #fff;
+    color: var(--miq-navy);
+    border: 1px solid var(--miq-gray-200);
+    border-radius: var(--radius-lg) var(--radius-lg) var(--radius-lg) 0.25rem;
+  }
+  .chatgpt-message.user .message-content {
+    background: var(--miq-magenta);
+    color: #fff;
+    border-radius: var(--radius-lg) var(--radius-lg) 0.25rem var(--radius-lg);
+  }
+
+  /* --- Error stripe --------------------------------------------------------- */
+  .chatgpt-error {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 1rem;
+    margin: 1rem auto;
+    max-width: 48rem;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: var(--radius-md);
+    color: var(--miq-red);
+  }
+
+  /* --- Input Area ----------------------------------------------------------- */
+  .chatgpt-input-area {
+    padding: 1rem 1.5rem 1.5rem;
+    background: #fff;
+    border-top: 1px solid var(--miq-gray-200);
+  }
+  .chatgpt-input-container {
+    max-width: 48rem;
+    margin: 0 auto;
+    display: flex;
+    align-items: flex-end;
+    gap: 0.75rem;
+    background: var(--miq-gray-50);
+    border: 2px solid var(--miq-gray-200);
+    border-radius: var(--radius-xl);
+    padding: 0.75rem 1rem;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    max-width: 100%;
+  }
+  .chatgpt-input-container:focus-within {
+    border-color: var(--miq-magenta);
+    box-shadow: 0 0 0 3px rgba(160, 3, 108, 0.1);
+  }
+  .chatgpt-input {
+    flex: 1;
+    border: none;
+    background: transparent;
+    resize: none;
+    outline: none;
+    font-size: 1rem;
+    line-height: 1.5;
+    color: var(--miq-navy);
+    min-height: 1.5rem;
+    max-height: 8rem;
+    font-family: inherit;
+  }
+  .chatgpt-input::placeholder { color: var(--miq-gray-400); }
+
+  .chatgpt-send {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border: none;
+    border-radius: var(--radius-md);
+    background: var(--miq-magenta);
+    color: #fff;
+    cursor: pointer;
+    transition: all 0.2s;
+    flex-shrink: 0;
+  }
+  .chatgpt-send:hover:not(:disabled) { background: #8a0359; }
+  .chatgpt-send:disabled { background: var(--miq-gray-400); cursor: not-allowed; }
+
+  /* --- Progress footer ------------------------------------------------------ */
+  .chatgpt-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 0.75rem;
+    gap: 1rem;
+  }
+  .progress-indicator {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  .progress-bar-container {
+    flex: 1;
+    height: 6px;
+    background-color: var(--miq-gray-200);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .progress-bar-fill {
+    height: 100%;
+    background-color: var(--miq-magenta);
+    transition: width 0.3s ease;
+  }
+  .progress-text {
+    font-size: 0.75rem;
+    color: var(--miq-gray-500);
+    white-space: nowrap;
+  }
+  .finish-analyze-btn {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    padding: .5rem 1rem;
+    background: var(--miq-magenta);
+    color: #fff;
+    border: 0;
+    border-radius: var(--radius-md);
+    font-size: .875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all .2s ease;
+    white-space: nowrap;
+  }
+  .finish-analyze-btn:hover:not(:disabled) {
+    background: #8a0359;
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-sm);
+  }
+  .finish-analyze-btn:disabled {
+    background: var(--miq-gray-400);
+    cursor: not-allowed;
+    opacity: .6;
+  }
+
+  /* --- Thinking overlay ----------------------------------------------------- */
+  .thinking-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,.3);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 50;
+  }
+  .thinking-content {
+    display: flex; align-items: center; gap: .75rem;
+    padding: 1rem 1.5rem;
+    background: #fff;
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    color: var(--miq-navy);
+    font-weight: 500;
+  }
+
+  /* ============================================================================
+    LEFT SIDEBARS - Readiness & History
+    ============================================================================ */
+
+  .miq-left-sidebar {
+    position: fixed;
+    left: -320px; top: 0; bottom: 0;
+    width: 320px;
+    background: #fff;
+    border-right: 1px solid var(--miq-gray-200);
+    box-shadow: var(--shadow-lg);
+    transition: left .3s ease, transform .25s ease;
+    z-index: 40;
+    display: flex; flex-direction: column;
+  }
+  .miq-left-sidebar.sidebar-open { left: 0; }
+  .miq-sidebar-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 1rem; border-bottom: 1px solid var(--miq-gray-200);
+  }
+  .miq-sidebar-header h3 {
+    font-size: 1rem; font-weight: 600; color: var(--miq-navy); margin: 0;
+  }
+  .miq-sidebar-close {
+    width: 2rem; height: 2rem; border: 0; border-radius: var(--radius-md);
+    background: transparent; color: var(--miq-gray-500);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; transition: all .2s;
+  }
+  .miq-sidebar-close:hover { background: var(--miq-gray-100); color: var(--miq-navy); }
+  .miq-sidebar-content { flex: 1; overflow-y: auto; padding: 1rem; }
+
+  /* ============================================================================
+    READINESS SIDEBAR STYLES - ENHANCED (REPLACEMENT)
+    Replace lines 446-465 and 3481-3488 in your existing MarketIQ.css
+    ============================================================================ */
+
+  /* --- Readiness Display (Main Progress Circle) --- */
+  .miq-readiness-display {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 1rem 0 2rem;
+  }
+
+  .miq-readiness-circle {
+    position: relative;
+    width: 120px;
+    height: 120px;
+    margin-bottom: 1rem;
+  }
+
+  .miq-progress-ring {
+    transform: rotate(-90deg);
+  }
+
+  .miq-progress-ring-fill {
+    transition: stroke-dasharray 0.3s ease;
+  }
+
+  .miq-readiness-percent {
+    position: absolute;
+    inset: 50% auto auto 50%;
+    transform: translate(-50%, -50%);
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--miq-navy);
+  }
+
+  .miq-readiness-status {
+    font-size: 0.875rem;
+    color: var(--miq-gray-600);
+    text-align: center;
+  }
+
+  /* --- Collected Section (Categories) --- */
+  .miq-collected-section {
+    margin-top: 1.5rem;
+  }
+
+  .miq-collected-section h4 {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--miq-navy);
+    margin: 0 0 1rem;
+  }
+
+  .miq-collected-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  /* --- Category Items (Expandable) --- */
+  .miq-collected-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem;
+    background: var(--miq-white);
+    border: 1px solid var(--miq-gray-200);
+    border-radius: var(--radius-md);
+    font-size: 0.875rem;
+    color: var(--miq-gray-700);
+    transition: all 0.2s;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .miq-collected-item:hover {
+    background: var(--miq-gray-50);
+    border-color: var(--miq-gray-300);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .miq-collected-item.collected {
+    background: #f0fdf4;
+    border-color: #86efac;
+  }
+
+  .miq-collected-icon {
+    font-size: 1rem;
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background-color: var(--miq-gray-100);
+    transition: background-color 0.2s ease;
+  }
+
+  .miq-collected-item.collected .miq-collected-icon {
+    background-color: #d1fae5;
+  }
+
+  /* --- Expandable Category Header Components --- */
+  .miq-category-expand-icon {
+    flex-shrink: 0;
+    width: 12px;
+    margin-right: 4px;
+    color: var(--miq-gray-500);
+    transition: transform 0.2s ease;
+  }
+
+  .miq-category-label {
+    flex: 1;
+    font-weight: 500;
+    color: var(--miq-navy);
+  }
+
+  .miq-category-progress-container {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-left: auto;
+  }
+
+  .miq-category-progress-bar {
+    width: 60px;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--miq-gray-200);
+    overflow: hidden;
+  }
+
+  .miq-category-progress-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 300ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .miq-category-percent-text {
+    font-size: 12px;
+    color: var(--miq-gray-600);
+    min-width: 35px;
+    text-align: right;
+  }
+
+  /* --- Micro Elements Container --- */
+  .miq-micro-elements {
+    padding: 0.5rem 0.75rem 0.75rem 2.5rem;
+    background-color: var(--miq-gray-50);
+    border-top: 1px solid var(--miq-gray-200);
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    animation: slideDown 0.2s ease-out;
+  }
+
+
+  /* --- Micro Confidence Indicator (Partial Progress) --- */
+  .miq-micro-confidence {
+    flex-shrink: 0;
+    width: 30px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--miq-gray-200);
+    overflow: hidden;
+  }
+
+  .miq-micro-confidence-fill {
+    height: 100%;
+    background: #60a5fa;
+    transition: width 200ms ease;
+  }
+
+  /* --- Progress Bar Color States --- */
+  .miq-progress-red {
+    background: var(--miq-red);
+  }
+
+  .miq-progress-blue {
+    background: var(--miq-blue);
+  }
+
+  .miq-progress-amber {
+    background: var(--miq-amber);
+  }
+
+  .miq-progress-green {
+    background: var(--miq-green);
+  }
+
+  /* --- Empty State --- */
+  .miq-readiness-empty {
+    padding: 1.5rem;
+    text-align: center;
+    color: var(--miq-gray-500);
+    font-size: 0.875rem;
+    background-color: var(--miq-gray-50);
+    border-radius: var(--radius-md);
+    border: 1px dashed var(--miq-gray-300);
+  }
+
+  /* --- Animations --- */
+  @keyframes slideDown {
+    from {
+      opacity: 0;
+      max-height: 0;
+    }
+    to {
+      opacity: 1;
+      max-height: 500px;
+    }
+  }
+
+  /* --- Responsive Adjustments --- */
+  @media (max-width: 768px) {
+    .miq-micro-elements {
+      padding-left: 1.5rem;
+    }
+
+    .miq-collected-item {
+      padding: 0.625rem;
+    }
+
+    .miq-category-label {
+      font-size: 0.8125rem;
+    }
+
+    .miq-micro-label {
+      font-size: 0.75rem;
+    }
+
+    .miq-category-progress-bar {
+      width: 50px;
+    }
+  }
+
+  /* --- Accessibility: Focus States --- */
+  .miq-collected-item:focus {
+    outline: 2px solid var(--miq-magenta);
+    outline-offset: -2px;
+  }
+
+  /* --- Sidebar Specific Tweaks --- */
+  .miq-readiness-sidebar .miq-collected-section h4 {
+    margin-bottom: 8px;
+  }
+
+  .miq-readiness-sidebar .miq-collected-list {
+    gap: 8px;
+  }
+
+  /* History */
+  .miq-no-history { text-align: center; color: var(--miq-gray-500); font-size: .875rem; padding: 2rem 1rem; }
+  .miq-history-item {
+    display: flex; align-items: center; gap: .5rem; padding: .75rem;
+    background: var(--miq-gray-50); border: 1px solid var(--miq-gray-200);
+    border-radius: var(--radius-md); margin-bottom: .75rem; transition: all .2s;
+  }
+  .miq-history-item:hover { border-color: var(--miq-magenta); box-shadow: var(--shadow-sm); }
+  .miq-history-main { flex: 1; cursor: pointer; }
+  .miq-history-title { font-size: .875rem; font-weight: 600; color: var(--miq-navy); margin-bottom: .25rem; }
+  .miq-history-date { font-size: .75rem; color: var(--miq-gray-500); }
+  .miq-history-score { font-size: .75rem; color: var(--miq-magenta); font-weight: 600; margin-top: .25rem; }
+  .miq-history-delete {
+    width: 2rem; height: 2rem; border: 0; border-radius: var(--radius-md);
+    background: transparent; color: var(--miq-gray-400);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; transition: all .2s;
+  }
+  .miq-history-delete:hover { background: #fee2e2; color: var(--miq-red); }
+
+  /* Vertical tabs */
+  .miq-sidebar-tab {
+    position: fixed; left: 0; top: 50%; transform: translateY(-50%);
+    width: 48px; height: 120px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .5rem;
+    background: #fff; border: 1px solid var(--miq-gray-200); border-left: none;
+    border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+    box-shadow: var(--shadow-md); cursor: pointer; transition: all .2s; z-index: 30;
+    font-size: 1.25rem; color: var(--miq-gray-600);
+  }
+  .miq-sidebar-tab:hover { width: 52px; box-shadow: var(--shadow-lg); }
+  .miq-tab-readiness { top: calc(50% - 80px); background: linear-gradient(135deg,#ffffff 0%,#ffffff 100%); color:#161f3b; border-color:#ffffff; }
+  .miq-tab-history   { top: calc(50% + 80px); background: linear-gradient(135deg,#ffffff 0%,#ffffff 100%); color:#161f3b; border-color:#ffffff; }
+  .miq-tab-label { font-size: .625rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; writing-mode: vertical-rl; text-orientation: mixed; }
+
+  /* Hover: invert to navy background and white text/icon */
+  .miq-tab-readiness:hover,
+  .miq-tab-history:hover {
+    background: #161f3b !important;
+    color: #ffffff !important;
+    border-color: #161f3b !important;
+  }
+
+  .miq-sidebar-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.3); z-index: 35; }
+
+  /* ============================================================================
+    PROFESSIONAL DASHBOARD – Compact Card bits used on intake screen
+    ============================================================================ */
+
+  .miq-dashboard-pro { min-height: 100vh; background: var(--miq-light-bg); }
+  .miq-header-pro {
+    display:flex; align-items:center; justify-content:space-between;
+    padding:1.5rem 2rem; background:#fff; border-bottom:1px solid var(--miq-gray-200); box-shadow: var(--shadow-sm);
+  }
+  .miq-btn-back {
+    display:flex; align-items:center; justify-content:center; width:2.5rem; height:2.5rem;
+    border:1px solid var(--miq-gray-300); border-radius: var(--radius-md); background:#fff; color:var(--miq-navy);
+    cursor:pointer; transition:all .2s;
+  }
+  .miq-btn-back:hover { background: var(--miq-gray-50); border-color: var(--miq-navy); }
+  .miq-header-center { flex:1; text-align:center; }
+  .miq-title-pro { font-size:1.5rem; font-weight:700; color:var(--miq-navy); margin:0 0 .25rem; }
+  .miq-subtitle-pro { font-size:.875rem; color:var(--miq-gray-600); margin:0; }
+  .miq-btn-discuss {
+    display:flex; align-items:center; gap:.5rem; padding:.625rem 1.25rem;
+    background: var(--miq-magenta); color:#fff; border:0; border-radius: var(--radius-md);
+    font-size:.875rem; font-weight:600; cursor:pointer; transition: all .2s;
+  }
+  .miq-btn-discuss:hover { background:#8a0359; transform: translateY(-1px); box-shadow: var(--shadow-md); }
+  .miq-container-pro { max-width:1400px; margin:0 auto; padding:2rem; }
+
+  /* Top Metrics */
+  .miq-metrics-row {
+    display:grid; grid-template-columns: repeat(auto-fit,minmax(200px,1fr));
+    gap:1.5rem; margin-bottom:2rem;
+  }
+  .miq-metric-card {
+    background:#fff; border:1px solid var(--miq-gray-200); border-radius: var(--radius-lg);
+    padding:1.5rem; box-shadow: var(--shadow-sm); transition: all .2s;
+  }
+  .miq-metric-card:hover { box-shadow: var(--shadow-md); transform: translateY(-2px); }
+  .miq-score-main { text-align:center; }
+  .miq-metric-label { font-size:.75rem; font-weight:600; color:var(--miq-gray-500); text-transform:uppercase; letter-spacing:.05em; margin-bottom:.75rem; }
+  .miq-metric-value { font-size:3rem; font-weight:700; line-height:1; margin-bottom:.5rem; }
+  .miq-value-sm { font-size:1.75rem; }
+  .miq-metric-badge { display:inline-block; padding:.25rem .75rem; border-radius:999px; color:#fff; font-size:.75rem; font-weight:600; }
+  .miq-metric-change { font-size:.875rem; font-weight:600; margin-top:.5rem; }
+  .miq-change-positive{ color:var(--miq-green); }
+  .miq-change-negative{ color:var(--miq-red); }
+  .miq-change-neutral{ color:var(--miq-gray-600); }
+
+  .miq-section-pro {
+    background:#fff; border:1px solid var(--miq-gray-200); border-radius: var(--radius-lg);
+    padding:2rem; margin-bottom:2rem; box-shadow: var(--shadow-sm);
+  }
+  .miq-section-title-pro { font-size:1.25rem; font-weight:700; color:var(--miq-navy); margin:0 0 1.5rem; }
+
+  /* Before/After (kept succinct) */
+  .miq-before-after-grid { display:grid; grid-template-columns: 1fr 1fr; gap:2rem; }
+  .miq-financial-column { background: var(--miq-gray-50); border-radius: var(--radius-md); overflow:hidden; }
+  .miq-column-header { background: var(--miq-navy); color:#fff; padding:.75rem 1rem; font-size:.875rem; font-weight:600; text-align:center; }
+  .miq-financial-list { padding:1rem; }
+  .miq-financial-row { display:flex; justify-content:space-between; align-items:center; padding:.75rem; border-bottom:1px solid var(--miq-gray-200); }
+  .miq-financial-row:last-child { border-bottom:none; }
+  .miq-row-highlight { background:#fef3c7; font-weight:600; border-radius: var(--radius-sm); }
+  .miq-fin-label { font-size:.875rem; color:var(--miq-gray-700); }
+  .miq-fin-value { font-size:.875rem; font-weight:600; color:var(--miq-navy); }
+  .miq-value-after { color: var(--miq-magenta); }
+  .miq-fin-change { font-size:.75rem; font-weight:600; margin-left:.5rem; }
+  .miq-fin-change.positive{ color:var(--miq-green); }
+  .miq-fin-change.negative{ color:var(--miq-red); }
+  .miq-fin-change.neutral { color:var(--miq-gray-500); }
+
+  /* Responsive pieces used by this span */
+  @media (max-width: 768px) {
+    .miq-before-after-grid { grid-template-columns: 1fr; }
+    .miq-metrics-row { grid-template-columns: 1fr; }
+  }
+
+  /* ============================================================================
+    CHAT INTERFACE (Discuss Analysis Page)
+    ============================================================================ */
+
+  .chat-interface { display:flex; height:100vh; background: var(--miq-bg, #fff); }
+
+  /* Sidebar */
+  .chat-sidebar {
+    width: 280px; background:#fff; border-right:1px solid var(--miq-gray-200);
+    display:flex; flex-direction:column; flex-shrink:0;
+  }
+  .chat-sidebar-header { padding:1.5rem; border-bottom:1px solid var(--miq-gray-200); }
+  .chat-sidebar-title { font-size:1.125rem; font-weight:600; color:var(--miq-navy); margin:0; }
+
+  .chat-score-card { padding:1.5rem; border-bottom:1px solid var(--miq-gray-200); }
+  .chat-score-display { display:flex; align-items:center; gap:1rem; margin-bottom:1rem; }
+  .chat-score-circle {
+    width: 60px; height: 60px; border-radius: 50%; border: 4px solid;
+    display:flex; align-items:center; justify-content:center; font-size:1.5rem; font-weight:700; flex-shrink:0;
+  }
+  .chat-score-info { flex:1; }
+  .chat-score-label { font-size:.75rem; color:var(--miq-gray-500); text-transform:uppercase; letter-spacing:.05em; margin-bottom:.25rem; }
+  .chat-score-value { font-size:.875rem; font-weight:600; color:var(--miq-navy); }
+
+  .chat-metrics { display:flex; flex-direction:column; gap:.5rem; }
+  .chat-metric-item { display:flex; justify-content:space-between; font-size:.8125rem; }
+  .chat-metric-label { color: var(--miq-gray-600); }
+  .chat-metric-value { font-weight:600; color: var(--miq-navy); }
+
+  /* Quick nav */
+  .chat-quick-nav { padding:1.5rem; border-bottom:1px solid var(--miq-gray-200); }
+  .chat-quick-nav h4 {
+    font-size:.75rem; font-weight:600; color:var(--miq-gray-500);
+    text-transform:uppercase; letter-spacing:.05em; margin:0 0 1rem;
+  }
+  .chat-nav-buttons { display:flex; flex-direction:column; gap:.5rem; }
+  .chat-nav-btn {
+    display:flex; align-items:center; gap:.75rem; padding:.75rem;
+    background:#fff; border:1px solid var(--miq-gray-200); border-radius: var(--radius-md);
+    color:var(--miq-navy); font-size:.875rem; cursor:pointer; transition: all .2s; text-align:left;
+  }
+  .chat-nav-btn:hover { background: var(--miq-gray-50); border-color: var(--miq-navy); }
+  .chat-nav-icon { color: var(--miq-magenta); font-size:1rem; }
+
+  /* Suggested questions */
+  .chat-suggested-questions { padding:1.5rem; flex:1; overflow-y:auto; }
+  .chat-suggested-questions h4 {
+    font-size:.75rem; font-weight:600; color:var(--miq-gray-500); text-transform:uppercase; letter-spacing:.05em; margin:0 0 1rem;
+  }
+  .chat-question-list { display:flex; flex-direction:column; gap:.75rem; }
+  .chat-question-btn {
+    padding:.75rem; background:#fff; border:1px solid var(--miq-gray-200); border-radius: var(--radius-md);
+    color: var(--miq-gray-700); font-size:.8125rem; line-height:1.5; cursor:pointer; transition: all .2s; text-align:left;
+  }
+  .chat-question-btn:hover { background: var(--miq-gray-50); border-color: var(--miq-magenta); color: var(--miq-navy); }
+
+  /* Main column */
+  .chat-main { flex:1; display:flex; flex-direction:column; background:#fff; }
+  .chat-header {
+    padding:1.5rem; border-bottom:1px solid var(--miq-gray-200);
+    display:flex; align-items:center; gap:1rem;
+  }
+  .chat-back-btn {
+    width:40px; height:40px; border-radius:50%; border:1px solid var(--miq-gray-200);
+    background:#fff; color:var(--miq-navy); display:flex; align-items:center; justify-content:center;
+    cursor:pointer; transition: all .2s;
+  }
+  .chat-back-btn:hover { background: var(--miq-gray-50); border-color: var(--miq-navy); }
+
+  .chat-header-title { flex:1; }
+  .chat-header-title h2 { font-size:1.25rem; font-weight:600; color:var(--miq-navy); margin:0 0 .25rem; }
+  .chat-header-subtitle { font-size:.875rem; color: var(--miq-gray-500); }
+
+  .chat-new-btn {
+    padding:.75rem 1.5rem; background: var(--miq-magenta); color:#fff; border:0; border-radius: var(--radius-md);
+    font-size:.875rem; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:.5rem; transition: all .2s;
+  }
+  .chat-new-btn:hover { background:#8a0257; }
+
+  .chat-messages {
+    flex:1; overflow-y:auto; padding:2rem; display:flex; flex-direction:column; gap:1.5rem;
+  }
+  .chat-message { display:flex; gap:1rem; max-width:800px; }
+  .chat-message.user { margin-left:auto; flex-direction: row-reverse; }
+  .chat-message-avatar {
+    width:36px; height:36px; border-radius:50%; background: var(--miq-gray-200);
+    display:flex; align-items:center; justify-content:center; flex-shrink:0; font-weight:600; font-size:.875rem; color: var(--miq-navy);
+  }
+  .chat-message.user .chat-message-avatar { background: var(--miq-magenta); color:#fff; }
+  .chat-message-content { flex:1; }
+  .chat-message-bubble {
+    padding:1rem; background: var(--miq-gray-50); border-radius: var(--radius-md);
+    color: var(--miq-gray-700); font-size:.9375rem; line-height:1.6;
+  }
+  .chat-message.user .chat-message-bubble { background: var(--miq-magenta); color:#fff; }
+  .chat-message-time { font-size:.75rem; color: var(--miq-gray-400); margin-top:.5rem; }
+  .chat-message.error .chat-message-bubble { background:#fee; color: var(--miq-red); border:1px solid #fcc; }
+
+  /* Input row */
+  .chat-input-container { padding:1.5rem; border-top:1px solid var(--miq-gray-200); background:#fff; }
+  .chat-input-wrapper {
+    display:flex; gap:1rem; align-items:flex-end; max-width:900px; margin:0 auto;
+  }
+  .chat-textarea {
+    flex:1; min-height:50px; max-height:150px; padding:.875rem 1rem;
+    border:1px solid var(--miq-gray-300); border-radius: var(--radius-md);
+    font-size:.9375rem; font-family:inherit; resize:none; transition: all .2s;
+  }
+  .chat-textarea:focus { outline:none; border-color: var(--miq-magenta); box-shadow: 0 0 0 3px rgba(160,3,108,.1); }
+  .chat-textarea::placeholder { color: var(--miq-gray-400); }
+  .chat-send-btn {
+    width:50px; height:50px; border-radius:50%; background: var(--miq-magenta);
+    color:#fff; border:0; display:flex; align-items:center; justify-content:center;
+    cursor:pointer; transition: all .2s; flex-shrink:0;
+  }
+  .chat-send-btn:hover:not(:disabled) { background:#8a0257; transform: scale(1.05); }
+  .chat-send-btn:disabled { background: var(--miq-gray-300); cursor:not-allowed; }
+  .chat-error-message { color: var(--miq-red); font-size:.875rem; margin-top:.5rem; text-align:center; }
+
+  /* Typing indicator */
+  .chat-loading { display:flex; gap:.5rem; padding:1rem; }
+  .chat-loading-dot { width:8px; height:8px; border-radius:50%; background: var(--miq-gray-400); animation: chatDotPulse 1.4s infinite ease-in-out both; }
+  .chat-loading-dot:nth-child(1){ animation-delay:-.32s; }
+  .chat-loading-dot:nth-child(2){ animation-delay:-.16s; }
+  @keyframes chatDotPulse { 0%,80%,100%{ transform: scale(0);} 40%{ transform: scale(1);} }
+
+  /* Mobile sidebar behavior */
+  @media (max-width: 768px) {
+    .chat-sidebar { position:absolute; left:-280px; height:100%; z-index:100; transition:left .3s ease; }
+    .chat-sidebar.open { left:0; }
+  }
+
+  /* ----- Chat spacing overrides (kept here to ensure effect) --------------- */
+  .chat-main .chat-messages { padding-bottom: clamp(140px, 20vh, 280px) !important; }
+  .chat-main .chat-input-container { margin-top: 1rem !important; }
+  .chat-main .chat-suggestions-grid,
+  .chat-main .chat-suggested-questions { margin-top: 1rem !important; }
+
+  /* ============================================================================
+    RESPONSIVE SAFEGUARDS FOR THIS REGION
+    ============================================================================ */
+
+  /* Prevent horizontal scroll on small screens */
+  html, body { max-width: 100%; overflow-x: hidden; }
+  .chatgpt-interface, .chatgpt-content, .chatgpt-header { max-width:100%; overflow-x:hidden; }
+  .chatgpt-interface * { box-sizing: border-box; }
+
+  /* Inputs/buttons never overflow */
+  .chatgpt-input, .chatgpt-input-container, .chatgpt-send, .finish-analyze-btn { max-width: 100%; }
+  .header-icon-btn, .header-icon-btn svg, .header-icon-btn .miq-icon { max-width: 100%; }
+
+  /* Mobile: sidebars as full-width drawers & hide vertical tabs */
+  @media (max-width: 768px) {
+    .chatgpt-content { padding: 0 12px; }
+
+    .chatgpt-welcome h1 {
+      font-size: clamp(1.55rem, 6vw, 2rem);
+      line-height: 1.2; word-break: break-word;
+    }
+    .chatgpt-welcome p { font-size: 1rem; line-height: 1.5; }
+
+    .miq-left-sidebar {
+      position: fixed;
+      top: 56px; bottom: 0; left: 0; right: 0;
+      width: 100vw !important; max-width: 100vw !important;
+      transform: translateX(-100%); will-change: transform; transition: transform .25s ease;
+      overflow-y: auto; visibility: hidden; pointer-events: none;
+    }
+    .miq-left-sidebar.sidebar-open { transform: translateX(0); visibility: visible; pointer-events: auto; }
+    .miq-sidebar-tab { display: none !important; }
+
+    .chatgpt-message .message-content { max-width: 100%; }
+    .chatgpt-input-container { padding-left: 10px; padding-right: 10px; }
+
+    /* Clamp rogue min-widths from inline styles */
+    .chatgpt-interface [style*="min-width"],
+    .chatgpt-interface [style*="width: 340px"] {
+      min-width: 0 !important; width: auto !important; max-width: 100% !important;
+    }
+  }
+
+  /* ============================================================================
+    WHAT'S NEXT DROPDOWN MENU
+    ============================================================================ */
+
+  /* ============================================================================
+    WHAT'S NEXT DROPDOWN MENU
+    ============================================================================ */
+
+  .miq-whats-next-dropdown {
+    position: relative;
+  }
+
+  .miq-btn-whats-next {
+    padding: 0.75rem 1.5rem;
+    background: var(--miq-magenta);
+    color: white;
+    border: none;
+    border-radius: var(--radius-md);
+    font-size: 0.9375rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    transition: all 0.2s ease;
+  }
+
+  .miq-btn-whats-next:hover {
+    background: #8a0257;
+  }
+
+  .miq-dropdown-arrow {
+    font-size: 0.75rem;
+    transition: transform 0.3s ease;
+    display: inline-block;
+  }
+
+  .miq-dropdown-arrow.open {
+    transform: rotate(180deg);
+  }
+
+  .miq-dropdown-menu {
+    position: absolute;
+    top: calc(100% + 0.5rem);
+    right: 0;
+    min-width: 220px;
+    background: white;
+    border: 1px solid var(--miq-gray-200);
+    border-radius: var(--radius-md);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    padding: 0.5rem;
+    z-index: 1000;
+    animation: dropdownSlideIn 0.2s ease-out;
+  }
+
+  @keyframes dropdownSlideIn {
+    from {
+      opacity: 0;
+      transform: translateY(-10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .miq-dropdown-item {
+    width: 100%;
+    padding: 0.875rem 1rem;
+    background: white;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--miq-navy);
+    font-size: 0.9375rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    text-align: left;
+    transition: all 0.2s ease;
+  }
+
+  .miq-dropdown-item:hover {
+    background: var(--miq-gray-50);
+    color: var(--miq-magenta);
+  }
+
+  .miq-dropdown-item svg {
+    font-size: 1rem;
+    color: var(--miq-magenta);
+  }
+
+  .miq-dropdown-item:not(:last-child) {
+    margin-bottom: 0.25rem;
+  }
+
+  /* ============================================
+    ADD THESE STYLES TO MarketIQ.css
+    (Navigation Icons + Help Modal)
+    ============================================ */
+
+  /* Top Navigation Icons in Header */
+  .miq-top-nav-icons {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+  }
+
+  .miq-nav-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: white;
+    border: 1px solid #e5e7eb;
+    color: #a0036c;
+    font-size: 1.125rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .miq-nav-icon:hover {
+    background: #a0036c;
+    color: white;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(160, 3, 108, 0.3);
+  }
+
+  /* Help Modal */
+  .miq-help-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+    padding: 1rem;
+  }
+
+  .miq-help-content {
+    background: white;
+    border-radius: 12px;
+    width: 100%;
+    max-width: 600px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  }
+
+  .miq-help-header {
+    padding: 1.5rem;
+    border-bottom: 1px solid #e5e7eb;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .miq-help-header h3 {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: #161f3b;
+    margin: 0;
+  }
+
+  .miq-help-close {
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    background: transparent;
+    border: none;
+    color: #6b7280;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .miq-help-close:hover {
+    background: #f3f4f6;
+    color: #161f3b;
+  }
+
+  .miq-help-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .miq-help-welcome {
+    color: #374151;
+    font-size: 0.9375rem;
+    line-height: 1.6;
+  }
+
+  .miq-help-welcome p {
+    margin: 0 0 1rem 0;
+  }
+
+  .miq-help-welcome ul {
+    margin: 0 0 1rem 0;
+    padding-left: 1.5rem;
+  }
+
+  .miq-help-welcome li {
+    margin-bottom: 0.5rem;
+  }
+
+  .miq-help-message {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .miq-help-message.user {
+    align-items: flex-end;
+  }
+
+  .miq-help-message.assistant {
+    align-items: flex-start;
+  }
+
+  .miq-help-bubble {
+    max-width: 85%;
+    padding: 0.875rem 1rem;
+    border-radius: 12px;
+    font-size: 0.9375rem;
+    line-height: 1.5;
+  }
+
+  .miq-help-message.user .miq-help-bubble {
+    background: #a0036c;
+    color: white;
+  }
+
+  .miq-help-message.assistant .miq-help-bubble {
+    background: #f3f4f6;
+    color: #161f3b;
+  }
+
+  .miq-help-loading {
+    text-align: center;
+    color: #9ca3af;
+    font-size: 0.875rem;
+    font-style: italic;
+  }
+
+  .miq-help-input {
+    padding: 1rem 1.5rem;
+    border-top: 1px solid #e5e7eb;
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-end;
+  }
+
+  .miq-help-input textarea {
+    flex: 1;
+    min-height: 44px;
+    max-height: 120px;
+    padding: 0.75rem;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    font-size: 0.9375rem;
+    font-family: inherit;
+    resize: none;
+  }
+
+  .miq-help-input textarea:focus {
+    outline: none;
+    border-color: #a0036c;
+    box-shadow: 0 0 0 3px rgba(160, 3, 108, 0.1);
+  }
+
+  .miq-help-input textarea:disabled {
+    background: #f9fafb;
+    color: #9ca3af;
+    cursor: not-allowed;
+  }
+
+  .miq-help-input button {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: #a0036c;
+    color: white;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .miq-help-input button:hover:not(:disabled) {
+    background: #8a0257;
+    transform: scale(1.05);
+  }
+
+  .miq-help-input button:disabled {
+    background: #d1d5db;
+    cursor: not-allowed;
+  }
+
+
+  /* ============================================================================
+    EXPLORE ANALYSIS SECTION
+    ============================================================================ */
+
+  .explore-analysis {
+    min-height: 100vh;
+    background: var(--miq-light-bg);
+    padding: 2rem;
+  }
+
+  .explore-analysis .dashboard-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 2rem;
+    padding-bottom: 1rem;
+    border-bottom: 2px solid var(--miq-gray-200);
+  }
+
+  .explore-analysis .dashboard-header h2 {
+    font-size: 1.875rem;
+    font-weight: 700;
+    color: var(--miq-navy);
+    margin: 0;
+  }
+
+  .explore-analysis .back-button {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.625rem 1.25rem;
+    background: var(--miq-white);
+    border: 1px solid var(--miq-gray-300);
+    border-radius: var(--radius-md);
+    color: var(--miq-navy);
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .explore-analysis .back-button:hover {
+    background: var(--miq-gray-50);
+    border-color: var(--miq-magenta);
+    transform: translateX(-2px);
+  }
+
+  .explore-analysis .action-button {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.625rem 1.25rem;
+    background: var(--miq-magenta);
+    border: none;
+    border-radius: var(--radius-md);
+    color: white;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .explore-analysis .action-button:hover {
+    background: #8a0359;
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+  }
+
+  .explore-metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+  }
+
+  .explore-metric-card {
+    background: var(--miq-white);
+    border: 1px solid var(--miq-gray-200);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    box-shadow: var(--shadow-sm);
+    transition: all 0.2s;
+  }
+
+  .explore-metric-card:hover {
+    box-shadow: var(--shadow-md);
+    transform: translateY(-2px);
+  }
+
+  .explore-metric-card h4 {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--miq-gray-600);
+    margin: 0 0 0.5rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .explore-metric-card .metric-value {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--miq-navy);
+    margin: 0;
+  }
+
+  .explore-breakdown {
+    background: var(--miq-white);
+    border: 1px solid var(--miq-gray-200);
+    border-radius: var(--radius-lg);
+    padding: 2rem;
+    box-shadow: var(--shadow-sm);
+    margin-bottom: 2rem;
+  }
+
+  .explore-breakdown h3 {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--miq-navy);
+    margin: 0 0 1.5rem;
+  }
+
+  .explore-breakdown p {
+    color: var(--miq-gray-600);
+    line-height: 1.6;
+    margin-bottom: 1.5rem;
+  }
+
+  .explore-breakdown table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .explore-breakdown th {
+    text-align: left;
+    padding: 0.75rem;
+    background: var(--miq-gray-50);
+    color: var(--miq-navy);
+    font-weight: 600;
+    font-size: 0.875rem;
+    border-bottom: 2px solid var(--miq-gray-200);
+  }
+
+  .explore-breakdown td {
+    padding: 0.75rem;
+    border-bottom: 1px solid var(--miq-gray-200);
+    color: var(--miq-gray-700);
+  }
+
+  .explore-breakdown tr:last-child td {
+    border-bottom: none;
+  }
+
+  /* ============================================================================
+    SCENARIO MODELER SECTION
+    ============================================================================ */
+
+  /* ============ SCENARIO MODELER SECTION ============ */
+
+  .scenario-modeler-page {
+    min-height: 100vh;
+    background: var(--miq-light-bg);
+  }
+
+  .scenario-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1.5rem 2rem;
+    background: white;
+    border-bottom: 1px solid var(--miq-gray-200);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .scenario-title {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--miq-navy);
+    margin: 0;
+  }
+
+  .scenario-content {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 2rem;
+  }
+
+  .scenario-intro {
+    background: var(--miq-white);
+    border: 1px solid var(--miq-gray-200);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    margin-bottom: 2rem;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .scenario-intro h3 {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--miq-navy);
+    margin: 0 0 0.75rem;
+  }
+
+  .scenario-intro p {
+    color: var(--miq-gray-600);
+    line-height: 1.6;
+    margin: 0;
+  }
+
+  .scenario-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+  }
+
+  .scenario-panel {
+    background: var(--miq-white);
+    border: 1px solid var(--miq-gray-200);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    box-shadow: var(--shadow-sm);
+    transition: all 0.2s;
+  }
+
+  .scenario-panel:hover {
+    box-shadow: var(--shadow-md);
+  }
+
+  .scenario-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--miq-gray-200);
+  }
+
+  .scenario-panel-header h4 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--miq-navy);
+    margin: 0;
+  }
+
+  .save-scenario-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border: none;
+    border-radius: var(--radius-md);
+    background: var(--miq-gray-100);
+    color: var(--miq-magenta);
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .save-scenario-btn:hover:not(:disabled) {
+    background: var(--miq-magenta);
+    color: white;
+    transform: scale(1.05);
+  }
+
+  .save-scenario-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .lever-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+
+  .lever-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .lever-label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--miq-navy);
+  }
+
+  .lever-value {
+    font-weight: 700;
+    color: var(--miq-magenta);
+  }
+
+  .lever-slider {
+    width: 100%;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--miq-gray-200);
+    outline: none;
+    -webkit-appearance: none;
+    appearance: none;
+    cursor: pointer;
+  }
+
+  .lever-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--miq-magenta);
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .lever-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.2);
+    box-shadow: 0 0 0 4px rgba(160, 3, 108, 0.1);
+  }
+
+  .lever-slider::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--miq-magenta);
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .lever-slider::-moz-range-thumb:hover {
+    transform: scale(1.2);
+    box-shadow: 0 0 0 4px rgba(160, 3, 108, 0.1);
+  }
+
+  .lever-slider:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .lever-markers {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.75rem;
+    color: var(--miq-gray-500);
+    margin-top: 0.25rem;
+  }
+
+  .scenario-actions {
+    display: flex;
+    gap: 0.75rem;
+    margin-top: 1.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--miq-gray-200);
+  }
+
+  .scenario-actions button {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.625rem 1rem;
+    border: none;
+    border-radius: var(--radius-md);
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .scenario-actions button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .run-scenario-btn {
+    background: var(--miq-magenta);
+    color: white;
+  }
+
+  .run-scenario-btn:hover:not(:disabled) {
+    background: #8a0359;
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .scenario-result {
+    margin-top: 1.5rem;
+    padding: 1rem;
+    background: var(--miq-gray-50);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--miq-gray-200);
+  }
+
+  .scenario-result h5 {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--miq-navy);
+    margin: 0 0 0.75rem;
+  }
+
+  .scenario-result-score {
+    font-size: 2rem;
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+  }
+
+  .scenario-result-metrics {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    font-size: 0.875rem;
+  }
+
+  .scenario-result-metrics div {
+    display: flex;
+    justify-content: space-between;
+    color: var(--miq-gray-700);
+  }
+
+  .scenario-result-metrics strong {
+    color: var(--miq-navy);
+  }
+
+  .compare-all-btn {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.875rem 1.5rem;
+    background: var(--miq-navy);
+    color: white;
+    border: none;
+    border-radius: var(--radius-md);
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    margin-top: 1rem;
+  }
+
+  .compare-all-btn:hover:not(:disabled) {
+    background: #0f1729;
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+  }
+
+  .compare-all-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* Responsive padding */
+  @media (max-width: 768px) {
+    .scenario-header {
+      padding: 1rem;
+    }
+    
+    .scenario-content {
+      padding: 1rem;
+    }
+    
+    .scenario-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+
+  /* ============================================================================
+    COMPARISON VIEW
+    ============================================================================ */
+
+  .comparison-view {
+    min-height: 100vh;
+    background: var(--miq-light-bg);
+    padding: 2rem;
+  }
+
+  .comparison-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 2rem;
+    padding-bottom: 1rem;
+    border-bottom: 2px solid var(--miq-gray-200);
+  }
+
+  .comparison-header h2 {
+    font-size: 1.875rem;
+    font-weight: 700;
+    color: var(--miq-navy);
+    margin: 0;
+  }
+
+  .comparison-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1.5rem;
+  }
+
+  .comparison-card {
+    background: var(--miq-white);
+    border: 1px solid var(--miq-gray-200);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    box-shadow: var(--shadow-sm);
+    transition: all 0.2s;
+  }
+
+  .comparison-card:hover {
+    box-shadow: var(--shadow-md);
+    transform: translateY(-2px);
+  }
+
+  .comparison-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--miq-gray-200);
+  }
+
+  .comparison-card-header h4 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--miq-navy);
+    margin: 0;
+  }
+
+  .comparison-score {
+    font-size: 2rem;
+    font-weight: 700;
+    text-align: center;
+    margin: 1rem 0;
+  }
+
+  .comparison-metrics {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .comparison-metric-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.875rem;
+  }
+
+  .comparison-metric-row .label {
+    color: var(--miq-gray-600);
+    font-weight: 500;
+  }
+
+  .comparison-metric-row .value {
+    color: var(--miq-navy);
+    font-weight: 600;
+  }
+
+  .comparison-delta {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.125rem 0.5rem;
+    border-radius: var(--radius-sm);
+  }
+
+  .adopt-scenario-btn {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.625rem 1rem;
+    background: var(--miq-magenta);
+    color: white;
+    border: none;
+    border-radius: var(--radius-md);
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    margin-top: 1rem;
+  }
+
+  .adopt-scenario-btn:hover {
+    background: #8a0359;
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-sm);
+  }
+
+  /* ============================================================================
+    NEXT STEPS SECTION (for Scenario Modeler bottom section)
+    ============================================================================ */
+
+  .miq-next-steps-section {
+    background: var(--miq-white);
+    border: 1px solid var(--miq-gray-200);
+    border-radius: var(--radius-lg);
+    padding: 2rem;
+    margin-top: 2rem;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .miq-next-steps-title {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--miq-navy);
+    margin: 0 0 1.5rem;
+  }
+
+  .miq-next-steps-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 1rem;
+  }
+
+  .miq-next-step-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+    padding: 1.25rem;
+    background: var(--miq-gray-50);
+    border: 1px solid var(--miq-gray-200);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .miq-next-step-card:hover {
+    background: var(--miq-white);
+    border-color: var(--miq-magenta);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+  }
+
+  .miq-next-step-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: var(--radius-md);
+    background: var(--miq-magenta);
+    color: white;
+    font-size: 1.125rem;
+    flex-shrink: 0;
+  }
+
+  .miq-next-step-content {
+    flex: 1;
+  }
+
+  .miq-next-step-card .miq-next-step-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--miq-navy);
+    margin: 0 0 0.25rem;
+  }
+
+  .miq-next-step-description {
+    font-size: 0.875rem;
+    color: var(--miq-gray-600);
+    margin: 0;
+    line-height: 1.4;
+  }
+  /* Additional ExploreAnalysis styles - add before SCENARIO MODELER SECTION */
+
+  .explore-analysis .dashboard-title {
+    font-size: 1.875rem;
+    font-weight: 700;
+    color: var(--miq-navy);
+    margin: 0;
+  }
+
+  .explore-analysis .chat-button {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.625rem 1.25rem;
+    background: var(--miq-magenta);
+    border: none;
+    border-radius: var(--radius-md);
+    color: white;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .explore-analysis .chat-button:hover {
+    background: #8a0359;
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+  }
+
+  .explore-score-summary {
+    background: var(--miq-white);
+    border: 1px solid var(--miq-gray-200);
+    border-radius: var(--radius-lg);
+    padding: 2rem;
+    margin-bottom: 2rem;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .explore-score-header {
+    display: flex;
+    align-items: center;
+    gap: 2rem;
+    margin-bottom: 2rem;
+    padding-bottom: 2rem;
+    border-bottom: 1px solid var(--miq-gray-200);
+  }
+
+  .explore-score-circle {
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    border: 6px solid;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 3rem;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  .explore-score-details {
+    flex: 1;
+  }
+
+  .explore-score-label {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--miq-gray-600);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 0.5rem;
+  }
+
+  .explore-score-category {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--miq-navy);
+  }
+
+  .explore-financial-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1.5rem;
+  }
+
+  .explore-financial-item {
+    text-align: center;
+    padding: 1rem;
+    background: var(--miq-gray-50);
+    border-radius: var(--radius-md);
+  }
+
+  .explore-financial-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--miq-gray-600);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 0.5rem;
+  }
+
+  .explore-financial-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--miq-navy);
+  }
+
+  .explore-financial-value.risk {
+    color: var(--miq-red);
+  }
+
+  .explore-financial-value.negative {
+    color: var(--miq-red);
+  }
+
+  .explore-financial-value.opportunity {
+    color: var(--miq-green);
+  }
+
+  .explore-financial-value.positive {
+    color: var(--miq-green);
+  }
+
+  .methodology-section {
+    background: var(--miq-white);
+    border: 1px solid var(--miq-gray-200);
+    border-radius: var(--radius-lg);
+    padding: 2rem;
+    margin-bottom: 2rem;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .methodology-section h3 {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--miq-navy);
+    margin: 0 0 1rem;
+  }
+
+  .methodology-section p {
+    color: var(--miq-gray-600);
+    line-height: 1.6;
+    margin-bottom: 1.5rem;
+  }
+
+  .methodology-table {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .methodology-header,
+  .methodology-row,
+  .methodology-footer {
+    display: grid;
+    grid-template-columns: 2fr 1fr 1fr 1fr;
+    gap: 1rem;
+    padding: 0.75rem 1rem;
+    align-items: center;
+  }
+
+  .methodology-header {
+    background: var(--miq-gray-50);
+    border-radius: var(--radius-md);
+    font-weight: 600;
+    font-size: 0.875rem;
+    color: var(--miq-navy);
+  }
+
+  .methodology-row {
+    border-bottom: 1px solid var(--miq-gray-200);
+    color: var(--miq-gray-700);
+  }
+
+  .methodology-footer {
+    background: var(--miq-gray-50);
+    border-radius: var(--radius-md);
+    font-weight: 700;
+    color: var(--miq-navy);
+    margin-top: 0.5rem;
+  }
+
+  .component-breakdown-section {
+    background: var(--miq-white);
+    border: 1px solid var(--miq-gray-200);
+    border-radius: var(--radius-lg);
+    padding: 2rem;
+    margin-bottom: 2rem;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .component-breakdown-section h3 {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--miq-navy);
+    margin: 0 0 1.5rem;
+  }
+
+  .breakdown-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 1.5rem;
+  }
+
+  .breakdown-item {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1.5rem;
+    background: var(--miq-gray-50);
+    border-radius: var(--radius-md);
+    transition: all 0.2s;
+  }
+
+  .breakdown-item:hover {
+    background: var(--miq-white);
+    box-shadow: var(--shadow-md);
+    transform: translateY(-2px);
+  }
+
+  .breakdown-icon {
+    width: 3rem;
+    height: 3rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.5rem;
+    background: var(--miq-white);
+    border-radius: var(--radius-md);
+    flex-shrink: 0;
+  }
+
+  .breakdown-content {
+    flex: 1;
+  }
+
+  .breakdown-label {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--miq-gray-600);
+    margin-bottom: 0.25rem;
+  }
+
+  .breakdown-score {
+    font-size: 1.75rem;
+    font-weight: 700;
+  }
+
+  .raw-data-section {
+    background: var(--miq-white);
+    border: 1px solid var(--miq-gray-200);
+    border-radius: var(--radius-lg);
+    padding: 2rem;
+    margin-bottom: 2rem;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .raw-data-section h3 {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--miq-navy);
+    margin: 0 0 1.5rem;
+  }
+
+  .raw-data-container {
+    background: var(--miq-gray-50);
+    border: 1px solid var(--miq-gray-200);
+    border-radius: var(--radius-md);
+    padding: 1rem;
+    max-height: 400px;
+    overflow-y: auto;
+    margin-bottom: 1rem;
+  }
+
+  .raw-data-container pre {
+    margin: 0;
+    font-family: 'Courier New', monospace;
+    font-size: 0.75rem;
+    color: var(--miq-gray-700);
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+
+  .raw-data-actions {
+    display: flex;
+    gap: 1rem;
+  }
+
+  .action-btn {
+    padding: 0.625rem 1.25rem;
+    border-radius: var(--radius-md);
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: none;
+  }
+
+  .action-btn.secondary {
+    background: var(--miq-gray-100);
+    color: var(--miq-navy);
+    border: 1px solid var(--miq-gray-300);
+  }
+
+  .action-btn.secondary:hover {
+    background: var(--miq-gray-200);
+    border-color: var(--miq-navy);
+  }
+
+  .navigation-section {
+    background: var(--miq-white);
+    border: 1px solid var(--miq-gray-200);
+    border-radius: var(--radius-lg);
+    padding: 2rem;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .navigation-section h3 {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--miq-navy);
+    margin: 0 0 1.5rem;
+  }
+
+  .navigation-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 1rem;
+  }
+
+  .nav-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+    padding: 1.25rem;
+    background: var(--miq-gray-50);
+    border: 1px solid var(--miq-gray-200);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .nav-card:hover {
+    background: var(--miq-white);
+    border-color: var(--miq-magenta);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+  }
+
+  .nav-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: var(--radius-md);
+    background: var(--miq-magenta);
+    color: white;
+    font-size: 1.125rem;
+    flex-shrink: 0;
+  }
+
+  .nav-content {
+    flex: 1;
+  }
+
+  .nav-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--miq-navy);
+    margin: 0 0 0.25rem;
+  }
+
+  .nav-description {
+    font-size: 0.875rem;
+    color: var(--miq-gray-600);
+    margin: 0;
+    line-height: 1.4;
+  }
+
+
+  .navigation-section {
+    background: var(--miq-white);
+    border: 1px solid var(--miq-gray-200);
+    border-radius: var(--radius-lg);
+    padding: 2rem;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .navigation-section h3 {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--miq-navy);
+    margin: 0 0 1.5rem;
+  }
+
+  .navigation-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 1rem;
+  }
+
+  .nav-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+    padding: 1.25rem;
+    background: var(--miq-gray-50);
+    border: 1px solid var(--miq-gray-200);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .nav-card:hover {
+    background: var(--miq-white);
+    border-color: var(--miq-magenta);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+  }
+
+  .nav-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: var(--radius-md);
+    background: var(--miq-magenta);
+    color: white;
+    font-size: 1.125rem;
+    flex-shrink: 0;
+  }
+
+  .nav-content {
+    flex: 1;
+  }
+
+  .nav-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--miq-navy);
+    margin: 0 0 0.25rem;
+  }
+
+  .nav-description {
+    font-size: 0.875rem;
+    color: var(--miq-gray-600);
+    margin: 0;
+    line-height: 1.4;
+  }
+
+
+  /* What's Next Dropdown for ExploreAnalysis */
+  .explore-whats-next-dropdown {
+    position: relative;
+  }
+
+  .explore-btn-whats-next {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.625rem 1.25rem;
+    background: var(--miq-magenta);
+    border: none;
+    border-radius: var(--radius-md);
+    color: white;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .explore-btn-whats-next:hover {
+    background: #8a0359;
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+  }
+
+  .explore-dropdown-arrow {
+    font-size: 0.625rem;
+    transition: transform 0.2s;
+  }
+
+  .explore-dropdown-arrow.open {
+    transform: rotate(180deg);
+  }
+
+  .explore-dropdown-menu {
+    position: absolute;
+    top: calc(100% + 0.5rem);
+    right: 0;
+    min-width: 220px;
+    background: var(--miq-white);
+    border: 1px solid var(--miq-gray-200);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+    z-index: 1000;
+    overflow: hidden;
+  }
+
+  .explore-dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 0.875rem 1.25rem;
+    background: var(--miq-white);
+    border: none;
+    border-bottom: 1px solid var(--miq-gray-100);
+    color: var(--miq-navy);
+    font-size: 0.875rem;
+    font-weight: 500;
+    text-align: left;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .explore-dropdown-item:last-child {
+    border-bottom: none;
+  }
+
+  .explore-dropdown-item:hover {
+    background: var(--miq-gray-50);
+    color: var(--miq-magenta);
+  }
+
+  .explore-dropdown-item svg {
+    color: var(--miq-magenta);
+    font-size: 1rem;
+  }
+
+  /* ===== Chat spacing overrides – paste at very bottom ===== */
+
+  /* Add breathing room between last message and the input box */
+  .chat-main .chat-messages {
+    padding-bottom: clamp(140px, 20vh, 280px) !important; /* adjust to taste */
+  }
+
+  /* (Optional) add a little extra separation before the input area itself */
+  .chat-main .chat-input-container {
+    margin-top: 1rem !important;
+  }
+
+  /* (Optional) if you show a suggested-questions strip under the input,
+    keep a comfortable gap from the input */
+  .chat-main .chat-suggestions-grid,
+  .chat-main .chat-suggested-questions {
+    margin-top: 1rem !important;
+  }
+
+  /* ============================================================================
+    ENHANCED FINANCIAL METRICS STYLING
+    Add these styles to your existing MarketIQ.css file
+    ============================================================================ */
+
+  /* Strategic Decision Framework */
+  .miq-decision-framework {
+    background: var(--miq-white);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    border: 1px solid var(--miq-gray-200);
+  }
+
+  .miq-decision-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .miq-decision-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 1.25rem;
+    border-radius: var(--radius-md);
+    border: 2px solid var(--miq-gray-200);
+    transition: all 0.2s;
+  }
+
+  .miq-decision-item.miq-decision-pass {
+    border-color: var(--miq-green);
+    background: rgba(16, 185, 129, 0.05);
+  }
+
+  .miq-decision-item.miq-decision-fail {
+    border-color: var(--miq-red);
+    background: rgba(239, 68, 68, 0.05);
+  }
+
+  .miq-decision-icon {
+    font-size: 2rem;
+    font-weight: bold;
+    margin-bottom: 0.5rem;
+  }
+
+  .miq-decision-pass .miq-decision-icon {
+    color: var(--miq-green);
+  }
+
+  .miq-decision-fail .miq-decision-icon {
+    color: var(--miq-red);
+  }
+
+  .miq-decision-label {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--miq-navy);
+    text-align: center;
+    margin-bottom: 0.25rem;
+  }
+
+  .miq-decision-desc {
+    font-size: 0.75rem;
+    color: var(--miq-gray-600);
+    text-align: center;
+  }
+
+  .miq-decision-recommendation {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 1.5rem;
+    border-radius: var(--radius-md);
+    border: 3px solid;
+    margin-top: 1rem;
+  }
+
+  .miq-rec-strong {
+    border-color: var(--miq-green);
+    background: rgba(16, 185, 129, 0.1);
+  }
+
+  .miq-rec-moderate {
+    border-color: var(--miq-amber);
+    background: rgba(245, 158, 11, 0.1);
+  }
+
+  .miq-rec-risk {
+    border-color: var(--miq-red);
+    background: rgba(239, 68, 68, 0.1);
+  }
+
+  .miq-rec-reject {
+    border-color: #dc3545;
+    background: rgba(220, 53, 69, 0.1);
+  }
+
+  .miq-rec-title {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--miq-gray-600);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.5rem;
+  }
+
+  .miq-rec-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--miq-navy);
+  }
+
+  /* Investment Analysis Section */
+  .miq-investment-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+  }
+
+  .miq-investment-card {
+    background: var(--miq-white);
+    border: 1px solid var(--miq-gray-200);
+    border-radius: var(--radius-md);
+    padding: 1.25rem;
+    transition: all 0.2s;
+  }
+
+  .miq-investment-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+  }
+
+  .miq-investment-card.miq-inv-highlight {
+    background: linear-gradient(135deg, rgba(160, 3, 108, 0.05) 0%, rgba(22, 31, 59, 0.05) 100%);
+    border-color: var(--miq-magenta);
+    border-width: 2px;
+  }
+
+  .miq-inv-label {
+    font-size: 0.875rem;
+    color: var(--miq-gray-600);
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+  }
+
+  .miq-inv-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--miq-navy);
+    margin-bottom: 0.25rem;
+  }
+
+  .miq-inv-desc {
+    font-size: 0.75rem;
+    color: var(--miq-gray-500);
+    font-style: italic;
+  }
+
+  /* NPV & IRR Analysis Section */
+  .miq-npv-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .miq-npv-card {
+    background: var(--miq-white);
+    border: 1px solid var(--miq-gray-200);
+    border-radius: var(--radius-md);
+    padding: 1.25rem;
+    transition: all 0.2s;
+  }
+
+  .miq-npv-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+  }
+
+  .miq-npv-card.miq-npv-highlight {
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.05) 0%, rgba(59, 130, 246, 0.05) 100%);
+    border-color: var(--miq-blue);
+    border-width: 2px;
+  }
+
+  .miq-npv-label {
+    font-size: 0.875rem;
+    color: var(--miq-gray-600);
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+  }
+
+  .miq-npv-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--miq-navy);
+    margin-bottom: 0.25rem;
+  }
+
+  .miq-npv-desc {
+    font-size: 0.75rem;
+    color: var(--miq-gray-500);
+    font-style: italic;
+  }
+
+  /* Cash Flows */
+  .miq-cash-flows {
+    margin-top: 1.5rem;
+    padding: 1.5rem;
+    background: var(--miq-gray-50);
+    border-radius: var(--radius-md);
+  }
+
+  .miq-subsection-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--miq-navy);
+    margin: 0 0 1rem;
+  }
+
+  .miq-cash-flow-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 1rem;
+  }
+
+  .miq-cash-flow-item {
+    background: var(--miq-white);
+    border: 1px solid var(--miq-gray-200);
+    border-radius: var(--radius-sm);
+    padding: 1rem;
+    text-align: center;
+  }
+
+  .miq-cf-year {
+    font-size: 0.75rem;
+    color: var(--miq-gray-600);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.5rem;
+  }
+
+  .miq-cf-value {
+    font-size: 1.125rem;
+    font-weight: 700;
+    color: var(--miq-navy);
+  }
+
+  /* Sensitivity Analysis */
+  .miq-sensitivity {
+    margin-top: 1.5rem;
+    padding: 1.5rem;
+    background: var(--miq-gray-50);
+    border-radius: var(--radius-md);
+  }
+
+  .miq-sensitivity-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    margin-bottom: 1rem;
+  }
+
+  .miq-sensitivity-header:hover {
+    opacity: 0.8;
+  }
+
+  .miq-sensitivity-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1rem;
+  }
+
+  .miq-sensitivity-item {
+    background: var(--miq-white);
+    border: 1px solid var(--miq-gray-200);
+    border-radius: var(--radius-sm);
+    padding: 1rem;
+    text-align: center;
+  }
+
+  .miq-sens-label {
+    font-size: 0.75rem;
+    color: var(--miq-gray-600);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.5rem;
+  }
+
+  .miq-sens-value {
+    font-size: 1.125rem;
+    font-weight: 700;
+    color: var(--miq-navy);
+  }
+
+  /* Valuation Section */
+  .miq-valuation-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+  }
+
+  .miq-valuation-card {
+    background: var(--miq-white);
+    border: 1px solid var(--miq-gray-200);
+    border-radius: var(--radius-md);
+    padding: 1.25rem;
+    transition: all 0.2s;
+  }
+
+  .miq-valuation-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+  }
+
+  .miq-valuation-card.miq-val-highlight {
+    background: linear-gradient(135deg, rgba(160, 3, 108, 0.05) 0%, rgba(22, 31, 59, 0.05) 100%);
+    border-color: var(--miq-magenta);
+    border-width: 2px;
+  }
+
+  .miq-val-label {
+    font-size: 0.875rem;
+    color: var(--miq-gray-600);
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+  }
+
+  .miq-val-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--miq-navy);
+    margin-bottom: 0.25rem;
+  }
+
+  .miq-val-desc {
+    font-size: 0.75rem;
+    color: var(--miq-gray-500);
+    font-style: italic;
+  }
+
+  /* Responsive Design for New Sections */
+  @media (max-width: 768px) {
+    .miq-decision-grid {
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    }
+
+    .miq-investment-grid,
+    .miq-npv-grid,
+    .miq-valuation-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .miq-cash-flow-grid,
+    .miq-sensitivity-grid {
+      grid-template-columns: repeat(2, 1fr);
+    }
+
+    .miq-inv-value,
+    .miq-npv-value,
+    .miq-val-value {
+      font-size: 1.25rem;
+    }
+  }
+  /* ============================================================================
+    EMPTY STATE STYLING FOR MARKETIQ DASHBOARD
+    Add these styles to your existing MarketIQ.css file
+    ============================================================================ */
+
+  /* Empty State Container */
+  .miq-empty-state-section {
+    background: linear-gradient(135deg, rgba(160, 3, 108, 0.03) 0%, rgba(22, 31, 59, 0.03) 100%);
+    border: 2px dashed var(--miq-gray-300);
+    border-radius: var(--radius-lg);
+    padding: 3rem 2rem;
+    text-align: center;
+    margin-top: 1rem;
+  }
+
+  .miq-empty-icon {
+    font-size: 3rem;
+    color: var(--miq-gray-400);
+    margin-bottom: 1rem;
+  }
+
+  .miq-empty-title {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--miq-navy);
+    margin: 0 0 0.75rem;
+  }
+
+  .miq-empty-desc {
+    font-size: 1rem;
+    color: var(--miq-gray-600);
+    margin: 0 0 1.5rem;
+    line-height: 1.6;
+  }
+
+  .miq-empty-list {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 1.5rem;
+    text-align: left;
+    max-width: 600px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .miq-empty-list li {
+    font-size: 0.95rem;
+    color: var(--miq-gray-700);
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--miq-gray-200);
+  }
+
+  .miq-empty-list li:last-child {
+    border-bottom: none;
+  }
+
+  .miq-empty-hint {
+    font-size: 0.875rem;
+    color: var(--miq-magenta);
+    font-weight: 600;
+    font-style: italic;
+    margin: 0;
+  }
+
+  /* Empty State Metrics Preview */
+  .miq-empty-metrics-preview {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1rem;
+    max-width: 700px;
+    margin: 1.5rem auto;
+    padding: 1.5rem;
+    background: var(--miq-white);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--miq-gray-200);
+  }
+
+  .miq-preview-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 1rem;
+    border-radius: var(--radius-sm);
+    background: var(--miq-gray-50);
+  }
+
+  .miq-preview-label {
+    font-size: 0.75rem;
+    color: var(--miq-gray-600);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.5rem;
+    text-align: center;
+  }
+
+  .miq-preview-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--miq-gray-400);
+    font-family: 'Courier New', monospace;
+  }
+
+  /* Empty State for Top Metric Cards */
+  .miq-metric-card.miq-empty-state {
+    background: linear-gradient(135deg, rgba(160, 3, 108, 0.02) 0%, rgba(22, 31, 59, 0.02) 100%);
+    border: 2px dashed var(--miq-gray-300);
+    opacity: 0.7;
+  }
+
+  .miq-placeholder-text {
+    color: var(--miq-gray-400) !important;
+    font-family: 'Courier New', monospace;
+  }
+
+  .miq-change-neutral {
+    color: var(--miq-gray-500);
+    font-size: 0.75rem;
+  }
+
+  /* Responsive Design for Empty States */
+  @media (max-width: 768px) {
+    .miq-empty-state-section {
+      padding: 2rem 1.5rem;
+    }
+
+    .miq-empty-icon {
+      font-size: 2.5rem;
+    }
+
+    .miq-empty-title {
+      font-size: 1.125rem;
+    }
+
+    .miq-empty-desc {
+      font-size: 0.9rem;
+    }
+
+    .miq-empty-metrics-preview {
+      grid-template-columns: repeat(2, 1fr);
+      padding: 1rem;
+    }
+
+    .miq-preview-value {
+      font-size: 1.25rem;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .miq-empty-metrics-preview {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  /* ============================================================================
+    NEW SESSION BUTTON - Professional style, no gradients
+    Add this to your MarketIQ.css file
+    ============================================================================ */
+
+
+
+  /* Adjust header-center to accommodate the button */
+  .header-center {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+
+  .header-title {
+    margin: 0 !important;
+  }
+
+  /* ---- New Session (+) ---------------------------------------------------- */
+  /* Base button styles */
+  .chatgpt-header .miq-new-session-btn {
+    background: transparent !important;
+    border: none !important;
+    border-radius: 4px !important;
+    width: 32px !important;
+    height: 32px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    margin-left: 12px !important;
+    padding: 0 !important;
+
+    /* prevent Safari / UA quirks */
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+  }
+
+  /* Make the icon visible by setting color on the SVG itself */
+  .chatgpt-header .miq-new-session-btn svg {
+    width: var(--miq-plus-size, 16px) !important;
+    height: var(--miq-plus-size, 16px) !important;
+
+    /* Lucide uses currentColor for stroke — set it here explicitly */
+    color: #161f3b !important;
+    stroke: #161f3b !important;
+    stroke-width: 2 !important;
+    opacity: 1 !important;               /* in case a global rule is dimming it */
+  }
+
+  /* Sometimes paths get their own stroke; lock those too */
+  .chatgpt-header .miq-new-session-btn svg path,
+  .chatgpt-header .miq-new-session-btn svg line,
+  .chatgpt-header .miq-new-session-btn svg polyline {
+    stroke: #161f3b !important;
+  }
+
+  /* Hover/active effects without changing icon color */
+  .chatgpt-header .miq-new-session-btn:hover,
+  .chatgpt-header .miq-new-session-btn:focus-visible {
+    background: rgba(0, 0, 0, 0.05) !important;
+    transform: scale(1.05) !important;
+  }
+
+  .chatgpt-header .miq-new-session-btn:active {
+    transform: scale(0.95) !important;
+    background: rgba(0, 0, 0, 0.10) !important;
+  }
+
+
+
+  /* --- Top-left icon buttons: rounded squares, navy bg, white icon --- */
+  .miq-toolbar {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .miq-toolbar .icon-btn {
+    width: 36px;
+    height: 36px;
+    border: 0;
+    border-radius: 10px;       /* rounded square */
+    background: #161f3b;       /* navy */
+    color: #fff;               /* white icon */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    cursor: pointer;
+    transition: transform .15s ease, box-shadow .15s ease, opacity .15s ease;
+  }
+
+  .miq-toolbar .icon-btn i,
+  .miq-toolbar .icon-btn svg {
+    font-size: 18px;           /* FA icons */
+    pointer-events: none;
+  }
+
+  .miq-toolbar .icon-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(0,0,0,.12); }
+  .miq-toolbar .icon-btn:active { transform: translateY(0); opacity: .9; }
+
+  /* --- Tabs (desktop) --- */
+  .miq-tabs-desktop {
+    display: flex;
+    gap: 10px;
+    margin: 8px 0 16px;
+  }
+  .miq-tab {
+    appearance: none;
+    background: #f3f4f6;
+    color: #161f3b;
+    border: 1px solid #e5e7eb;
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .miq-tab.is-active {
+    background: #161f3b;
+    color: #fff;
+    border-color: #161f3b;
+  }
+
+  /* --- Mobile tab switcher (select) --- */
+  .miq-tabs-mobile { display: none; margin: 8px 0 12px; }
+  .miq-tabs-mobile select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    font-weight: 600;
+    background: #fff;
+    color: #161f3b;
+  }
+
+  /* --- Panels layout --- */
+  .miq-layout {
+    display: grid;
+    grid-template-columns: 1fr 360px;   /* main + side column */
+    gap: 20px;
+  }
+
+  /* Panel base */
+  .miq-panel { display: block; }
+
+  /* Mobile behavior */
+  @media (max-width: 768px) {
+    .miq-tabs-desktop { display: none; }   /* hide desktop tabs */
+    .miq-tabs-mobile  { display: block; }  /* show mobile select */
+
+    .miq-layout {
+      display: block;                      /* stack panels */
+    }
+
+    /* Only show the active panel full-width */
+    .miq-panel { display: none; }
+    .miq-panel.is-active { display: block; }
+
+    /* Optional: give panels some breathing room on phones */
+    .miq-panel { margin-bottom: 14px; }
+  }
+
+  /* Optional: make the header title & toolbar play nice */
+  .miq-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .miq-title { margin: 0; }
+
+  /* Screen-reader only class (for the select label) */
+  .sr-only {
+    position: absolute !important;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px; overflow: hidden;
+    clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+  }
+  /* Header icon buttons: rounded squares, navy background, white icons */
+  .header-icon-btn {
+    width: 36px;
+    height: 36px;
+    border: 0;
+    border-radius: 10px;         /* rounded square */
+    background: #161f3b;         /* navy */
+    color: #fff;                 /* ensure white icon glyphs */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    cursor: pointer;
+    transition: transform .15s ease, box-shadow .15s ease, opacity .15s ease;
+  }
+
+  /* Lucide or FA inside the button */
+  .header-icon-btn .miq-icon,
+  .header-icon-btn i,
+  .header-icon-btn svg {
+    color: #fff !important;
+    stroke: #fff !important;     /* for Lucide */
+  }
+
+  /* Small hover/press feedback */
+  .header-icon-btn:hover   { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(0,0,0,.12); }
+  .header-icon-btn:active  { transform: translateY(0); opacity: .9; }
+
+  /* Keep the "+" new-session button visually consistent */
+  .miq-new-session-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+  }
+  /* Mobile switcher container (hidden on desktop) */
+  .miq-tabs-mobile {
+    display: none;
+    margin: 10px 0 12px;
+    gap: 8px;
+  }
+
+  /* Pretty pills */
+  .miq-pill {
+    appearance: none;
+    border: 1px solid #e5e7eb;
+    background: #f9fafb;
+    color: #161f3b;
+    border-radius: 999px;
+    padding: 8px 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .miq-pill:active { opacity: .9; }
+
+  /* On phones: show mobile switcher, hide the floating edge tabs so users use pills instead */
+  @media (max-width: 768px) {
+    .miq-tabs-mobile { 
+      display: flex; 
+      justify-content: center; 
+    }
+
+    /* Hide the floating vertical tabs when on mobile (you already render .miq-sidebar-tab) */
+    .miq-sidebar-tab { display: none !important; }
+
+    /* Make sidebars behave like full-screen drawers on mobile (optional but nice) */
+    .miq-left-sidebar {
+      width: 100vw !important;
+      max-width: 100vw !important;
+    }
+  }
+
+  /* Ensure the whole interface never scrolls horizontally */
+  .chatgpt-interface,
+  .chatgpt-content { overflow-x: hidden; }
+
+
+  /* ====== MOBILE NO-H-SCROLL & SAFETY GUARDS ====== */
+  html, body {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  .chatgpt-interface,
+  .chatgpt-content,
+  .chatgpt-header {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  /* Ensure any grid or container can't exceed viewport */
+  .chatgpt-interface * {
+    box-sizing: border-box;
+  }
+
+  /* Inputs/buttons should never force width overflow */
+  .chatgpt-input,
+  .chatgpt-input-container,
+  .chatgpt-send,
+  .finish-analyze-btn {
+    max-width: 100%;
+  }
+
+  /* Some themes add min-width to svg/buttons; clamp it */
+  .header-icon-btn,
+  .header-icon-btn svg,
+  .header-icon-btn .miq-icon {
+    max-width: 100%;
+  }
+
+  /* ====== SIDEBARS: FULLY HIDE WHEN CLOSED ON MOBILE ====== */
+  @media (max-width: 768px) {
+    /* Give the main content some breathing room and keep it inside the viewport */
+    .chatgpt-content { padding: 0 12px; }
+
+    /* Hero/welcome text can be a tad big on phones; scale down to prevent overflow */
+    .chatgpt-welcome h1 {
+      font-size: clamp(1.55rem, 6vw, 2rem);
+      line-height: 1.2;
+      word-break: break-word;
+    }
+    .chatgpt-welcome p {
+      font-size: 1rem;
+      line-height: 1.5;
+    }
+
+    /* Sidebars become full-width overlays and are 100% off-screen when closed */
+    .miq-left-sidebar {
+      position: fixed;
+      top: 56px;   /* under your fixed header */
+      bottom: 0;
+      left: 0;
+      right: 0;
+      width: 100vw !important;
+      max-width: 100vw !important;
+      transform: translateX(-100%);   /* fully hidden, no sliver */
+      will-change: transform;
+      transition: transform .25s ease;
+      overflow-y: auto;
+    }
+    .miq-left-sidebar.sidebar-open {
+      transform: translateX(0);       /* slide fully into view */
+    }
+
+    /* While closed: don't allow it to receive taps or cause layout */
+    .miq-left-sidebar:not(.sidebar-open) {
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    /* Tabs themselves should not create extra width on phones */
+    .miq-sidebar-tab {
+      position: fixed;        /* keep it in the viewport, not widening the page */
+      z-index: 1001;
+    }
+
+    /* Keep message bubbles from growing past the viewport */
+    .chatgpt-message .message-content {
+      max-width: 100%;
+      word-wrap: break-word;
+      overflow-wrap: anywhere;
+    }
+
+    /* Trim paddings/margins that sometimes push width */
+    .chatgpt-input-container {
+      padding-left: 10px;
+      padding-right: 10px;
+    }
+
+    /* Prevent any rogue element from setting a min-width > viewport */
+    .chatgpt-interface [style*="min-width"],
+    .chatgpt-interface [style*="width: 340px"] {
+      min-width: 0 !important;
+      width: auto !important;
+      max-width: 100% !important;
+    }
+  }
+
+
+  /* ============================================================================
+    PUSH LAYOUT ON DESKTOP  (composer only)
+    When the sidebar is open, nudge ONLY the bottom input by the drawer width.
+    ============================================================================ */
+  @media (min-width: 769px) {
+
+    /* default: composer spans full width */
+    .chatgpt-input-area {
+      width: 100%;
+      max-width: 100%;
+      transition: margin-left 0.25s ease, width 0.25s ease, max-width 0.25s ease;
+    }
+
+    /* sidebar open: shift the composer just enough for the 320px drawer */
+    .chatgpt-interface:has(.miq-left-sidebar.sidebar-open) .chatgpt-input-area {
+      margin-left: 320px !important;
+      width: calc(100% - 320px) !important;
+      max-width: calc(100% - 320px) !important;
+    }
+
+    /* Overlay not needed on desktop push mode */
+    .chatgpt-interface:has(.miq-left-sidebar.sidebar-open) .miq-sidebar-overlay {
+      display: none !important;
+    }
+  }
+
+  /* in MarketIQ.css or your header css */
+  .logout-link {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+  }
+
+  /* ==== Nuke ALL focus borders/rings on chat inputs (Safari-safe) ==== */
+
+  /* Main composer (ChatGPT-style) */
+  .chatgpt-input,
+  .chatgpt-input:focus,
+  .chatgpt-input:focus-visible,
+  .chatgpt-input:focus-within {
+    border: 0 !important;
+    outline: none !important;
+    box-shadow: none !important;
+    background: transparent;
+    -webkit-appearance: none !important;
+    appearance: none !important;
+  }
+
+  /* Container should also stay ringless when focused */
+  .chatgpt-input-container,
+  .chatgpt-input-container:focus-within {
+    border: 0 !important;
+    outline: none !important;
+    box-shadow: none !important;
+  }
+
+  /* Discuss page textarea */
+  .chat-input-wrapper .chat-textarea,
+  .chat-input-wrapper .chat-textarea:focus,
+  .chat-input-wrapper .chat-textarea:focus-visible,
+  .chat-input-wrapper .chat-textarea:focus-within {
+    border: 0 !important;
+    outline: none !important;
+    box-shadow: none !important;
+    background: transparent;
+    -webkit-appearance: none !important;
+    appearance: none !important;
+  }
+
+  /* Help modal textarea */
+  .miq-help-input textarea,
+  .miq-help-input textarea:focus,
+  .miq-help-input textarea:focus-visible,
+  .miq-help-input textarea:focus-within {
+    border: 0 !important;
+    outline: none !important;
+    box-shadow: none !important;
+    background: transparent;
+    -webkit-appearance: none !important;
+    appearance: none !important;
+  }
+
+  /* Extra safety for WebKit’s focus ring */
+  @supports (-webkit-touch-callout: none) {
+    .chatgpt-input:focus,
+    .chat-textarea:focus,
+    .miq-help-input textarea:focus {
+      outline: none !important;
+      box-shadow: none !important;
+    }
+  }
+
+  /* === MarketIQMain input bar: plus / textarea / mic / send === */
+  .chatgpt-input-container {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;            /* space between plus, textarea, mic, send */
+  }
+
+  .chatgpt-input-container .chatgpt-input {
+    flex: 1;             /* textarea grows to fill remaining space */
+    min-height: 44px;
+  }
+
+  .chatgpt-plus,
+  .chatgpt-mic,
+  .chatgpt-send {
+    border: none;
+    background: var(--miq-chip-bg, #f3f4f6);
+    padding: 10px 12px;
+    border-radius: 10px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;     /* comfortable tap target */
+    min-height: 44px;
+  }
+
+  .chatgpt-plus:disabled,
+  .chatgpt-mic:disabled,
+  .chatgpt-send:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .chatgpt-plus .svg-inline--fa,
+  .chatgpt-mic .svg-inline--fa,
+  .chatgpt-send .svg-inline--fa {
+    font-size: 16px;
+  }
+
+  /* ===== MarketIQ - chat input extras ===== */
+  .chatgpt-plus,
+  .chatgpt-mic {
+    border: none;
+    background: transparent;
+    padding: 8px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    border-radius: 8px;            /* subtle rounding to match UI */
+  }
+
+  /* keep the icons subtle until hover/focus */
+  .chatgpt-plus .svg-inline--fa,
+  .chatgpt-mic .svg-inline--fa {
+    font-size: 1rem;
+    opacity: 0.85;
+  }
+
+  /* hover/focus feedback without changing your color palette */
+  .chatgpt-plus:hover,
+  .chatgpt-plus:focus-visible,
+  .chatgpt-mic:hover,
+  .chatgpt-mic:focus-visible {
+    background: rgba(0,0,0,0.05);
+    outline: none;
+  }
+
+  /* position tweaks relative to textarea & send button */
+  .chatgpt-plus { margin-right: 6px; }   /* sits to the LEFT of textarea */
+  .chatgpt-mic  { margin-left: 6px; }    /* sits between textarea and Send */
+
+  /* === Mic button (idle + recording) ============================== */
+  .chatgpt-input-container {
+    display: flex;
+    align-items: center;
+  }
+
+  .chatgpt-mic {
+    margin: 0 8px;
+    width: 36px;
+    height: 36px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    outline: none; /* we keep focus-visible below */
+  }
+
+  .chatgpt-mic:hover,
+  .chatgpt-mic:focus-visible {
+    background: #f1f5f9; /* subtle hover/focus */
+  }
+
+  /* Recording state: gentle pulse + red icon */
+  .chatgpt-mic.is-recording {
+    animation: miq-mic-pulse 1.2s infinite;
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.45); /* red glow */
+  }
+
+  /* FA icon turns red while recording */
+  .chatgpt-mic.is-recording .svg-inline--fa {
+    color: #ef4444;
+  }
+
+  @keyframes miq-mic-pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.45); }
+    70%  { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+  }
+
+  .miq-file-chips {
+    display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 0;
+  }
+  .miq-file-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 10px; border: 1px solid #e2e8f0; border-radius: 999px;
+    font-size: 12px; background: #f8fafc;
+  }
+  .miq-file-chip-remove { background: none; border: 0; cursor: pointer; font-size: 14px; line-height: 1; }
+
+  .message-attachments { display: grid; gap: 8px; margin-top: 8px; }
+  .message-attachment { display: flex; align-items: center; gap: 10px; }
+  .attachment-thumb { width: 120px; height: auto; border-radius: 6px; border: 1px solid #e2e8f0; }
+  .attachment-link { text-decoration: underline; }
+  .attachment-meta { color: #64748b; font-size: 12px; }
+  .attachments-caption { color: #64748b; font-size: 12px; margin-top: 2px; }
+
+  .chatgpt-mic.is-recording { animation: micPulse 1.2s ease-in-out infinite; }
+  @keyframes micPulse {
+    0% { box-shadow: 0 0 0 0 rgba(16,185,129,0.6); }
+    70% { box-shadow: 0 0 0 10px rgba(16,185,129,0); }
+    100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); }
+  }
+
+  /* ==== Mini progress bars in Readiness list ==== */
+  .miq-collected-list {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .miq-collected-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 10px;
+    border: 1px solid #e5e7eb; /* light border to separate items */
+    border-radius: 10px;
+    background: #ffffff;
+  }
+
+  .miq-collected-item .miq-collected-icon {
+    margin-right: 8px;
+    opacity: 0.9;
+  }
+
+  .miq-collected-item > span {
+    flex: 1 1 auto;
+    font-size: 14px;
+    line-height: 1.2;
+  }
+
+  /* Mini bar container */
+  .miq-mini-bar {
+    flex: 0 0 48%;
+    max-width: 220px;
+    min-width: 160px;
+  }
+
+  .miq-mini-bar-track {
+    position: relative;
+    height: 8px;
+    width: 100%;
+    background: #e2e8f0;        /* slate-200 */
+    border-radius: 999px;
+    overflow: hidden;
+  }
+
+  /* Fill (width is set inline via style attr) */
+  .miq-mini-bar-fill {
+    height: 100%;
+    width: 0%;
+    background: #3b82f6;        /* blue-500 for partial */
+    border-radius: 999px;
+    transition: width 240ms ease-in-out;
+  }
+
+  /* Full/complete state (we add .is-complete in JSX when pct===100) */
+  .miq-mini-bar-fill.is-complete {
+    background: #10b981;        /* emerald-500 for 100% */
+  }
+
+
+  /* Responsive: on narrow screens keep bars readable */
+  @media (max-width: 480px) {
+    .miq-mini-bar {
+      flex-basis: 42%;
+      min-width: 120px;
+    }
+  }
+
+  /* ============================================================================
+    ENHANCED READINESS - Micro Elements CSS
+    Drop-in replacement (white pills, no borders, no green row bg)
+    ============================================================================ */
+
+  /* Category Wrapper (contains header + expandable micros) */
+  .miq-category-wrapper {
+    margin-bottom: 0.5rem;
+  }
+
+  /* Expand/Collapse Icon */
+  .miq-expand-icon {
+    flex-shrink: 0;
+    transition: transform 0.2s ease;
+  }
+
+  /* Micro Elements List (expandable section) */
+  .miq-micro-list {
+    padding: 0.5rem 0 0.5rem 2.5rem;
+    background-color: var(--miq-gray-50);
+    border-left: 2px solid var(--miq-gray-200);
+    margin-left: 1.5rem;
+    margin-top: 0.25rem;
+    border-radius: 0 0 var(--radius-md) var(--radius-md);
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    animation: slideDown 0.2s ease-out;
+  }
+
+  /* Individual Micro Element */
+  .miq-micro-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.375rem 0.5rem;
+    background-color: var(--miq-white);
+    border: 1px solid var(--miq-gray-200);
+    border-radius: var(--radius-sm);
+    font-size: 0.8125rem;
+    transition: all 0.15s ease;
+  }
+
+  /* Keep collected rows white (no green) */
+  .miq-micro-item.collected {
+    background-color: #fff;
+  }
+
+  .miq-micro-item:hover {
+    border-color: var(--miq-gray-300);
+  }
+
+  /* Micro Icon */
+  .miq-micro-icon {
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--miq-gray-400);
+  }
+
+  /* (Optional) leave checkmark green; remove this if you want neutral */
+  /* .miq-micro-item.collected .miq-micro-icon { color: var(--miq-green); } */
+
+  /* Micro Label */
+  .miq-micro-label {
+    flex: 1;
+    color: var(--miq-gray-700);
+    font-size: 0.75rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .miq-micro-item.collected .miq-micro-label {
+    color: var(--miq-navy);
+    font-weight: 500;
+  }
+
+  /* Slide Down Animation */
+  @keyframes slideDown {
+    from { opacity: 0; max-height: 0; }
+    to   { opacity: 1; max-height: 500px; }
+  }
+
+  /* Responsive: Reduce padding on mobile */
+  @media (max-width: 768px) {
+    .miq-micro-list { padding-left: 1.5rem; margin-left: 1rem; }
+    .miq-micro-label { font-size: 0.75rem; }
+  }
+
+  /* Mini bar (category progress) */
+  .miq-mini-bar {
+    flex: 0 0 60px;
+    height: 6px;
+    background: #e5e7eb;
+    border-radius: 3px;
+    overflow: hidden;
+    margin-left: auto;
+    margin-right: 8px;
+  }
+
+  .miq-mini-bar-fill {
+    height: 100%;
+    background: #3b82f6;
+    border-radius: 3px;
+    transition: width 0.3s ease;
+  }
+
+  /* Keep "complete" same color (no gray) */
+  .miq-mini-bar-fill.is-complete {
+    background: #3b82f6;
+  }
+
+  .miq-mini-bar-text {
+    flex-shrink: 0;
+    font-size: 0.75rem;
+    color: #64748b;
+    min-width: 35px;
+    text-align: right;
+  }
+
+  /* --- Micro contribution pill: white, borderless --- */
+  .miq-micro-contrib {
+    margin-left: auto;      /* right-align */
+    padding: 2px 6px;
+    font-size: 0.72rem;
+    line-height: 1;
+    border-radius: 6px;
+    border: none;           /* borderless */
+    background: #fff;       /* keep white */
+    opacity: 0.95;
+  }
+
+  /* Keep white even when collected */
+  .miq-micro-item.collected .miq-micro-contrib {
+    border: none;
+    background: #fff;
+  }
+
+  /* Category row layout: [chevron][status][label][mini-bar][%] */
+  .miq-collected-item {
+    display: grid;
+    grid-template-columns: 16px 16px 1fr 72px auto; /* label shrinks, bar fixed */
+    column-gap: 8px;
+    align-items: center;
+    min-width: 0; /* allow shrink */
+  }
+
+  .miq-expand-icon,
+  .miq-collected-icon { width: 16px; height: 16px; }
+
+  .miq-collected-item > span {        /* the category label */
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .miq-mini-bar { width: 72px; flex: 0 0 auto; margin-left: 0; margin-right: 0; }
+  .miq-mini-bar-text { min-width: 0; text-align: right; }
+
+  /* ==== Readiness sidebar: compact, borderless, white pills (override) ==== */
+
+  /* 1) Macro category row layout fits the drawer */
+  .miq-readiness-sidebar .miq-collected-item {
+    display: grid;
+    grid-template-columns: 16px 16px 1fr 64px auto; /* [chev][icon][label][bar][%] */
+    column-gap: 8px;
+    align-items: center;
+    min-width: 0;
+    background: #fff !important;          /* keep white even when "collected" */
+    border: 1px solid var(--miq-gray-200); /* light divider only */
+  }
+  .miq-readiness-sidebar .miq-collected-item.collected {
+    background: #fff !important;           /* kill green/gray backgrounds */
+    border-color: var(--miq-gray-200);
+  }
+  .miq-readiness-sidebar .miq-collected-item > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .miq-readiness-sidebar .miq-expand-icon,
+  .miq-readiness-sidebar .miq-collected-icon {
+    width: 16px; height: 16px;
+  }
+
+
+  /* Mini bar: fixed width so the row never overflows */
+  .miq-readiness-sidebar .miq-mini-bar {
+    width: 64px !important;
+    height: 6px;
+    margin: 0 !important;
+    flex: 0 0 auto;
+    background: #e5e7eb;
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .miq-readiness-sidebar .miq-mini-bar-fill {
+    height: 100%;
+    background: #3b82f6;                   /* one color throughout */
+    transition: width .25s ease;
+  }
+  .miq-readiness-sidebar .miq-mini-bar-fill.is-complete {
+    background: #3b82f6 !important;        /* stay blue when 100% */
+  }
+  .miq-readiness-sidebar .miq-mini-bar-text {
+    min-width: 0;
+    text-align: right;
+    font-size: 0.75rem;
+  }
+
+  /* 2) Micro rows: keep white, remove green/gray backgrounds */
+  .miq-readiness-sidebar .miq-micro-item {
+    background: #fff !important;
+    border: 0 !important;                  /* no border line */
+    box-shadow: none !important;
+  }
+  .miq-readiness-sidebar .miq-micro-item.collected {
+    background: #fff !important;           /* no green fill when collected */
+  }
+
+  /* 3) Micro contribution pill: white, borderless */
+  .miq-readiness-sidebar .miq-micro-contrib {
+    margin-left: auto;
+    padding: 2px 6px;
+    font-size: 0.72rem;
+    line-height: 1;
+    border: 0 !important;
+    background: #fff !important;
+    border-radius: 6px;
+    opacity: .95;
+  }
+
+  /* Safety: the whole list never creates horizontal scroll */
+  .miq-readiness-sidebar .miq-collected-list,
+  .miq-readiness-sidebar .miq-micro-list {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  /* ==== Readiness: stack macro bar under label + wrap long labels ==== */
+  .miq-readiness-sidebar .miq-collected-item {
+    /* grid: [chevron][status][content(label+bar)][percent] */
+    display: grid;
+    grid-template-columns: 16px 16px 1fr auto;
+    grid-template-rows: auto auto;          /* row 1 = label, row 2 = bar */
+    column-gap: 8px;
+    align-items: center;
+  }
+
+  /* Label takes full content width and can wrap */
+  .miq-readiness-sidebar .miq-collected-item > span {
+    grid-column: 3 / 5;                     /* span across content + % column */
+    grid-row: 1;                             /* first row */
+    min-width: 0;
+    white-space: normal;                     /* allow wrapping */
+    overflow-wrap: anywhere;                 /* prevent overflow on long words */
+  }
+
+  /* Mini bar sits on its own line, full width of content area */
+  .miq-readiness-sidebar .miq-mini-bar {
+    grid-column: 3 / 4;                      /* content column only */
+    grid-row: 2;                             /* second row */
+    width: 100% !important;                  /* fill the content width */
+    margin: 4px 0 0 0 !important;            /* a little space under the label */
+  }
+
+  /* Percent sits to the right of the bar on the same row */
+  .miq-readiness-sidebar .miq-mini-bar-text {
+    grid-column: 4 / 5;                      /* percent column */
+    grid-row: 2;                             /* second row */
+    align-self: center;
+    margin-left: 8px;
+    text-align: right;
+  }
+
+  /* Chevron + status icon naturally land in row 1, cols 1–2 */
+  .miq-readiness-sidebar .miq-expand-icon,
+  .miq-readiness-sidebar .miq-collected-icon {
+    width: 16px; height: 16px;
+  }

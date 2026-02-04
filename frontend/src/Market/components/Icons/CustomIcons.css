@@ -1,0 +1,82 @@
+/* ============================
+   Custom Icons – Header Styles
+   ============================ */
+
+/* Easy knobs */
+:root {
+  /* Header icon size (PM/LSS) */
+  --miq-header-icon-size: 32px;
+
+  /* New session + size (smaller than PM/LSS) */
+  --miq-plus-size: 16px;
+
+  /* Colors */
+  --miq-icon-color: #161f3b;
+  --miq-focus-color: #0ea5e9;
+
+  /* Spacing between right-side header buttons */
+  --miq-header-gap: 16px;
+}
+
+/* Base button reset */
+.header-icon-btn {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  line-height: 0;            /* removes stray inline spacing */
+  cursor: pointer;
+}
+
+.header-icon-btn,
+.header-icon-btn::before,
+.header-icon-btn::after {
+  box-shadow: none;
+  border-radius: 0;
+}
+
+/* Icon base (applies to our custom SVGs via className and to FA via currentColor) */
+.miq-icon {
+  display: inline-block;
+  vertical-align: middle;
+  color: var(--miq-icon-color);
+  transition: transform 0.2s ease, opacity 0.2s ease, color 0.2s ease;
+}
+
+/* Hover affordance */
+.header-icon-btn:hover .miq-icon,
+.header-icon-btn:hover svg {
+  transform: scale(1.07);
+  opacity: 0.85;
+}
+
+/* Keyboard focus ring */
+.header-icon-btn:focus-visible {
+  outline: 2px solid var(--miq-focus-color);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Gap between right-side header buttons */
+.header-right .header-icon-btn {
+  margin-left: var(--miq-header-gap);
+}
+
+/* ---------- Sizing (define once) ---------- */
+
+/* Default header icon size (PM/LSS & any other header icon) */
+.header-icon-btn svg {
+  width: var(--miq-header-icon-size) !important;
+  height: var(--miq-header-icon-size) !important;
+}
+
+/* Smaller + (new session) — higher specificity than the rule above */
+.header-icon-btn.miq-new-session-btn svg {
+  width: var(--miq-plus-size) !important;
+  height: var(--miq-plus-size) !important;
+}
+
+/* Ensure FA icons follow the same color as our custom ones */
+.header-icon-btn .fa-icon,
+.header-icon-btn svg {
+  color: var(--miq-icon-color);
+}

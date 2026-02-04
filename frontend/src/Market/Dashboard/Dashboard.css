@@ -1,0 +1,1035 @@
+:root {
+  /* Light‐mode variables */
+  --bg-color:        #f0f3f2;
+  --text-color:      #161f3b;
+  --card-bg-color:   #ffffff;
+  --primary-color:   #A0006D;    /* Eggplant */
+  --secondary-color: #161f3b;    /* Navy */
+  --primary-light:   rgba(160, 0, 109, 0.1);
+  --success-color:   #28a745;    /* Green for success states */
+  --white:           #FFFFFF;
+  --border-color:    #e0e0e0;
+  --hover-color:     #f5f5f5;
+  --border-radius:   8px;
+  --shadow:          0 2px 8px rgba(0,0,0,0.1);
+  --transition:      all 0.2s ease;
+}
+
+/* ─── BASE "LIGHT MODE" STYLES ────────────────────────────────────────── */
+body {
+  font-family: 'Poppins', sans-serif;
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  margin: 0;
+  padding: 0;
+  line-height: 1.6;
+}
+
+.workspace-container {
+  max-width: 1200px;
+  margin: 20px auto;
+  padding: 20px;
+  position: relative;
+}
+
+/* ---------- Header ---------- */
+.workspace-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 30px;
+}
+.workspace-header h1 {
+  font-size: 2rem;
+  color: var(--text-color);
+  font-weight: normal;
+}
+.workspace-header a {
+  text-decoration: none;
+  color: var(--primary-color);
+}
+
+/* ---------- Layout: Sidebar & Main ---------- */
+.workspace-layout {
+  display: flex;
+  gap: 20px;
+}
+.left-panel {
+  width: 250px;
+  background: var(--card-bg-color);
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  height: fit-content;
+}
+
+/* ---------- "Sessions" Button ---------- */
+.workflows-section {
+  text-align: center;
+}
+.workflows-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 12px;
+  font-size: 1rem;
+  font-weight: bold;
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  border-radius: 4px;
+  text-decoration: none;
+  width: 100%;
+  box-sizing: border-box;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+.workflows-button:hover {
+  background-color: #e0e3e2;
+}
+.workflows-button .sessions-icon {
+  width: 16px;
+  height: 16px;
+  margin-right: 6px;
+  fill: var(--text-color);
+}
+.workflows-button .sessions-label {
+  line-height: 1;
+  color: var(--text-color);
+}
+.divider {
+  margin-top: 20px;
+  border: 0;
+  border-top: 1px solid var(--primary-color);
+}
+
+/* ---------- Quick Actions (Market/​GAP/​SWOT) ---------- */
+.action-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.action-button {
+  display: inline-block;
+  background: var(--primary-color);
+  color: var(--card-bg-color);
+  padding: 12px 16px;
+  border-radius: 4px;
+  text-decoration: none;
+  font-weight: bold;
+  text-align: center;
+  transition: background 0.3s ease;
+  font-size: 1rem;
+  width: 100%;
+  box-sizing: border-box;
+  cursor: pointer;
+  border: none;
+}
+.action-button:hover {
+  background: var(--secondary-color);
+}
+.action-button.disabled {
+  background: #cccccc;
+  cursor: not-allowed;
+}
+
+/* ---------- "Credits Remaining" Progress Widget ---------- */
+.storage-info {
+  background-color: var(--primary-light);
+  border-radius: 4px;
+  padding: 12px;
+  margin-top: 15px;
+}
+.storage-info h4 {
+  color: var(--primary-color);
+  margin-top: 0;
+  margin-bottom: 10px;
+  font-size: 1rem;
+  text-align: center;
+}
+.storage-progress {
+  margin-bottom: 5px;
+}
+.progress-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: center;
+}
+.progress-percentage {
+  font-weight: bold;
+}
+.progress-bar-container {
+  width: 100%;
+  background: #e0e0e0;
+  border-radius: 4px;
+  overflow: hidden;
+  height: 8px;
+}
+.progress-bar {
+  height: 8px;
+  background-color: var(--primary-color);
+}
+.storage-text {
+  font-size: 0.85rem;
+  text-align: center;
+  color: var(--text-color);
+  margin-top: 5px;
+}
+
+/* ---------- Recent Sessions Box ---------- */
+.recent-sessions-box {
+  background-color: var(--card-bg-color);
+  border-radius: 4px;
+  padding: 12px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+}
+.recent-sessions-box h4 {
+  margin-top: 0;
+  color: var(--text-color);
+}
+.recent-sessions-box ul {
+  list-style: none;
+  padding-left: 0;
+  margin: 0;
+}
+.recent-sessions-box ul li {
+  margin-bottom: 6px;
+}
+.recent-sessions-box ul li a {
+  text-decoration: none;
+  color: var(--primary-color);
+  font-size: 0.95rem;
+}
+
+/* ---------- Main Panel ---------- */
+.main-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* ---------- Session Range Selector ---------- */
+.session-range-selector {
+  margin-bottom: 16px;
+}
+.session-range-selector label {
+  font-weight: bold;
+  color: var(--text-color);
+  margin-right: 8px;
+}
+.session-range-selector select {
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid #ccc;
+}
+
+/* ---------- Dashboard Cards (3 in a row) ---------- */
+.dashboard-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 20px;
+  margin-bottom: 20px;
+}
+.dashboard-card {
+  background: var(--card-bg-color);
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  transition: transform 0.2s ease-in-out;
+  text-align: left;
+}
+.dashboard-card:hover {
+  transform: translateY(-5px);
+}
+.dashboard-card h3 {
+  font-size: 1.1rem;
+  margin: 0 0 10px 0;
+  color: var(--text-color);
+  font-weight: 600;
+}
+.dashboard-card .card-value {
+  font-size: 2.5rem;
+  font-weight: bold;
+  margin: 10px 0 5px 0;
+  color: var(--primary-color);
+}
+.dashboard-card .card-subtitle {
+  font-size: 0.9rem;
+  color: var(--text-color);
+  margin: 0;
+}
+
+/* Special styling for completion rate card with circular chart */
+.completion-rate-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+.completion-rate-card h3 {
+  align-self: flex-start;
+  text-align: left;
+  width: 100%;
+}
+.completion-rate-card .card-subtitle {
+  align-self: flex-start;
+  text-align: left;
+  width: 100%;
+}
+.circular-progress {
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: conic-gradient(var(--primary-color) 0deg 270deg, #e0e0e0 270deg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 20px 0;
+  position: relative;
+}
+.circular-progress::before {
+  content: '';
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: var(--card-bg-color);
+  position: absolute;
+}
+.circular-progress .percentage {
+  font-size: 1.8rem;
+  font-weight: bold;
+  color: var(--text-color);
+  z-index: 1;
+}
+
+/* ---------- Bottom Section (Kanban + Document Types) ---------- */
+.bottom-section {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 20px;
+}
+
+/* ---------- Document Types Section ---------- */
+.document-types-section {
+  background: var(--card-bg-color);
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+.document-types-section h3 {
+  color: var(--primary-color);
+  margin: 0 0 15px 0;
+  font-size: 1.3rem;
+}
+.document-types-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.document-type-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  background: var(--bg-color);
+  border-radius: 4px;
+}
+.type-name {
+  font-weight: 500;
+  text-transform: capitalize;
+}
+.type-count {
+  background: var(--primary-color);
+  color: white;
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+/* ─── Kanban Board ────────────────────────────────────────────────────────── */
+.kanban-container {
+  background: var(--card-bg-color);
+  padding: 20px;
+  border-radius: var(--border-radius);
+  box-shadow: var(--shadow);
+  border: 1px solid var(--border-color);
+}
+
+.kanban-container h2 {
+  margin: 0 0 25px 0;
+  font-size: 1.5rem;
+  color: var(--primary-color);
+  font-weight: 600;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.modify-link {
+  color: var(--primary-color);
+  text-decoration: none;
+  font-size: 0.9rem;
+  font-weight: normal;
+}
+.modify-link:hover {
+  text-decoration: underline;
+}
+
+.kanban-board {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+}
+
+.kanban-column {
+  background: var(--hover-color);
+  padding: 15px;
+  border-radius: var(--border-radius);
+  min-height: 300px;
+}
+
+.kanban-column h3 {
+  margin: 0 0 15px 0;
+  font-size: 1.1rem;
+  color: var(--text-color);
+  font-weight: 600;
+  text-transform: capitalize;
+  text-align: center;
+  padding-bottom: 10px;
+  border-bottom: 2px solid var(--primary-color);
+}
+
+.kanban-items {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 15px;
+}
+
+.kanban-item {
+  background: var(--card-bg-color);
+  padding: 12px;
+  border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: var(--transition);
+}
+
+.kanban-item:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+}
+
+.item-actions {
+  display: flex;
+  gap: 5px;
+}
+
+.item-actions button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: var(--transition);
+  font-size: 14px;
+  color: var(--text-color);
+}
+
+.item-actions button:hover {
+  background: var(--hover-color);
+  color: var(--primary-color);
+}
+
+.add-item-button {
+  width: 100%;
+  padding: 10px;
+  border: 2px dashed var(--border-color);
+  background: none;
+  color: var(--text-color);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: var(--transition);
+  font-weight: 500;
+}
+
+.add-item-button:hover {
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+}
+
+.add-task-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.add-task-form input {
+  padding: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.add-task-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.add-task-buttons button {
+  padding: 6px 12px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: var(--transition);
+}
+
+.add-task-buttons button:first-child {
+  background: var(--primary-color);
+  color: white;
+}
+
+.add-task-buttons button:first-child:hover {
+  background: var(--secondary-color);
+}
+
+.add-task-buttons button:last-child {
+  background: var(--border-color);
+  color: var(--text-color);
+}
+
+.add-task-buttons button:last-child:hover {
+  background: #ccc;
+}
+
+/* ─── Task Board Modal (Enhanced Kanban) ────────────────────────────────────── */
+.modal {
+  display: none;
+  position: fixed;
+  z-index: 11000;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  background-color: rgba(0,0,0,0.4);
+  backdrop-filter: blur(2px);
+}
+.modal.show {
+  display: block;
+}
+.modal-content {
+  background: var(--card-bg-color);
+  margin: 3% auto;
+  padding: 30px;
+  border-radius: 12px;
+  width: 95%;
+  max-width: 1000px;
+  position: relative;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+}
+.modal-content h2 {
+  margin-top: 0;
+  color: var(--primary-color);
+  margin-bottom: 20px;
+  font-size: 1.8rem;
+  text-align: center;
+}
+.kanban-columns {
+  display: flex;
+  gap: 20px;
+  margin-bottom: 30px;
+}
+.kanban-column {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.kanban-column label {
+  font-weight: bold;
+  color: var(--text-color);
+  margin-bottom: 8px;
+  font-size: 1.1rem;
+}
+.kanban-column textarea {
+  flex: 1;
+  width: 100%;
+  padding: 12px;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  resize: vertical;
+  min-height: 200px;
+  font-family: inherit;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.kanban-column textarea:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px var(--primary-light);
+}
+.modal-buttons {
+  text-align: right;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+.modal-buttons button {
+  padding: 12px 24px;
+  border: none;
+  border-radius: 8px;
+  font-weight: bold;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: all 0.2s ease;
+  position: relative;
+  min-width: 100px;
+}
+.save-kanban {
+  background-color: var(--primary-color);
+  color: var(--card-bg-color);
+}
+.save-kanban:hover:not(:disabled) {
+  background-color: var(--secondary-color);
+  transform: translateY(-1px);
+}
+.save-kanban:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+.close-kanban {
+  background-color: #f8f9fa;
+  color: var(--text-color);
+  border: 2px solid #e0e0e0;
+}
+.close-kanban:hover {
+  background-color: #e9ecef;
+  border-color: #ccc;
+}
+
+/* ────────────────────────────────────────────────────────────────────────── */
+/*  Settings Modal Styles ──────────────────────────────────────────────────── */
+#settingsModal .modal-content {
+  background: var(--card-bg-color);
+  margin: 5% auto;
+  padding: 20px 30px 30px;
+  border-radius: 12px;
+  width: 90%;
+  max-width: 500px;
+  position: relative;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+}
+.close-settings {
+  position: absolute;
+  right: 15px;
+  top: 15px;
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  color: var(--secondary-color);
+  cursor: pointer;
+}
+.close-settings:hover {
+  color: var(--primary-color);
+}
+#settingsModal h2 {
+  margin-top: 0;
+  color: var(--primary-color);
+  font-size: 1.8rem;
+  text-align: center;
+  margin-bottom: 20px;
+}
+.settings-body {
+  padding: 10px 0;
+  text-align: left;
+}
+.settings-body label {
+  cursor: pointer;
+}
+
+/* Settings sections */
+.settings-section {
+  margin-top: 20px;
+  padding-top: 15px;
+  border-top: 1px solid var(--border-color);
+}
+
+.settings-section h3 {
+  margin: 0 0 10px 0;
+  font-size: 1rem;
+  color: var(--text-color);
+  font-weight: 600;
+}
+
+.account-button {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 12px 16px;
+  background-color: var(--hover-color);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-color);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-decoration: none;
+}
+
+.account-button:hover {
+  background-color: var(--primary-light);
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+}
+
+.account-button i {
+  margin-right: 8px;
+  font-size: 16px;
+}
+.modal-buttons {
+  text-align: right;
+  margin-top: 20px;
+}
+.save-settings {
+  padding: 10px 20px;
+  background-color: var(--primary-color);
+  color: #ffffff;
+  border: none;
+  border-radius: 6px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+.save-settings:hover {
+  background-color: var(--secondary-color);
+}
+
+/* Help icon */
+.help-icon {
+  background: var(--primary-color);
+  color: #fff;
+  border: none;
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 700;
+  margin-left: 8px;
+  cursor: pointer;
+  transition: .3s;
+}
+.help-icon:hover {
+  background: var(--secondary-color);
+}
+
+/* Help modal + slider */
+.help-modal {
+  display: none;
+  position: fixed;
+  z-index: 11000;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0,0,0,.8);
+  overflow: auto;
+}
+.help-modal-content {
+  background: var(--card-bg-color);
+  margin: 5% auto;
+  padding: 20px;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 800px;
+  max-height: 90vh;
+  overflow-y: auto;
+  position: relative;
+}
+.help-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 15px;
+  margin-bottom: 20px;
+}
+.slider-container {
+  position: relative;
+  width: 100%;
+  height: 400px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #f5f5f5;
+}
+.slider-wrapper {
+  display: flex;
+  height: 100%;
+  transition: transform .3s;
+}
+.slide {
+  min-width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.slide img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 4px;
+}
+.slider-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 20px;
+}
+.nav-button {
+  background: var(--primary-color);
+  color: #fff;
+  border: none;
+  padding: 10px 15px;
+  border-radius: 4px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: .3s;
+}
+.nav-button:hover {
+  background: var(--secondary-color);
+}
+.nav-button:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+}
+.slide-counter {
+  font-size: 14px;
+  color: var(--text-color);
+  font-weight: 500;
+}
+.slide-indicators {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 15px;
+}
+.indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ddd;
+  cursor: pointer;
+  transition: .3s;
+}
+.indicator.active {
+  background: var(--primary-color);
+}
+
+/* bottom-of-sidebar: Settings + Help */
+.sidebar-controls {
+  margin-top: auto;            /* keep it at the bottom */
+  padding-top: 20px;
+  display: flex;               /* line the buttons up horizontally */
+  justify-content: center;
+  align-items: center;
+  gap: 14px;                   /* space between them */
+}
+
+/* make the Settings button auto-width instead of 100 % */
+.settings-btn {
+  width: auto;
+  min-width: 140px;            /* adjust to taste */
+  padding: 10px 26px;          /* a little slimmer than the full-width version */
+  background-color: #161f3b;   /* navy */
+  color: #ffffff;
+  border: none;              /* <-- add this line */
+}
+
+/* ────────────────────────────────────────────────────────────────────────── */
+/*  Dark‐Mode Overrides (applied when body.dark-mode is present)               */
+/* ────────────────────────────────────────────────────────────────────────── */
+body.dark-mode {
+  background-color: #161f3b;
+  color: #f0f3f2;
+}
+body.dark-mode .workspace-header h1,
+body.dark-mode .workspace-header a {
+  color: #f0f3f2;
+}
+body.dark-mode .left-panel,
+body.dark-mode .dashboard-card,
+body.dark-mode .kanban-container,
+body.dark-mode .document-types-section {
+  background-color: #232f4f;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+body.dark-mode .dashboard-card h3,
+body.dark-mode .dashboard-card .card-subtitle,
+body.dark-mode .storage-text,
+body.dark-mode label,
+body.dark-mode strong {
+  color: #f0f3f2;
+}
+body.dark-mode .action-button {
+  background-color: #f0f3f2;
+  color: #161f3b;
+}
+body.dark-mode .action-button:hover {
+  background-color: #e0e3e2;
+}
+body.dark-mode .workflows-button {
+  background-color: #232f4f;
+  color: #f0f3f2;
+}
+body.dark-mode .workflows-button:hover {
+  background-color: #1b2748;
+}
+body.dark-mode .sessions-icon,
+body.dark-mode .sessions-label {
+  fill: #f0f3f2;
+  color: #f0f3f2;
+}
+
+/* Dark mode for task board */
+body.dark-mode .kanban-column {
+  background-color: #1b2748;
+}
+body.dark-mode .kanban-item {
+  background-color: #232f4f;
+  color: #f0f3f2;
+}
+body.dark-mode .document-type-item {
+  background-color: #1b2748;
+}
+body.dark-mode .modal-content {
+  background-color: #232f4f;
+}
+body.dark-mode .account-button {
+  background-color: #1b2748;
+  border-color: #404040;
+  color: #f0f3f2;
+}
+body.dark-mode .account-button:hover {
+  background-color: rgba(160, 0, 109, 0.2);
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+}
+body.dark-mode .settings-section {
+  border-top-color: #404040;
+}
+body.dark-mode .kanban-column textarea {
+  background-color: #1b2748;
+  color: #f0f3f2;
+  border-color: #404040;
+}
+body.dark-mode .help-modal-content {
+  background-color: #232f4f;
+}
+body.dark-mode .add-task-form input {
+  background-color: #1b2748;
+  color: #f0f3f2;
+  border-color: #404040;
+}
+
+/* Hide page scrollbar when any modal is open */
+body.modal-open {
+  overflow: hidden;
+}
+
+/* Responsive Design */
+@media (max-width: 1200px) {
+  .bottom-section {
+    grid-template-columns: 1fr;
+  }
+  
+  .kanban-board {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .workspace-container {
+    padding: 15px;
+  }
+  
+  .workspace-header {
+    flex-direction: column;
+    gap: 15px;
+    text-align: center;
+  }
+  
+  .workspace-header h1 {
+    font-size: 1.5rem;
+  }
+  
+  .workspace-layout {
+    flex-direction: column;
+  }
+  
+  .dashboard-cards {
+    grid-template-columns: 1fr;
+  }
+  
+  .bottom-section {
+    gap: 20px;
+  }
+  
+  .modal-content {
+    padding: 20px;
+    margin: 20px;
+  }
+  
+  .help-modal-content {
+    width: 95%;
+  }
+  
+  .slider-container {
+    height: 300px;
+  }
+  
+  .kanban-columns {
+    flex-direction: column;
+    gap: 15px;
+  }
+  
+  .modal-buttons {
+    flex-direction: column-reverse;
+    gap: 8px;
+  }
+  
+  .modal-buttons button {
+    width: 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  .workspace-header {
+    padding: 15px 0;
+  }
+  
+  .sidebar-controls {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  
+  .dashboard-card .card-value {
+    font-size: 2rem;
+  }
+  
+  .action-button {
+    padding: 10px 12px;
+  }
+}
+

@@ -82,21 +82,24 @@ export default function FAQSection() {
     <section className="faq" id="contact">
       <div className="container">
         <h2>Frequently Asked Questions</h2>
-        <div className="faq-container">
-          {faqs.map((f, i) => (
-            <div className="faq-item" key={i}>
-              <button
-                className={`faq-question${open === i ? ' active' : ''}`}
-                onClick={() => setOpen(open === i ? null : i)}
-              >
-                {f.q} <i className="fas fa-chevron-down faq-icon"></i>
-              </button>
-              <div className={`faq-answer${open === i ? ' active' : ''}`}>
-                {f.a}
-              </div>
-            </div>
-          ))}
+<div className="faq-container">
+  {faqs.map((f, i) => (
+    <div className="faq-item" key={i}>
+      <button
+        className={`faq-question${open === i ? ' active' : ''}`}
+        onClick={() => setOpen(open === i ? null : i)}
+      >
+        {f.q} <i className="fas fa-chevron-down faq-icon"></i>
+      </button>
+
+      <div className={`faq-answer${open === i ? ' active' : ''}`}>
+        <div className="faq-answer-inner">
+          {f.a}
         </div>
+      </div>
+    </div>
+  ))}
+</div>
       </div>
     </section>
   );
