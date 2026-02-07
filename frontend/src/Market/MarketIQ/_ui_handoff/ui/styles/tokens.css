@@ -1,0 +1,96 @@
+/* ==========================================================================
+   AI Agent — Design Tokens
+   
+   Single source of truth for all visual properties.
+   Import this file at the top of your app's global CSS or in marketiq.css.
+   ========================================================================== */
+
+:root {
+  /* ---- Brand Colors (user-specified, in priority order) ---- */
+  --miq-navy:       #161f3b;
+  --miq-magenta:    #a0036c;
+  --miq-yellow:     #f0f302;
+  --miq-light-bg:   #f0f3f2;
+  --miq-orange:     #fd6b02;
+  --miq-tan:        #eab67b;
+
+  /* ---- Neutral Palette ---- */
+  --miq-white:      #ffffff;
+  --miq-gray-50:    #f8f9fa;
+  --miq-gray-100:   #f1f3f5;
+  --miq-gray-200:   #e9ecef;
+  --miq-gray-300:   #dee2e6;
+  --miq-gray-400:   #ced4da;
+  --miq-gray-500:   #adb5bd;
+  --miq-gray-600:   #868e96;
+  --miq-gray-700:   #495057;
+  --miq-gray-800:   #343a40;
+
+  /* ---- Semantic Colors ---- */
+  --miq-text-primary:   var(--miq-navy);
+  --miq-text-secondary: var(--miq-gray-700);
+  --miq-text-muted:     var(--miq-gray-600);
+  --miq-border:         var(--miq-gray-200);
+  --miq-success:        #0d7a3e;
+  --miq-warning:        var(--miq-orange);
+  --miq-danger:         #c0392b;
+
+  /* ---- Typography ---- */
+  --miq-font:       'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --miq-font-mono:  'JetBrains Mono', 'Fira Code', monospace;
+
+  --miq-text-xs:    0.625rem;   /* 10px */
+  --miq-text-sm:    0.75rem;    /* 12px */
+  --miq-text-base:  0.8125rem;  /* 13px */
+  --miq-text-md:    0.875rem;   /* 14px */
+  --miq-text-lg:    1rem;       /* 16px */
+  --miq-text-xl:    1.125rem;   /* 18px */
+  --miq-text-2xl:   1.25rem;    /* 20px */
+  --miq-text-3xl:   1.75rem;    /* 28px */
+  --miq-text-4xl:   2.25rem;    /* 36px */
+
+  --miq-leading-tight:  1.25;
+  --miq-leading-normal: 1.6;
+  --miq-leading-loose:  1.7;
+
+  --miq-tracking-tight:  -0.03em;
+  --miq-tracking-normal: 0;
+  --miq-tracking-wide:   0.06em;
+  --miq-tracking-wider:  0.1em;
+
+  /* ---- Spacing Scale (8px base) ---- */
+  --miq-space-1:    4px;
+  --miq-space-2:    8px;
+  --miq-space-3:    12px;
+  --miq-space-4:    16px;
+  --miq-space-5:    20px;
+  --miq-space-6:    24px;
+  --miq-space-8:    32px;
+  --miq-space-10:   40px;
+  --miq-space-12:   48px;
+  --miq-space-16:   64px;
+  --miq-space-20:   80px;
+  --miq-space-24:   96px;
+
+  /* ---- Border Radius ---- */
+  --miq-radius-sm:  4px;
+  --miq-radius-md:  8px;
+  --miq-radius-lg:  12px;
+  --miq-radius-full: 100px;
+
+  /* ---- Shadows (no gradients — flat color + opacity only) ---- */
+  --miq-shadow-sm:  0 1px 3px rgba(22, 31, 59, 0.06);
+  --miq-shadow-md:  0 4px 12px rgba(22, 31, 59, 0.08);
+  --miq-shadow-lg:  0 8px 24px rgba(22, 31, 59, 0.10);
+  --miq-shadow-xl:  0 8px 32px rgba(22, 31, 59, 0.15);
+
+  /* ---- Transitions ---- */
+  --miq-transition: 0.2s ease;
+  --miq-transition-slow: 0.3s ease;
+
+  /* ---- Layout ---- */
+  --miq-topbar-h:     52px;
+  --miq-drawer-w:     380px;
+  --miq-drawer-tab-w: 32px;
+  --miq-max-width:    1200px;
+}
