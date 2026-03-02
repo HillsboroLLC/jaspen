@@ -1,26 +1,27 @@
 /* ============================================================================
-   HomePage.css — AI Agent Landing Page
-   Matches Manus Reference Design
+   HomePage.css — Jaspen Landing Page
    ============================================================================ */
 
 /* --- Design Tokens --- */
 .homepage {
-  --navy: #161f3b;
-  --magenta: #a0036c;
+  --navy: #0f172a;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
   --white: #ffffff;
-  --gray-50: #f9fafb;
-  --gray-100: #f3f4f6;
-  --gray-200: #e5e7eb;
-  --gray-300: #d1d5db;
-  --gray-400: #9ca3af;
-  --gray-500: #6b7280;
-  --gray-600: #4b5563;
-  --gray-700: #374151;
-  --green: #10b981;
+  --gray-50: #f8fafc;
+  --gray-100: #f1f5f9;
+  --gray-200: #e2e8f0;
+  --gray-300: #cbd5e1;
+  --gray-400: #94a3b8;
+  --gray-500: #64748b;
+  --gray-600: #475569;
+  --gray-700: #334155;
+  --gray-800: #1e293b;
+  --green: #22c55e;
   --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
-/* --- Base Page --- */
+/* --- Base --- */
 .homepage {
   font-family: var(--font);
   color: var(--navy);
@@ -32,586 +33,617 @@
 }
 
 /* ============================================================================
-   VALUE STATS STRIP (Navy background)
+   HEADER / NAV
    ============================================================================ */
 
-.homepage .value-strip {
+.jaspen-header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: var(--white);
+  border-bottom: 1px solid var(--gray-200);
+}
+
+.jaspen-header-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.jaspen-logo {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--navy);
+  text-decoration: none;
+  letter-spacing: -0.02em;
+}
+
+.jaspen-nav-desktop {
+  display: flex;
+  gap: 32px;
+}
+
+.jaspen-nav-desktop a {
+  font-size: 0.9375rem;
+  font-weight: 500;
+  color: var(--gray-600);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+.jaspen-nav-desktop a:hover {
+  color: var(--navy);
+}
+
+.jaspen-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.jaspen-login-link {
+  font-size: 0.9375rem;
+  font-weight: 500;
+  color: var(--gray-600);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+.jaspen-login-link:hover {
+  color: var(--navy);
+}
+
+/* Hamburger */
+.jaspen-hamburger {
+  display: none;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  width: 28px;
+  height: 28px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+
+.jaspen-hamburger span {
   display: block;
   width: 100%;
-  background: #161f3b;
-  background-color: #161f3b;
-  padding: 56px 32px;
-  box-sizing: border-box;
+  height: 2px;
+  background: var(--navy);
+  border-radius: 1px;
+  transition: transform 0.2s, opacity 0.2s;
 }
 
-.homepage .value-strip-inner {
-  max-width: 1280px;
-  margin: 0 auto;
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 32px;
-  text-align: center;
-  width: 100%;
+.jaspen-hamburger.is-open span:nth-child(1) {
+  transform: translateY(7px) rotate(45deg);
 }
 
-.homepage .value-item .number {
-  font-size: 2rem;
-  font-weight: 700;
-  color: #ffffff;
-  line-height: 1.2;
+.jaspen-hamburger.is-open span:nth-child(2) {
+  opacity: 0;
 }
 
-.homepage .value-item .label {
-  font-size: 0.875rem;
-  color: rgba(255, 255, 255, 0.6);
-  margin-top: 8px;
+.jaspen-hamburger.is-open span:nth-child(3) {
+  transform: translateY(-7px) rotate(-45deg);
+}
+
+/* Mobile nav */
+.jaspen-mobile-nav {
+  display: none;
+  flex-direction: column;
+  padding: 16px 24px 24px;
+  background: var(--white);
+  border-bottom: 1px solid var(--gray-200);
+}
+
+.jaspen-mobile-nav.show {
+  display: flex;
+}
+
+.jaspen-mobile-nav a {
+  padding: 12px 0;
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--gray-700);
+  text-decoration: none;
+  border-bottom: 1px solid var(--gray-100);
+}
+
+.jaspen-mobile-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
 }
 
 /* ============================================================================
-   PAIN POINTS SECTION
+   BUTTONS
    ============================================================================ */
 
-.homepage .pain-section {
-  display: block;
-  width: 100%;
-  padding: 80px 48px 0;
-  background: #ffffff;
-  box-sizing: border-box;
+.jaspen-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 500;
+  font-size: 0.9375rem;
+  padding: 10px 20px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-decoration: none;
+  border: 1px solid transparent;
 }
 
-.homepage .pain-container {
-  max-width: 1200px;
+.jaspen-btn-lg {
+  padding: 14px 28px;
+  font-size: 1rem;
+}
+
+.jaspen-btn-primary {
+  background: var(--accent);
+  color: var(--white);
+  border-color: var(--accent);
+}
+
+.jaspen-btn-primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.jaspen-btn-outline {
+  background: transparent;
+  color: var(--navy);
+  border-color: var(--gray-300);
+}
+
+.jaspen-btn-outline:hover {
+  border-color: var(--gray-400);
+  background: var(--gray-50);
+}
+
+/* ============================================================================
+   HERO
+   ============================================================================ */
+
+.jaspen-hero {
+  padding: 80px 24px 96px;
+  text-align: center;
+  background: linear-gradient(180deg, var(--gray-50) 0%, var(--white) 100%);
+}
+
+.jaspen-hero-inner {
+  max-width: 720px;
   margin: 0 auto;
-  width: 100%;
 }
 
-.homepage .pain-grid {
+.jaspen-hero h1 {
+  font-size: 3rem;
+  font-weight: 700;
+  line-height: 1.15;
+  color: var(--navy);
+  margin-bottom: 20px;
+  letter-spacing: -0.025em;
+}
+
+.jaspen-hero-sub {
+  font-size: 1.25rem;
+  color: var(--gray-600);
+  margin-bottom: 32px;
+  line-height: 1.6;
+}
+
+.jaspen-hero-cta {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+/* ============================================================================
+   3 PILLARS
+   ============================================================================ */
+
+.jaspen-pillars {
+  padding: 80px 24px;
+  background: var(--white);
+}
+
+.jaspen-pillars-inner {
+  max-width: 1000px;
+  margin: 0 auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 24px;
+}
+
+.jaspen-pillar {
+  flex: 1;
+  max-width: 280px;
+  text-align: center;
+}
+
+.jaspen-pillar-num {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--white);
+  font-size: 1rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 16px;
+}
+
+.jaspen-pillar h3 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--navy);
+  margin-bottom: 8px;
+}
+
+.jaspen-pillar p {
+  font-size: 0.9375rem;
+  color: var(--gray-600);
+  line-height: 1.6;
+}
+
+.jaspen-pillar-arrow {
+  display: flex;
+  align-items: center;
+  padding-top: 48px;
+  color: var(--gray-300);
+  font-size: 1.25rem;
+}
+
+/* ============================================================================
+   CAPABILITIES
+   ============================================================================ */
+
+.jaspen-capabilities {
+  padding: 80px 24px;
+  background: var(--gray-50);
+}
+
+.jaspen-capabilities-inner {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.jaspen-section-header {
+  text-align: center;
+  margin-bottom: 48px;
+}
+
+.jaspen-section-header h2 {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--navy);
+  margin-bottom: 8px;
+  letter-spacing: -0.02em;
+}
+
+.jaspen-section-header p {
+  font-size: 1.125rem;
+  color: var(--gray-500);
+}
+
+.jaspen-caps-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 24px;
 }
 
-.homepage .pain-card {
-  background: #ffffff;
-  border: 1px solid #e5e7eb;
+.jaspen-cap-card {
+  background: var(--white);
+  border: 1px solid var(--gray-200);
   border-radius: 8px;
-  padding: 28px;
-  transition: box-shadow 0.2s ease;
+  padding: 24px;
+  transition: box-shadow 0.15s, border-color 0.15s;
 }
 
-.homepage .pain-card:hover {
-  box-shadow: 0 4px 12px rgba(22, 31, 59, 0.08);
+.jaspen-cap-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+  border-color: var(--gray-300);
 }
 
-.homepage .pain-icon {
+.jaspen-cap-icon {
   width: 40px;
   height: 40px;
-  border-radius: 4px;
-  background: #f0f3f2;
+  border-radius: 8px;
+  background: var(--gray-100);
   display: flex;
   align-items: center;
   justify-content: center;
   margin-bottom: 16px;
 }
 
-.homepage .pain-icon i {
-  color: #a0036c;
+.jaspen-cap-icon i {
   font-size: 1rem;
+  color: var(--accent);
 }
 
-.homepage .pain-card h4 {
-  font-size: 0.9375rem;
+.jaspen-cap-card h4 {
+  font-size: 1rem;
   font-weight: 600;
-  color: #161f3b;
-  margin-bottom: 8px;
+  color: var(--navy);
+  margin-bottom: 6px;
 }
 
-.homepage .pain-card p {
-  font-size: 0.8125rem;
-  color: #868e96;
-  line-height: 1.6;
-  margin-bottom: 0;
-}
-
-.homepage .pain-stat {
-  display: block;
-  margin-top: 12px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: #fd6b02;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+.jaspen-cap-card p {
+  font-size: 0.875rem;
+  color: var(--gray-500);
+  line-height: 1.5;
+  margin: 0;
 }
 
 /* ============================================================================
-   WORKFLOW SECTION (4 numbered steps)
+   CREDIBILITY / WHO IT'S FOR
    ============================================================================ */
 
-.homepage .workflow-section {
-  display: block;
-  width: 100%;
-  padding: 96px 32px;
-  background: #ffffff;
-  background-color: #ffffff;
-  box-sizing: border-box;
+.jaspen-credibility {
+  padding: 80px 24px;
+  background: var(--white);
 }
 
-.homepage .workflow-container {
-  max-width: 1280px;
+.jaspen-credibility-inner {
+  max-width: 700px;
   margin: 0 auto;
-  width: 100%;
-}
-
-.homepage .section-header {
   text-align: center;
-  margin-bottom: 64px;
 }
 
-.homepage .section-header h2 {
-  font-size: 2.25rem;
+.jaspen-credibility h2 {
+  font-size: 1.75rem;
   font-weight: 700;
-  color: #161f3b;
-  margin-bottom: 12px;
+  color: var(--navy);
+  margin-bottom: 32px;
   letter-spacing: -0.02em;
 }
 
-.homepage .section-header p {
-  font-size: 1.125rem;
-  color: #6b7280;
+.jaspen-who-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  text-align: left;
+}
+
+.jaspen-who-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--gray-100);
+}
+
+.jaspen-who-list li:last-child {
+  border-bottom: none;
+}
+
+.jaspen-who-list i {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--green);
+  color: var(--white);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  margin-top: 2px;
+}
+
+.jaspen-who-list span {
+  font-size: 1rem;
+  color: var(--gray-700);
+  line-height: 1.6;
+}
+
+.jaspen-who-list strong {
+  color: var(--navy);
+}
+
+/* ============================================================================
+   FINAL CTA
+   ============================================================================ */
+
+.jaspen-final-cta {
+  padding: 80px 24px;
+  background: var(--navy);
+  text-align: center;
+}
+
+.jaspen-final-cta-inner {
   max-width: 600px;
   margin: 0 auto;
 }
 
-.homepage .workflow-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 40px;
-}
-
-.homepage .workflow-step {
-  text-align: center;
-}
-
-.homepage .workflow-step .step-number {
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  background: #161f3b;
-  color: #ffffff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.125rem;
-  font-weight: 700;
-  margin: 0 auto 20px;
-}
-
-.homepage .workflow-step h3 {
-  font-size: 1.125rem;
+.jaspen-final-cta h2 {
+  font-size: 1.75rem;
   font-weight: 600;
-  color: #161f3b;
+  color: var(--white);
   margin-bottom: 12px;
 }
 
-.homepage .workflow-step p {
-  font-size: 0.9375rem;
-  color: #6b7280;
-  line-height: 1.6;
-  margin-bottom: 16px;
-}
-
-.homepage .workflow-step .step-time {
-  display: inline-block;
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: #a0036c;
-  letter-spacing: 0.05em;
-}
-
-/* ============================================================================
-   PROOF STRIP
-   ============================================================================ */
-
-.homepage .proof-strip {
-  display: block;
-  width: 100%;
-  background: #f0f3f2;
-  padding: 56px 48px;
-  box-sizing: border-box;
-}
-
-.homepage .proof-inner {
-  max-width: 1200px;
-  margin: 0 auto;
-  text-align: center;
-}
-
-.homepage .proof-inner h3 {
-  font-size: 1.125rem;
-  font-weight: 600;
-  color: #161f3b;
-  margin-bottom: 8px;
-}
-
-.homepage .proof-inner > p {
-  font-size: 0.9375rem;
-  color: #868e96;
-  max-width: 640px;
-  margin: 0 auto 28px;
-  line-height: 1.7;
-}
-
-.homepage .proof-metrics {
-  display: flex;
-  justify-content: center;
-  gap: 48px;
-}
-
-.homepage .proof-metric {
-  text-align: center;
-}
-
-.homepage .pm-val {
-  font-size: 1.75rem;
-  font-weight: 700;
-  color: #161f3b;
-  line-height: 1;
-}
-
-.homepage .pm-label {
-  font-size: 0.75rem;
-  color: #868e96;
-  margin-top: 4px;
-}
-
-/* ============================================================================
-   COMPARISON TABLE SECTION
-   ============================================================================ */
-
-.homepage .comparison-section {
-  display: block;
-  width: 100%;
-  padding: 96px 32px;
-  background: #ffffff;
-  background-color: #ffffff;
-  box-sizing: border-box;
-}
-
-.homepage .comparison-container {
-  max-width: 1100px;
-  margin: 0 auto;
-  width: 100%;
-}
-
-.homepage .comparison-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: 48px;
-}
-
-.homepage .comparison-table th {
-  text-align: left;
-  padding: 16px 20px;
-  font-size: 0.6875rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: #9ca3af;
-  border-bottom: 1px solid #e5e7eb;
-}
-
-.homepage .comparison-table th.highlight-col {
-  background: #161f3b;
-  color: #ffffff;
-  border-radius: 8px 8px 0 0;
-}
-
-.homepage .comparison-table td {
-  padding: 20px;
-  font-size: 0.9375rem;
-  color: #4b5563;
-  border-bottom: 1px solid #f3f4f6;
-  vertical-align: middle;
-}
-
-.homepage .comparison-table td:first-child {
-  font-weight: 600;
-  color: #161f3b;
-}
-
-.homepage .comparison-table td.highlight-col {
-  background: #f9fafb;
-}
-
-.homepage .comparison-table tbody tr:last-child td.highlight-col {
-  border-radius: 0 0 8px 8px;
-}
-
-.homepage .comparison-table .check-icon {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-weight: 600;
-  color: #161f3b;
-}
-
-.homepage .comparison-table .check-icon i {
-  color: #a0036c;
-}
-
-/* ============================================================================
-   CTA SECTION (Navy background)
-   ============================================================================ */
-
-.homepage .cta-section {
-  display: block;
-  width: 100%;
-  padding: 72px 48px;
-  background: #161f3b;
-  background-color: #161f3b;
-  text-align: center;
-  box-sizing: border-box;
-}
-
-.homepage .cta-container {
-  max-width: 700px;
-  margin: 0 auto;
-  width: 100%;
-}
-
-.homepage .cta-section h2 {
-  font-size: 1.75rem;
-  font-weight: 600;
-  color: #ffffff;
-  margin-bottom: 12px;
-  letter-spacing: -0.02em;
-}
-
-.homepage .cta-section p {
-  font-size: 0.9375rem;
-  color: rgba(255, 255, 255, 0.6);
+.jaspen-final-cta p {
+  font-size: 1rem;
+  color: rgba(255, 255, 255, 0.7);
   margin-bottom: 28px;
 }
 
-.homepage .cta-buttons {
-  display: flex;
-  gap: 12px;
-  justify-content: center;
-  align-items: center;
+.jaspen-final-cta .jaspen-btn-primary {
+  background: var(--white);
+  color: var(--navy);
+  border-color: var(--white);
 }
 
-.homepage .cta-section .btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  font-weight: 500;
-  font-size: 0.875rem;
-  padding: 14px 32px;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  text-decoration: none;
-  border: 1px solid transparent;
-}
-
-.homepage .cta-section .btn-primary {
-  background: #a0036c;
-  color: #ffffff;
-  border-color: #a0036c;
-}
-
-.homepage .cta-section .btn-primary:hover {
-  background: #8a025d;
-  border-color: #8a025d;
-}
-
-.homepage .cta-section .btn-primary i {
-  margin-right: 4px;
-}
-
-.homepage .cta-section .btn-outline {
-  background: transparent;
-  color: #ffffff;
-  border-color: rgba(255, 255, 255, 0.3);
-}
-
-.homepage .cta-section .btn-outline:hover {
-  border-color: rgba(255, 255, 255, 0.6);
-  background: rgba(255, 255, 255, 0.05);
+.jaspen-final-cta .jaspen-btn-primary:hover {
+  background: var(--gray-100);
+  border-color: var(--gray-100);
 }
 
 /* ============================================================================
-   FOOTER (Simple design)
+   FOOTER
    ============================================================================ */
 
-.homepage footer.footer,
-.homepage .footer {
-  display: block;
-  width: 100%;
-  background: #ffffff !important;
-  background-color: #ffffff !important;
-  border-top: 1px solid #e5e7eb;
-  padding: 24px 32px;
-  box-sizing: border-box;
-  color: #6b7280 !important;
+.jaspen-footer {
+  padding: 24px;
+  background: var(--white);
+  border-top: 1px solid var(--gray-200);
 }
 
-.homepage .footer-container {
-  max-width: 1280px;
+.jaspen-footer-inner {
+  max-width: 1200px;
   margin: 0 auto;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  width: 100%;
 }
 
-.homepage .footer-left p {
+.jaspen-footer-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.jaspen-footer-logo {
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: var(--navy);
+}
+
+.jaspen-footer-left p {
   font-size: 0.875rem;
-  color: #6b7280;
+  color: var(--gray-500);
   margin: 0;
 }
 
-.homepage .footer-right {
+.jaspen-footer-right {
   display: flex;
-  gap: 32px;
-  align-items: center;
+  gap: 24px;
 }
 
-.homepage .footer-right a {
+.jaspen-footer-right a {
   font-size: 0.875rem;
-  color: #6b7280;
+  color: var(--gray-500);
   text-decoration: none;
-  transition: color 0.2s ease;
+  transition: color 0.15s;
 }
 
-.homepage .footer-right a:hover {
-  color: #161f3b;
+.jaspen-footer-right a:hover {
+  color: var(--navy);
 }
 
 /* ============================================================================
    RESPONSIVE
    ============================================================================ */
 
-@media (max-width: 1024px) {
-  .homepage .value-strip-inner {
+@media (max-width: 900px) {
+  .jaspen-caps-grid {
     grid-template-columns: repeat(2, 1fr);
-    gap: 40px;
-  }
-
-  .homepage .pain-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-
-  .homepage .workflow-grid {
-    grid-template-columns: repeat(2, 1fr);
-    gap: 48px;
-  }
-
-  .homepage .proof-metrics {
-    gap: 32px;
-  }
-
-  .homepage .comparison-table {
-    font-size: 0.875rem;
   }
 }
 
 @media (max-width: 768px) {
-  .homepage .value-strip {
-    padding: 48px 20px;
+  /* Header */
+  .jaspen-nav-desktop,
+  .jaspen-header-actions {
+    display: none;
   }
 
-  .homepage .value-strip-inner {
-    grid-template-columns: repeat(2, 1fr);
-    gap: 32px;
+  .jaspen-hamburger {
+    display: flex;
   }
 
-  .homepage .value-item .number {
-    font-size: 1.5rem;
+  /* Hero */
+  .jaspen-hero {
+    padding: 60px 20px 72px;
   }
 
-  .homepage .pain-section {
-    padding: 64px 20px 0;
+  .jaspen-hero h1 {
+    font-size: 2rem;
   }
 
-  .homepage .pain-grid {
-    grid-template-columns: 1fr;
-    gap: 20px;
+  .jaspen-hero-sub {
+    font-size: 1.0625rem;
   }
 
-  .homepage .workflow-section {
+  .jaspen-hero-cta {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  /* Pillars */
+  .jaspen-pillars {
     padding: 64px 20px;
   }
 
-  .homepage .section-header h2 {
-    font-size: 1.75rem;
-  }
-
-  .homepage .workflow-grid {
-    grid-template-columns: 1fr;
+  .jaspen-pillars-inner {
+    flex-direction: column;
+    align-items: center;
     gap: 40px;
   }
 
-  .homepage .proof-strip {
-    padding: 48px 20px;
+  .jaspen-pillar {
+    max-width: 100%;
   }
 
-  .homepage .proof-metrics {
-    flex-direction: column;
-    gap: 24px;
+  .jaspen-pillar-arrow {
+    display: none;
   }
 
-  .homepage .comparison-section {
-    padding: 64px 20px;
-    overflow-x: auto;
-  }
-
-  .homepage .comparison-table {
-    min-width: 600px;
-  }
-
-  .homepage .cta-section {
+  /* Capabilities */
+  .jaspen-capabilities {
     padding: 64px 20px;
   }
 
-  .homepage .cta-section h2 {
+  .jaspen-caps-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .jaspen-section-header h2 {
     font-size: 1.5rem;
   }
 
-  .homepage .cta-buttons {
-    flex-direction: column;
-    width: 100%;
+  /* Credibility */
+  .jaspen-credibility {
+    padding: 64px 20px;
   }
 
-  .homepage .cta-section .btn {
-    width: 100%;
+  .jaspen-credibility h2 {
+    font-size: 1.5rem;
   }
 
-  .homepage .footer {
-    padding: 20px;
+  /* Final CTA */
+  .jaspen-final-cta {
+    padding: 64px 20px;
   }
 
-  .homepage .footer-container {
+  .jaspen-final-cta h2 {
+    font-size: 1.5rem;
+  }
+
+  /* Footer */
+  .jaspen-footer-inner {
     flex-direction: column;
     gap: 16px;
     text-align: center;
   }
 
-  .homepage .footer-right {
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 20px;
+  .jaspen-footer-left {
+    flex-direction: column;
+    gap: 8px;
   }
 }
 
 @media (max-width: 480px) {
-  .homepage .value-strip-inner {
-    grid-template-columns: 1fr;
-    gap: 24px;
-  }
-
-  .homepage .value-item .number {
+  .jaspen-hero h1 {
     font-size: 1.75rem;
   }
 }
