@@ -12,6 +12,7 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
   const isEmailMode = mode === 'email';
 
   const resetState = () => {
+    setEmail('');
     setStatus('idle');
     setError('');
   };
