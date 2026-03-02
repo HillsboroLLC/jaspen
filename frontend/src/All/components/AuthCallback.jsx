@@ -11,13 +11,15 @@ export default function AuthCallback() {
   useEffect(() => {
     let timeoutId;
     let subscription;
+    const params = new URLSearchParams(window.location.search);
+    const next = params.get('next') || '/market-iq';
 
     const redirectHome = () => {
       navigate('/?auth=1', { replace: true });
     };
 
     const redirectMarket = () => {
-      navigate('/market-iq', { replace: true });
+      navigate(next, { replace: true });
     };
 
     const init = async () => {
