@@ -1,11 +1,18 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { supabase } from '../../shared/supabase/supabaseClient';
 
 const TARGET_SCORE = 87;
 const ANIMATION_DURATION_MS = 1200;
 
+const getRedirectUrl = () =>
+  typeof window !== 'undefined' ? `${window.location.origin}/auth/callback` : '';
+
 export default function StrategyAccessCard() {
   const [score, setScore] = useState(0);
   const [status, setStatus] = useState('Pending');
+  const [email, setEmail] = useState('');
+  const [authStatus, setAuthStatus] = useState('idle');
+  const [authError, setAuthError] = useState('');
 
   useEffect(() => {
     const prefersReducedMotion =
@@ -41,6 +48,72 @@ export default function StrategyAccessCard() {
     };
   }, []);
 
+  const helperText = useMemo(() => {
+    if (authError) return authError;
+    if (authStatus === 'sent') return 'Check your inbox for a secure magic link.';
+    return 'By continuing, you agree to receive product updates.';
+  }, [authError, authStatus]);
+
+  const helperClassName = authError
+    ? 'strategy-card-disclaimer is-error'
+    : authStatus === 'sent'
+      ? 'strategy-card-disclaimer is-success'
+      : 'strategy-card-disclaimer';
+
+  const handleGoogleClick = async () => {
+    console.log("Google button clicked");
+    if (!supabase) {
+      setAuthError('Supabase is not configured yet. Please try again shortly.');
+      return;
+    }
+
+    setAuthError('');
+    setAuthStatus('idle');
+
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: getRedirectUrl(),
+      },
+    });
+
+    if (error) {
+      setAuthError(error.message || 'Unable to start Google sign-in.');
+    }
+  };
+
+  const handleEmailSubmit = async (event) => {
+    event.preventDefault();
+
+    if (!email.trim()) {
+      setAuthError('Please enter a valid email address.');
+      return;
+    }
+
+    if (!supabase) {
+      setAuthError('Supabase is not configured yet. Please try again shortly.');
+      return;
+    }
+
+    setAuthError('');
+    setAuthStatus('sending');
+
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        emailRedirectTo: getRedirectUrl(),
+      },
+    });
+
+    if (error) {
+      setAuthError(error.message || 'Unable to send magic link.');
+      setAuthStatus('idle');
+      return;
+    }
+
+    setAuthStatus('sent');
+  };
+
   return (
     <div className="strategy-access-card">
       <div className="strategy-card-header">STRATEGY ACCESS</div>
@@ -57,27 +130,36 @@ export default function StrategyAccessCard() {
 
       <div className="strategy-card-section strategy-card-auth">
         <>
-          <button type="button" className="jaspen-btn jaspen-btn-outline strategy-google-btn">
+          <button
+            type="button"
+            className="jaspen-btn jaspen-btn-outline strategy-google-btn"
+            onClick={handleGoogleClick}
+          >
             Continue with Google
           </button>
           <div className="strategy-card-divider"><span>OR</span></div>
         </>
-        <form className="strategy-card-form" onSubmit={(e) => e.preventDefault()}>
+        <form className="strategy-card-form" onSubmit={handleEmailSubmit}>
           <input
             type="email"
             className="strategy-email-input"
             placeholder="Enter your email"
             aria-label="Email address"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            disabled={authStatus === 'sending' || authStatus === 'sent'}
           />
-          <button type="submit" className="jaspen-btn jaspen-btn-primary strategy-email-btn">
-            Continue with email
+          <button
+            type="submit"
+            className="jaspen-btn jaspen-btn-primary strategy-email-btn"
+            disabled={authStatus === 'sending' || authStatus === 'sent'}
+          >
+            {authStatus === 'sending' ? 'Sending...' : 'Continue with email'}
           </button>
         </form>
       </div>
 
-      <div className="strategy-card-disclaimer">
-        By continuing, you agree to receive product updates.
-      </div>
+      <div className={helperClassName}>{helperText}</div>
     </div>
   );
 }
