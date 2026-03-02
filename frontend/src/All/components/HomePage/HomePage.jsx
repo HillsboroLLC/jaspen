@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import AuthModal from './AuthModal';
 import StrategyAccessCard from './StrategyAccessCard';
 import './HomePage.css';
 
@@ -39,6 +40,10 @@ export default function HomePage() {
   const [visibleElements, setVisibleElements] = useState(new Set());
   const [activeStep, setActiveStep] = useState(0);
   const stepRefs = useRef([]);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authMode, setAuthMode] = useState('email');
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -65,12 +70,44 @@ export default function HomePage() {
     return () => observer.disconnect();
   }, []);
 
+  useEffect(() => {
+    const shouldOpen = searchParams.get('auth') === '1';
+    if (shouldOpen) {
+      const mode = searchParams.get('mode');
+      setAuthMode(mode === 'google' ? 'google' : 'email');
+      setAuthModalOpen(true);
+    }
+  }, [searchParams]);
+
   const scrollToSection = (e, sectionId) => {
     e.preventDefault();
     setMobileNavOpen(false);
     const el = document.getElementById(sectionId);
     if (el) {
       el.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
+
+  const openAuthModal = (mode) => {
+    setAuthMode(mode);
+    setAuthModalOpen(true);
+  };
+
+  const closeAuthModal = () => {
+    setAuthModalOpen(false);
+
+    if (searchParams.get('auth')) {
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete('auth');
+      nextParams.delete('mode');
+      const queryString = nextParams.toString();
+      navigate(
+        {
+          pathname: '/',
+          search: queryString ? `?${queryString}` : '',
+        },
+        { replace: true }
+      );
     }
   };
 
@@ -128,7 +165,10 @@ export default function HomePage() {
               <div className="jaspen-visual-orb orb-2"></div>
               <div className="jaspen-visual-orb orb-3"></div>
               <div className="strategy-card-float">
-                <StrategyAccessCard />
+                <StrategyAccessCard
+                  onGoogleClick={() => openAuthModal('google')}
+                  onEmailClick={() => openAuthModal('email')}
+                />
               </div>
             </div>
           </div>
@@ -258,6 +298,13 @@ export default function HomePage() {
           </div>
         </section>
       </main>
+
+      <AuthModal
+        isOpen={authModalOpen}
+        mode={authMode}
+        onClose={closeAuthModal}
+        onModeChange={setAuthMode}
+      />
 
       {/* ========== FOOTER ========== */}
       <footer className="jaspen-footer">
