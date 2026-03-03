@@ -187,10 +187,10 @@ if (data?.token) {
         setUser(data?.user || { email });
         return { success: true };
       } else {
-        return { success: false, error: data?.message || 'Login failed' };
+        return { success: false, error: data?.message || 'Sign-in failed' };
       }
     } catch (error) {
-      console.error('Login error:', error);
+      console.error('Sign-in error:', error);
       return { success: false, error: 'Network error. Please try again.' };
     } finally {
       setLoading(false);

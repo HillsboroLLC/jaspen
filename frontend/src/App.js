@@ -7,12 +7,11 @@ import './App.css';
 
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import ProtectedRoute from './All/components/ProtectedRoute';
-import SupabaseProtectedRoute from './All/components/SupabaseProtectedRoute';
 import { AppShell } from './components/layout';
 
 // Shared
 import HomePage      from './All/components/HomePage/HomePage';
-import Login         from './All/Login/Login';
+import GetInTouch    from './All/GetInTouch/GetInTouch';
 import SignUp        from './All/SignUp/SignUp';
 import Privacy       from './All/pages/Privacy/privacy';
 import Terms         from './All/pages/Terms/terms';
@@ -62,7 +61,7 @@ export default function App() {
       <Routes>
         {/* Public */}
         <Route path="/"               element={withShell(<HomePage />, { showHeader: false, fullBleed: true, noPadding: true })} />
-        <Route path="/login"          element={withShell(<Login />, { showHeader: false, fullBleed: true, noPadding: true })} />
+        <Route path="/login"          element={withShell(<GetInTouch />, { showHeader: false, fullBleed: true, noPadding: true })} />
         <Route path="/sign-up"        element={withShell(<SignUp />)} />
         <Route path="/pricing"        element={withShell(<PricingResult />)} />
         <Route path="/pages/privacy"  element={withShell(<Privacy />)} />
