@@ -502,6 +502,25 @@
   gap: 8px;
   align-items: center;
 }
+.miq-ud-profile-name {
+  font-size: 0.875rem;
+  color: var(--navy);
+  font-weight: 600;
+  flex: 1;
+}
+.miq-ud-profile-edit {
+  border: 1px solid var(--gray-300);
+  background: var(--white);
+  color: var(--gray-700);
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+.miq-ud-profile-edit:hover {
+  border-color: var(--navy);
+  color: var(--navy);
+}
 .miq-ud-profile-input {
   flex: 1;
   border: 1px solid var(--gray-300);

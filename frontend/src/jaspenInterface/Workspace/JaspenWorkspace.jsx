@@ -454,6 +454,7 @@ const refreshBundle = async (tid) => {
   const [displayName, setDisplayName] = useState('');
   const [nameInput, setNameInput] = useState('');
   const [nameModalOpen, setNameModalOpen] = useState(false);
+  const [editingName, setEditingName] = useState(false);
   const userInitials = getInitials(displayName || user?.name || user?.email || 'User');
   const userName = displayName || user?.name || user?.email?.split('@')[0] || 'User';
   const userEmail = user?.email || 'user@example.com';
@@ -468,6 +469,7 @@ const refreshBundle = async (tid) => {
     const initial = saved || fallback;
     setDisplayName(saved || '');
     setNameInput(initial);
+    setEditingName(false);
     if (!saved) setNameModalOpen(true);
   }, [user]);
 
@@ -518,26 +520,40 @@ const refreshBundle = async (tid) => {
     <>
       <div className="miq-ud-profile">
         <div className="miq-ud-profile-label">Display name</div>
-        <div className="miq-ud-profile-row">
-          <input
-            className="miq-ud-profile-input"
-            value={nameInput}
-            onChange={(e) => setNameInput(e.target.value)}
-            placeholder="What should I call you?"
-          />
-          <button
-            type="button"
-            className="miq-ud-profile-save"
-            onClick={() => {
-              const trimmed = nameInput.trim();
-              if (!trimmed) return;
-              persistDisplayName(trimmed);
-            }}
-            disabled={!nameInput.trim()}
-          >
-            Save
-          </button>
-        </div>
+        {!editingName ? (
+          <div className="miq-ud-profile-row">
+            <span className="miq-ud-profile-name">{userName}</span>
+            <button
+              type="button"
+              className="miq-ud-profile-edit"
+              onClick={() => setEditingName(true)}
+            >
+              Edit
+            </button>
+          </div>
+        ) : (
+          <div className="miq-ud-profile-row">
+            <input
+              className="miq-ud-profile-input"
+              value={nameInput}
+              onChange={(e) => setNameInput(e.target.value)}
+              placeholder="What should I call you?"
+            />
+            <button
+              type="button"
+              className="miq-ud-profile-save"
+              onClick={() => {
+                const trimmed = nameInput.trim();
+                if (!trimmed) return;
+                persistDisplayName(trimmed);
+                setEditingName(false);
+              }}
+              disabled={!nameInput.trim()}
+            >
+              Save
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="miq-ud-header">
