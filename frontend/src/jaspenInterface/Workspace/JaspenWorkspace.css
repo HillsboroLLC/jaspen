@@ -1518,6 +1518,10 @@
   .miq-workspace.miq-settings-open {
     margin-left: 0;
   }
+
+  .miq-shell.drawer-open .chatgpt-interface {
+    margin-left: 0;
+  }
 }
 
 /* ============================================================================
@@ -1526,6 +1530,7 @@
 .miq { font-family: var(--font); }
 .miq-shell { display: flex; height: 100vh; width: 100%; overflow: hidden; position: relative; background: var(--white); }
 .miq-main { flex: 1; display: flex; flex-direction: column; height: 100vh; overflow: hidden; min-width: 0; }
+.miq-shell.drawer-open .chatgpt-interface { margin-left: 380px; transition: margin-left 0.3s ease; }
 
 /* Sidebar legacy classes */
 .miq-left-sidebar {

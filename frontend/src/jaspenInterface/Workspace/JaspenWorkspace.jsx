@@ -15,7 +15,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faQuestionCircle, faHome, faCogs,
   faPaperPlane, faSpinner, faTimes, faBars, faCheck, faExclamationTriangle,
-  faChartLine, faTrash, faPlus, faMinus, faMicrophone,
+  faChartLine, faTrash, faPlus, faMinus, faMicrophone, faWandMagicSparkles,
   faUser, faGear, faBolt, faBrain, faLayerGroup, faRobot, faListCheck, faArrowUpRightFromSquare, faArrowRightFromBracket, faGaugeHigh, faClockRotateLeft, faPaperclip, faArrowUp
 } from '@fortawesome/free-solid-svg-icons';
 import {
@@ -147,9 +147,6 @@ export default function MarketIQWorkspace() {
   const [view, setView] = useState('intake');
   const [activeTab, setActiveTab] = useState('summary');
 
-  // User menu dropdown state
-  const [userDropdownOpen, setUserDropdownOpen] = useState(false);
-  const userMenuRef = useRef(null);
   const { user, logout } = useAuth();
 
   // Imperative control for scenario modeling (used by interactive chat actions)
@@ -226,10 +223,11 @@ const [helpLoading, setHelpLoading] = useState(false);
 const [scenarioOptions, setScenarioOptions] = useState([]);
 const [activeScenarioId, setActiveScenarioId] = useState('baseline');
 const [scenarioDrawerView, setScenarioDrawerView] = useState('assistant');
-const [scenarioLevers, setScenarioLevers] = useState([]);
-const [threadEditOpen, setThreadEditOpen] = useState(false);
-const [bundleCurrentScorecard, setBundleCurrentScorecard] = useState(null);
-const [bundleBaselineScorecard, setBundleBaselineScorecard] = useState(null);
+  const [scenarioLevers, setScenarioLevers] = useState([]);
+  const [threadEditOpen, setThreadEditOpen] = useState(false);
+  const [bundleCurrentScorecard, setBundleCurrentScorecard] = useState(null);
+  const [bundleBaselineScorecard, setBundleBaselineScorecard] = useState(null);
+  const hasHistory = analysisHistory.length > 0;
 
   // PROMPT ALIGNMENT: Scorecard snapshots (baseline + adopted scenarios)
   const [scorecardSnapshots, setScorecardSnapshots] = useState([]);
@@ -469,7 +467,7 @@ const refreshBundle = async (tid) => {
       <div className="miq-ud-section">
         <div className="miq-ud-section-label">Navigate</div>
         <button className="miq-ud-item" onClick={() => { onClose?.(); window.location.reload(); }}>
-          <FontAwesomeIcon icon={faRobot} />
+          <FontAwesomeIcon icon={faWandMagicSparkles} />
           <span className="miq-ud-item-label">Jaspen</span>
         </button>
         <button className="miq-ud-item" onClick={() => { onClose?.(); enterScorecardPreview(); }}>
@@ -529,19 +527,6 @@ const refreshBundle = async (tid) => {
       </div>
     </>
   );
-
-  // Close user dropdown when clicking outside
-  useEffect(() => {
-    const onDocClick = (e) => {
-      if (userMenuRef.current && !userMenuRef.current.contains(e.target)) {
-        setUserDropdownOpen(false);
-      }
-    };
-    if (userDropdownOpen) document.addEventListener('mousedown', onDocClick);
-    return () => document.removeEventListener('mousedown', onDocClick);
-  }, [userDropdownOpen]);
-
-  const toggleUserMenu = () => setUserDropdownOpen(prev => !prev);
 
   // === Speech Recognition for Voice Input ===
   useEffect(() => {
@@ -958,6 +943,12 @@ useEffect(() => {
       mq.removeListener?.(handler);
     };
   }, []);
+
+  useEffect(() => {
+    if (!hasHistory && sidebarState.history) {
+      dispatchSidebar({ type: 'CLOSE_HISTORY' });
+    }
+  }, [hasHistory, sidebarState.history]);
 
   // Autoscroll
   const endRef = useRef(null);
@@ -2601,6 +2592,9 @@ const handleSaveScenario = async (scenario) => {
     const isSettingsOpen = sidebarState.settings;
     const isScenarioTab = activeTab === 'scenario';
     const shellOpen = sidebarState.history || sidebarState.readiness || sidebarState.settings;
+    const sideTabBase = 80;
+    const sideTabGap = 70;
+    const sideTabSecond = sideTabBase + sideTabGap;
     const TabButton = ({ id, label }) => (
       <button
         className={`miq-top-tab ${activeTab === id ? 'active' : ''}`}
@@ -2707,7 +2701,11 @@ setView(id === 'chat' ? 'intake' : id);
     </div>
 
     {sessionId && messages.length > 0 && !sidebarState.readiness && (
-      <div className="miq-sidebar-tab miq-tab-readiness" onClick={() => dispatchSidebar({ type: 'OPEN_READINESS' })}>
+      <div
+        className="miq-sidebar-tab miq-tab-readiness"
+        style={{ top: `${sideTabSecond}px` }}
+        onClick={() => dispatchSidebar({ type: 'OPEN_READINESS' })}
+      >
         <FontAwesomeIcon icon={faChartLine} />
         <span className="miq-tab-label">Readiness</span>
       </div>
@@ -2735,7 +2733,7 @@ setView(id === 'chat' ? 'intake' : id);
           role="button"
           aria-label="User settings"
           title="User settings"
-          style={{ top: '160px' }}
+          style={{ top: `${sideTabBase}px` }}
         >
           <FontAwesomeIcon icon={faGear} />
           <span className="miq-tab-label">Settings</span>
@@ -2754,6 +2752,7 @@ setView(id === 'chat' ? 'intake' : id);
 {activeTab !== 'chat' && !aiDrawerOpen && (
   <div
     className="miq-sidebar-tab miq-tab-assistant"
+    style={{ top: `${sideTabSecond}px` }}
     onClick={toggleAIDrawer}
     role="button"
     aria-label="Assistant"
@@ -3222,6 +3221,14 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
   // Default: conversational intake (no tabs)
   const intakeShellOpen = sidebarState.history || sidebarState.readiness || sidebarState.settings;
   const intakeHasReadinessTab = sessionId && messages.length > 0 && !sidebarState.readiness;
+  const intakeTabs = [];
+  if (!sidebarState.settings) intakeTabs.push('settings');
+  if (hasHistory && !sidebarState.history) intakeTabs.push('history');
+  if (intakeHasReadinessTab) intakeTabs.push('readiness');
+  const intakeTabTop = (key) => {
+    const idx = intakeTabs.indexOf(key);
+    return `${80 + idx * 70}px`;
+  };
   return (
     <div className={`miq miq-shell ${intakeShellOpen ? 'drawer-open' : ''}`}>
       <main className="miq-main">
@@ -3236,33 +3243,34 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
       )}
 
       {/* Drawer Tabs on Left Edge */}
-      {intakeHasReadinessTab && (
+      {!sidebarState.settings && (
         <div
-          className={`miq-drawer-tab miq-drawer-tab-readiness ${sessionId && messages.length > 0 ? 'active' : ''}`}
-          onClick={() => dispatchSidebar({ type: 'OPEN_READINESS' })}
+          className="miq-drawer-tab miq-drawer-tab-settings"
+          style={{ top: intakeTabTop('settings') }}
+          onClick={() => dispatchSidebar({ type: 'TOGGLE_SETTINGS' })}
         >
-          <FontAwesomeIcon icon={faGaugeHigh} />
-          READINESS
+          <FontAwesomeIcon icon={faGear} />
+          SETTINGS
         </div>
       )}
-      {!sidebarState.history && (
+      {hasHistory && !sidebarState.history && (
         <div
           className="miq-drawer-tab miq-drawer-tab-history"
-          style={{ top: intakeHasReadinessTab ? '160px' : '80px' }}
+          style={{ top: intakeTabTop('history') }}
           onClick={() => dispatchSidebar({ type: 'TOGGLE_HISTORY' })}
         >
           <FontAwesomeIcon icon={faClockRotateLeft} />
           HISTORY
         </div>
       )}
-      {!sidebarState.settings && (
+      {intakeHasReadinessTab && (
         <div
-          className="miq-drawer-tab miq-drawer-tab-settings"
-          style={{ top: intakeHasReadinessTab ? '240px' : '160px' }}
-          onClick={() => dispatchSidebar({ type: 'TOGGLE_SETTINGS' })}
+          className={`miq-drawer-tab miq-drawer-tab-readiness ${sessionId && messages.length > 0 ? 'active' : ''}`}
+          style={{ top: intakeTabTop('readiness') }}
+          onClick={() => dispatchSidebar({ type: 'OPEN_READINESS' })}
         >
-          <FontAwesomeIcon icon={faGear} />
-          SETTINGS
+          <FontAwesomeIcon icon={faGaugeHigh} />
+          READINESS
         </div>
       )}
 
@@ -3360,18 +3368,16 @@ const done = category.completed === true;
       </div>
 
       {/* LEFT SIDEBAR - History */}
-      <div className={`miq-left-sidebar miq-history-sidebar ${sidebarState.history ? 'sidebar-open' : ''}`}>
-        <div className="miq-sidebar-header">
-          <h3>Analysis History</h3>
-          <button className="miq-sidebar-close" onClick={() => dispatchSidebar({ type: 'CLOSE_HISTORY' })}>
-            <FontAwesomeIcon icon={faTimes} />
-          </button>
-        </div>
-        <div className="miq-sidebar-content">
-          {analysisHistory.length === 0 ? (
-            <p className="miq-no-history">No previous analyses</p>
-          ) : (
-            analysisHistory.map((item, index) => (
+      {hasHistory && (
+        <div className={`miq-left-sidebar miq-history-sidebar ${sidebarState.history ? 'sidebar-open' : ''}`}>
+          <div className="miq-sidebar-header">
+            <h3>Analysis History</h3>
+            <button className="miq-sidebar-close" onClick={() => dispatchSidebar({ type: 'CLOSE_HISTORY' })}>
+              <FontAwesomeIcon icon={faTimes} />
+            </button>
+          </div>
+          <div className="miq-sidebar-content">
+            {analysisHistory.map((item, index) => (
               <div key={index} className="miq-history-item" onClick={() => handleSelectAnalysis(item.result)}>
                 <div className="hi-text">
                   <div className="hi-title">
@@ -3393,10 +3399,10 @@ const done = category.completed === true;
                   <FontAwesomeIcon icon={faTrash} />
                 </button>
               </div>
-            ))
-          )}
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* LEFT SIDEBAR - User Settings */}
       <div className={`miq-left-sidebar miq-settings-sidebar ${sidebarState.settings ? 'sidebar-open' : ''}`}>
@@ -3432,32 +3438,13 @@ const done = category.completed === true;
           </button>
         </div>
 
-        <div className="miq-topbar-right">
-          {/* User Avatar & Dropdown */}
-          <div className="miq-user-menu-wrapper" ref={userMenuRef}>
-            <button className="miq-user-avatar" onClick={toggleUserMenu} aria-haspopup="menu" aria-expanded={userDropdownOpen}>
-              {userInitials}
-            </button>
-
-            <div className={`miq-user-dropdown ${userDropdownOpen ? 'open' : ''}`} role="menu">
-              {renderUserMenuContent(() => setUserDropdownOpen(false))}
-            </div>
-          </div>
-
-          {/* Help button */}
-          <button className="miq-help-btn" onClick={() => setHelpOpen(true)} title="Help" aria-label="Help">
-            <FontAwesomeIcon icon={faQuestionCircle} />
-          </button>
-        </div>
+        <div className="miq-topbar-right" />
       </div>
 
       {/* Content */}
       <div className="miq-chat-content">
         {messages.length === 0 ? (
           <div className="miq-chat-welcome">
-            <div className="cw-icon">
-              <FontAwesomeIcon icon={faRobot} />
-            </div>
             <h2>What would you like to work on?</h2>
             <p>Describe your project or business idea and I'll help you build a complete strategy scorecard through a natural conversation.</p>
           </div>
