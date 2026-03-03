@@ -74,11 +74,7 @@ export default function App() {
         <Route path="/dashboard" element={<ProtectedRoute>{withShell(<Dashboard />)}</ProtectedRoute>} />
         <Route
           path="/market-iq"
-          element={(
-            <SupabaseProtectedRoute>
-              {withShell(<MarketIQWorkspace />, { title: 'Market IQ', showHeader: false, fullBleed: true, noPadding: true })}
-            </SupabaseProtectedRoute>
-          )}
+          element={withShell(<MarketIQWorkspace />, { title: 'Market IQ', showHeader: false, fullBleed: true, noPadding: true })}
         />
         <Route path="/sessions"  element={<ProtectedRoute>{withShell(<Sessions />)}</ProtectedRoute>} />
         <Route path="/account"   element={<ProtectedRoute>{withShell(<Account />)}</ProtectedRoute>} />
