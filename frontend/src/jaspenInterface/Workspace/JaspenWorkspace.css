@@ -1,306 +1,163 @@
 /* ============================================================================
-   Jaspen Workspace - Claude-Inspired Redesign
-   Clean, calm, centered interface with premium feel
+   Jaspen Workspace - Claude-Inspired Visual Redesign
+   Preserving ALL original functionality and sidebars
    ============================================================================ */
 
-/* === CSS Variables & Reset === */
+/* === Reset & Variables === */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
 :root {
-  --jaspen-navy: #161f3b;
-  --jaspen-magenta: #a0036c;
-  --jaspen-light-bg: #f9faf9;
-  --jaspen-white: #ffffff;
-  --jaspen-gray-50: #f8f9fa;
-  --jaspen-gray-100: #f1f3f5;
-  --jaspen-gray-200: #e9ecef;
-  --jaspen-gray-300: #dee2e6;
-  --jaspen-gray-400: #ced4da;
-  --jaspen-gray-500: #adb5bd;
-  --jaspen-gray-600: #868e96;
-  --jaspen-gray-700: #495057;
-  --jaspen-border: #e9ecef;
-  --jaspen-font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --jaspen-transition: 0.15s ease;
+  --navy: #161f3b;
+  --magenta: #a0036c;
+  --light-bg: #f9faf9; /* Claude-style light tint */
+  --white: #ffffff;
+  --gray-50: #f8f9fa;
+  --gray-100: #f1f3f5;
+  --gray-200: #e9ecef;
+  --gray-300: #dee2e6;
+  --gray-400: #ced4da;
+  --gray-500: #adb5bd;
+  --gray-600: #868e96;
+  --gray-700: #495057;
+  --border: #e9ecef;
+  --radius-sm: 4px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --transition: 0.15s ease;
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
 }
 
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-}
-
-html,
-body {
-  margin: 0;
-  padding: 0;
-  height: 100%;
-  width: 100%;
-}
-
-/* ============================================================================
-   WORKSPACE SHELL
-   ============================================================================ */
-.jaspen-workspace {
+/* === Base Layout === */
+.miq-workspace-shell, .miq-shell {
   display: flex;
-  flex-direction: column;
   height: 100vh;
   width: 100%;
-  background: var(--jaspen-light-bg);
-  font-family: var(--jaspen-font);
-  color: var(--jaspen-gray-700);
   overflow: hidden;
+  position: relative;
+  background: var(--light-bg);
+  font-family: var(--font);
 }
 
-/* ============================================================================
-   TOP BAR
-   ============================================================================ */
-.jaspen-topbar {
+/* === Top Bar Refinement === */
+.miq-chat-topbar {
   height: 56px;
-  background: var(--jaspen-white);
-  border-bottom: 1px solid var(--jaspen-border);
+  border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 24px;
   flex-shrink: 0;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  background: var(--white);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.03);
 }
 
-.jaspen-topbar-left {
-  display: flex;
-  align-items: center;
-  gap: 32px;
-}
-
-.jaspen-logo {
-  font-size: 1.125rem;
+.miq-topbar-title {
+  font-size: 0.9375rem;
   font-weight: 700;
-  color: var(--jaspen-navy);
-  margin: 0;
-  letter-spacing: -0.5px;
-  cursor: pointer;
+  color: var(--navy);
+  letter-spacing: -0.01em;
 }
 
-.jaspen-tabs {
-  display: flex;
-  gap: 16px;
+/* === Sidebars (Preserved Experience) === */
+.miq-left-sidebar, .miq-drawer {
+  background: var(--white);
+  border-right: 1px solid var(--border);
+  box-shadow: 4px 0 12px rgba(0, 0, 0, 0.03);
 }
 
-.jaspen-tab {
-  background: none;
-  border: none;
-  font-family: var(--jaspen-font);
-  font-size: 0.875rem;
-  font-weight: 500;
-  color: var(--jaspen-gray-600);
-  cursor: pointer;
-  padding: 6px 12px;
-  border-radius: 6px;
-  transition: all var(--jaspen-transition);
+.miq-sidebar-header, .miq-drawer-header {
+  border-bottom: 1px solid var(--border);
+  padding: 16px 20px;
 }
 
-.jaspen-tab:hover {
-  color: var(--jaspen-navy);
-  background: var(--jaspen-gray-50);
+.miq-sidebar-tab, .miq-drawer-tab {
+  background: var(--white);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+  transition: all var(--transition);
 }
 
-.jaspen-tab.active {
-  color: var(--jaspen-magenta);
-  background: rgba(160, 3, 108, 0.05);
+.miq-sidebar-tab:hover, .miq-drawer-tab:hover {
+  background: var(--gray-50);
+  border-color: var(--gray-300);
 }
 
-.jaspen-topbar-right {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-/* ============================================================================
-   USER MENU
-   ============================================================================ */
-.jaspen-user-menu-wrapper {
-  position: relative;
-}
-
-.jaspen-user-avatar {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--jaspen-magenta) 0%, #c0047a 100%);
-  color: var(--jaspen-white);
-  border: none;
-  font-size: 0.875rem;
-  font-weight: 600;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: opacity var(--jaspen-transition);
-  font-family: var(--jaspen-font);
-}
-
-.jaspen-user-avatar:hover {
-  opacity: 0.9;
-}
-
-.jaspen-user-dropdown {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  background: var(--jaspen-white);
-  border: 1px solid var(--jaspen-border);
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-  min-width: 160px;
-  z-index: 1000;
-  overflow: hidden;
-}
-
-.jaspen-dropdown-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  color: var(--jaspen-gray-700);
-  font-size: 0.875rem;
-  cursor: pointer;
-  transition: background-color var(--jaspen-transition);
-  border: none;
-  background: none;
-  width: 100%;
-  text-align: left;
-  font-family: var(--jaspen-font);
-}
-
-.jaspen-dropdown-item:hover {
-  background-color: var(--jaspen-gray-50);
-}
-
-/* ============================================================================
-   MAIN CONTENT AREA
-   ============================================================================ */
-.jaspen-main {
+/* === Centered Content Column (Claude Vibe) === */
+.miq-main {
   flex: 1;
-  overflow-y: auto;
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  padding: 40px 24px;
-}
-
-.jaspen-content-container {
-  width: 100%;
-  max-width: 920px;
-}
-
-/* ============================================================================
-   WELCOME STATE (Initial View)
-   ============================================================================ */
-.jaspen-welcome {
   display: flex;
   flex-direction: column;
-  gap: 32px;
-  padding-top: 40px;
+  align-items: center;
+  overflow-y: auto;
+  padding: 0;
 }
 
-.jaspen-hero {
+/* Welcome / Hero State */
+.miq-welcome-container, .miq-hero-section {
+  width: 100%;
+  max-width: 860px;
+  margin: 120px auto 40px;
   text-align: center;
-  margin-bottom: 24px;
 }
 
-.jaspen-hero-title {
+.miq-hero-title {
   font-size: 2.5rem;
   font-weight: 600;
-  color: var(--jaspen-navy);
-  line-height: 1.2;
-  margin-bottom: 12px;
-  letter-spacing: -0.5px;
+  color: var(--navy);
+  margin-bottom: 16px;
+  letter-spacing: -0.02em;
 }
 
-.jaspen-hero-subtitle {
-  font-size: 1rem;
-  color: var(--jaspen-gray-600);
-  line-height: 1.6;
-  margin: 0;
+.miq-hero-subtitle {
+  font-size: 1.125rem;
+  color: var(--gray-600);
   max-width: 600px;
-  margin-left: auto;
-  margin-right: auto;
+  margin: 0 auto;
 }
 
-/* ============================================================================
-   COMPOSER CARD
-   ============================================================================ */
-.jaspen-composer-card {
-  background: var(--jaspen-white);
-  border: 1px solid var(--jaspen-border);
-  border-radius: 18px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+/* === Primary Input Card (Composer) === */
+.miq-chat-input-container, .miq-composer-card {
+  width: 100%;
+  max-width: 860px;
+  margin: 0 auto;
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
   padding: 16px;
-  transition: all var(--jaspen-transition);
-}
-
-.jaspen-composer-card:focus-within {
-  border-color: var(--jaspen-magenta);
-  box-shadow: 0 4px 16px rgba(160, 3, 108, 0.12);
-}
-
-.jaspen-composer-input-wrapper {
+  box-shadow: var(--shadow-sm);
+  transition: all var(--transition);
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 12px;
 }
 
-.jaspen-composer-icon-btn {
-  background: none;
-  border: none;
-  color: var(--jaspen-gray-500);
-  cursor: pointer;
-  font-size: 1rem;
-  padding: 6px;
-  transition: color var(--jaspen-transition);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
+.miq-chat-input-container:focus-within {
+  border-color: var(--magenta);
+  box-shadow: 0 4px 20px rgba(160, 3, 108, 0.08);
 }
 
-.jaspen-composer-input {
-  flex: 1;
+.miq-chat-input {
   border: none;
-  background: none;
-  font-family: var(--jaspen-font);
-  font-size: 1rem;
-  color: var(--jaspen-navy);
-  outline: none;
-  padding: 8px 0;
+  background: transparent;
+  font-size: 1.0625rem;
+  color: var(--navy);
   resize: none;
+  width: 100%;
+  outline: none;
   min-height: 24px;
 }
 
-.jaspen-composer-actions {
+.miq-input-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
+  justify-content: space-between;
 }
 
-.jaspen-composer-voice-btn {
-  background: none;
-  border: none;
-  color: var(--jaspen-gray-500);
-  cursor: pointer;
-  font-size: 0.875rem;
-  padding: 6px;
-  transition: color var(--jaspen-transition);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.jaspen-composer-send-btn {
-  background: var(--jaspen-magenta);
-  color: var(--jaspen-white);
+.miq-send-btn {
+  background: var(--magenta);
+  color: var(--white);
   border: none;
   border-radius: 10px;
   width: 36px;
@@ -309,148 +166,83 @@ body {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  font-size: 0.875rem;
-  transition: all var(--jaspen-transition);
-  flex-shrink: 0;
+  transition: transform 0.1s ease;
 }
 
-/* ============================================================================
-   QUICK ACTION CHIPS
-   ============================================================================ */
-.jaspen-quick-actions {
+.miq-send-btn:hover {
+  background: #8a0260;
+  transform: scale(1.05);
+}
+
+/* === Quick Action Chips === */
+.miq-suggestions-list, .miq-quick-actions {
+  width: 100%;
+  max-width: 860px;
+  margin: 20px auto;
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
   gap: 10px;
-  margin-top: 16px;
+  justify-content: center;
 }
 
-.jaspen-action-chip {
-  background: var(--jaspen-white);
-  border: 1px solid var(--jaspen-border);
+.miq-suggestion-item, .miq-action-chip {
+  background: var(--white);
+  border: 1px solid var(--border);
   border-radius: 12px;
-  padding: 12px 16px;
-  font-family: var(--jaspen-font);
+  padding: 10px 16px;
   font-size: 0.9375rem;
-  color: var(--jaspen-gray-700);
+  color: var(--gray-700);
   cursor: pointer;
-  transition: all var(--jaspen-transition);
+  transition: all var(--transition);
   text-align: left;
-  line-height: 1.5;
 }
 
-.jaspen-action-chip:hover {
-  background: var(--jaspen-gray-50);
-  border-color: var(--jaspen-magenta);
-  color: var(--jaspen-navy);
+.miq-suggestion-item:hover {
+  background: var(--gray-50);
+  border-color: var(--magenta);
+  color: var(--navy);
 }
 
-/* ============================================================================
-   CONVERSATION VIEW
-   ============================================================================ */
-.jaspen-chat-view {
+/* === Chat Messages === */
+.miq-messages-list {
+  width: 100%;
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 40px 0;
   display: flex;
   flex-direction: column;
   gap: 24px;
 }
 
-.jaspen-messages {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.jaspen-message {
-  display: flex;
-  gap: 12px;
-  animation: slideIn 0.3s ease-out;
-}
-
-@keyframes slideIn {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.jaspen-message-user { justify-content: flex-end; }
-.jaspen-message-ai { justify-content: flex-start; }
-
-.jaspen-message-content {
-  max-width: 70%;
+.miq-message-bubble {
   padding: 12px 16px;
   border-radius: 12px;
   line-height: 1.6;
-  font-size: 0.9375rem;
+  font-size: 1rem;
 }
 
-.jaspen-message-user .jaspen-message-content {
-  background: var(--jaspen-magenta);
-  color: var(--jaspen-white);
+.miq-message-user .miq-message-bubble {
+  background: var(--magenta);
+  color: var(--white);
+  align-self: flex-end;
 }
 
-.jaspen-message-ai .jaspen-message-content {
-  background: var(--jaspen-gray-100);
-  color: var(--jaspen-navy);
+.miq-message-ai .miq-message-bubble {
+  background: var(--gray-100);
+  color: var(--navy);
+  align-self: flex-start;
 }
 
-/* ============================================================================
-   ANALYSIS VIEW FOOTER
-   ============================================================================ */
-.jaspen-chat-footer {
-  margin-top: 24px;
-  padding-top: 24px;
-  border-top: 1px solid var(--jaspen-border);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+/* === User Menu === */
+.miq-user-avatar {
+  background: linear-gradient(135deg, var(--magenta) 0%, #c0047a 100%);
+  border-radius: 50%;
+  box-shadow: var(--shadow-sm);
 }
 
-.jaspen-readiness-mini {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.jaspen-readiness-bar {
-  width: 120px;
-  height: 6px;
-  background: var(--jaspen-gray-200);
-  border-radius: 100px;
-  overflow: hidden;
-}
-
-.jaspen-readiness-bar .fill {
-  height: 100%;
-  background: #10b981;
-  transition: width 0.3s ease;
-}
-
-.jaspen-readiness-mini span {
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--jaspen-gray-600);
-}
-
-.jaspen-analyze-btn {
-  background: var(--jaspen-navy);
-  color: var(--jaspen-white);
-  border: none;
-  border-radius: 8px;
-  padding: 10px 20px;
-  font-family: var(--jaspen-font);
-  font-size: 0.875rem;
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  cursor: pointer;
-  transition: all var(--jaspen-transition);
-}
-
-.jaspen-analyze-btn:hover:not(:disabled) {
-  background: #1e2b52;
-  transform: translateY(-1px);
-}
-
-.jaspen-analyze-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+/* === Responsive === */
+@media (max-width: 768px) {
+  .miq-welcome-container { margin-top: 60px; }
+  .miq-hero-title { font-size: 1.875rem; }
+  .miq-chat-input-container { border-radius: 14px; }
 }
