@@ -16,7 +16,7 @@ export default function SupabaseProtectedRoute({ children }) {
 
     const check = async () => {
       try {
-        const res = await fetch(`${API_BASE}/api/auth/me`, {
+        const res = await fetch(`${API_BASE}/api/auth/me-cookie`, {
           method: 'GET',
           credentials: 'include', // send the sekki_access cookie
         });
