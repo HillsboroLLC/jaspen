@@ -1,7 +1,4 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { supabase } from '../../shared/supabase/supabaseClient';
-
-const EMAIL_REDIRECT = `${window.location.origin}/auth/callback`;
 
 export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChange }) {
   const [email, setEmail] = useState('');
@@ -48,17 +45,8 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
   };
 
   const handleGoogle = async () => {
-    if (!supabase) {
-      setError('Supabase is not configured yet. Please try again shortly.');
-      return;
-    }
-
-setError('');
-window.location.href = "https://api.jaspen.ai/api/auth/google/start";
-return;
-    if (signInError) {
-      setError(signInError.message || 'Unable to start Google sign-in.');
-    }
+    setError('');
+    window.location.href = "https://api.jaspen.ai/api/auth/google/start";
   };
 
   const handleEmailSubmit = async (event) => {
@@ -69,28 +57,7 @@ return;
       return;
     }
 
-    if (!supabase) {
-      setError('Supabase is not configured yet. Please try again shortly.');
-      return;
-    }
-
-    setStatus('sending');
-    setError('');
-
-    const { error: otpError } = await supabase.auth.signInWithOtp({
-      email,
-      options: {
-        emailRedirectTo: EMAIL_REDIRECT,
-      },
-    });
-
-    if (otpError) {
-      setError(otpError.message || 'Unable to send magic link.');
-      setStatus('idle');
-      return;
-    }
-
-    setStatus('sent');
+    setError('Email authentication is not currently available. Please use Google sign-in.');
   };
 
   return (

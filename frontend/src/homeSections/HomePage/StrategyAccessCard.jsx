@@ -1,13 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { supabase } from '../../shared/supabase/supabaseClient';
 
 const TARGET_SCORE = 87;
 const ANIMATION_DURATION_MS = 1200;
-
-const getRedirectUrl = () =>
-  typeof window !== 'undefined'
-    ? `${window.location.origin}/auth/callback?next=/market-iq`
-    : '';
 
 export default function StrategyAccessCard() {
   const [score, setScore] = useState(0);
@@ -75,28 +69,7 @@ export default function StrategyAccessCard() {
       return;
     }
 
-    if (!supabase) {
-      setAuthError('Supabase is not configured yet. Please try again shortly.');
-      return;
-    }
-
-    setAuthError('');
-    setAuthStatus('sending');
-
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: {
-        emailRedirectTo: getRedirectUrl(),
-      },
-    });
-
-    if (error) {
-      setAuthError(error.message || 'Unable to send magic link.');
-      setAuthStatus('idle');
-      return;
-    }
-
-    setAuthStatus('sent');
+    setAuthError('Email authentication is not currently available. Please use Google sign-in.');
   };
 
   return (
