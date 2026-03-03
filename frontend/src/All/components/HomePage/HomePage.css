@@ -470,6 +470,14 @@
   line-height: 1.5;
 }
 
+.strategy-card-disclaimer.is-error {
+  color: #b91c1c;
+}
+
+.strategy-card-disclaimer.is-success {
+  color: #0f766e;
+}
+
 @keyframes float-soft {
   from { transform: translateY(0); }
   to { transform: translateY(-16px); }

@@ -5,7 +5,9 @@ const TARGET_SCORE = 87;
 const ANIMATION_DURATION_MS = 1200;
 
 const getRedirectUrl = () =>
-  typeof window !== 'undefined' ? `${window.location.origin}/auth/callback` : '';
+  typeof window !== 'undefined'
+    ? `${window.location.origin}/auth/callback?next=/market-iq`
+    : '';
 
 export default function StrategyAccessCard() {
   const [score, setScore] = useState(0);

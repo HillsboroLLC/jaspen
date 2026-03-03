@@ -7,6 +7,7 @@ import './App.css';
 
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import ProtectedRoute from './All/components/ProtectedRoute';
+import SupabaseProtectedRoute from './All/components/SupabaseProtectedRoute';
 import { AppShell } from './components/layout';
 
 // Shared
@@ -16,6 +17,7 @@ import SignUp        from './All/SignUp/SignUp';
 import Privacy       from './All/pages/Privacy/privacy';
 import Terms         from './All/pages/Terms/terms';
 import Support       from './All/pages/Support/Support';
+import AuthCallback  from './All/components/AuthCallback';
 
 // Market
 import PricingResult from './Market/PricingResult/PricingResult';
@@ -66,15 +68,16 @@ export default function App() {
         <Route path="/pages/privacy"  element={withShell(<Privacy />)} />
         <Route path="/pages/terms"    element={withShell(<Terms />)} />
         <Route path="/pages/support"  element={withShell(<Support />)} />
+        <Route path="/auth/callback"  element={withShell(<AuthCallback />, { showHeader: false, fullBleed: true, noPadding: true })} />
 
         {/* Protected (Market) */}
         <Route path="/dashboard" element={<ProtectedRoute>{withShell(<Dashboard />)}</ProtectedRoute>} />
         <Route
           path="/market-iq"
           element={(
-            <ProtectedRoute>
+            <SupabaseProtectedRoute>
               {withShell(<MarketIQWorkspace />, { title: 'Market IQ', showHeader: false, fullBleed: true, noPadding: true })}
-            </ProtectedRoute>
+            </SupabaseProtectedRoute>
           )}
         />
         <Route path="/sessions"  element={<ProtectedRoute>{withShell(<Sessions />)}</ProtectedRoute>} />

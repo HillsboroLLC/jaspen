@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import StrategyAccessCard from './StrategyAccessCard';
 import './HomePage.css';
 
@@ -39,6 +39,17 @@ export default function HomePage() {
   const [visibleElements, setVisibleElements] = useState(new Set());
   const [activeStep, setActiveStep] = useState(0);
   const stepRefs = useRef([]);
+  const [searchParams] = useSearchParams();
+
+  // Scroll to auth card when redirected with ?auth=1
+  useEffect(() => {
+    if (searchParams.get('auth') === '1') {
+      const card = document.querySelector('.strategy-card-float');
+      if (card) {
+        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     const observer = new IntersectionObserver(
