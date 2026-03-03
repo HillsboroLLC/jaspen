@@ -1,6 +1,6 @@
 /* ============================================================================
-   Jaspen Workspace - Claude-Inspired Visual Redesign
-   Preserving ALL original functionality and sidebars
+   Jaspen Workspace - Manus Design Match
+   Clean implementation matching the Manus demo exactly
    ============================================================================ */
 
 /* === Reset & Variables === */
@@ -9,7 +9,7 @@
 :root {
   --navy: #161f3b;
   --magenta: #a0036c;
-  --light-bg: #f9faf9; /* Claude-style light tint */
+  --light-bg: #f0f3f2;
   --white: #ffffff;
   --gray-50: #f8f9fa;
   --gray-100: #f1f3f5;
@@ -21,228 +21,1905 @@
   --gray-700: #495057;
   --border: #e9ecef;
   --radius-sm: 4px;
-  --radius-md: 12px;
-  --radius-lg: 18px;
+  --radius-md: 8px;
   --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --transition: 0.15s ease;
-  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.04);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --transition: 0.2s ease;
 }
 
 /* === Base Layout === */
-.miq-workspace-shell, .miq-shell {
+.miq-workspace-shell {
   display: flex;
   height: 100vh;
   width: 100%;
   overflow: hidden;
   position: relative;
-  background: var(--light-bg);
+  background: var(--white);
   font-family: var(--font);
 }
 
-/* === Top Bar Refinement === */
-.miq-chat-topbar {
-  height: 56px;
-  border-bottom: 1px solid var(--border);
+.miq-workspace-shell h1,
+.miq-workspace-shell h2,
+.miq-workspace-shell h3,
+.miq-workspace-shell h4 {
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--navy);
+  margin: 0;
+}
+
+.miq-workspace-shell p {
+  color: var(--gray-700);
+  line-height: 1.7;
+  margin: 0;
+}
+
+/* ============================================================================
+   DRAWER TABS (Left Edge - Vertical Text)
+   ============================================================================ */
+.miq-drawer-tab {
+  position: fixed;
+  left: 0;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  background: var(--light-bg);
+  border: 1px solid var(--border);
+  border-left: none;
+  padding: 14px 8px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--navy);
+  cursor: pointer;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  transition: background var(--transition);
+}
+.miq-drawer-tab:hover {
+  background: var(--gray-200);
+}
+.miq-drawer-tab svg {
+  writing-mode: horizontal-tb;
+  font-size: 0.75rem;
+  width: 12px;
+  height: 12px;
+}
+
+.miq-drawer-tab-readiness {
+  top: 80px;
+  display: none;
+}
+.miq-drawer-tab-readiness.active {
+  display: flex;
+}
+
+.miq-drawer-tab-history {
+  top: 80px;
+}
+
+/* ============================================================================
+   DRAWER PANELS (Slide from Left)
+   ============================================================================ */
+.miq-drawer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 380px;
+  height: 100vh;
+  background: var(--light-bg);
+  border-right: 1px solid var(--border);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(-100%);
+  transition: transform 0.3s ease;
+  box-shadow: 4px 0 12px rgba(22, 31, 59, 0.08);
+}
+.miq-drawer.open {
+  transform: translateX(0);
+}
+
+.miq-drawer-header {
+  padding: 18px 20px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 24px;
-  flex-shrink: 0;
-  background: var(--white);
-  box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+  border-bottom: 1px solid var(--border);
 }
-
-.miq-topbar-title {
-  font-size: 0.9375rem;
+.miq-drawer-header h3 {
+  font-size: 0.8125rem;
   font-weight: 700;
   color: var(--navy);
-  letter-spacing: -0.01em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.miq-drawer-header h3 svg {
+  color: var(--magenta);
+  width: 14px;
+  height: 14px;
 }
 
-/* === Sidebars (Preserved Experience) === */
-.miq-left-sidebar, .miq-drawer {
-  background: var(--white);
-  border-right: 1px solid var(--border);
-  box-shadow: 4px 0 12px rgba(0, 0, 0, 0.03);
+.miq-drawer-close {
+  background: none;
+  border: none;
+  color: var(--gray-600);
+  cursor: pointer;
+  font-size: 0.875rem;
+  padding: 4px;
+  transition: color var(--transition);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.miq-drawer-close:hover {
+  color: var(--navy);
 }
 
-.miq-sidebar-header, .miq-drawer-header {
-  border-bottom: 1px solid var(--border);
+.miq-drawer-body {
+  flex: 1;
+  overflow-y: auto;
   padding: 16px 20px;
 }
 
-.miq-sidebar-tab, .miq-drawer-tab {
-  background: var(--white);
-  border: 1px solid var(--border);
-  box-shadow: var(--shadow-sm);
-  transition: all var(--transition);
+/* ============================================================================
+   READINESS DRAWER CONTENT
+   ============================================================================ */
+.miq-readiness-overview {
+  margin-bottom: 20px;
 }
 
-.miq-sidebar-tab:hover, .miq-drawer-tab:hover {
-  background: var(--gray-50);
-  border-color: var(--gray-300);
-}
-
-/* === Centered Content Column (Claude Vibe) === */
-.miq-main {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  overflow-y: auto;
-  padding: 0;
-}
-
-/* Welcome / Hero State */
-.miq-welcome-container, .miq-hero-section {
-  width: 100%;
-  max-width: 860px;
-  margin: 120px auto 40px;
-  text-align: center;
-}
-
-.miq-hero-title {
-  font-size: 2.5rem;
-  font-weight: 600;
-  color: var(--navy);
-  margin-bottom: 16px;
-  letter-spacing: -0.02em;
-}
-
-.miq-hero-subtitle {
-  font-size: 1.125rem;
-  color: var(--gray-600);
-  max-width: 600px;
-  margin: 0 auto;
-}
-
-/* === Primary Input Card (Composer) === */
-.miq-chat-input-container, .miq-composer-card {
-  width: 100%;
-  max-width: 860px;
-  margin: 0 auto;
-  background: var(--white);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 16px;
-  box-shadow: var(--shadow-sm);
-  transition: all var(--transition);
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.miq-chat-input-container:focus-within {
-  border-color: var(--magenta);
-  box-shadow: 0 4px 20px rgba(160, 3, 108, 0.08);
-}
-
-.miq-chat-input {
-  border: none;
-  background: transparent;
-  font-size: 1.0625rem;
-  color: var(--navy);
-  resize: none;
-  width: 100%;
-  outline: none;
-  min-height: 24px;
-}
-
-.miq-input-actions {
+.miq-readiness-pct-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  margin-bottom: 8px;
 }
 
-.miq-send-btn {
+.miq-readiness-pct {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--navy);
+}
+
+.miq-readiness-status-text {
+  font-size: 0.75rem;
+  color: var(--gray-600);
+}
+
+.miq-readiness-bar {
+  height: 6px;
+  background: var(--gray-300);
+  border-radius: 100px;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+.miq-readiness-bar .fill {
+  height: 100%;
+  background: var(--magenta);
+  border-radius: 100px;
+  transition: width 0.3s ease;
+}
+
+.miq-readiness-version {
+  font-size: 0.625rem;
+  color: var(--gray-500);
+  text-align: right;
+}
+
+.miq-readiness-section-label {
+  font-size: 0.625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--gray-600);
+  margin-bottom: 10px;
+  margin-top: 8px;
+}
+
+.miq-readiness-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.8125rem;
+  color: var(--navy);
+}
+.miq-readiness-item:last-child {
+  border-bottom: none;
+}
+
+.miq-readiness-item .ri-icon {
+  width: 20px;
+  text-align: center;
+  color: var(--gray-400);
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+.miq-readiness-item .ri-icon.captured {
+  color: var(--magenta);
+}
+
+.miq-readiness-item .ri-label {
+  flex: 1;
+}
+
+.miq-readiness-item .ri-status {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--gray-500);
+}
+.miq-readiness-item .ri-status.done {
+  color: var(--magenta);
+}
+
+/* ============================================================================
+   HISTORY DRAWER CONTENT
+   ============================================================================ */
+.miq-history-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background var(--transition);
+}
+.miq-history-item:last-child {
+  border-bottom: none;
+}
+.miq-history-item:hover {
+  background: rgba(0, 0, 0, 0.02);
+  margin: 0 -20px;
+  padding: 10px 20px;
+}
+
+.miq-history-item .hi-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.miq-history-item .hi-title {
+  font-size: 0.8125rem;
+  color: var(--navy);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.miq-history-item .hi-meta {
+  font-size: 0.6875rem;
+  color: var(--gray-600);
+  margin-top: 2px;
+  display: flex;
+  gap: 8px;
+}
+
+.miq-history-item .hi-score {
+  font-weight: 600;
+  color: var(--magenta);
+}
+
+.miq-history-item .hi-delete {
+  background: none;
+  border: none;
+  color: var(--gray-400);
+  cursor: pointer;
+  font-size: 0.75rem;
+  padding: 2px;
+  transition: color var(--transition);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.miq-history-item .hi-delete:hover {
+  color: var(--navy);
+}
+
+/* ============================================================================
+   MAIN CHAT AREA
+   ============================================================================ */
+.miq-chat-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-width: 0;
+}
+
+/* === Top Bar === */
+.miq-chat-topbar {
+  height: 52px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px 0 48px;
+  flex-shrink: 0;
+  background: var(--white);
+}
+
+.miq-topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.miq-topbar-title {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--navy);
+}
+
+.miq-topbar-new {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--gray-600);
+  cursor: pointer;
+  font-size: 0.75rem;
+  transition: all var(--transition);
+}
+.miq-topbar-new:hover {
+  border-color: var(--navy);
+  color: var(--navy);
+}
+
+.miq-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* === User Avatar & Dropdown === */
+.miq-user-menu-wrapper {
+  position: relative;
+}
+
+.miq-user-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--magenta);
+  color: var(--white);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity var(--transition);
+  border: none;
+  font-family: var(--font);
+  letter-spacing: 0.02em;
+}
+.miq-user-avatar:hover {
+  opacity: 0.85;
+}
+
+.miq-user-dropdown {
+  display: none;
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 260px;
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(22, 31, 59, 0.12);
+  z-index: 500;
+  overflow: hidden;
+}
+.miq-user-dropdown.open {
+  display: block;
+}
+
+.miq-ud-header {
+  padding: 16px 18px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.miq-ud-header-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--magenta);
+  color: var(--white);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.miq-ud-header-info {
+  min-width: 0;
+}
+
+.miq-ud-header-name {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--navy);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.miq-ud-header-email {
+  font-size: 0.6875rem;
+  color: var(--gray-600);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.miq-ud-section {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.miq-ud-section:last-child {
+  border-bottom: none;
+}
+
+.miq-ud-section-label {
+  padding: 6px 18px 4px;
+  font-size: 0.5625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--gray-500);
+}
+
+.miq-ud-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 18px;
+  font-size: 0.8125rem;
+  color: var(--gray-700);
+  cursor: pointer;
+  transition: background var(--transition);
+  border: none;
+  background: none;
+  width: 100%;
+  text-align: left;
+  font-family: var(--font);
+}
+.miq-ud-item:hover {
+  background: var(--gray-50);
+  color: var(--navy);
+}
+
+.miq-ud-item svg {
+  width: 16px;
+  height: 16px;
+  color: var(--gray-500);
+  flex-shrink: 0;
+}
+.miq-ud-item:hover svg {
+  color: var(--navy);
+}
+
+.miq-ud-item-label {
+  flex: 1;
+}
+
+.miq-ud-item-badge {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--gray-500);
+}
+
+.miq-ud-item-ext {
+  font-size: 0.625rem;
+  color: var(--gray-400);
+}
+.miq-ud-item-ext svg {
+  width: 10px;
+  height: 10px;
+}
+
+.miq-ud-item.signout {
+  color: var(--magenta);
+}
+.miq-ud-item.signout svg {
+  color: var(--magenta);
+}
+.miq-ud-item.signout:hover {
+  background: #fdf0f7;
+}
+
+/* === Help Button === */
+.miq-help-btn {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: var(--navy);
+  color: var(--white);
+  cursor: pointer;
+  font-size: 1rem;
+  transition: all var(--transition);
+}
+.miq-help-btn:hover {
+  opacity: 0.85;
+}
+
+/* ============================================================================
+   CHAT CONTENT (Welcome + Messages)
+   ============================================================================ */
+.miq-chat-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  padding: 24px 48px 48px;
+  overflow-y: auto;
+  width: 100%;
+}
+
+.miq-chat-welcome {
+  text-align: center;
+  max-width: 520px;
+  margin: auto;
+}
+
+.miq-chat-welcome .cw-icon {
+  color: var(--navy);
+  font-size: 2.5rem;
+  margin: 0 auto 20px;
+}
+.miq-chat-welcome .cw-icon svg {
+  width: 48px;
+  height: 48px;
+}
+
+.miq-chat-welcome h2 {
+  font-size: 1.375rem;
+  margin-bottom: 8px;
+  color: var(--navy);
+}
+
+.miq-chat-welcome p {
+  font-size: 0.875rem;
+  color: var(--gray-600);
+  margin-bottom: 28px;
+  line-height: 1.6;
+}
+
+/* === Prompt Suggestions === */
+.miq-prompt-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.miq-prompt-suggestion {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--gray-50);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition);
+  text-align: left;
+  font-family: var(--font);
+  font-size: 0.8125rem;
+  color: var(--gray-700);
+}
+.miq-prompt-suggestion:hover {
+  border-color: var(--navy);
+  background: var(--white);
+}
+
+.miq-prompt-suggestion svg {
+  color: var(--gray-600);
+  font-size: 0.75rem;
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+}
+
+/* === Messages Area === */
+.miq-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 0;
+  max-width: 100%;
+  width: 100%;
+}
+
+.miq-message {
+  margin-bottom: 24px;
+}
+
+.miq-message.user {
+  text-align: right;
+}
+
+.miq-message-bubble {
+  display: inline-block;
+  max-width: 80%;
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+.miq-message.user .miq-message-bubble {
+  background: var(--navy);
+  color: var(--white);
+  text-align: left;
+}
+
+.miq-message.ai .miq-message-bubble {
+  background: var(--gray-50);
+  color: var(--navy);
+  text-align: left;
+}
+
+/* ============================================================================
+   CHAT INPUT AREA
+   ============================================================================ */
+.miq-chat-input-area {
+  padding: 16px 24px 20px;
+  flex-shrink: 0;
+  width: 100%;
+}
+
+.miq-chat-input-box {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--white);
+  border: 1px solid var(--gray-300);
+  border-radius: var(--radius-md);
+  transition: border-color var(--transition);
+  width: 100%;
+  max-width: 800px;
+  margin: 0 auto;
+}
+.miq-chat-input-box:focus-within {
+  border-color: var(--navy);
+}
+
+.miq-chat-input-box textarea {
+  flex: 1;
+  border: none;
+  outline: none;
+  font-size: 0.875rem;
+  font-family: var(--font);
+  color: var(--navy);
+  resize: none;
+  min-height: 24px;
+  max-height: 120px;
+  line-height: 1.5;
+  background: transparent;
+}
+.miq-chat-input-box textarea::placeholder {
+  color: var(--gray-400);
+}
+
+.miq-chat-input-icons {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.miq-ci-btn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: var(--gray-600);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  transition: all var(--transition);
+}
+.miq-ci-btn:hover {
+  color: var(--navy);
+  background: var(--gray-100);
+}
+.miq-ci-btn.send {
+  background: var(--navy);
+  color: var(--white);
+}
+.miq-ci-btn.send:hover {
+  background: #1e2a4f;
+}
+.miq-ci-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Recording state for mic button */
+.miq-ci-btn.recording {
+  background: var(--magenta);
+  color: var(--white);
+  animation: pulse-recording 1.5s infinite;
+}
+
+@keyframes pulse-recording {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+/* ============================================================================
+   PROGRESS BAR / FOOTER
+   ============================================================================ */
+.chatgpt-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 12px;
+  width: 100%;
+}
+
+.progress-indicator {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.progress-bar-container {
+  flex: 1;
+  height: 6px;
+  background: var(--gray-200);
+  border-radius: 100px;
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: var(--magenta);
+  border-radius: 100px;
+  transition: width 0.3s ease;
+}
+
+.progress-text {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--gray-600);
+  white-space: nowrap;
+}
+
+/* ============================================================================
+   THINKING/LOADING OVERLAY
+   ============================================================================ */
+.miq-thinking-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.miq-thinking-content {
+  background: var(--white);
+  padding: 24px 32px;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.875rem;
+  color: var(--navy);
+  box-shadow: 0 8px 24px rgba(22, 31, 59, 0.15);
+}
+
+/* ============================================================================
+   FINISH & ANALYZE BUTTON
+   ============================================================================ */
+.miq-finish-analyze-btn {
   background: var(--magenta);
   color: var(--white);
   border: none;
-  border-radius: 10px;
+  padding: 10px 20px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font);
+}
+.miq-finish-analyze-btn:hover {
+  background: #8a025d;
+}
+.miq-finish-analyze-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ============================================================================
+   WORKSPACE TABS (Post-Analysis View)
+   ============================================================================ */
+.miq-workspace-header {
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.miq-workspace-title {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.miq-brand-small {
+  font-size: 0.625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--gray-500);
+}
+
+.miq-project-title {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--navy);
+}
+
+.miq-top-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+}
+
+.miq-top-tab {
+  padding: 8px 16px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--gray-600);
+  cursor: pointer;
+  transition: all var(--transition);
+  font-family: var(--font);
+}
+.miq-top-tab:hover {
+  background: var(--gray-50);
+  color: var(--navy);
+}
+.miq-top-tab.active {
+  background: var(--navy);
+  color: var(--white);
+  border-color: var(--navy);
+}
+
+/* Right rail container for Score tab controls */
+.miq-right-rail {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+
+.miq-scores-select,
+.miq-variant-select {
+  padding: 8px 32px 8px 12px;
+  font-size: 0.8125rem;
+  font-family: var(--font);
+  border: 1px solid var(--gray-300);
+  border-radius: var(--radius-sm);
+  background: var(--white);
+  color: var(--navy);
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23868e96' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  cursor: pointer;
+  outline: none;
+  min-width: 160px;
+}
+
+.miq-scores-select:focus,
+.miq-variant-select:focus {
+  border-color: var(--navy);
+}
+
+/* ============================================================================
+   TAB CONTENT AREA
+   ============================================================================ */
+.miq-tab-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+}
+
+/* ============================================================================
+   DRAWER TAB (Left Edge - Vertical)
+   ============================================================================ */
+.miq-sidebar-tab {
+  position: fixed;
+  left: 0;
+  top: 80px;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  background: var(--light-bg);
+  border: 1px solid var(--border);
+  border-left: none;
+  padding: 14px 8px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--navy);
+  cursor: pointer;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  transition: background var(--transition);
+}
+
+.miq-sidebar-tab:hover {
+  background: var(--gray-200);
+}
+
+.miq-sidebar-tab svg {
+  writing-mode: horizontal-tb;
+  font-size: 0.75rem;
+  width: 12px;
+  height: 12px;
+}
+
+.miq-tab-label {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+}
+
+/* Close button in drawer header */
+.miq-close-btn {
+  background: none;
+  border: none;
+  color: var(--gray-600);
+  cursor: pointer;
+  font-size: 0.875rem;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color var(--transition);
+}
+
+.miq-close-btn:hover {
+  color: var(--navy);
+}
+
+/* ============================================================================
+   AI ASSISTANT DRAWER (Left Sidebar)
+   ============================================================================ */
+.miq-ai-drawer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 380px;
+  height: 100vh;
+  background: var(--light-bg);
+  border-right: 1px solid var(--border);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(-100%);
+  transition: transform 0.3s ease;
+  box-shadow: 4px 0 12px rgba(22, 31, 59, 0.08);
+}
+
+.miq-ai-drawer.miq-drawer-open {
+  transform: translateX(0);
+}
+
+.miq-ai-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.miq-ai-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--navy);
+}
+
+.miq-ai-badge {
+  background: var(--magenta);
+  color: var(--white);
+  font-size: 0.625rem;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 100px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.miq-ai-toggle {
+  display: flex;
+  gap: 4px;
+}
+
+.miq-ai-toggle-btn {
+  padding: 6px 12px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--gray-600);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition);
+  font-family: var(--font);
+}
+
+.miq-ai-toggle-btn:hover {
+  background: var(--gray-50);
+  color: var(--navy);
+}
+
+.miq-ai-toggle-btn.active {
+  background: var(--navy);
+  color: var(--white);
+  border-color: var(--navy);
+}
+
+.miq-ai-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+}
+
+.miq-ai-message {
+  margin-bottom: 16px;
+}
+
+.miq-ai-message.user {
+  text-align: right;
+}
+
+.miq-ai-message .miq-message-content {
+  display: inline-block;
+  max-width: 85%;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.miq-ai-message.user .miq-message-content {
+  background: var(--navy);
+  color: var(--white);
+}
+
+.miq-ai-message.assistant .miq-message-content {
+  background: var(--gray-50);
+  color: var(--navy);
+}
+
+.miq-ai-input-area {
+  padding: 16px 20px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.miq-ai-input {
+  flex: 1;
+  border: 1px solid var(--gray-300);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: 0.8125rem;
+  font-family: var(--font);
+  color: var(--navy);
+  resize: none;
+  outline: none;
+}
+
+.miq-ai-input:focus {
+  border-color: var(--navy);
+}
+
+.miq-ai-input::placeholder {
+  color: var(--gray-400);
+}
+
+.miq-ai-send-btn {
   width: 36px;
   height: 36px;
   display: flex;
   align-items: center;
   justify-content: center;
+  background: var(--navy);
+  color: var(--white);
+  border: none;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: transform 0.1s ease;
+  transition: all var(--transition);
 }
 
-.miq-send-btn:hover {
-  background: #8a0260;
+.miq-ai-send-btn:hover {
+  background: #1e2a4f;
+}
+
+/* Drawer backdrop overlay */
+.miq-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.3);
+  z-index: 199;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.3s ease, visibility 0.3s ease;
+}
+.miq-drawer-backdrop.visible {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* Workspace adjustment when AI drawer is open - content shrinks to fit */
+.miq-workspace.miq-ai-open {
+  margin-left: 380px;
+  transition: margin-left 0.3s ease;
+}
+
+.miq-workspace.miq-readiness-open {
+  margin-left: 380px;
+  transition: margin-left 0.3s ease;
+}
+
+/* Floating button to reopen AI drawer */
+.miq-ai-float-btn {
+  position: fixed;
+  bottom: 24px;
+  left: 24px;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--navy);
+  color: var(--white);
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  box-shadow: 0 4px 12px rgba(22, 31, 59, 0.2);
+  transition: all var(--transition);
+  z-index: 100;
+}
+
+.miq-ai-float-btn:hover {
+  background: #1e2a4f;
   transform: scale(1.05);
 }
 
-/* === Quick Action Chips === */
-.miq-suggestions-list, .miq-quick-actions {
-  width: 100%;
-  max-width: 860px;
-  margin: 20px auto;
+/* Drawer subtabs (Assistant / Score Summary toggle) */
+.miq-ai-subtabs {
   display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  justify-content: center;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
-.miq-suggestion-item, .miq-action-chip {
-  background: var(--white);
+.miq-ai-subtab {
+  flex: 1;
+  padding: 10px 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-align: center;
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: var(--gray-600);
+  border-bottom: 2px solid transparent;
+  font-family: var(--font);
+  transition: all var(--transition);
+}
+
+.miq-ai-subtab.active {
+  color: var(--navy);
+  border-bottom-color: var(--magenta);
+}
+
+.miq-ai-subtab:hover {
+  color: var(--navy);
+}
+
+/* ============================================================================
+   SCENARIOS TAB
+   ============================================================================ */
+.miq-scenario-info {
+  background: var(--navy);
+  color: rgba(255, 255, 255, 0.8);
+  padding: 16px 20px;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  margin-bottom: 24px;
+  border-radius: var(--radius-sm);
+}
+
+.miq-scenario-cols {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.miq-scenario-col {
+  flex: 1;
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 10px 16px;
-  font-size: 0.9375rem;
-  color: var(--gray-700);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--white);
+}
+
+.miq-scenario-header {
+  background: var(--navy);
+  color: var(--white);
+  padding: 12px 16px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.miq-scenario-badge {
+  background: rgba(255, 255, 255, 0.2);
+  padding: 2px 10px;
+  border-radius: 100px;
+  font-size: 0.625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.miq-scenario-body {
+  padding: 16px;
+}
+
+.miq-scenario-field {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.8125rem;
+}
+
+.miq-scenario-field:last-of-type {
+  border-bottom: none;
+}
+
+.miq-scenario-field-label {
+  color: var(--navy);
+}
+
+.miq-scenario-field-value {
+  color: var(--gray-500);
+  font-weight: 500;
+}
+
+.miq-scenario-score-box {
+  text-align: center;
+  padding: 16px 0 8px;
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+}
+
+.miq-scenario-score-label {
+  font-size: 0.6875rem;
+  color: var(--gray-500);
+}
+
+.miq-scenario-score-num {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--navy);
+}
+
+.miq-scenario-score-sub {
+  font-size: 0.6875rem;
+  color: var(--gray-500);
+}
+
+.miq-scenario-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  padding: 20px 16px;
+}
+
+.miq-scenario-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--white);
+  font-size: 0.8125rem;
+  font-family: var(--font);
+  color: var(--gray-600);
   cursor: pointer;
   transition: all var(--transition);
+}
+
+.miq-scenario-btn:hover {
+  border-color: var(--navy);
+  color: var(--navy);
+}
+
+.miq-scenario-btn i,
+.miq-scenario-btn svg {
+  font-size: 0.75rem;
+  width: 12px;
+  height: 12px;
+}
+
+.miq-scenario-bottom-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-bottom: 20px;
+}
+
+.miq-scenario-hint {
+  background: var(--navy);
+  color: rgba(255, 255, 255, 0.7);
+  padding: 14px 20px;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  border-radius: var(--radius-sm);
+}
+
+/* ============================================================================
+   RESPONSIVE ADJUSTMENTS
+   ============================================================================ */
+@media (max-width: 768px) {
+  .miq-chat-topbar {
+    padding: 0 16px;
+  }
+
+  .miq-drawer {
+    width: 100%;
+  }
+
+  .miq-drawer-tab {
+    display: none;
+  }
+
+  .miq-chat-content {
+    padding: 24px 16px;
+  }
+
+  .miq-chat-input-area {
+    padding: 12px 16px;
+  }
+
+  .miq-workspace-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .miq-top-tabs {
+    flex-wrap: wrap;
+  }
+
+  /* AI drawer responsive */
+  .miq-ai-drawer {
+    width: 100%;
+  }
+
+  .miq-workspace.miq-ai-open,
+  .miq-workspace.miq-readiness-open {
+    margin-left: 0;
+  }
+}
+
+/* ============================================================================
+   LEGACY COMPATIBILITY (keep existing functionality working)
+   ============================================================================ */
+.miq { font-family: var(--font); }
+.miq-shell { display: flex; height: 100vh; width: 100%; overflow: hidden; position: relative; background: var(--white); }
+.miq-main { flex: 1; display: flex; flex-direction: column; height: 100vh; overflow: hidden; min-width: 0; }
+
+/* Sidebar legacy classes */
+.miq-left-sidebar {
+  position: fixed;
+  left: -380px;
+  top: 0;
+  bottom: 0;
+  width: 380px;
+  background: var(--light-bg);
+  border-right: 1px solid var(--border);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  transition: left 0.3s ease;
+  box-shadow: 4px 0 12px rgba(22, 31, 59, 0.08);
+}
+.miq-left-sidebar.sidebar-open {
+  left: 0;
+}
+
+.miq-sidebar-header {
+  padding: 18px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+}
+.miq-sidebar-header h3 {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: var(--navy);
+  margin: 0;
+}
+.miq-sidebar-close {
+  background: none;
+  border: none;
+  color: var(--gray-600);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.miq-sidebar-close:hover {
+  color: var(--navy);
+}
+.miq-sidebar-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+}
+
+/* ============================================================================
+   REFINE & RESCORE TAB (Chat Tab)
+   ============================================================================ */
+.miq-chat-tab {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  overflow: hidden;
+}
+
+.miq-chat-tab .chatgpt-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  width: 100%;
+  max-width: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.miq-chat-tab .chatgpt-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 32px;
+  width: 100%;
+  min-height: 0;
+}
+
+.miq-chat-tab .chatgpt-conversation {
+  width: 100%;
+  max-width: 100%;
+}
+
+.miq-chat-tab .chatgpt-message {
+  margin-bottom: 16px;
+  width: 100%;
+}
+
+.miq-chat-tab .chatgpt-message.user {
+  text-align: right;
+}
+
+.miq-chat-tab .chatgpt-message .message-content {
+  display: inline-block;
+  max-width: 80%;
+  padding: 14px 18px;
+  border-radius: var(--radius-md);
+  font-size: 0.875rem;
+  line-height: 1.6;
   text-align: left;
 }
 
-.miq-suggestion-item:hover {
-  background: var(--gray-50);
-  border-color: var(--magenta);
-  color: var(--navy);
-}
-
-/* === Chat Messages === */
-.miq-messages-list {
-  width: 100%;
-  max-width: 860px;
-  margin: 0 auto;
-  padding: 40px 0;
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
-}
-
-.miq-message-bubble {
-  padding: 12px 16px;
-  border-radius: 12px;
-  line-height: 1.6;
-  font-size: 1rem;
-}
-
-.miq-message-user .miq-message-bubble {
+.miq-chat-tab .chatgpt-message.user .message-content {
   background: var(--magenta);
   color: var(--white);
-  align-self: flex-end;
+  border-bottom-right-radius: 2px;
 }
 
-.miq-message-ai .miq-message-bubble {
-  background: var(--gray-100);
+.miq-chat-tab .chatgpt-message.ai .message-content {
+  background: var(--gray-50);
   color: var(--navy);
-  align-self: flex-start;
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 2px;
 }
 
-/* === User Menu === */
-.miq-user-avatar {
-  background: linear-gradient(135deg, var(--magenta) 0%, #c0047a 100%);
-  border-radius: 50%;
-  box-shadow: var(--shadow-sm);
+.miq-chat-tab .chatgpt-input-area {
+  padding: 16px 32px 24px;
+  flex-shrink: 0;
+  width: 100%;
+  background: var(--white);
+  border-top: 1px solid var(--border);
 }
 
-/* === Responsive === */
-@media (max-width: 768px) {
-  .miq-welcome-container { margin-top: 60px; }
-  .miq-hero-title { font-size: 1.875rem; }
-  .miq-chat-input-container { border-radius: 14px; }
+.miq-chat-tab .chatgpt-input-container {
+  max-width: 100%;
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--white);
+  border: 1px solid var(--gray-300);
+  border-radius: var(--radius-md);
+}
+
+/* ChatGPT interface legacy */
+.chatgpt-interface {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--white);
+  position: relative;
+}
+
+.chatgpt-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+}
+
+.chatgpt-welcome {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+  padding: 2rem;
+  text-align: center;
+  max-width: 520px;
+  margin: 0 auto;
+}
+
+.chatgpt-welcome h2 {
+  font-size: 1.375rem;
+  margin-bottom: 8px;
+  color: var(--navy);
+}
+
+.chatgpt-welcome p {
+  font-size: 0.875rem;
+  color: var(--gray-600);
+  margin-bottom: 28px;
+  line-height: 1.6;
+}
+
+.chatgpt-input-area {
+  padding: 16px 24px 20px;
+  flex-shrink: 0;
+}
+
+.chatgpt-input-container {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--white);
+  border: 1px solid var(--gray-300);
+  border-radius: var(--radius-md);
+  max-width: 800px;
+  margin: 0 auto;
+}
+.chatgpt-input-container:focus-within {
+  border-color: var(--navy);
+}
+
+.chatgpt-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  font-size: 0.875rem;
+  font-family: var(--font);
+  color: var(--navy);
+  resize: none;
+  min-height: 24px;
+  max-height: 120px;
+  line-height: 1.5;
+  background: transparent;
+}
+.chatgpt-input::placeholder {
+  color: var(--gray-400);
+}
+
+.chatgpt-send {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: var(--navy);
+  color: var(--white);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition);
+}
+.chatgpt-send:hover {
+  background: #1e2a4f;
+}
+.chatgpt-send:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Suggestions */
+.chatgpt-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 520px;
+}
+
+.chatgpt-suggestion {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--gray-50);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition);
+  text-align: left;
+  font-family: var(--font);
+  font-size: 0.8125rem;
+  color: var(--gray-700);
+}
+.chatgpt-suggestion:hover {
+  border-color: var(--navy);
+  background: var(--white);
+}
+
+/* Thinking overlay */
+.thinking-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.thinking-content {
+  background: var(--white);
+  padding: 24px 32px;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.875rem;
+  color: var(--navy);
+  box-shadow: 0 8px 24px rgba(22, 31, 59, 0.15);
+}
+
+/* Finish analyze button */
+.finish-analyze-btn {
+  background: var(--magenta);
+  color: var(--white);
+  border: none;
+  padding: 10px 20px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font);
+}
+.finish-analyze-btn:hover {
+  background: #8a025d;
+}
+.finish-analyze-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* No history message */
+.miq-no-history {
+  text-align: center;
+  color: var(--gray-500);
+  font-size: 0.875rem;
+  padding: 2rem 1rem;
+}
+
+/* Readiness display */
+.miq-readiness-display {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 1rem 0 2rem;
+}
+
+.miq-readiness-circle {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  margin-bottom: 1rem;
+}
+
+.miq-progress-ring {
+  transform: rotate(-90deg);
+}
+
+.miq-progress-ring-fill {
+  transition: stroke-dasharray 0.3s ease;
+}
+
+.miq-readiness-percent {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--navy);
+}
+
+.miq-readiness-status {
+  font-size: 0.875rem;
+  color: var(--gray-600);
+  text-align: center;
+}
+
+/* Collected section */
+.miq-collected-section {
+  margin-top: 1.5rem;
+}
+
+.miq-collected-section h4 {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--navy);
+  margin: 0 0 1rem;
+}
+
+/* Checklist */
+.miq-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.miq-check-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.miq-check-item:last-child {
+  border-bottom: none;
+}
+
+.miq-check {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--magenta);
+}
+
+.miq-check-main {
+  flex: 1;
+}
+
+.miq-check-label {
+  font-size: 0.8125rem;
+  color: var(--navy);
+}
+
+.miq-check-meta {
+  font-size: 0.6875rem;
+  color: var(--gray-500);
+  margin-top: 2px;
+}
+
+/* Begin project button */
+.begin-project-btn {
+  background: var(--magenta);
+  color: var(--white);
+  border: none;
+  padding: 10px 20px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+  font-family: var(--font);
+}
+.begin-project-btn:hover {
+  background: #8a025d;
+}
+.begin-project-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Workspace content */
+.miq-workspace {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+  height: 100%;
+  transition: margin-left 0.3s ease;
+}
+
+.miq-workspace-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+}
+
+/* Workspace body - container for tab content */
+.miq-workspace-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* Ensure workspace transitions smoothly */
+.miq-workspace {
+  transition: margin-left 0.3s ease;
 }
