@@ -28,7 +28,7 @@ import PaymentPage   from './Market/PaymentPage/PaymentPage';
 
 // Market IQ (NEW)
 import MarketIQWorkspace from './Market/MarketIQ/workspace/MarketIQWorkspace';
-
+console.log("[BOOT] App.js loaded", window.location.href);
 export default function App() {
   const getDisplayName = (node) =>
     node?.type?.displayName || node?.type?.name || 'Page';

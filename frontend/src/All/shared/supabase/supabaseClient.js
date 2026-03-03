@@ -4,7 +4,9 @@ const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
 const supabaseAnonKey = process.env.REACT_APP_SUPABASE_ANON_KEY;
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  console.warn('Supabase env vars missing. Set REACT_APP_SUPABASE_URL and REACT_APP_SUPABASE_ANON_KEY.');
+  console.warn('[Supabase] Env vars missing. REACT_APP_SUPABASE_URL:', supabaseUrl ? 'set' : 'MISSING', 'REACT_APP_SUPABASE_ANON_KEY:', supabaseAnonKey ? 'set' : 'MISSING');
+} else {
+  console.log('[Supabase] Client initialized for:', supabaseUrl);
 }
 
 export const supabase =

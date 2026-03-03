@@ -63,24 +63,35 @@ export default function StrategyAccessCard() {
       : 'strategy-card-disclaimer';
 
   const handleGoogleClick = async () => {
-    console.log("Google button clicked");
+    console.log('[Auth] Google button clicked, supabase client:', supabase ? 'exists' : 'NULL');
     if (!supabase) {
-      setAuthError('Supabase is not configured yet. Please try again shortly.');
+      console.error('[Auth] Supabase client is null. Check REACT_APP_SUPABASE_URL and REACT_APP_SUPABASE_ANON_KEY env vars.');
+      setAuthError('Auth not configured. Please contact support.');
       return;
     }
 
     setAuthError('');
     setAuthStatus('idle');
 
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: getRedirectUrl(),
-      },
-    });
+    try {
+      const redirectUrl = getRedirectUrl();
+      console.log('[Auth] Starting OAuth with redirectTo:', redirectUrl);
 
-    if (error) {
-      setAuthError(error.message || 'Unable to start Google sign-in.');
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: redirectUrl,
+        },
+      });
+
+      console.log('[Auth] signInWithOAuth result:', { data, error });
+
+      if (error) {
+        setAuthError(error.message || 'Unable to start Google sign-in.');
+      }
+    } catch (err) {
+      console.error('[Auth] signInWithOAuth threw:', err);
+      setAuthError('Unexpected error starting sign-in.');
     }
   };
 
