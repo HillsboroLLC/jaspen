@@ -2147,6 +2147,7 @@
 
 .score-with-rail .score-dashboard-container {
   padding-left: 48px;
+  padding-right: 48px;
 }
 
 /* Ensure workspace transitions smoothly */
