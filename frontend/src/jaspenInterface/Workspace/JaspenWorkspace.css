@@ -65,7 +65,7 @@
   background: var(--light-bg);
   border: 1px solid var(--border);
   border-left: none;
-  padding: 14px 8px;
+  padding: 14px 5px;
   font-size: 0.6875rem;
   font-weight: 600;
   text-transform: uppercase;
@@ -1180,7 +1180,7 @@
   background: var(--light-bg);
   border: 1px solid var(--border);
   border-left: none;
-  padding: 14px 8px;
+  padding: 14px 5px;
   font-size: 0.6875rem;
   font-weight: 600;
   text-transform: uppercase;
