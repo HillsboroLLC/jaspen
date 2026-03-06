@@ -2722,7 +2722,7 @@ const handleSaveScenario = async (scenario) => {
     const isScenarioTab = activeTab === 'scenario';
     const shellOpen = sidebarState.history || sidebarState.readiness || sidebarState.settings;
     const sideTabBase = 80;
-    const sideTabGap = 82;
+    const sideTabGap = 70;
     const sideTabSecond = sideTabBase + sideTabGap;
     const TabButton = ({ id, label }) => (
       <button
@@ -3359,7 +3359,7 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
   if (intakeHasReadinessTab) intakeTabs.push('readiness');
   const intakeTabTop = (key) => {
     const idx = intakeTabs.indexOf(key);
-    return `${80 + idx * 82}px`;
+    return `${80 + idx * 70}px`;
   };
   return (
     <div className={`miq miq-shell ${intakeShellOpen ? 'drawer-open' : ''}`}>

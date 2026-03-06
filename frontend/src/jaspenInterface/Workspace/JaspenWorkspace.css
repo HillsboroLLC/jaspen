@@ -1652,10 +1652,6 @@
     align-items: flex-start;
   }
 
-  .miq-workspace-body {
-    padding-left: 0;
-  }
-
   .miq-top-tabs {
     flex-wrap: wrap;
   }
@@ -2147,7 +2143,6 @@
   flex-direction: column;
   overflow: hidden;
   min-height: 0;
-  padding-left: 32px;
 }
 
 /* Ensure workspace transitions smoothly */
