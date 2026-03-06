@@ -77,13 +77,15 @@ def create_app():
     from .routes.chat      import chat_bp
     from .routes.billing   import billing_bp
     from .routes.dashboard import dashboard_bp
-    from .routes.market_iq import market_iq_bp
+    from .routes.ai_agent import ai_agent_bp
 
     app.register_blueprint(auth_bp,      url_prefix='/api/auth')
     app.register_blueprint(chat_bp,      url_prefix='/api/chat')
     app.register_blueprint(billing_bp,   url_prefix='/api/billing')
     app.register_blueprint(dashboard_bp)  # includes its own /api/dashboard path
-    app.register_blueprint(market_iq_bp, url_prefix='/api/market-iq')
+    app.register_blueprint(ai_agent_bp,  url_prefix='/api/ai-agent')
+    # Backward-compat: frontend still calls /api/market-iq/ for bundle, adopt, analyses
+    app.register_blueprint(ai_agent_bp,  url_prefix='/api/market-iq', name='ai_agent_compat')
 
     # Optional sessions blueprint
     try:
@@ -92,8 +94,7 @@ def create_app():
     except ImportError:
         print("Warning: sessions blueprint not found. Session saving will not work.")
 
-    # Market IQ blueprint
-    print("DEBUG: Market IQ API registered successfully at /api/market-iq")
+    print("DEBUG: AI Agent API registered at /api/ai-agent (compat alias at /api/market-iq)")
 
     # Statistical Analysis blueprint
     print("DEBUG: About to register statistical analysis blueprint")

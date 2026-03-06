@@ -8,14 +8,14 @@ import time
 from datetime import datetime
 import uuid
 
-market_iq_bp = Blueprint('market_iq', __name__)
+ai_agent_bp = Blueprint('ai_agent', __name__)
 
 # Set OpenAI API key from config
 def get_openai_client():
     openai.api_key = current_app.config['OPENAI_API_KEY']
     return openai
 
-@market_iq_bp.route('/analyze', methods=['POST'])
+@ai_agent_bp.route('/analyze', methods=['POST'])
 @jwt_required()
 def analyze_project():
     try:
@@ -127,7 +127,7 @@ Provide specific, actionable insights with quantified financial impacts where po
         print(f"Error in Market IQ analysis: {str(e)}")
         return jsonify({'error': 'Analysis failed. Please try again.'}), 500
 
-@market_iq_bp.route('/chat', methods=['POST'])
+@ai_agent_bp.route('/chat', methods=['POST'])
 @jwt_required()
 def chat_with_analysis():
     try:
@@ -183,7 +183,7 @@ Keep responses concise but comprehensive (2-3 paragraphs maximum).
         print(f"Error in Market IQ chat: {str(e)}")
         return jsonify({'error': 'Chat failed. Please try again.'}), 500
 
-@market_iq_bp.route('/history', methods=['GET'])
+@ai_agent_bp.route('/history', methods=['GET'])
 @jwt_required()
 def get_analysis_history():
     try:
@@ -196,6 +196,232 @@ def get_analysis_history():
     except Exception as e:
         print(f"Error retrieving analysis history: {str(e)}")
         return jsonify({'error': 'Failed to retrieve history.'}), 500
+
+
+# ============================================================
+# FILE-BASED SESSION/THREAD STORAGE (unified with sessions.py)
+# ============================================================
+SESSIONS_DIR = 'sessions_data'
+
+def _ensure_sessions_dir():
+    if not os.path.exists(SESSIONS_DIR):
+        os.makedirs(SESSIONS_DIR)
+
+def _sessions_file(user_id):
+    _ensure_sessions_dir()
+    return os.path.join(SESSIONS_DIR, f'user_{user_id}_sessions.json')
+
+def _load_sessions(user_id):
+    path = _sessions_file(user_id)
+    if os.path.exists(path):
+        try:
+            with open(path, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"[sessions] load error for {user_id}: {e}")
+    return {}
+
+def _save_sessions(user_id, data):
+    path = _sessions_file(user_id)
+    try:
+        with open(path, 'w') as f:
+            json.dump(data, f, indent=2)
+        return True
+    except Exception as e:
+        print(f"[sessions] save error for {user_id}: {e}")
+        return False
+
+
+# ============================================================
+# THREAD CRUD ROUTES
+# ============================================================
+
+@ai_agent_bp.route('/threads', methods=['GET'])
+@jwt_required()
+def list_threads():
+    """List all threads/sessions for the current user."""
+    try:
+        user_id = get_jwt_identity()
+        sessions = _load_sessions(user_id)
+
+        sessions_list = sorted(
+            sessions.values(),
+            key=lambda s: s.get('timestamp', s.get('created', '')),
+            reverse=True
+        )
+
+        return jsonify({'success': True, 'sessions': sessions_list}), 200
+    except Exception as e:
+        print(f"[list_threads] {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@ai_agent_bp.route('/threads/<thread_id>', methods=['GET'])
+@jwt_required()
+def get_thread(thread_id):
+    """Get a single thread/session by ID."""
+    try:
+        user_id = get_jwt_identity()
+        sessions = _load_sessions(user_id)
+
+        if thread_id not in sessions:
+            return jsonify({'error': 'Thread not found'}), 404
+
+        return jsonify({'success': True, 'session': sessions[thread_id]}), 200
+    except Exception as e:
+        print(f"[get_thread] {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@ai_agent_bp.route('/threads/<thread_id>', methods=['PATCH'])
+@jwt_required()
+def update_thread(thread_id):
+    """Rename or update thread metadata."""
+    try:
+        user_id = get_jwt_identity()
+        data = request.get_json() or {}
+        sessions = _load_sessions(user_id)
+
+        if thread_id not in sessions:
+            return jsonify({'error': 'Thread not found'}), 404
+
+        if 'name' in data:
+            sessions[thread_id]['name'] = data['name']
+        sessions[thread_id]['timestamp'] = datetime.utcnow().isoformat()
+
+        _save_sessions(user_id, sessions)
+        return jsonify({'success': True, 'session': sessions[thread_id]}), 200
+    except Exception as e:
+        print(f"[update_thread] {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@ai_agent_bp.route('/threads/<thread_id>', methods=['DELETE'])
+@jwt_required()
+def delete_thread(thread_id):
+    """Delete a single thread and its scenario data."""
+    try:
+        user_id = get_jwt_identity()
+
+        # Remove from sessions
+        sessions = _load_sessions(user_id)
+        if thread_id in sessions:
+            del sessions[thread_id]
+            _save_sessions(user_id, sessions)
+
+        # Remove from scenarios
+        scenarios = _load_scenarios(user_id)
+        if thread_id in scenarios:
+            del scenarios[thread_id]
+            _save_scenarios(user_id, scenarios)
+
+        return jsonify({'success': True}), 200
+    except Exception as e:
+        print(f"[delete_thread] {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@ai_agent_bp.route('/threads/clear', methods=['POST'])
+@jwt_required()
+def clear_threads():
+    """
+    Clear ALL threads, sessions, and scenarios for the current user.
+    Uses POST (not DELETE) to survive reverse-proxy method restrictions.
+    """
+    try:
+        user_id = get_jwt_identity()
+        cleared = {'sessions': False, 'scenarios': False}
+
+        # Wipe sessions file
+        sessions_path = _sessions_file(user_id)
+        if os.path.exists(sessions_path):
+            os.remove(sessions_path)
+            cleared['sessions'] = True
+
+        # Wipe scenarios file
+        scenarios_path = _scenarios_file(user_id)
+        if os.path.exists(scenarios_path):
+            os.remove(scenarios_path)
+            cleared['scenarios'] = True
+
+        print(f"[clear_threads] user={user_id} cleared={cleared}")
+        return jsonify({'success': True, 'cleared': cleared}), 200
+    except Exception as e:
+        print(f"[clear_threads] {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@ai_agent_bp.route('/threads/<thread_id>/levers', methods=['GET'])
+@jwt_required()
+def get_thread_levers(thread_id):
+    """
+    Return scenario lever definitions from the stored baseline.
+    Same logic as the bundle endpoint's lever extraction,
+    exposed as a standalone route for the ScenarioModeler.
+    """
+    try:
+        user_id = get_jwt_identity()
+        td = _load_scenarios(user_id).get(thread_id, {})
+
+        scenario_levers = []
+        for key, val in (td.get('baseline_inputs') or {}).items():
+            if not isinstance(val, (int, float)):
+                continue
+            k = key.lower()
+            ltype = ('currency'    if any(p in k for p in ('budget','invest','cost','price','revenue','value'))
+                     else 'months'     if any(p in k for p in ('month','timeline','period','duration'))
+                     else 'percentage' if any(p in k for p in ('percent','rate','margin','growth'))
+                     else 'number')
+            scenario_levers.append({
+                'key': key,
+                'label': key.replace('_', ' ').title(),
+                'current': val,
+                'value': val,
+                'type': ltype,
+                'display_multiplier': 1,
+            })
+
+        return jsonify({'levers': scenario_levers}), 200
+    except Exception as e:
+        print(f"[get_thread_levers] {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@ai_agent_bp.route('/threads/<thread_id>/analyses', methods=['GET'])
+@jwt_required()
+def list_thread_analyses(thread_id):
+    """List scored analyses/scorecards for a thread."""
+    try:
+        user_id = get_jwt_identity()
+        td = _load_scenarios(user_id).get(thread_id, {})
+
+        analyses = []
+        # Baseline counts as the first analysis
+        baseline = td.get('baseline')
+        if baseline:
+            analyses.append({
+                'id': thread_id,
+                'label': 'Baseline',
+                'market_iq_score': baseline.get('market_iq_score'),
+                'created_at': baseline.get('timestamp'),
+                'is_baseline': True,
+            })
+
+        # Each applied scenario with a cached result is also an analysis
+        for sid, scn in (td.get('scenarios') or {}).items():
+            if scn.get('result'):
+                analyses.append({
+                    'id': sid,
+                    'label': scn.get('label', 'Scenario'),
+                    'market_iq_score': scn['result'].get('market_iq_score'),
+                    'created_at': scn.get('created_at'),
+                    'is_baseline': False,
+                })
+
+        return jsonify({'analyses': analyses}), 200
+    except Exception as e:
+        print(f"[list_thread_analyses] {e}")
+        return jsonify({'error': str(e)}), 500
 
 
 # ============================================================
@@ -464,7 +690,7 @@ def _compute_scenario_scorecard(baseline, deltas, baseline_inputs):
 # SCENARIO CRUD ROUTES
 # ============================================================
 
-@market_iq_bp.route('/threads/<thread_id>/scenarios', methods=['POST'])
+@ai_agent_bp.route('/threads/<thread_id>/scenarios', methods=['POST'])
 @jwt_required()
 def create_scenario(thread_id):
     """Create a scenario. Stores baseline on first call for this thread."""
@@ -507,7 +733,7 @@ def create_scenario(thread_id):
         return jsonify({'error': str(e)}), 500
 
 
-@market_iq_bp.route('/threads/<thread_id>/scenarios', methods=['GET'])
+@ai_agent_bp.route('/threads/<thread_id>/scenarios', methods=['GET'])
 @jwt_required()
 def list_scenarios(thread_id):
     """List scenarios for a thread, with pagination."""
@@ -530,7 +756,7 @@ def list_scenarios(thread_id):
         return jsonify({'error': str(e)}), 500
 
 
-@market_iq_bp.route('/scenarios/<scenario_id>', methods=['PATCH'])
+@ai_agent_bp.route('/scenarios/<scenario_id>', methods=['PATCH'])
 @jwt_required()
 def update_scenario(scenario_id):
     """Update label / deltas. Invalidates cached result if deltas change."""
@@ -562,7 +788,7 @@ def update_scenario(scenario_id):
         return jsonify({'error': str(e)}), 500
 
 
-@market_iq_bp.route('/scenarios/<scenario_id>', methods=['DELETE'])
+@ai_agent_bp.route('/scenarios/<scenario_id>', methods=['DELETE'])
 @jwt_required()
 def delete_scenario(scenario_id):
     """Delete a scenario. Clears adoption if it was the adopted one."""
@@ -593,7 +819,7 @@ def delete_scenario(scenario_id):
 # SCENARIO APPLY / ADOPT
 # ============================================================
 
-@market_iq_bp.route('/scenarios/<scenario_id>/apply', methods=['POST'])
+@ai_agent_bp.route('/scenarios/<scenario_id>/apply', methods=['POST'])
 @jwt_required()
 def apply_scenario(scenario_id):
     """
@@ -647,7 +873,7 @@ def apply_scenario(scenario_id):
         return jsonify({'error': str(e)}), 500
 
 
-@market_iq_bp.route('/scenarios/<scenario_id>/adopt', methods=['POST'])
+@ai_agent_bp.route('/scenarios/<scenario_id>/adopt', methods=['POST'])
 @jwt_required()
 def adopt_scenario(scenario_id):
     """Mark a scenario as the adopted (current) analysis for its thread."""
@@ -686,7 +912,7 @@ def adopt_scenario(scenario_id):
 # THREAD BUNDLE  (hydrates the Scenarios tab + ScoreDashboard)
 # ============================================================
 
-@market_iq_bp.route('/threads/<thread_id>/bundle', methods=['GET'])
+@ai_agent_bp.route('/threads/<thread_id>/bundle', methods=['GET'])
 @jwt_required()
 def get_thread_bundle(thread_id):
     """
@@ -750,7 +976,7 @@ def get_thread_bundle(thread_id):
 # THREAD-LEVEL ADOPT  (used by ThreadEditModal)
 # ============================================================
 
-@market_iq_bp.route('/threads/<thread_id>/adopt', methods=['POST'])
+@ai_agent_bp.route('/threads/<thread_id>/adopt', methods=['POST'])
 @jwt_required()
 def adopt_analysis_for_thread(thread_id):
     """
