@@ -77,13 +77,21 @@ def create_app():
     from .routes.chat      import chat_bp
     from .routes.billing   import billing_bp
     from .routes.dashboard import dashboard_bp
-    from .routes.market_iq import market_iq_bp
+    from .routes.ai_agent  import ai_agent_bp
+    from .routes.market_iq import market_iq_bp, analyze_project
 
     app.register_blueprint(auth_bp,      url_prefix='/api/auth')
     app.register_blueprint(chat_bp,      url_prefix='/api/chat')
     app.register_blueprint(billing_bp,   url_prefix='/api/billing')
     app.register_blueprint(dashboard_bp)  # includes its own /api/dashboard path
+    app.register_blueprint(ai_agent_bp,  url_prefix='/api/ai-agent')
     app.register_blueprint(market_iq_bp, url_prefix='/api/market-iq')
+    app.add_url_rule(
+        '/api/ai-agent/analyze',
+        endpoint='ai_agent_analyze',
+        view_func=analyze_project,
+        methods=['POST'],
+    )
 
     # Optional sessions blueprint
     try:

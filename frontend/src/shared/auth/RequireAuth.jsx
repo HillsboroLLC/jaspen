@@ -1,8 +1,8 @@
 // filepath: src/shared/auth/RequireAuth.jsx
 import { useEffect, useState } from "react";
 import { useLocation, Navigate } from "react-router-dom";
+import { API_BASE } from "../../config/apiBase";
 
-const API_BASE = "https://api.sekki.io";
 const SOFT_GATED_PREFIXES = ["/market-iq"]; // render page; block server actions
 
 export default function RequireAuth({ children }) {

@@ -26,7 +26,7 @@ function getAuthHeaders() {
     const token =
       localStorage.getItem('token') ||
       localStorage.getItem('access_token') ||
-      localStorage.getItem('sekki_token') ||
+      localStorage.getItem('jaspen_token') ||
       null;
 
     return token ? { Authorization: `Bearer ${token}` } : {};

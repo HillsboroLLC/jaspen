@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useLocation, Link } from 'react-router-dom';
+import { API_BASE } from '../../config/apiBase';
 import './PricingResult.css';
 
 export default function PricingResult() {
@@ -11,7 +12,7 @@ export default function PricingResult() {
 
   useEffect(() => {
     if (status === 'success' && sessionId) {
-      fetch(`https://api.sekki.io/api/billing/checkout-session?session_id=${sessionId}`)
+      fetch(`${API_BASE}/api/billing/checkout-session?session_id=${sessionId}`)
         .then(res => res.json())
         .then(setSession)
         .catch(console.error);

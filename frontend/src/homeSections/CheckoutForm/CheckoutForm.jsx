@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { CardElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import Spinner from '../Spinner/Spinner';
+import { API_BASE } from '../../config/apiBase';
 import './CheckoutForm.css';
 
 export default function CheckoutForm() {
@@ -18,7 +19,7 @@ export default function CheckoutForm() {
     setErrorMsg('');
 
     // Create PaymentIntent on the server
-    const res = await fetch('https://api.sekki.io/api/billing/create-payment-intent', {
+    const res = await fetch(`${API_BASE}/api/billing/create-payment-intent`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ amount: 1000 })  // sample amount

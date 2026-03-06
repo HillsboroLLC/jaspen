@@ -4,10 +4,7 @@
 // Notes: Uses API_BASE so local/staging/prod all work.
 // =====================================================
 
-const API_BASE =
-  (typeof window !== 'undefined' && window.__API_BASE__) ||
-  process.env.REACT_APP_API_BASE ||
-  'https://api.sekki.io';
+import { API_BASE } from '../config/apiBase';
 
 async function jsonOrThrow(res) {
   const text = await res.text();

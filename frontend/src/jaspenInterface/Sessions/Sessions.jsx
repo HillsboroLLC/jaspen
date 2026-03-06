@@ -1,6 +1,7 @@
 // src/pages/Sessions/Sessions.jsx
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { API_BASE } from '../../config/apiBase';
 import './Sessions.css';
 
 const Sessions = () => {
@@ -48,7 +49,7 @@ const Sessions = () => {
       setLoading(true);
       
       // Try to load from API first
-      const response = await fetch('https://api.sekki.io/api/ai-agent/threads', {
+      const response = await fetch(`${API_BASE}/api/ai-agent/threads`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`
         }
@@ -108,7 +109,7 @@ const Sessions = () => {
 
     try {
       // Try to delete from API
-      const response = await fetch(`https://api.sekki.io/api/ai-agent/threads/${sessionId}`, {
+      const response = await fetch(`${API_BASE}/api/ai-agent/threads/${sessionId}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`
@@ -423,4 +424,3 @@ const Sessions = () => {
 };
 
 export default Sessions;
-

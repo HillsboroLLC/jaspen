@@ -1,5 +1,6 @@
 // Enhanced AuthContext with cookie-friendly auth + server logout
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { API_BASE } from '../../config/apiBase';
 
 // User roles for LSS system
 export const USER_ROLES = {
@@ -61,10 +62,7 @@ const ROLE_PERMISSIONS = {
 const AuthContext = createContext();
 
 // Backend URL configuration
-const API_BASE_URL =
-  (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_BASE) ||
-  (typeof process !== 'undefined' && process.env && process.env.REACT_APP_API_BASE) ||
-  'https://api.sekki.io';
+const API_BASE_URL = API_BASE;
 const DISABLE_LEGACY_AUTH = false;
 
 // Normalize user shape across email + Google sign-in payloads.
@@ -151,7 +149,7 @@ export function AuthProvider({ children }) {
     localStorage.removeItem('access_token');
     localStorage.removeItem('token');
     localStorage.removeItem('refresh_token');
-    document.cookie = 'sekki_sid=; Max-Age=0; Path=/; Secure; SameSite=None';
+    document.cookie = 'jaspen_sid=; Max-Age=0; Path=/; Secure; SameSite=None';
   };
 
   // Check if user is authenticated on app load (cookie OR token)

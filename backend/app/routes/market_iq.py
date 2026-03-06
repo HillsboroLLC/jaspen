@@ -15,24 +15,107 @@ def get_openai_client():
     openai.api_key = current_app.config['OPENAI_API_KEY']
     return openai
 
-@market_iq_bp.route('/analyze', methods=['POST'])
-@jwt_required()
-def analyze_project():
+
+def _extract_json_object(text):
+    """Parse JSON object from model output (raw JSON or fenced/embedded JSON)."""
     try:
-        data = request.get_json()
-        project_description = data.get('description', '')
-        
-        if not project_description:
-            return jsonify({'error': 'Project description is required'}), 400
-        
-        # Get current user
-        current_user_id = get_jwt_identity()
-        
-        # Initialize OpenAI
-        client = get_openai_client()
-        
-        # Create the analysis prompt
-        analysis_prompt = f"""
+        return json.loads(text)
+    except json.JSONDecodeError:
+        json_match = re.search(r'\{.*\}', text, re.DOTALL)
+        if not json_match:
+            raise ValueError("Could not parse JSON from OpenAI response")
+        return json.loads(json_match.group())
+
+
+def _load_thread_conversation(user_id, thread_id):
+    """
+    Load stored conversation history for a thread from session storage.
+    Returns [] when no matching thread/session is found.
+    """
+    sessions_path = os.path.join('sessions_data', f'user_{user_id}_sessions.json')
+    if not os.path.exists(sessions_path):
+        return []
+
+    try:
+        with open(sessions_path, 'r') as f:
+            sessions = json.load(f) or {}
+    except Exception as e:
+        print(f"[market_iq.analyze] failed reading sessions for user {user_id}: {e}")
+        return []
+
+    if not isinstance(sessions, dict):
+        return []
+
+    session = sessions.get(thread_id)
+    if not session:
+        # Fallback: match by stored session_id field if key differs.
+        for candidate in sessions.values():
+            if str((candidate or {}).get('session_id', '')) == str(thread_id):
+                session = candidate
+                break
+
+    if not isinstance(session, dict):
+        return []
+
+    history = session.get('chat_history')
+    if isinstance(history, list):
+        return history
+
+    result_blob = session.get('result')
+    if isinstance(result_blob, dict) and isinstance(result_blob.get('chat_history'), list):
+        return result_blob.get('chat_history')
+
+    return []
+
+
+def _conversation_to_transcript(history):
+    """Normalize mixed message shapes into a plain text transcript."""
+    lines = []
+    for msg in history or []:
+        if isinstance(msg, str):
+            text = msg.strip()
+            if text:
+                lines.append(f"User: {text}")
+            continue
+
+        if not isinstance(msg, dict):
+            continue
+
+        role = str(msg.get('role') or msg.get('sender') or 'user').lower()
+        content = msg.get('content')
+        text = ''
+
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, dict):
+            text = content.get('text') or content.get('message') or ''
+        elif isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    part = item.get('text') or item.get('content') or item.get('message')
+                    if isinstance(part, str):
+                        parts.append(part)
+            text = ' '.join(parts)
+
+        if not text:
+            text = msg.get('text') or msg.get('message') or ''
+
+        text = str(text).strip()
+        if not text:
+            continue
+
+        speaker = 'User' if role == 'user' else 'Assistant' if role in ('assistant', 'ai', 'bot') else 'System' if role == 'system' else 'User'
+        lines.append(f"{speaker}: {text}")
+
+    return '\n'.join(lines)
+
+
+def _generate_market_iq_scorecard(client, project_description):
+    """Run the existing LLM scoring flow and return parsed scorecard JSON."""
+    analysis_prompt = f"""
 You are a Market IQ analyst specializing in commercialization strategy and financial impact assessment. Analyze the following project and provide a comprehensive Market IQ score and breakdown.
 
 Project Description: {project_description}
@@ -87,41 +170,88 @@ Focus on:
 Provide specific, actionable insights with quantified financial impacts where possible.
 """
 
-        # Call OpenAI API
-        response = client.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": "You are a Market IQ analyst specializing in commercialization strategy. Always respond with valid JSON only."},
-                {"role": "user", "content": analysis_prompt}
-            ],
-            temperature=0.7,
-            max_tokens=2000
-        )
-        
-        # Parse the response
-        analysis_text = response.choices[0].message.content
-        
-        # Try to parse JSON from the response
-        try:
-            analysis_result = json.loads(analysis_text)
-        except json.JSONDecodeError:
-            # If JSON parsing fails, extract JSON from the response
-            import re
-            json_match = re.search(r'\{.*\}', analysis_text, re.DOTALL)
-            if json_match:
-                analysis_result = json.loads(json_match.group())
-            else:
-                raise ValueError("Could not parse JSON from OpenAI response")
-        
-        # Add metadata
-        analysis_result['analysis_id'] = str(uuid.uuid4())
-        analysis_result['timestamp'] = datetime.utcnow().isoformat()
-        analysis_result['user_id'] = current_user_id
-        analysis_result['project_description'] = project_description
-        
-        # TODO: Save to database for history
-        
-        return jsonify(analysis_result), 200
+    response = client.chat.completions.create(
+        model="gpt-4",
+        messages=[
+            {"role": "system", "content": "You are a Market IQ analyst specializing in commercialization strategy. Always respond with valid JSON only."},
+            {"role": "user", "content": analysis_prompt}
+        ],
+        temperature=0.7,
+        max_tokens=2000
+    )
+
+    analysis_text = response.choices[0].message.content
+    return _extract_json_object(analysis_text)
+
+
+@market_iq_bp.route('/analyze', methods=['POST'])
+@jwt_required()
+def analyze_project():
+    try:
+        data = request.get_json() or {}
+        current_user_id = get_jwt_identity()
+
+        thread_id = data.get('thread_id')
+        project_name = data.get('name') or data.get('project_name') or 'Market IQ Project'
+        framework_id = data.get('framework_id')
+        project_description = (data.get('description') or '').strip()
+
+        # Build analysis input from thread conversation when thread_id is provided.
+        conversation_history = []
+        transcript = ''
+        if thread_id:
+            conversation_history = _load_thread_conversation(current_user_id, str(thread_id))
+            transcript = _conversation_to_transcript(conversation_history).strip()
+
+            if not transcript and not project_description:
+                return jsonify({'error': 'No conversation found for thread_id'}), 404
+
+        analysis_input_parts = []
+        if project_name:
+            analysis_input_parts.append(f"Project Name: {project_name}")
+        if framework_id:
+            analysis_input_parts.append(f"Framework ID: {framework_id}")
+        if thread_id:
+            analysis_input_parts.append(f"Thread ID: {thread_id}")
+
+        if transcript:
+            analysis_input_parts.append(f"Conversation Transcript:\n{transcript}")
+        elif project_description:
+            analysis_input_parts.append(f"Project Description: {project_description}")
+
+        if not analysis_input_parts:
+            return jsonify({'error': 'thread_id or description is required'}), 400
+
+        effective_description = "\n\n".join(analysis_input_parts)
+
+        client = get_openai_client()
+        analysis_result = _generate_market_iq_scorecard(client, effective_description)
+
+        analysis_id = str(uuid.uuid4())
+        generated_at = datetime.utcnow().isoformat()
+
+        prior_meta = analysis_result.get('meta') if isinstance(analysis_result.get('meta'), dict) else {}
+        analysis = {
+            **analysis_result,
+            'id': analysis_id,
+            'analysis_id': analysis_id,
+            'thread_id': thread_id,
+            'framework_id': framework_id,
+            'project_name': project_name,
+            'project_description': effective_description,
+            'timestamp': generated_at,
+            'user_id': current_user_id,
+            'meta': {
+                **prior_meta,
+                'thread_id': thread_id,
+                'framework_id': framework_id,
+                'name': project_name,
+                'conversation_turns': len(conversation_history),
+                'generated_at': generated_at,
+            }
+        }
+
+        return jsonify({'analysis': analysis}), 200
         
     except Exception as e:
         print(f"Error in Market IQ analysis: {str(e)}")

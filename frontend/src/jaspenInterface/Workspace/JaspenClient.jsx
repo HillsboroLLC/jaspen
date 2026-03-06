@@ -5,10 +5,7 @@
 //          (keeps legacy shapes; falls back where needed)
 // ============================================================================
 
-const API_BASE =
-  (typeof window !== 'undefined' && window.__API_BASE__) ||
-  process.env.REACT_APP_API_BASE ||
-  'https://api.sekki.io';
+import { API_BASE } from '../../config/apiBase';
 
 export const endpoints = {
   // AI Agent endpoints (NEW)
@@ -100,7 +97,7 @@ async function getJSON(url, { withSid = false, sidOverride } = {}) {
   return _fetch(url, { method: 'GET', withSid, sidOverride });
 }
 async function putJSON(url, body, { withSid = false, sidOverride } = {}) {
-  return _fetch(url, { method: 'PUT', body: JSON.stringify(body ?? {}), withSid, sidOverride });
+  return _fetch(url, { method: 'PATCH', body: JSON.stringify(body ?? {}), withSid, sidOverride });
 }
 async function del(url, { withSid = false, sidOverride } = {}) {
   return _fetch(url, { method: 'DELETE', withSid, sidOverride });
@@ -318,11 +315,7 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
 
   // ---------- Streaming ----------
   streamChat({ prompt, onDelta, onDone }) {
-    const base =
-      (typeof window !== 'undefined' && window.__API_BASE__) ||
-      process.env.REACT_APP_API_BASE ||
-      'https://api.sekki.io';
-    const url = `${base}/api/chat/stream?q=${encodeURIComponent(prompt )}&sid=${encodeURIComponent(getSid())}`;
+    const url = `${API_BASE}/api/chat/stream?q=${encodeURIComponent(prompt )}&sid=${encodeURIComponent(getSid())}`;
 
     const es = new EventSource(url, { withCredentials: true });
 
@@ -364,19 +357,19 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
    * Adopt a scenario scorecard as the current scorecard
    */
   async adoptScorecard(threadId, scorecardId) {
-    const apiBase = process.env.REACT_APP_API_BASE || 'https://api.sekki.io';
+    const apiBase = API_BASE;
     const token = getToken();
 
     const res = await fetch(
       `${apiBase}/api/market-iq/threads/${encodeURIComponent(threadId)}/adopt`,
       {
-        method: 'PUT',
+        method: 'POST',
         credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ scorecard_id: scorecardId }),
+        body: JSON.stringify({ analysis_id: scorecardId }),
       }
     );
 

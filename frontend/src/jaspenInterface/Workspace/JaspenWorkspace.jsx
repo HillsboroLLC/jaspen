@@ -6,7 +6,7 @@
 
 import React, { useEffect, useRef, useState, useMemo, useReducer } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { PM_API_BASE } from '../../config/apiBase';
+import { API_BASE } from '../../config/apiBase';
 import { useChatCommands, parseUIActions, ChatActionTypes } from "../../shared/hooks/useChatCommands"
 import { useToast, ToastContainer } from '../../shared/components/Toast';
 import { useAuth } from 'shared/auth/AuthContext';
@@ -431,7 +431,7 @@ const refreshBundle = async (tid) => {
 };
 
   const authFetch = (url, options = {}) => {
-    const apiBase = process.env.REACT_APP_API_BASE || 'https://api.sekki.io';
+    const apiBase = API_BASE;
     const fullUrl = url.startsWith('http') ? url : `${apiBase}${url}`;
     const token = localStorage.getItem('access_token') || localStorage.getItem('token');
     const headers = {
@@ -757,7 +757,7 @@ const [aiInput, setAiInput] = useState('');
 
   // Fetch readiness spec on mount (ONCE) - single source, no duplicates
   useEffect(() => {
-    const apiBase = process.env.REACT_APP_API_BASE || 'https://api.sekki.io';
+    const apiBase = API_BASE;
     let abort = false;
     (async () => {
       try {
@@ -789,21 +789,21 @@ const [aiInput, setAiInput] = useState('');
   const chatWithReadiness = async (message, forcedSid) => {
     const sid = (() => {
       if (forcedSid && typeof forcedSid === 'string') {
-        const m = document.cookie.match(/(?:^|;\s*)sekki_sid=([^;]+)/);
+        const m = document.cookie.match(/(?:^|;\s*)jaspen_sid=([^;]+)/);
         const cookieSid = m ? decodeURIComponent(m[1]) : null;
         if (cookieSid !== forcedSid) {
-          document.cookie = `sekki_sid=${encodeURIComponent(forcedSid)}; Max-Age=${30*24*3600}; Path=/; Secure; SameSite=None`;
+          document.cookie = `jaspen_sid=${encodeURIComponent(forcedSid)}; Max-Age=${30*24*3600}; Path=/; Secure; SameSite=None`;
         }
         return forcedSid;
       }
-      const m = document.cookie.match(/(?:^|;\s*)sekki_sid=([^;]+)/);
+      const m = document.cookie.match(/(?:^|;\s*)jaspen_sid=([^;]+)/);
       if (m) return decodeURIComponent(m[1]);
       const v = `web_${Math.random().toString(36).slice(2)}`;
-      document.cookie = `sekki_sid=${v}; Max-Age=${30*24*3600}; Path=/; Secure; SameSite=None`;
+      document.cookie = `jaspen_sid=${v}; Max-Age=${30*24*3600}; Path=/; Secure; SameSite=None`;
       return v;
     })();
 
-    const resp = await fetch(`${process.env.REACT_APP_API_BASE || 'https://api.sekki.io'}/api/ai-agent/conversation/continue`, {
+    const resp = await fetch(`${API_BASE}/api/ai-agent/conversation/continue`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -842,7 +842,7 @@ return {
       const headers = { };
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
-      const response = await fetch('https://api.sekki.io/api/ai-agent/threads', {
+      const response = await fetch(`${API_BASE}/api/ai-agent/threads`, {
         method: 'GET',
         headers,
         credentials: 'include'
@@ -899,7 +899,7 @@ async function loadSessionById(id) {
   const headers = {};
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  const apiBase = process.env.REACT_APP_API_BASE || 'https://api.sekki.io';
+  const apiBase = API_BASE;
   const url = `${apiBase}/api/ai-agent/threads/${encodeURIComponent(id )}`;
 
   try {
@@ -1257,7 +1257,7 @@ async function fetchReadinessFor(sid) {
   }
 
   try {
-    const apiBase = process.env.REACT_APP_API_BASE || 'https://api.sekki.io';
+    const apiBase = API_BASE;
     const url = `${apiBase}/api/ai-agent/readiness/audit?thread_id=${encodeURIComponent(sid)}`;
     console.log('[fetchReadinessFor] fetching URL:', url);
 
@@ -1392,7 +1392,7 @@ return uiReadiness >= 85 && hasUserTurns;
   const handleLogout = async (e) => {
     e?.preventDefault?.();
     try {
-      const apiBase = process.env.REACT_APP_API_BASE || 'https://api.sekki.io';
+      const apiBase = API_BASE;
       const access  = localStorage.getItem('access_token') || localStorage.getItem('token');
       const refresh = localStorage.getItem('refresh_token');
 
@@ -1411,7 +1411,7 @@ return uiReadiness >= 85 && hasUserTurns;
       }
 
       ['access_token','token','refresh_token'].forEach(k => localStorage.removeItem(k));
-      document.cookie = 'sekki_sid=; Max-Age=0; Path=/; Secure; SameSite=None';
+      document.cookie = 'jaspen_sid=; Max-Age=0; Path=/; Secure; SameSite=None';
     } finally {
       window.location.replace('/logout');
     }
@@ -1638,8 +1638,6 @@ async function onBeginProject() {
     setBeginMsg("Building your project plan…");
 
     try {
-        const API_BASE = 'https://api.sekki.io';
-
         // Use your session id when available so future runs "replace" the same project
         const sid = (currentSessionId || sessionId || `web_${Date.now()}`);
 
@@ -2504,7 +2502,7 @@ if (!baselineRef.current) baselineRef.current = normalizedFallback; // only set 
       const headers = { };
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
-await fetch(`https://api.sekki.io/api/ai-agent/threads/${itemId}`, {
+await fetch(`${API_BASE}/api/ai-agent/threads/${itemId}`, {
   method: 'DELETE',
   headers,
   credentials: 'include'
@@ -2518,7 +2516,7 @@ await fetch(`https://api.sekki.io/api/ai-agent/threads/${itemId}`, {
   // Persist a scenario row to the backend, then refresh bundle
 async function persistScenario(label, values) {
   try {
-    const apiBase = process.env.REACT_APP_API_BASE || 'https://api.sekki.io';
+    const apiBase = API_BASE;
     const threadId = currentSessionId || sessionId;
     if (!threadId || !analysisResult?.analysis_id) {
       throw new Error('Missing thread/analysis id');
@@ -2644,7 +2642,7 @@ const handleSaveScenario = async (scenario) => {
 
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('https://api.sekki.io/api/help/chat', {
+      const response = await fetch(`${API_BASE}/api/help/chat`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
