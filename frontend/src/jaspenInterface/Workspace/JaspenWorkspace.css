@@ -491,6 +491,14 @@
   flex-direction: column;
 }
 
+.jas-settings-sidebar {
+  background: var(--white);
+}
+
+.jas-settings-sidebar .jas-sidebar-header {
+  background: var(--white);
+}
+
 .jas-ud-layout {
   display: flex;
   flex-direction: column;

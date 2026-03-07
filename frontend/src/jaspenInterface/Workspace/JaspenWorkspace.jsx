@@ -483,6 +483,7 @@ const refreshBundle = async (tid) => {
   const userInitials = getInitials(displayName || user?.name || user?.email || savedEmail || 'User');
   const userName = displayName || user?.name || user?.email?.split('@')[0] || savedEmail?.split?.('@')[0] || 'User';
   const userEmail = user?.email || savedEmail || 'user@example.com';
+  const [welcomeNow, setWelcomeNow] = useState(() => new Date());
   const planOrder = ['free', 'essential', 'team', 'enterprise'];
   const planRank = { free: 0, essential: 1, team: 2, enterprise: 3 };
   const plans = billingCatalog?.plans || {};
@@ -496,6 +497,18 @@ const refreshBundle = async (tid) => {
     () => localStorage.getItem('access_token') || localStorage.getItem('token'),
     []
   );
+  const preferredFirstName = useMemo(() => {
+    const source = (displayName || userName || '').trim();
+    if (!source) return 'there';
+    return source.split(/\s+/)[0];
+  }, [displayName, userName]);
+  const greetingPrefix = useMemo(() => {
+    const hour = welcomeNow.getHours();
+    if (hour < 12) return 'Good morning';
+    if (hour < 17) return 'Good afternoon';
+    return 'Good evening';
+  }, [welcomeNow]);
+  const welcomeHeading = `${greetingPrefix}, ${preferredFirstName}. What would you like to work on?`;
 
   useEffect(() => {
     if (!user) return;
@@ -516,6 +529,11 @@ const refreshBundle = async (tid) => {
       if (user?.email) localStorage.setItem('jaspen_last_email', user.email);
     } catch {}
   }, [user]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setWelcomeNow(new Date()), 60000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const persistDisplayName = (value) => {
     const trimmed = String(value || '').trim();
@@ -3837,7 +3855,7 @@ const done = category.completed === true;
                 src="/android-chrome-192x192.png"
                 alt="Jaspen unicorn"
               />
-              <span>What would you like to work on?</span>
+              <span>{welcomeHeading}</span>
             </h2>
             <p>Describe your project or business idea and I'll help you build a complete strategy scorecard through a natural conversation.</p>
           </div>
