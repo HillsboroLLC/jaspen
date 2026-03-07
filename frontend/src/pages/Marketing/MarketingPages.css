@@ -18,7 +18,7 @@
 }
 
 .marketing-container {
-  max-width: 1160px;
+  max-width: 1120px;
   margin: 0 auto;
   padding: 0 28px;
 }
@@ -35,7 +35,7 @@
 }
 
 .marketing-header-inner {
-  max-width: 1160px;
+  max-width: 1120px;
   margin: 0 auto;
   padding: 16px 28px;
   display: flex;
@@ -51,25 +51,15 @@
   letter-spacing: -0.03em;
 }
 
-.marketing-nav {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.marketing-nav-link {
-  text-decoration: none;
-  color: var(--marketing-gray-700);
-  font-weight: 600;
-  font-size: 0.95rem;
-  padding: 9px 12px;
-  border-radius: 10px;
-}
-
-.marketing-nav-link.is-active,
-.marketing-nav-link:hover {
-  color: var(--marketing-navy-deep);
-  background: rgba(15, 23, 42, 0.05);
+.marketing-page-chip {
+  color: var(--marketing-magenta);
+  background: rgba(160, 3, 108, 0.1);
+  border-radius: 999px;
+  padding: 7px 12px;
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 .marketing-header-actions {
@@ -78,6 +68,7 @@
   gap: 14px;
 }
 
+.marketing-home-link,
 .marketing-contact-link {
   text-decoration: none;
   color: var(--marketing-gray-700);
@@ -139,7 +130,9 @@
 }
 
 .marketing-section {
-  padding-top: 34px;
+  padding-top: 30px;
+  max-width: 960px;
+  margin: 0 auto;
   scroll-margin-top: 120px;
 }
 
@@ -174,6 +167,10 @@
   color: var(--marketing-gray-500);
 }
 
+.marketing-card[id] {
+  scroll-margin-top: 120px;
+}
+
 .industry-grid {
   list-style: none;
   margin: 0;
@@ -188,13 +185,158 @@
   font-weight: 600;
 }
 
+.solutions-intro-grid {
+  display: grid;
+  grid-template-columns: 1.35fr 0.95fr;
+  gap: 16px;
+}
+
+.solutions-intro-card {
+  background: linear-gradient(155deg, rgba(160, 3, 108, 0.08), rgba(255, 255, 255, 1));
+}
+
+.solutions-intro-metrics {
+  background: linear-gradient(160deg, rgba(15, 23, 42, 0.04), rgba(255, 255, 255, 1));
+  display: grid;
+  gap: 14px;
+}
+
+.solutions-intro-metrics strong {
+  color: var(--marketing-navy-deep);
+  display: block;
+  margin-bottom: 2px;
+}
+
+.solutions-intro-metrics p {
+  margin: 0;
+}
+
+.solutions-use-case-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.industry-surface {
+  background: linear-gradient(145deg, rgba(15, 23, 42, 0.04), rgba(255, 255, 255, 1));
+}
+
+.pricing-overview-split {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr;
+  gap: 16px;
+}
+
+.pricing-highlight {
+  background: linear-gradient(158deg, rgba(160, 3, 108, 0.09), rgba(255, 255, 255, 1));
+}
+
+.pricing-summary {
+  background: rgba(15, 23, 42, 0.03);
+}
+
+.pricing-checks {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--marketing-gray-700);
+  display: grid;
+  gap: 6px;
+}
+
+.api-surface {
+  background: linear-gradient(145deg, rgba(37, 99, 235, 0.08), rgba(255, 255, 255, 1));
+}
+
+.plans-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.pricing-plan-card:nth-child(2) {
+  transform: translateY(-6px);
+}
+
+.score-intro-layout {
+  display: grid;
+  grid-template-columns: 0.85fr 1.15fr;
+  gap: 16px;
+}
+
+.score-signal-card {
+  background: linear-gradient(160deg, rgba(160, 3, 108, 0.12), rgba(255, 255, 255, 1));
+}
+
+.score-label {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--marketing-gray-500);
+  font-size: 0.75rem;
+  margin: 0 0 10px;
+}
+
+.score-value-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.score-value {
+  font-size: 2.8rem;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--marketing-navy-deep);
+}
+
+.score-state {
+  font-weight: 700;
+  color: #059669;
+  background: rgba(5, 150, 105, 0.12);
+  border-radius: 999px;
+  padding: 6px 12px;
+}
+
+.score-guidance-card {
+  background: rgba(15, 23, 42, 0.03);
+}
+
+.score-guidance-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--marketing-gray-700);
+  display: grid;
+  gap: 7px;
+}
+
+.score-pillars-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.score-pillar-card:nth-child(2) {
+  background: linear-gradient(145deg, rgba(15, 23, 42, 0.05), rgba(255, 255, 255, 1));
+}
+
+.score-pillar-card:nth-child(3) {
+  background: linear-gradient(145deg, rgba(37, 99, 235, 0.09), rgba(255, 255, 255, 1));
+}
+
 @media (max-width: 960px) {
-  .marketing-nav {
-    display: none;
+  .marketing-grid,
+  .plans-grid,
+  .score-pillars-grid {
+    grid-template-columns: 1fr 1fr;
   }
 
-  .marketing-grid {
-    grid-template-columns: 1fr 1fr;
+  .solutions-intro-grid,
+  .pricing-overview-split,
+  .score-intro-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .pricing-plan-card:nth-child(2) {
+    transform: none;
   }
 }
 
@@ -208,7 +350,9 @@
   }
 
   .marketing-grid,
-  .industry-grid {
+  .industry-grid,
+  .plans-grid,
+  .score-pillars-grid {
     grid-template-columns: 1fr;
   }
 }

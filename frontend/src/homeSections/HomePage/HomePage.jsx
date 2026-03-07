@@ -62,7 +62,8 @@ const NAV_MENUS = [
       {
         title: 'Use Cases',
         items: [
-          { label: 'Jaspen Security and Execution', path: '/pages/solutions#use-cases' },
+          { label: 'Jaspen Security', path: '/pages/solutions#jaspen-security' },
+          { label: 'Execution', path: '/pages/solutions#execution' },
         ],
       },
       {
@@ -249,9 +250,15 @@ export default function HomePage() {
                           {column.items.map((item) => (
                             <li key={`${menu.label}-${column.title}-${item.label}`}>
                               {item.path ? (
-                                <Link to={item.path} className="mega-menu-link" onClick={closeNavMenus}>
+                                <a
+                                  href={item.path}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="mega-menu-link"
+                                  onClick={closeNavMenus}
+                                >
                                   {item.label}
-                                </Link>
+                                </a>
                               ) : (
                                 <a href={`#${item.sectionId}`} className="mega-menu-link" onClick={(e) => scrollToSection(e, item.sectionId)}>
                                   {item.label}
@@ -297,7 +304,7 @@ export default function HomePage() {
                           {column.items.map((item) => (
                             <li key={`mobile-${menu.label}-${column.title}-${item.label}`}>
                               {item.path ? (
-                                <Link to={item.path} onClick={closeNavMenus}>{item.label}</Link>
+                                <a href={item.path} target="_blank" rel="noopener noreferrer" onClick={closeNavMenus}>{item.label}</a>
                               ) : (
                                 <a href={`#${item.sectionId}`} onClick={(e) => scrollToSection(e, item.sectionId)}>{item.label}</a>
                               )}

@@ -167,13 +167,13 @@
 }
 
 .jaspen-mega-menu.is-solutions {
-  width: min(980px, 86vw);
-  min-width: 760px;
+  width: min(860px, 80vw);
+  min-width: 680px;
 }
 
 .jaspen-mega-menu.is-im-jaspen {
-  width: min(760px, 78vw);
-  min-width: 560px;
+  width: min(680px, 72vw);
+  min-width: 500px;
 }
 
 .jaspen-nav-item.is-open .jaspen-mega-menu {
@@ -189,11 +189,11 @@
 }
 
 .jaspen-mega-menu.is-solutions .jaspen-mega-menu-grid {
-  grid-template-columns: minmax(220px, 0.9fr) minmax(520px, 1.7fr);
+  grid-template-columns: minmax(200px, 0.9fr) minmax(430px, 1.45fr);
 }
 
 .jaspen-mega-menu.is-im-jaspen .jaspen-mega-menu-grid {
-  grid-template-columns: minmax(210px, 1fr) minmax(300px, 1.3fr);
+  grid-template-columns: minmax(180px, 0.95fr) minmax(290px, 1.2fr);
 }
 
 .mega-menu-column {

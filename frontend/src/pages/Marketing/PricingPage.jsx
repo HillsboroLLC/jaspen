@@ -25,17 +25,29 @@ export default function PricingPage() {
     >
       <section id="overview" className="marketing-section">
         <h2>Overview</h2>
-        <article className="marketing-card">
-          <p>
-            Jaspen pricing is designed around adoption stage, number of active initiatives, and depth of integrations.
-            Start with core workflows and scale into enterprise governance when needed.
-          </p>
-        </article>
+        <div className="pricing-overview-split">
+          <article className="marketing-card pricing-highlight">
+            <h3>Designed for staged adoption</h3>
+            <p>
+              Jaspen pricing is designed around adoption stage, number of active initiatives, and depth of integrations.
+              Start with core workflows and scale into enterprise governance when needed.
+            </p>
+          </article>
+          <article className="marketing-card pricing-summary">
+            <h3>What pricing includes</h3>
+            <ul className="pricing-checks">
+              <li>Decision and execution workflows</li>
+              <li>Role-based collaboration</li>
+              <li>Progress and readiness reporting</li>
+            </ul>
+          </article>
+        </div>
       </section>
 
       <section id="api" className="marketing-section">
         <h2>API</h2>
-        <article className="marketing-card">
+        <article className="marketing-card api-surface">
+          <h3>Integration and automation</h3>
           <p>
             API access supports custom automation, internal dashboards, and workflow handoffs.
             Detailed API limits and onboarding options are available during implementation scoping.
@@ -45,9 +57,9 @@ export default function PricingPage() {
 
       <section id="plans" className="marketing-section">
         <h2>Plans</h2>
-        <div className="marketing-grid">
+        <div className="plans-grid">
           {PLAN_ITEMS.map((plan) => (
-            <article key={plan.name} className="marketing-card">
+            <article key={plan.name} className="marketing-card pricing-plan-card">
               <h3>{plan.name}</h3>
               <p>{plan.detail}</p>
             </article>
