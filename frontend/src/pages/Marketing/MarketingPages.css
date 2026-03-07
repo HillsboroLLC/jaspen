@@ -438,6 +438,16 @@
   animation-delay: 0.9s;
 }
 
+.connectors-abstract span:nth-child(4) {
+  margin-left: 28px;
+  animation-delay: 1.2s;
+}
+
+.connectors-abstract span:nth-child(5) {
+  margin-left: 10px;
+  animation-delay: 1.5s;
+}
+
 .plugins-abstract {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1026,11 +1036,24 @@
   gap: 7px;
 }
 
+.api-compare-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
 .api-surface {
   border-color: #b9c9e6;
   background:
     linear-gradient(180deg, rgba(246, 250, 255, 0.92), rgba(246, 250, 255, 0.92)),
     repeating-linear-gradient(34deg, rgba(29, 79, 151, 0.07) 0 9px, transparent 9px 19px);
+}
+
+.api-surface-custom {
+  border-color: #d8c7e8;
+  background:
+    linear-gradient(180deg, rgba(250, 245, 255, 0.92), rgba(250, 245, 255, 0.92)),
+    repeating-linear-gradient(-32deg, rgba(122, 58, 175, 0.07) 0 9px, transparent 9px 19px);
 }
 
 .plans-grid {
@@ -1397,6 +1420,31 @@
   gap: 12px;
 }
 
+.connector-group-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+
+.connector-group-card {
+  border: 1px solid var(--marketing-gray-200);
+  border-radius: 18px;
+  padding: 18px;
+  background: rgba(255, 255, 255, 0.9);
+  display: grid;
+  gap: 12px;
+}
+
+.connector-group-card h3 {
+  margin: 0;
+  color: var(--marketing-navy-deep);
+}
+
+.connector-group-card p {
+  margin: 0;
+  color: var(--marketing-gray-500);
+}
+
 .connector-cell {
   border: 1px solid #c7d4e8;
   border-radius: 16px;
@@ -1477,6 +1525,7 @@
 @media (max-width: 960px) {
   .lydia-story,
   .solutions-intro-grid,
+  .api-compare-grid,
   .pricing-overview-split,
   .score-intro-layout,
   .scorecard-main {
