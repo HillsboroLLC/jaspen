@@ -643,10 +643,14 @@
   padding: 10px 12px 12px;
   position: relative;
   background: #f7f9fb;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .jas-ud-footer-profile {
-  width: 100%;
+  width: auto;
+  flex: 1;
   border: 1px solid var(--gray-300);
   border-radius: 12px;
   background: var(--white);
@@ -698,9 +702,7 @@
 }
 
 .jas-ud-footer-actions {
-  margin-top: 8px;
   display: flex;
-  justify-content: flex-end;
   gap: 8px;
 }
 
@@ -726,13 +728,23 @@
   position: absolute;
   right: 12px;
   bottom: 56px;
-  width: 220px;
+  width: 250px;
   border: 1px solid var(--gray-300);
   border-radius: 12px;
   background: var(--white);
   box-shadow: 0 16px 28px rgba(22, 31, 59, 0.16);
   overflow: hidden;
   z-index: 30;
+}
+
+.jas-ud-footer-email {
+  font-size: 0.75rem;
+  color: var(--gray-600);
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--gray-100);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .jas-ud-footer-menu button {
@@ -758,6 +770,38 @@
 }
 .jas-ud-footer-menu .danger:hover {
   background: #fdf0f7;
+}
+
+.jas-ud-submenu-wrap {
+  position: relative;
+}
+
+.jas-ud-submenu-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.jas-ud-submenu-caret {
+  font-size: 0.875rem;
+  color: var(--gray-500);
+}
+
+.jas-ud-submenu {
+  position: absolute;
+  top: 0;
+  left: calc(100% - 2px);
+  width: 240px;
+  border: 1px solid var(--gray-300);
+  border-radius: 12px;
+  background: var(--white);
+  box-shadow: 0 16px 28px rgba(22, 31, 59, 0.16);
+  overflow: hidden;
+  z-index: 31;
+}
+
+.jas-ud-submenu button {
+  font-size: 0.75rem;
 }
 
 .jas-modal-backdrop {
@@ -2035,6 +2079,10 @@
   .jas-apps-modal {
     width: 100%;
     padding: 16px;
+  }
+
+  .jas-ud-footer {
+    flex-wrap: wrap;
   }
 
   .jas-account-summary-grid,

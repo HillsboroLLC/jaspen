@@ -76,9 +76,11 @@ const Sessions = () => {
       setLoading(true);
       
       // Try to load from API first
+      const token = localStorage.getItem('access_token') || localStorage.getItem('token');
       const response = await fetch(`${API_BASE}/api/ai-agent/threads`, {
+        credentials: 'include',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
         }
       });
 
@@ -165,10 +167,12 @@ const Sessions = () => {
 
     try {
       // Try to delete from API
+      const token = localStorage.getItem('access_token') || localStorage.getItem('token');
       await fetch(`${API_BASE}/api/ai-agent/threads/${sessionId}`, {
         method: 'DELETE',
+        credentials: 'include',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
         }
       });
 

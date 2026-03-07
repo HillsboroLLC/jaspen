@@ -13,11 +13,11 @@ import { useAuth } from 'shared/auth/AuthContext';
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
-  faQuestionCircle, faCogs,
-  faPaperPlane, faSpinner, faTimes, faBars, faCheck, faExclamationTriangle, faPen,
-  faChartLine, faTrash, faPlus, faMinus, faMicrophone, faWandMagicSparkles,
-  faGear, faBolt, faBrain, faLayerGroup, faRobot, faListCheck, faArrowUpRightFromSquare, faGaugeHigh, faClockRotateLeft, faPaperclip, faArrowUp,
-  faDownload, faChevronDown, faChevronUp, faCreditCard
+  faQuestionCircle,
+  faPaperPlane, faSpinner, faTimes, faBars, faCheck, faExclamationTriangle,
+  faChartLine, faTrash, faPlus, faMinus, faMicrophone,
+  faBolt, faLayerGroup, faRobot, faListCheck, faArrowUpRightFromSquare, faGaugeHigh, faClockRotateLeft, faPaperclip, faArrowUp,
+  faDownload, faChevronDown, faChevronUp
 } from '@fortawesome/free-solid-svg-icons';
 import {
   MonitorCheck, MessageCircleQuestion,
@@ -159,6 +159,13 @@ export default function MarketIQWorkspace() {
     settings: true,
     userDismissedReadiness: false
   });
+  const didAutoOpenSettingsRef = useRef(false);
+
+  useEffect(() => {
+    if (didAutoOpenSettingsRef.current) return;
+    didAutoOpenSettingsRef.current = true;
+    dispatchSidebar({ type: 'OPEN_SETTINGS' });
+  }, []);
 
   const [sessionId, setSessionId] = useState(null);
   const [currentSessionId, setCurrentSessionId] = useState(null);
@@ -461,15 +468,15 @@ const refreshBundle = async (tid) => {
   const [displayName, setDisplayName] = useState('');
   const [nameInput, setNameInput] = useState('');
   const [nameModalOpen, setNameModalOpen] = useState(false);
-  const [editingName, setEditingName] = useState(false);
   const [billingStatus, setBillingStatus] = useState(null);
   const [billingCatalog, setBillingCatalog] = useState({ plans: {}, overage_packs: {} });
   const [billingLoading, setBillingLoading] = useState(true);
   const [billingMessage, setBillingMessage] = useState('');
   const [billingActionLoading, setBillingActionLoading] = useState('');
   const [billingModalOpen, setBillingModalOpen] = useState(false);
-  const [appsModalOpen, setAppsModalOpen] = useState(false);
   const [accountQuickMenuOpen, setAccountQuickMenuOpen] = useState(false);
+  const [knowledgeMenuOpen, setKnowledgeMenuOpen] = useState(false);
+  const accountMenuRef = useRef(null);
   const savedEmail = (() => {
     try { return localStorage.getItem('jaspen_last_email'); } catch { return null; }
   })();
@@ -484,7 +491,6 @@ const refreshBundle = async (tid) => {
   const monthlyCreditLimit = billingStatus?.monthly_credit_limit;
   const creditsRemaining = billingStatus?.credits_remaining;
   const creditsBadge = creditsRemaining == null ? 'Contracted' : Number(creditsRemaining || 0).toLocaleString();
-  const queueCount = analysisHistory.length;
 
   const getAuthToken = useCallback(
     () => localStorage.getItem('access_token') || localStorage.getItem('token'),
@@ -505,7 +511,6 @@ const refreshBundle = async (tid) => {
     const initial = saved || fallback;
     setDisplayName(saved || '');
     setNameInput(initial);
-    setEditingName(false);
     if (!saved) setNameModalOpen(true);
     try {
       if (user?.email) localStorage.setItem('jaspen_last_email', user.email);
@@ -560,8 +565,22 @@ const refreshBundle = async (tid) => {
   useEffect(() => {
     if (!sidebarState.settings) {
       setAccountQuickMenuOpen(false);
+      setKnowledgeMenuOpen(false);
     }
   }, [sidebarState.settings]);
+
+  useEffect(() => {
+    if (!accountQuickMenuOpen) return;
+    const onPointerDown = (event) => {
+      if (!accountMenuRef.current) return;
+      if (!accountMenuRef.current.contains(event.target)) {
+        setAccountQuickMenuOpen(false);
+        setKnowledgeMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, [accountQuickMenuOpen]);
 
   const startPlanChange = async (planKey) => {
     const token = getAuthToken();
@@ -752,46 +771,8 @@ const refreshBundle = async (tid) => {
     );
   };
 
-  const renderAppsModal = () => {
-    if (!appsModalOpen) return null;
-    return (
-      <div className="jas-modal-backdrop" role="presentation" onClick={() => setAppsModalOpen(false)}>
-        <div className="jas-apps-modal" role="dialog" aria-modal="true" aria-label="Apps and extensions" onClick={(e) => e.stopPropagation()}>
-          <div className="jas-account-modal-header">
-            <h3>Apps and extensions</h3>
-            <button type="button" className="jas-account-modal-close" onClick={() => setAppsModalOpen(false)} aria-label="Close">
-              <FontAwesomeIcon icon={faTimes} />
-            </button>
-          </div>
-          <p className="jas-apps-intro">
-            Install lightweight tools for delivery workflows. Start with essential project-system connections.
-          </p>
-          <div className="jas-apps-grid">
-            <article className="jas-app-card">
-              <h4>Desktop app</h4>
-              <p>Run Jaspen in a focused workspace for live planning sessions.</p>
-              <button type="button" onClick={() => window.open('/pages/resources/tutorials', '_blank', 'noopener,noreferrer')}>
-                Download beta
-              </button>
-            </article>
-            <article className="jas-app-card">
-              <h4>Connectors</h4>
-              <p>Jira, Workfront, Smartsheets, Salesforce, Oracle Fusion, and Snowflake setup guides.</p>
-              <button type="button" onClick={() => window.open('/pages/resources/connectors', '_blank', 'noopener,noreferrer')}>
-                Open connectors
-              </button>
-            </article>
-            <article className="jas-app-card">
-              <h4>Integrations</h4>
-              <p>See how APIs and integrations map into plan updates and data trend detection.</p>
-              <button type="button" onClick={() => window.open('/pages/resources/integrations', '_blank', 'noopener,noreferrer')}>
-                View integrations
-              </button>
-            </article>
-          </div>
-        </div>
-      </div>
-    );
+  const openExternal = (path) => {
+    window.open(path, '_blank', 'noopener,noreferrer');
   };
 
   const handlePMDashboardClick = (onClose) => {
@@ -807,72 +788,9 @@ const refreshBundle = async (tid) => {
 
   const renderUserMenuContent = (onClose) => (
     <div className="jas-ud-layout">
-      <div className="jas-ud-header">
-        <div className="jas-ud-header-avatar">{userInitials}</div>
-        <div className="jas-ud-header-info">
-          <div className="jas-ud-header-name-row">
-            <div className="jas-ud-header-name">{userName}</div>
-            <button
-              type="button"
-              className="jas-ud-edit-btn"
-              onClick={() => {
-                setNameInput(userName);
-                setEditingName(true);
-              }}
-              aria-label="Edit display name"
-              title="Edit name"
-            >
-              <FontAwesomeIcon icon={faPen} />
-            </button>
-          </div>
-          <div className="jas-ud-header-email">{userEmail}</div>
-          {editingName && (
-            <div className="jas-ud-name-edit">
-              <input
-                className="jas-ud-name-input"
-                value={nameInput}
-                onChange={(e) => setNameInput(e.target.value)}
-                placeholder="What should I call you?"
-              />
-              <button
-                type="button"
-                className="jas-ud-name-save"
-                onClick={() => {
-                  const trimmed = nameInput.trim();
-                  if (!trimmed) return;
-                  persistDisplayName(trimmed);
-                  setEditingName(false);
-                }}
-                disabled={!nameInput.trim()}
-                title="Save"
-                aria-label="Save name"
-              >
-                <FontAwesomeIcon icon={faCheck} />
-              </button>
-              <button
-                type="button"
-                className="jas-ud-name-cancel"
-                onClick={() => {
-                  setNameInput(userName);
-                  setEditingName(false);
-                }}
-                title="Cancel"
-                aria-label="Cancel"
-              >
-                <FontAwesomeIcon icon={faTimes} />
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-
       <div className="jas-ud-scroll">
         <div className="jas-ud-section">
           <div className="jas-ud-section-label">Navigate</div>
-          <button className="jas-ud-item" onClick={() => { onClose?.(); window.location.reload(); }}>
-            <FontAwesomeIcon icon={faWandMagicSparkles} />
-            <span className="jas-ud-item-label">Jaspen</span>
-          </button>
           <button className="jas-ud-item" onClick={() => { onClose?.(); enterScorecardPreview(); }}>
             <FontAwesomeIcon icon={faChartLine} />
             <span className="jas-ud-item-label">Scorecard</span>
@@ -885,7 +803,6 @@ const refreshBundle = async (tid) => {
           <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/sessions?view=queue'); }}>
             <FontAwesomeIcon icon={faLayerGroup} />
             <span className="jas-ud-item-label">In Queue</span>
-            <span className="jas-ud-item-badge">{queueCount}</span>
           </button>
         </div>
 
@@ -896,19 +813,10 @@ const refreshBundle = async (tid) => {
             <span className="jas-ud-item-label">Credits</span>
             <span className="jas-ud-item-badge">{billingLoading ? '...' : creditsBadge}</span>
           </button>
-          <button className="jas-ud-item" onClick={() => { setBillingModalOpen(true); setAccountQuickMenuOpen(false); }}>
-            <FontAwesomeIcon icon={faCreditCard} />
-            <span className="jas-ud-item-label">Account</span>
-            <span className="jas-ud-item-badge">{currentPlanLabel}</span>
-          </button>
-          <button className="jas-ud-item">
-            <FontAwesomeIcon icon={faBrain} />
-            <span className="jas-ud-item-label">Knowledge</span>
-          </button>
         </div>
 
         <div className="jas-ud-section">
-          <button className="jas-ud-item" onClick={() => { setHelpOpen(true); setAccountQuickMenuOpen(false); }}>
+          <button className="jas-ud-item" onClick={() => { openExternal('/pages/support'); setAccountQuickMenuOpen(false); }}>
             <FontAwesomeIcon icon={faQuestionCircle} />
             <span className="jas-ud-item-label">Get help</span>
             <span className="jas-ud-item-ext"><FontAwesomeIcon icon={faArrowUpRightFromSquare} /></span>
@@ -916,8 +824,15 @@ const refreshBundle = async (tid) => {
         </div>
       </div>
 
-      <div className="jas-ud-footer">
-        <button type="button" className="jas-ud-footer-profile" onClick={() => setBillingModalOpen(true)}>
+      <div className="jas-ud-footer" ref={accountMenuRef}>
+        <button
+          type="button"
+          className="jas-ud-footer-profile"
+          onClick={() => {
+            setAccountQuickMenuOpen((prev) => !prev);
+            setKnowledgeMenuOpen(false);
+          }}
+        >
           <div className="jas-ud-footer-avatar">{userInitials}</div>
           <div className="jas-ud-footer-meta">
             <span>{userName}</span>
@@ -930,7 +845,11 @@ const refreshBundle = async (tid) => {
             className="jas-ud-footer-icon"
             title="Get apps and extensions"
             aria-label="Get apps and extensions"
-            onClick={() => { setAppsModalOpen(true); setAccountQuickMenuOpen(false); }}
+            onClick={() => {
+              openExternal('/pages/resources/connectors');
+              setAccountQuickMenuOpen(false);
+              setKnowledgeMenuOpen(false);
+            }}
           >
             <FontAwesomeIcon icon={faDownload} />
           </button>
@@ -939,24 +858,50 @@ const refreshBundle = async (tid) => {
             className="jas-ud-footer-icon"
             title="Account menu"
             aria-label="Account menu"
-            onClick={() => setAccountQuickMenuOpen((prev) => !prev)}
+            onClick={() => {
+              setAccountQuickMenuOpen((prev) => !prev);
+              setKnowledgeMenuOpen(false);
+            }}
           >
             <FontAwesomeIcon icon={accountQuickMenuOpen ? faChevronUp : faChevronDown} />
           </button>
         </div>
         {accountQuickMenuOpen && (
           <div className="jas-ud-footer-menu">
+            <div className="jas-ud-footer-email">{userEmail}</div>
             <button type="button" onClick={() => { setBillingModalOpen(true); setAccountQuickMenuOpen(false); }}>
-              Account and billing
+              Upgrade plan
             </button>
-            <button type="button" onClick={() => { setAppsModalOpen(true); setAccountQuickMenuOpen(false); }}>
-              Get apps and extensions
+            <button type="button" onClick={() => { openExternal('/login'); setAccountQuickMenuOpen(false); }}>
+              Gift Jaspen
             </button>
-            <button type="button" onClick={() => { setHelpOpen(true); setAccountQuickMenuOpen(false); }}>
-              Help
+            <div
+              className="jas-ud-submenu-wrap"
+              onMouseEnter={() => setKnowledgeMenuOpen(true)}
+              onMouseLeave={() => setKnowledgeMenuOpen(false)}
+            >
+              <button type="button" className="jas-ud-submenu-trigger">
+                <span>Knowledge</span>
+                <span className="jas-ud-submenu-caret">›</span>
+              </button>
+              {knowledgeMenuOpen && (
+                <div className="jas-ud-submenu">
+                  <button type="button" onClick={() => { openExternal('/pages/api'); setAccountQuickMenuOpen(false); setKnowledgeMenuOpen(false); }}>API console</button>
+                  <button type="button" onClick={() => { openExternal('/#about'); setAccountQuickMenuOpen(false); setKnowledgeMenuOpen(false); }}>About Jaspen</button>
+                  <button type="button" onClick={() => { openExternal('/pages/resources/tutorials'); setAccountQuickMenuOpen(false); setKnowledgeMenuOpen(false); }}>Tutorials</button>
+                  <button type="button" onClick={() => { openExternal('/pages/resources/tutorials'); setAccountQuickMenuOpen(false); setKnowledgeMenuOpen(false); }}>Courses</button>
+                  <button type="button" onClick={() => { openExternal('/pages/terms'); setAccountQuickMenuOpen(false); setKnowledgeMenuOpen(false); }}>Usage policy</button>
+                  <button type="button" onClick={() => { openExternal('/pages/privacy'); setAccountQuickMenuOpen(false); setKnowledgeMenuOpen(false); }}>Privacy policy</button>
+                  <button type="button" onClick={() => { openExternal('/pages/privacy#choices'); setAccountQuickMenuOpen(false); setKnowledgeMenuOpen(false); }}>Your privacy choices</button>
+                  <button type="button" onClick={() => { showToast('Keyboard shortcuts coming soon.', 'info'); setAccountQuickMenuOpen(false); setKnowledgeMenuOpen(false); }}>Keyboard shortcuts</button>
+                </div>
+              )}
+            </div>
+            <button type="button" onClick={() => { openExternal('/pages/support'); setAccountQuickMenuOpen(false); }}>
+              Get help
             </button>
             <button type="button" onClick={() => { onClose?.(); handleLogout(); }} className="danger">
-              Sign out
+              Log out
             </button>
           </div>
         )}
@@ -3163,8 +3108,8 @@ setView(id === 'chat' ? 'intake' : id);
           title="User settings"
           style={{ top: `${sideTabBase}px` }}
         >
-          <FontAwesomeIcon icon={faGear} />
-          <span className="jas-tab-label">Settings</span>
+          <FontAwesomeIcon icon={faBars} />
+          <span className="jas-tab-label">Menu</span>
         </div>
       )}
 
@@ -3179,7 +3124,6 @@ setView(id === 'chat' ? 'intake' : id);
 
       {renderNameModal()}
       {renderBillingModal()}
-      {renderAppsModal()}
 
 {/* Assistant Vertical Tab (Score + Scenarios only) */}
 {activeTab !== 'chat' && !aiDrawerOpen && (
@@ -3688,8 +3632,8 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
           style={{ top: intakeTabTop('settings') }}
           onClick={() => dispatchSidebar({ type: 'TOGGLE_SETTINGS' })}
         >
-          <FontAwesomeIcon icon={faGear} />
-          SETTINGS
+          <FontAwesomeIcon icon={faBars} />
+          MENU
         </div>
       )}
       {hasHistory && !sidebarState.history && (
@@ -3882,7 +3826,6 @@ const done = category.completed === true;
 
       {renderNameModal()}
       {renderBillingModal()}
-      {renderAppsModal()}
 
       {/* Content */}
       <div className="jas-chat-content">
