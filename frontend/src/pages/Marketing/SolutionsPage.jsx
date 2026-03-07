@@ -27,11 +27,20 @@ const INDUSTRIES = [
 
 export default function SolutionsPage() {
   return (
-    <MarketingPageLayout
-      eyebrow="SOLUTIONS"
-      title="Solutions built for decision quality and execution speed"
-      subtitle="Use-case and industry frameworks tailored for teams that need clear recommendations and reliable delivery."
-    >
+    <MarketingPageLayout pageClass="page-solutions">
+      <section className="page-hero page-hero-solutions">
+        <div className="hero-copy">
+          <p className="hero-kicker">Solutions</p>
+          <h1>Solutions built for decision quality and execution speed</h1>
+          <p>Use-case and industry frameworks tailored for teams that need clear recommendations and reliable delivery.</p>
+        </div>
+        <div className="hero-abstract solutions-abstract">
+          <div className="flow-node">Security</div>
+          <div className="flow-node">Execution</div>
+          <div className="flow-node">Governance</div>
+        </div>
+      </section>
+
       <section className="marketing-section">
         <div className="solutions-intro-grid">
           <article className="marketing-card solutions-intro-card">

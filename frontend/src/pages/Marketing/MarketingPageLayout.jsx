@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import './MarketingPages.css';
 
-export default function MarketingPageLayout({ eyebrow, title, subtitle, children }) {
+export default function MarketingPageLayout({ pageClass = '', children }) {
   const location = useLocation();
 
   useEffect(() => {
@@ -29,15 +29,7 @@ export default function MarketingPageLayout({ eyebrow, title, subtitle, children
         </div>
       </header>
 
-      <main className="marketing-main">
-        <section className="marketing-hero">
-          <div className="marketing-container">
-            <p className="marketing-eyebrow">{eyebrow}</p>
-            <h1>{title}</h1>
-            <p className="marketing-subtitle">{subtitle}</p>
-          </div>
-        </section>
-
+      <main className={`marketing-main ${pageClass}`.trim()}>
         <div className="marketing-container marketing-content">
           {children}
         </div>

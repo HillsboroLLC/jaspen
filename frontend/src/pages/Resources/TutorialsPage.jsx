@@ -10,11 +10,20 @@ const TUTORIALS = [
 
 export default function TutorialsPage() {
   return (
-    <MarketingPageLayout
-      eyebrow="RESOURCES"
-      title="Tutorials for adoption and rollout"
-      subtitle="Practical guides designed for operators, transformation leads, and execution teams."
-    >
+    <MarketingPageLayout pageClass="page-resources page-tutorials">
+      <section className="page-hero page-hero-resources">
+        <div className="hero-copy">
+          <p className="hero-kicker">Resources</p>
+          <h1>Tutorials for adoption and rollout</h1>
+          <p>Practical guides designed for operators, transformation leads, and execution teams.</p>
+        </div>
+        <div className="hero-abstract tutorials-abstract">
+          <div className="step-dot"></div>
+          <div className="step-dot"></div>
+          <div className="step-dot"></div>
+          <div className="step-dot"></div>
+        </div>
+      </section>
       <section className="marketing-section">
         <h2>Tutorial Path</h2>
         <ol className="tutorial-ladder">

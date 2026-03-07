@@ -9,11 +9,19 @@ const DEMOS = [
 
 export default function DemosPage() {
   return (
-    <MarketingPageLayout
-      eyebrow="RESOURCES"
-      title="Product demos for decision and execution workflows"
-      subtitle="Use demo walkthroughs to evaluate fit before implementation planning."
-    >
+    <MarketingPageLayout pageClass="page-resources page-demos">
+      <section className="page-hero page-hero-resources">
+        <div className="hero-copy">
+          <p className="hero-kicker">Resources</p>
+          <h1>Product demos for decision and execution workflows</h1>
+          <p>Use demo walkthroughs to evaluate fit before implementation planning.</p>
+        </div>
+        <div className="hero-abstract demos-abstract">
+          <div className="demo-frame">01</div>
+          <div className="demo-frame">02</div>
+          <div className="demo-frame">03</div>
+        </div>
+      </section>
       <section className="marketing-section">
         <div className="resource-callout">
           <h3>Recommended order</h3>

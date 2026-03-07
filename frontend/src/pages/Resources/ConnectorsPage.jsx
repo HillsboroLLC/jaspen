@@ -9,11 +9,19 @@ const CONNECTORS = [
 
 export default function ConnectorsPage() {
   return (
-    <MarketingPageLayout
-      eyebrow="RESOURCES"
-      title="Connectors for execution-system alignment"
-      subtitle="Keep initiative context and delivery status synchronized across planning and execution systems."
-    >
+    <MarketingPageLayout pageClass="page-resources page-connectors">
+      <section className="page-hero page-hero-resources">
+        <div className="hero-copy">
+          <p className="hero-kicker">Resources</p>
+          <h1>Connectors for execution-system alignment</h1>
+          <p>Keep initiative context and delivery status synchronized across planning and execution systems.</p>
+        </div>
+        <div className="hero-abstract connectors-abstract">
+          <span>Jira</span>
+          <span>Workfront</span>
+          <span>Smartsheets</span>
+        </div>
+      </section>
       <section className="marketing-section">
         <h2>Connector Matrix</h2>
         <div className="connector-matrix">

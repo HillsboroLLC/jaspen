@@ -26,11 +26,21 @@ const PLAN_ITEMS = [
 
 export default function PricingPage() {
   return (
-    <MarketingPageLayout
-      eyebrow="PRICING"
-      title="Clear pricing for teams moving from analysis to execution"
-      subtitle="Choose the plan that matches your scale today, then expand as your initiatives and integrations grow."
-    >
+    <MarketingPageLayout pageClass="page-pricing">
+      <section className="page-hero page-hero-pricing">
+        <div className="hero-copy">
+          <p className="hero-kicker">Pricing</p>
+          <h1>Clear pricing from individual use to enterprise rollout</h1>
+          <p>Start free, upgrade to Essential at $20, and scale with Team or Enterprise as adoption grows.</p>
+        </div>
+        <div className="hero-abstract pricing-abstract">
+          <div className="floating-price">Free</div>
+          <div className="floating-price">Essential $20</div>
+          <div className="floating-price">Team</div>
+          <div className="floating-price">Enterprise</div>
+        </div>
+      </section>
+
       <section id="overview" className="marketing-section">
         <h2>Overview</h2>
         <div className="pricing-overview-split">

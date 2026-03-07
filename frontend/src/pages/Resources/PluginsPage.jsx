@@ -9,11 +9,19 @@ const PLUGINS = [
 
 export default function PluginsPage() {
   return (
-    <MarketingPageLayout
-      eyebrow="RESOURCES"
-      title="Plugins for workflow-specific extension"
-      subtitle="Extend Jaspen into role-specific workflows without breaking your core decision-to-execution flow."
-    >
+    <MarketingPageLayout pageClass="page-resources page-plugins">
+      <section className="page-hero page-hero-resources">
+        <div className="hero-copy">
+          <p className="hero-kicker">Resources</p>
+          <h1>Plugins for workflow-specific extension</h1>
+          <p>Extend Jaspen into role-specific workflows without breaking your core decision-to-execution flow.</p>
+        </div>
+        <div className="hero-abstract plugins-abstract">
+          <div className="plugin-block"></div>
+          <div className="plugin-block"></div>
+          <div className="plugin-block"></div>
+        </div>
+      </section>
       <section className="marketing-section">
         <h2>Plugin Patterns</h2>
         <div className="resource-track">

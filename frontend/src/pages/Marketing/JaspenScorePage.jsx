@@ -21,11 +21,20 @@ const SCORE_PILLARS = [
 
 export default function JaspenScorePage() {
   return (
-    <MarketingPageLayout
-      eyebrow="PRODUCT"
-      title="Jaspen Score turns ambiguity into a decision signal"
-      subtitle="Quantify initiative quality before execution begins so teams can prioritize with confidence and speed."
-    >
+    <MarketingPageLayout pageClass="page-score">
+      <section className="page-hero page-hero-score">
+        <div className="hero-copy">
+          <p className="hero-kicker">Product</p>
+          <h1>Jaspen Score turns ambiguity into a decision signal</h1>
+          <p>Quantify initiative quality before execution begins so teams can prioritize with confidence and speed.</p>
+        </div>
+        <div className="hero-abstract score-abstract">
+          <div className="floating-pill">Strategic Fit</div>
+          <div className="floating-pill">Execution Readiness</div>
+          <div className="floating-pill">Impact Potential</div>
+        </div>
+      </section>
+
       <section className="marketing-section">
         <div className="score-intro-layout">
           <article className="scorecard-shell">
