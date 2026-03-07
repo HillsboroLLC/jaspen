@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../shared/auth/AuthContext';
+import { API_BASE } from '../../config/apiBase';
 import './Dashboard.css';
 
 export default function Dashboard() {
@@ -10,11 +11,17 @@ export default function Dashboard() {
   const [darkMode, setDarkMode] = useState(false);
   const [timezone, setTimezone] = useState('America/New_York');
   const [showSettings, setShowSettings] = useState(false);
+  const [showBillingModal, setShowBillingModal] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [showKanban, setShowKanban] = useState(false);
   const [currentSlide, setCurrentSlide] = useState(0);
   const [newTaskText, setNewTaskText] = useState('');
   const [showAddTask, setShowAddTask] = useState({ toDo: false, doing: false, done: false });
+  const [billingStatus, setBillingStatus] = useState(null);
+  const [billingCatalog, setBillingCatalog] = useState({ plans: {}, overage_packs: {} });
+  const [billingLoading, setBillingLoading] = useState(true);
+  const [billingError, setBillingError] = useState('');
+  const [billingActionLoading, setBillingActionLoading] = useState('');
   
   const [kanbanData, setKanbanData] = useState({
     toDo: [
@@ -52,8 +59,21 @@ export default function Dashboard() {
     ]
   });
 
-  const creditsRemaining = dashboardData.creditsTotal - dashboardData.creditsUsed;
-  const creditsPercentage = (creditsRemaining / dashboardData.creditsTotal) * 100;
+  const hasMeteredCredits =
+    Number.isFinite(billingStatus?.monthly_credit_limit) &&
+    Number.isFinite(billingStatus?.credits_remaining);
+  const creditsTotal = hasMeteredCredits
+    ? Number(billingStatus?.monthly_credit_limit)
+    : dashboardData.creditsTotal;
+  const creditsRemaining = hasMeteredCredits
+    ? Number(billingStatus?.credits_remaining)
+    : (dashboardData.creditsTotal - dashboardData.creditsUsed);
+  const creditsUsed = hasMeteredCredits
+    ? Math.max(0, creditsTotal - creditsRemaining)
+    : dashboardData.creditsUsed;
+  const creditsPercentage = creditsTotal > 0 ? (creditsRemaining / creditsTotal) * 100 : 0;
+  const currentPlanKey = billingStatus?.plan_key || 'free';
+  const currentPlan = billingCatalog?.plans?.[currentPlanKey];
 
   const helpImages = [
     '/help_images/1.gif',
@@ -64,6 +84,8 @@ export default function Dashboard() {
     '/help_images/6-1.gif',
     '/help_images/7.gif'
   ];
+  const planOrder = ['free', 'essential', 'team', 'enterprise'];
+  const packOrder = ['pack_1000', 'pack_5000', 'pack_20000'];
 
   useEffect(() => {
     const savedDarkMode = localStorage.getItem('darkModeEnabled') === 'true';
@@ -75,6 +97,54 @@ export default function Dashboard() {
     const savedTimezone = localStorage.getItem('userTimezone') || Intl.DateTimeFormat().resolvedOptions().timeZone;
     setTimezone(savedTimezone);
   }, []);
+
+  useEffect(() => {
+    const token = localStorage.getItem('access_token') || localStorage.getItem('token');
+    if (!token) {
+      setBillingLoading(false);
+      return;
+    }
+
+    const loadBilling = async () => {
+      setBillingLoading(true);
+      setBillingError('');
+      try {
+        const [statusRes, catalogRes] = await Promise.all([
+          fetch(`${API_BASE}/api/billing/status`, {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+          fetch(`${API_BASE}/api/billing/catalog`),
+        ]);
+        const statusData = await statusRes.json();
+        const catalogData = await catalogRes.json();
+
+        if (!statusRes.ok) {
+          throw new Error(statusData?.msg || 'Unable to load billing status.');
+        }
+
+        setBillingStatus(statusData);
+        setBillingCatalog(catalogData || { plans: {}, overage_packs: {} });
+      } catch (error) {
+        setBillingError(error.message || 'Unable to load billing data.');
+      } finally {
+        setBillingLoading(false);
+      }
+    };
+
+    loadBilling();
+  }, []);
+
+  const refreshBilling = async () => {
+    const token = localStorage.getItem('access_token') || localStorage.getItem('token');
+    if (!token) return;
+    const res = await fetch(`${API_BASE}/api/billing/status`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await res.json();
+    if (res.ok) {
+      setBillingStatus(data);
+    }
+  };
 
   const handleLogout = () => {
     logout();
@@ -96,6 +166,100 @@ export default function Dashboard() {
     const newTimezone = e.target.value;
     setTimezone(newTimezone);
     localStorage.setItem('userTimezone', newTimezone);
+  };
+
+  const startPlanChange = async (planKey) => {
+    const token = localStorage.getItem('access_token') || localStorage.getItem('token');
+    if (!token) {
+      navigate('/?auth=1');
+      return;
+    }
+
+    setBillingActionLoading(planKey);
+    setBillingError('');
+    try {
+      const response = await fetch(`${API_BASE}/api/billing/create-checkout-session`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ plan_key: planKey }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.msg || 'Unable to start plan change.');
+      }
+
+      if (data?.url) {
+        window.location.href = data.url;
+        return;
+      }
+
+      await refreshBilling();
+    } catch (error) {
+      setBillingError(error.message || 'Unable to start plan change.');
+    } finally {
+      setBillingActionLoading('');
+    }
+  };
+
+  const buyCreditPack = async (packKey) => {
+    const token = localStorage.getItem('access_token') || localStorage.getItem('token');
+    if (!token) {
+      navigate('/?auth=1');
+      return;
+    }
+
+    setBillingActionLoading(packKey);
+    setBillingError('');
+    try {
+      const response = await fetch(`${API_BASE}/api/billing/create-overage-checkout-session`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ pack_key: packKey }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data?.url) {
+        throw new Error(data?.msg || 'Unable to start overage checkout.');
+      }
+      window.location.href = data.url;
+    } catch (error) {
+      setBillingError(error.message || 'Unable to start overage checkout.');
+      setBillingActionLoading('');
+    }
+  };
+
+  const openBillingPortal = async () => {
+    const token = localStorage.getItem('access_token') || localStorage.getItem('token');
+    if (!token) {
+      navigate('/?auth=1');
+      return;
+    }
+
+    setBillingActionLoading('portal');
+    setBillingError('');
+    try {
+      const response = await fetch(`${API_BASE}/api/billing/create-portal-session`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ return_url: `${window.location.origin}/dashboard` }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data?.url) {
+        throw new Error(data?.msg || 'Unable to open billing portal.');
+      }
+      window.location.href = data.url;
+    } catch (error) {
+      setBillingError(error.message || 'Unable to open billing portal.');
+      setBillingActionLoading('');
+    }
   };
 
   const saveKanban = () => {
@@ -208,14 +372,27 @@ export default function Dashboard() {
                 <div className="progress-bar-container">
                   <div 
                     className="progress-bar"
-                    style={{ width: `${creditsPercentage}%` }}
+                    style={{ width: `${Math.max(0, Math.min(100, creditsPercentage))}%` }}
                   ></div>
                 </div>
               </div>
             </div>
             <div className="storage-text">
-              {creditsRemaining} of {dashboardData.creditsTotal} credits remaining
+              {billingLoading ? (
+                'Loading credits...'
+              ) : hasMeteredCredits ? (
+                `${creditsRemaining.toLocaleString()} of ${creditsTotal.toLocaleString()} credits remaining`
+              ) : billingStatus?.monthly_credit_limit == null ? (
+                'Contracted usage plan (sales-managed)'
+              ) : (
+                `${creditsRemaining} of ${dashboardData.creditsTotal} credits remaining`
+              )}
             </div>
+            {hasMeteredCredits && (
+              <div className="storage-text">
+                {creditsUsed.toLocaleString()} used this cycle
+              </div>
+            )}
           </div>
 
           {/* Recent Sessions */}
@@ -558,11 +735,21 @@ export default function Dashboard() {
                   className="account-button"
                   onClick={() => {
                     setShowSettings(false);
+                    setShowBillingModal(true);
+                  }}
+                >
+                  <i className="fas fa-credit-card"></i>
+                  Plan & Billing
+                </button>
+                <button
+                  className="account-button account-button-secondary"
+                  onClick={() => {
+                    setShowSettings(false);
                     navigate('/account');
                   }}
                 >
                   <i className="fas fa-user"></i>
-                  My Account
+                  Open Account Page
                 </button>
               </div>
             </div>
@@ -573,6 +760,116 @@ export default function Dashboard() {
               >
                 Save
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showBillingModal && (
+        <div id="billingModal" className="modal show">
+          <div className="modal-content billing-modal-content">
+            <button
+              className="close-settings"
+              onClick={() => setShowBillingModal(false)}
+            >
+              &times;
+            </button>
+            <h2>Plan & Billing</h2>
+            <div className="settings-body">
+              {billingLoading ? (
+                <p>Loading billing details...</p>
+              ) : (
+                <>
+                  <div className="billing-summary-card">
+                    <p className="billing-summary-label">Current plan</p>
+                    <h3>{currentPlan?.label || currentPlanKey}</h3>
+                    <p>
+                      {hasMeteredCredits
+                        ? `${creditsRemaining.toLocaleString()} credits remaining of ${creditsTotal.toLocaleString()} this month`
+                        : 'Contracted usage managed under your sales agreement'}
+                    </p>
+                  </div>
+
+                  <div className="billing-grid">
+                    {planOrder.map((key) => {
+                      const plan = billingCatalog?.plans?.[key];
+                      if (!plan) return null;
+                      const isCurrent = key === currentPlanKey;
+                      const isSalesOnly = !!plan.sales_only;
+                      return (
+                        <article key={key} className={`billing-option-card ${isCurrent ? 'is-current' : ''}`}>
+                          <h4>{plan.label}</h4>
+                          <p className="billing-option-price">
+                            {Number.isFinite(plan.monthly_price_usd)
+                              ? (plan.monthly_price_usd === 0 ? '$0' : `$${plan.monthly_price_usd}/mo`)
+                              : 'Contact sales'}
+                          </p>
+                          <p>
+                            {plan.monthly_credits == null
+                              ? 'Pooled contracted usage'
+                              : `${Number(plan.monthly_credits).toLocaleString()} credits/month`}
+                          </p>
+                          {isCurrent ? (
+                            <span className="billing-chip">Current</span>
+                          ) : isSalesOnly ? (
+                            <a href="/login" className="billing-action-link">Talk to sales</a>
+                          ) : (
+                            <button
+                              type="button"
+                              className="save-settings"
+                              onClick={() => startPlanChange(key)}
+                              disabled={billingActionLoading === key}
+                            >
+                              {billingActionLoading === key ? 'Redirecting...' : 'Select'}
+                            </button>
+                          )}
+                        </article>
+                      );
+                    })}
+                  </div>
+
+                  <h3 className="billing-subhead">Overage credit packs</h3>
+                  <div className="billing-grid">
+                    {packOrder.map((key) => {
+                      const pack = billingCatalog?.overage_packs?.[key];
+                      if (!pack) return null;
+                      return (
+                        <article key={key} className="billing-option-card billing-pack-card">
+                          <h4>{pack.label}</h4>
+                          <p className="billing-option-price">${pack.price_usd}</p>
+                          <p>{Number(pack.credits || 0).toLocaleString()} one-time credits</p>
+                          <button
+                            type="button"
+                            className="save-settings"
+                            onClick={() => buyCreditPack(key)}
+                            disabled={billingActionLoading === key}
+                          >
+                            {billingActionLoading === key ? 'Redirecting...' : 'Buy'}
+                          </button>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+
+              {billingError && <p className="billing-error">{billingError}</p>}
+
+              <div className="modal-buttons">
+                <button
+                  className="close-kanban"
+                  onClick={() => setShowBillingModal(false)}
+                >
+                  Close
+                </button>
+                <button
+                  className="save-settings"
+                  onClick={openBillingPortal}
+                  disabled={billingActionLoading === 'portal'}
+                >
+                  {billingActionLoading === 'portal' ? 'Opening...' : 'Open Stripe Billing Portal'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -694,4 +991,3 @@ export default function Dashboard() {
     </div>
   );
 }
-

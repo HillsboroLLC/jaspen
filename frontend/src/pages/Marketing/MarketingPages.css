@@ -1317,6 +1317,14 @@
   transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
 }
 
+.pricing-cta-muted {
+  margin-top: 14px;
+  display: inline-flex;
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: #56698a;
+}
+
 .pricing-cta-button:hover,
 .pricing-cta-link:hover,
 .pricing-portal-button:hover {

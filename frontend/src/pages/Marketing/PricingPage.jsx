@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import MarketingPageLayout from './MarketingPageLayout';
 import { API_BASE } from '../../config/apiBase';
+import { useAuth } from '../../shared/auth/AuthContext';
 
 const FALLBACK_PLANS = [
   {
@@ -44,6 +45,7 @@ function getToken() {
 }
 
 export default function PricingPage() {
+  const { user, loading } = useAuth();
   const [plans, setPlans] = useState(FALLBACK_PLANS);
   const [packs, setPacks] = useState(FALLBACK_PACKS);
   const [pendingKey, setPendingKey] = useState('');
@@ -93,6 +95,7 @@ export default function PricingPage() {
     () => plans.reduce((acc, plan) => ({ ...acc, [plan.plan_key]: plan }), {}),
     [plans]
   );
+  const isLoggedIn = !!user;
 
   const beginCheckout = async (planKey) => {
     const token = getToken();
@@ -236,6 +239,11 @@ export default function PricingPage() {
 
       <section id="plans" className="marketing-section">
         <h2>Plans</h2>
+        {!loading && !isLoggedIn && (
+          <p className="pricing-inline-status">
+            Sign in to see your current plan and manage upgrades/downgrades from Settings or Account.
+          </p>
+        )}
         {statusMessage && <p className="pricing-inline-status">{statusMessage}</p>}
         <div className="plans-grid">
           {plans.map((plan) => {
@@ -251,6 +259,8 @@ export default function PricingPage() {
                 <p>{plan.detail}</p>
                 {plan.sales_only ? (
                   <a className="pricing-cta-link" href="/login">Talk to sales</a>
+                ) : !isLoggedIn ? (
+                  <span className="pricing-cta-muted">Sign in to manage this plan</span>
                 ) : (
                   <button
                     type="button"
@@ -273,32 +283,38 @@ export default function PricingPage() {
 
       <section id="api" className="marketing-section">
         <h2>Overage credit packs</h2>
-        <p className="pricing-pack-copy">
-          For teams staying self-serve, add credits without changing plan tier.
-        </p>
-        <div className="plans-grid pricing-pack-grid">
-          {packs.map((pack) => {
-            const price = Number(pack.price_usd);
-            const loading = pendingKey === pack.pack_key;
-            return (
-              <article key={pack.pack_key} className="marketing-card pricing-plan-card pricing-pack-card">
-                <div className="pricing-plan-head">
-                  <h3>{pack.label || `${pack.credits?.toLocaleString()} credits`}</h3>
-                  <span className="plan-price">${Number.isFinite(price) ? price : pack.price_usd}</span>
-                </div>
-                <p>{(pack.credits || 0).toLocaleString()} one-time credits added to your balance.</p>
-                <button
-                  type="button"
-                  className="pricing-cta-button"
-                  onClick={() => buyOveragePack(pack.pack_key)}
-                  disabled={loading}
-                >
-                  {loading ? 'Redirecting...' : 'Buy credit pack'}
-                </button>
-              </article>
-            );
-          })}
-        </div>
+        {isLoggedIn ? (
+          <>
+            <p className="pricing-pack-copy">
+              For teams staying self-serve, add credits without changing plan tier.
+            </p>
+            <div className="plans-grid pricing-pack-grid">
+              {packs.map((pack) => {
+                const price = Number(pack.price_usd);
+                const loading = pendingKey === pack.pack_key;
+                return (
+                  <article key={pack.pack_key} className="marketing-card pricing-plan-card pricing-pack-card">
+                    <div className="pricing-plan-head">
+                      <h3>{pack.label || `${pack.credits?.toLocaleString()} credits`}</h3>
+                      <span className="plan-price">${Number.isFinite(price) ? price : pack.price_usd}</span>
+                    </div>
+                    <p>{(pack.credits || 0).toLocaleString()} one-time credits added to your balance.</p>
+                    <button
+                      type="button"
+                      className="pricing-cta-button"
+                      onClick={() => buyOveragePack(pack.pack_key)}
+                      disabled={loading}
+                    >
+                      {loading ? 'Redirecting...' : 'Buy credit pack'}
+                    </button>
+                  </article>
+                );
+              })}
+            </div>
+          </>
+        ) : (
+          <p className="pricing-pack-copy">Overage packs are available after sign-in, inside Account settings.</p>
+        )}
       </section>
 
       <section className="marketing-section">
@@ -307,9 +323,13 @@ export default function PricingPage() {
           <p>
             Use Stripe Customer Portal to update payment methods, manage Essential, or cancel at period end.
           </p>
-          <button type="button" className="pricing-portal-button" onClick={openPortal} disabled={pendingKey === 'portal'}>
-            {pendingKey === 'portal' ? 'Opening...' : 'Open billing portal'}
-          </button>
+          {isLoggedIn ? (
+            <button type="button" className="pricing-portal-button" onClick={openPortal} disabled={pendingKey === 'portal'}>
+              {pendingKey === 'portal' ? 'Opening...' : 'Open billing portal'}
+            </button>
+          ) : (
+            <a href="/?auth=1" className="pricing-cta-link">Sign in to manage billing</a>
+          )}
         </div>
       </section>
 

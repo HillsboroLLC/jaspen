@@ -696,6 +696,101 @@ body {
   margin-right: 8px;
   font-size: 16px;
 }
+
+.account-button-secondary {
+  margin-top: 10px;
+}
+
+.billing-modal-content {
+  max-width: 860px !important;
+}
+
+.billing-summary-card {
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 14px;
+  background: #fafcff;
+}
+
+.billing-summary-card h3 {
+  margin: 4px 0;
+  color: var(--primary-color);
+}
+
+.billing-summary-card p {
+  margin: 0;
+}
+
+.billing-summary-label {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  color: #6f7c92;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+}
+
+.billing-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.billing-option-card {
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 12px;
+  background: var(--card-bg-color);
+  display: grid;
+  gap: 8px;
+}
+
+.billing-option-card.is-current {
+  border-color: var(--primary-color);
+  background: var(--primary-light);
+}
+
+.billing-option-card h4,
+.billing-option-card p {
+  margin: 0;
+}
+
+.billing-option-price {
+  color: var(--secondary-color);
+  font-weight: 700;
+}
+
+.billing-chip {
+  display: inline-flex;
+  width: fit-content;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  background: #eaf0ff;
+  color: #365c99;
+}
+
+.billing-action-link {
+  color: var(--primary-color);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.billing-action-link:hover {
+  text-decoration: underline;
+}
+
+.billing-subhead {
+  margin: 16px 0 10px;
+  color: var(--text-color);
+}
+
+.billing-error {
+  margin-top: 12px;
+  color: #8f1d2f;
+  font-weight: 500;
+}
 .modal-buttons {
   text-align: right;
   margin-top: 20px;
@@ -929,6 +1024,23 @@ body.dark-mode .account-button:hover {
 body.dark-mode .settings-section {
   border-top-color: #404040;
 }
+body.dark-mode .billing-summary-card,
+body.dark-mode .billing-option-card {
+  background-color: #1b2748;
+  border-color: #404040;
+}
+body.dark-mode .billing-summary-card h3,
+body.dark-mode .billing-option-price,
+body.dark-mode .billing-subhead {
+  color: #f0f3f2;
+}
+body.dark-mode .billing-chip {
+  background: rgba(255, 255, 255, 0.12);
+  color: #e7eefc;
+}
+body.dark-mode .billing-action-link {
+  color: #f0c3e2;
+}
 body.dark-mode .kanban-column textarea {
   background-color: #1b2748;
   color: #f0f3f2;
@@ -1003,6 +1115,10 @@ body.modal-open {
     flex-direction: column;
     gap: 15px;
   }
+
+  .billing-grid {
+    grid-template-columns: 1fr;
+  }
   
   .modal-buttons {
     flex-direction: column-reverse;
@@ -1032,4 +1148,3 @@ body.modal-open {
     padding: 10px 12px;
   }
 }
-
