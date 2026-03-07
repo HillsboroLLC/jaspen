@@ -781,7 +781,7 @@
 }
 
 .cta-box {
-  background: var(--accent);
+  background: #a0036c;
   padding: 100px;
   border-radius: 48px;
   color: var(--white);
@@ -808,7 +808,8 @@
 .cta-box p {
   font-size: 1.375rem;
   margin-bottom: 48px;
-  opacity: 0.9;
+  color: var(--white);
+  opacity: 1;
 }
 
 .cta-box .jaspen-btn-primary {
