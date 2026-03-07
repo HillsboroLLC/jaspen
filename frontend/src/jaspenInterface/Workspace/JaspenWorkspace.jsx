@@ -4,7 +4,7 @@
 //          and show tabs AFTER Finish & Analyze.
 // ============================================================================
 
-import React, { useEffect, useRef, useState, useMemo, useReducer } from 'react';
+import React, { useEffect, useRef, useState, useMemo, useReducer, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { API_BASE } from '../../config/apiBase';
 import { useChatCommands, parseUIActions, ChatActionTypes } from "../../shared/hooks/useChatCommands"
@@ -13,10 +13,11 @@ import { useAuth } from 'shared/auth/AuthContext';
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
-  faQuestionCircle, faHome, faCogs,
+  faQuestionCircle, faCogs,
   faPaperPlane, faSpinner, faTimes, faBars, faCheck, faExclamationTriangle, faPen,
   faChartLine, faTrash, faPlus, faMinus, faMicrophone, faWandMagicSparkles,
-  faUser, faGear, faBolt, faBrain, faLayerGroup, faRobot, faListCheck, faArrowUpRightFromSquare, faArrowRightFromBracket, faGaugeHigh, faClockRotateLeft, faPaperclip, faArrowUp
+  faGear, faBolt, faBrain, faLayerGroup, faRobot, faListCheck, faArrowUpRightFromSquare, faGaugeHigh, faClockRotateLeft, faPaperclip, faArrowUp,
+  faDownload, faChevronDown, faChevronUp, faCreditCard
 } from '@fortawesome/free-solid-svg-icons';
 import {
   MonitorCheck, MessageCircleQuestion,
@@ -155,7 +156,7 @@ export default function MarketIQWorkspace() {
   const [sidebarState, dispatchSidebar] = useReducer(sidebarReducer, {
     history: false,
     readiness: false,
-    settings: false,
+    settings: true,
     userDismissedReadiness: false
   });
 
@@ -461,12 +462,34 @@ const refreshBundle = async (tid) => {
   const [nameInput, setNameInput] = useState('');
   const [nameModalOpen, setNameModalOpen] = useState(false);
   const [editingName, setEditingName] = useState(false);
+  const [billingStatus, setBillingStatus] = useState(null);
+  const [billingCatalog, setBillingCatalog] = useState({ plans: {}, overage_packs: {} });
+  const [billingLoading, setBillingLoading] = useState(true);
+  const [billingMessage, setBillingMessage] = useState('');
+  const [billingActionLoading, setBillingActionLoading] = useState('');
+  const [billingModalOpen, setBillingModalOpen] = useState(false);
+  const [appsModalOpen, setAppsModalOpen] = useState(false);
+  const [accountQuickMenuOpen, setAccountQuickMenuOpen] = useState(false);
   const savedEmail = (() => {
     try { return localStorage.getItem('jaspen_last_email'); } catch { return null; }
   })();
   const userInitials = getInitials(displayName || user?.name || user?.email || savedEmail || 'User');
   const userName = displayName || user?.name || user?.email?.split('@')[0] || savedEmail?.split?.('@')[0] || 'User';
   const userEmail = user?.email || savedEmail || 'user@example.com';
+  const planOrder = ['free', 'essential', 'team', 'enterprise'];
+  const planRank = { free: 0, essential: 1, team: 2, enterprise: 3 };
+  const plans = billingCatalog?.plans || {};
+  const currentPlanKey = String(billingStatus?.plan_key || 'free').toLowerCase();
+  const currentPlanLabel = plans[currentPlanKey]?.label || (currentPlanKey[0]?.toUpperCase() + currentPlanKey.slice(1));
+  const monthlyCreditLimit = billingStatus?.monthly_credit_limit;
+  const creditsRemaining = billingStatus?.credits_remaining;
+  const creditsBadge = creditsRemaining == null ? 'Contracted' : Number(creditsRemaining || 0).toLocaleString();
+  const queueCount = analysisHistory.length;
+
+  const getAuthToken = useCallback(
+    () => localStorage.getItem('access_token') || localStorage.getItem('token'),
+    []
+  );
 
   useEffect(() => {
     if (!user) return;
@@ -498,6 +521,110 @@ const refreshBundle = async (tid) => {
     } catch {}
     setDisplayName(trimmed);
     setUser?.((prev) => prev ? { ...prev, name: trimmed } : prev);
+  };
+
+  const loadBilling = useCallback(async () => {
+    const token = getAuthToken();
+    if (!token) {
+      setBillingLoading(false);
+      return;
+    }
+    setBillingLoading(true);
+    try {
+      const [statusRes, catalogRes] = await Promise.all([
+        fetch(`${API_BASE}/api/billing/status`, {
+          headers: { Authorization: `Bearer ${token}` },
+          credentials: 'include'
+        }),
+        fetch(`${API_BASE}/api/billing/catalog`, { credentials: 'include' })
+      ]);
+      const statusData = await statusRes.json().catch(() => ({}));
+      const catalogData = await catalogRes.json().catch(() => ({}));
+      if (!statusRes.ok) {
+        throw new Error(statusData?.msg || 'Unable to load plan details.');
+      }
+      setBillingStatus(statusData || null);
+      setBillingCatalog(catalogData || { plans: {}, overage_packs: {} });
+      setBillingMessage('');
+    } catch (error) {
+      setBillingMessage(error.message || 'Unable to load plan details.');
+    } finally {
+      setBillingLoading(false);
+    }
+  }, [getAuthToken]);
+
+  useEffect(() => {
+    loadBilling();
+  }, [loadBilling, user?.id, user?.email]);
+
+  useEffect(() => {
+    if (!sidebarState.settings) {
+      setAccountQuickMenuOpen(false);
+    }
+  }, [sidebarState.settings]);
+
+  const startPlanChange = async (planKey) => {
+    const token = getAuthToken();
+    if (!token) {
+      navigate('/?auth=1');
+      return;
+    }
+    setBillingActionLoading(planKey);
+    setBillingMessage('');
+    try {
+      const response = await fetch(`${API_BASE}/api/billing/create-checkout-session`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        credentials: 'include',
+        body: JSON.stringify({ plan_key: planKey }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.msg || 'Unable to start plan change.');
+      }
+      if (data?.url) {
+        window.location.href = data.url;
+        return;
+      }
+      await loadBilling();
+    } catch (error) {
+      setBillingMessage(error.message || 'Unable to start plan change.');
+    } finally {
+      setBillingActionLoading('');
+    }
+  };
+
+  const openBillingPortal = async () => {
+    const token = getAuthToken();
+    if (!token) {
+      navigate('/?auth=1');
+      return;
+    }
+    setBillingActionLoading('portal');
+    setBillingMessage('');
+    try {
+      const response = await fetch(`${API_BASE}/api/billing/create-portal-session`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        credentials: 'include',
+        body: JSON.stringify({ return_url: `${window.location.origin}/account` }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data?.url) {
+        throw new Error(data?.msg || 'Unable to open billing portal.');
+      }
+      window.location.href = data.url;
+    } catch (error) {
+      setBillingMessage(error.message || 'Unable to open billing portal.');
+    } finally {
+      setBillingActionLoading('');
+    }
   };
 
   const renderNameModal = () => {
@@ -534,8 +661,152 @@ const refreshBundle = async (tid) => {
     );
   };
 
+  const renderBillingModal = () => {
+    if (!billingModalOpen) return null;
+    return (
+      <div className="jas-modal-backdrop" role="presentation" onClick={() => setBillingModalOpen(false)}>
+        <div className="jas-account-modal" role="dialog" aria-modal="true" aria-label="Account and billing" onClick={(e) => e.stopPropagation()}>
+          <div className="jas-account-modal-header">
+            <h3>Account and billing</h3>
+            <button type="button" className="jas-account-modal-close" onClick={() => setBillingModalOpen(false)} aria-label="Close">
+              <FontAwesomeIcon icon={faTimes} />
+            </button>
+          </div>
+
+          <div className="jas-account-summary-grid">
+            <article className="jas-account-summary-card">
+              <p className="label">Current plan</p>
+              <p className="value">{currentPlanLabel}</p>
+            </article>
+            <article className="jas-account-summary-card">
+              <p className="label">Credits remaining</p>
+              <p className="value">{creditsBadge}</p>
+            </article>
+            <article className="jas-account-summary-card">
+              <p className="label">Monthly limit</p>
+              <p className="value">
+                {monthlyCreditLimit == null ? 'Contracted' : Number(monthlyCreditLimit).toLocaleString()}
+              </p>
+            </article>
+          </div>
+
+          <div className="jas-account-plan-grid">
+            {planOrder.map((key) => {
+              const plan = plans[key];
+              if (!plan) return null;
+              const isCurrent = key === currentPlanKey;
+              const isSalesOnly = !!plan.sales_only;
+              return (
+                <article className={`jas-account-plan-card ${isCurrent ? 'is-current' : ''}`} key={key}>
+                  <h4>{plan.label}</h4>
+                  <p className="price">
+                    {Number.isFinite(plan.monthly_price_usd)
+                      ? (plan.monthly_price_usd === 0 ? '$0/mo' : `$${plan.monthly_price_usd}/mo`)
+                      : 'Contact sales'}
+                  </p>
+                  <p className="detail">
+                    {plan.monthly_credits == null
+                      ? 'Contracted pooled credits'
+                      : `${Number(plan.monthly_credits).toLocaleString()} credits/month`}
+                  </p>
+                  {isCurrent ? (
+                    <span className="jas-account-pill">Current</span>
+                  ) : isSalesOnly ? (
+                    <a href="/pages/get-in-touch" className="jas-account-action-link" target="_blank" rel="noreferrer">Talk to sales</a>
+                  ) : (
+                    <button
+                      type="button"
+                      className="jas-account-action-btn"
+                      onClick={() => startPlanChange(key)}
+                      disabled={billingActionLoading === key}
+                    >
+                      {billingActionLoading === key ? 'Redirecting...' : 'Select plan'}
+                    </button>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+
+          {billingMessage && <p className="jas-account-message">{billingMessage}</p>}
+
+          <div className="jas-account-modal-actions">
+            <button
+              type="button"
+              className="jas-account-portal-btn"
+              onClick={openBillingPortal}
+              disabled={billingActionLoading === 'portal'}
+            >
+              {billingActionLoading === 'portal' ? 'Opening...' : 'Open Stripe billing portal'}
+            </button>
+            <button
+              type="button"
+              className="jas-account-secondary-btn"
+              onClick={() => navigate('/account')}
+            >
+              Full account page
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderAppsModal = () => {
+    if (!appsModalOpen) return null;
+    return (
+      <div className="jas-modal-backdrop" role="presentation" onClick={() => setAppsModalOpen(false)}>
+        <div className="jas-apps-modal" role="dialog" aria-modal="true" aria-label="Apps and extensions" onClick={(e) => e.stopPropagation()}>
+          <div className="jas-account-modal-header">
+            <h3>Apps and extensions</h3>
+            <button type="button" className="jas-account-modal-close" onClick={() => setAppsModalOpen(false)} aria-label="Close">
+              <FontAwesomeIcon icon={faTimes} />
+            </button>
+          </div>
+          <p className="jas-apps-intro">
+            Install lightweight tools for delivery workflows. Start with essential project-system connections.
+          </p>
+          <div className="jas-apps-grid">
+            <article className="jas-app-card">
+              <h4>Desktop app</h4>
+              <p>Run Jaspen in a focused workspace for live planning sessions.</p>
+              <button type="button" onClick={() => window.open('/pages/resources/tutorials', '_blank', 'noopener,noreferrer')}>
+                Download beta
+              </button>
+            </article>
+            <article className="jas-app-card">
+              <h4>Connectors</h4>
+              <p>Jira, Workfront, Smartsheets, Salesforce, Oracle Fusion, and Snowflake setup guides.</p>
+              <button type="button" onClick={() => window.open('/pages/resources/connectors', '_blank', 'noopener,noreferrer')}>
+                Open connectors
+              </button>
+            </article>
+            <article className="jas-app-card">
+              <h4>Integrations</h4>
+              <p>See how APIs and integrations map into plan updates and data trend detection.</p>
+              <button type="button" onClick={() => window.open('/pages/resources/integrations', '_blank', 'noopener,noreferrer')}>
+                View integrations
+              </button>
+            </article>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const handlePMDashboardClick = (onClose) => {
+    const rank = planRank[currentPlanKey] || 0;
+    if (rank < 1) {
+      showToast('PM Dashboard is available on Essential, Team, and Enterprise plans.', 'info');
+      setBillingModalOpen(true);
+      return;
+    }
+    onClose?.();
+    navigate('/dashboard');
+  };
+
   const renderUserMenuContent = (onClose) => (
-    <>
+    <div className="jas-ud-layout">
       <div className="jas-ud-header">
         <div className="jas-ud-header-avatar">{userInitials}</div>
         <div className="jas-ud-header-info">
@@ -595,68 +866,102 @@ const refreshBundle = async (tid) => {
         </div>
       </div>
 
-      <div className="jas-ud-section">
-        <div className="jas-ud-section-label">Navigate</div>
-        <button className="jas-ud-item" onClick={() => { onClose?.(); window.location.reload(); }}>
-          <FontAwesomeIcon icon={faWandMagicSparkles} />
-          <span className="jas-ud-item-label">Jaspen</span>
-        </button>
-        <button className="jas-ud-item" onClick={() => { onClose?.(); enterScorecardPreview(); }}>
-          <FontAwesomeIcon icon={faChartLine} />
-          <span className="jas-ud-item-label">Scorecard</span>
-        </button>
-        <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/ops/pm'); }}>
-          <FontAwesomeIcon icon={faListCheck} />
-          <span className="jas-ud-item-label">PM Dashboard</span>
-        </button>
-        <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/ops/activities'); }}>
-          <FontAwesomeIcon icon={faLayerGroup} />
-          <span className="jas-ud-item-label">In Queue</span>
-          <span className="jas-ud-item-badge">3</span>
-        </button>
+      <div className="jas-ud-scroll">
+        <div className="jas-ud-section">
+          <div className="jas-ud-section-label">Navigate</div>
+          <button className="jas-ud-item" onClick={() => { onClose?.(); window.location.reload(); }}>
+            <FontAwesomeIcon icon={faWandMagicSparkles} />
+            <span className="jas-ud-item-label">Jaspen</span>
+          </button>
+          <button className="jas-ud-item" onClick={() => { onClose?.(); enterScorecardPreview(); }}>
+            <FontAwesomeIcon icon={faChartLine} />
+            <span className="jas-ud-item-label">Scorecard</span>
+          </button>
+          <button className="jas-ud-item" onClick={() => handlePMDashboardClick(onClose)}>
+            <FontAwesomeIcon icon={faListCheck} />
+            <span className="jas-ud-item-label">PM Dashboard</span>
+            {(planRank[currentPlanKey] || 0) < 1 && <span className="jas-ud-item-badge">Essential+</span>}
+          </button>
+          <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/sessions?view=queue'); }}>
+            <FontAwesomeIcon icon={faLayerGroup} />
+            <span className="jas-ud-item-label">In Queue</span>
+            <span className="jas-ud-item-badge">{queueCount}</span>
+          </button>
+        </div>
+
+        <div className="jas-ud-section">
+          <div className="jas-ud-section-label">Account</div>
+          <button className="jas-ud-item" onClick={() => { setBillingModalOpen(true); setAccountQuickMenuOpen(false); }}>
+            <FontAwesomeIcon icon={faBolt} />
+            <span className="jas-ud-item-label">Credits</span>
+            <span className="jas-ud-item-badge">{billingLoading ? '...' : creditsBadge}</span>
+          </button>
+          <button className="jas-ud-item" onClick={() => { setBillingModalOpen(true); setAccountQuickMenuOpen(false); }}>
+            <FontAwesomeIcon icon={faCreditCard} />
+            <span className="jas-ud-item-label">Account</span>
+            <span className="jas-ud-item-badge">{currentPlanLabel}</span>
+          </button>
+          <button className="jas-ud-item">
+            <FontAwesomeIcon icon={faBrain} />
+            <span className="jas-ud-item-label">Knowledge</span>
+          </button>
+        </div>
+
+        <div className="jas-ud-section">
+          <button className="jas-ud-item" onClick={() => { setHelpOpen(true); setAccountQuickMenuOpen(false); }}>
+            <FontAwesomeIcon icon={faQuestionCircle} />
+            <span className="jas-ud-item-label">Get help</span>
+            <span className="jas-ud-item-ext"><FontAwesomeIcon icon={faArrowUpRightFromSquare} /></span>
+          </button>
+        </div>
       </div>
 
-      <div className="jas-ud-section">
-        <div className="jas-ud-section-label">Account</div>
-        <button className="jas-ud-item">
-          <FontAwesomeIcon icon={faBolt} />
-          <span className="jas-ud-item-label">Credits</span>
-          <span className="jas-ud-item-badge">0</span>
+      <div className="jas-ud-footer">
+        <button type="button" className="jas-ud-footer-profile" onClick={() => setBillingModalOpen(true)}>
+          <div className="jas-ud-footer-avatar">{userInitials}</div>
+          <div className="jas-ud-footer-meta">
+            <span>{userName}</span>
+            <span>{currentPlanLabel}</span>
+          </div>
         </button>
-        <button className="jas-ud-item">
-          <FontAwesomeIcon icon={faBrain} />
-          <span className="jas-ud-item-label">Knowledge</span>
-        </button>
-        <button className="jas-ud-item">
-          <FontAwesomeIcon icon={faUser} />
-          <span className="jas-ud-item-label">Account</span>
-        </button>
-        <button className="jas-ud-item">
-          <FontAwesomeIcon icon={faGear} />
-          <span className="jas-ud-item-label">Settings</span>
-        </button>
+        <div className="jas-ud-footer-actions">
+          <button
+            type="button"
+            className="jas-ud-footer-icon"
+            title="Get apps and extensions"
+            aria-label="Get apps and extensions"
+            onClick={() => { setAppsModalOpen(true); setAccountQuickMenuOpen(false); }}
+          >
+            <FontAwesomeIcon icon={faDownload} />
+          </button>
+          <button
+            type="button"
+            className="jas-ud-footer-icon"
+            title="Account menu"
+            aria-label="Account menu"
+            onClick={() => setAccountQuickMenuOpen((prev) => !prev)}
+          >
+            <FontAwesomeIcon icon={accountQuickMenuOpen ? faChevronUp : faChevronDown} />
+          </button>
+        </div>
+        {accountQuickMenuOpen && (
+          <div className="jas-ud-footer-menu">
+            <button type="button" onClick={() => { setBillingModalOpen(true); setAccountQuickMenuOpen(false); }}>
+              Account and billing
+            </button>
+            <button type="button" onClick={() => { setAppsModalOpen(true); setAccountQuickMenuOpen(false); }}>
+              Get apps and extensions
+            </button>
+            <button type="button" onClick={() => { setHelpOpen(true); setAccountQuickMenuOpen(false); }}>
+              Help
+            </button>
+            <button type="button" onClick={() => { onClose?.(); handleLogout(); }} className="danger">
+              Sign out
+            </button>
+          </div>
+        )}
       </div>
-
-      <div className="jas-ud-section">
-        <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/'); }}>
-          <FontAwesomeIcon icon={faHome} />
-          <span className="jas-ud-item-label">Homepage</span>
-          <span className="jas-ud-item-ext"><FontAwesomeIcon icon={faArrowUpRightFromSquare} /></span>
-        </button>
-        <button className="jas-ud-item" onClick={() => { onClose?.(); setHelpOpen(true); }}>
-          <FontAwesomeIcon icon={faQuestionCircle} />
-          <span className="jas-ud-item-label">Get help</span>
-          <span className="jas-ud-item-ext"><FontAwesomeIcon icon={faArrowUpRightFromSquare} /></span>
-        </button>
-      </div>
-
-      <div className="jas-ud-section">
-        <button className="jas-ud-item signout" onClick={() => { onClose?.(); handleLogout(); }}>
-          <FontAwesomeIcon icon={faArrowRightFromBracket} />
-          <span className="jas-ud-item-label">Sign out</span>
-        </button>
-      </div>
-    </>
+    </div>
   );
 
   // === Speech Recognition for Voice Input ===
@@ -2873,6 +3178,8 @@ setView(id === 'chat' ? 'intake' : id);
       )}
 
       {renderNameModal()}
+      {renderBillingModal()}
+      {renderAppsModal()}
 
 {/* Assistant Vertical Tab (Score + Scenarios only) */}
 {activeTab !== 'chat' && !aiDrawerOpen && (
@@ -3574,6 +3881,8 @@ const done = category.completed === true;
       </div>
 
       {renderNameModal()}
+      {renderBillingModal()}
+      {renderAppsModal()}
 
       {/* Content */}
       <div className="jas-chat-content">

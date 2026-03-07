@@ -1,8 +1,36 @@
 // src/pages/Sessions/Sessions.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { API_BASE } from '../../config/apiBase';
 import './Sessions.css';
+
+const parseDateValue = (value) => {
+  const ts = new Date(value || 0).getTime();
+  return Number.isFinite(ts) ? ts : 0;
+};
+
+const extractSessionScore = (session) => {
+  const candidates = [
+    session?.score,
+    session?.market_iq_score,
+    session?.result?.market_iq_score,
+    session?.result?.score,
+    session?.result?.compat?.score,
+    session?.result?.metrics?.overall_score
+  ];
+  for (const value of candidates) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return Math.round(parsed);
+  }
+  return null;
+};
+
+const normalizeSession = (session) => ({
+  ...session,
+  _score: extractSessionScore(session),
+  _updatedAt: parseDateValue(session?.timestamp || session?.updated_at || session?.created),
+  _createdAt: parseDateValue(session?.created || session?.timestamp),
+});
 
 const Sessions = () => {
   const navigate = useNavigate();
@@ -12,6 +40,7 @@ const Sessions = () => {
   const [sessions, setSessions] = useState([]);
   const [filteredSessions, setFilteredSessions] = useState([]);
   const [statusFilter, setStatusFilter] = useState('all');
+  const [sortBy, setSortBy] = useState('updated_desc');
   const [view, setView] = useState('list');
   const [currentSession, setCurrentSession] = useState(null);
   const [activeTab, setActiveTab] = useState('summary');
@@ -21,11 +50,8 @@ const Sessions = () => {
   const urlParams = new URLSearchParams(location.search);
   const viewParam = urlParams.get('view');
   const sessionIdParam = urlParams.get('session_id');
-
-  // Load sessions on component mount
-  useEffect(() => {
-    loadSessions();
-  }, []);
+  const fromParam = urlParams.get('from');
+  const isQueueView = viewParam === 'queue';
 
   // Handle URL parameters
   useEffect(() => {
@@ -35,16 +61,17 @@ const Sessions = () => {
         setView('review');
         setCurrentSession(session);
       }
+      return;
+    }
+    if (viewParam === 'queue') {
+      setView('list');
+      setCurrentSession(null);
+      setSortBy('score_desc');
     }
   }, [viewParam, sessionIdParam, sessions]);
 
-  // Filter sessions when filter changes
-  useEffect(() => {
-    filterSessions();
-  }, [sessions, statusFilter]);
-
   // Load sessions from localStorage and API
-  const loadSessions = async () => {
+  const loadSessions = useCallback(async () => {
     try {
       setLoading(true);
       
@@ -58,7 +85,8 @@ const Sessions = () => {
       if (response.ok) {
         const data = await response.json();
         if (data.success) {
-          setSessions(data.sessions);
+          const normalized = (data.sessions || []).map(normalizeSession);
+          setSessions(normalized);
           setLoading(false);
           return;
         }
@@ -71,7 +99,7 @@ const Sessions = () => {
         if (key && key.startsWith('session_')) {
           try {
             const sessionData = JSON.parse(localStorage.getItem(key));
-            localSessions.push(sessionData);
+            localSessions.push(normalizeSession(sessionData));
           } catch (e) {
             console.error('Error parsing session:', e);
           }
@@ -86,20 +114,48 @@ const Sessions = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   // Filter sessions based on status
-  const filterSessions = () => {
+  const filterSessions = useCallback(() => {
+    let filtered = [...sessions];
     if (statusFilter === 'all') {
-      setFilteredSessions(sessions);
+      filtered = [...sessions];
     } else {
-      const filtered = sessions.filter(session => {
+      filtered = sessions.filter(session => {
         const status = session.status || 'in_progress';
         return status === statusFilter;
       });
-      setFilteredSessions(filtered);
     }
-  };
+
+    filtered.sort((a, b) => {
+      if (sortBy === 'score_desc') {
+        return (b._score ?? -1) - (a._score ?? -1);
+      }
+      if (sortBy === 'score_asc') {
+        return (a._score ?? 101) - (b._score ?? 101);
+      }
+      if (sortBy === 'created_desc') {
+        return (b._createdAt || 0) - (a._createdAt || 0);
+      }
+      if (sortBy === 'created_asc') {
+        return (a._createdAt || 0) - (b._createdAt || 0);
+      }
+      return (b._updatedAt || 0) - (a._updatedAt || 0);
+    });
+
+    setFilteredSessions(filtered);
+  }, [sessions, statusFilter, sortBy]);
+
+  // Load sessions on component mount
+  useEffect(() => {
+    loadSessions();
+  }, [loadSessions]);
+
+  // Filter sessions when filter changes
+  useEffect(() => {
+    filterSessions();
+  }, [filterSessions]);
 
   // Handle session deletion
   const handleDeleteSession = async (sessionId) => {
@@ -109,7 +165,7 @@ const Sessions = () => {
 
     try {
       // Try to delete from API
-      const response = await fetch(`${API_BASE}/api/ai-agent/threads/${sessionId}`, {
+      await fetch(`${API_BASE}/api/ai-agent/threads/${sessionId}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`
@@ -136,7 +192,7 @@ const Sessions = () => {
 
   // Handle continue session
   const handleContinueSession = (sessionId) => {
-    navigate(`/iq?session=${sessionId}`);
+    navigate(`/new?sid=${encodeURIComponent(sessionId)}`);
   };
 
   // Handle view session
@@ -144,14 +200,14 @@ const Sessions = () => {
     setView('review');
     setCurrentSession(session);
     setActiveTab('summary');
-    navigate(`/sessions?view=review&session_id=${session.session_id}`);
+    navigate(`/sessions?view=review&session_id=${session.session_id}${isQueueView ? '&from=queue' : ''}`);
   };
 
   // Handle back to list
   const handleBackToList = () => {
     setView('list');
     setCurrentSession(null);
-    navigate('/sessions');
+    navigate(fromParam === 'queue' || isQueueView ? '/sessions?view=queue' : '/sessions');
   };
 
   // Format date
@@ -177,6 +233,7 @@ const Sessions = () => {
 
   // Format document type
   const formatDocumentType = (type) => {
+    if (!type) return 'Session';
     return type.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
   };
 
@@ -195,7 +252,7 @@ const Sessions = () => {
     <div className="sessions-container">
       <div className="sessions-header">
         <button 
-          onClick={() => navigate('/dashboard')} 
+          onClick={() => navigate('/new')} 
           className="back-link"
         >
           ← Back to Workspace
@@ -210,8 +267,12 @@ const Sessions = () => {
           </>
         ) : (
           <>
-            <h1>Your Sessions</h1>
-            <p>Select a session to view details</p>
+            <h1>{isQueueView ? 'In Queue' : 'Your Sessions'}</h1>
+            <p>
+              {isQueueView
+                ? 'Review scored sessions and prioritize what to run next.'
+                : 'Select a session to view details.'}
+            </p>
           </>
         )}
       </div>
@@ -339,6 +400,18 @@ const Sessions = () => {
               <option value="in_progress">In Progress</option>
               <option value="completed">Completed</option>
             </select>
+            <label htmlFor="sortBy">Sort by:</label>
+            <select
+              id="sortBy"
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+            >
+              <option value="updated_desc">Last updated</option>
+              <option value="score_desc">Highest score</option>
+              <option value="score_asc">Lowest score</option>
+              <option value="created_desc">Newest created</option>
+              <option value="created_asc">Oldest created</option>
+            </select>
           </div>
 
           {/* Sessions Table */}
@@ -346,7 +419,7 @@ const Sessions = () => {
             <div className="empty-state">
               <p>No saved sessions yet. Start a wizard to create one.</p>
               <button 
-                onClick={() => navigate('/iq')}
+                onClick={() => navigate('/new')}
                 className="action-button continue-button"
               >
                 Start New Analysis
@@ -363,6 +436,7 @@ const Sessions = () => {
                   <tr>
                     <th>Status</th>
                     <th>Title</th>
+                    <th>Score</th>
                     <th>Type</th>
                     <th>Last Updated</th>
                     <th>Created</th>
@@ -383,8 +457,9 @@ const Sessions = () => {
                           </span>
                         </td>
                         <td className="session-title">
-                          {session.name || session.session_id}
+                          {session?.result?.project_name || session.name || session.session_id}
                         </td>
+                        <td>{session._score == null ? '—' : session._score}</td>
                         <td>{formatDocumentType(session.document_type)}</td>
                         <td>{formatDate(session.timestamp)}</td>
                         <td>{formatDate(session.created)}</td>
