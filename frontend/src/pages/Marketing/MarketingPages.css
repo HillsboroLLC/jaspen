@@ -2,6 +2,8 @@
   --marketing-navy: #0f172a;
   --marketing-navy-deep: #020617;
   --marketing-magenta: #a0036c;
+  --marketing-amber: #ef8d2f;
+  --marketing-indigo: #4057c7;
   --marketing-white: #ffffff;
   --marketing-paper: #f5f8fd;
   --marketing-gray-100: #e4ebf4;
@@ -538,6 +540,392 @@
 
 .marketing-card[id] {
   scroll-margin-top: 120px;
+}
+
+.lydia-story {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.9fr) minmax(0, 1.1fr);
+  gap: 18px;
+  align-items: stretch;
+}
+
+.lydia-visual {
+  position: relative;
+  border-radius: 22px;
+  border: 1px solid var(--marketing-gray-200);
+  min-height: 260px;
+  padding: 18px;
+  overflow: hidden;
+}
+
+.lydia-visual::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(rgba(15, 23, 42, 0.08) 1px, transparent 1px);
+  background-size: 10px 10px;
+  opacity: 0.34;
+  pointer-events: none;
+}
+
+.lydia-content {
+  border: 1px solid var(--marketing-gray-200);
+  border-radius: 22px;
+  padding: clamp(18px, 2.4vw, 26px);
+  background: rgba(255, 255, 255, 0.88);
+  position: relative;
+}
+
+.lydia-content::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 4px;
+  width: 128px;
+  background: var(--marketing-navy-deep);
+  border-radius: 0 0 4px 0;
+}
+
+.lydia-content h3 {
+  margin: 0 0 10px;
+  font-size: 1.36rem;
+  color: var(--marketing-navy-deep);
+  letter-spacing: -0.02em;
+}
+
+.lydia-content p {
+  margin: 0 0 12px;
+  color: var(--marketing-gray-500);
+  line-height: 1.6;
+}
+
+.lydia-bullets {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.lydia-bullets li {
+  position: relative;
+  padding-left: 20px;
+  color: var(--marketing-gray-700);
+  font-weight: 600;
+}
+
+.lydia-bullets li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.55em;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--marketing-amber);
+}
+
+.lydia-story-score .signal-atlas {
+  background:
+    linear-gradient(160deg, #eef4ff 0 64%, #f8ecf4 64% 100%);
+  border-color: #c7d7f0;
+}
+
+.atlas-panel {
+  position: relative;
+  z-index: 1;
+  border-radius: 18px;
+  border: 1px solid #b8cbe9;
+  background: rgba(255, 255, 255, 0.92);
+  padding: 16px;
+  width: min(280px, 100%);
+  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.12);
+}
+
+.atlas-panel h4 {
+  margin: 0;
+  font-size: 0.98rem;
+  color: var(--marketing-navy-deep);
+}
+
+.atlas-panel p {
+  margin: 2px 0 10px;
+  color: var(--marketing-gray-500);
+  font-size: 0.85rem;
+}
+
+.atlas-meter-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 0;
+  border-bottom: 1px solid rgba(24, 39, 88, 0.12);
+  font-size: 0.84rem;
+  color: var(--marketing-gray-700);
+}
+
+.atlas-meter-row:last-child {
+  border-bottom: none;
+}
+
+.atlas-meter-row strong {
+  color: var(--marketing-navy-deep);
+}
+
+.atlas-chip {
+  position: absolute;
+  right: 16px;
+  padding: 8px 10px;
+  border-radius: 999px;
+  border: 1px solid #c8d6eb;
+  background: rgba(255, 255, 255, 0.9);
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: #1b4b93;
+}
+
+.atlas-chip:nth-of-type(2) {
+  top: 24px;
+}
+
+.atlas-chip:nth-of-type(3) {
+  top: 62px;
+}
+
+.lydia-story-pricing .pricing-architecture {
+  display: grid;
+  align-items: center;
+  justify-items: center;
+  gap: 8px;
+  background:
+    linear-gradient(154deg, #fff4f9 0 52%, #fff5e9 52% 100%);
+  border-color: #e7cad8;
+}
+
+.pricing-node {
+  min-width: 170px;
+  text-align: center;
+  padding: 9px 12px;
+  border-radius: 14px;
+  border: 1px solid #cfbfd1;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--marketing-navy-deep);
+  font-weight: 700;
+  z-index: 1;
+}
+
+.pricing-node.emphasized {
+  border-color: rgba(160, 3, 108, 0.5);
+  box-shadow: 0 12px 24px rgba(160, 3, 108, 0.16);
+}
+
+.pricing-link {
+  width: 2px;
+  height: 22px;
+  background: repeating-linear-gradient(to bottom, #c5b2c3, #c5b2c3 4px, transparent 4px, transparent 8px);
+}
+
+.lydia-story-solutions .solution-map {
+  background:
+    linear-gradient(165deg, #edf8f5 0 54%, #f3fbff 54% 100%);
+  border-color: #c4dfd5;
+}
+
+.map-core {
+  position: absolute;
+  left: 26px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 138px;
+  height: 138px;
+  border-radius: 50%;
+  border: 2px dashed #5d9c8e;
+  display: grid;
+  place-content: center;
+  font-size: 0.9rem;
+  font-weight: 800;
+  color: #0f5e51;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.map-branch {
+  position: absolute;
+  right: 18px;
+  min-width: 152px;
+  border-radius: 12px;
+  padding: 9px 12px;
+  border: 1px solid #bbdcd2;
+  background: rgba(255, 255, 255, 0.9);
+  color: #0f5e51;
+  font-weight: 700;
+}
+
+.map-branch:nth-child(2) {
+  top: 26px;
+}
+
+.map-branch:nth-child(3) {
+  top: 104px;
+}
+
+.map-branch:nth-child(4) {
+  top: 182px;
+}
+
+.solution-map .map-branch::before {
+  content: '';
+  position: absolute;
+  left: -39px;
+  top: 50%;
+  width: 30px;
+  border-top: 2px solid rgba(93, 156, 142, 0.4);
+}
+
+.lydia-story-demos .demos-canvas {
+  background:
+    linear-gradient(162deg, #eef4ff 0 58%, #fff2e4 58% 100%);
+  border-color: #cbd8ea;
+  display: grid;
+  align-content: center;
+  gap: 12px;
+}
+
+.canvas-window {
+  width: 78%;
+  border-radius: 14px;
+  border: 1px solid #c1d1e8;
+  background: rgba(255, 255, 255, 0.92);
+  padding: 10px 14px;
+  color: #1c4a92;
+  font-weight: 700;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.1);
+}
+
+.canvas-window:nth-child(2) {
+  margin-left: 28px;
+  border-color: #d7c0d1;
+  color: var(--marketing-magenta);
+}
+
+.canvas-window:nth-child(3) {
+  margin-left: 56px;
+  border-color: #e2c59e;
+  color: #9d5a16;
+}
+
+.lydia-story-tutorials .tutorials-canvas {
+  background:
+    linear-gradient(158deg, #eff4ff 0 56%, #f3f0ff 56% 100%);
+  border-color: #c6d4ef;
+  display: grid;
+  align-content: center;
+  gap: 10px;
+}
+
+.tutorial-step {
+  border-radius: 12px;
+  border: 1px solid #b9ccec;
+  background: rgba(255, 255, 255, 0.92);
+  padding: 10px 12px;
+  font-weight: 700;
+  color: #1d4f97;
+  width: fit-content;
+  min-width: 190px;
+}
+
+.tutorial-step:nth-child(2) {
+  margin-left: 24px;
+}
+
+.tutorial-step:nth-child(3) {
+  margin-left: 48px;
+}
+
+.tutorial-step:nth-child(4) {
+  margin-left: 72px;
+}
+
+.lydia-story-connectors .connectors-canvas {
+  background:
+    linear-gradient(154deg, #eef5ff 0 54%, #edfcf6 54% 100%);
+  border-color: #c4d8e6;
+}
+
+.connector-core {
+  position: absolute;
+  left: 24px;
+  top: 50%;
+  transform: translateY(-50%);
+  border-radius: 16px;
+  border: 1px solid #b7cdea;
+  background: rgba(255, 255, 255, 0.94);
+  padding: 14px;
+  width: 130px;
+  font-weight: 800;
+  color: #1d4f97;
+}
+
+.connector-node {
+  position: absolute;
+  right: 20px;
+  border-radius: 999px;
+  border: 1px solid #b9d6cf;
+  background: rgba(255, 255, 255, 0.94);
+  padding: 8px 14px;
+  min-width: 120px;
+  text-align: center;
+  color: #0f5e51;
+  font-weight: 700;
+}
+
+.connector-node:nth-child(2) {
+  top: 34px;
+}
+
+.connector-node:nth-child(3) {
+  top: 108px;
+}
+
+.connector-node:nth-child(4) {
+  top: 182px;
+}
+
+.connectors-canvas .connector-node::before {
+  content: '';
+  position: absolute;
+  left: -54px;
+  top: 50%;
+  width: 46px;
+  border-top: 2px solid rgba(76, 130, 118, 0.4);
+}
+
+.lydia-story-plugins .plugins-canvas {
+  background:
+    linear-gradient(162deg, #edf4ff 0 60%, #fff3e7 60% 100%);
+  border-color: #c6d7ee;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.plugin-card {
+  border-radius: 14px;
+  border: 1px solid #bcd0ea;
+  background: rgba(255, 255, 255, 0.92);
+  padding: 12px;
+  font-weight: 700;
+  color: #1d4f97;
+  display: grid;
+  align-content: end;
+  min-height: 102px;
+}
+
+.plugin-card-large {
+  grid-column: span 2;
+  border-color: #e0bfcd;
+  color: var(--marketing-magenta);
+  min-height: 120px;
 }
 
 .industry-grid {
@@ -1087,11 +1475,49 @@
 }
 
 @media (max-width: 960px) {
+  .lydia-story,
   .solutions-intro-grid,
   .pricing-overview-split,
   .score-intro-layout,
   .scorecard-main {
     grid-template-columns: 1fr;
+  }
+
+  .lydia-visual {
+    min-height: 220px;
+  }
+
+  .map-core {
+    position: relative;
+    left: auto;
+    top: auto;
+    transform: none;
+    width: 120px;
+    height: 120px;
+    margin-bottom: 8px;
+  }
+
+  .map-branch,
+  .connector-node,
+  .atlas-chip {
+    position: relative;
+    right: auto;
+    top: auto;
+    margin: 0 0 8px;
+  }
+
+  .solution-map .map-branch::before,
+  .connectors-canvas .connector-node::before {
+    display: none;
+  }
+
+  .connector-core {
+    position: relative;
+    left: auto;
+    top: auto;
+    transform: none;
+    margin-bottom: 10px;
+    width: fit-content;
   }
 
   .plans-grid,
@@ -1124,6 +1550,11 @@
     border-radius: 22px;
     padding: 20px;
     margin-top: 16px;
+  }
+
+  .lydia-visual,
+  .lydia-content {
+    border-radius: 16px;
   }
 
   .hero-copy h1 {
@@ -1166,6 +1597,17 @@
   .resource-track,
   .connector-matrix {
     grid-template-columns: 1fr;
+  }
+
+  .tutorial-step,
+  .tutorial-step:nth-child(2),
+  .tutorial-step:nth-child(3),
+  .tutorial-step:nth-child(4),
+  .canvas-window,
+  .canvas-window:nth-child(2),
+  .canvas-window:nth-child(3) {
+    margin-left: 0;
+    width: 100%;
   }
 }
 

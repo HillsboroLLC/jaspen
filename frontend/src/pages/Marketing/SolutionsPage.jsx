@@ -42,23 +42,24 @@ export default function SolutionsPage() {
       </section>
 
       <section className="marketing-section">
-        <div className="solutions-intro-grid">
-          <article className="marketing-card solutions-intro-card">
-            <h3>Why teams use Jaspen for solutions</h3>
+        <div className="lydia-story lydia-story-solutions">
+          <div className="lydia-visual solution-map">
+            <div className="map-core">Jaspen Core</div>
+            <div className="map-branch">Security Controls</div>
+            <div className="map-branch">Execution Planning</div>
+            <div className="map-branch">Industry Playbooks</div>
+          </div>
+          <article className="lydia-content">
+            <h3>One system, different operating contexts</h3>
             <p>
-              Teams use Jaspen to keep decision quality and operational execution in one flow.
-              The platform reduces rework between strategic planning, risk review, and delivery.
+              Jaspen keeps decision quality, governance, and execution flow connected while adapting to each industry pattern.
+              Security and execution are separate tracks that still share a common operating signal.
             </p>
-          </article>
-          <article className="marketing-card solutions-intro-metrics">
-            <div>
-              <strong>Use-case fit</strong>
-              <p>Security, transformation, and execution workflows</p>
-            </div>
-            <div>
-              <strong>Industry coverage</strong>
-              <p>Eight active vertical patterns including Wellness</p>
-            </div>
+            <ul className="lydia-bullets">
+              <li>Security and execution playbooks run as separate solution tracks</li>
+              <li>Shared signal model keeps leadership aligned across teams</li>
+              <li>Industry overlays adjust language, constraints, and metrics</li>
+            </ul>
           </article>
         </div>
       </section>

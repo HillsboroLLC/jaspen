@@ -76,6 +76,43 @@ export default function JaspenScorePage() {
       </section>
 
       <section className="marketing-section">
+        <div className="lydia-story lydia-story-score">
+          <div className="lydia-visual signal-atlas">
+            <div className="atlas-panel atlas-panel-primary">
+              <h4>Signal Atlas</h4>
+              <p>Execution confidence map</p>
+              <div className="atlas-meter-row">
+                <span>Strategic fit</span>
+                <strong>91</strong>
+              </div>
+              <div className="atlas-meter-row">
+                <span>Execution readiness</span>
+                <strong>84</strong>
+              </div>
+              <div className="atlas-meter-row">
+                <span>Impact potential</span>
+                <strong>86</strong>
+              </div>
+            </div>
+            <div className="atlas-chip">Decision Confidence: High</div>
+            <div className="atlas-chip">Risk Drift: Controlled</div>
+          </div>
+          <article className="lydia-content">
+            <h3>Decision signal, not just a score</h3>
+            <p>
+              Jaspen Score compresses fragmented execution context into one interpretable signal with drill-down clarity.
+              Teams see where confidence is strong, where assumptions are fragile, and where delivery risk is emerging.
+            </p>
+            <ul className="lydia-bullets">
+              <li>Weighted scoring across strategy, execution, and impact</li>
+              <li>Readable confidence profile for leadership alignment</li>
+              <li>Action-ready prompts tied directly to weak signals</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section className="marketing-section">
         <h2>Scoring Pillars</h2>
         <div className="score-pillars-grid">
           {SCORE_PILLARS.map((pillar) => (

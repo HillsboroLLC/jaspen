@@ -23,6 +23,28 @@ export default function ConnectorsPage() {
         </div>
       </section>
       <section className="marketing-section">
+        <div className="lydia-story lydia-story-connectors">
+          <div className="lydia-visual connectors-canvas">
+            <div className="connector-core">Jaspen Context</div>
+            <div className="connector-node">Jira</div>
+            <div className="connector-node">Workfront</div>
+            <div className="connector-node">Smartsheets</div>
+          </div>
+          <article className="lydia-content">
+            <h3>Connected systems, one decision context</h3>
+            <p>
+              Connectors keep planning and execution tools synchronized so teams can maintain context integrity
+              from decision framing through delivery tracking.
+            </p>
+            <ul className="lydia-bullets">
+              <li>Bi-directional context consistency across systems</li>
+              <li>Reduced handoff and re-entry overhead for operators</li>
+              <li>Visibility into delivery signals without tool hopping</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+      <section className="marketing-section">
         <h2>Connector Matrix</h2>
         <div className="connector-matrix">
           {CONNECTORS.map((connector) => (

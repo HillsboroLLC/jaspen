@@ -23,6 +23,27 @@ export default function DemosPage() {
         </div>
       </section>
       <section className="marketing-section">
+        <div className="lydia-story lydia-story-demos">
+          <div className="lydia-visual demos-canvas">
+            <div className="canvas-window">Decision framing</div>
+            <div className="canvas-window">Execution plan</div>
+            <div className="canvas-window">Risk review</div>
+          </div>
+          <article className="lydia-content">
+            <h3>Walkthroughs built like real operator flow</h3>
+            <p>
+              Demos are sequenced to mirror adoption. Teams start with framing, move through execution setup,
+              then validate readiness and delivery confidence.
+            </p>
+            <ul className="lydia-bullets">
+              <li>Scenario-led demo flow instead of feature tour fragments</li>
+              <li>Decision and execution artifacts shown in one sequence</li>
+              <li>Built for stakeholder review and implementation planning</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+      <section className="marketing-section">
         <div className="resource-callout">
           <h3>Recommended order</h3>
           <p>Start with Decision Flow, then Plan Build, then Readiness Review for a full product picture.</p>

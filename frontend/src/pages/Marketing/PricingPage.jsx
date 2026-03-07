@@ -72,6 +72,32 @@ export default function PricingPage() {
         </article>
       </section>
 
+      <section className="marketing-section">
+        <div className="lydia-story lydia-story-pricing">
+          <div className="lydia-visual pricing-architecture">
+            <div className="pricing-node">Free</div>
+            <div className="pricing-link"></div>
+            <div className="pricing-node emphasized">Essential $20</div>
+            <div className="pricing-link"></div>
+            <div className="pricing-node">Team</div>
+            <div className="pricing-link"></div>
+            <div className="pricing-node">Enterprise</div>
+          </div>
+          <article className="lydia-content">
+            <h3>Structured upgrade path</h3>
+            <p>
+              The model mirrors common AI-agent adoption patterns: individual entry, low-friction paid upgrade,
+              then organization-scale rollout with governance and support.
+            </p>
+            <ul className="lydia-bullets">
+              <li>Free for individual discovery and light usage</li>
+              <li>Essential at $20 for daily individual workflows</li>
+              <li>Team and Enterprise for controls, collaboration, and security</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
       <section id="plans" className="marketing-section">
         <h2>Plans</h2>
         <div className="plans-grid">

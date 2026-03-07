@@ -23,6 +23,27 @@ export default function PluginsPage() {
         </div>
       </section>
       <section className="marketing-section">
+        <div className="lydia-story lydia-story-plugins">
+          <div className="lydia-visual plugins-canvas">
+            <div className="plugin-card plugin-card-large">Briefing Output</div>
+            <div className="plugin-card">Risk Escalation</div>
+            <div className="plugin-card">Decision Log</div>
+          </div>
+          <article className="lydia-content">
+            <h3>Composable extensions for role-specific workflows</h3>
+            <p>
+              Plugins let teams tailor outputs by function while preserving the same decision-to-execution backbone.
+              Leadership, PMO, and delivery teams each get purpose-built views.
+            </p>
+            <ul className="lydia-bullets">
+              <li>Drop-in modules for recurring workflow requirements</li>
+              <li>Shared context across plugin outputs and core workflows</li>
+              <li>Faster adoption by role without platform fragmentation</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+      <section className="marketing-section">
         <h2>Plugin Patterns</h2>
         <div className="resource-track">
           {PLUGINS.map((plugin, idx) => (

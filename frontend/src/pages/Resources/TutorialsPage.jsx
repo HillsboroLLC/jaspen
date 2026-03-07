@@ -25,6 +25,28 @@ export default function TutorialsPage() {
         </div>
       </section>
       <section className="marketing-section">
+        <div className="lydia-story lydia-story-tutorials">
+          <div className="lydia-visual tutorials-canvas">
+            <div className="tutorial-step">01 Setup context</div>
+            <div className="tutorial-step">02 Define milestones</div>
+            <div className="tutorial-step">03 Track readiness</div>
+            <div className="tutorial-step">04 Report decisions</div>
+          </div>
+          <article className="lydia-content">
+            <h3>Learning path with operational continuity</h3>
+            <p>
+              Each tutorial step builds on the last so users can progress from setup to leadership reporting
+              without switching frameworks or redoing artifacts.
+            </p>
+            <ul className="lydia-bullets">
+              <li>Progressive path for first-time and advanced users</li>
+              <li>Hands-on exercises tied to real initiative data</li>
+              <li>Outcome format aligned to leadership updates</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+      <section className="marketing-section">
         <h2>Tutorial Path</h2>
         <ol className="tutorial-ladder">
           {TUTORIALS.map((item) => (
