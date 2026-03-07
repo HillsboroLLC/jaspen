@@ -150,9 +150,9 @@
 
 .jaspen-mega-menu {
   position: absolute;
-  top: calc(100% + 12px);
+  top: calc(100% + 4px);
   left: 50%;
-  transform: translateX(-50%) translateY(12px);
+  transform: translateX(-50%) translateY(8px);
   width: min(920px, calc(220px * var(--menu-columns)));
   min-width: 440px;
   background: rgba(255, 255, 255, 0.98);
@@ -166,6 +166,11 @@
   backdrop-filter: blur(14px);
 }
 
+.jaspen-mega-menu.is-solutions {
+  width: min(980px, 86vw);
+  min-width: 760px;
+}
+
 .jaspen-nav-item.is-open .jaspen-mega-menu {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
@@ -176,6 +181,10 @@
   display: grid;
   grid-template-columns: repeat(var(--menu-columns), minmax(0, 1fr));
   gap: 24px;
+}
+
+.jaspen-mega-menu.is-solutions .jaspen-mega-menu-grid {
+  grid-template-columns: minmax(220px, 0.9fr) minmax(520px, 1.7fr);
 }
 
 .mega-menu-column {
@@ -202,6 +211,12 @@
   margin: 0;
   display: grid;
   gap: 6px;
+}
+
+.mega-menu-column.is-industries ul {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 26px;
+  row-gap: 6px;
 }
 
 .mega-menu-link {

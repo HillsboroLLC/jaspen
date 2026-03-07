@@ -50,8 +50,8 @@ const NAV_MENUS = [
         title: 'Features',
         items: [
           { label: 'Jaspen in Jira', sectionId: 'product' },
-          { label: 'Workfront', sectionId: 'product' },
-          { label: 'Smartsheets', sectionId: 'product' },
+          { label: 'Jaspen in Workfront', sectionId: 'product' },
+          { label: 'Jaspen in Smartsheets', sectionId: 'product' },
         ],
       },
     ],
@@ -127,6 +127,7 @@ export default function HomePage() {
   const [activeStep, setActiveStep] = useState(0);
   const [activeDesktopMenu, setActiveDesktopMenu] = useState(null);
   const stepRefs = useRef([]);
+  const closeMenuTimer = useRef(null);
   const [searchParams] = useSearchParams();
 
   // Scroll to auth card when redirected with ?auth=1
@@ -164,6 +165,31 @@ export default function HomePage() {
     return () => observer.disconnect();
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (closeMenuTimer.current) {
+        clearTimeout(closeMenuTimer.current);
+      }
+    };
+  }, []);
+
+  const openDesktopMenu = (label) => {
+    if (closeMenuTimer.current) {
+      clearTimeout(closeMenuTimer.current);
+      closeMenuTimer.current = null;
+    }
+    setActiveDesktopMenu(label);
+  };
+
+  const closeDesktopMenu = () => {
+    if (closeMenuTimer.current) {
+      clearTimeout(closeMenuTimer.current);
+    }
+    closeMenuTimer.current = setTimeout(() => {
+      setActiveDesktopMenu(null);
+    }, 180);
+  };
+
   const scrollToSection = (e, sectionId) => {
     e.preventDefault();
     setMobileNavOpen(false);
@@ -181,12 +207,13 @@ export default function HomePage() {
         <div className="jaspen-header-inner">
           <a href="/" className="jaspen-logo">Jaspen</a>
 
-          <nav className="jaspen-nav-desktop" onMouseLeave={() => setActiveDesktopMenu(null)}>
+          <nav className="jaspen-nav-desktop">
             {NAV_MENUS.map((menu) => (
               <div
                 key={menu.label}
                 className={`jaspen-nav-item ${activeDesktopMenu === menu.label ? 'is-open' : ''}`}
-                onMouseEnter={() => setActiveDesktopMenu(menu.label)}
+                onMouseEnter={() => openDesktopMenu(menu.label)}
+                onMouseLeave={closeDesktopMenu}
               >
                 <button
                   type="button"
@@ -199,10 +226,16 @@ export default function HomePage() {
                   <i className="fa-solid fa-chevron-down"></i>
                 </button>
 
-                <div className="jaspen-mega-menu" style={{ '--menu-columns': menu.columns.length }}>
+                <div
+                  className={`jaspen-mega-menu ${menu.label === 'Solutions' ? 'is-solutions' : ''}`}
+                  style={{ '--menu-columns': menu.columns.length }}
+                >
                   <div className="jaspen-mega-menu-grid">
                     {menu.columns.map((column) => (
-                      <div key={`${menu.label}-${column.title}`} className="mega-menu-column">
+                      <div
+                        key={`${menu.label}-${column.title}`}
+                        className={`mega-menu-column ${menu.label === 'Solutions' && column.title === 'Industries' ? 'is-industries' : ''}`}
+                      >
                         <p className="mega-menu-heading">{column.title}</p>
                         <ul>
                           {column.items.map((item) => (
