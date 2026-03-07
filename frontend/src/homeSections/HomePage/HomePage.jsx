@@ -34,10 +34,98 @@ const STEPS = [
   },
 ];
 
+const NAV_MENUS = [
+  {
+    label: "I'm Jaspen",
+    columns: [
+      {
+        title: 'Products',
+        items: [
+          { label: 'Jaspen', sectionId: 'product' },
+          { label: 'Jaspen Score', sectionId: 'product' },
+          { label: 'Project Management', sectionId: 'product' },
+        ],
+      },
+      {
+        title: 'Features',
+        items: [
+          { label: 'Jaspen in Jira', sectionId: 'product' },
+          { label: 'Workfront', sectionId: 'product' },
+          { label: 'Smartsheets', sectionId: 'product' },
+        ],
+      },
+    ],
+  },
+  {
+    label: 'Solutions',
+    columns: [
+      {
+        title: 'Use Cases',
+        items: [
+          { label: 'Jaspen Security', sectionId: 'about' },
+          { label: 'Execution', sectionId: 'product' },
+        ],
+      },
+      {
+        title: 'Industries',
+        items: [
+          { label: 'Financial Services', sectionId: 'about' },
+          { label: 'Nonprofits', sectionId: 'about' },
+          { label: 'Quick Service Restaurants', sectionId: 'about' },
+          { label: 'Government', sectionId: 'about' },
+          { label: 'Healthcare', sectionId: 'about' },
+          { label: 'Energy', sectionId: 'about' },
+          { label: 'Aviation', sectionId: 'about' },
+        ],
+      },
+    ],
+  },
+  {
+    label: 'Pricing',
+    columns: [
+      {
+        title: 'Overview',
+        items: [
+          { label: 'Overview', sectionId: 'request-access' },
+          { label: 'API', sectionId: 'request-access' },
+        ],
+      },
+      {
+        title: 'Plans',
+        items: [
+          { label: 'Essential', sectionId: 'request-access' },
+          { label: 'Growth', sectionId: 'request-access' },
+          { label: 'Transform', sectionId: 'request-access' },
+        ],
+      },
+    ],
+  },
+  {
+    label: 'Resources',
+    columns: [
+      {
+        title: 'Learn',
+        items: [
+          { label: 'Demos', sectionId: 'product' },
+          { label: 'Tutorials', sectionId: 'product' },
+        ],
+      },
+      {
+        title: 'Tools',
+        items: [
+          { label: 'Connectors', sectionId: 'product' },
+          { label: 'Plugins', sectionId: 'product' },
+        ],
+      },
+    ],
+  },
+];
+
 export default function HomePage() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [visibleElements, setVisibleElements] = useState(new Set());
   const [activeStep, setActiveStep] = useState(0);
+  const [activeDesktopMenu, setActiveDesktopMenu] = useState(null);
   const stepRefs = useRef([]);
   const [searchParams] = useSearchParams();
 
@@ -79,6 +167,7 @@ export default function HomePage() {
   const scrollToSection = (e, sectionId) => {
     e.preventDefault();
     setMobileNavOpen(false);
+    setActiveDesktopMenu(null);
     const el = document.getElementById(sectionId);
     if (el) {
       el.scrollIntoView({ behavior: 'smooth' });
@@ -92,9 +181,44 @@ export default function HomePage() {
         <div className="jaspen-header-inner">
           <a href="/" className="jaspen-logo">Jaspen</a>
 
-          <nav className="jaspen-nav-desktop">
-            <a href="#product" onClick={(e) => scrollToSection(e, 'product')}>How it works</a>
-            <a href="#about" onClick={(e) => scrollToSection(e, 'about')}>About</a>
+          <nav className="jaspen-nav-desktop" onMouseLeave={() => setActiveDesktopMenu(null)}>
+            {NAV_MENUS.map((menu) => (
+              <div
+                key={menu.label}
+                className={`jaspen-nav-item ${activeDesktopMenu === menu.label ? 'is-open' : ''}`}
+                onMouseEnter={() => setActiveDesktopMenu(menu.label)}
+              >
+                <button
+                  type="button"
+                  className="jaspen-nav-trigger"
+                  aria-haspopup="true"
+                  aria-expanded={activeDesktopMenu === menu.label}
+                  onClick={() => setActiveDesktopMenu(activeDesktopMenu === menu.label ? null : menu.label)}
+                >
+                  {menu.label}
+                  <i className="fa-solid fa-chevron-down"></i>
+                </button>
+
+                <div className="jaspen-mega-menu" style={{ '--menu-columns': menu.columns.length }}>
+                  <div className="jaspen-mega-menu-grid">
+                    {menu.columns.map((column) => (
+                      <div key={`${menu.label}-${column.title}`} className="mega-menu-column">
+                        <p className="mega-menu-heading">{column.title}</p>
+                        <ul>
+                          {column.items.map((item) => (
+                            <li key={`${menu.label}-${column.title}-${item.label}`}>
+                              <a href={`#${item.sectionId}`} className="mega-menu-link" onClick={(e) => scrollToSection(e, item.sectionId)}>
+                                {item.label}
+                              </a>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ))}
           </nav>
 
           <div className="jaspen-header-actions">
@@ -106,11 +230,43 @@ export default function HomePage() {
             className={`jaspen-hamburger ${mobileNavOpen ? 'is-open' : ''}`}
             onClick={() => setMobileNavOpen(!mobileNavOpen)}
             aria-label="Toggle menu"
+            aria-expanded={mobileNavOpen}
           >
             <span /><span /><span />
           </button>
         </div>
 
+        {mobileNavOpen && (
+          <div className="jaspen-mobile-menu">
+            <div className="jaspen-mobile-menu-inner">
+              {NAV_MENUS.map((menu) => (
+                <div key={`mobile-${menu.label}`} className="mobile-menu-group">
+                  <p className="mobile-menu-group-title">{menu.label}</p>
+                  <div className="mobile-menu-columns">
+                    {menu.columns.map((column) => (
+                      <div key={`mobile-${menu.label}-${column.title}`} className="mobile-menu-column">
+                        <p className="mobile-menu-heading">{column.title}</p>
+                        <ul>
+                          {column.items.map((item) => (
+                            <li key={`mobile-${menu.label}-${column.title}-${item.label}`}>
+                              <a href={`#${item.sectionId}`} onClick={(e) => scrollToSection(e, item.sectionId)}>
+                                {item.label}
+                              </a>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              <div className="mobile-menu-actions">
+                <Link to="/login" className="jaspen-login-link" onClick={() => setMobileNavOpen(false)}>Get in touch</Link>
+                <a href="#request-access" className="jaspen-btn jaspen-btn-primary" onClick={(e) => scrollToSection(e, 'request-access')}>Request access</a>
+              </div>
+            </div>
+          </div>
+        )}
       </header>
 
       <main>
