@@ -69,14 +69,14 @@ const NAV_MENUS = [
       {
         title: 'Industries',
         items: [
-          { label: 'Financial Services', path: '/pages/solutions#industries' },
-          { label: 'Nonprofits', path: '/pages/solutions#industries' },
-          { label: 'Quick Service Restaurants', path: '/pages/solutions#industries' },
-          { label: 'Government', path: '/pages/solutions#industries' },
-          { label: 'Healthcare', path: '/pages/solutions#industries' },
-          { label: 'Wellness', path: '/pages/solutions#industries' },
-          { label: 'Energy', path: '/pages/solutions#industries' },
-          { label: 'Aviation', path: '/pages/solutions#industries' },
+          { label: 'Financial Services', sectionId: 'industries' },
+          { label: 'Nonprofits', sectionId: 'industries' },
+          { label: 'Quick Service Restaurants', sectionId: 'industries' },
+          { label: 'Government', sectionId: 'industries' },
+          { label: 'Healthcare', sectionId: 'industries' },
+          { label: 'Wellness', sectionId: 'industries' },
+          { label: 'Energy', sectionId: 'industries' },
+          { label: 'Aviation', sectionId: 'industries' },
         ],
       },
     ],
@@ -94,10 +94,10 @@ const NAV_MENUS = [
       {
         title: 'Plans',
         items: [
-          { label: 'Free', path: '/pages/pricing#plans' },
-          { label: 'Essential ($20)', path: '/pages/pricing#plans' },
-          { label: 'Team', path: '/pages/pricing#plans' },
-          { label: 'Enterprise', path: '/pages/pricing#plans' },
+          { label: 'Free', sectionId: 'pricing-plans' },
+          { label: 'Essential ($20)', sectionId: 'pricing-plans' },
+          { label: 'Team', sectionId: 'pricing-plans' },
+          { label: 'Enterprise', sectionId: 'pricing-plans' },
         ],
       },
     ],
@@ -108,15 +108,15 @@ const NAV_MENUS = [
       {
         title: 'Learn',
         items: [
-          { label: 'Demos', sectionId: 'product' },
-          { label: 'Tutorials', sectionId: 'product' },
+          { label: 'Demos', path: '/pages/resources/demos' },
+          { label: 'Tutorials', path: '/pages/resources/tutorials' },
         ],
       },
       {
         title: 'Tools',
         items: [
-          { label: 'Connectors', sectionId: 'product' },
-          { label: 'Plugins', sectionId: 'product' },
+          { label: 'Connectors', path: '/pages/resources/connectors' },
+          { label: 'Plugins', path: '/pages/resources/plugins' },
         ],
       },
     ],
@@ -463,6 +463,56 @@ export default function HomePage() {
                   </li>
                 </ul>
               </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ========== INDUSTRIES ========== */}
+        <section id="industries" className="jaspen-industries-section">
+          <div className="jaspen-container">
+            <div className="jaspen-industries-wrap scroll-reveal">
+              <div className="industries-header">
+                <h2>Industry-ready operating patterns</h2>
+                <p>Built for real implementation constraints across regulated, service, and transformation-heavy environments.</p>
+              </div>
+              <div className="industry-chip-grid">
+                {[
+                  'Financial Services',
+                  'Nonprofits',
+                  'Quick Service Restaurants',
+                  'Government',
+                  'Healthcare',
+                  'Wellness',
+                  'Energy',
+                  'Aviation',
+                ].map((industry) => (
+                  <div key={industry} className="industry-chip">{industry}</div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ========== HOMEPAGE PRICING ========== */}
+        <section id="pricing-plans" className="jaspen-home-pricing-section">
+          <div className="jaspen-container">
+            <div className="home-pricing-header scroll-reveal">
+              <h2>Simple path from individual to enterprise</h2>
+              <p>Start free, upgrade to Essential for $20, and scale with Team or Enterprise when collaboration and governance needs grow.</p>
+            </div>
+            <div className="home-plan-grid">
+              {[
+                { name: 'Free', price: '$0', summary: 'Individual entry with core workflows.' },
+                { name: 'Essential', price: '$20 / month', summary: 'Higher limits and deeper daily usage.' },
+                { name: 'Team', price: 'Contact sales', summary: 'Shared workspaces and collaboration controls.' },
+                { name: 'Enterprise', price: 'Custom', summary: 'Governance, security, and implementation support.' },
+              ].map((plan, idx) => (
+                <article key={plan.name} className={`home-plan-card scroll-reveal ${idx === 1 ? 'is-emphasized' : ''}`}>
+                  <h3>{plan.name}</h3>
+                  <p className="home-plan-price">{plan.price}</p>
+                  <p>{plan.summary}</p>
+                </article>
+              ))}
             </div>
           </div>
         </section>

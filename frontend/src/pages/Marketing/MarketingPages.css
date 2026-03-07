@@ -85,10 +85,6 @@
   padding: 72px 0 28px;
   border-bottom: 1px solid var(--marketing-gray-100);
   background-color: var(--marketing-paper);
-  background-image:
-    linear-gradient(var(--marketing-gray-100) 1px, transparent 1px),
-    linear-gradient(90deg, var(--marketing-gray-100) 1px, transparent 1px);
-  background-size: 28px 28px;
 }
 
 .marketing-hero::after {
@@ -510,6 +506,129 @@
   color: var(--marketing-gray-500);
 }
 
+.resource-callout {
+  border: 1px solid #c7d4e8;
+  border-left: 4px solid var(--marketing-magenta);
+  border-radius: 8px;
+  background: #fbfcff;
+  padding: 16px 18px;
+}
+
+.resource-callout h3 {
+  margin: 0 0 6px;
+  color: var(--marketing-navy-deep);
+}
+
+.resource-callout p {
+  margin: 0;
+  color: var(--marketing-gray-500);
+}
+
+.resource-track {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.resource-card {
+  border: 1px solid var(--marketing-gray-100);
+  border-radius: 10px;
+  padding: 18px;
+  background: #ffffff;
+}
+
+.resource-index {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--marketing-magenta);
+  margin-bottom: 8px;
+}
+
+.resource-card h3 {
+  margin: 0 0 6px;
+  color: var(--marketing-navy-deep);
+}
+
+.resource-card p {
+  margin: 0;
+  color: var(--marketing-gray-500);
+}
+
+.tutorial-ladder {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--marketing-gray-100);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.tutorial-ladder li {
+  padding: 14px 16px 14px 48px;
+  border-bottom: 1px solid var(--marketing-gray-100);
+  position: relative;
+  color: var(--marketing-gray-700);
+  font-weight: 600;
+}
+
+.tutorial-ladder li:last-child {
+  border-bottom: none;
+}
+
+.tutorial-ladder li::before {
+  counter-increment: tutorial;
+  content: counter(tutorial);
+  position: absolute;
+  left: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--marketing-gray-300);
+  display: grid;
+  place-content: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--marketing-navy-deep);
+}
+
+.tutorial-ladder {
+  counter-reset: tutorial;
+}
+
+.connector-matrix {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.connector-cell {
+  border: 1px solid #c7d4e8;
+  border-radius: 10px;
+  padding: 16px;
+  background: #f8fbff;
+  display: grid;
+  gap: 8px;
+}
+
+.connector-cell h3 {
+  margin: 0;
+  color: var(--marketing-navy-deep);
+}
+
+.connector-cell span {
+  width: fit-content;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #1d4f97;
+  background: #e8f1ff;
+  border-radius: 999px;
+  padding: 5px 9px;
+}
+
 @media (max-width: 1024px) {
   .marketing-hero::after {
     display: none;
@@ -526,7 +645,9 @@
 
   .plans-grid,
   .score-pillars-grid,
-  .marketing-grid {
+  .marketing-grid,
+  .resource-track,
+  .connector-matrix {
     grid-template-columns: 1fr 1fr;
   }
 }
@@ -543,7 +664,9 @@
   .plans-grid,
   .score-pillars-grid,
   .marketing-grid,
-  .industry-grid {
+  .industry-grid,
+  .resource-track,
+  .connector-matrix {
     grid-template-columns: 1fr;
   }
 

@@ -19,6 +19,10 @@ import AuthCallback  from './shared/components/AuthCallback';
 import JaspenScorePage from './pages/Marketing/JaspenScorePage';
 import SolutionsPage from './pages/Marketing/SolutionsPage';
 import PricingPage from './pages/Marketing/PricingPage';
+import DemosPage from './pages/Resources/DemosPage';
+import TutorialsPage from './pages/Resources/TutorialsPage';
+import ConnectorsPage from './pages/Resources/ConnectorsPage';
+import PluginsPage from './pages/Resources/PluginsPage';
 
 // Jaspen
 import PricingResult from './jaspenInterface/PricingResult/PricingResult';
@@ -71,6 +75,10 @@ export default function App() {
         <Route path="/pages/jaspen-score" element={withShell(<JaspenScorePage />, { showHeader: false, fullBleed: true, noPadding: true })} />
         <Route path="/pages/solutions" element={withShell(<SolutionsPage />, { showHeader: false, fullBleed: true, noPadding: true })} />
         <Route path="/pages/pricing" element={withShell(<PricingPage />, { showHeader: false, fullBleed: true, noPadding: true })} />
+        <Route path="/pages/resources/demos" element={withShell(<DemosPage />, { showHeader: false, fullBleed: true, noPadding: true })} />
+        <Route path="/pages/resources/tutorials" element={withShell(<TutorialsPage />, { showHeader: false, fullBleed: true, noPadding: true })} />
+        <Route path="/pages/resources/connectors" element={withShell(<ConnectorsPage />, { showHeader: false, fullBleed: true, noPadding: true })} />
+        <Route path="/pages/resources/plugins" element={withShell(<PluginsPage />, { showHeader: false, fullBleed: true, noPadding: true })} />
         <Route path="/auth/callback"  element={withShell(<AuthCallback />, { showHeader: false, fullBleed: true, noPadding: true })} />
 
         {/* Protected (Market) */}
