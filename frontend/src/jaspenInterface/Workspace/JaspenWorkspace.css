@@ -62,7 +62,7 @@
   left: 0;
   writing-mode: vertical-rl;
   text-orientation: mixed;
-  background: var(--light-bg);
+  background: var(--white);
   border: 1px solid var(--border);
   border-left: none;
   padding: 14px 8px;
@@ -110,7 +110,7 @@
   left: 0;
   width: 380px;
   height: 100vh;
-  background: var(--light-bg);
+  background: var(--white);
   border-right: 1px solid var(--border);
   z-index: 200;
   display: flex;
@@ -758,6 +758,58 @@
 }
 .jas-ud-footer-menu .danger:hover {
   background: #fdf0f7;
+}
+
+/* Learn More submenu */
+.jas-ud-footer-submenu-wrap {
+  position: relative;
+}
+.jas-ud-footer-submenu-trigger {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--gray-100);
+  background: var(--white);
+  color: var(--gray-700);
+  text-align: left;
+  font-size: 0.8125rem;
+  padding: 10px 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+.jas-ud-footer-submenu-trigger:hover {
+  background: var(--gray-50);
+  color: var(--navy);
+}
+.jas-ud-footer-submenu {
+  position: absolute;
+  left: 0;
+  bottom: 100%;
+  width: 220px;
+  border: 1px solid var(--gray-300);
+  border-radius: 12px;
+  background: var(--white);
+  box-shadow: 0 16px 28px rgba(22, 31, 59, 0.16);
+  overflow: hidden;
+  z-index: 31;
+}
+.jas-ud-footer-submenu a {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  border-bottom: 1px solid var(--gray-100);
+  color: var(--gray-700);
+  text-decoration: none;
+  text-align: left;
+  font-size: 0.8125rem;
+  padding: 10px 12px;
+}
+.jas-ud-footer-submenu a:last-child {
+  border-bottom: 0;
+}
+.jas-ud-footer-submenu a:hover {
+  background: var(--gray-50);
+  color: var(--navy);
 }
 
 .jas-modal-backdrop {
@@ -1537,7 +1589,7 @@
   top: 80px;
   writing-mode: vertical-rl;
   text-orientation: mixed;
-  background: var(--light-bg);
+  background: var(--white);
   border: 1px solid var(--border);
   border-left: none;
   padding: 14px 8px;
@@ -1598,7 +1650,7 @@
   left: 0;
   width: 380px;
   height: 100vh;
-  background: var(--light-bg);
+  background: var(--white);
   border-right: 1px solid var(--border);
   z-index: 200;
   display: flex;
@@ -2063,7 +2115,7 @@
   top: 0;
   bottom: 0;
   width: 380px;
-  background: var(--light-bg);
+  background: var(--white);
   border-right: 1px solid var(--border);
   z-index: 200;
   display: flex;

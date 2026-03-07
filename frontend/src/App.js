@@ -15,6 +15,7 @@ import GetInTouch    from './pages/GetInTouch/GetInTouch';
 import Privacy       from './pages/Privacy/privacy';
 import Terms         from './pages/Terms/terms';
 import Support       from './pages/Support/Support';
+import Usage         from './pages/Usage/Usage';
 import AuthCallback  from './shared/components/AuthCallback';
 import JaspenScorePage from './pages/Marketing/JaspenScorePage';
 import SolutionsPage from './pages/Marketing/SolutionsPage';
@@ -74,6 +75,7 @@ export default function App() {
         <Route path="/pages/privacy"  element={withShell(<Privacy />)} />
         <Route path="/pages/terms"    element={withShell(<Terms />)} />
         <Route path="/pages/support"  element={withShell(<Support />)} />
+        <Route path="/pages/usage"    element={withShell(<Usage />)} />
         <Route path="/pages/jaspen-score" element={withShell(<JaspenScorePage />, { showHeader: false, fullBleed: true, noPadding: true })} />
         <Route path="/pages/solutions" element={withShell(<SolutionsPage />, { showHeader: false, fullBleed: true, noPadding: true })} />
         <Route path="/pages/pricing" element={withShell(<PricingPage />, { showHeader: false, fullBleed: true, noPadding: true })} />
@@ -86,15 +88,15 @@ export default function App() {
         <Route path="/auth/callback"  element={withShell(<AuthCallback />, { showHeader: false, fullBleed: true, noPadding: true })} />
 
         {/* Protected (Market) */}
-        <Route path="/dashboard" element={<ProtectedRoute>{withShell(<Dashboard />)}</ProtectedRoute>} />
+        <Route path="/dashboard" element={<ProtectedRoute>{withShell(<Dashboard />, { title: 'Dashboard' })}</ProtectedRoute>} />
         <Route
           path="/new"
           element={withShell(<JaspenWorkspace />, { title: 'Jaspen', showHeader: false, fullBleed: true, noPadding: true })}
         />
         <Route path="/market-iq" element={<Navigate to="/new" replace />} />
-        <Route path="/sessions"  element={<ProtectedRoute>{withShell(<Sessions />)}</ProtectedRoute>} />
-        <Route path="/account"   element={<ProtectedRoute>{withShell(<Account />)}</ProtectedRoute>} />
-        <Route path="/payment"   element={<ProtectedRoute>{withShell(<PaymentPage />)}</ProtectedRoute>} />
+        <Route path="/sessions"  element={<ProtectedRoute>{withShell(<Sessions />, { title: 'Sessions', showHeader: false })}</ProtectedRoute>} />
+        <Route path="/account"   element={<ProtectedRoute>{withShell(<Account />, { title: 'Account' })}</ProtectedRoute>} />
+        <Route path="/payment"   element={<ProtectedRoute>{withShell(<PaymentPage />, { title: 'Payment' })}</ProtectedRoute>} />
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

@@ -220,6 +220,8 @@ const selectedVariant = useMemo(() => {
   const [helpMessages, setHelpMessages] = useState([]);
 const [helpInput, setHelpInput] = useState('');
 const [helpLoading, setHelpLoading] = useState(false);
+const [giftModalOpen, setGiftModalOpen] = useState(false);
+const [learnMoreSubmenuOpen, setLearnMoreSubmenuOpen] = useState(false);
 // Score view dropdown state (baseline + up to 3 scenarios)
 const [scenarioOptions, setScenarioOptions] = useState([]);
 const [activeScenarioId, setActiveScenarioId] = useState('baseline');
@@ -476,6 +478,14 @@ const refreshBundle = async (tid) => {
   const userInitials = getInitials(displayName || user?.name || user?.email || savedEmail || 'User');
   const userName = displayName || user?.name || user?.email?.split('@')[0] || savedEmail?.split?.('@')[0] || 'User';
   const userEmail = user?.email || savedEmail || 'user@example.com';
+  const getGreeting = () => {
+    const hour = new Date().getHours();
+    const name = displayName || user?.name?.split(' ')[0] || '';
+    const suffix = name ? `, ${name}` : '';
+    if (hour < 12) return `Good morning${suffix}`;
+    if (hour < 17) return `Good afternoon${suffix}`;
+    return `Good evening${suffix}`;
+  };
   const planOrder = ['free', 'essential', 'team', 'enterprise'];
   const planRank = { free: 0, essential: 1, team: 2, enterprise: 3 };
   const plans = billingCatalog?.plans || {};
@@ -484,7 +494,9 @@ const refreshBundle = async (tid) => {
   const monthlyCreditLimit = billingStatus?.monthly_credit_limit;
   const creditsRemaining = billingStatus?.credits_remaining;
   const creditsBadge = creditsRemaining == null ? 'Contracted' : Number(creditsRemaining || 0).toLocaleString();
-  const queueCount = analysisHistory.length;
+  const queueCount = analysisHistory.filter(
+    s => s.result?.status && s.result.status !== 'completed'
+  ).length;
 
   const getAuthToken = useCallback(
     () => localStorage.getItem('access_token') || localStorage.getItem('token'),
@@ -797,7 +809,7 @@ const refreshBundle = async (tid) => {
   const handlePMDashboardClick = (onClose) => {
     const rank = planRank[currentPlanKey] || 0;
     if (rank < 1) {
-      showToast('PM Dashboard is available on Essential, Team, and Enterprise plans.', 'info');
+      showToast('Upgrade to Essential to unlock PM Dashboard', 'info');
       setBillingModalOpen(true);
       return;
     }
@@ -873,10 +885,6 @@ const refreshBundle = async (tid) => {
             <FontAwesomeIcon icon={faWandMagicSparkles} />
             <span className="jas-ud-item-label">Jaspen</span>
           </button>
-          <button className="jas-ud-item" onClick={() => { onClose?.(); enterScorecardPreview(); }}>
-            <FontAwesomeIcon icon={faChartLine} />
-            <span className="jas-ud-item-label">Scorecard</span>
-          </button>
           <button className="jas-ud-item" onClick={() => handlePMDashboardClick(onClose)}>
             <FontAwesomeIcon icon={faListCheck} />
             <span className="jas-ud-item-label">PM Dashboard</span>
@@ -885,7 +893,7 @@ const refreshBundle = async (tid) => {
           <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/sessions?view=queue'); }}>
             <FontAwesomeIcon icon={faLayerGroup} />
             <span className="jas-ud-item-label">In Queue</span>
-            <span className="jas-ud-item-badge">{queueCount}</span>
+            {queueCount > 0 && <span className="jas-ud-item-badge">{queueCount}</span>}
           </button>
         </div>
 
@@ -895,11 +903,6 @@ const refreshBundle = async (tid) => {
             <FontAwesomeIcon icon={faBolt} />
             <span className="jas-ud-item-label">Credits</span>
             <span className="jas-ud-item-badge">{billingLoading ? '...' : creditsBadge}</span>
-          </button>
-          <button className="jas-ud-item" onClick={() => { setBillingModalOpen(true); setAccountQuickMenuOpen(false); }}>
-            <FontAwesomeIcon icon={faCreditCard} />
-            <span className="jas-ud-item-label">Account</span>
-            <span className="jas-ud-item-badge">{currentPlanLabel}</span>
           </button>
           <button className="jas-ud-item">
             <FontAwesomeIcon icon={faBrain} />
@@ -947,14 +950,33 @@ const refreshBundle = async (tid) => {
         {accountQuickMenuOpen && (
           <div className="jas-ud-footer-menu">
             <button type="button" onClick={() => { setBillingModalOpen(true); setAccountQuickMenuOpen(false); }}>
-              Account and billing
+              Upgrade
             </button>
             <button type="button" onClick={() => { setAppsModalOpen(true); setAccountQuickMenuOpen(false); }}>
               Get apps and extensions
             </button>
-            <button type="button" onClick={() => { setHelpOpen(true); setAccountQuickMenuOpen(false); }}>
-              Help
+            <button type="button" onClick={() => { setGiftModalOpen(true); setAccountQuickMenuOpen(false); }}>
+              Gift Jaspen
             </button>
+            <div
+              className="jas-ud-footer-submenu-wrap"
+              onMouseEnter={() => setLearnMoreSubmenuOpen(true)}
+              onMouseLeave={() => setLearnMoreSubmenuOpen(false)}
+            >
+              <button type="button" className="jas-ud-footer-submenu-trigger">
+                Learn more
+                <FontAwesomeIcon icon={faChevronUp} style={{ marginLeft: 'auto', fontSize: '0.65rem' }} />
+              </button>
+              {learnMoreSubmenuOpen && (
+                <div className="jas-ud-footer-submenu">
+                  <a href="/pages/support" target="_blank" rel="noopener noreferrer">About Jaspen <FontAwesomeIcon icon={faArrowUpRightFromSquare} style={{ fontSize: '0.6rem', marginLeft: 6, opacity: 0.5 }} /></a>
+                  <a href="/pages/resources/tutorials" target="_blank" rel="noopener noreferrer">Tutorials <FontAwesomeIcon icon={faArrowUpRightFromSquare} style={{ fontSize: '0.6rem', marginLeft: 6, opacity: 0.5 }} /></a>
+                  <a href="/pages/terms" target="_blank" rel="noopener noreferrer">Terms of Service <FontAwesomeIcon icon={faArrowUpRightFromSquare} style={{ fontSize: '0.6rem', marginLeft: 6, opacity: 0.5 }} /></a>
+                  <a href="/pages/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy <FontAwesomeIcon icon={faArrowUpRightFromSquare} style={{ fontSize: '0.6rem', marginLeft: 6, opacity: 0.5 }} /></a>
+                  <a href="/pages/usage" target="_blank" rel="noopener noreferrer">Usage Policy <FontAwesomeIcon icon={faArrowUpRightFromSquare} style={{ fontSize: '0.6rem', marginLeft: 6, opacity: 0.5 }} /></a>
+                </div>
+              )}
+            </div>
             <button type="button" onClick={() => { onClose?.(); handleLogout(); }} className="danger">
               Sign out
             </button>
@@ -1413,7 +1435,8 @@ useEffect(() => {
         setReadinessAudit(null);
         setView('intake');
         setActiveTab('summary');
-        dispatchSidebar({ type: 'CLOSE_ALL' });
+        dispatchSidebar({ type: 'CLOSE_HISTORY' });
+        dispatchSidebar({ type: 'CLOSE_READINESS' });
         return;
       }
       const sid = urlSid;
@@ -3884,6 +3907,25 @@ const done = category.completed === true;
       {renderBillingModal()}
       {renderAppsModal()}
 
+      {/* Gift Jaspen Modal */}
+      {giftModalOpen && (
+        <div className="jas-modal-backdrop" onClick={() => setGiftModalOpen(false)}>
+          <div className="jas-account-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 440 }}>
+            <div className="jas-account-modal-header">
+              <h3>Gift Jaspen</h3>
+              <button onClick={() => setGiftModalOpen(false)}><FontAwesomeIcon icon={faTimes} /></button>
+            </div>
+            <div style={{ textAlign: 'center', padding: '40px 24px' }}>
+              <img src="/android-chrome-192x192.png" alt="Jaspen" style={{ width: 64, height: 64, borderRadius: '50%', marginBottom: 16 }} />
+              <h4 style={{ marginBottom: 8, color: 'var(--navy)' }}>Gift Jaspen to a colleague</h4>
+              <p style={{ color: 'var(--gray-600)', marginBottom: 0, lineHeight: 1.6 }}>
+                Share the power of AI-driven strategy scorecards. Gifting will be available soon — stay tuned.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Content */}
       <div className="jas-chat-content">
         {messages.length === 0 ? (
@@ -3894,9 +3936,9 @@ const done = category.completed === true;
                 src="/android-chrome-192x192.png"
                 alt="Jaspen unicorn"
               />
-              <span>What would you like to work on?</span>
+              <span>{getGreeting()}</span>
             </h2>
-            <p>Describe your project or business idea and I'll help you build a complete strategy scorecard through a natural conversation.</p>
+            <p>Describe your project and I'll build a strategy scorecard with you.</p>
           </div>
         ) : (
           <div className="jas-messages">

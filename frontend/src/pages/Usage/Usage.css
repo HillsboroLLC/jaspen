@@ -1,4 +1,4 @@
-.terms-container {
+.usage-container {
   max-width: 800px;
   margin: 0 auto;
   padding: 20px;
@@ -7,14 +7,14 @@
   color: #161f3b;
 }
 
-.terms-content {
+.usage-content {
   background: #fff;
   border-radius: 8px;
   padding: 40px;
   box-shadow: 0 2px 10px rgba(22, 31, 59, 0.08);
 }
 
-.terms-content h1 {
+.usage-content h1 {
   color: #161f3b;
   font-size: 2.5rem;
   margin-bottom: 20px;
@@ -23,7 +23,7 @@
   padding-bottom: 15px;
 }
 
-.terms-meta {
+.usage-meta {
   background: #f8f9fa;
   padding: 15px;
   border-radius: 6px;
@@ -31,16 +31,16 @@
   text-align: center;
 }
 
-.terms-meta p {
+.usage-meta p {
   margin: 0;
   color: #868e96;
 }
 
-.terms-section {
+.usage-section {
   margin-bottom: 35px;
 }
 
-.terms-section h2 {
+.usage-section h2 {
   color: #161f3b;
   font-size: 1.8rem;
   margin-bottom: 15px;
@@ -49,51 +49,43 @@
   padding-left: 15px;
 }
 
-.terms-section h3 {
+.usage-section h3 {
   color: #495057;
   font-size: 1.3rem;
   margin-bottom: 10px;
   margin-top: 25px;
 }
 
-.terms-section h4 {
-  color: #495057;
-  font-size: 1.1rem;
-  margin-bottom: 8px;
-  margin-top: 20px;
-  font-weight: 600;
-}
-
-.terms-section p {
+.usage-section p {
   margin-bottom: 15px;
   text-align: justify;
 }
 
-.terms-section ul {
+.usage-section ul {
   margin-bottom: 15px;
   padding-left: 25px;
 }
 
-.terms-section li {
+.usage-section li {
   margin-bottom: 8px;
 }
 
-.terms-section li strong {
+.usage-section li strong {
   color: #161f3b;
 }
 
-.terms-section a {
+.usage-section a {
   color: #a0036c;
   text-decoration: none;
   border-bottom: 1px solid transparent;
   transition: border-bottom-color 0.3s ease;
 }
 
-.terms-section a:hover {
+.usage-section a:hover {
   border-bottom-color: #a0036c;
 }
 
-.legal-text {
+.usage-callout {
   background: #fdf0f7;
   padding: 15px;
   border-left: 4px solid #a0036c;
@@ -101,6 +93,7 @@
   font-size: 0.9rem;
   margin: 20px 0;
   border-radius: 0 6px 6px 0;
+  line-height: 1.6;
 }
 
 .contact-info {
@@ -123,14 +116,14 @@
   text-decoration: underline;
 }
 
-.terms-divider {
+.usage-divider {
   border: none;
   height: 2px;
   background: linear-gradient(to right, #a0036c, #161f3b);
   margin: 40px 0;
 }
 
-.terms-footer {
+.usage-footer {
   text-align: center;
   color: #868e96;
   font-style: italic;
@@ -139,45 +132,45 @@
 
 /* Mobile Responsiveness */
 @media (max-width: 768px) {
-  .terms-container {
+  .usage-container {
     padding: 10px;
   }
 
-  .terms-content {
+  .usage-content {
     padding: 20px;
   }
 
-  .terms-content h1 {
+  .usage-content h1 {
     font-size: 2rem;
   }
 
-  .terms-section h2 {
+  .usage-section h2 {
     font-size: 1.5rem;
   }
 
-  .terms-section h3 {
+  .usage-section h3 {
     font-size: 1.2rem;
   }
 }
 
 @media (max-width: 480px) {
-  .terms-content h1 {
+  .usage-content h1 {
     font-size: 1.8rem;
   }
 
-  .terms-section h2 {
+  .usage-section h2 {
     font-size: 1.3rem;
   }
 
-  .terms-section h3 {
+  .usage-section h3 {
     font-size: 1.1rem;
   }
 
-  .terms-section {
+  .usage-section {
     margin-bottom: 25px;
   }
 
-  .legal-text {
+  .usage-callout {
     font-size: 0.85rem;
     padding: 12px;
   }
