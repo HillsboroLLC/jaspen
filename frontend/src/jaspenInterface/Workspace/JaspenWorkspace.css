@@ -1496,14 +1496,17 @@
   padding: 16px 24px;
   border-bottom: 1px solid var(--border);
   display: flex;
-  align-items: center;
-  gap: 16px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
 }
 
 .jas-workspace-title {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 0;
+  min-height: 30px;
+  justify-content: center;
 }
 
 .jas-brand-small {
@@ -1523,8 +1526,11 @@
 .jas-top-tabs {
   display: flex;
   align-items: center;
-  gap: 4px;
-  flex: 1;
+  gap: 8px;
+  width: 100%;
+  min-height: 42px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
 }
 
 .jas-top-tab {
@@ -1538,6 +1544,8 @@
   cursor: pointer;
   transition: all var(--transition);
   font-family: var(--font);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .jas-top-tab:hover {
   background: var(--gray-50);
@@ -1555,6 +1563,7 @@
   align-items: center;
   gap: 12px;
   margin-left: auto;
+  flex-shrink: 0;
 }
 
 .jas-scores-select,
@@ -1966,7 +1975,7 @@
 .jas-mini-bar-fill {
   height: 100%;
   border-radius: 999px;
-  background: linear-gradient(90deg, var(--navy), var(--magenta));
+  background: var(--navy);
 }
 
 .jas-mini-risks {

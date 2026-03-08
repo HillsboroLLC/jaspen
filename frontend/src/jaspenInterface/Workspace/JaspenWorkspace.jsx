@@ -2966,6 +2966,23 @@ const handleSaveScenario = async (scenario) => {
       messages,
       fallback: 'Untitled Idea',
     });
+    const snapshotOptions = Array.isArray(scorecardSnapshots)
+      ? [...scorecardSnapshots]
+          .sort((a, b) => {
+            if (Boolean(a?.isBaseline) !== Boolean(b?.isBaseline)) {
+              return a?.isBaseline ? -1 : 1;
+            }
+            return Number(a?.createdAt || 0) - Number(b?.createdAt || 0);
+          })
+          .map((snap, idx) => ({
+            id: snap.id,
+            label: snap.isBaseline ? 'Baseline' : (snap.label || `Scenario ${idx}`),
+          }))
+      : [];
+    const useSnapshotSelect = snapshotOptions.length > 0;
+    const scoreSelectValue = useSnapshotSelect
+      ? (selectedScorecardId || snapshotOptions[0]?.id || '')
+      : selectedVariantId;
     const TabButton = ({ id, label }) => (
       <button
         className={`jas-top-tab ${activeTab === id ? 'active' : ''}`}
@@ -3247,12 +3264,23 @@ setView(id === 'chat' ? 'intake' : id);
                   <select
                     className="jas-variant-select"
                     aria-label="Score View"
-                    value={selectedVariantId}
-                    onChange={(e) => setSelectedVariantId(e.target.value)}
+                    value={scoreSelectValue}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      if (useSnapshotSelect) {
+                        setSelectedScorecardId(next);
+                        return;
+                      }
+                      setSelectedVariantId(next);
+                    }}
                   >
-                    {scoreVariants.map(v => (
-                      <option key={v.id} value={v.id}>{v.label}</option>
-                    ))}
+                    {useSnapshotSelect
+                      ? snapshotOptions.map((opt) => (
+                          <option key={opt.id} value={opt.id}>{opt.label}</option>
+                        ))
+                      : scoreVariants.map((v) => (
+                          <option key={v.id} value={v.id}>{v.label}</option>
+                        ))}
                   </select>
 
                   <select

@@ -154,10 +154,98 @@ function formatValue(value, type) {
   }
 }
 
+function parseMetricNumber(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value !== 'string') return null;
+  const cleaned = value.replace(/[^\d.-]/g, '');
+  if (!cleaned) return null;
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function metricContainers(result = {}) {
+  return [
+    result?.financial_analysis,
+    result?.financial_impact,
+    result?.npv_irr_analysis,
+    result?.investment_analysis,
+    result?.valuation,
+    result?.metrics,
+    result?.compat?.financials,
+  ].filter((x) => x && typeof x === 'object');
+}
+
+function getMetricValue(result = {}, key = '') {
+  for (const box of metricContainers(result)) {
+    if (Object.prototype.hasOwnProperty.call(box, key)) {
+      const parsed = parseMetricNumber(box[key]);
+      if (parsed != null) return parsed;
+    }
+  }
+  return null;
+}
+
+function buildMetricRows(result = {}) {
+  const rows = new Map();
+  const blocked = ['score', 'category', 'label', 'id', 'analysis', 'thread', 'project', 'name', 'risk', 'source', 'version', 'status'];
+  const priority = [
+    'npv', 'irr', 'payback', 'payback_period', 'payback_months', 'roi', 'roi_opportunity',
+    'potential_loss', 'ebitda_at_risk', 'projected_ebitda', 'enterprise_value', 'initial_investment',
+  ];
+
+  for (const box of metricContainers(result)) {
+    for (const [key, rawValue] of Object.entries(box)) {
+      const lower = String(key).toLowerCase();
+      if (blocked.some((term) => lower.includes(term))) continue;
+      const value = parseMetricNumber(rawValue);
+      if (value == null) continue;
+      if (!rows.has(key)) {
+        rows.set(key, {
+          key,
+          label: formatLabel(key),
+          type: inferType(key),
+          value,
+        });
+      }
+    }
+  }
+
+  return [...rows.values()]
+    .sort((a, b) => {
+      const ai = priority.indexOf(a.key);
+      const bi = priority.indexOf(b.key);
+      if (ai === -1 && bi === -1) return a.label.localeCompare(b.label);
+      if (ai === -1) return 1;
+      if (bi === -1) return -1;
+      return ai - bi;
+    })
+    .slice(0, 6);
+}
+
+function buildScenarioMetricRows(result = {}, baselineMetrics = []) {
+  if (!result) return [];
+  const keys = Array.isArray(baselineMetrics) ? baselineMetrics.map((m) => m.key) : [];
+  const fromBaseline = keys
+    .map((key) => {
+      const value = getMetricValue(result, key);
+      if (value == null) return null;
+      return {
+        key,
+        label: formatLabel(key),
+        type: inferType(key),
+        value,
+      };
+    })
+    .filter(Boolean);
+  if (fromBaseline.length > 0) return fromBaseline;
+  return buildMetricRows(result);
+}
+
 // ============================================================================
 // BASELINE COLUMN (Read-only)
 // ============================================================================
-function BaselineColumn({ levers, result }) {
+function BaselineColumn({ result, metrics }) {
+  const rows = Array.isArray(metrics) ? metrics : [];
   return (
     <div className="jas-scenario-col">
       <div className="jas-scenario-header">
@@ -165,30 +253,21 @@ function BaselineColumn({ levers, result }) {
         <span className="jas-scenario-badge">Current</span>
       </div>
       <div className="jas-scenario-body">
-        <div className="jas-scenario-field">
-          <span style={{ color: 'var(--jas-navy)' }}>NPV</span>
-          <span style={{ color: 'var(--jas-gray-500)', fontWeight: 500 }}>
-            {result?.financial_impact?.npv
-              ? formatValue(result.financial_impact.npv, 'currency')
-              : result?.financial_impact?.roi_opportunity || '—'}
-          </span>
-        </div>
-        <div className="jas-scenario-field">
-          <span style={{ color: 'var(--jas-navy)' }}>IRR</span>
-          <span style={{ color: 'var(--jas-gray-500)', fontWeight: 500 }}>
-            {result?.financial_impact?.irr
-              ? formatValue(result.financial_impact.irr, 'percentage')
-              : '—'}
-          </span>
-        </div>
-        <div className="jas-scenario-field">
-          <span style={{ color: 'var(--jas-navy)' }}>Payback</span>
-          <span style={{ color: 'var(--jas-gray-500)', fontWeight: 500 }}>
-            {result?.financial_impact?.payback_months
-              ? formatValue(result.financial_impact.payback_months, 'months')
-              : result?.financial_impact?.payback_period || '—'}
-          </span>
-        </div>
+        {rows.length > 0 ? (
+          rows.map((metric) => (
+            <div key={metric.key} className="jas-scenario-field">
+              <span style={{ color: 'var(--jas-navy)' }}>{metric.label}</span>
+              <span style={{ color: 'var(--jas-gray-500)', fontWeight: 500 }}>
+                {formatValue(metric.value, metric.type)}
+              </span>
+            </div>
+          ))
+        ) : (
+          <div className="jas-scenario-field">
+            <span style={{ color: 'var(--jas-gray-500)' }}>No baseline financial metrics available</span>
+            <span style={{ color: 'var(--jas-gray-500)', fontWeight: 500 }}>—</span>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -202,6 +281,7 @@ function ScenarioColumn({
   levers,
   values,
   baselineValues,
+  baselineMetrics,
   onChange,
   onRun,
   onAdopt,
@@ -209,6 +289,11 @@ function ScenarioColumn({
   disabled,
   running,
 }) {
+  const scenarioMetricRows = useMemo(
+    () => buildScenarioMetricRows(result, baselineMetrics),
+    [result, baselineMetrics]
+  );
+
   const calculateDelta = (currentValue, baselineValue, type) => {
     if (baselineValue == null || currentValue == null) return '—';
     const diff = Number(currentValue) - Number(baselineValue);
@@ -254,38 +339,12 @@ function ScenarioColumn({
 
         {result && (
           <div className="results-box">
-            <div className="result-row">
-              <span className="result-label">NPV</span>
-              <span className="result-value">
-                {result?.financial_analysis?.npv
-                  ? formatValue(result.financial_analysis.npv, 'currency')
-                  : result?.financial_impact?.npv
-                  ? formatValue(result.financial_impact.npv, 'currency')
-                  : '—'}
-              </span>
-            </div>
-
-            <div className="result-row">
-              <span className="result-label">IRR</span>
-              <span className="result-value">
-                {result?.financial_analysis?.irr
-                  ? formatValue(result.financial_analysis.irr, 'percentage')
-                  : result?.financial_impact?.irr
-                  ? formatValue(result.financial_impact.irr, 'percentage')
-                  : '—'}
-              </span>
-            </div>
-
-            <div className="result-row">
-              <span className="result-label">Payback</span>
-              <span className="result-value">
-                {result?.financial_analysis?.payback_period
-                  ? formatValue(result.financial_analysis.payback_period, 'months')
-                  : result?.financial_impact?.payback_months
-                  ? formatValue(result.financial_impact.payback_months, 'months')
-                  : '—'}
-              </span>
-            </div>
+            {scenarioMetricRows.map((metric) => (
+              <div key={metric.key} className="result-row">
+                <span className="result-label">{metric.label}</span>
+                <span className="result-value">{formatValue(metric.value, metric.type)}</span>
+              </div>
+            ))}
 
             <div className="result-score">
               <div className="result-score-label">Jaspen Score</div>
@@ -362,6 +421,7 @@ const ScenarioModeler = forwardRef(function ScenarioModeler({
   console.log('[ScenarioModeler] derived threadId:', threadId);
 
   const [baselineLevers, setBaselineLevers] = useState([]);
+  const baselineMetrics = useMemo(() => buildMetricRows(baseAnalysis), [baseAnalysis]);
 
   const levers = useMemo(() => {
     if (baselineLevers.length > 0) {
@@ -673,17 +733,18 @@ if (label === 'Scenario B') onResultB?.(snapshot);
         }}
       >
         Adjust key levers to model different scenarios. Run scenarios individually or all at once to
-        see projected impact on your AI Agent score.
+        see projected impact on your Jaspen score.
       </div>
 
       <div className="jas-scenario-cols" style={{ marginBottom: '24px' }}>
-        <BaselineColumn levers={levers} result={baseAnalysis} />
+        <BaselineColumn result={baseAnalysis} metrics={baselineMetrics} />
 
         <ScenarioColumn
           title="Scenario A"
           levers={levers}
           values={scenarioA}
           baselineValues={baseAnalysis}
+          baselineMetrics={baselineMetrics}
           onChange={setScenarioA}
           onRun={() => runSingleScenario(scenarioA, setResultA, 'Scenario A')}
           onAdopt={() => adoptScenario(resultA, 'Scenario A')}
@@ -697,6 +758,7 @@ if (label === 'Scenario B') onResultB?.(snapshot);
           levers={levers}
           values={scenarioB}
           baselineValues={baseAnalysis}
+          baselineMetrics={baselineMetrics}
           onChange={setScenarioB}
           onRun={() => runSingleScenario(scenarioB, setResultB, 'Scenario B')}
           onAdopt={() => adoptScenario(resultB, 'Scenario B')}
