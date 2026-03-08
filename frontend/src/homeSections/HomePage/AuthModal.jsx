@@ -1,7 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
 
-const GOOGLE_AUTH_ENTRY_PATH = '/auth/google/start';
-
 export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChange }) {
   const [email, setEmail] = useState('');
   const [status, setStatus] = useState('idle');
@@ -48,7 +46,7 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
 
   const handleGoogle = async () => {
     setError('');
-    window.location.assign(GOOGLE_AUTH_ENTRY_PATH);
+    window.location.href = "https://api.jaspen.ai/api/auth/google/start";
   };
 
   const handleEmailSubmit = async (event) => {
