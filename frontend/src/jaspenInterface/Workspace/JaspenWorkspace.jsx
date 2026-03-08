@@ -821,10 +821,6 @@ const refreshBundle = async (tid) => {
       <div className="jas-ud-scroll">
         <div className="jas-ud-section">
           <div className="jas-ud-section-label">Navigate</div>
-          <button className="jas-ud-item" onClick={() => { onClose?.(); enterScorecardPreview(); }}>
-            <FontAwesomeIcon icon={faChartLine} />
-            <span className="jas-ud-item-label">Scorecard</span>
-          </button>
           <button className="jas-ud-item" onClick={() => handlePMDashboardClick(onClose)}>
             <FontAwesomeIcon icon={faListCheck} />
             <span className="jas-ud-item-label">PM Dashboard</span>
@@ -1692,40 +1688,6 @@ return uiReadiness >= 85 && hasUserTurns;
     } finally {
       window.location.replace('/logout');
     }
-  };
-
-  // === Preview / Demo Scorecard ===
-  const enterScorecardPreview = () => {
-    const demo = {
-      isPreview: true,
-      analysis_id: `demo_${Date.now()}`,
-      project_name: 'Demo Project – Preview Only',
-      market_iq_score: 76,
-      score_category: 'Good',
-      component_scores: {
-        financial_health: 80,
-        operational_efficiency: 72,
-        market_position: 68,
-        execution_readiness: 82
-      },
-      financial_impact: {
-        ebitda_at_risk: '$1.2M',
-        potential_loss: '$3.4M',
-        roi_opportunity: '41%',
-        projected_ebitda: '$8.7M'
-      },
-      risks: [
-        'Customer concentration risk in top 2 accounts',
-        'Packaging lead time may delay rollout',
-        'Model assumptions on churn unvalidated'
-      ],
-      status: 'completed'
-    };
-
-    setAnalysisResult(demo);
-    setSessionId(demo.analysis_id);
-    setView('summary');
-    setActiveTab('summary');
   };
 
   // === Conversation Start ===
