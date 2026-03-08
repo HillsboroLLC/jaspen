@@ -14,7 +14,32 @@ db  = SQLAlchemy()
 jwt = JWTManager()
 mail = Mail()
 
+
+def _as_bool(value, default=False):
+    if value is None:
+        return default
+    return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _derive_cors_origins(frontend_base_url):
+    raw = os.getenv('CORS_ORIGINS')
+    if raw:
+        return [item.strip() for item in raw.split(',') if item.strip()]
+
+    base = (frontend_base_url or 'http://localhost:3000').rstrip('/')
+    origins = {base, 'http://localhost:3000', 'http://127.0.0.1:3000'}
+
+    if '://www.' in base:
+        origins.add(base.replace('://www.', '://', 1))
+    elif '://' in base:
+        scheme, host = base.split('://', 1)
+        origins.add(f"{scheme}://www.{host}")
+
+    return sorted(origins)
+
+
 def create_app():
+    frontend_base = os.getenv('FRONTEND_BASE_URL', 'http://localhost:3000')
     app = Flask(__name__, instance_relative_config=False)
     app.config.from_mapping(
         SECRET_KEY                     = os.getenv('SECRET_KEY'),
@@ -31,6 +56,12 @@ def create_app():
 
         # JWT
         JWT_SECRET_KEY                 = os.getenv('JWT_SECRET_KEY'),
+        JWT_TOKEN_LOCATION             = ['cookies', 'headers'],
+        JWT_ACCESS_COOKIE_NAME         = os.getenv('JWT_ACCESS_COOKIE_NAME', 'jaspen_access'),
+        JWT_COOKIE_SECURE              = _as_bool(os.getenv('JWT_COOKIE_SECURE'), default=False),
+        JWT_COOKIE_SAMESITE            = os.getenv('JWT_COOKIE_SAMESITE', 'Lax'),
+        JWT_COOKIE_CSRF_PROTECT        = _as_bool(os.getenv('JWT_COOKIE_CSRF_PROTECT'), default=False),
+        JWT_COOKIE_DOMAIN              = os.getenv('JWT_COOKIE_DOMAIN') or None,
 
         # Mailer
         MAIL_SERVER                    = os.getenv('MAIL_SERVER', 'smtp.example.com'),
@@ -62,7 +93,7 @@ def create_app():
         'pack_20000':      os.getenv('PRICE_ID_OVERAGE_20000'),
     }
     # —— Frontend base URL for success/cancel links —— #
-    app.config['FRONTEND_BASE_URL'] = os.getenv('FRONTEND_BASE_URL', 'http://localhost:3000')
+    app.config['FRONTEND_BASE_URL'] = frontend_base
 
     # —— Database setup —— #
     db.init_app(app)
@@ -76,7 +107,12 @@ def create_app():
     mail.init_app(app)
 
     # —— CORS —— #
-    CORS(app)
+    cors_origins = _derive_cors_origins(frontend_base)
+    CORS(
+        app,
+        supports_credentials=True,
+        resources={r"/api/*": {"origins": cors_origins}},
+    )
 
     # —— Register blueprints —— #
     from .routes.auth      import auth_bp

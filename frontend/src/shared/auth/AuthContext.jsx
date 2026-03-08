@@ -176,16 +176,8 @@ const syncSelfServeStorageOwnership = (user) => {
 async function authFetch(path, options = {}) {
   const url = path.startsWith('http') ? path : `${API_BASE_URL}${path}`;
 
-  const token =
-    localStorage.getItem('access_token') || localStorage.getItem('token');
-
   // Merge headers safely
   const headers = { ...(options.headers || {}) };
-
-  // Only add Authorization if caller didn't already set it
-  if (token && !headers.Authorization && !headers.authorization) {
-    headers.Authorization = `Bearer ${token}`;
-  }
 
   return fetch(url, {
     ...options,
@@ -243,17 +235,15 @@ export function AuthProvider({ children }) {
   const checkAuthStatus = async () => {
     setLoading(true);
     try {
-const token = localStorage.getItem('access_token') || localStorage.getItem('token'); // backward-compat
-const res = await authFetch('/api/auth/me', {
-  method: 'GET',
-  headers: {
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  },
-});
+const res = await authFetch('/api/auth/me', { method: 'GET' });
 
       if (res.ok) {
         const userData = await res.json();
         const normalized = normalizeUser(userData);
+        // Cookie auth is canonical; remove any stale legacy bearer tokens.
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('token');
+        localStorage.removeItem('refresh_token');
         syncSelfServeStorageOwnership(normalized);
         setUser(normalized);
       } else {
@@ -281,11 +271,10 @@ const res = await authFetch('/api/auth/me', {
 
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        // Keep the token for now (optional), but cookie is the source of truth
-if (data?.token) {
-  localStorage.setItem('token', data.token);          // backward-compat
-  localStorage.setItem('access_token', data.token);   // preferred key
-}
+        // Cookie is the source of truth; do not persist auth tokens in localStorage.
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('token');
+        localStorage.removeItem('refresh_token');
         const normalized = normalizeUser(data?.user || { email });
         syncSelfServeStorageOwnership(normalized);
         setUser(normalized);
@@ -341,10 +330,10 @@ if (data?.token) {
 
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-if (data?.token) {
-  localStorage.setItem('token', data.token);          // backward-compat
-  localStorage.setItem('access_token', data.token);   // preferred key
-}
+        // Cookie is the source of truth; do not persist auth tokens in localStorage.
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('token');
+        localStorage.removeItem('refresh_token');
         const normalized = normalizeUser(data?.user || { email, name });
         syncSelfServeStorageOwnership(normalized);
         setUser(normalized);

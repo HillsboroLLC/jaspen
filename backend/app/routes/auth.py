@@ -1,6 +1,13 @@
 from flask import Blueprint, request, jsonify, current_app
 from werkzeug.security import generate_password_hash, check_password_hash
-from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity, decode_token
+from flask_jwt_extended import (
+    create_access_token,
+    jwt_required,
+    get_jwt_identity,
+    decode_token,
+    set_access_cookies,
+    unset_jwt_cookies,
+)
 import stripe
 
 from app import db
@@ -20,6 +27,12 @@ auth_bp = Blueprint('auth', __name__)
 @auth_bp.before_app_request
 def _set_stripe_key():
     stripe.api_key = current_app.config['STRIPE_SECRET_KEY']
+
+
+def _attach_auth_cookie(resp, token):
+    # New primary auth cookie name is configured in app config (jaspen_access).
+    set_access_cookies(resp, token)
+    return resp
 
 
 @auth_bp.route('/signup', methods=['POST'])
@@ -57,7 +70,7 @@ def signup():
 
     # Free plan can complete sign-up with no payment flow.
     if requested_plan == 'free':
-        return jsonify(
+        resp = jsonify(
             message='User created',
             token=access_token,
             user={
@@ -67,7 +80,9 @@ def signup():
                 'subscription_plan': to_public_plan(user.subscription_plan),
                 'credits_remaining': user.credits_remaining,
             },
-        ), 201
+        )
+        resp.status_code = 201
+        return _attach_auth_cookie(resp, access_token)
 
     # Essential goes through Stripe checkout.
     price_id = (current_app.config.get('STRIPE_PRICE_IDS') or {}).get(requested_plan)
@@ -94,7 +109,7 @@ def signup():
         cancel_url=f"{frontend}/pricing?status=cancel",
     )
 
-    return jsonify(
+    resp = jsonify(
         message='User created; complete payment',
         token=access_token,
         checkout_session_id=session.id,
@@ -106,7 +121,9 @@ def signup():
             'subscription_plan': to_public_plan(user.subscription_plan),
             'credits_remaining': user.credits_remaining,
         },
-    ), 201
+    )
+    resp.status_code = 201
+    return _attach_auth_cookie(resp, access_token)
 
 
 @auth_bp.route('/register', methods=['POST'])
@@ -132,7 +149,7 @@ def login():
         db.session.commit()
 
     token = create_access_token(identity=str(user.id))
-    return jsonify(
+    resp = jsonify(
         token=token,
         user={
             'id': user.id,
@@ -141,7 +158,9 @@ def login():
             'subscription_plan': to_public_plan(user.subscription_plan),
             'credits_remaining': user.credits_remaining,
         },
-    ), 200
+    )
+    resp.status_code = 200
+    return _attach_auth_cookie(resp, token)
 
 
 @auth_bp.route('/me', methods=['GET'])
@@ -166,13 +185,26 @@ def get_current_user():
 
 @auth_bp.route('/logout', methods=['POST'])
 def logout():
-    """Token is client-managed; this endpoint exists for client compatibility."""
-    return jsonify(message='Logged out'), 200
+    """Clear auth cookies while staying backward-compatible with token clients."""
+    resp = jsonify(message='Logged out')
+    unset_jwt_cookies(resp)
+    # Clear legacy cookie key used during Sekki era.
+    resp.set_cookie(
+        'sekki_access',
+        '',
+        max_age=0,
+        expires=0,
+        path='/',
+        secure=bool(current_app.config.get('JWT_COOKIE_SECURE')),
+        samesite=current_app.config.get('JWT_COOKIE_SAMESITE', 'Lax'),
+        domain=current_app.config.get('JWT_COOKIE_DOMAIN'),
+    )
+    return resp, 200
 
 
 @auth_bp.route('/me-cookie', methods=['GET'])
 def get_current_user_from_cookie():
-    token = request.cookies.get('sekki_access')
+    token = request.cookies.get('jaspen_access') or request.cookies.get('sekki_access')
     if not token:
         return jsonify(error='Missing auth cookie'), 401
 

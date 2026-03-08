@@ -10,6 +10,7 @@ import uuid
 from app import db
 from app.models import User
 from app.billing_config import bootstrap_legacy_credits, consume_credits, get_monthly_credit_limit, to_public_plan
+from .sessions import load_user_sessions
 
 market_iq_bp = Blueprint('market_iq', __name__)
 
@@ -32,16 +33,11 @@ def _extract_json_object(text):
 
 def _load_thread_conversation(user_id, thread_id):
     """
-    Load stored conversation history for a thread from session storage.
+    Load stored conversation history for a thread from user session storage.
     Returns [] when no matching thread/session is found.
     """
-    sessions_path = os.path.join('sessions_data', f'user_{user_id}_sessions.json')
-    if not os.path.exists(sessions_path):
-        return []
-
     try:
-        with open(sessions_path, 'r') as f:
-            sessions = json.load(f) or {}
+        sessions = load_user_sessions(user_id) or {}
     except Exception as e:
         print(f"[market_iq.analyze] failed reading sessions for user {user_id}: {e}")
         return []

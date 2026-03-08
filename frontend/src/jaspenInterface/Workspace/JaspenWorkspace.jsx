@@ -3529,7 +3529,7 @@ setView(id === 'chat' ? 'intake' : id);
           title: deriveIdeaTitle({ result: analysisResult, messages, fallback: 'Untitled Idea' }),
           payload: analysisResult,
         });
-        window.location.href = `https://sekki.io/ops/project-planning?from=jas&analysis=${encodeURIComponent(sessionId)}`;
+        window.location.href = `https://www.jaspen.ai/ops/project-planning?from=jas&analysis=${encodeURIComponent(sessionId)}`;
       }}
     />
   </div>
@@ -3729,7 +3729,7 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
       title: deriveIdeaTitle({ result: analysisResult, messages, fallback: 'Untitled Idea' }),
       payload: analysisResult,
     });
-    window.location.href = `https://sekki.io/ops/project-planning?from=jas&analysis=${encodeURIComponent(sessionId)}`;
+    window.location.href = `https://www.jaspen.ai/ops/project-planning?from=jas&analysis=${encodeURIComponent(sessionId)}`;
   }}
 />
                 )}

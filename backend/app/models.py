@@ -107,3 +107,22 @@ class User(db.Model):
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat(),
         }
+
+
+class UserSession(db.Model):
+    __tablename__ = 'user_sessions'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.String(36), db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    session_id = db.Column(db.String(255), nullable=False)
+    name = db.Column(db.String(255), nullable=False, default='Market IQ Intake')
+    document_type = db.Column(db.String(100), nullable=False, default='market_iq')
+    status = db.Column(db.String(50), nullable=False, default='in_progress')
+    payload = db.Column(db.JSON, nullable=False, default=dict)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'session_id', name='uq_user_sessions_user_id_session_id'),
+        db.Index('ix_user_sessions_user_id_updated_at', 'user_id', 'updated_at'),
+    )
