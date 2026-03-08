@@ -31,10 +31,12 @@ function extractLevers(baseAnalysis) {
   ];
 
   const levers = [];
+  const seen = new Set();
 
   for (const [key, value] of Object.entries(combined)) {
     if (EXCLUDED.includes(key)) continue;
     if (typeof value === 'number' && !isNaN(value)) {
+      seen.add(key);
       levers.push({
         key,
         label: formatLabel(key),
@@ -42,6 +44,38 @@ function extractLevers(baseAnalysis) {
         type: inferType(key, value),
       });
     }
+  }
+
+  // Fallback: if backend inputs are sparse, allow editing of baseline metrics directly.
+  if (levers.length === 0) {
+    const baselineMetrics = buildMetricRows(baseAnalysis);
+    baselineMetrics.forEach((metric) => {
+      if (!metric?.key || seen.has(metric.key)) return;
+      const value = Number(metric.value);
+      if (!Number.isFinite(value)) return;
+
+      const spread = metric.type === 'percentage'
+        ? 10
+        : Math.max(Math.abs(value) * 0.5, 1);
+
+      const step = metric.type === 'currency'
+        ? Math.max(100, Math.round((Math.abs(value) * 0.02) / 100) * 100 || 100)
+        : metric.type === 'percentage'
+          ? 0.5
+          : metric.type === 'months'
+            ? 1
+            : Math.max(1, Math.round(Math.abs(value) * 0.05) || 1);
+
+      levers.push({
+        key: metric.key,
+        label: metric.label || formatLabel(metric.key),
+        value,
+        min: metric.type === 'percentage' ? Math.max(0, value - spread) : value - spread,
+        max: value + spread,
+        step,
+        type: metric.type || inferType(metric.key, value),
+      });
+    });
   }
 
   return levers;
@@ -313,6 +347,15 @@ function ScenarioColumn({
       <div className="jas-scenario-header">{title}</div>
 
       <div className="jas-scenario-body" style={{ minHeight: '180px' }}>
+        {levers.length === 0 && (
+          <div className="jas-scenario-field">
+            <span style={{ color: 'var(--jas-gray-500)' }}>
+              No editable baseline levers are available for this scorecard yet.
+            </span>
+            <span style={{ color: 'var(--jas-gray-500)', fontWeight: 500 }}>—</span>
+          </div>
+        )}
+
         {levers.map(lever => {
           const currentValue = values[lever.key] ?? lever.value;
           const delta = calculateDelta(currentValue, lever.value, lever.type);

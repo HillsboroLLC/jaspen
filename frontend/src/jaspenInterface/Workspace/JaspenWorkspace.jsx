@@ -255,6 +255,7 @@ const selectedVariant = useMemo(() => {
 }, [scoreVariants, selectedVariantId, analysisResult]);
 
   const [analysisHistory, setAnalysisHistory] = useState([]);
+  const [clearingHistory, setClearingHistory] = useState(false);
   const [savedScenarios, setSavedScenarios] = useState([]);
   const [helpOpen, setHelpOpen] = useState(false);
   const [helpMessages, setHelpMessages] = useState([]);
@@ -2733,7 +2734,7 @@ if (!baselineRef.current) baselineRef.current = normalizedFallback; // only set 
   }
 
   // Delete a session
-  const handleDeleteAnalysis = async (itemId) => {
+  const deleteAnalysisById = async (itemId) => {
     try {
       const token = localStorage.getItem('access_token') || localStorage.getItem('token');
 
@@ -2748,7 +2749,41 @@ await fetch(`${API_BASE}/api/ai-agent/threads/${itemId}`, {
     } catch (error) {
       console.error('Error deleting session from backend:', error);
     }
+  };
+
+  const handleDeleteAnalysis = async (itemId) => {
+    await deleteAnalysisById(itemId);
     await fetchSessions();
+  };
+
+  const handleClearHistory = async () => {
+    if (!analysisHistory.length || clearingHistory) return;
+    const ok = window.confirm(`Delete all ${analysisHistory.length} history sessions? This cannot be undone.`);
+    if (!ok) return;
+
+    setClearingHistory(true);
+    try {
+      const ids = analysisHistory.map((h) => h.id).filter(Boolean);
+      await Promise.allSettled(ids.map((id) => deleteAnalysisById(id)));
+
+      const currentGone = ids.includes(currentSessionId) || ids.includes(sessionId);
+      if (currentGone) {
+        clearLastSessionId();
+        setSessionId(null);
+        setCurrentSessionId(null);
+        setAnalysisResult(null);
+        setMessages([]);
+        setView('intake');
+      }
+
+      await fetchSessions();
+      showToast('History cleared', 'success');
+    } catch (error) {
+      console.error('[handleClearHistory] failed', error);
+      showToast('Failed to clear history', 'error');
+    } finally {
+      setClearingHistory(false);
+    }
   };
 
   // Persist a scenario row to the backend, then refresh bundle
@@ -2958,7 +2993,7 @@ const handleSaveScenario = async (scenario) => {
     const isSettingsOpen = sidebarState.settings;
     const isScenarioTab = activeTab === 'scenario';
     const shellOpen = sidebarState.history || sidebarState.readiness || sidebarState.settings;
-    const sideTabBase = 80;
+    const sideTabBase = 128;
     const sideTabGap = 130;
     const sideTabSecond = sideTabBase + sideTabGap;
     const workspaceProjectTitle = deriveIdeaTitle({
@@ -3630,7 +3665,7 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
   if (intakeHasReadinessTab) intakeTabs.push('readiness');
   const intakeTabTop = (key) => {
     const idx = intakeTabs.indexOf(key);
-    return `${80 + idx * 130}px`;
+    return `${128 + idx * 130}px`;
   };
   return (
     <div className={`jas jas-shell ${intakeShellOpen ? 'drawer-open' : ''}`}>
@@ -3776,9 +3811,19 @@ const done = category.completed === true;
         <div className={`jas-left-sidebar jas-history-sidebar ${sidebarState.history ? 'sidebar-open' : ''}`}>
           <div className="jas-sidebar-header">
             <h3>Analysis History</h3>
-            <button className="jas-sidebar-close" onClick={() => dispatchSidebar({ type: 'CLOSE_HISTORY' })}>
-              <FontAwesomeIcon icon={faTimes} />
-            </button>
+            <div className="jas-sidebar-header-actions">
+              <button
+                className="jas-sidebar-clear"
+                onClick={handleClearHistory}
+                disabled={clearingHistory || analysisHistory.length === 0}
+                title="Clear all history"
+              >
+                {clearingHistory ? 'Clearing…' : 'Clear'}
+              </button>
+              <button className="jas-sidebar-close" onClick={() => dispatchSidebar({ type: 'CLOSE_HISTORY' })}>
+                <FontAwesomeIcon icon={faTimes} />
+              </button>
+            </div>
           </div>
           <div className="jas-sidebar-content">
             {analysisHistory.map((item, index) => (

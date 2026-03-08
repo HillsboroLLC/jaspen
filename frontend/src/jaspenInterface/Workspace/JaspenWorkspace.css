@@ -12,6 +12,8 @@
   --light-bg: #f0f3f2;
   --white: #ffffff;
   --sidebar-width: 320px;
+  --side-tab-top: 128px;
+  --tab-edge-gutter: 44px;
   --gray-50: #f8f9fa;
   --gray-100: #f1f3f5;
   --gray-200: #e9ecef;
@@ -61,6 +63,7 @@
 .jas-drawer-tab {
   position: fixed;
   left: 0;
+  top: var(--side-tab-top);
   writing-mode: vertical-rl;
   text-orientation: mixed;
   background: var(--light-bg);
@@ -91,7 +94,7 @@
 }
 
 .jas-drawer-tab-readiness {
-  top: 80px;
+  top: var(--side-tab-top);
   display: none;
 }
 .jas-drawer-tab-readiness.active {
@@ -99,7 +102,7 @@
 }
 
 .jas-drawer-tab-history {
-  top: 80px;
+  top: var(--side-tab-top);
 }
 
 /* ============================================================================
@@ -1493,7 +1496,7 @@
    WORKSPACE TABS (Post-Analysis View)
    ============================================================================ */
 .jas-workspace-header {
-  padding: 16px 24px;
+  padding: 26px calc(24px + var(--tab-edge-gutter)) 16px;
   border-bottom: 1px solid var(--border);
   display: flex;
   flex-direction: column;
@@ -1604,7 +1607,7 @@
 .jas-sidebar-tab {
   position: fixed;
   left: 0;
-  top: 80px;
+  top: var(--side-tab-top);
   writing-mode: vertical-rl;
   text-orientation: mixed;
   background: var(--light-bg);
@@ -2179,10 +2182,15 @@
   .jas-workspace-header {
     flex-direction: column;
     align-items: flex-start;
+    padding: 16px;
   }
 
   .jas-top-tabs {
     flex-wrap: wrap;
+  }
+
+  .jas-workspace-body {
+    padding: 0 16px;
   }
 
   /* AI drawer responsive */
@@ -2266,12 +2274,43 @@
   background: var(--white);
 }
 
+/* Keep readiness rail on the same canvas color as other sidebars */
+.jas-left-sidebar.jas-readiness-sidebar,
+.jas-left-sidebar.jas-readiness-sidebar .jas-sidebar-header,
+.jas-left-sidebar.jas-readiness-sidebar .jas-sidebar-content {
+  background: var(--white);
+}
+
 .jas-sidebar-header {
   padding: 18px 20px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   border-bottom: 1px solid var(--border);
+}
+.jas-sidebar-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.jas-sidebar-clear {
+  border: 1px solid var(--gray-300);
+  background: var(--white);
+  color: var(--gray-700);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.jas-sidebar-clear:hover:not(:disabled) {
+  border-color: var(--navy);
+  color: var(--navy);
+}
+.jas-sidebar-clear:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 .jas-sidebar-header h3 {
   font-size: 0.8125rem;
@@ -2716,6 +2755,11 @@
   flex-direction: column;
   overflow: hidden;
   min-height: 0;
+  padding: 0 var(--tab-edge-gutter);
+}
+
+.jas-workspace-body > * {
+  width: 100%;
 }
 
 .score-with-rail .score-dashboard-container {
