@@ -695,6 +695,23 @@ const refreshBundle = async (tid) => {
     setKnowledgeMenuOpen(false);
   }, []);
 
+  const anySidebarOpen = sidebarState.history || sidebarState.readiness || sidebarState.settings;
+
+  useEffect(() => {
+    if (!anySidebarOpen) return;
+
+    const onPointerDown = (event) => {
+      if (!(event.target instanceof Element)) return;
+      if (event.target.closest('.jas-left-sidebar')) return;
+      if (event.target.closest('.jas-sidebar-tab')) return;
+      if (event.target.closest('.jas-drawer-tab')) return;
+      dismissSidebars();
+    };
+
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [anySidebarOpen, dismissSidebars]);
+
   const startPlanChange = async (planKey) => {
     const token = getAuthToken();
     if (!token) {
@@ -3115,14 +3132,6 @@ setView(id === 'chat' ? 'intake' : id);
       <div className={`jas jas-shell ${shellOpen ? 'drawer-open' : ''}`}>
         <main className="jas-main">
           <ToastContainer toasts={toasts} onDismiss={dismissToast} />
-          {shellOpen && (
-            <button
-              type="button"
-              className="jas-left-sidebar-backdrop"
-              aria-label="Close sidebars"
-              onClick={dismissSidebars}
-            />
-          )}
 
 {activeTab === 'chat' && (
   <>
@@ -3756,14 +3765,6 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
   return (
     <div className={`jas jas-shell ${intakeShellOpen ? 'drawer-open' : ''}`}>
       <main className="jas-main">
-        {intakeShellOpen && (
-          <button
-            type="button"
-            className="jas-left-sidebar-backdrop"
-            aria-label="Close sidebars"
-            onClick={dismissSidebars}
-          />
-        )}
         <div className="chatgpt-interface">
       {busy && (
         <div className="thinking-overlay">
