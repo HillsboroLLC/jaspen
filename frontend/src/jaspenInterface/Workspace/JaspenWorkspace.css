@@ -1526,6 +1526,29 @@
   color: var(--navy);
 }
 
+.jas-return-main-btn {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--gray-300);
+  background: var(--white);
+  color: var(--navy);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: all var(--transition);
+  white-space: nowrap;
+}
+
+.jas-return-main-btn:hover {
+  border-color: var(--navy);
+  background: var(--gray-50);
+}
+
 .jas-top-tabs {
   display: flex;
   align-items: center;

@@ -3280,13 +3280,24 @@ setView(id === 'chat' ? 'intake' : id);
         }}
       />
 
-        <div className={`jas-workspace ${aiDrawerOpen ? 'jas-ai-open' : ''} ${isReadinessOpen ? 'jas-readiness-open' : ''} ${isSettingsOpen ? 'jas-settings-open' : ''}`}>
+          <div className={`jas-workspace ${aiDrawerOpen ? 'jas-ai-open' : ''} ${isReadinessOpen ? 'jas-readiness-open' : ''} ${isSettingsOpen ? 'jas-settings-open' : ''}`}>
           <div className="jas-workspace-header">
             <div className="jas-workspace-title">
               <h2 className="jas-project-title">
                 {workspaceProjectTitle}
               </h2>
             </div>
+
+            <button
+              type="button"
+              className="jas-return-main-btn"
+              onClick={() => navigate('/new')}
+              title="Back to main chat"
+              aria-label="Back to main chat"
+            >
+              <span>Jaspen</span>
+              <FontAwesomeIcon icon={faPlus} />
+            </button>
 
             <nav className="jas-top-tabs" role="tablist" aria-label="Jaspen views">
               <TabButton id="summary"  label="Score" />
