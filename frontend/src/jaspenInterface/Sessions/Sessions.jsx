@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { API_BASE } from '../../config/apiBase';
+import { useAuth } from '../../shared/auth/AuthContext';
 import './Sessions.css';
 
 const parseDateValue = (value) => {
@@ -32,9 +33,13 @@ const normalizeSession = (session) => ({
   _createdAt: parseDateValue(session?.created || session?.timestamp),
 });
 
+const normalizePlanKey = (plan) => String(plan || '').trim().toLowerCase();
+const isSelfServePlan = (plan) => ['free', 'essential'].includes(normalizePlanKey(plan));
+
 const Sessions = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user, currentUserRole } = useAuth();
   
   // State management
   const [sessions, setSessions] = useState([]);
@@ -52,6 +57,10 @@ const Sessions = () => {
   const sessionIdParam = urlParams.get('session_id');
   const fromParam = urlParams.get('from');
   const isQueueView = viewParam === 'queue';
+  const planKey = normalizePlanKey(user?.subscription_plan);
+  const isSelfServe = isSelfServePlan(planKey);
+  const allowUnscopedFallback = !isSelfServe && currentUserRole === 'admin';
+  const activeUserId = user?.id ? String(user.id) : '';
 
   // Handle URL parameters
   useEffect(() => {
@@ -94,13 +103,18 @@ const Sessions = () => {
         }
       }
 
-      // Fallback to localStorage
+      // Fallback to localStorage (self-serve plans are user-scoped only)
       const localSessions = [];
       for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i);
         if (key && key.startsWith('session_')) {
           try {
             const sessionData = JSON.parse(localStorage.getItem(key));
+            const sessionOwnerId = sessionData?.user_id ? String(sessionData.user_id) : '';
+            const belongsToActiveUser = Boolean(activeUserId && sessionOwnerId && activeUserId === sessionOwnerId);
+            if (!allowUnscopedFallback && !belongsToActiveUser) {
+              continue;
+            }
             localSessions.push(normalizeSession(sessionData));
           } catch (e) {
             console.error('Error parsing session:', e);
@@ -116,7 +130,7 @@ const Sessions = () => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeUserId, allowUnscopedFallback]);
 
   // Filter sessions based on status
   const filterSessions = useCallback(() => {

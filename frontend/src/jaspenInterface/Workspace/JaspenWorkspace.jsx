@@ -176,6 +176,27 @@ return {
   before_after_financials: raw.before_after_financials || null,
 };
 }
+
+function normalizePlanKey(plan) {
+  return String(plan || '').trim().toLowerCase();
+}
+
+function isSelfServePlan(plan) {
+  return ['free', 'essential'].includes(normalizePlanKey(plan));
+}
+
+function clearLegacySessionCaches() {
+  const fixedKeys = ['jas_history', 'jas_projects', 'jas_last_session_id', 'jas_sid', 'jaspen_last_email'];
+  fixedKeys.forEach((key) => localStorage.removeItem(key));
+
+  for (let i = localStorage.length - 1; i >= 0; i -= 1) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith('session_')) {
+      localStorage.removeItem(key);
+    }
+  }
+}
+
 export default function MarketIQWorkspace() {
   // View states: intake | summary | scenario | comparison | chat
   const [view, setView] = useState('intake');
@@ -1532,6 +1553,7 @@ async function fetchReadinessFor(sid) {
   try {
     const apiBase = API_BASE;
     const url = `${apiBase}/api/ai-agent/readiness/audit?thread_id=${encodeURIComponent(sid)}`;
+    const token = localStorage.getItem('access_token') || localStorage.getItem('token');
     console.log('[fetchReadinessFor] fetching URL:', url);
 
     const res = await fetch(url, {
@@ -1540,6 +1562,7 @@ async function fetchReadinessFor(sid) {
       headers: {
         'Content-Type': 'application/json',
         'X-Session-ID': sid,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
     });
 
@@ -1681,6 +1704,10 @@ return uiReadiness >= 85 && hasUserTurns;
         } catch {}
       }
 
+      if (isSelfServePlan(user?.subscription_plan)) {
+        clearLegacySessionCaches();
+        localStorage.removeItem('jas_storage_owner_id');
+      }
       ['access_token','token','refresh_token'].forEach(k => localStorage.removeItem(k));
       document.cookie = 'jaspen_sid=; Max-Age=0; Path=/; Secure; SameSite=None';
     } finally {
@@ -3280,24 +3307,30 @@ setView(id === 'chat' ? 'intake' : id);
         }}
       />
 
-          <div className={`jas-workspace ${aiDrawerOpen ? 'jas-ai-open' : ''} ${isReadinessOpen ? 'jas-readiness-open' : ''} ${isSettingsOpen ? 'jas-settings-open' : ''}`}>
+        <div className={`jas-workspace ${aiDrawerOpen ? 'jas-ai-open' : ''} ${isReadinessOpen ? 'jas-readiness-open' : ''} ${isSettingsOpen ? 'jas-settings-open' : ''}`}>
           <div className="jas-workspace-header">
-            <div className="jas-workspace-title">
-              <h2 className="jas-project-title">
-                {workspaceProjectTitle}
-              </h2>
-            </div>
+            <div className="jas-workspace-header-top">
+              <div className="jas-workspace-title">
+                <h2 className="jas-project-title">
+                  {workspaceProjectTitle}
+                </h2>
+              </div>
 
-            <button
-              type="button"
-              className="jas-return-main-btn"
-              onClick={() => navigate('/new')}
-              title="Back to main chat"
-              aria-label="Back to main chat"
-            >
-              <span>Jaspen</span>
-              <FontAwesomeIcon icon={faPlus} />
-            </button>
+              <button
+                type="button"
+                className="jas-return-main-btn"
+                onClick={() => window.location.assign('/new')}
+                title="Back to main chat"
+                aria-label="Back to main chat"
+              >
+                <span className="jas-return-main-label">Jaspen</span>
+                <span className="jas-return-main-plus" aria-hidden="true">
+                  <FontAwesomeIcon icon={faPlus} />
+                </span>
+              </button>
+
+              <div className="jas-workspace-header-spacer" aria-hidden="true" />
+            </div>
 
             <nav className="jas-top-tabs" role="tablist" aria-label="Jaspen views">
               <TabButton id="summary"  label="Score" />

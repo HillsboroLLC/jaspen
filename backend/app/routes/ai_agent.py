@@ -1,8 +1,6 @@
 from flask import Blueprint, request, jsonify
-from flask_jwt_extended import jwt_required, get_jwt_identity, verify_jwt_in_request
+from flask_jwt_extended import jwt_required, get_jwt_identity
 from datetime import datetime
-import glob
-import json
 import os
 import uuid
 
@@ -244,25 +242,16 @@ def _normalize_analysis_history(session, thread_id):
 def _find_session_by_thread(thread_id, user_id=None):
     thread_id = str(thread_id)
 
-    if user_id:
-        sessions = load_user_sessions(user_id)
-        if thread_id in sessions:
-            return sessions[thread_id]
-        for candidate in sessions.values():
-            if str((candidate or {}).get("session_id", "")) == thread_id:
-                return candidate
+    if not user_id:
+        return None
 
-    for path in glob.glob(os.path.join("sessions_data", "user_*_sessions.json")):
-        try:
-            with open(path, "r") as f:
-                sessions = json.load(f) or {}
-            if thread_id in sessions:
-                return sessions[thread_id]
-            for candidate in sessions.values():
-                if str((candidate or {}).get("session_id", "")) == thread_id:
-                    return candidate
-        except Exception:
-            continue
+    sessions = load_user_sessions(user_id)
+    if thread_id in sessions:
+        return sessions[thread_id]
+    for candidate in sessions.values():
+        if str((candidate or {}).get("session_id", "")) == thread_id:
+            return candidate
+
     return None
 
 
@@ -364,18 +353,13 @@ def readiness_spec():
 
 
 @ai_agent_bp.route("/readiness/audit", methods=["GET"])
+@jwt_required()
 def readiness_audit():
     thread_id = request.args.get("thread_id") or request.headers.get("X-Session-ID")
     if not thread_id:
         return jsonify({"error": "thread_id query param required"}), 400
 
-    user_id = None
-    try:
-        verify_jwt_in_request(optional=True)
-        user_id = get_jwt_identity()
-    except Exception:
-        user_id = None
-
+    user_id = get_jwt_identity()
     session = _find_session_by_thread(thread_id, user_id=user_id)
     chat_history = session.get("chat_history", []) if isinstance(session, dict) else []
     readiness = _compute_readiness(chat_history)

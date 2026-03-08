@@ -114,6 +114,51 @@ const normalizeUser = (raw) => {
   };
 };
 
+const normalizePlanKey = (plan) => String(plan || '').trim().toLowerCase();
+const isSelfServePlan = (plan) => ['free', 'essential'].includes(normalizePlanKey(plan));
+const AUTH_STORAGE_OWNER_KEY = 'jas_storage_owner_id';
+
+const clearLegacySessionCaches = () => {
+  const fixedKeys = ['jas_history', 'jas_projects', 'jas_last_session_id', 'jas_sid', 'jaspen_last_email'];
+  fixedKeys.forEach((key) => localStorage.removeItem(key));
+
+  for (let i = localStorage.length - 1; i >= 0; i -= 1) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith('session_')) {
+      localStorage.removeItem(key);
+    }
+  }
+};
+
+const hasLegacySessionKeys = () => {
+  for (let i = 0; i < localStorage.length; i += 1) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith('session_')) {
+      return true;
+    }
+  }
+  return false;
+};
+
+const syncSelfServeStorageOwnership = (user) => {
+  if (!isSelfServePlan(user?.subscription_plan)) {
+    return;
+  }
+
+  const ownerId = String(user?.id || user?.email || '').trim();
+  if (!ownerId) {
+    return;
+  }
+
+  const currentOwner = String(localStorage.getItem(AUTH_STORAGE_OWNER_KEY) || '').trim();
+  if (!currentOwner || currentOwner !== ownerId) {
+    if (currentOwner || hasLegacySessionKeys()) {
+      clearLegacySessionCaches();
+    }
+    localStorage.setItem(AUTH_STORAGE_OWNER_KEY, ownerId);
+  }
+};
+
 // Small helper to always send cookies + attach Bearer token if present
 async function authFetch(path, options = {}) {
   const url = path.startsWith('http') ? path : `${API_BASE_URL}${path}`;
@@ -195,7 +240,9 @@ const res = await authFetch('/api/auth/me', {
 
       if (res.ok) {
         const userData = await res.json();
-        setUser(normalizeUser(userData));
+        const normalized = normalizeUser(userData);
+        syncSelfServeStorageOwnership(normalized);
+        setUser(normalized);
       } else {
         // Clear any stale token if server says no
         clearAuthTokens();
@@ -226,7 +273,9 @@ if (data?.token) {
   localStorage.setItem('token', data.token);          // backward-compat
   localStorage.setItem('access_token', data.token);   // preferred key
 }
-        setUser(normalizeUser(data?.user || { email }));
+        const normalized = normalizeUser(data?.user || { email });
+        syncSelfServeStorageOwnership(normalized);
+        setUser(normalized);
         return { success: true };
       } else {
         return { success: false, error: data?.message || 'Sign-in failed' };
@@ -252,7 +301,11 @@ if (data?.token) {
     }
 
     // Clear client state regardless
-      clearAuthTokens();
+    if (isSelfServePlan(user?.subscription_plan)) {
+      clearLegacySessionCaches();
+      localStorage.removeItem(AUTH_STORAGE_OWNER_KEY);
+    }
+    clearAuthTokens();
     localStorage.removeItem('lss_user_roles');
 
     setUser(null);
@@ -279,7 +332,9 @@ if (data?.token) {
   localStorage.setItem('token', data.token);          // backward-compat
   localStorage.setItem('access_token', data.token);   // preferred key
 }
-        setUser(normalizeUser(data?.user || { email, name }));
+        const normalized = normalizeUser(data?.user || { email, name });
+        syncSelfServeStorageOwnership(normalized);
+        setUser(normalized);
         return { success: true };
       } else {
         return { success: false, error: data?.message || 'Signup failed' };
