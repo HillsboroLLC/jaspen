@@ -47,29 +47,39 @@ const INITIAL_NOTIFICATION_UPDATES = [
     title: 'Model access by plan',
     body: 'Pluto-1.0 is available now. Orbit-1.0 and Titan-1.0 show upgrade guidance when locked.',
     stamp: 'Today',
-    unread: true,
   },
   {
     id: 'notif-readiness',
     title: 'Readiness checklist sync',
     body: 'Frontend and backend checklist signals are now aligned to reduce score drift.',
     stamp: 'Today',
-    unread: true,
   },
   {
     id: 'notif-account',
     title: 'Account settings update',
     body: 'Display name editing is available in User Settings so you can control how you are addressed.',
     stamp: 'Today',
-    unread: true,
   },
 ];
 
-const buildDefaultNotifications = ({ unread = true } = {}) =>
-  INITIAL_NOTIFICATION_UPDATES.map((item) => ({
-    ...item,
-    unread,
-  }));
+const buildDefaultNotifications = () =>
+  INITIAL_NOTIFICATION_UPDATES.map((item) => ({ ...item }));
+
+const normalizeNotificationFeed = (value) =>
+  (Array.isArray(value) ? value : [])
+    .map((item, idx) => {
+      if (!item || typeof item !== 'object') return null;
+      const fallback = INITIAL_NOTIFICATION_UPDATES[idx] || {};
+      const id = String(item.id || fallback.id || `notif-${idx + 1}`).trim();
+      if (!id) return null;
+      return {
+        id,
+        title: String(item.title || fallback.title || 'Notification').trim(),
+        body: String(item.body || fallback.body || '').trim(),
+        stamp: String(item.stamp || fallback.stamp || 'Today').trim(),
+      };
+    })
+    .filter(Boolean);
 
 // ============================================================================
 // Readiness Normalization Helpers (Backend Contract Compliance)
@@ -571,7 +581,11 @@ const refreshBundle = async (tid) => {
   const [billingActionLoading, setBillingActionLoading] = useState('');
   const [billingModalOpen, setBillingModalOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [notificationItems, setNotificationItems] = useState(() => buildDefaultNotifications({ unread: true }));
+  const [notificationsMode, setNotificationsMode] = useState('bell');
+  const [notificationFeed, setNotificationFeed] = useState(() => buildDefaultNotifications());
+  const [bellNotificationIds, setBellNotificationIds] = useState(() =>
+    buildDefaultNotifications().map((item) => item.id)
+  );
   const [threadUsage, setThreadUsage] = useState(null);
   const [threadUsageLoading, setThreadUsageLoading] = useState(false);
   const [threadUsageError, setThreadUsageError] = useState('');
@@ -627,14 +641,18 @@ const refreshBundle = async (tid) => {
       ? '--'
       : Number(intakeCreditsValue).toLocaleString();
   const creditsBadge = creditsRemaining == null ? 'Contracted' : Number(creditsRemaining || 0).toLocaleString();
-  const unreadNotificationCount = useMemo(
-    () => notificationItems.filter((item) => item.unread).length,
-    [notificationItems]
-  );
-  const notificationsForDisplay = useMemo(() => {
-    if (notificationItems.length > 0) return notificationItems;
-    return buildDefaultNotifications({ unread: false });
-  }, [notificationItems]);
+  const notificationFeedWithFallback = useMemo(() => {
+    const normalized = normalizeNotificationFeed(notificationFeed);
+    return normalized.length > 0 ? normalized : buildDefaultNotifications();
+  }, [notificationFeed]);
+  const bellNotifications = useMemo(() => {
+    const allowed = new Set(bellNotificationIds);
+    return notificationFeedWithFallback.filter((item) => allowed.has(item.id));
+  }, [notificationFeedWithFallback, bellNotificationIds]);
+  const unreadNotificationCount = bellNotificationIds.length;
+  const notificationsForDisplay = notificationsMode === 'settings'
+    ? notificationFeedWithFallback
+    : bellNotifications;
   const allowedModelTypes = useMemo(() => {
     const fromStatus = Array.isArray(billingStatus?.allowed_model_types)
       ? billingStatus.allowed_model_types.map((item) => String(item || '').toLowerCase()).filter(Boolean)
@@ -754,36 +772,58 @@ const refreshBundle = async (tid) => {
     try {
       const raw = localStorage.getItem(notificationsStorageKey);
       if (!raw) {
-        setNotificationItems(buildDefaultNotifications({ unread: true }));
+        const defaults = buildDefaultNotifications();
+        setNotificationFeed(defaults);
+        setBellNotificationIds(defaults.map((item) => item.id));
         return;
       }
       const parsed = JSON.parse(raw);
+      // Legacy format: single array with unread flags.
       if (Array.isArray(parsed)) {
-        if (parsed.length === 0) {
-          // Migration: older Clear action persisted [] (removed history).
-          // Restore default notifications as read-only history.
-          setNotificationItems(buildDefaultNotifications({ unread: false }));
-          return;
-        }
-        setNotificationItems(parsed);
+        const normalizedFeed = normalizeNotificationFeed(parsed);
+        const fallbackFeed = normalizedFeed.length > 0 ? normalizedFeed : buildDefaultNotifications();
+        setNotificationFeed(fallbackFeed);
+        const unreadIds = normalizedFeed
+          .filter((item) => {
+            const match = parsed.find((rawItem) => String(rawItem?.id || '') === item.id);
+            return Boolean(match?.unread);
+          })
+          .map((item) => item.id);
+        setBellNotificationIds(unreadIds);
+        return;
+      }
+      // New split format: { feed: [...], bellIds: [...] }
+      if (parsed && typeof parsed === 'object') {
+        const normalizedFeed = normalizeNotificationFeed(parsed.feed);
+        const fallbackFeed = normalizedFeed.length > 0 ? normalizedFeed : buildDefaultNotifications();
+        const allowedIds = new Set(fallbackFeed.map((item) => item.id));
+        const persistedBellIds = Array.isArray(parsed.bellIds)
+          ? parsed.bellIds.map((id) => String(id || '').trim()).filter((id) => allowedIds.has(id))
+          : [];
+        setNotificationFeed(fallbackFeed);
+        setBellNotificationIds(persistedBellIds);
         return;
       }
     } catch {}
-    setNotificationItems(buildDefaultNotifications({ unread: true }));
+    const defaults = buildDefaultNotifications();
+    setNotificationFeed(defaults);
+    setBellNotificationIds(defaults.map((item) => item.id));
   }, [notificationsStorageKey]);
 
   useEffect(() => {
     try {
-      localStorage.setItem(notificationsStorageKey, JSON.stringify(notificationItems));
+      localStorage.setItem(
+        notificationsStorageKey,
+        JSON.stringify({
+          feed: notificationFeed,
+          bellIds: bellNotificationIds,
+        })
+      );
     } catch {}
-  }, [notificationsStorageKey, notificationItems]);
+  }, [notificationsStorageKey, notificationFeed, bellNotificationIds]);
 
   const clearNotificationBadge = useCallback(() => {
-    setNotificationItems((prev) =>
-      prev.some((item) => item.unread)
-        ? prev.map((item) => ({ ...item, unread: false }))
-        : prev
-    );
+    setBellNotificationIds([]);
   }, []);
 
   const persistDisplayName = async (value) => {
@@ -1201,15 +1241,21 @@ const refreshBundle = async (tid) => {
             </div>
           </div>
           <div className="jas-notifications-list">
-            {notificationsForDisplay.map((item) => (
-              <article key={item.id} className="jas-notification-item">
-                <div className="jas-notification-row">
-                  <h4>{item.title}</h4>
-                  <span>{item.stamp}</span>
-                </div>
-                <p>{item.body}</p>
-              </article>
-            ))}
+            {notificationsForDisplay.length === 0 ? (
+              <div className="jas-notification-empty">
+                {notificationsMode === 'bell' ? 'No new notifications' : 'No notifications'}
+              </div>
+            ) : (
+              notificationsForDisplay.map((item) => (
+                <article key={item.id} className="jas-notification-item">
+                  <div className="jas-notification-row">
+                    <h4>{item.title}</h4>
+                    <span>{item.stamp}</span>
+                  </div>
+                  <p>{item.body}</p>
+                </article>
+              ))
+            )}
           </div>
         </div>
       </div>
@@ -1351,6 +1397,7 @@ const refreshBundle = async (tid) => {
           <button
             className="jas-ud-item"
             onClick={() => {
+              setNotificationsMode('settings');
               setNotificationsOpen(true);
               setAccountQuickMenuOpen(false);
               setKnowledgeMenuOpen(false);
@@ -4545,7 +4592,10 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
               <button
                 type="button"
                 className="jas-topbar-bell"
-                onClick={() => setNotificationsOpen(true)}
+                onClick={() => {
+                  setNotificationsMode('bell');
+                  setNotificationsOpen(true);
+                }}
                 title="Notifications"
                 aria-label="Open notifications"
               >
