@@ -1324,6 +1324,92 @@
   border-color: var(--navy);
 }
 
+.jas-connectors-modal {
+  width: min(980px, 96vw);
+}
+
+.jas-connectors-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.jas-connector-card {
+  border: 1px solid var(--gray-200);
+  border-radius: 14px;
+  padding: 14px;
+  background: #f8fbff;
+}
+
+.jas-connector-card.is-connected {
+  border-color: #9fd2b2;
+  background: #f4fff7;
+}
+
+.jas-connector-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.jas-connector-head h4 {
+  margin: 0;
+  color: var(--navy);
+}
+
+.jas-connector-group {
+  margin: 4px 0 8px;
+  font-size: 0.6875rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--gray-600);
+}
+
+.jas-connector-badge {
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.6875rem;
+  font-weight: 700;
+}
+
+.jas-connector-badge.is-available {
+  background: #eaf5ff;
+  color: #0f5487;
+}
+
+.jas-connector-badge.is-locked {
+  background: #f4f4f5;
+  color: #5a6370;
+}
+
+.jas-connector-badge.is-connected {
+  background: #e5f9ec;
+  color: #1c7a3d;
+}
+
+.jas-connector-card p {
+  color: var(--gray-700);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+
+.jas-connector-card button {
+  margin-top: 10px;
+  border-radius: 10px;
+  border: 1px solid var(--gray-300);
+  background: var(--white);
+  color: var(--navy);
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.jas-connector-card button:hover {
+  border-color: var(--navy);
+}
+
 /* === Help Button === */
 .jas-help-btn {
   width: 34px;
@@ -2797,7 +2883,8 @@
 
   .jas-account-summary-grid,
   .jas-account-plan-grid,
-  .jas-apps-grid {
+  .jas-apps-grid,
+  .jas-connectors-grid {
     grid-template-columns: 1fr;
   }
 

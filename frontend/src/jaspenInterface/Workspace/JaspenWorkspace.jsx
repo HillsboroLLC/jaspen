@@ -231,6 +231,53 @@ function isSelfServePlan(plan) {
   return ['free', 'essential'].includes(normalizePlanKey(plan));
 }
 
+const CONNECTOR_DEFINITIONS = {
+  jira_sync: {
+    label: 'Jira',
+    group: 'Execution',
+    description: 'Sync issues, ownership, and sprint status for delivery tracking.',
+  },
+  workfront_sync: {
+    label: 'Workfront',
+    group: 'Execution',
+    description: 'Connect portfolio, project milestones, and execution updates.',
+  },
+  smartsheet_sync: {
+    label: 'Smartsheet',
+    group: 'Execution',
+    description: 'Connect plans, timelines, and row-level status tracking.',
+  },
+  salesforce_insights: {
+    label: 'Salesforce',
+    group: 'Data',
+    description: 'Monitor customer and pipeline trends for strategic insights.',
+  },
+  snowflake_insights: {
+    label: 'Snowflake',
+    group: 'Data',
+    description: 'Pull governed KPI and financial trend data for analysis.',
+  },
+  oracle_fusion_insights: {
+    label: 'Oracle Fusion',
+    group: 'Data',
+    description: 'Use ERP financial and operations signals in recommendations.',
+  },
+  servicenow_insights: {
+    label: 'ServiceNow',
+    group: 'Data',
+    description: 'Track service and change patterns impacting delivery confidence.',
+  },
+  netsuite_insights: {
+    label: 'NetSuite',
+    group: 'Data',
+    description: 'Connect finance and operational trends to planning decisions.',
+  },
+};
+
+const CONNECTOR_IDS = Object.keys(CONNECTOR_DEFINITIONS);
+const PLAN_ORDER = ['free', 'essential', 'team', 'enterprise'];
+const PLAN_RANK = { free: 0, essential: 1, team: 2, enterprise: 3 };
+
 export default function MarketIQWorkspace() {
   // View states: intake | summary | scenario | comparison | chat
   const [view, setView] = useState('intake');
@@ -580,6 +627,7 @@ const refreshBundle = async (tid) => {
   const [billingMessage, setBillingMessage] = useState('');
   const [billingActionLoading, setBillingActionLoading] = useState('');
   const [billingModalOpen, setBillingModalOpen] = useState(false);
+  const [connectorsModalOpen, setConnectorsModalOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notificationsMode, setNotificationsMode] = useState('bell');
   const [notificationFeed, setNotificationFeed] = useState(() => buildDefaultNotifications());
@@ -603,8 +651,6 @@ const refreshBundle = async (tid) => {
     return 'jaspen_notifications_last';
   }, [user?.id, user?.email]);
   const [welcomeNow, setWelcomeNow] = useState(() => new Date());
-  const planOrder = ['free', 'essential', 'team', 'enterprise'];
-  const planRank = { free: 0, essential: 1, team: 2, enterprise: 3 };
   const plans = billingCatalog?.plans || {};
   const modelTypes = useMemo(() => billingCatalog?.model_types || {}, [billingCatalog]);
   const currentPlanKey = String(billingStatus?.plan_key || 'free').toLowerCase();
@@ -636,7 +682,7 @@ const refreshBundle = async (tid) => {
     servicenow_insights: 'enterprise',
     netsuite_insights: 'enterprise',
   }), []);
-  const canUseTool = (toolId, mode = 'read') => {
+  const canUseTool = useCallback((toolId, mode = 'read') => {
     const entry = toolEntitlementById[String(toolId || '').trim()];
     if (entry) {
       if (String(mode || 'read').toLowerCase() === 'write') return Boolean(entry.allowed_write);
@@ -645,14 +691,43 @@ const refreshBundle = async (tid) => {
 
     // Fallback while status payload is loading or if backend omits entitlement data.
     const minPlan = fallbackMinPlanByTool[String(toolId || '').trim()];
-    const minRank = planRank[minPlan] ?? Number.MAX_SAFE_INTEGER;
-    const curRank = planRank[currentPlanKey] ?? 0;
+    const minRank = PLAN_RANK[minPlan] ?? Number.MAX_SAFE_INTEGER;
+    const curRank = PLAN_RANK[currentPlanKey] ?? 0;
     return curRank >= minRank;
-  };
+  }, [toolEntitlementById, fallbackMinPlanByTool, currentPlanKey]);
   const canUseScenarios = canUseTool('scenario_create', 'write');
-  const canUseWbsRead = canUseTool('wbs_read', 'read');
   const canUseWbsWrite = canUseTool('wbs_write', 'write');
-  const recentTurnsBudget = Number(billingStatus?.context_budget?.recent_turns || 16);
+  const connectorCatalog = useMemo(() => {
+    const connectorEntitlements = toolEntitlements.filter((tool) => String(tool?.type || '').toLowerCase() === 'connector');
+    const entitlementMap = {};
+    connectorEntitlements.forEach((tool) => {
+      const id = String(tool?.id || '').trim();
+      if (id) entitlementMap[id] = tool;
+    });
+
+    return CONNECTOR_IDS.map((id) => {
+      const def = CONNECTOR_DEFINITIONS[id];
+      const ent = entitlementMap[id];
+      const enabled = ent ? Boolean(ent.enabled) : canUseTool(id, 'read');
+      const connected = Boolean(ent?.connected || String(ent?.connection_status || '').toLowerCase() === 'connected');
+      const requiredMinTier = ent?.required_min_tier || fallbackMinPlanByTool[id] || 'enterprise';
+      const status = connected ? 'connected' : enabled ? 'available' : 'locked';
+      return {
+        id,
+        label: def.label,
+        group: def.group,
+        description: def.description,
+        status,
+        connected,
+        enabled,
+        requiredMinTier: String(requiredMinTier || '').toLowerCase(),
+      };
+    });
+  }, [toolEntitlements, canUseTool, fallbackMinPlanByTool]);
+  const connectedConnectorCount = useMemo(
+    () => connectorCatalog.filter((item) => item.connected).length,
+    [connectorCatalog]
+  );
   const monthlyCreditLimit = billingStatus?.monthly_credit_limit;
   const creditsRemaining = billingStatus?.credits_remaining;
   const monthlyCreditsUsed = billingStatus?.credits_used;
@@ -1194,7 +1269,7 @@ const refreshBundle = async (tid) => {
           </div>
 
           <div className="jas-account-plan-grid">
-            {planOrder.map((key) => {
+            {PLAN_ORDER.map((key) => {
               const plan = plans[key];
               if (!plan) return null;
               const isCurrent = key === currentPlanKey;
@@ -1249,6 +1324,78 @@ const refreshBundle = async (tid) => {
             >
               Full account page
             </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderConnectorsModal = () => {
+    if (!connectorsModalOpen) return null;
+    return (
+      <div className="jas-modal-backdrop" role="presentation" onClick={() => setConnectorsModalOpen(false)}>
+        <div
+          className="jas-account-modal jas-connectors-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Connectors"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="jas-account-modal-header">
+            <h3>Connectors</h3>
+            <button
+              type="button"
+              className="jas-account-modal-close"
+              onClick={() => setConnectorsModalOpen(false)}
+              aria-label="Close"
+            >
+              <FontAwesomeIcon icon={faTimes} />
+            </button>
+          </div>
+
+          <p className="jas-apps-intro">
+            Connect your execution systems and data platforms. Availability depends on your current plan.
+          </p>
+
+          <div className="jas-connectors-grid">
+            {connectorCatalog.map((connector) => {
+              const locked = connector.status === 'locked';
+              const connected = connector.status === 'connected';
+              const available = connector.status === 'available';
+              return (
+                <article key={connector.id} className={`jas-connector-card ${connected ? 'is-connected' : ''}`}>
+                  <div className="jas-connector-head">
+                    <h4>{connector.label}</h4>
+                    <span className={`jas-connector-badge ${locked ? 'is-locked' : connected ? 'is-connected' : 'is-available'}`}>
+                      {connected ? 'Connected' : available ? 'Available' : `${connector.requiredMinTier}+`}
+                    </span>
+                  </div>
+                  <p className="jas-connector-group">{connector.group}</p>
+                  <p>{connector.description}</p>
+                  {locked ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setConnectorsModalOpen(false);
+                        setBillingModalOpen(true);
+                      }}
+                    >
+                      Upgrade to unlock
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setConnectorsModalOpen(false);
+                        openExternal('/pages/resources/connectors');
+                      }}
+                    >
+                      {connected ? 'Manage connector' : 'Connect'}
+                    </button>
+                  )}
+                </article>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -1326,7 +1473,7 @@ const refreshBundle = async (tid) => {
   };
 
   const handlePMDashboardClick = (onClose) => {
-    const rank = planRank[currentPlanKey] || 0;
+    const rank = PLAN_RANK[currentPlanKey] || 0;
     if (rank < 1) {
       showToast('PM Dashboard is available on Essential, Team, and Enterprise plans.', 'info');
       setBillingModalOpen(true);
@@ -1435,7 +1582,7 @@ const refreshBundle = async (tid) => {
           <button className="jas-ud-item" onClick={() => handlePMDashboardClick(onClose)}>
             <FontAwesomeIcon icon={faListCheck} />
             <span className="jas-ud-item-label">PM Dashboard</span>
-            {(planRank[currentPlanKey] || 0) < 1 && <span className="jas-ud-item-badge">Essential+</span>}
+            {(PLAN_RANK[currentPlanKey] || 0) < 1 && <span className="jas-ud-item-badge">Essential+</span>}
           </button>
           <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/sessions?view=queue'); }}>
             <FontAwesomeIcon icon={faLayerGroup} />
@@ -1468,33 +1615,19 @@ const refreshBundle = async (tid) => {
             <span className="jas-ud-item-label">Credits</span>
             <span className="jas-ud-item-badge">{billingLoading ? '...' : creditsBadge}</span>
           </button>
-          <button className="jas-ud-item" onClick={() => { openExternal('/pages/resources/connectors'); setAccountQuickMenuOpen(false); }}>
+          <button
+            className="jas-ud-item"
+            onClick={() => {
+              setConnectorsModalOpen(true);
+              setAccountQuickMenuOpen(false);
+            }}
+          >
             <FontAwesomeIcon icon={faLayerGroup} />
-            <span className="jas-ud-item-label">Tool access</span>
-            <span className="jas-ud-item-badge">{currentPlanLabel}</span>
+            <span className="jas-ud-item-label">Connectors</span>
+            <span className="jas-ud-item-badge">
+              {connectedConnectorCount > 0 ? `${connectedConnectorCount} connected` : currentPlanLabel}
+            </span>
           </button>
-        </div>
-
-        <div className="jas-ud-section">
-          <div className="jas-ud-section-label">AI Tooling</div>
-          <div className="jas-ud-usage-grid">
-            <div className="jas-ud-usage-stat">
-              <span>Scenarios</span>
-              <strong>{canUseScenarios ? 'Enabled' : 'Essential+'}</strong>
-            </div>
-            <div className="jas-ud-usage-stat">
-              <span>WBS Read</span>
-              <strong>{canUseWbsRead ? 'Enabled' : 'Essential+'}</strong>
-            </div>
-            <div className="jas-ud-usage-stat">
-              <span>WBS Write</span>
-              <strong>{canUseWbsWrite ? 'Enabled' : 'Essential+'}</strong>
-            </div>
-            <div className="jas-ud-usage-stat">
-              <span>Context turns</span>
-              <strong>{Number.isFinite(recentTurnsBudget) ? recentTurnsBudget : 16}</strong>
-            </div>
-          </div>
         </div>
 
         <div className="jas-ud-section">
@@ -4111,6 +4244,7 @@ setView(id === 'chat' ? 'intake' : id);
 
       {renderNameModal()}
       {renderBillingModal()}
+      {renderConnectorsModal()}
 
 {/* Assistant Vertical Tab (Score + Scenarios only) */}
 {activeTab !== 'chat' && !aiDrawerOpen && (
@@ -4857,6 +4991,7 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
       {renderNotificationsModal()}
       {renderNameModal()}
       {renderBillingModal()}
+      {renderConnectorsModal()}
 
       {/* Content */}
       <div className="jas-chat-content">
