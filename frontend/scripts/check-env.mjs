@@ -1,4 +1,4 @@
-// FILE: sekki-platform/frontend/scripts/check-env.mjs
+// FILE: jaspen-platform/frontend/scripts/check-env.mjs
 // WHY: Validate .env without leaking secrets; optional `--connect` to test SFTP login.
 
 import 'dotenv/config';

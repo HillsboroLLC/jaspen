@@ -1,1 +1,1 @@
-# SEKKI Platform
+# JASPEN Platform

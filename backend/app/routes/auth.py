@@ -185,26 +185,15 @@ def get_current_user():
 
 @auth_bp.route('/logout', methods=['POST'])
 def logout():
-    """Clear auth cookies while staying backward-compatible with token clients."""
+    """Clear auth cookies for logout."""
     resp = jsonify(message='Logged out')
     unset_jwt_cookies(resp)
-    # Clear legacy cookie key used during Sekki era.
-    resp.set_cookie(
-        'sekki_access',
-        '',
-        max_age=0,
-        expires=0,
-        path='/',
-        secure=bool(current_app.config.get('JWT_COOKIE_SECURE')),
-        samesite=current_app.config.get('JWT_COOKIE_SAMESITE', 'Lax'),
-        domain=current_app.config.get('JWT_COOKIE_DOMAIN'),
-    )
     return resp, 200
 
 
 @auth_bp.route('/me-cookie', methods=['GET'])
 def get_current_user_from_cookie():
-    token = request.cookies.get('jaspen_access') or request.cookies.get('sekki_access')
+    token = request.cookies.get('jaspen_access')
     if not token:
         return jsonify(error='Missing auth cookie'), 401
 

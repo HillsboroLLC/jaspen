@@ -1938,7 +1938,7 @@ async function onBeginProject() {
     const ok = window.confirm(
         `Begin a project from your Jaspen context?\n\n` +
         `Project name: "${suggestedName}"\n\n` +
-        `This will create/update a project and plan in your Sekki workspace.`
+        `This will create/update a project and plan in your Jaspen workspace.`
     );
     if (!ok) return;
 

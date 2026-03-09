@@ -14,7 +14,7 @@ const Terms = () => {
 
         <section className="terms-section">
           <h2>Agreement to Terms</h2>
-          <p>These Terms of Service ("Terms") are a legal agreement between you and Sekki LLC d/b/a Jaspen ("Jaspen," "we," "our," or "us") for your use of Jaspen websites, applications, and related services.</p>
+          <p>These Terms of Service ("Terms") are a legal agreement between you and Jaspen ("Jaspen," "we," "our," or "us") for your use of Jaspen websites, applications, and related services.</p>
           <p>By accessing or using Jaspen, you agree to these Terms.</p>
         </section>
 
@@ -64,7 +64,7 @@ const Terms = () => {
         <section className="terms-section">
           <h2>Disclaimers and Limitation of Liability</h2>
           <p className="legal-text">THE SERVICE IS PROVIDED "AS IS" AND "AS AVAILABLE" WITHOUT WARRANTIES OF ANY KIND, EXPRESS OR IMPLIED.</p>
-          <p className="legal-text">TO THE MAXIMUM EXTENT PERMITTED BY LAW, SEKII LLC D/B/A JASPEN SHALL NOT BE LIABLE FOR INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, INCLUDING LOSS OF DATA, PROFITS, OR BUSINESS INTERRUPTION.</p>
+          <p className="legal-text">TO THE MAXIMUM EXTENT PERMITTED BY LAW, JASPEN SHALL NOT BE LIABLE FOR INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, INCLUDING LOSS OF DATA, PROFITS, OR BUSINESS INTERRUPTION.</p>
         </section>
 
         <section className="terms-section">
@@ -81,8 +81,8 @@ const Terms = () => {
           <h2>Contact Information</h2>
           <p>If you have questions about these Terms, contact us:</p>
           <div className="contact-info">
-            <p><strong>Sekki LLC d/b/a Jaspen</strong><br />
-            Email: hello@jaspen.ai<br />
+            <p><strong>Jaspen</strong><br />
+            Email: hello@jaspen.ai (general) or support@jaspen.ai (support)<br />
             Website: <a href="https://jaspen.ai" target="_blank" rel="noopener noreferrer">https://jaspen.ai</a><br />
             Address: 4030 Wake Forest Road, STE 349, Raleigh, NC 27609, USA<br />
             Phone: +1 (704) 488-5799</p>

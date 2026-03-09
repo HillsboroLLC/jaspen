@@ -8,12 +8,12 @@ const Support = () => {
   return (
     <div className="support-container">
       <div className="support-content">
-        <h1>Support – Gridd Sudoku</h1>
+        <h1>Support for Jaspen</h1>
 
         <div className="support-meta">
           <p>
             <strong>Effective Date:</strong> September 15, 2025<br />
-            <strong>Last Updated:</strong> September 15, 2025
+            <strong>Last Updated:</strong> March 9, 2026
           </p>
         </div>
 
@@ -29,7 +29,8 @@ const Support = () => {
         <section className="support-section">
           <h2>Contact Options</h2>
           <ul>
-            <li>Email: <a href="mailto:hello@jaspen.ai">hello@jaspen.ai</a></li>
+            <li>Support: <a href="mailto:support@jaspen.ai">support@jaspen.ai</a></li>
+            <li>General: <a href="mailto:hello@jaspen.ai">hello@jaspen.ai</a></li>
             <li>Website: <a href="https://jaspen.ai" target="_blank" rel="noopener noreferrer">jaspen.ai</a></li>
             <li>Address: 4030 Wake Forest Road, STE 349, Raleigh, NC 27609, USA</li>
           </ul>
@@ -41,7 +42,7 @@ const Support = () => {
           <h3>Billing</h3>
           <ul>
             <li>Receipts and invoices</li>
-            <li>In-app purchases and refunds (via Apple App Store)</li>
+            <li>Subscription plan changes and renewals</li>
             <li>Managing subscriptions</li>
           </ul>
 
@@ -49,7 +50,7 @@ const Support = () => {
           <ul>
             <li>Access issues and password resets</li>
             <li>Data export and deletion requests</li>
-            <li>Device or progress sync</li>
+            <li>Workspace and session access</li>
           </ul>
 
           <h3>Technical</h3>
@@ -64,8 +65,8 @@ const Support = () => {
           <h2>Submit a Request</h2>
           <p>When emailing support, include:</p>
           <ul>
-            <li>Your device and OS version</li>
-            <li>App version (from settings/about)</li>
+            <li>Your account email</li>
+            <li>Device/browser and operating system</li>
             <li>Steps to reproduce the issue and screenshots if possible</li>
           </ul>
         </section>
@@ -83,7 +84,7 @@ const Support = () => {
         <div className="support-footer">
           <p>
             <em>
-              This Support page was last updated on September 15, 2025. Please check back for updates.
+              This Support page was last updated on March 9, 2026.
             </em>
           </p>
         </div>

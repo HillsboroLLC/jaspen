@@ -29,7 +29,7 @@ def upgrade():
         sa.column('user_id', sa.String(length=36)),
     )
 
-    demo_emails = ['demo@sekki.io', 'demo@jaspen.ai']
+    demo_emails = ['demo@jaspen.ai']
     demo_ids = [
         row[0]
         for row in conn.execute(

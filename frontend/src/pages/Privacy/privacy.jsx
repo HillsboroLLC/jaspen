@@ -14,7 +14,7 @@ const Privacy = () => {
 
         <section className="policy-section">
           <h2>Introduction</h2>
-          <p>Sekki LLC d/b/a Jaspen ("Jaspen," "we," "our," or "us") provides strategy scoring, scenario planning, and execution workflow tools. This Privacy Policy explains how we collect, use, and protect information when you use Jaspen.</p>
+          <p>Jaspen ("Jaspen," "we," "our," or "us") provides strategy scoring, scenario planning, and execution workflow tools. This Privacy Policy explains how we collect, use, and protect information when you use Jaspen.</p>
           <p>By using Jaspen, you agree to this Privacy Policy.</p>
         </section>
 
@@ -83,8 +83,8 @@ const Privacy = () => {
           <h2>Contact Information</h2>
           <p>If you have privacy questions, contact us:</p>
           <div className="contact-info">
-            <p><strong>Sekki LLC d/b/a Jaspen</strong><br />
-            Email: hello@jaspen.ai<br />
+            <p><strong>Jaspen</strong><br />
+            Email: hello@jaspen.ai (general) or support@jaspen.ai (support)<br />
             Website: <a href="https://jaspen.ai" target="_blank" rel="noopener noreferrer">https://jaspen.ai</a><br />
             Address: 4030 Wake Forest Road, STE 349, Raleigh, NC 27609, USA</p>
           </div>

@@ -14,7 +14,7 @@ const cfg = {
   password: process.env.SFTP_PASS || undefined,
   privateKey: process.env.SSH_KEY_PATH ? fs.readFileSync(process.env.SSH_KEY_PATH) : undefined,
   passphrase: process.env.SSH_KEY_PASSPHRASE || undefined,
-  remotePath: normalize(process.env.REMOTE_PATH || '/public_html/sekki')
+  remotePath: normalize(process.env.REMOTE_PATH || '/public_html/jaspen')
 };
 
 function normalize(p) { return p.startsWith('/') ? p : `/${p}`; }
