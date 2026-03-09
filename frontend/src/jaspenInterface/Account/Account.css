@@ -212,6 +212,124 @@
   justify-self: start;
 }
 
+.account-connectors-subtext,
+.account-connectors-loading {
+  margin: 0 0 8px;
+  color: #5b7194;
+  font-size: 0.82rem;
+}
+
+.account-connector-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.account-connector-card {
+  border: 1px solid #d6e2f2;
+  border-radius: 12px;
+  padding: 12px;
+  background: #ffffff;
+  display: grid;
+  gap: 6px;
+}
+
+.account-connector-card.is-connected {
+  border-color: rgba(31, 124, 90, 0.35);
+  background: linear-gradient(180deg, #f7fffb 0%, #ffffff 100%);
+}
+
+.account-connector-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.account-connector-head h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.2;
+}
+
+.account-connector-badge {
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 3px 8px;
+  line-height: 1.2;
+}
+
+.account-connector-badge.is-connected {
+  background: #dff7eb;
+  color: #176f4f;
+}
+
+.account-connector-badge.is-available {
+  background: #e9f0ff;
+  color: #1d4f97;
+}
+
+.account-connector-badge.is-locked {
+  background: #f0f3f8;
+  color: #5e6f8c;
+}
+
+.account-connector-group {
+  margin: 0;
+  color: #5a6f92;
+  font-size: 0.74rem !important;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-weight: 700;
+}
+
+.account-connector-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.account-connector-controls label {
+  display: grid;
+  gap: 4px;
+  color: #5a6f92;
+  font-size: 0.74rem;
+  font-weight: 600;
+}
+
+.account-connector-controls select {
+  border: 1px solid #d2deee;
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 0.8rem;
+  color: #1f355c;
+  background: #ffffff;
+}
+
+.account-connector-controls input {
+  border: 1px solid #d2deee;
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 0.8rem;
+  color: #1f355c;
+  background: #ffffff;
+}
+
+.account-connector-controls select:disabled {
+  background: #f5f7fb;
+  color: #8a9ab6;
+}
+
+.account-connector-controls input:disabled {
+  background: #f5f7fb;
+  color: #8a9ab6;
+}
+
+.account-jira-config {
+  margin-bottom: 2px;
+}
+
 .account-actions-row {
   display: flex;
   flex-wrap: wrap;
@@ -276,7 +394,8 @@
 
 @media (max-width: 860px) {
   .account-plan-grid,
-  .account-pack-grid {
+  .account-pack-grid,
+  .account-connector-grid {
     grid-template-columns: 1fr;
   }
 
@@ -287,5 +406,9 @@
 
   .account-header-row h1 {
     font-size: 1.7rem;
+  }
+
+  .account-connector-controls {
+    grid-template-columns: 1fr;
   }
 }

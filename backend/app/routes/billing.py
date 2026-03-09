@@ -19,6 +19,7 @@ from app.billing_config import (
     normalize_plan_key,
     to_public_plan,
 )
+from app.connector_store import get_all_connector_settings
 from app.tool_registry import get_context_budget, get_tool_entitlements
 
 billing_bp = Blueprint('billing', __name__)
@@ -86,6 +87,23 @@ def get_billing_status():
         credits_used = max(0, int(monthly_limit) - int(user.credits_remaining))
     allowed_model_types = get_allowed_model_types(plan_key, current_app.config)
     default_model_type = get_default_model_type(plan_key, current_app.config)
+    tool_entitlements = get_tool_entitlements(plan_key)
+    connector_settings = get_all_connector_settings(user.id)
+    for tool in tool_entitlements:
+        if str(tool.get('type') or '').lower() != 'connector':
+            continue
+        connector_id = str(tool.get('id') or '').strip().lower()
+        settings = connector_settings.get(connector_id) or {}
+        connection_status = str(settings.get('connection_status') or 'disconnected').strip().lower()
+        if connection_status not in ('connected', 'disconnected'):
+            connection_status = 'disconnected'
+        tool['connection_status'] = connection_status
+        tool['connected'] = bool(tool.get('enabled')) and connection_status == 'connected'
+        tool['sync_mode'] = settings.get('sync_mode') or 'import'
+        tool['conflict_policy'] = settings.get('conflict_policy') or 'prefer_external'
+        tool['last_sync_at'] = settings.get('last_sync_at')
+        tool['auto_sync'] = bool(settings.get('auto_sync', True))
+        tool['external_workspace'] = settings.get('external_workspace') or ''
 
     return jsonify({
         'plan_key': plan_key,
@@ -96,7 +114,7 @@ def get_billing_status():
         'allowed_model_types': allowed_model_types,
         'default_model_type': default_model_type,
         'context_budget': get_context_budget(plan_key),
-        'tool_entitlements': get_tool_entitlements(plan_key),
+        'tool_entitlements': tool_entitlements,
         'stripe_customer_id': user.stripe_customer_id,
         'stripe_subscription_id': user.stripe_subscription_id,
     }), 200

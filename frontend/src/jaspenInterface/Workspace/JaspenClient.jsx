@@ -42,6 +42,11 @@ export const endpoints = {
   adoptScenario:    (scenarioId, threadId) => `${API_BASE}/api/market-iq/scenarios/${encodeURIComponent(scenarioId)}/adopt${threadId ? `?thread_id=${encodeURIComponent(threadId)}` : ''}`,
   threadWbs:        (threadId) => `${API_BASE}/api/market-iq/threads/${encodeURIComponent(threadId)}/wbs`,
   deleteAnalysis:   (analysisId) => `${API_BASE}/api/market-iq/analyses/${encodeURIComponent(analysisId)}`,
+  // Connector settings and PM sync profile
+  connectorStatus: `${API_BASE}/api/connectors/status`,
+  connectorUpdate: (connectorId) => `${API_BASE}/api/connectors/${encodeURIComponent(connectorId)}`,
+  threadPmSync: (threadId) => `${API_BASE}/api/connectors/threads/${encodeURIComponent(threadId)}/sync`,
+  threadJiraSync: (threadId) => `${API_BASE}/api/connectors/threads/${encodeURIComponent(threadId)}/jira/sync`,
 };
 // ---- Session ID for memory that survives Safari ITP ----
 const SID_KEY = 'jas_sid';
@@ -99,6 +104,12 @@ async function getJSON(url, { withSid = false, sidOverride } = {}) {
 }
 async function putJSON(url, body, { withSid = false, sidOverride } = {}) {
   return _fetch(url, { method: 'PATCH', body: JSON.stringify(body ?? {}), withSid, sidOverride });
+}
+async function patchJSON(url, body, { withSid = false, sidOverride } = {}) {
+  return _fetch(url, { method: 'PATCH', body: JSON.stringify(body ?? {}), withSid, sidOverride });
+}
+async function upsertJSON(url, body, { withSid = false, sidOverride } = {}) {
+  return _fetch(url, { method: 'PUT', body: JSON.stringify(body ?? {}), withSid, sidOverride });
 }
 async function del(url, { withSid = false, sidOverride } = {}) {
   return _fetch(url, { method: 'DELETE', withSid, sidOverride });
@@ -431,6 +442,22 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
   // Threads bundle
   getThreadBundle: async (threadId, { msg_limit = 50, scn_limit = 50 } = {}) =>
     getJSON(endpoints.threadBundle(threadId, msg_limit, scn_limit), { withSid: true }),
+
+  // Connector settings
+  getConnectorStatus: async () =>
+    getJSON(endpoints.connectorStatus, { withSid: true }),
+
+  updateConnectorSettings: async (connectorId, payload = {}) =>
+    patchJSON(endpoints.connectorUpdate(connectorId), payload, { withSid: true }),
+
+  getThreadPmSync: async (threadId) =>
+    getJSON(endpoints.threadPmSync(threadId), { withSid: true }),
+
+  updateThreadPmSync: async (threadId, payload = {}) =>
+    upsertJSON(endpoints.threadPmSync(threadId), payload, { withSid: true }),
+
+  syncThreadWbsToJira: async (threadId) =>
+    postJSON(endpoints.threadJiraSync(threadId), {}, { withSid: true }),
 };
 
 // Minimal local persistence

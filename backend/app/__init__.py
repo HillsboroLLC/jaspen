@@ -126,6 +126,12 @@ def create_app():
     app.config['AI_AGENT_CREDITS_PER_1K_TOKENS'] = float(os.getenv('AI_AGENT_CREDITS_PER_1K_TOKENS', '1.0'))
     app.config['AI_AGENT_MIN_CREDIT_CHARGE'] = int(os.getenv('AI_AGENT_MIN_CREDIT_CHARGE', '1'))
     app.config['AI_AGENT_CREDIT_MULTIPLIERS'] = os.getenv('AI_AGENT_CREDIT_MULTIPLIERS_JSON', '')
+    app.config['JIRA_BASE_URL'] = os.getenv('JIRA_BASE_URL', '')
+    app.config['JIRA_EMAIL'] = os.getenv('JIRA_EMAIL', '')
+    app.config['JIRA_API_TOKEN'] = os.getenv('JIRA_API_TOKEN', '')
+    app.config['JIRA_DEFAULT_PROJECT_KEY'] = os.getenv('JIRA_DEFAULT_PROJECT_KEY', '')
+    app.config['JIRA_DEFAULT_ISSUE_TYPE'] = os.getenv('JIRA_DEFAULT_ISSUE_TYPE', 'Task')
+    app.config['JIRA_WEBHOOK_SECRET'] = os.getenv('JIRA_WEBHOOK_SECRET', '')
     # —— Frontend base URL for success/cancel links —— #
     app.config['FRONTEND_BASE_URL'] = frontend_base
 
@@ -169,6 +175,7 @@ def create_app():
     from .routes.auth      import auth_bp
     from .routes.chat      import chat_bp
     from .routes.billing   import billing_bp
+    from .routes.connectors import connectors_bp
     from .routes.dashboard import dashboard_bp
     from .routes.ai_agent  import ai_agent_bp
     from .routes.market_iq import market_iq_bp, analyze_project
@@ -176,6 +183,7 @@ def create_app():
     app.register_blueprint(auth_bp,      url_prefix='/api/auth')
     app.register_blueprint(chat_bp,      url_prefix='/api/chat')
     app.register_blueprint(billing_bp,   url_prefix='/api/billing')
+    app.register_blueprint(connectors_bp, url_prefix='/api/connectors')
     app.register_blueprint(dashboard_bp)  # includes its own /api/dashboard path
     app.register_blueprint(ai_agent_bp,  url_prefix='/api/ai-agent')
     app.register_blueprint(market_iq_bp, url_prefix='/api/market-iq')

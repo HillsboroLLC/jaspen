@@ -45,8 +45,13 @@ export default function Account() {
   const navigate = useNavigate();
   const [status, setStatus] = useState(null);
   const [catalog, setCatalog] = useState({ plans: {}, overage_packs: {}, model_types: FALLBACK_MODEL_TYPES });
+  const [connectorState, setConnectorState] = useState({
+    loading: true,
+    items: [],
+  });
   const [loading, setLoading] = useState(true);
   const [pendingAction, setPendingAction] = useState('');
+  const [connectorPendingId, setConnectorPendingId] = useState('');
   const [message, setMessage] = useState('');
 
   useEffect(() => {
@@ -56,16 +61,21 @@ export default function Account() {
       const token = getToken();
 
       try {
-        const [statusRes, catalogRes] = await Promise.all([
+        const [statusRes, catalogRes, connectorsRes] = await Promise.all([
           fetch(`${API_BASE}/api/billing/status`, {
             headers: token ? { Authorization: `Bearer ${token}` } : {},
             credentials: 'include',
           }),
           fetch(`${API_BASE}/api/billing/catalog`, { credentials: 'include' }),
+          fetch(`${API_BASE}/api/connectors/status`, {
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+            credentials: 'include',
+          }),
         ]);
 
         const statusData = await statusRes.json();
         const catalogData = await catalogRes.json();
+        const connectorsData = await connectorsRes.json().catch(() => ({}));
 
         if (!statusRes.ok) {
           if (statusRes.status === 401) {
@@ -74,12 +84,23 @@ export default function Account() {
           }
           throw new Error(statusData?.msg || 'Unable to load billing status.');
         }
+        if (!connectorsRes.ok && connectorsRes.status === 401) {
+          navigate('/?auth=1', { replace: true });
+          return;
+        }
         if (mounted) {
           setStatus(statusData);
           setCatalog(catalogData || { plans: {}, overage_packs: {}, model_types: FALLBACK_MODEL_TYPES });
+          setConnectorState({
+            loading: false,
+            items: Array.isArray(connectorsData?.connectors) ? connectorsData.connectors : [],
+          });
         }
       } catch (error) {
-        if (mounted) setMessage(error.message || 'Unable to load account details.');
+        if (mounted) {
+          setMessage(error.message || 'Unable to load account details.');
+          setConnectorState((prev) => ({ ...prev, loading: false }));
+        }
       } finally {
         if (mounted) setLoading(false);
       }
@@ -99,6 +120,23 @@ export default function Account() {
     });
     const data = await res.json();
     if (res.ok) setStatus(data);
+  };
+
+  const refreshConnectors = async () => {
+    const token = getToken();
+    const res = await fetch(`${API_BASE}/api/connectors/status`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      credentials: 'include',
+    });
+    const data = await res.json();
+    if (res.ok) {
+      setConnectorState({
+        loading: false,
+        items: Array.isArray(data?.connectors) ? data.connectors : [],
+      });
+    } else if (res.status === 401) {
+      navigate('/?auth=1', { replace: true });
+    }
   };
 
   const startPlanChange = async (planKey) => {
@@ -236,6 +274,46 @@ export default function Account() {
     }
   };
 
+  const updateConnector = async (connectorId, updates) => {
+    const token = getToken();
+    setConnectorPendingId(connectorId);
+    setMessage('');
+
+    try {
+      const response = await fetch(`${API_BASE}/api/connectors/${encodeURIComponent(connectorId)}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        credentials: 'include',
+        body: JSON.stringify(updates || {}),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        if (response.status === 401) {
+          navigate('/?auth=1', { replace: true });
+          return;
+        }
+        throw new Error(data?.error || 'Unable to update connector.');
+      }
+
+      const updatedConnector = data?.connector;
+      if (updatedConnector?.id) {
+        setConnectorState((prev) => ({
+          ...prev,
+          items: (prev.items || []).map((item) => (item.id === updatedConnector.id ? updatedConnector : item)),
+        }));
+      } else {
+        await refreshConnectors();
+      }
+    } catch (error) {
+      setMessage(error.message || 'Unable to update connector.');
+    } finally {
+      setConnectorPendingId('');
+    }
+  };
+
   if (loading) {
     return (
       <div className="account-page">
@@ -343,6 +421,126 @@ export default function Account() {
               );
             })}
           </div>
+        </section>
+
+        <section className="account-section" id="connectors">
+          <h2>Connectors & PM Sync</h2>
+          <p className="account-connectors-subtext">
+            Configure whether external systems feed Jaspen, Jaspen feeds external systems, or both.
+          </p>
+          {connectorState.loading ? (
+            <p className="account-connectors-loading">Loading connector settings...</p>
+          ) : (
+            <div className="account-connector-grid">
+              {(connectorState.items || []).map((connector) => {
+                const locked = connector?.status === 'locked' || !connector?.enabled;
+                const connected = Boolean(connector?.connected);
+                const pending = connectorPendingId === connector?.id;
+                const syncModes = Array.isArray(connector?.available_sync_modes) ? connector.available_sync_modes : [];
+                const conflictPolicies = Array.isArray(connector?.available_conflict_policies)
+                  ? connector.available_conflict_policies
+                  : ['latest_wins', 'prefer_external', 'prefer_jaspen', 'manual_review'];
+                const modeValue = connector?.sync_mode || (syncModes.includes('import') ? 'import' : '');
+                const policyValue = connector?.conflict_policy || 'prefer_external';
+
+                return (
+                  <article className={`account-connector-card ${connected ? 'is-connected' : ''}`} key={connector.id}>
+                    <div className="account-connector-head">
+                      <h3>{connector.label}</h3>
+                      <span className={`account-connector-badge ${locked ? 'is-locked' : connected ? 'is-connected' : 'is-available'}`}>
+                        {locked ? `${connector.required_min_tier || 'team'}+` : connected ? 'Connected' : 'Available'}
+                      </span>
+                    </div>
+                    <p className="account-connector-group">{connector.group}</p>
+                    <p>{connector.description}</p>
+
+                    {locked ? (
+                      <button type="button" className="account-secondary-btn" onClick={() => setMessage('Upgrade plan to unlock this connector.')}>
+                        Upgrade to unlock
+                      </button>
+                    ) : (
+                      <>
+                        {connector.id === 'jira_sync' && (
+                          <div className="account-connector-controls account-jira-config">
+                            <label>
+                              Jira URL
+                              <input
+                                type="text"
+                                defaultValue={connector?.jira?.base_url || ''}
+                                placeholder="https://your-company.atlassian.net"
+                                disabled={pending}
+                                onBlur={(e) => {
+                                  const value = String(e.target.value || '').trim();
+                                  const currentValue = String(connector?.jira?.base_url || '').trim();
+                                  if (value !== currentValue) {
+                                    updateConnector(connector.id, { jira_base_url: value });
+                                  }
+                                }}
+                              />
+                            </label>
+                            <label>
+                              Jira project key
+                              <input
+                                type="text"
+                                defaultValue={connector?.jira?.project_key || ''}
+                                placeholder="PROJ"
+                                disabled={pending}
+                                onBlur={(e) => {
+                                  const value = String(e.target.value || '').trim();
+                                  const currentValue = String(connector?.jira?.project_key || '').trim();
+                                  if (value !== currentValue) {
+                                    updateConnector(connector.id, { jira_project_key: value, external_workspace: value });
+                                  }
+                                }}
+                              />
+                            </label>
+                          </div>
+                        )}
+                        <div className="account-connector-controls">
+                          <label>
+                            Sync direction
+                            <select
+                              value={modeValue}
+                              disabled={!connected || pending}
+                              onChange={(e) => updateConnector(connector.id, { sync_mode: e.target.value })}
+                            >
+                              {syncModes.map((mode) => (
+                                <option key={mode} value={mode}>
+                                  {mode === 'import' ? 'External -> Jaspen' : mode === 'push' ? 'Jaspen -> External' : 'Two-way'}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label>
+                            Conflict policy
+                            <select
+                              value={policyValue}
+                              disabled={!connected || pending}
+                              onChange={(e) => updateConnector(connector.id, { conflict_policy: e.target.value })}
+                            >
+                              {conflictPolicies.map((policy) => (
+                                <option key={policy} value={policy}>
+                                  {policy.replace(/_/g, ' ')}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        </div>
+                        <button
+                          type="button"
+                          className="account-primary-btn"
+                          onClick={() => updateConnector(connector.id, { connection_status: connected ? 'disconnected' : 'connected' })}
+                          disabled={pending}
+                        >
+                          {pending ? 'Saving...' : connected ? 'Disconnect' : 'Connect'}
+                        </button>
+                      </>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+          )}
         </section>
 
         <section className="account-section">

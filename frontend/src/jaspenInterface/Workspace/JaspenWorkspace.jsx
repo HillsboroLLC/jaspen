@@ -1391,7 +1391,7 @@ const refreshBundle = async (tid) => {
                       type="button"
                       onClick={() => {
                         setConnectorsModalOpen(false);
-                        openExternal('/pages/resources/connectors');
+                        navigate('/account#connectors');
                       }}
                     >
                       {connected ? 'Manage connector' : 'Connect'}
@@ -1510,7 +1510,7 @@ const refreshBundle = async (tid) => {
           title="Get apps and extensions"
           aria-label="Get apps and extensions"
           onClick={() => {
-            openExternal('/pages/resources/connectors');
+            navigate('/account#connectors');
             setAccountQuickMenuOpen(false);
             setKnowledgeMenuOpen(false);
           }}

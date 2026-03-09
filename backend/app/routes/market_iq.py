@@ -25,6 +25,8 @@ from app.tool_registry import (
     get_wbs_limits_for_plan,
     is_tool_allowed,
 )
+from app.jira_sync import sync_wbs_to_jira
+from app.connector_store import get_thread_sync_profile
 from .sessions import load_user_sessions, save_user_sessions
 
 market_iq_bp = Blueprint('market_iq', __name__)
@@ -631,6 +633,16 @@ def _normalize_wbs_task(raw_task):
         seen.add(dep_id)
         deduped_dep_ids.append(dep_id)
 
+    external_refs = raw_task.get('external_refs') if isinstance(raw_task.get('external_refs'), dict) else {}
+    jira_issue_key = str(
+        raw_task.get('jira_issue_key')
+        or external_refs.get('jira_issue_key')
+        or ''
+    ).strip()
+    normalized_refs = {}
+    if jira_issue_key:
+        normalized_refs['jira_issue_key'] = jira_issue_key
+
     return {
         'id': task_id,
         'title': title,
@@ -639,6 +651,7 @@ def _normalize_wbs_task(raw_task):
         'due_date': due_date,
         'depends_on': deduped_dep_ids,
         'order': order,
+        'external_refs': normalized_refs,
     }
 
 
@@ -1232,6 +1245,28 @@ def upsert_thread_wbs(thread_id):
                 'dependency_count': dep_count,
             }), 403
 
+        sync_result = None
+        profile = get_thread_sync_profile(user_id, thread_id)
+        jira_selected = isinstance(profile.get('connector_ids'), list) and 'jira_sync' in [
+            str(item or '').strip().lower() for item in profile.get('connector_ids', [])
+        ]
+        if jira_selected or str(profile.get('sync_mode') or '').strip().lower() in ('push', 'two_way'):
+            try:
+                sync_result = sync_wbs_to_jira(
+                    user_id=user_id,
+                    thread_id=thread_id,
+                    project_wbs=normalized_wbs,
+                    thread_sync_profile=profile,
+                )
+                if isinstance(sync_result, dict) and isinstance(sync_result.get('project_wbs'), dict):
+                    normalized_wbs = sync_result.get('project_wbs')
+            except Exception as sync_error:
+                sync_result = {
+                    'success': False,
+                    'skipped': False,
+                    'errors': [{'error': str(sync_error)}],
+                }
+
         td['project_wbs'] = normalized_wbs
         all_data[thread_id] = td
         _save_scenarios(user_id, all_data)
@@ -1241,6 +1276,7 @@ def upsert_thread_wbs(thread_id):
             'thread_id': thread_id,
             'project_wbs': normalized_wbs,
             'limits': limits,
+            'jira_sync': sync_result,
         }), 200
     except Exception as e:
         print(f"[upsert_thread_wbs] {e}")
