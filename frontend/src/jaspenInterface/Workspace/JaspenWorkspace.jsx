@@ -17,7 +17,7 @@ import {
   faPaperPlane, faSpinner, faTimes, faBars, faCheck, faExclamationTriangle,
   faChartLine, faTrash, faPlus, faMinus, faMicrophone,
   faBolt, faLayerGroup, faPlay, faListCheck, faArrowUpRightFromSquare, faGaugeHigh, faClockRotateLeft, faPaperclip, faArrowUp,
-  faDownload, faChevronDown, faChevronUp, faUser
+  faDownload, faChevronDown, faChevronUp, faUser, faBell
 } from '@fortawesome/free-solid-svg-icons';
 import {
   MonitorCheck, MessageCircleQuestion,
@@ -41,6 +41,29 @@ const PM_VARIANT  = "monitor-check";
 const LSS_VARIANT = "chart-scatter";
 const MODEL_DISPLAY_ORDER = ['pluto', 'orbit', 'titan'];
 const MODEL_VERSION_BY_TYPE = { pluto: '1.0', orbit: '1.0', titan: '1.0' };
+const INITIAL_NOTIFICATION_UPDATES = [
+  {
+    id: 'notif-model-access',
+    title: 'Model access by plan',
+    body: 'Pluto-1.0 is available now. Orbit-1.0 and Titan-1.0 show upgrade guidance when locked.',
+    stamp: 'Today',
+    unread: true,
+  },
+  {
+    id: 'notif-readiness',
+    title: 'Readiness checklist sync',
+    body: 'Frontend and backend checklist signals are now aligned to reduce score drift.',
+    stamp: 'Today',
+    unread: true,
+  },
+  {
+    id: 'notif-account',
+    title: 'Account settings update',
+    body: 'Display name editing is available in User Settings so you can control how you are addressed.',
+    stamp: 'Today',
+    unread: true,
+  },
+];
 
 // ============================================================================
 // Readiness Normalization Helpers (Backend Contract Compliance)
@@ -541,6 +564,8 @@ const refreshBundle = async (tid) => {
   const [billingMessage, setBillingMessage] = useState('');
   const [billingActionLoading, setBillingActionLoading] = useState('');
   const [billingModalOpen, setBillingModalOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notificationItems, setNotificationItems] = useState(() => INITIAL_NOTIFICATION_UPDATES);
   const [threadUsage, setThreadUsage] = useState(null);
   const [threadUsageLoading, setThreadUsageLoading] = useState(false);
   const [threadUsageError, setThreadUsageError] = useState('');
@@ -578,7 +603,23 @@ const refreshBundle = async (tid) => {
     if (!Number.isFinite(limitNum) || limitNum <= 0 || resolvedMonthlyCreditsUsed == null) return null;
     return Math.max(0, Math.min(100, Math.round((resolvedMonthlyCreditsUsed / limitNum) * 100)));
   }, [monthlyCreditLimit, resolvedMonthlyCreditsUsed]);
+  const intakeCreditsValue = useMemo(() => {
+    const remaining = Number(creditsRemaining);
+    if (Number.isFinite(remaining)) return Math.max(0, Math.round(remaining));
+    const monthly = Number(monthlyCreditLimit);
+    if (Number.isFinite(monthly)) return Math.max(0, Math.round(monthly));
+    return null;
+  }, [creditsRemaining, monthlyCreditLimit]);
+  const intakeCreditsLabel = billingLoading
+    ? '...'
+    : intakeCreditsValue == null
+      ? '--'
+      : Number(intakeCreditsValue).toLocaleString();
   const creditsBadge = creditsRemaining == null ? 'Contracted' : Number(creditsRemaining || 0).toLocaleString();
+  const unreadNotificationCount = useMemo(
+    () => notificationItems.filter((item) => item.unread).length,
+    [notificationItems]
+  );
   const allowedModelTypes = useMemo(() => {
     const fromStatus = Array.isArray(billingStatus?.allowed_model_types)
       ? billingStatus.allowed_model_types.map((item) => String(item || '').toLowerCase()).filter(Boolean)
@@ -693,6 +734,15 @@ const refreshBundle = async (tid) => {
       ['miq_last_session_id', 'miq_sid', 'miq_history', 'miq_projects'].forEach((key) => localStorage.removeItem(key));
     } catch {}
   }, []);
+
+  useEffect(() => {
+    if (!notificationsOpen) return;
+    setNotificationItems((prev) =>
+      prev.some((item) => item.unread)
+        ? prev.map((item) => ({ ...item, unread: false }))
+        : prev
+    );
+  }, [notificationsOpen]);
 
   const persistDisplayName = async (value) => {
     const trimmed = String(value || '').trim();
@@ -1066,6 +1116,48 @@ const refreshBundle = async (tid) => {
             >
               Full account page
             </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderNotificationsModal = () => {
+    if (!notificationsOpen) return null;
+    return (
+      <div
+        className="jas-notifications-backdrop"
+        role="presentation"
+        onClick={() => setNotificationsOpen(false)}
+      >
+        <div
+          className="jas-notifications-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Notifications"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="jas-notifications-header">
+            <h3>Notifications</h3>
+            <button
+              type="button"
+              className="jas-notifications-close"
+              onClick={() => setNotificationsOpen(false)}
+              aria-label="Close notifications"
+            >
+              <FontAwesomeIcon icon={faTimes} />
+            </button>
+          </div>
+          <div className="jas-notifications-list">
+            {notificationItems.map((item) => (
+              <article key={item.id} className="jas-notification-item">
+                <div className="jas-notification-row">
+                  <h4>{item.title}</h4>
+                  <span>{item.stamp}</span>
+                </div>
+                <p>{item.body}</p>
+              </article>
+            ))}
           </div>
         </div>
       </div>
@@ -4190,6 +4282,7 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
   // Default: conversational intake (no tabs)
   const intakeShellOpen = sidebarState.history || sidebarState.readiness || sidebarState.settings;
   const intakeHasReadinessTab = sessionId && messages.length > 0 && !sidebarState.readiness;
+  const showIntakeTopbarUtilities = !sessionId && messages.length === 0;
   const intakeTabs = [];
   if (!sidebarState.settings) intakeTabs.push('settings');
   if (hasHistory && !sidebarState.history) intakeTabs.push('history');
@@ -4382,9 +4475,37 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
           </button>
         </div>
 
-        <div className="jas-topbar-right" />
+        <div className="jas-topbar-right">
+          {showIntakeTopbarUtilities && (
+            <>
+              <button
+                type="button"
+                className="jas-topbar-bell"
+                onClick={() => setNotificationsOpen(true)}
+                title="Notifications"
+                aria-label="Open notifications"
+              >
+                <FontAwesomeIcon icon={faBell} />
+                {unreadNotificationCount > 0 && (
+                  <span className="jas-topbar-bell-count">{unreadNotificationCount}</span>
+                )}
+              </button>
+              <button
+                type="button"
+                className="jas-topbar-credits"
+                onClick={() => setBillingModalOpen(true)}
+                title="View account credits"
+                aria-label="View credits"
+              >
+                <FontAwesomeIcon icon={faBolt} />
+                <span>{intakeCreditsLabel}</span>
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
+      {renderNotificationsModal()}
       {renderNameModal()}
       {renderBillingModal()}
 
