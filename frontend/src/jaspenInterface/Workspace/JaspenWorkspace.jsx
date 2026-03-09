@@ -17,7 +17,7 @@ import {
   faPaperPlane, faSpinner, faTimes, faBars, faCheck, faExclamationTriangle,
   faChartLine, faTrash, faPlus, faMinus, faMicrophone,
   faBolt, faLayerGroup, faPlay, faListCheck, faArrowUpRightFromSquare, faGaugeHigh, faClockRotateLeft, faPaperclip, faArrowUp,
-  faDownload, faChevronDown, faChevronUp
+  faDownload, faChevronDown, faChevronUp, faUser
 } from '@fortawesome/free-solid-svg-icons';
 import {
   MonitorCheck, MessageCircleQuestion,
@@ -53,13 +53,18 @@ function normalizeReadiness(value) {
   if (value && typeof value === 'object') {
     const percent = Math.max(0, Math.min(100, Math.round(Number(value.percent) || 0)));
     const categories = Array.isArray(value.categories) ? value.categories : [];
+    const items = Array.isArray(value.items) ? value.items : [];
+    const checklist_summary = value.checklist_summary && typeof value.checklist_summary === 'object'
+      ? value.checklist_summary
+      : null;
     const updated_at = value.updated_at || null;
-    return { percent, categories, updated_at };
+    const version = value.version || null;
+    return { percent, categories, items, checklist_summary, updated_at, version };
   }
   
   // Primitive value (int/float/string)
   const pct = Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
-  return { percent: pct, categories: [], updated_at: null };
+  return { percent: pct, categories: [], items: [], checklist_summary: null, updated_at: null, version: null };
 }
 
 /**
@@ -185,34 +190,12 @@ function isSelfServePlan(plan) {
   return ['free', 'essential'].includes(normalizePlanKey(plan));
 }
 
-function clearLegacySessionCaches() {
-  const fixedKeys = [
-    'jas_history',
-    'jas_projects',
-    'jas_last_session_id',
-    'jas_sid',
-    'jaspen_last_email',
-    'miq_history',
-    'miq_projects',
-    'miq_last_session_id',
-    'miq_sid',
-  ];
-  fixedKeys.forEach((key) => localStorage.removeItem(key));
-
-  for (let i = localStorage.length - 1; i >= 0; i -= 1) {
-    const key = localStorage.key(i);
-    if (key && key.startsWith('session_')) {
-      localStorage.removeItem(key);
-    }
-  }
-}
-
 export default function MarketIQWorkspace() {
   // View states: intake | summary | scenario | comparison | chat
   const [view, setView] = useState('intake');
   const [activeTab, setActiveTab] = useState('summary');
 
-  const { user, logout, setUser } = useAuth();
+  const { user, logout, checkAuthStatus, updateDisplayName } = useAuth();
 
   // Imperative control for scenario modeling (used by interactive chat actions)
   const scenarioModelerRef = useRef(null);
@@ -510,6 +493,14 @@ const refreshBundle = async (tid) => {
   }
 };
 
+  const navigate = useNavigate();
+  const handleUnauthorized = useCallback(async () => {
+    const status = await checkAuthStatus({ silent: true });
+    if (!status?.authenticated) {
+      navigate('/?auth=1', { replace: true });
+    }
+  }, [checkAuthStatus, navigate]);
+
   const authFetch = (url, options = {}) => {
     const apiBase = API_BASE;
     const fullUrl = url.startsWith('http') ? url : `${apiBase}${url}`;
@@ -520,8 +511,6 @@ const refreshBundle = async (tid) => {
     };
     return fetch(fullUrl, { credentials: 'include', ...options, headers });
   };
-
-  const navigate = useNavigate();
 
   // User menu helpers
   const getInitials = (name) => {
@@ -540,6 +529,8 @@ const refreshBundle = async (tid) => {
   const [displayName, setDisplayName] = useState('');
   const [nameInput, setNameInput] = useState('');
   const [nameModalOpen, setNameModalOpen] = useState(false);
+  const [nameSaving, setNameSaving] = useState(false);
+  const [nameError, setNameError] = useState('');
   const [billingStatus, setBillingStatus] = useState(null);
   const [billingCatalog, setBillingCatalog] = useState({ plans: {}, overage_packs: {} });
   const [billingLoading, setBillingLoading] = useState(true);
@@ -607,6 +598,7 @@ const refreshBundle = async (tid) => {
     const initial = saved || fallback;
     setDisplayName(saved || '');
     setNameInput(initial);
+    setNameError('');
     if (!saved) setNameModalOpen(true);
     try {
       if (user?.email) localStorage.setItem('jaspen_last_email', user.email);
@@ -624,28 +616,33 @@ const refreshBundle = async (tid) => {
     } catch {}
   }, []);
 
-  const persistDisplayName = (value) => {
+  const persistDisplayName = async (value) => {
     const trimmed = String(value || '').trim();
-    if (!trimmed) return;
+    if (!trimmed) return false;
+    setNameError('');
+    setNameSaving(true);
+    const result = await updateDisplayName(trimmed);
+    if (!result?.success) {
+      setNameError(result?.error || 'Unable to save name.');
+      setNameSaving(false);
+      return false;
+    }
     try {
       const keys = getUserStorageKeys(user);
       keys.forEach((k) => localStorage.setItem(k, trimmed));
     } catch {}
     setDisplayName(trimmed);
-    setUser?.((prev) => prev ? { ...prev, name: trimmed } : prev);
+    setNameSaving(false);
+    return true;
   };
 
   const loadBilling = useCallback(async () => {
     const token = getAuthToken();
-    if (!token) {
-      setBillingLoading(false);
-      return;
-    }
     setBillingLoading(true);
     try {
       const [statusRes, catalogRes] = await Promise.all([
         fetch(`${API_BASE}/api/billing/status`, {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
           credentials: 'include'
         }),
         fetch(`${API_BASE}/api/billing/catalog`, { credentials: 'include' })
@@ -653,6 +650,9 @@ const refreshBundle = async (tid) => {
       const statusData = await statusRes.json().catch(() => ({}));
       const catalogData = await catalogRes.json().catch(() => ({}));
       if (!statusRes.ok) {
+        if (statusRes.status === 401) {
+          await handleUnauthorized();
+        }
         throw new Error(statusData?.msg || 'Unable to load plan details.');
       }
       setBillingStatus(statusData || null);
@@ -663,7 +663,7 @@ const refreshBundle = async (tid) => {
     } finally {
       setBillingLoading(false);
     }
-  }, [getAuthToken]);
+  }, [getAuthToken, handleUnauthorized]);
 
   useEffect(() => {
     loadBilling();
@@ -714,10 +714,6 @@ const refreshBundle = async (tid) => {
 
   const startPlanChange = async (planKey) => {
     const token = getAuthToken();
-    if (!token) {
-      navigate('/?auth=1');
-      return;
-    }
     setBillingActionLoading(planKey);
     setBillingMessage('');
     try {
@@ -725,13 +721,16 @@ const refreshBundle = async (tid) => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         credentials: 'include',
         body: JSON.stringify({ plan_key: planKey }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
+        if (response.status === 401) {
+          await handleUnauthorized();
+        }
         throw new Error(data?.msg || 'Unable to start plan change.');
       }
       if (data?.url) {
@@ -748,10 +747,6 @@ const refreshBundle = async (tid) => {
 
   const openBillingPortal = async () => {
     const token = getAuthToken();
-    if (!token) {
-      navigate('/?auth=1');
-      return;
-    }
     setBillingActionLoading('portal');
     setBillingMessage('');
     try {
@@ -759,13 +754,16 @@ const refreshBundle = async (tid) => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         credentials: 'include',
         body: JSON.stringify({ return_url: `${window.location.origin}/account` }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data?.url) {
+        if (response.status === 401) {
+          await handleUnauthorized();
+        }
         throw new Error(data?.msg || 'Unable to open billing portal.');
       }
       window.location.href = data.url;
@@ -790,19 +788,30 @@ const refreshBundle = async (tid) => {
             placeholder="Your name"
             autoFocus
           />
+          {nameError && <p className="jas-name-error">{nameError}</p>}
           <div className="jas-name-actions">
             <button
               type="button"
-              className="jas-name-save"
+              className="jas-name-cancel"
               onClick={() => {
-                const trimmed = nameInput.trim();
-                if (!trimmed) return;
-                persistDisplayName(trimmed);
+                setNameError('');
                 setNameModalOpen(false);
               }}
-              disabled={!nameInput.trim()}
             >
-              Save
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="jas-name-save"
+              onClick={async () => {
+                const trimmed = nameInput.trim();
+                if (!trimmed) return;
+                const ok = await persistDisplayName(trimmed);
+                if (ok) setNameModalOpen(false);
+              }}
+              disabled={!nameInput.trim() || nameSaving}
+            >
+              {nameSaving ? 'Saving...' : 'Save'}
             </button>
           </div>
         </div>
@@ -905,6 +914,14 @@ const refreshBundle = async (tid) => {
     window.open(path, '_blank', 'noopener,noreferrer');
   };
 
+  const openDisplayNameEditor = () => {
+    setNameError('');
+    setNameInput(displayName || user?.name || user?.email?.split?.('@')[0] || '');
+    setNameModalOpen(true);
+    setAccountQuickMenuOpen(false);
+    setKnowledgeMenuOpen(false);
+  };
+
   const handlePMDashboardClick = (onClose) => {
     const rank = planRank[currentPlanKey] || 0;
     if (rank < 1) {
@@ -962,6 +979,12 @@ const refreshBundle = async (tid) => {
       {accountQuickMenuOpen && (
         <div className="jas-ud-footer-menu">
           <div className="jas-ud-footer-email">{userEmail}</div>
+          <button
+            type="button"
+            onClick={openDisplayNameEditor}
+          >
+            Edit display name
+          </button>
           <button type="button" onClick={() => { setBillingModalOpen(true); setAccountQuickMenuOpen(false); }}>
             Upgrade plan
           </button>
@@ -1019,6 +1042,11 @@ const refreshBundle = async (tid) => {
 
         <div className="jas-ud-section">
           <div className="jas-ud-section-label">Account</div>
+          <button className="jas-ud-item" onClick={openDisplayNameEditor}>
+            <FontAwesomeIcon icon={faUser} />
+            <span className="jas-ud-item-label">Edit display name</span>
+            <span className="jas-ud-item-badge">{displayName || user?.name || 'Set name'}</span>
+          </button>
           <button className="jas-ud-item" onClick={() => { setBillingModalOpen(true); setAccountQuickMenuOpen(false); }}>
             <FontAwesomeIcon icon={faBolt} />
             <span className="jas-ud-item-label">Credits</span>
@@ -1261,6 +1289,9 @@ return {
           setAnalysisHistory([]);
         }
       } else {
+        if (response.status === 401) {
+          await handleUnauthorized();
+        }
         setAnalysisHistory([]);
       }
     } catch (error) {
@@ -1290,31 +1321,10 @@ async function loadSessionById(id) {
       credentials: 'include',
     });
 
-    // If auth fails on refresh, fallback to thread bundle so we can still restore chat
+    // If auth fails, session is no longer valid for this browser context.
     if (resp.status === 401) {
-      try {
-        const bundle = await MarketIQ.getThreadBundle(id, { msg_limit: 80, scn_limit: 50 });
-
-        const bundleMsgs = Array.isArray(bundle?.messages) ? bundle.messages : [];
-        const chat_history = bundleMsgs
-          .map((m) => ({
-            role: m.role || (m.sender === 'user' ? 'user' : 'assistant'),
-            content: m.content || m.text || m.message || '',
-          }))
-          .filter((x) => (x.content || '').trim().length > 0);
-
-        return {
-          session_id: id,
-          chat_history,
-          result: bundle?.latest_analysis || bundle?.result || null,
-          collected_data: bundle?.collected_data || {},
-          readiness: normalizeReadiness(bundle?.readiness || null),
-          status: bundle?.status || null,
-        };
-      } catch (e) {
-        console.debug('[loadSessionById] bundle fallback failed', e);
-        return null;
-      }
+      await handleUnauthorized();
+      return null;
     }
 
     if (!resp.ok) return null;
@@ -1630,9 +1640,13 @@ async function fetchReadinessFor(sid) {
     });
 
     const categories = Array.isArray(auditPayload?.categories) ? auditPayload.categories : [];
+    const items = Array.isArray(auditPayload?.items) ? auditPayload.items : [];
+    const checklist_summary = auditPayload?.checklist_summary && typeof auditPayload.checklist_summary === 'object'
+      ? auditPayload.checklist_summary
+      : null;
     const version = auditPayload?.version || null;
 
-    const newAudit = { overall: { ...overall, percent: pct }, categories, version };
+    const newAudit = { overall: { ...overall, percent: pct }, categories, items, checklist_summary, version };
     console.log('[fetchReadinessFor] calling setReadinessAudit with:', newAudit);
     setReadinessAudit(newAudit);
     setReadinessSource(overall.source);
@@ -1709,6 +1723,87 @@ const canAnalyze = React.useMemo(() => {
 return uiReadiness >= 85 && hasUserTurns;
 }, [uiReadiness, messages]);
 
+const readinessChecklistItems = useMemo(() => {
+  const items = Array.isArray(readinessAudit?.items) ? readinessAudit.items : [];
+  if (items.length > 0) {
+    return items.map((item, index) => {
+      const percent = clampPercent(item?.percent ?? 0);
+      const status = String(item?.status || '').toLowerCase();
+      const complete = status === 'complete' || item?.completed === true || percent >= 85;
+      const inProgress = !complete && (status === 'in_progress' || status === 'partial' || percent >= 45);
+      return {
+        id: item?.id || item?.key || `item_${index}`,
+        label: item?.label || item?.key || `Checklist item ${index + 1}`,
+        percent,
+        complete,
+        inProgress,
+        contextModule: item?.context_module || null,
+      };
+    });
+  }
+
+  const categories = Array.isArray(readinessAudit?.categories) ? readinessAudit.categories : [];
+  return categories.map((category, index) => {
+    const percent = clampPercent(category?.percent ?? 0);
+    const complete = category?.completed === true || percent >= 85;
+    const inProgress = !complete && percent >= 45;
+    return {
+      id: category?.key || `cat_${index}`,
+      label: category?.label || category?.key || `Checklist item ${index + 1}`,
+      percent,
+      complete,
+      inProgress,
+      contextModule: null,
+    };
+  });
+}, [readinessAudit]);
+
+const readinessChecklistSummary = useMemo(() => {
+  const summary = readinessAudit?.checklist_summary;
+  if (summary && typeof summary === 'object') {
+    const done = Number(summary.complete || 0);
+    const inProgress = Number(summary.in_progress || 0);
+    const missing = Number(summary.missing || 0);
+    const total = Number(summary.total || (done + inProgress + missing));
+    return { done, inProgress, missing, total };
+  }
+
+  const done = readinessChecklistItems.filter((item) => item.complete).length;
+  const inProgress = readinessChecklistItems.filter((item) => !item.complete && item.inProgress).length;
+  const missing = readinessChecklistItems.filter((item) => !item.complete && !item.inProgress).length;
+  return { done, inProgress, missing, total: readinessChecklistItems.length };
+}, [readinessAudit, readinessChecklistItems]);
+
+const renderReadinessChecklist = () => (
+  <div className="jas-collected-section">
+    <h4>Progress Checklist</h4>
+    <p style={{ color: '#64748b', fontSize: '12px', margin: '0 0 10px' }}>
+      {readinessChecklistSummary.done}/{readinessChecklistSummary.total} captured
+      {readinessChecklistSummary.inProgress > 0 ? ` • ${readinessChecklistSummary.inProgress} in progress` : ''}
+    </p>
+    {readinessChecklistItems.length > 0 ? (
+      <div className="jas-checklist">
+        {readinessChecklistItems.map((item) => (
+          <label className="jas-check-item" key={item.id}>
+            <input type="checkbox" className="jas-check" checked={item.complete} readOnly />
+            <div className="jas-check-main">
+              <div className="jas-check-label">{item.label}</div>
+              <div className="jas-check-meta">
+                {item.complete ? 'Captured' : item.inProgress ? `In progress (${item.percent}%)` : 'Missing'}
+                {item.contextModule ? ` • ${String(item.contextModule).replace(/_/g, ' ')}` : ''}
+              </div>
+            </div>
+          </label>
+        ))}
+      </div>
+    ) : (
+      <p style={{ color: '#64748b', fontSize: '13px', lineHeight: 1.5, margin: '6px 0 0' }}>
+        Ask one more question to start checklist tracking.
+      </p>
+    )}
+  </div>
+);
+
   // Utilities
   const normalize = (s) => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
 
@@ -1728,34 +1823,7 @@ return uiReadiness >= 85 && hasUserTurns;
   // === Auth ===
   const handleLogout = async (e) => {
     e?.preventDefault?.();
-    try {
-      const apiBase = API_BASE;
-      const access  = localStorage.getItem('access_token') || localStorage.getItem('token');
-      const refresh = localStorage.getItem('refresh_token');
-
-      if (access || refresh) {
-        try {
-          await fetch(`${apiBase}/api/auth/logout`, {
-            method: 'POST',
-            headers: {
-              ...(access ? { 'Authorization': `Bearer ${access}` } : {}),
-              'Content-Type': 'application/json'
-            },
-            credentials: 'include',
-            body: JSON.stringify({ refresh_token: refresh })
-          });
-        } catch {}
-      }
-
-      if (isSelfServePlan(user?.subscription_plan)) {
-        clearLegacySessionCaches();
-        localStorage.removeItem('jas_storage_owner_id');
-      }
-      ['access_token','token','refresh_token'].forEach(k => localStorage.removeItem(k));
-      document.cookie = 'jaspen_sid=; Max-Age=0; Path=/; Secure; SameSite=None';
-    } finally {
-      window.location.replace('/logout');
-    }
+    await logout();
   };
 
   // === Conversation Start ===
@@ -1883,6 +1951,10 @@ async function continueConversation(userText) {
     if (auditPayload) {
       const pct = clampPercent(auditPayload.overall?.percent ?? 0);
       const categories = Array.isArray(auditPayload?.categories) ? auditPayload.categories : [];
+      const items = Array.isArray(auditPayload?.items) ? auditPayload.items : [];
+      const checklist_summary = auditPayload?.checklist_summary && typeof auditPayload.checklist_summary === 'object'
+        ? auditPayload.checklist_summary
+        : null;
       const version = auditPayload?.version || null;
 
       console.log('[continueConversation] setting readinessAudit with pct:', pct);
@@ -1890,6 +1962,8 @@ async function continueConversation(userText) {
       setReadinessAudit({
         overall: { ...auditPayload.overall, percent: pct },
         categories,
+        items,
+        checklist_summary,
         version
       });
     } else {
@@ -1909,10 +1983,16 @@ async function continueConversation(userText) {
       readiness: auditPayload ? {
         percent: clampPercent(auditPayload.overall?.percent ?? 0),
         categories: auditPayload.categories || [],
+        items: auditPayload.items || [],
+        checklist_summary: auditPayload.checklist_summary || null,
+        version: auditPayload.version || null,
         updated_at: new Date().toISOString()
       } : {
         percent: 0,
         categories: [],
+        items: [],
+        checklist_summary: null,
+        version: null,
         updated_at: new Date().toISOString()
       },
       collectedData: updatedCollected,
@@ -3167,13 +3247,7 @@ setView(id === 'chat' ? 'intake' : id);
           </div>
         </div>
 
-        <div className="jas-collected-section">
-          <h4>Framework Progress</h4>
-          <p style={{ color: '#64748b', fontSize: '13px', lineHeight: 1.5, margin: '6px 0 0' }}>
-            Progress is calculated using the framework internally so your execution score stays consistent
-            across financial and non-financial KPI inputs.
-          </p>
-        </div>
+        {renderReadinessChecklist()}
       </div>
       {renderSidebarFooter(() => dispatchSidebar({ type: 'CLOSE_READINESS' }))}
     </div>
@@ -3846,13 +3920,7 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
 )}
           </div>
 
-<div className="jas-collected-section">
-  <h4>Framework Progress</h4>
-  <p style={{ color: '#64748b', fontSize: '13px', lineHeight: 1.5, margin: '6px 0 0' }}>
-    Progress is calculated using the framework internally so your execution score stays consistent
-    across financial and non-financial KPI inputs.
-  </p>
-</div>
+{renderReadinessChecklist()}
         </div>
         {renderSidebarFooter(() => dispatchSidebar({ type: 'CLOSE_READINESS' }))}
       </div>

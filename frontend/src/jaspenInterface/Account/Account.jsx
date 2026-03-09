@@ -23,23 +23,26 @@ export default function Account() {
 
     const load = async () => {
       const token = getToken();
-      if (!token) {
-        navigate('/?auth=1', { replace: true });
-        return;
-      }
 
       try {
         const [statusRes, catalogRes] = await Promise.all([
           fetch(`${API_BASE}/api/billing/status`, {
-            headers: { Authorization: `Bearer ${token}` },
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+            credentials: 'include',
           }),
-          fetch(`${API_BASE}/api/billing/catalog`),
+          fetch(`${API_BASE}/api/billing/catalog`, { credentials: 'include' }),
         ]);
 
         const statusData = await statusRes.json();
         const catalogData = await catalogRes.json();
 
-        if (!statusRes.ok) throw new Error(statusData?.msg || 'Unable to load billing status.');
+        if (!statusRes.ok) {
+          if (statusRes.status === 401) {
+            navigate('/?auth=1', { replace: true });
+            return;
+          }
+          throw new Error(statusData?.msg || 'Unable to load billing status.');
+        }
         if (mounted) {
           setStatus(statusData);
           setCatalog(catalogData || { plans: {}, overage_packs: {} });
@@ -59,9 +62,9 @@ export default function Account() {
 
   const refreshStatus = async () => {
     const token = getToken();
-    if (!token) return;
     const res = await fetch(`${API_BASE}/api/billing/status`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      credentials: 'include',
     });
     const data = await res.json();
     if (res.ok) setStatus(data);
@@ -69,10 +72,6 @@ export default function Account() {
 
   const startPlanChange = async (planKey) => {
     const token = getToken();
-    if (!token) {
-      navigate('/?auth=1');
-      return;
-    }
 
     setPendingAction(planKey);
     setMessage('');
@@ -82,13 +81,18 @@ export default function Account() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
+        credentials: 'include',
         body: JSON.stringify({ plan_key: planKey }),
       });
       const data = await response.json();
 
       if (!response.ok) {
+        if (response.status === 401) {
+          navigate('/?auth=1', { replace: true });
+          return;
+        }
         throw new Error(data?.msg || 'Unable to start plan change.');
       }
 
@@ -108,7 +112,6 @@ export default function Account() {
 
   const openBillingPortal = async () => {
     const token = getToken();
-    if (!token) return;
 
     setPendingAction('portal');
     setMessage('');
@@ -118,12 +121,17 @@ export default function Account() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
+        credentials: 'include',
         body: JSON.stringify({ return_url: `${window.location.origin}/account` }),
       });
       const data = await response.json();
       if (!response.ok || !data?.url) {
+        if (response.status === 401) {
+          navigate('/?auth=1', { replace: true });
+          return;
+        }
         throw new Error(data?.msg || 'No billing portal is available yet for this account.');
       }
       window.location.href = data.url;
@@ -136,7 +144,6 @@ export default function Account() {
 
   const cancelAtPeriodEnd = async () => {
     const token = getToken();
-    if (!token) return;
 
     setPendingAction('cancel');
     setMessage('');
@@ -145,11 +152,16 @@ export default function Account() {
       const response = await fetch(`${API_BASE}/api/billing/cancel-subscription`, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${token}`,
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
+        credentials: 'include',
       });
       const data = await response.json();
       if (!response.ok) {
+        if (response.status === 401) {
+          navigate('/?auth=1', { replace: true });
+          return;
+        }
         throw new Error(data?.msg || 'Unable to cancel subscription.');
       }
       setMessage('Subscription will cancel at period end.');
@@ -163,7 +175,6 @@ export default function Account() {
 
   const buyPack = async (packKey) => {
     const token = getToken();
-    if (!token) return;
 
     setPendingAction(packKey);
     setMessage('');
@@ -173,12 +184,17 @@ export default function Account() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
+        credentials: 'include',
         body: JSON.stringify({ pack_key: packKey }),
       });
       const data = await response.json();
       if (!response.ok || !data?.url) {
+        if (response.status === 401) {
+          navigate('/?auth=1', { replace: true });
+          return;
+        }
         throw new Error(data?.msg || 'Unable to start overage checkout.');
       }
       window.location.href = data.url;

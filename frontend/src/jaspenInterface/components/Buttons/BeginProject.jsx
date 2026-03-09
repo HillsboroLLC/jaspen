@@ -10,7 +10,7 @@ import {
 import './BeginProject.css';
 
 /**
- * BeginProjectMenu - Reusable dropdown menu for Market IQ pages
+ * BeginProjectMenu - Reusable dropdown menu for Jaspen workspace pages
  * 
  * @param {string} currentPage - The current page name to exclude from menu
  *   Options: 'dashboard', 'explore', 'scenario', 'chat'

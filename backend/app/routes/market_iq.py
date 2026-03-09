@@ -115,7 +115,7 @@ def _conversation_to_transcript(history):
 def _generate_market_iq_scorecard(client, project_description):
     """Run the existing LLM scoring flow and return parsed scorecard JSON."""
     analysis_prompt = f"""
-You are a Market IQ analyst specializing in commercialization strategy and financial impact assessment. Analyze the following project and provide a comprehensive Market IQ score and breakdown.
+You are a Jaspen strategy analyst specializing in commercialization strategy and financial impact assessment. Analyze the following project and provide a comprehensive strategy score and breakdown.
 
 Project Description: {project_description}
 
@@ -172,7 +172,7 @@ Provide specific, actionable insights with quantified financial impacts where po
     response = client.chat.completions.create(
         model="gpt-4",
         messages=[
-            {"role": "system", "content": "You are a Market IQ analyst specializing in commercialization strategy. Always respond with valid JSON only."},
+            {"role": "system", "content": "You are a Jaspen strategy analyst specializing in commercialization strategy. Always respond with valid JSON only."},
             {"role": "user", "content": analysis_prompt}
         ],
         temperature=0.7,
@@ -196,7 +196,7 @@ def analyze_project():
             db.session.commit()
 
         thread_id = data.get('thread_id')
-        project_name = data.get('name') or data.get('project_name') or 'Market IQ Project'
+        project_name = data.get('name') or data.get('project_name') or 'Jaspen Project'
         framework_id = data.get('framework_id')
         project_description = (data.get('description') or '').strip()
 
@@ -281,7 +281,7 @@ def analyze_project():
         return jsonify({'analysis': analysis}), 200
         
     except Exception as e:
-        print(f"Error in Market IQ analysis: {str(e)}")
+        print(f"Error in Jaspen analysis: {str(e)}")
         return jsonify({'error': 'Analysis failed. Please try again.'}), 500
 
 @market_iq_bp.route('/chat', methods=['POST'])
@@ -300,9 +300,9 @@ def chat_with_analysis():
         
         # Create context from analysis
         context_prompt = f"""
-You are a Market IQ analyst assistant. The user has received the following analysis:
+You are a Jaspen strategy assistant. The user has received the following analysis:
 
-Market IQ Score: {analysis_context.get('market_iq_score', 'N/A')}
+Jaspen Score: {analysis_context.get('market_iq_score', 'N/A')}
 Component Scores: {json.dumps(analysis_context.get('component_scores', {}), indent=2)}
 Financial Impact: {json.dumps(analysis_context.get('financial_impact', {}), indent=2)}
 
@@ -322,7 +322,7 @@ Keep responses concise but comprehensive (2-3 paragraphs maximum).
         response = client.chat.completions.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "You are a Market IQ analyst assistant specializing in commercialization strategy and financial optimization."},
+                {"role": "system", "content": "You are a Jaspen strategy assistant specializing in commercialization strategy and financial optimization."},
                 {"role": "user", "content": context_prompt}
             ],
             temperature=0.7,
@@ -337,7 +337,7 @@ Keep responses concise but comprehensive (2-3 paragraphs maximum).
         }), 200
         
     except Exception as e:
-        print(f"Error in Market IQ chat: {str(e)}")
+        print(f"Error in Jaspen chat: {str(e)}")
         return jsonify({'error': 'Chat failed. Please try again.'}), 500
 
 @market_iq_bp.route('/history', methods=['GET'])

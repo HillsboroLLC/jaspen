@@ -1105,7 +1105,18 @@
 
 .jas-name-actions {
   display: flex;
+  gap: 8px;
   justify-content: flex-end;
+}
+
+.jas-name-cancel {
+  border: 1px solid var(--gray-300);
+  background: var(--white);
+  color: var(--gray-700);
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  cursor: pointer;
 }
 
 .jas-name-save {
@@ -1120,6 +1131,12 @@
 .jas-name-save:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.jas-name-error {
+  color: #c0392b;
+  font-size: 0.75rem;
+  margin-bottom: 10px;
 }
 
 /* ============================================================================

@@ -180,8 +180,8 @@ def create_app():
     except ImportError:
         print("Warning: sessions blueprint not found. Session saving will not work.")
 
-    # Market IQ blueprint
-    print("DEBUG: Market IQ API registered successfully at /api/market-iq")
+    # Jaspen strategy blueprint
+    print("DEBUG: Jaspen strategy API registered successfully at /api/market-iq")
 
     # Statistical Analysis blueprint
     print("DEBUG: About to register statistical analysis blueprint")

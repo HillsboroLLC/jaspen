@@ -63,7 +63,6 @@ const AuthContext = createContext();
 
 // Backend URL configuration
 const API_BASE_URL = API_BASE;
-const DISABLE_LEGACY_AUTH = false;
 
 // Normalize user shape across email + Google sign-in payloads.
 const normalizeUser = (raw) => {
@@ -155,7 +154,7 @@ const syncSelfServeStorageOwnership = (user) => {
     return;
   }
 
-  // Always remove obsolete MIQ-only keys for self-serve sessions.
+  // Always remove obsolete legacy keys for self-serve sessions.
   ['miq_last_session_id', 'miq_sid', 'miq_history', 'miq_projects'].forEach((key) => localStorage.removeItem(key));
 
   const ownerId = String(user?.id || user?.email || '').trim();
@@ -208,6 +207,26 @@ export function AuthProvider({ children }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Re-check auth quietly so UI does not remain in a stale "looks logged in" state.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        checkAuthStatus({ silent: true });
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+
+    const intervalId = window.setInterval(() => {
+      checkAuthStatus({ silent: true });
+    }, 5 * 60 * 1000);
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.clearInterval(intervalId);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Load LSS users and set role when user changes
   useEffect(() => {
     if (user) {
@@ -232,10 +251,10 @@ export function AuthProvider({ children }) {
 
   // IMPORTANT: do NOT require localStorage token just to check session.
   // If the cookie is present, /api/auth/me will return 200 and user info.
-  const checkAuthStatus = async () => {
-    setLoading(true);
+  const checkAuthStatus = async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     try {
-const res = await authFetch('/api/auth/me', { method: 'GET' });
+      const res = await authFetch('/api/auth/me', { method: 'GET' });
 
       if (res.ok) {
         const userData = await res.json();
@@ -246,17 +265,47 @@ const res = await authFetch('/api/auth/me', { method: 'GET' });
         localStorage.removeItem('refresh_token');
         syncSelfServeStorageOwnership(normalized);
         setUser(normalized);
+        return { authenticated: true, user: normalized };
       } else {
         // Clear any stale token if server says no
         clearAuthTokens();
         setUser(null);
+        return { authenticated: false, user: null };
       }
     } catch (error) {
       console.error('Auth check failed:', error);
       clearAuthTokens();
       setUser(null);
+      return { authenticated: false, user: null };
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
+    }
+  };
+
+  const updateDisplayName = async (name) => {
+    const trimmed = String(name || '').trim();
+    if (!trimmed) {
+      return { success: false, error: 'Name is required.' };
+    }
+
+    try {
+      const res = await authFetch('/api/auth/me', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: trimmed })
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return { success: false, error: data?.error || 'Unable to update display name.' };
+      }
+
+      const normalized = normalizeUser(data);
+      setUser(normalized);
+      return { success: true, user: normalized };
+    } catch (error) {
+      console.error('Update display name error:', error);
+      return { success: false, error: 'Network error. Please try again.' };
     }
   };
 
@@ -466,6 +515,7 @@ const res = await authFetch('/api/auth/me', { method: 'GET' });
     signup,
     setUser,
     checkAuthStatus,
+    updateDisplayName,
     isAuthenticated,
 
     // LSS functionality

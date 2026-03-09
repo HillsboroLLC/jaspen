@@ -81,6 +81,63 @@ FOLLOW_UP_QUESTIONS_BY_VERSION = {
     },
 }
 
+ADAPTIVE_CONTEXT_PROFILES = [
+    {
+        "key": "marketing_campaign",
+        "triggers": ["campaign", "ad", "marketing", "impression", "promotion", "offer"],
+        "items": [
+            {
+                "id": "campaign_audience",
+                "label": "Target audience and segment are defined",
+                "keywords": ["segment", "audience", "customer", "buyer", "persona"],
+                "question": "Who is the target audience segment for this initiative?",
+            },
+            {
+                "id": "campaign_channel",
+                "label": "Channel, reach, and conversion assumptions are explicit",
+                "keywords": ["channel", "reach", "conversion", "ctr", "impression", "funnel"],
+                "question": "Which channels will you use and what conversion assumptions are you using?",
+            },
+        ],
+    },
+    {
+        "key": "operations_execution",
+        "triggers": ["operation", "process", "workflow", "handoff", "capacity", "throughput"],
+        "items": [
+            {
+                "id": "process_owner",
+                "label": "Owners are assigned for the critical workflow",
+                "keywords": ["owner", "responsible", "team", "lead", "accountable"],
+                "question": "Who owns each critical workflow step and decision?",
+            },
+            {
+                "id": "process_constraint",
+                "label": "Operational bottleneck and release plan are defined",
+                "keywords": ["bottleneck", "constraint", "queue", "capacity", "blocker", "unlock"],
+                "question": "What is the main operational bottleneck and how will you remove it?",
+            },
+        ],
+    },
+    {
+        "key": "product_growth",
+        "triggers": ["product", "feature", "launch", "adoption", "retention", "churn"],
+        "items": [
+            {
+                "id": "value_hypothesis",
+                "label": "Customer value hypothesis is testable",
+                "keywords": ["value proposition", "hypothesis", "customer need", "pain point", "benefit"],
+                "question": "What customer value hypothesis are you testing first?",
+            },
+            {
+                "id": "success_signal",
+                "label": "Leading success signals are defined",
+                "keywords": ["activation", "retention", "adoption", "engagement", "signal", "north star"],
+                "question": "Which leading signals will show this is working before final outcomes?",
+            },
+        ],
+    },
+]
+
 EVIDENCE_DATA_CONTRACT = {
     "required_fields": [
         "metric_name",
@@ -170,11 +227,80 @@ def _score_data_evidence(user_text):
     }
 
 
+def _status_from_percent(percent):
+    pct = int(max(0, min(100, percent)))
+    if pct >= 85:
+        return "complete"
+    if pct >= 45:
+        return "in_progress"
+    return "missing"
+
+
+def _selected_context_profiles(user_text):
+    ranked = []
+    for profile in ADAPTIVE_CONTEXT_PROFILES:
+        score = sum(1 for term in profile.get("triggers", []) if term in user_text)
+        if score > 0:
+            ranked.append((score, profile))
+    ranked.sort(key=lambda x: x[0], reverse=True)
+    return [profile for _, profile in ranked[:2]]
+
+
+def _build_readiness_items(spec, version, categories, user_text, user_turns):
+    followups = FOLLOW_UP_QUESTIONS_BY_VERSION.get(version, {})
+    items = []
+
+    # Core framework items (always present)
+    for category in categories:
+        key = category.get("key")
+        percent = int(category.get("percent", 0))
+        items.append({
+            "id": f"core_{key}",
+            "key": key,
+            "label": category.get("label") or key,
+            "type": "core",
+            "status": _status_from_percent(percent),
+            "percent": percent,
+            "confidence": round(max(0.2, min(0.99, percent / 100)), 2),
+            "next_question": followups.get(key),
+            "step": category.get("step"),
+        })
+
+    # Context-specific items (adaptive by request type)
+    for profile in _selected_context_profiles(user_text):
+        for item in profile.get("items", []):
+            hits = sum(1 for term in item.get("keywords", []) if term in user_text)
+            if hits > 0:
+                percent = min(100, 55 + hits * 20 + min(user_turns * 4, 20))
+            else:
+                percent = min(45, user_turns * 10)
+            items.append({
+                "id": item.get("id"),
+                "key": item.get("id"),
+                "label": item.get("label"),
+                "type": "context",
+                "context_module": profile.get("key"),
+                "status": _status_from_percent(percent),
+                "percent": int(percent),
+                "confidence": round(max(0.2, min(0.99, percent / 100)), 2),
+                "next_question": item.get("question"),
+                "step": None,
+            })
+
+    summary = {"complete": 0, "in_progress": 0, "missing": 0, "total": len(items)}
+    for item in items:
+        state = item.get("status")
+        if state in summary:
+            summary[state] += 1
+
+    return items, summary
+
+
 def _new_session(user_id, thread_id, name):
     now = _iso_now()
     return {
         "session_id": thread_id,
-        "name": name or "Market IQ Intake",
+        "name": name or "Jaspen Intake",
         "document_type": "market_iq",
         "current_phase": 1,
         "chat_history": [],
@@ -253,6 +379,10 @@ def _compute_readiness(chat_history):
         "categories": categories,
         "version": version,
     }
+    items, checklist_summary = _build_readiness_items(spec, version, categories, user_text, user_turns)
+    readiness_payload["items"] = items
+    readiness_payload["checklist_summary"] = checklist_summary
+    readiness_payload["checklist_mode"] = "adaptive"
     if evidence:
         readiness_payload["evidence_quality"] = evidence
         readiness_payload["data_contract"] = EVIDENCE_DATA_CONTRACT
@@ -260,6 +390,12 @@ def _compute_readiness(chat_history):
 
 
 def _next_question(readiness):
+    for item in readiness.get("items", []):
+        if item.get("status") != "complete":
+            prompt = item.get("next_question")
+            if prompt:
+                return prompt
+
     version = readiness.get("version", "readiness-v1")
     followups = FOLLOW_UP_QUESTIONS_BY_VERSION.get(version, FOLLOW_UP_QUESTIONS_BY_VERSION["readiness-v1"])
     for category in readiness.get("categories", []):
@@ -413,7 +549,7 @@ def conversation_start():
         return jsonify({"error": "message is required"}), 400
 
     thread_id = str(data.get("thread_id") or request.headers.get("X-Session-ID") or f"thread_{uuid.uuid4().hex[:12]}")
-    name = str(data.get("name") or user_message[:60] or "Market IQ Intake").strip()
+    name = str(data.get("name") or user_message[:60] or "Jaspen Intake").strip()
 
     sessions = load_user_sessions(user_id)
     session = sessions.get(thread_id) or _new_session(user_id, thread_id, name)
@@ -442,6 +578,8 @@ def conversation_start():
         "readiness": {
             "percent": readiness["overall"]["percent"],
             "categories": readiness["categories"],
+            "items": readiness.get("items", []),
+            "checklist_summary": readiness.get("checklist_summary", {}),
             "version": readiness.get("version"),
             "updated_at": _iso_now(),
         },
@@ -464,7 +602,7 @@ def conversation_continue():
         return jsonify({"error": "message is required"}), 400
 
     sessions = load_user_sessions(user_id)
-    session = sessions.get(thread_id) or _new_session(user_id, thread_id, "Market IQ Intake")
+    session = sessions.get(thread_id) or _new_session(user_id, thread_id, "Jaspen Intake")
     chat_history = session.get("chat_history")
     if not isinstance(chat_history, list):
         chat_history = []
@@ -489,6 +627,8 @@ def conversation_continue():
         "readiness": {
             "percent": readiness["overall"]["percent"],
             "categories": readiness["categories"],
+            "items": readiness.get("items", []),
+            "checklist_summary": readiness.get("checklist_summary", {}),
             "version": readiness.get("version"),
             "updated_at": _iso_now(),
         },
@@ -501,6 +641,8 @@ def readiness_spec():
     spec = dict(_active_readiness_spec())
     spec["active_version"] = _active_readiness_version()
     spec["available_versions"] = list(READINESS_SPECS.keys())
+    spec["checklist_mode"] = "adaptive"
+    spec["context_profiles"] = [profile.get("key") for profile in ADAPTIVE_CONTEXT_PROFILES]
     if spec.get("version") == "readiness-v2":
         spec["data_contract"] = EVIDENCE_DATA_CONTRACT
     return jsonify(spec), 200
@@ -537,7 +679,7 @@ def list_threads():
         sessions_list.append({
             **candidate,
             "session_id": thread_id,
-            "name": candidate.get("name") or "Market IQ Intake",
+            "name": candidate.get("name") or "Jaspen Intake",
             "chat_history": chat_history,
             "readiness": readiness,
         })
@@ -599,7 +741,7 @@ def get_thread(thread_id):
     thread_payload = {
         "id": resolved_thread_id,
         "session_id": resolved_thread_id,
-        "name": session.get("name") or "Market IQ Intake",
+        "name": session.get("name") or "Jaspen Intake",
         "status": session.get("status") or ("completed" if analyses else "in_progress"),
         "created_at": session.get("created"),
         "updated_at": session.get("timestamp"),

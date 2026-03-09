@@ -65,7 +65,7 @@ def _normalize_session_payload(user_id, session_id, payload):
     normalized = {
         **src,
         'session_id': str(src.get('session_id') or session_id),
-        'name': src.get('name') or 'Market IQ Intake',
+        'name': src.get('name') or 'Jaspen Intake',
         'document_type': src.get('document_type') or 'market_iq',
         'current_phase': _as_int(src.get('current_phase'), default=1),
         'chat_history': src.get('chat_history') if isinstance(src.get('chat_history'), list) else [],
@@ -100,7 +100,7 @@ def _upsert_session_row(user_id, session_id, payload, existing=None):
     normalized = _normalize_session_payload(user_id, session_id, payload)
     row = existing or UserSession(user_id=str(user_id), session_id=str(session_id))
 
-    row.name = normalized.get('name') or 'Market IQ Intake'
+    row.name = normalized.get('name') or 'Jaspen Intake'
     row.document_type = normalized.get('document_type') or 'market_iq'
     row.status = normalized.get('status') or 'in_progress'
     row.payload = normalized

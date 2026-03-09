@@ -183,6 +183,33 @@ def get_current_user():
     ), 200
 
 
+@auth_bp.route('/me', methods=['PATCH'])
+@jwt_required()
+def update_current_user():
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify(error='User not found'), 404
+
+    data = request.get_json() or {}
+    name = str(data.get('name') or '').strip()
+    if not name:
+        return jsonify(error='name is required'), 400
+    if len(name) > 255:
+        return jsonify(error='name is too long'), 400
+
+    user.name = name
+    db.session.commit()
+
+    return jsonify(
+        id=user.id,
+        email=user.email,
+        name=user.name,
+        subscription_plan=to_public_plan(user.subscription_plan),
+        credits_remaining=user.credits_remaining,
+    ), 200
+
+
 @auth_bp.route('/logout', methods=['POST'])
 def logout():
     """Clear auth cookies for logout."""
