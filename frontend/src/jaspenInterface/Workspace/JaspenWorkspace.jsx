@@ -1910,6 +1910,8 @@ async function fetchReadinessFor(sid) {
 
   // --- Upload (UI only) ---
   const fileInputRef = useRef(null);
+  const chatTabInputRef = useRef(null);
+  const intakeInputRef = useRef(null);
 
 // ======= UI Readiness - SINGLE SOURCE FROM BACKEND ====================
 // ONLY source: readinessAudit.overall.percent from GET /api/readiness/audit
@@ -2034,9 +2036,7 @@ const renderModelTypeInlinePicker = (className = '') => (
           ? normalizedKey.charAt(0).toUpperCase() + normalizedKey.slice(1)
           : 'Model';
         const isAllowed = allowedModelTypes.includes(normalizedKey);
-        const minPlan = String(item?.min_plan || 'free').toLowerCase();
-        const minPlanLabel = plans?.[minPlan]?.label || (minPlan ? minPlan.charAt(0).toUpperCase() + minPlan.slice(1) : 'higher plan');
-        const optionLabel = isAllowed ? (item?.label || fallbackLabel) : `${item?.label || fallbackLabel} (Upgrade to ${minPlanLabel})`;
+        const optionLabel = isAllowed ? (item?.label || fallbackLabel) : `${item?.label || fallbackLabel} (Upgrade to access)`;
         return (
           <option key={modelTypeKey} value={modelTypeKey} disabled={!isAllowed}>
             {optionLabel}
@@ -2046,6 +2046,23 @@ const renderModelTypeInlinePicker = (className = '') => (
     </select>
   </div>
 );
+
+const resizeComposerTextarea = useCallback((el) => {
+  if (!el) return;
+  el.style.height = 'auto';
+  const next = Math.max(44, Math.min(el.scrollHeight, 180));
+  el.style.height = `${next}px`;
+}, []);
+
+const handleComposerInputChange = useCallback((event) => {
+  setInput(event.target.value);
+  resizeComposerTextarea(event.target);
+}, [resizeComposerTextarea]);
+
+useEffect(() => {
+  resizeComposerTextarea(chatTabInputRef.current);
+  resizeComposerTextarea(intakeInputRef.current);
+}, [input, activeTab, view, resizeComposerTextarea]);
 
   // Utilities
   const normalize = (s) => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -3974,51 +3991,54 @@ setView(id === 'chat' ? 'intake' : id);
                     )}
 
                     <div className="chatgpt-input-container">
-                      <div className="chatgpt-input-left-controls">
-                        <button
-                          type="button"
-                          className="chatgpt-plus"
-                          aria-label="Attach files"
-                          title="Attach files"
-                          disabled={busy}
-                          onClick={() => fileInputRef.current?.click()}
-                        >
-                          <FontAwesomeIcon icon={faPlus} />
-                        </button>
-                        {renderModelTypeInlinePicker()}
-                      </div>
-
                       <textarea
+                        ref={chatTabInputRef}
                         value={input}
-                        onChange={(e)=>setInput(e.target.value)}
+                        onChange={handleComposerInputChange}
                         onKeyDown={onKey}
                         placeholder="Refine the conversation to improve your scorecard..."
                         className="chatgpt-input"
-                        rows={1}
+                        rows={2}
                         disabled={busy}
                       />
 
-                      <div className="chatgpt-input-right-controls">
-                        <button
-                          type="button"
-                          className={`chatgpt-mic ${isRecording ? 'is-recording' : ''}`}
-                          aria-label={isRecording ? 'Stop recording' : 'Start recording'}
-                          aria-pressed={isRecording}
-                          title={isRecording ? 'Stop recording' : 'Start recording'}
-                          disabled={busy}
-                          onClick={() => setIsRecording(prev => !prev)}
-                        >
-                          <FontAwesomeIcon icon={faMicrophone} />
-                        </button>
+                      <div className="chatgpt-input-toolbar">
+                        <div className="chatgpt-input-left-controls">
+                          <button
+                            type="button"
+                            className="chatgpt-plus"
+                            aria-label="Attach files"
+                            title="Attach files"
+                            disabled={busy}
+                            onClick={() => fileInputRef.current?.click()}
+                          >
+                            <FontAwesomeIcon icon={faPlus} />
+                          </button>
+                          {renderModelTypeInlinePicker()}
+                        </div>
 
-                        <button
-                          className="chatgpt-send"
-                          onClick={onSubmit}
-                          disabled={busy || (!input.trim() && pendingFiles.length === 0)}
-                          title="Send"
-                        >
-                          {busy ? <FontAwesomeIcon icon={faSpinner} spin /> : <FontAwesomeIcon icon={faPaperPlane} />}
-                        </button>
+                        <div className="chatgpt-input-right-controls">
+                          <button
+                            type="button"
+                            className={`chatgpt-mic ${isRecording ? 'is-recording' : ''}`}
+                            aria-label={isRecording ? 'Stop recording' : 'Start recording'}
+                            aria-pressed={isRecording}
+                            title={isRecording ? 'Stop recording' : 'Start recording'}
+                            disabled={busy}
+                            onClick={() => setIsRecording(prev => !prev)}
+                          >
+                            <FontAwesomeIcon icon={faMicrophone} />
+                          </button>
+
+                          <button
+                            className="chatgpt-send"
+                            onClick={onSubmit}
+                            disabled={busy || (!input.trim() && pendingFiles.length === 0)}
+                            title="Send"
+                          >
+                            {busy ? <FontAwesomeIcon icon={faSpinner} spin /> : <FontAwesomeIcon icon={faPaperPlane} />}
+                          </button>
+                        </div>
                       </div>
                     </div>
 
@@ -4368,46 +4388,49 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
           )}
 
           <div className="jas-chat-input-box">
-            <div className="jas-chat-input-left-controls">
-              <button
-                type="button"
-                className="jas-ci-btn"
-                aria-label="Attach files"
-                title="Attach"
-                disabled={busy}
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <FontAwesomeIcon icon={faPaperclip} />
-              </button>
-              {renderModelTypeInlinePicker()}
-            </div>
             <textarea
+              ref={intakeInputRef}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={handleComposerInputChange}
               onKeyDown={onKey}
               placeholder={sessionId ? "Continue the conversation..." : "Describe your project or goal..."}
-              rows={1}
+              rows={2}
               disabled={busy}
             />
-            <div className="jas-chat-input-right-controls">
-              <button
-                type="button"
-                className={`jas-ci-btn ${isRecording ? 'recording' : ''}`}
-                aria-label={isRecording ? 'Stop recording' : 'Start recording'}
-                title="Voice"
-                disabled={busy}
-                onClick={() => setIsRecording(prev => !prev)}
-              >
-                <FontAwesomeIcon icon={faMicrophone} />
-              </button>
-              <button
-                className="jas-ci-btn send"
-                onClick={onSubmit}
-                disabled={busy || (!input.trim() && pendingFiles.length === 0)}
-                title="Send"
-              >
-                {busy ? <FontAwesomeIcon icon={faSpinner} spin /> : <FontAwesomeIcon icon={faArrowUp} />}
-              </button>
+            <div className="jas-chat-input-toolbar">
+              <div className="jas-chat-input-left-controls">
+                <button
+                  type="button"
+                  className="jas-ci-btn"
+                  aria-label="Attach files"
+                  title="Attach"
+                  disabled={busy}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <FontAwesomeIcon icon={faPaperclip} />
+                </button>
+                {renderModelTypeInlinePicker()}
+              </div>
+              <div className="jas-chat-input-right-controls">
+                <button
+                  type="button"
+                  className={`jas-ci-btn ${isRecording ? 'recording' : ''}`}
+                  aria-label={isRecording ? 'Stop recording' : 'Start recording'}
+                  title="Voice"
+                  disabled={busy}
+                  onClick={() => setIsRecording(prev => !prev)}
+                >
+                  <FontAwesomeIcon icon={faMicrophone} />
+                </button>
+                <button
+                  className="jas-ci-btn send"
+                  onClick={onSubmit}
+                  disabled={busy || (!input.trim() && pendingFiles.length === 0)}
+                  title="Send"
+                >
+                  {busy ? <FontAwesomeIcon icon={faSpinner} spin /> : <FontAwesomeIcon icon={faArrowUp} />}
+                </button>
+              </div>
             </div>
           </div>
 

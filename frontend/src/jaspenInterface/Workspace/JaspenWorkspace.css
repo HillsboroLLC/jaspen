@@ -1437,21 +1437,21 @@
 .jas-model-picker-inline {
   display: inline-flex;
   align-items: center;
-  height: 30px;
+  height: 32px;
   padding: 0;
-  border: 1px solid var(--gray-300);
-  border-radius: 10px;
-  background: var(--white);
+  border: none;
+  background: transparent;
 }
 
 .jas-model-picker-inline:focus-within {
-  border-color: var(--gray-300);
+  border-color: transparent;
   box-shadow: none;
 }
 
 .jas-model-picker-inline-select {
   height: 100%;
-  border: none;
+  border: 1px solid var(--gray-300);
+  border-radius: 10px;
   background: transparent;
   color: var(--gray-700);
   font-size: 0.8125rem;
@@ -1462,6 +1462,7 @@
   -webkit-appearance: menulist;
   appearance: auto;
   outline: none;
+  background-color: var(--white);
 }
 
 .jas-model-picker-inline-select:focus,
@@ -1486,7 +1487,8 @@
 
 .jas-chat-input-box {
   display: flex;
-  align-items: flex-end;
+  flex-direction: column;
+  align-items: stretch;
   gap: 12px;
   padding: 16px 18px;
   background: var(--white);
@@ -1504,17 +1506,26 @@
 }
 
 .jas-chat-input-box textarea {
-  flex: 1;
+  width: 100%;
   border: none;
   outline: none;
   font-size: 0.875rem;
   font-family: var(--font);
   color: var(--navy);
   resize: none;
-  min-height: 24px;
-  max-height: 120px;
+  min-height: 44px;
+  max-height: 180px;
+  overflow-y: auto;
   line-height: 1.5;
   background: transparent;
+  margin: 0;
+}
+
+.jas-chat-input-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 .jas-chat-input-box textarea::placeholder {
   color: var(--gray-400);
@@ -2800,7 +2811,8 @@
 
 .chatgpt-input-container {
   display: flex;
-  align-items: flex-end;
+  flex-direction: column;
+  align-items: stretch;
   gap: 12px;
   padding: 16px 18px;
   background: var(--white);
@@ -2822,6 +2834,13 @@
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
+}
+
+.chatgpt-input-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .chatgpt-plus,
@@ -2858,17 +2877,19 @@
 }
 
 .chatgpt-input {
-  flex: 1;
+  width: 100%;
   border: none;
   outline: none;
   font-size: 0.875rem;
   font-family: var(--font);
   color: var(--navy);
   resize: none;
-  min-height: 24px;
-  max-height: 120px;
+  min-height: 44px;
+  max-height: 180px;
+  overflow-y: auto;
   line-height: 1.5;
   background: transparent;
+  margin: 0;
 }
 .chatgpt-input::placeholder {
   color: var(--gray-400);
