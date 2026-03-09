@@ -2005,23 +2005,30 @@ const renderReadinessChecklist = () => (
 );
 
 const renderModelTypeInlinePicker = (className = '') => (
-  <select
-    className={`jas-model-picker-inline-select ${className}`.trim()}
-    value={selectedModelType}
-    onChange={(event) => setSelectedModelType(String(event.target.value || '').toLowerCase())}
-    disabled={busy}
-    aria-label="Model type"
-    title="Model type"
-  >
-    {allowedModelTypes.map((modelTypeKey) => {
-      const item = modelTypes?.[modelTypeKey] || {};
-      return (
-        <option key={modelTypeKey} value={modelTypeKey}>
-          {item?.label || modelTypeKey}
-        </option>
-      );
-    })}
-  </select>
+  <div className={`jas-model-picker-inline ${className}`.trim()}>
+    <FontAwesomeIcon icon={faBolt} className="jas-model-picker-inline-icon" />
+    <select
+      className="jas-model-picker-inline-select"
+      value={selectedModelType}
+      onChange={(event) => setSelectedModelType(String(event.target.value || '').toLowerCase())}
+      disabled={busy}
+      aria-label="Model type"
+      title="Model type"
+    >
+      {allowedModelTypes.map((modelTypeKey) => {
+        const normalizedKey = String(modelTypeKey || '').toLowerCase();
+        const item = modelTypes?.[normalizedKey] || {};
+        const fallbackLabel = normalizedKey
+          ? normalizedKey.charAt(0).toUpperCase() + normalizedKey.slice(1)
+          : 'Model';
+        return (
+          <option key={modelTypeKey} value={modelTypeKey}>
+            {item?.label || fallbackLabel}
+          </option>
+        );
+      })}
+    </select>
+  </div>
 );
 
   // Utilities
