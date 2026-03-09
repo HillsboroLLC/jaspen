@@ -19,6 +19,7 @@ from app.billing_config import (
     normalize_plan_key,
     to_public_plan,
 )
+from app.tool_registry import get_context_budget, get_tool_entitlements
 
 billing_bp = Blueprint('billing', __name__)
 
@@ -94,6 +95,8 @@ def get_billing_status():
         'credits_used': credits_used,
         'allowed_model_types': allowed_model_types,
         'default_model_type': default_model_type,
+        'context_budget': get_context_budget(plan_key),
+        'tool_entitlements': get_tool_entitlements(plan_key),
         'stripe_customer_id': user.stripe_customer_id,
         'stripe_subscription_id': user.stripe_subscription_id,
     }), 200

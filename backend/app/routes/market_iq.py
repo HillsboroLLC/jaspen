@@ -19,6 +19,12 @@ from app.billing_config import (
     normalize_model_type,
     to_public_plan,
 )
+from app.tool_registry import (
+    get_scenario_limits_for_plan,
+    get_tool_min_tier,
+    get_wbs_limits_for_plan,
+    is_tool_allowed,
+)
 from .sessions import load_user_sessions, save_user_sessions
 
 market_iq_bp = Blueprint('market_iq', __name__)
@@ -157,6 +163,30 @@ def _resolve_user_model_selection(user, requested_model_type=None):
         'allowed_model_types': allowed_model_types,
         'default_model_type': default_model_type,
     }, None
+
+
+def _tool_access_error_response(plan_key, tool_id, access='read'):
+    required_min_tier = get_tool_min_tier(tool_id)
+    return jsonify({
+        'error': f"Tool '{tool_id}' requires at least the {required_min_tier} tier.",
+        'code': 'tool_not_allowed',
+        'tool_id': tool_id,
+        'requested_access': access,
+        'required_min_tier': required_min_tier,
+        'plan_key': plan_key,
+    }), 403
+
+
+def _require_tool_access(user_id, tool_id, access='read'):
+    user = User.query.get(user_id)
+    if not user:
+        return None, None, (jsonify({'error': 'User not found'}), 404)
+
+    plan_key = to_public_plan(user.subscription_plan)
+    if not is_tool_allowed(plan_key, tool_id, access):
+        return user, plan_key, _tool_access_error_response(plan_key, tool_id, access=access)
+
+    return user, plan_key, None
 
 
 def _generate_market_iq_scorecard(client, project_description, llm_model):
@@ -561,6 +591,101 @@ def _thread_entry():
     }
 
 
+ALLOWED_WBS_STATUSES = {'todo', 'in_progress', 'blocked', 'done'}
+
+
+def _normalize_wbs_task(raw_task):
+    if not isinstance(raw_task, dict):
+        return None
+
+    task_id = str(raw_task.get('id') or uuid.uuid4().hex[:12]).strip()
+    title = str(raw_task.get('title') or raw_task.get('name') or '').strip()
+    if not title:
+        return None
+
+    status = str(raw_task.get('status') or 'todo').strip().lower()
+    if status not in ALLOWED_WBS_STATUSES:
+        status = 'todo'
+
+    owner = str(raw_task.get('owner') or '').strip()
+    due_date = str(raw_task.get('due_date') or '').strip() or None
+    order = raw_task.get('order')
+    try:
+        order = int(order) if order is not None else None
+    except Exception:
+        order = None
+
+    depends_on = raw_task.get('depends_on')
+    if not isinstance(depends_on, list):
+        depends_on = []
+    dep_ids = []
+    for dep in depends_on:
+        dep_id = str(dep or '').strip()
+        if dep_id:
+            dep_ids.append(dep_id)
+    deduped_dep_ids = []
+    seen = set()
+    for dep_id in dep_ids:
+        if dep_id in seen or dep_id == task_id:
+            continue
+        seen.add(dep_id)
+        deduped_dep_ids.append(dep_id)
+
+    return {
+        'id': task_id,
+        'title': title,
+        'status': status,
+        'owner': owner,
+        'due_date': due_date,
+        'depends_on': deduped_dep_ids,
+        'order': order,
+    }
+
+
+def _normalize_project_wbs(payload, existing=None):
+    base = existing if isinstance(existing, dict) else {}
+    now = datetime.utcnow().isoformat()
+
+    if isinstance(payload, dict) and isinstance(payload.get('project_wbs'), dict):
+        payload = payload.get('project_wbs')
+    elif not isinstance(payload, dict):
+        payload = {}
+
+    incoming_tasks = payload.get('tasks')
+    if not isinstance(incoming_tasks, list):
+        incoming_tasks = []
+
+    tasks = []
+    for idx, raw_task in enumerate(incoming_tasks):
+        task = _normalize_wbs_task(raw_task)
+        if not task:
+            continue
+        if task.get('order') is None:
+            task['order'] = idx + 1
+        tasks.append(task)
+
+    # Ensure dependency ids refer to tasks in this WBS.
+    valid_ids = {t['id'] for t in tasks}
+    for task in tasks:
+        task['depends_on'] = [dep for dep in task.get('depends_on', []) if dep in valid_ids]
+
+    return {
+        'version': int(base.get('version') or payload.get('version') or 1),
+        'name': str(payload.get('name') or base.get('name') or 'Execution WBS').strip(),
+        'description': str(payload.get('description') or base.get('description') or '').strip(),
+        'tasks': tasks,
+        'created_at': base.get('created_at') or now,
+        'updated_at': now,
+    }
+
+
+def _wbs_dependency_count(project_wbs):
+    tasks = project_wbs.get('tasks') if isinstance(project_wbs, dict) else []
+    if not isinstance(tasks, list):
+        return 0
+    return sum(len(t.get('depends_on', [])) for t in tasks if isinstance(t, dict))
+
+
 # ============================================================
 # DETERMINISTIC SCORING ENGINE
 # ============================================================
@@ -790,12 +915,27 @@ def create_scenario(thread_id):
     """Create a scenario. Stores baseline on first call for this thread."""
     try:
         user_id = get_jwt_identity()
+        _, plan_key, access_err = _require_tool_access(user_id, 'scenario_create', access='write')
+        if access_err:
+            return access_err
+
         data = request.get_json() or {}
 
         all_data = _load_scenarios(user_id)
         if thread_id not in all_data:
             all_data[thread_id] = _thread_entry()
         td = all_data[thread_id]
+
+        max_scenarios = get_scenario_limits_for_plan(plan_key).get('max_scenarios_per_thread')
+        current_count = len(td.get('scenarios', {}))
+        if isinstance(max_scenarios, int) and current_count >= max_scenarios:
+            return jsonify({
+                'error': 'Scenario limit reached for current plan',
+                'code': 'scenario_limit_reached',
+                'plan_key': plan_key,
+                'thread_id': thread_id,
+                'max_scenarios_per_thread': max_scenarios,
+            }), 403
 
         # Persist baseline the first time it arrives
         baseline = data.get('baseline')
@@ -833,6 +973,10 @@ def list_scenarios(thread_id):
     """List scenarios for a thread, with pagination."""
     try:
         user_id = get_jwt_identity()
+        _, _, access_err = _require_tool_access(user_id, 'scenario_create', access='read')
+        if access_err:
+            return access_err
+
         td = _load_scenarios(user_id).get(thread_id, {})
         scenarios = sorted(td.get('scenarios', {}).values(),
                            key=lambda s: s.get('created_at', ''), reverse=True)
@@ -856,6 +1000,10 @@ def update_scenario(scenario_id):
     """Update label / deltas. Invalidates cached result if deltas change."""
     try:
         user_id  = get_jwt_identity()
+        _, _, access_err = _require_tool_access(user_id, 'scenario_create', access='write')
+        if access_err:
+            return access_err
+
         thread_id = request.args.get('thread_id')
         if not thread_id:
             return jsonify({'error': 'thread_id query param required'}), 400
@@ -888,6 +1036,10 @@ def delete_scenario(scenario_id):
     """Delete a scenario. Clears adoption if it was the adopted one."""
     try:
         user_id  = get_jwt_identity()
+        _, _, access_err = _require_tool_access(user_id, 'scenario_delete', access='write')
+        if access_err:
+            return access_err
+
         thread_id = request.args.get('thread_id')
         if not thread_id:
             return jsonify({'error': 'thread_id query param required'}), 400
@@ -922,6 +1074,10 @@ def apply_scenario(scenario_id):
     """
     try:
         user_id   = get_jwt_identity()
+        _, _, access_err = _require_tool_access(user_id, 'scenario_apply', access='write')
+        if access_err:
+            return access_err
+
         thread_id = request.args.get('thread_id')
         if not thread_id:
             return jsonify({'error': 'thread_id query param required'}), 400
@@ -973,6 +1129,10 @@ def adopt_scenario(scenario_id):
     """Mark a scenario as the adopted (current) analysis for its thread."""
     try:
         user_id   = get_jwt_identity()
+        _, _, access_err = _require_tool_access(user_id, 'scenario_adopt', access='write')
+        if access_err:
+            return access_err
+
         data      = request.get_json() or {}
         thread_id = data.get('thread_id') or request.args.get('thread_id')
 
@@ -999,6 +1159,91 @@ def adopt_scenario(scenario_id):
 
     except Exception as e:
         print(f"[adopt_scenario] {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+# ============================================================
+# WBS ROUTES
+# ============================================================
+
+@market_iq_bp.route('/threads/<thread_id>/wbs', methods=['GET'])
+@jwt_required()
+def get_thread_wbs(thread_id):
+    try:
+        user_id = get_jwt_identity()
+        _, plan_key, access_err = _require_tool_access(user_id, 'wbs_read', access='read')
+        if access_err:
+            return access_err
+
+        all_data = _load_scenarios(user_id)
+        td = all_data.get(thread_id, {}) if isinstance(all_data, dict) else {}
+        project_wbs = td.get('project_wbs') if isinstance(td, dict) else None
+
+        return jsonify({
+            'thread_id': thread_id,
+            'project_wbs': project_wbs,
+            'limits': get_wbs_limits_for_plan(plan_key),
+        }), 200
+    except Exception as e:
+        print(f"[get_thread_wbs] {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@market_iq_bp.route('/threads/<thread_id>/wbs', methods=['PUT', 'PATCH'])
+@jwt_required()
+def upsert_thread_wbs(thread_id):
+    try:
+        user_id = get_jwt_identity()
+        _, plan_key, access_err = _require_tool_access(user_id, 'wbs_write', access='write')
+        if access_err:
+            return access_err
+
+        payload = request.get_json() or {}
+
+        all_data = _load_scenarios(user_id)
+        if thread_id not in all_data:
+            all_data[thread_id] = _thread_entry()
+        td = all_data[thread_id]
+
+        existing_wbs = td.get('project_wbs') if isinstance(td.get('project_wbs'), dict) else None
+        normalized_wbs = _normalize_project_wbs(payload, existing=existing_wbs)
+
+        limits = get_wbs_limits_for_plan(plan_key)
+        max_tasks = limits.get('max_tasks_per_wbs')
+        max_deps = limits.get('max_dependencies_per_wbs')
+        task_count = len(normalized_wbs.get('tasks', []))
+        dep_count = _wbs_dependency_count(normalized_wbs)
+
+        if isinstance(max_tasks, int) and task_count > max_tasks:
+            return jsonify({
+                'error': 'WBS task limit reached for current plan',
+                'code': 'wbs_task_limit_reached',
+                'plan_key': plan_key,
+                'max_tasks_per_wbs': max_tasks,
+                'task_count': task_count,
+            }), 403
+
+        if isinstance(max_deps, int) and dep_count > max_deps:
+            return jsonify({
+                'error': 'WBS dependency limit reached for current plan',
+                'code': 'wbs_dependency_limit_reached',
+                'plan_key': plan_key,
+                'max_dependencies_per_wbs': max_deps,
+                'dependency_count': dep_count,
+            }), 403
+
+        td['project_wbs'] = normalized_wbs
+        all_data[thread_id] = td
+        _save_scenarios(user_id, all_data)
+
+        return jsonify({
+            'success': True,
+            'thread_id': thread_id,
+            'project_wbs': normalized_wbs,
+            'limits': limits,
+        }), 200
+    except Exception as e:
+        print(f"[upsert_thread_wbs] {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -1103,6 +1348,10 @@ def adopt_analysis_for_thread(thread_id):
     """
     try:
         user_id = get_jwt_identity()
+        _, _, access_err = _require_tool_access(user_id, 'scenario_adopt', access='write')
+        if access_err:
+            return access_err
+
         data    = request.get_json() or {}
         analysis_id = data.get('analysis_id')
         if not analysis_id:

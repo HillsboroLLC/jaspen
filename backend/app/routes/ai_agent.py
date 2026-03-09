@@ -19,6 +19,11 @@ from app.billing_config import (
     normalize_model_type,
     to_public_plan,
 )
+from app.tool_registry import (
+    get_context_budget,
+    get_tool_catalog,
+    get_tool_entitlements,
+)
 
 from .sessions import load_user_sessions, save_user_sessions
 
@@ -505,6 +510,41 @@ def _anthropic_messages_from_history(chat_history, max_turns=14):
     return normalized
 
 
+def _anthropic_history_summary(chat_history, keep_last_turns=16):
+    normalized = _anthropic_messages_from_history(chat_history, max_turns=0)
+    if not normalized:
+        return ""
+
+    keep = max(1, int(keep_last_turns or 0))
+    if len(normalized) <= keep:
+        return ""
+
+    older = normalized[:-keep]
+    user_points = []
+    assistant_points = []
+    for msg in older:
+        content = str(msg.get("content") or "").strip()
+        if not content:
+            continue
+        compact = re.sub(r"\s+", " ", content)
+        compact = compact[:200]
+        if msg.get("role") == "user":
+            user_points.append(compact)
+        else:
+            assistant_points.append(compact)
+
+    if not user_points and not assistant_points:
+        return ""
+
+    parts = []
+    if user_points:
+        parts.append("Earlier user context: " + " | ".join(user_points[-4:]))
+    if assistant_points:
+        parts.append("Earlier assistant guidance: " + " | ".join(assistant_points[-2:]))
+    summary = "Thread summary for continuity. " + " ".join(parts)
+    return summary[:1200]
+
+
 def _anthropic_tool_definitions():
     return [
         {
@@ -596,7 +636,7 @@ def _anthropic_text(content_blocks):
     return "\n".join(out).strip()
 
 
-def _generate_assistant_reply(user_message, chat_history, readiness, model_selection):
+def _generate_assistant_reply(user_message, chat_history, readiness, model_selection, context_budget=None):
     fallback_reply = _next_question(readiness)
     api_key = _anthropic_api_key()
     if not api_key:
@@ -623,7 +663,12 @@ def _generate_assistant_reply(user_message, chat_history, readiness, model_selec
         "You are Jaspen's intake agent. Ask one concise next question that advances readiness. "
         "Do not repeat the user's wording unnecessarily. Use tool results when available."
     )
-    messages = _anthropic_messages_from_history(chat_history, max_turns=16)
+    max_turns = int((context_budget or {}).get("recent_turns") or 16)
+    max_turns = max(8, min(80, max_turns))
+    messages = _anthropic_messages_from_history(chat_history, max_turns=max_turns)
+    summary = _anthropic_history_summary(chat_history, keep_last_turns=max_turns)
+    if summary:
+        messages = [{"role": "user", "content": summary}, *messages]
     if not messages:
         messages = [{"role": "user", "content": user_message}]
 
@@ -924,7 +969,14 @@ def conversation_start():
 
     chat_history.append({"role": "user", "content": user_message, "timestamp": _iso_now()})
     readiness = _compute_readiness(chat_history)
-    assistant_reply, usage = _generate_assistant_reply(user_message, chat_history, readiness, model_selection)
+    context_budget = get_context_budget(to_public_plan(user.subscription_plan))
+    assistant_reply, usage = _generate_assistant_reply(
+        user_message,
+        chat_history,
+        readiness,
+        model_selection,
+        context_budget=context_budget,
+    )
 
     credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"])
     charged, remaining = consume_credits(user, credits_charged)
@@ -958,6 +1010,7 @@ def conversation_start():
         "model_type": model_selection["model_type"],
         "allowed_model_types": model_selection["allowed_model_types"],
         "usage": usage,
+        "context_budget": context_budget,
         "credits": {
             "charged": credits_charged,
             "remaining": remaining,
@@ -1011,7 +1064,14 @@ def conversation_continue():
 
     chat_history.append({"role": "user", "content": user_message, "timestamp": _iso_now()})
     readiness = _compute_readiness(chat_history)
-    assistant_reply, usage = _generate_assistant_reply(user_message, chat_history, readiness, model_selection)
+    context_budget = get_context_budget(to_public_plan(user.subscription_plan))
+    assistant_reply, usage = _generate_assistant_reply(
+        user_message,
+        chat_history,
+        readiness,
+        model_selection,
+        context_budget=context_budget,
+    )
 
     credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"])
     charged, remaining = consume_credits(user, credits_charged)
@@ -1045,6 +1105,7 @@ def conversation_continue():
         "allowed_model_types": model_selection["allowed_model_types"],
         "actions": [],
         "usage": usage,
+        "context_budget": context_budget,
         "credits": {
             "charged": credits_charged,
             "remaining": remaining,
@@ -1071,6 +1132,30 @@ def readiness_spec():
     if spec.get("version") == "readiness-v2":
         spec["data_contract"] = EVIDENCE_DATA_CONTRACT
     return jsonify(spec), 200
+
+
+@ai_agent_bp.route("/tools/catalog", methods=["GET"])
+def tools_catalog():
+    return jsonify({
+        "version": "1.0",
+        "tools": get_tool_catalog(),
+        "context_budget_defaults": get_context_budget("free"),
+    }), 200
+
+
+@ai_agent_bp.route("/tools/entitlements", methods=["GET"])
+@jwt_required()
+def tools_entitlements():
+    user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    plan_key = to_public_plan(user.subscription_plan)
+    return jsonify({
+        "plan_key": plan_key,
+        "context_budget": get_context_budget(plan_key),
+        "tools": get_tool_entitlements(plan_key),
+    }), 200
 
 
 @ai_agent_bp.route("/provider/status", methods=["GET"])

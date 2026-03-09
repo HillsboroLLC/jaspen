@@ -609,6 +609,50 @@ const refreshBundle = async (tid) => {
   const modelTypes = useMemo(() => billingCatalog?.model_types || {}, [billingCatalog]);
   const currentPlanKey = String(billingStatus?.plan_key || 'free').toLowerCase();
   const currentPlanLabel = plans[currentPlanKey]?.label || (currentPlanKey[0]?.toUpperCase() + currentPlanKey.slice(1));
+  const toolEntitlements = useMemo(
+    () => (Array.isArray(billingStatus?.tool_entitlements) ? billingStatus.tool_entitlements : []),
+    [billingStatus]
+  );
+  const toolEntitlementById = useMemo(() => {
+    const map = {};
+    toolEntitlements.forEach((tool) => {
+      const id = String(tool?.id || '').trim();
+      if (id) map[id] = tool;
+    });
+    return map;
+  }, [toolEntitlements]);
+  const fallbackMinPlanByTool = useMemo(() => ({
+    scenario_create: 'essential',
+    scenario_apply: 'essential',
+    scenario_adopt: 'essential',
+    wbs_read: 'essential',
+    wbs_write: 'essential',
+    jira_sync: 'team',
+    workfront_sync: 'team',
+    smartsheet_sync: 'team',
+    salesforce_insights: 'enterprise',
+    snowflake_insights: 'enterprise',
+    oracle_fusion_insights: 'enterprise',
+    servicenow_insights: 'enterprise',
+    netsuite_insights: 'enterprise',
+  }), []);
+  const canUseTool = (toolId, mode = 'read') => {
+    const entry = toolEntitlementById[String(toolId || '').trim()];
+    if (entry) {
+      if (String(mode || 'read').toLowerCase() === 'write') return Boolean(entry.allowed_write);
+      return Boolean(entry.allowed_read);
+    }
+
+    // Fallback while status payload is loading or if backend omits entitlement data.
+    const minPlan = fallbackMinPlanByTool[String(toolId || '').trim()];
+    const minRank = planRank[minPlan] ?? Number.MAX_SAFE_INTEGER;
+    const curRank = planRank[currentPlanKey] ?? 0;
+    return curRank >= minRank;
+  };
+  const canUseScenarios = canUseTool('scenario_create', 'write');
+  const canUseWbsRead = canUseTool('wbs_read', 'read');
+  const canUseWbsWrite = canUseTool('wbs_write', 'write');
+  const recentTurnsBudget = Number(billingStatus?.context_budget?.recent_turns || 16);
   const monthlyCreditLimit = billingStatus?.monthly_credit_limit;
   const creditsRemaining = billingStatus?.credits_remaining;
   const monthlyCreditsUsed = billingStatus?.credits_used;
@@ -878,6 +922,13 @@ const refreshBundle = async (tid) => {
   useEffect(() => {
     loadBilling();
   }, [loadBilling, user?.id, user?.email]);
+
+  useEffect(() => {
+    if (!canUseScenarios && activeTab === 'scenario') {
+      setActiveTab('summary');
+      setView('summary');
+    }
+  }, [canUseScenarios, activeTab]);
 
   const loadThreadUsage = useCallback(async (targetThreadId = activeThreadId) => {
     if (!targetThreadId) {
@@ -1417,6 +1468,33 @@ const refreshBundle = async (tid) => {
             <span className="jas-ud-item-label">Credits</span>
             <span className="jas-ud-item-badge">{billingLoading ? '...' : creditsBadge}</span>
           </button>
+          <button className="jas-ud-item" onClick={() => { openExternal('/pages/resources/connectors'); setAccountQuickMenuOpen(false); }}>
+            <FontAwesomeIcon icon={faLayerGroup} />
+            <span className="jas-ud-item-label">Tool access</span>
+            <span className="jas-ud-item-badge">{currentPlanLabel}</span>
+          </button>
+        </div>
+
+        <div className="jas-ud-section">
+          <div className="jas-ud-section-label">AI Tooling</div>
+          <div className="jas-ud-usage-grid">
+            <div className="jas-ud-usage-stat">
+              <span>Scenarios</span>
+              <strong>{canUseScenarios ? 'Enabled' : 'Essential+'}</strong>
+            </div>
+            <div className="jas-ud-usage-stat">
+              <span>WBS Read</span>
+              <strong>{canUseWbsRead ? 'Enabled' : 'Essential+'}</strong>
+            </div>
+            <div className="jas-ud-usage-stat">
+              <span>WBS Write</span>
+              <strong>{canUseWbsWrite ? 'Enabled' : 'Essential+'}</strong>
+            </div>
+            <div className="jas-ud-usage-stat">
+              <span>Context turns</span>
+              <strong>{Number.isFinite(recentTurnsBudget) ? recentTurnsBudget : 16}</strong>
+            </div>
+          </div>
         </div>
 
         <div className="jas-ud-section">
@@ -2683,7 +2761,7 @@ async function onBeginProject() {
       const scenarioId = adoptedScenario.id || adoptedScenario.analysis_id;
       
       // 1) Persist adoption to backend
-      await MarketIQ.adoptScenario(scenarioId);
+      await MarketIQ.adoptScenario(scenarioId, tid);
 
       // 2) Create snapshot for adopted scenario
       const adoptedSnapshot = {
@@ -3140,6 +3218,11 @@ console.log('[Finish&Analyze] data.analysis_result.meta.extracted_levers?', data
 },
     
         [ChatActionTypes.SCENARIO_SET_INPUT]: (payload) => {
+      if (!canUseScenarios) {
+        showToast('Scenario tools require Essential or higher.', 'info');
+        setBillingModalOpen(true);
+        return;
+      }
       // payload examples:
       // { scenario: 'A', key: 'budget', value: 250000 }
       // { scenarioId: 'scenarioA', lever: 'budget', value: 250000 }
@@ -3159,6 +3242,11 @@ console.log('[Finish&Analyze] data.analysis_result.meta.extracted_levers?', data
 
     
         [ChatActionTypes.SCENARIO_RUN]: async (payload) => {
+      if (!canUseScenarios) {
+        showToast('Scenario tools require Essential or higher.', 'info');
+        setBillingModalOpen(true);
+        return;
+      }
       setActiveTab('scenario');
       setView('scenario');
 
@@ -3180,6 +3268,11 @@ console.log('[Finish&Analyze] data.analysis_result.meta.extracted_levers?', data
 
     
         [ChatActionTypes.SCENARIO_ADOPT]: async (payload) => {
+      if (!canUseScenarios) {
+        showToast('Scenario tools require Essential or higher.', 'info');
+        setBillingModalOpen(true);
+        return;
+      }
       setActiveTab('scenario');
       setView('scenario');
 
@@ -3196,6 +3289,140 @@ console.log('[Finish&Analyze] data.analysis_result.meta.extracted_levers?', data
       } catch (e) {
         console.error('[SCENARIO_ADOPT] failed', e);
         showToast('Scenario adoption failed', 'error');
+      }
+    },
+
+    [ChatActionTypes.WBS_ADD_TASK]: async (payload) => {
+      if (!canUseWbsWrite) {
+        showToast('WBS write tools require Essential or higher.', 'info');
+        setBillingModalOpen(true);
+        return;
+      }
+      const tid = currentSessionId || sessionId;
+      if (!tid) {
+        showToast('Start a thread before updating WBS.', 'error');
+        return;
+      }
+
+      const title = String(payload?.title || payload?.task || payload?.text || '').trim();
+      if (!title) {
+        showToast('Task title is required.', 'error');
+        return;
+      }
+
+      try {
+        const wbsResp = await MarketIQ.getThreadWbs(tid);
+        const currentWbs = (wbsResp?.project_wbs && typeof wbsResp.project_wbs === 'object')
+          ? wbsResp.project_wbs
+          : { name: 'Execution WBS', tasks: [] };
+        const tasks = Array.isArray(currentWbs.tasks) ? [...currentWbs.tasks] : [];
+
+        tasks.push({
+          id: String(payload?.id || `task_${Date.now()}`),
+          title,
+          status: String(payload?.status || 'todo').toLowerCase(),
+          owner: payload?.owner || '',
+          due_date: payload?.due_date || payload?.dueDate || null,
+          depends_on: Array.isArray(payload?.depends_on) ? payload.depends_on : [],
+        });
+
+        await MarketIQ.upsertThreadWbs(tid, { ...currentWbs, tasks });
+        showToast('Task added to WBS', 'success');
+      } catch (e) {
+        console.error('[WBS_ADD_TASK] failed', e);
+        if (e?.status === 403) setBillingModalOpen(true);
+        showToast(e?.message || 'Failed to add task to WBS', 'error');
+      }
+    },
+
+    [ChatActionTypes.WBS_UPDATE_TASK]: async (payload) => {
+      if (!canUseWbsWrite) {
+        showToast('WBS write tools require Essential or higher.', 'info');
+        setBillingModalOpen(true);
+        return;
+      }
+      const tid = currentSessionId || sessionId;
+      if (!tid) {
+        showToast('Start a thread before updating WBS.', 'error');
+        return;
+      }
+
+      const taskId = String(payload?.id || payload?.task_id || '').trim();
+      if (!taskId) {
+        showToast('Task id is required.', 'error');
+        return;
+      }
+
+      try {
+        const wbsResp = await MarketIQ.getThreadWbs(tid);
+        const currentWbs = (wbsResp?.project_wbs && typeof wbsResp.project_wbs === 'object')
+          ? wbsResp.project_wbs
+          : { name: 'Execution WBS', tasks: [] };
+        const tasks = Array.isArray(currentWbs.tasks) ? [...currentWbs.tasks] : [];
+        const idx = tasks.findIndex((t) => String(t?.id || '') === taskId);
+        if (idx < 0) {
+          showToast('Task not found in WBS', 'error');
+          return;
+        }
+
+        tasks[idx] = {
+          ...tasks[idx],
+          ...(payload?.title ? { title: String(payload.title) } : {}),
+          ...(payload?.status ? { status: String(payload.status).toLowerCase() } : {}),
+          ...(payload?.owner != null ? { owner: String(payload.owner) } : {}),
+          ...(payload?.due_date != null ? { due_date: payload.due_date } : {}),
+        };
+
+        await MarketIQ.upsertThreadWbs(tid, { ...currentWbs, tasks });
+        showToast('WBS task updated', 'success');
+      } catch (e) {
+        console.error('[WBS_UPDATE_TASK] failed', e);
+        if (e?.status === 403) setBillingModalOpen(true);
+        showToast(e?.message || 'Failed to update WBS task', 'error');
+      }
+    },
+
+    [ChatActionTypes.WBS_ADD_DEPENDENCY]: async (payload) => {
+      if (!canUseWbsWrite) {
+        showToast('WBS write tools require Essential or higher.', 'info');
+        setBillingModalOpen(true);
+        return;
+      }
+      const tid = currentSessionId || sessionId;
+      if (!tid) {
+        showToast('Start a thread before updating WBS.', 'error');
+        return;
+      }
+
+      const taskId = String(payload?.task_id || payload?.taskId || payload?.id || '').trim();
+      const dependsOn = String(payload?.depends_on || payload?.dependsOn || '').trim();
+      if (!taskId || !dependsOn) {
+        showToast('task_id and depends_on are required for dependency updates.', 'error');
+        return;
+      }
+
+      try {
+        const wbsResp = await MarketIQ.getThreadWbs(tid);
+        const currentWbs = (wbsResp?.project_wbs && typeof wbsResp.project_wbs === 'object')
+          ? wbsResp.project_wbs
+          : { name: 'Execution WBS', tasks: [] };
+        const tasks = Array.isArray(currentWbs.tasks) ? [...currentWbs.tasks] : [];
+        const idx = tasks.findIndex((t) => String(t?.id || '') === taskId);
+        if (idx < 0) {
+          showToast('Task not found in WBS', 'error');
+          return;
+        }
+
+        const deps = Array.isArray(tasks[idx]?.depends_on) ? [...tasks[idx].depends_on] : [];
+        if (!deps.includes(dependsOn) && dependsOn !== taskId) deps.push(dependsOn);
+        tasks[idx] = { ...tasks[idx], depends_on: deps };
+
+        await MarketIQ.upsertThreadWbs(tid, { ...currentWbs, tasks });
+        showToast('WBS dependency added', 'success');
+      } catch (e) {
+        console.error('[WBS_ADD_DEPENDENCY] failed', e);
+        if (e?.status === 403) setBillingModalOpen(true);
+        showToast(e?.message || 'Failed to add dependency', 'error');
       }
     },
 
@@ -3741,12 +3968,19 @@ const handleSaveScenario = async (scenario) => {
     const scoreSelectValue = useSnapshotSelect
       ? (selectedScorecardId || snapshotOptions[0]?.id || '')
       : selectedVariantId;
+    const scenarioTabLocked = !canUseScenarios;
     const TabButton = ({ id, label }) => (
       <button
-        className={`jas-top-tab ${activeTab === id ? 'active' : ''}`}
+        className={`jas-top-tab ${activeTab === id ? 'active' : ''} ${id === 'scenario' && scenarioTabLocked ? 'disabled' : ''}`}
         role="tab"
         aria-selected={activeTab === id}
+        aria-disabled={id === 'scenario' && scenarioTabLocked}
 onClick={async () => {
+  if (id === 'scenario' && scenarioTabLocked) {
+    showToast('Scenarios are available on Essential, Team, and Enterprise plans.', 'info');
+    setBillingModalOpen(true);
+    return;
+  }
   setActiveTab(id);
 setView(id === 'chat' ? 'intake' : id);
 
@@ -3760,6 +3994,7 @@ setView(id === 'chat' ? 'intake' : id);
 }}
       >
         {label}
+        {id === 'scenario' && scenarioTabLocked && <span className="jas-ud-item-badge" style={{ marginLeft: 8 }}>Essential+</span>}
       </button>
     );
 

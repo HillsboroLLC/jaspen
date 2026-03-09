@@ -34,12 +34,13 @@ export const endpoints = {
   scenario:   `${API_BASE}/api/ai-agent/scenario`,
 
   // Scenario CRUD
-  createScenario:   (threadId) => `${API_BASE}/api/ai-agent/threads/${encodeURIComponent(threadId)}/scenarios`,
-  listScenarios:    (threadId) => `${API_BASE}/api/ai-agent/threads/${encodeURIComponent(threadId)}/scenarios`,
+  createScenario:   (threadId) => `${API_BASE}/api/market-iq/threads/${encodeURIComponent(threadId)}/scenarios`,
+  listScenarios:    (threadId) => `${API_BASE}/api/market-iq/threads/${encodeURIComponent(threadId)}/scenarios`,
   getLevers:        (threadId) => `${API_BASE}/api/ai-agent/threads/${encodeURIComponent(threadId)}/levers`,
-  updateScenario:   (scenarioId, threadId) => `${API_BASE}/api/ai-agent/scenarios/${encodeURIComponent(scenarioId)}?thread_id=${encodeURIComponent(threadId)}`,
-  applyScenario:    (scenarioId, threadId) => `${API_BASE}/api/ai-agent/scenarios/${encodeURIComponent(scenarioId)}/apply?thread_id=${encodeURIComponent(threadId)}`,
-  adoptScenario:    (scenarioId) => `${API_BASE}/api/ai-agent/scenarios/${encodeURIComponent(scenarioId)}/adopt`,
+  updateScenario:   (scenarioId, threadId) => `${API_BASE}/api/market-iq/scenarios/${encodeURIComponent(scenarioId)}?thread_id=${encodeURIComponent(threadId)}`,
+  applyScenario:    (scenarioId, threadId) => `${API_BASE}/api/market-iq/scenarios/${encodeURIComponent(scenarioId)}/apply?thread_id=${encodeURIComponent(threadId)}`,
+  adoptScenario:    (scenarioId, threadId) => `${API_BASE}/api/market-iq/scenarios/${encodeURIComponent(scenarioId)}/adopt${threadId ? `?thread_id=${encodeURIComponent(threadId)}` : ''}`,
+  threadWbs:        (threadId) => `${API_BASE}/api/market-iq/threads/${encodeURIComponent(threadId)}/wbs`,
   deleteAnalysis:   (analysisId) => `${API_BASE}/api/market-iq/analyses/${encodeURIComponent(analysisId)}`,
 };
 // ---- Session ID for memory that survives Safari ITP ----
@@ -367,7 +368,7 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
     const token = getToken();
 
     const res = await fetch(
-      `${apiBase}/api/ai-agent/threads/${encodeURIComponent(threadId)}/adopt`,
+      `${apiBase}/api/market-iq/threads/${encodeURIComponent(threadId)}/adopt`,
       {
         method: 'POST',
         credentials: 'include',
@@ -410,8 +411,18 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
   applyScenario: async (scenario_id, thread_id) =>
     postJSON(endpoints.applyScenario(scenario_id, thread_id), {}, { withSid: true }),
 
-  adoptScenario: async (scenario_id) =>
-    postJSON(endpoints.adoptScenario(scenario_id), {}, { withSid: true }),
+  adoptScenario: async (scenario_id, thread_id) =>
+    postJSON(
+      endpoints.adoptScenario(scenario_id, thread_id),
+      thread_id ? { thread_id } : {},
+      { withSid: true }
+    ),
+
+  getThreadWbs: async (threadId) =>
+    getJSON(endpoints.threadWbs(threadId), { withSid: true }),
+
+  upsertThreadWbs: async (threadId, project_wbs) =>
+    putJSON(endpoints.threadWbs(threadId), { project_wbs }, { withSid: true }),
   
   async getLevers(threadId) {
     return getJSON(endpoints.getLevers(threadId));

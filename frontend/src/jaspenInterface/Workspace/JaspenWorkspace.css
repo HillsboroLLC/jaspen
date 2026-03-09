@@ -2106,6 +2106,11 @@
   border-color: var(--navy);
 }
 
+.jas-top-tab.disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
 /* Right rail container for Score tab controls */
 .jas-right-rail {
   display: flex;
