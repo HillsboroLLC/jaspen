@@ -3168,27 +3168,11 @@ setView(id === 'chat' ? 'intake' : id);
         </div>
 
         <div className="jas-collected-section">
-          <h4>Information Categories</h4>
-          <div className="jas-checklist">
-            {(readinessAudit?.categories || []).map((category) => {
-              const key = category.key;
-              const label = category.label || specMap[key]?.label || key;
-              const done = category.completed === true;
-              const weightPct = (Number(category.weight || 0) * 100).toFixed(0);
-
-              return (
-                <div key={key} className={`jas-check-item ${done ? 'is-done' : ''}`}>
-                  <input type="checkbox" className="jas-check" checked={done} readOnly />
-                  <div className="jas-check-main">
-                    <div className="jas-check-label">{label}</div>
-                    <div className="jas-check-meta">
-                      <span className="jas-check-weight">{weightPct}% weight</span>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          <h4>Framework Progress</h4>
+          <p style={{ color: '#64748b', fontSize: '13px', lineHeight: 1.5, margin: '6px 0 0' }}>
+            Progress is calculated using the framework internally so your execution score stays consistent
+            across financial and non-financial KPI inputs.
+          </p>
         </div>
       </div>
       {renderSidebarFooter(() => dispatchSidebar({ type: 'CLOSE_READINESS' }))}
@@ -3863,39 +3847,11 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
           </div>
 
 <div className="jas-collected-section">
-  <h4>Information Categories</h4>
-
-  <div className="jas-checklist">
-    {(readinessAudit?.categories || []).map((category) => {
-      // backend drives these; stay literal
-      const key       = category.key;
-      const label     = category.label || specMap[key]?.label || key;
-
-const done = category.completed === true;
-      const percent   = Math.max(0, Math.min(100, Math.round(Number(category.percent || 0))));
-      const weightPct = (Number(category.weight || 0) * 100).toFixed(0); // e.g. "25"
-
-      return (
-        <div key={key} className={`jas-check-item ${done ? 'is-done' : ''}`}>
-          <input
-            type="checkbox"
-            className="jas-check"
-            checked={done}
-            readOnly
-            aria-label={label}
-            title={done ? 'Complete' : 'Not complete'}
-          />
-          <div className="jas-check-main">
-            <div className="jas-check-label">{label}</div>
-            <div className="jas-check-meta">
-              {/* show what the backend said, but keep it subtle */}
-              <span className="jas-check-weight">{weightPct}% weight</span>
-            </div>
-          </div>
-        </div>
-      );
-    })}
-  </div>
+  <h4>Framework Progress</h4>
+  <p style={{ color: '#64748b', fontSize: '13px', lineHeight: 1.5, margin: '6px 0 0' }}>
+    Progress is calculated using the framework internally so your execution score stays consistent
+    across financial and non-financial KPI inputs.
+  </p>
 </div>
         </div>
         {renderSidebarFooter(() => dispatchSidebar({ type: 'CLOSE_READINESS' }))}
@@ -3998,7 +3954,7 @@ const done = category.completed === true;
               />
               <span>{welcomeHeading}</span>
             </h2>
-            <p>Describe your project or business idea and I'll help you build a complete strategy scorecard through a natural conversation.</p>
+            <p>Describe your project or goal, and I&apos;ll help you build a complete strategy scorecard with clear priorities and execution steps.</p>
           </div>
         ) : (
           <div className="jas-messages">

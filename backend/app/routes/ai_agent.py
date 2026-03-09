@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from datetime import datetime
 import os
+import re
 import uuid
 
 from .sessions import load_user_sessions, save_user_sessions
@@ -9,7 +10,7 @@ from .sessions import load_user_sessions, save_user_sessions
 ai_agent_bp = Blueprint('ai_agent', __name__)
 
 
-READINESS_SPEC = {
+READINESS_SPEC_V1 = {
     "version": "readiness-v1",
     "categories": [
         {"key": "problem_clarity", "label": "Problem Clarity", "weight": 0.25},
@@ -19,19 +20,96 @@ READINESS_SPEC = {
     ],
 }
 
-READINESS_KEYWORDS = {
-    "problem_clarity": ["problem", "pain", "challenge", "issue", "goal"],
-    "market_context": ["customer", "buyer", "market", "segment", "demand", "competition"],
-    "business_model": ["revenue", "pricing", "price", "cost", "margin", "budget", "roi"],
-    "execution_plan": ["timeline", "team", "resource", "milestone", "launch", "plan"],
+READINESS_SPEC_V2 = {
+    "version": "readiness-v2",
+    "categories": [
+        {"key": "goal_definition", "label": "Goal Definition", "weight": 1 / 7, "step": 1},
+        {"key": "evidence_baseline", "label": "Data Baseline (Financial or KPI)", "weight": 1 / 7, "step": 2},
+        {"key": "sme_drivers", "label": "SME Drivers (Why)", "weight": 1 / 7, "step": 3},
+        {"key": "system_mapping", "label": "System Mapping", "weight": 1 / 7, "step": 4},
+        {"key": "constraint_unlock", "label": "Constraint + Unlock", "weight": 1 / 7, "step": 5},
+        {"key": "execution_sequence", "label": "Execution Sequencing", "weight": 1 / 7, "step": 6},
+        {"key": "replication_plan", "label": "Replication Plan", "weight": 1 / 7, "step": 7},
+    ],
 }
 
-FOLLOW_UP_QUESTIONS = {
-    "problem_clarity": "What is the core problem you are solving, and who feels it most?",
-    "market_context": "Who is your primary customer segment, and what alternatives do they use today?",
-    "business_model": "How will this generate value financially (pricing, cost, ROI, or margin impact)?",
-    "execution_plan": "What is your implementation timeline and which resources or team roles are required?",
+READINESS_SPECS = {
+    "readiness-v1": READINESS_SPEC_V1,
+    "readiness-v2": READINESS_SPEC_V2,
 }
+
+READINESS_VERSION_ALIASES = {
+    "v1": "readiness-v1",
+    "v2": "readiness-v2",
+    "readiness-v1": "readiness-v1",
+    "readiness-v2": "readiness-v2",
+}
+
+READINESS_KEYWORDS_BY_VERSION = {
+    "readiness-v1": {
+        "problem_clarity": ["problem", "pain", "challenge", "issue", "goal"],
+        "market_context": ["customer", "buyer", "market", "segment", "demand", "competition"],
+        "business_model": ["revenue", "pricing", "price", "cost", "margin", "budget", "roi"],
+        "execution_plan": ["timeline", "team", "resource", "milestone", "launch", "plan"],
+    },
+    "readiness-v2": {
+        "goal_definition": ["goal", "objective", "north star", "outcome", "deadline", "target date"],
+        "evidence_baseline": ["metric", "kpi", "baseline", "current", "target", "trend", "data"],
+        "sme_drivers": ["sme", "stakeholder", "expert", "root cause", "why", "insight"],
+        "system_mapping": ["process", "workflow", "system", "handoff", "dependency map", "bottleneck"],
+        "constraint_unlock": ["constraint", "bottleneck", "unlock", "gate", "blocker", "critical path"],
+        "execution_sequence": ["sequence", "parallel", "milestone", "dependency", "owner", "timeline"],
+        "replication_plan": ["replicate", "template", "playbook", "standardize", "rollout", "repeat"],
+    },
+}
+
+FOLLOW_UP_QUESTIONS_BY_VERSION = {
+    "readiness-v1": {
+        "problem_clarity": "What is the core problem you are solving, and who feels it most?",
+        "market_context": "Who is your primary customer segment, and what alternatives do they use today?",
+        "business_model": "How will this generate value financially (pricing, cost, ROI, or margin impact)?",
+        "execution_plan": "What is your implementation timeline and which resources or team roles are required?",
+    },
+    "readiness-v2": {
+        "goal_definition": "What is the specific initiative goal, target outcome, and time horizon?",
+        "evidence_baseline": "Share baseline data: current vs target metrics, timeframe, and source (financial or KPI).",
+        "sme_drivers": "Which SMEs can explain why this is happening, and what patterns are they seeing?",
+        "system_mapping": "Map the system: what teams, steps, and handoffs shape this initiative end-to-end?",
+        "constraint_unlock": "What is the primary constraint today, and what unlock would remove it?",
+        "execution_sequence": "What work must happen in sequence vs in parallel, and what are the key dependencies?",
+        "replication_plan": "How will this be repeatable across teams, sites, or future initiatives?",
+    },
+}
+
+EVIDENCE_DATA_CONTRACT = {
+    "required_fields": [
+        "metric_name",
+        "metric_type",
+        "unit",
+        "direction",
+        "current",
+        "target",
+        "period_start",
+        "period_end",
+        "source_type",
+    ],
+    "allowed_metric_types": ["financial", "kpi", "operational", "risk"],
+    "allowed_source_types": ["system", "manual", "sme", "external_report"],
+}
+
+FINANCIAL_TERMS = [
+    "revenue", "ebitda", "margin", "cost", "expense", "profit", "cash flow",
+    "burn", "runway", "budget", "roi", "npv", "irr",
+]
+KPI_TERMS = [
+    "conversion", "retention", "churn", "throughput", "cycle time", "on-time",
+    "sla", "quality", "defect", "uptime", "adoption", "velocity",
+]
+TIMEFRAME_TERMS = [
+    "week", "month", "quarter", "year", "q1", "q2", "q3", "q4", "by", "within",
+]
+BASELINE_TERMS = ["baseline", "current", "target", "goal", "today", "starting point"]
+DATA_SOURCE_TERMS = ["dashboard", "crm", "erp", "finance", "system", "report", "spreadsheet"]
 
 SCENARIO_OUTPUT_FIELDS = {
     "market_iq_score", "score_category", "component_scores", "financial_impact",
@@ -44,6 +122,52 @@ SCENARIO_OUTPUT_FIELDS = {
 
 def _iso_now():
     return datetime.utcnow().isoformat()
+
+
+def _active_readiness_version():
+    requested = str(os.getenv("READINESS_SPEC_VERSION", "readiness-v2")).strip().lower()
+    normalized = READINESS_VERSION_ALIASES.get(requested)
+    return normalized if normalized in READINESS_SPECS else "readiness-v1"
+
+
+def _active_readiness_spec():
+    return READINESS_SPECS[_active_readiness_version()]
+
+
+def _score_data_evidence(user_text):
+    has_number = bool(re.search(r"\b\d+(\.\d+)?%?\b", user_text))
+    has_financial = any(term in user_text for term in FINANCIAL_TERMS)
+    has_kpi = any(term in user_text for term in KPI_TERMS)
+    has_timeframe = any(term in user_text for term in TIMEFRAME_TERMS)
+    has_baseline_target = any(term in user_text for term in BASELINE_TERMS)
+    has_source = any(term in user_text for term in DATA_SOURCE_TERMS)
+
+    quality_score = sum([
+        int(has_number),
+        int(has_financial or has_kpi),
+        int(has_timeframe),
+        int(has_baseline_target),
+        int(has_source),
+    ])
+
+    if has_financial and has_kpi:
+        metric_type = "mixed"
+    elif has_financial:
+        metric_type = "financial"
+    elif has_kpi:
+        metric_type = "kpi"
+    else:
+        metric_type = "unknown"
+
+    return {
+        "quality_score": quality_score,
+        "has_number": has_number,
+        "has_metric_type": bool(has_financial or has_kpi),
+        "has_timeframe": has_timeframe,
+        "has_baseline_target": has_baseline_target,
+        "has_source": has_source,
+        "metric_type_detected": metric_type,
+    }
 
 
 def _new_session(user_id, thread_id, name):
@@ -74,6 +198,10 @@ def _message_text(msg):
 
 
 def _compute_readiness(chat_history):
+    spec = _active_readiness_spec()
+    version = spec.get("version", "readiness-v1")
+    keyword_map = READINESS_KEYWORDS_BY_VERSION.get(version, {})
+
     user_msgs = [
         _message_text(m)
         for m in (chat_history or [])
@@ -81,43 +209,62 @@ def _compute_readiness(chat_history):
     ]
     user_text = " ".join(user_msgs).lower()
     user_turns = len([m for m in user_msgs if m])
+    evidence = _score_data_evidence(user_text) if version == "readiness-v2" else None
 
     categories = []
     completed_weight = 0.0
-    for cat in READINESS_SPEC["categories"]:
+    for cat in spec["categories"]:
         key = cat["key"]
         weight = float(cat.get("weight", 0))
-        hits = any(k in user_text for k in READINESS_KEYWORDS.get(key, []))
-        percent = 100 if hits else min(70, user_turns * 15)
-        completed = bool(hits)
+
+        if version == "readiness-v2" and key == "evidence_baseline" and evidence:
+            # Evidence is complete when we have a measurable baseline format that
+            # works for both financial and non-financial KPI metrics.
+            completed = evidence["quality_score"] >= 3
+            percent = min(100, evidence["quality_score"] * 20 + min(user_turns * 4, 20))
+        else:
+            hits = any(k in user_text for k in keyword_map.get(key, []))
+            completed = bool(hits)
+            percent = 100 if hits else min(70, user_turns * 15)
+
         if completed:
             completed_weight += weight
-        categories.append({
+        category_payload = {
             "key": key,
             "label": cat["label"],
             "weight": weight,
+            "step": cat.get("step"),
             "percent": int(percent),
             "completed": completed,
-        })
+        }
+        if version == "readiness-v2" and key == "evidence_baseline" and evidence:
+            category_payload["evidence_checks"] = evidence
+        categories.append(category_payload)
 
     # Small progress bonus for conversational depth.
     progress_bonus = min(0.15, user_turns * 0.025)
     overall = int(round(min(1.0, completed_weight + progress_bonus) * 100))
-    return {
+    readiness_payload = {
         "overall": {
             "percent": overall,
-            "source": "heuristic_intake",
+            "source": "heuristic_intake_v2" if version == "readiness-v2" else "heuristic_intake",
             "heur_overall": overall,
         },
         "categories": categories,
-        "version": READINESS_SPEC["version"],
+        "version": version,
     }
+    if evidence:
+        readiness_payload["evidence_quality"] = evidence
+        readiness_payload["data_contract"] = EVIDENCE_DATA_CONTRACT
+    return readiness_payload
 
 
 def _next_question(readiness):
+    version = readiness.get("version", "readiness-v1")
+    followups = FOLLOW_UP_QUESTIONS_BY_VERSION.get(version, FOLLOW_UP_QUESTIONS_BY_VERSION["readiness-v1"])
     for category in readiness.get("categories", []):
         if not category.get("completed"):
-            return FOLLOW_UP_QUESTIONS.get(category["key"])
+            return followups.get(category["key"])
     return "Great, I have enough context. You can click Finish & Analyze when ready."
 
 
@@ -295,6 +442,7 @@ def conversation_start():
         "readiness": {
             "percent": readiness["overall"]["percent"],
             "categories": readiness["categories"],
+            "version": readiness.get("version"),
             "updated_at": _iso_now(),
         },
         "status": "gathering_info",
@@ -341,6 +489,7 @@ def conversation_continue():
         "readiness": {
             "percent": readiness["overall"]["percent"],
             "categories": readiness["categories"],
+            "version": readiness.get("version"),
             "updated_at": _iso_now(),
         },
         "status": "ready_to_analyze" if readiness["overall"]["percent"] >= 85 else "gathering_info",
@@ -349,7 +498,12 @@ def conversation_continue():
 
 @ai_agent_bp.route("/readiness/spec", methods=["GET"])
 def readiness_spec():
-    return jsonify(READINESS_SPEC), 200
+    spec = dict(_active_readiness_spec())
+    spec["active_version"] = _active_readiness_version()
+    spec["available_versions"] = list(READINESS_SPECS.keys())
+    if spec.get("version") == "readiness-v2":
+        spec["data_contract"] = EVIDENCE_DATA_CONTRACT
+    return jsonify(spec), 200
 
 
 @ai_agent_bp.route("/readiness/audit", methods=["GET"])
