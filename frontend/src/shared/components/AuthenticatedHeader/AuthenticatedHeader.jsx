@@ -10,7 +10,7 @@ const AuthenticatedHeader = ({ title }) => {
       <div className="authenticated-header-content">
         <div className="header-left">
           <a href="/profile" className="logo-link">
-            <span className="logo-text">SEKKI</span>
+            <span className="logo-text">Jaspen</span>
           </a>
           {title && <h1 className="page-title">{title}</h1>}
         </div>

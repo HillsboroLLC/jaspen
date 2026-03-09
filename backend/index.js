@@ -22,8 +22,6 @@ app.get('/api-node/health', (_req, res) => {
 const ALLOWED_ORIGINS = [
   'https://jaspen.ai',
   'https://www.jaspen.ai',
-  'https://sekki.io',
-  'https://www.sekki.io',
   'http://localhost:3000',
 ];
 

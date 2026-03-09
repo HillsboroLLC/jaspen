@@ -146,7 +146,7 @@ const Privacy = () => {
           </ul>
 
           <h3>Contact Us</h3>
-          <p>If you have questions about your data or wish to exercise your privacy rights, contact us at hello@sekki.io.</p>
+          <p>If you have questions about your data or wish to exercise your privacy rights, contact us at hello@jaspen.ai.</p>
         </section>
 
         <section className="policy-section">
@@ -186,8 +186,8 @@ const Privacy = () => {
           <p>If you have any questions about this Privacy Policy, please contact us:</p>
           <div className="contact-info">
             <p><strong>Sekki LLC</strong><br />
-            Email: hello@sekki.io<br />
-            Website: <a href="https://sekki.io" target="_blank" rel="noopener noreferrer">https://sekki.io</a><br />
+            Email: hello@jaspen.ai<br />
+            Website: <a href="https://jaspen.ai" target="_blank" rel="noopener noreferrer">https://jaspen.ai</a><br />
             Address: 4030 Wake Forest Road, STE 349, Raleigh, NC 27609, USA</p>
           </div>
         </section>

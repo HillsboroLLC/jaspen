@@ -7,10 +7,10 @@ export default function AboutSection() {
       {/* Invisible anchor for fixed-header offset */}
       <div id="about" style={{ position: 'relative', top: '-80px', visibility: 'hidden' }}></div>
       
-      {/* How SEKKI Works Section */}
+      {/* How Jaspen Works Section */}
       <section className="about how-it-works">
         <div className="container">
-          <h2 className="section-title">How SEKKI Works</h2>
+          <h2 className="section-title">How Jaspen Works</h2>
           <div className="steps-grid">
             <div className="step">
               <div className="step-icon">
@@ -58,13 +58,13 @@ export default function AboutSection() {
             </div>
             <div className="stat">
               <div className="stat-number">95%</div>
-              <div class="stat-label">Customer Satisfaction</div>
+              <div className="stat-label">Customer Satisfaction</div>
             </div>
           </div>
 
           <div className="testimonials-grid">
             <div className="testimonial">
-              <p>"SEKKI helped us validate our SaaS idea in just 24 hours. The market analysis was spot-on and saved us months of research."</p>
+              <p>"Jaspen helped us validate our SaaS idea in just 24 hours. The market analysis was spot-on and saved us months of research."</p>
               <div className="testimonial-author">
                 <strong>Sarah Chen</strong> - Founder, TechFlow Solutions
               </div>
@@ -94,11 +94,11 @@ export default function AboutSection() {
         </div>
       </section>
 
-      {/* About SEKKI Section */}
-      <section className="about about-sekki">
+      {/* About Jaspen Section */}
+      <section className="about about-jaspen">
         <div className="container">
           <div className="about-header">
-            <h2 className="section-title">Why 10,000+ Businesses Choose SEKKI</h2>
+            <h2 className="section-title">Why 10,000+ Businesses Choose Jaspen</h2>
             <p className="section-subtitle">
               Join the fastest-growing community of data-driven decision makers
             </p>
@@ -108,7 +108,7 @@ export default function AboutSection() {
             <div className="about-story">
               <h3 className="story-title">Democratizing Business Intelligence</h3>
               <p className="about-text">
-                At SEKKI, we've eliminated the $50,000+ consulting fees and 6-month wait times. 
+                At Jaspen, we've eliminated the $50,000+ consulting fees and 6-month wait times. 
                 Our AI-driven platform delivers enterprise-level market research, competitive analysis, 
                 and strategic insights in minutes—not months.
               </p>
@@ -153,7 +153,7 @@ export default function AboutSection() {
               <div className="testimonial-content">
                 <div className="quote-icon">"</div>
                 <p className="testimonial-text">
-                  "SEKKI helped us validate our market fit and launch 3x faster than our competitors. 
+                  "Jaspen helped us validate our market fit and launch 3x faster than our competitors. 
                   The ROI was immediate."
                 </p>
                 <div className="testimonial-author">

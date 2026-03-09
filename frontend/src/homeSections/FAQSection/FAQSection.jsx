@@ -36,10 +36,10 @@ export default function FAQSection() {
       a: <>
         <p>Enterprise organizations typically save <span className="faq-highlight">$900K to $1.3M+ annually</span> compared to traditional consulting firms:</p>
         <ul>
-          <li><span className="faq-highlight">Market research projects:</span> $150K–$500K each vs unlimited with SEKKI</li>
+          <li><span className="faq-highlight">Market research projects:</span> $150K–$500K each vs unlimited with Jaspen</li>
           <li><span className="faq-highlight">Strategic planning:</span> $300K–$1M vs included in Transform tiers</li>
           <li><span className="faq-highlight">Custom programming:</span> $200K+ vs included in Transform plans</li>
-          <li><span className="faq-highlight">Ongoing updates:</span> $100K+ per refresh vs continuous with SEKKI</li>
+          <li><span className="faq-highlight">Ongoing updates:</span> $100K+ per refresh vs continuous with Jaspen</li>
         </ul>
         <p>Plus, you get execution tools and custom programming, not just expensive reports that sit on shelves.</p>
       </>
@@ -63,7 +63,7 @@ export default function FAQSection() {
     {
       q: 'How quickly can I get started?',
       a: <>
-        <p>Immediately! Once you complete your purchase, you'll receive instant access to your SEKKI account. All analysis tools are ready to use right away—no setup, no waiting, no onboarding calls required.</p>
+        <p>Immediately! Once you complete your purchase, you'll receive instant access to your Jaspen account. All analysis tools are ready to use right away—no setup, no waiting, no onboarding calls required.</p>
         <p>For Transform enterprise tiers, we'll schedule a brief onboarding call within 24 hours to discuss your custom programming needs.</p>
       </>
     },

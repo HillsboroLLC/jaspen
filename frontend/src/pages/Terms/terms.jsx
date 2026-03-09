@@ -246,8 +246,8 @@ const Terms = () => {
           <p>If you have any questions about these Terms of Service, please contact us:</p>
           <div className="contact-info">
             <p><strong>Sekki LLC</strong><br />
-            Email: hello@sekki.io<br />
-            Website: <a href="https://sekki.io" target="_blank" rel="noopener noreferrer">https://sekki.io</a><br />
+            Email: hello@jaspen.ai<br />
+            Website: <a href="https://jaspen.ai" target="_blank" rel="noopener noreferrer">https://jaspen.ai</a><br />
             Address: 4030 Wake Forest Road, STE 349, Raleigh, NC 27609, USA<br />
             Phone: +1 (704) 488-5799</p>
           </div>

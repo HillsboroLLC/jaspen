@@ -29,8 +29,8 @@ const Support = () => {
         <section className="support-section">
           <h2>Contact Options</h2>
           <ul>
-            <li>Email: <a href="mailto:hello@sekki.io">hello@sekki.io</a></li>
-            <li>Website: <a href="https://sekki.io" target="_blank" rel="noopener noreferrer">sekki.io</a></li>
+            <li>Email: <a href="mailto:hello@jaspen.ai">hello@jaspen.ai</a></li>
+            <li>Website: <a href="https://jaspen.ai" target="_blank" rel="noopener noreferrer">jaspen.ai</a></li>
             <li>Address: 4030 Wake Forest Road, STE 349, Raleigh, NC 27609, USA</li>
           </ul>
         </section>
