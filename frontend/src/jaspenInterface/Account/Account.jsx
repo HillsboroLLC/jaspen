@@ -47,6 +47,24 @@ const SYNC_MODE_LABELS = {
   push: 'Jaspen -> External',
   two_way: 'Two-way',
 };
+const DEFAULT_JIRA_ISSUE_TYPE = 'Task';
+
+function emptyJiraModalState() {
+  return {
+    open: false,
+    connectorId: '',
+    intentEnable: false,
+    revertStatus: 'disconnected',
+    hasStoredToken: false,
+    data: {
+      jira_base_url: '',
+      jira_project_key: '',
+      jira_email: '',
+      jira_api_token: '',
+      jira_issue_type: DEFAULT_JIRA_ISSUE_TYPE,
+    },
+  };
+}
 
 function buildConnectorDraft(connector) {
   const syncModes = Array.isArray(connector?.available_sync_modes) && connector.available_sync_modes.length
@@ -64,6 +82,9 @@ function buildConnectorDraft(connector) {
     external_workspace: String(connector?.external_workspace || ''),
     jira_base_url: String(connector?.jira?.base_url || ''),
     jira_project_key: String(connector?.jira?.project_key || ''),
+    jira_email: String(connector?.jira?.email || ''),
+    jira_issue_type: String(connector?.jira?.issue_type || DEFAULT_JIRA_ISSUE_TYPE),
+    jira_api_token: '',
   };
 }
 
@@ -87,8 +108,12 @@ function connectorDraftIsDirty(connector, draft) {
     'external_workspace',
     'jira_base_url',
     'jira_project_key',
+    'jira_email',
+    'jira_issue_type',
   ];
-  return fields.some((field) => trim(base[field]) !== trim(current[field]));
+  const hasFieldDiff = fields.some((field) => trim(base[field]) !== trim(current[field]));
+  const hasNewToken = trim(current.jira_api_token).length > 0;
+  return hasFieldDiff || hasNewToken;
 }
 
 function connectorToggleMeaning(connector) {
@@ -111,6 +136,9 @@ export default function Account() {
   const [loading, setLoading] = useState(true);
   const [pendingAction, setPendingAction] = useState('');
   const [connectorPendingId, setConnectorPendingId] = useState('');
+  const [jiraConfigModal, setJiraConfigModal] = useState(() => emptyJiraModalState());
+  const [jiraConfigError, setJiraConfigError] = useState('');
+  const [jiraConfigSaving, setJiraConfigSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [adminState, setAdminState] = useState({
     checked: false,
@@ -397,7 +425,7 @@ export default function Account() {
       if (!response.ok) {
         if (response.status === 401) {
           navigate('/?auth=1', { replace: true });
-          return;
+          return false;
         }
         throw new Error(data?.error || 'Unable to update connector.');
       }
@@ -417,8 +445,10 @@ export default function Account() {
         await refreshConnectors();
         setMessage('Connector saved.');
       }
+      return true;
     } catch (error) {
       setMessage(error.message || 'Unable to update connector.');
+      return false;
     } finally {
       setConnectorPendingId('');
     }
@@ -435,9 +465,9 @@ export default function Account() {
     }));
   };
 
-  const saveConnectorDraft = async (connector) => {
+  const saveConnectorDraft = async (connector, draftOverride = null) => {
     if (!connector?.id) return;
-    const draft = connectorDrafts[connector.id] || buildConnectorDraft(connector);
+    const draft = draftOverride || connectorDrafts[connector.id] || buildConnectorDraft(connector);
     const payload = {
       connection_status: draft.connection_status === 'connected' ? 'connected' : 'disconnected',
       sync_mode: String(draft.sync_mode || '').trim(),
@@ -447,8 +477,99 @@ export default function Account() {
     if (connector.id === 'jira_sync') {
       payload.jira_base_url = String(draft.jira_base_url || '').trim();
       payload.jira_project_key = String(draft.jira_project_key || '').trim();
+      payload.jira_email = String(draft.jira_email || '').trim();
+      payload.jira_issue_type = String(draft.jira_issue_type || DEFAULT_JIRA_ISSUE_TYPE).trim();
+      if (String(draft.jira_api_token || '').trim()) {
+        payload.jira_api_token = String(draft.jira_api_token || '').trim();
+      }
     }
-    await updateConnector(connector.id, payload);
+    return updateConnector(connector.id, payload);
+  };
+
+  const openJiraConfigModal = (connector, options = {}) => {
+    const baseDraft = connectorDrafts[connector.id] || buildConnectorDraft(connector);
+    const intentEnable = Boolean(options?.intentEnable);
+    const revertStatus = options?.revertStatus || baseDraft.connection_status || 'disconnected';
+    const nextStatus = intentEnable ? 'connected' : (baseDraft.connection_status || 'disconnected');
+    updateConnectorDraft(connector.id, { connection_status: nextStatus });
+    setJiraConfigError('');
+    setJiraConfigSaving(false);
+    setJiraConfigModal({
+      open: true,
+      connectorId: connector.id,
+      intentEnable,
+      revertStatus,
+      hasStoredToken: Boolean(connector?.jira?.has_api_token),
+      data: {
+        jira_base_url: String(baseDraft.jira_base_url || connector?.jira?.base_url || ''),
+        jira_project_key: String(baseDraft.jira_project_key || connector?.jira?.project_key || ''),
+        jira_email: String(baseDraft.jira_email || connector?.jira?.email || ''),
+        jira_api_token: '',
+        jira_issue_type: String(baseDraft.jira_issue_type || connector?.jira?.issue_type || DEFAULT_JIRA_ISSUE_TYPE),
+      },
+    });
+  };
+
+  const closeJiraConfigModal = (revertToPrevious = true) => {
+    setJiraConfigModal((prev) => {
+      if (revertToPrevious && prev?.open && prev.intentEnable && prev.connectorId) {
+        updateConnectorDraft(prev.connectorId, { connection_status: prev.revertStatus || 'disconnected' });
+      }
+      return emptyJiraModalState();
+    });
+    setJiraConfigSaving(false);
+    setJiraConfigError('');
+  };
+
+  const saveJiraConfigAndEnable = async () => {
+    const modal = jiraConfigModal;
+    if (!modal?.open || !modal.connectorId) return;
+    const connector = (connectorState.items || []).find((item) => item.id === modal.connectorId);
+    if (!connector) {
+      setJiraConfigError('Unable to locate Jira connector state.');
+      return;
+    }
+
+    const trimmed = {
+      jira_base_url: String(modal.data.jira_base_url || '').trim(),
+      jira_project_key: String(modal.data.jira_project_key || '').trim(),
+      jira_email: String(modal.data.jira_email || '').trim(),
+      jira_api_token: String(modal.data.jira_api_token || '').trim(),
+      jira_issue_type: String(modal.data.jira_issue_type || DEFAULT_JIRA_ISSUE_TYPE).trim() || DEFAULT_JIRA_ISSUE_TYPE,
+    };
+    const tokenAvailable = modal.hasStoredToken || Boolean(trimmed.jira_api_token);
+
+    if (!trimmed.jira_base_url || !trimmed.jira_project_key || !trimmed.jira_email) {
+      setJiraConfigError('Jira URL, project key, and Jira email are required.');
+      return;
+    }
+    if (!tokenAvailable) {
+      setJiraConfigError('Jira API token is required before enabling Jira sync.');
+      return;
+    }
+
+    const nextDraft = {
+      ...(connectorDrafts[connector.id] || buildConnectorDraft(connector)),
+      connection_status: modal.intentEnable ? 'connected' : (connectorDrafts[connector.id]?.connection_status || 'disconnected'),
+      jira_base_url: trimmed.jira_base_url,
+      jira_project_key: trimmed.jira_project_key,
+      jira_email: trimmed.jira_email,
+      jira_issue_type: trimmed.jira_issue_type,
+      external_workspace: trimmed.jira_project_key,
+    };
+    if (trimmed.jira_api_token) {
+      nextDraft.jira_api_token = trimmed.jira_api_token;
+    }
+
+    updateConnectorDraft(connector.id, nextDraft);
+    setJiraConfigSaving(true);
+    setJiraConfigError('');
+    const success = await saveConnectorDraft(connector, nextDraft);
+    setJiraConfigSaving(false);
+    if (success) {
+      setJiraConfigModal(emptyJiraModalState());
+      setJiraConfigError('');
+    }
   };
 
   const toAdminDraft = (user) => {
@@ -741,6 +862,8 @@ export default function Account() {
                 const draft = connectorDrafts[connector.id] || buildConnectorDraft(connector);
                 const isOn = draft.connection_status === 'connected';
                 const isDirty = connectorDraftIsDirty(connector, draft);
+                const jiraTokenConfigured =
+                  Boolean(connector?.jira?.has_api_token) || Boolean(String(draft.jira_api_token || '').trim());
 
                 return (
                   <article className={`account-connector-card account-connector-card-compact ${isOn ? 'is-connected' : ''} ${locked ? 'is-locked' : ''}`} key={connector.id}>
@@ -755,9 +878,18 @@ export default function Account() {
                             type="checkbox"
                             checked={isOn}
                             disabled={locked || pending}
-                            onChange={(e) => updateConnectorDraft(connector.id, {
-                              connection_status: e.target.checked ? 'connected' : 'disconnected',
-                            })}
+                            onChange={(e) => {
+                              if (connector.id === 'jira_sync' && e.target.checked) {
+                                openJiraConfigModal(connector, {
+                                  intentEnable: true,
+                                  revertStatus: draft.connection_status,
+                                });
+                                return;
+                              }
+                              updateConnectorDraft(connector.id, {
+                                connection_status: e.target.checked ? 'connected' : 'disconnected',
+                              });
+                            }}
                           />
                           <span className="account-connector-toggle-track" />
                         </label>
@@ -814,31 +946,26 @@ export default function Account() {
                           onChange={(e) => updateConnectorDraft(connector.id, { external_workspace: e.target.value })}
                         />
                       </label>
-                      {connector.id === 'jira_sync' && (
-                        <>
-                          <label>
-                            Jira URL
-                            <input
-                              type="text"
-                              value={draft.jira_base_url || ''}
-                              placeholder="https://your-company.atlassian.net"
-                              disabled={locked || pending}
-                              onChange={(e) => updateConnectorDraft(connector.id, { jira_base_url: e.target.value })}
-                            />
-                          </label>
-                          <label>
-                            Jira project key
-                            <input
-                              type="text"
-                              value={draft.jira_project_key || ''}
-                              placeholder="PROJ"
-                              disabled={locked || pending}
-                              onChange={(e) => updateConnectorDraft(connector.id, { jira_project_key: e.target.value, external_workspace: e.target.value })}
-                            />
-                          </label>
-                        </>
-                      )}
                     </div>
+
+                    {connector.id === 'jira_sync' && (
+                      <div className="account-jira-settings-row">
+                        <button
+                          type="button"
+                          className="account-secondary-btn account-jira-settings-btn"
+                          onClick={() => openJiraConfigModal(connector, {
+                            intentEnable: false,
+                            revertStatus: draft.connection_status,
+                          })}
+                          disabled={locked || pending}
+                        >
+                          Jira API settings
+                        </button>
+                        <span className={`account-jira-settings-state ${jiraTokenConfigured ? 'is-ready' : 'is-missing'}`}>
+                          {jiraTokenConfigured ? 'API token configured' : 'API token required'}
+                        </span>
+                      </div>
+                    )}
 
                     {locked && (
                       <p className="account-connector-locked-note">
@@ -851,6 +978,104 @@ export default function Account() {
             </div>
           )}
         </section>
+
+        {jiraConfigModal.open && (
+          <div className="account-jira-modal-backdrop" role="presentation" onClick={() => closeJiraConfigModal(true)}>
+            <div
+              className="account-jira-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Jira API settings"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="account-jira-modal-header">
+                <h3>Jira API settings</h3>
+                <button type="button" className="account-jira-modal-close" onClick={() => closeJiraConfigModal(true)} aria-label="Close">
+                  ×
+                </button>
+              </div>
+              <p className="account-jira-modal-subtext">
+                Enter Jira credentials and mapping details, then save. Required: URL, project key, Jira email, API token.
+              </p>
+              <div className="account-jira-modal-grid">
+                <label>
+                  Jira URL
+                  <input
+                    type="text"
+                    value={jiraConfigModal.data.jira_base_url}
+                    placeholder="https://your-company.atlassian.net"
+                    onChange={(e) => setJiraConfigModal((prev) => ({
+                      ...prev,
+                      data: { ...prev.data, jira_base_url: e.target.value },
+                    }))}
+                    disabled={jiraConfigSaving}
+                  />
+                </label>
+                <label>
+                  Jira project key
+                  <input
+                    type="text"
+                    value={jiraConfigModal.data.jira_project_key}
+                    placeholder="PROJ"
+                    onChange={(e) => setJiraConfigModal((prev) => ({
+                      ...prev,
+                      data: { ...prev.data, jira_project_key: e.target.value },
+                    }))}
+                    disabled={jiraConfigSaving}
+                  />
+                </label>
+                <label>
+                  Jira email
+                  <input
+                    type="email"
+                    value={jiraConfigModal.data.jira_email}
+                    placeholder="service-account@company.com"
+                    onChange={(e) => setJiraConfigModal((prev) => ({
+                      ...prev,
+                      data: { ...prev.data, jira_email: e.target.value },
+                    }))}
+                    disabled={jiraConfigSaving}
+                  />
+                </label>
+                <label>
+                  Jira issue type
+                  <input
+                    type="text"
+                    value={jiraConfigModal.data.jira_issue_type}
+                    placeholder="Task"
+                    onChange={(e) => setJiraConfigModal((prev) => ({
+                      ...prev,
+                      data: { ...prev.data, jira_issue_type: e.target.value },
+                    }))}
+                    disabled={jiraConfigSaving}
+                  />
+                </label>
+                <label className="account-jira-modal-token-field">
+                  Jira API token
+                  <input
+                    type="password"
+                    value={jiraConfigModal.data.jira_api_token}
+                    placeholder={jiraConfigModal.hasStoredToken ? 'Token exists. Enter to rotate token.' : 'Enter Jira API token'}
+                    onChange={(e) => setJiraConfigModal((prev) => ({
+                      ...prev,
+                      data: { ...prev.data, jira_api_token: e.target.value },
+                    }))}
+                    disabled={jiraConfigSaving}
+                  />
+                </label>
+              </div>
+              {jiraConfigError && <p className="account-jira-modal-error">{jiraConfigError}</p>}
+              <div className="account-jira-modal-actions">
+                <button type="button" className="account-secondary-btn" onClick={() => closeJiraConfigModal(true)} disabled={jiraConfigSaving}>
+                  Cancel
+                </button>
+                <button type="button" className="account-primary-btn" onClick={saveJiraConfigAndEnable} disabled={jiraConfigSaving}>
+                  {jiraConfigSaving ? 'Saving...' : (jiraConfigModal.intentEnable ? 'Save & enable Jira' : 'Save Jira settings')}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         <section className="account-section">
           <h2>One-time credit packs</h2>
