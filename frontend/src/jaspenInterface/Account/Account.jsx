@@ -40,6 +40,138 @@ const FALLBACK_MODEL_TYPES = {
     min_plan: 'enterprise',
   },
 };
+const CONNECTOR_GROUP_ORDER = ['execution', 'data'];
+const DEFAULT_SYNC_MODES = ['import', 'push', 'two_way'];
+const DEFAULT_CONFLICT_POLICIES = ['latest_wins', 'prefer_external', 'prefer_jaspen', 'manual_review'];
+const SYNC_MODE_LABELS = {
+  import: 'External -> Jaspen',
+  push: 'Jaspen -> External',
+  two_way: 'Two-way sync',
+};
+const CONNECTOR_TOGGLE_COPY = {
+  jira_sync: {
+    on: 'Jaspen can sync WBS tasks, statuses, owners, and sprint progress with Jira.',
+    off: 'Jaspen keeps internal plans only and does not sync Jira issues.',
+    config: 'Configuration required: Jira URL, project key, service account email, and API token.',
+  },
+  workfront_sync: {
+    on: 'Jaspen can sync project milestones and ownership updates with Workfront.',
+    off: 'Workfront milestones and ownership changes stay out of Jaspen sync.',
+    config: 'Configuration required: external workspace or account key.',
+  },
+  smartsheet_sync: {
+    on: 'Jaspen can sync timeline rows and delivery status updates with Smartsheet.',
+    off: 'Smartsheet plan updates are not synced into Jaspen.',
+    config: 'Configuration required: external workspace or account key.',
+  },
+  salesforce_insights: {
+    on: 'Jaspen can use Salesforce customer and pipeline signals in recommendations.',
+    off: 'Salesforce objects are not used in prioritization or insight generation.',
+    config: 'Configuration required: external workspace or account key.',
+  },
+  snowflake_insights: {
+    on: 'Jaspen can read governed KPI and trend tables from Snowflake.',
+    off: 'Snowflake data stays excluded from analysis context.',
+    config: 'Configuration required: external workspace or account key.',
+  },
+  oracle_fusion_insights: {
+    on: 'Jaspen can use Oracle Fusion finance and operating signals in planning.',
+    off: 'Oracle Fusion metrics are not included in recommendations.',
+    config: 'Configuration required: external workspace or account key.',
+  },
+  servicenow_insights: {
+    on: 'Jaspen can ingest service and change metrics for execution risk signals.',
+    off: 'ServiceNow records are excluded from risk and blocker insights.',
+    config: 'Configuration required: external workspace or account key.',
+  },
+  netsuite_insights: {
+    on: 'Jaspen can incorporate NetSuite operating and finance trends into decisions.',
+    off: 'NetSuite trends are excluded from execution tradeoff analysis.',
+    config: 'Configuration required: external workspace or account key.',
+  },
+};
+
+function normalizeConnectorGroup(value) {
+  return String(value || '').trim().toLowerCase() || 'data';
+}
+
+function normalizeTierLabel(value) {
+  const text = String(value || '').trim();
+  if (!text) return 'Team';
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function buildConnectorDraft(connector) {
+  const syncModes = Array.isArray(connector?.available_sync_modes) && connector.available_sync_modes.length
+    ? connector.available_sync_modes
+    : DEFAULT_SYNC_MODES;
+  const conflictPolicies =
+    Array.isArray(connector?.available_conflict_policies) && connector.available_conflict_policies.length
+      ? connector.available_conflict_policies
+      : DEFAULT_CONFLICT_POLICIES;
+
+  return {
+    connection_status: connector?.connected ? 'connected' : 'disconnected',
+    sync_mode: connector?.sync_mode || (syncModes.includes('import') ? 'import' : syncModes[0] || ''),
+    conflict_policy: connector?.conflict_policy || conflictPolicies[0] || 'prefer_external',
+    auto_sync: connector?.auto_sync !== false,
+    external_workspace: String(connector?.external_workspace || ''),
+    jira_base_url: String(connector?.jira?.base_url || ''),
+    jira_project_key: String(connector?.jira?.project_key || ''),
+    jira_email: String(connector?.jira?.email || ''),
+    jira_issue_type: String(connector?.jira?.issue_type || ''),
+    jira_api_token: '',
+  };
+}
+
+function buildConnectorDraftMap(items) {
+  const map = {};
+  (Array.isArray(items) ? items : []).forEach((connector) => {
+    if (!connector?.id) return;
+    map[connector.id] = buildConnectorDraft(connector);
+  });
+  return map;
+}
+
+function connectorDraftHasChanges(connector, draft) {
+  const base = buildConnectorDraft(connector);
+  const current = { ...base, ...(draft || {}) };
+  const trim = (value) => String(value || '').trim();
+  const keySet = [
+    'connection_status',
+    'sync_mode',
+    'conflict_policy',
+    'auto_sync',
+    'external_workspace',
+    'jira_base_url',
+    'jira_project_key',
+    'jira_email',
+    'jira_issue_type',
+  ];
+  const hasFieldDiff = keySet.some((key) => {
+    if (key === 'auto_sync') return Boolean(base[key]) !== Boolean(current[key]);
+    return trim(base[key]) !== trim(current[key]);
+  });
+  const hasNewJiraToken = connector?.id === 'jira_sync' && trim(current.jira_api_token).length > 0;
+  return hasFieldDiff || hasNewJiraToken;
+}
+
+function getConnectorCopy(connectorId, fallbackGroup) {
+  const copy = CONNECTOR_TOGGLE_COPY[String(connectorId || '').trim().toLowerCase()];
+  if (copy) return copy;
+  if (normalizeConnectorGroup(fallbackGroup) === 'execution') {
+    return {
+      on: 'Jaspen can exchange plan and status updates with this execution tool.',
+      off: 'Jaspen keeps this execution tool disconnected from plan sync flows.',
+      config: 'Configuration required: external workspace or account key.',
+    };
+  }
+  return {
+    on: 'Jaspen can use this system for insight and recommendation context.',
+    off: 'This system is excluded from connector-based analysis context.',
+    config: 'Configuration required: external workspace or account key.',
+  };
+}
 
 export default function Account() {
   const navigate = useNavigate();
@@ -49,6 +181,7 @@ export default function Account() {
     loading: true,
     items: [],
   });
+  const [connectorDrafts, setConnectorDrafts] = useState({});
   const [loading, setLoading] = useState(true);
   const [pendingAction, setPendingAction] = useState('');
   const [connectorPendingId, setConnectorPendingId] = useState('');
@@ -108,12 +241,14 @@ export default function Account() {
           return;
         }
         if (mounted) {
+          const connectorItems = Array.isArray(connectorsData?.connectors) ? connectorsData.connectors : [];
           setStatus(statusData);
           setCatalog(catalogData || { plans: {}, overage_packs: {}, model_types: FALLBACK_MODEL_TYPES });
           setConnectorState({
             loading: false,
-            items: Array.isArray(connectorsData?.connectors) ? connectorsData.connectors : [],
+            items: connectorItems,
           });
+          setConnectorDrafts(buildConnectorDraftMap(connectorItems));
           const isAdmin = Boolean(adminCapsRes.ok && adminCapsData?.is_admin);
           setAdminState((prev) => ({
             ...prev,
@@ -171,10 +306,12 @@ export default function Account() {
     });
     const data = await res.json();
     if (res.ok) {
+      const connectorItems = Array.isArray(data?.connectors) ? data.connectors : [];
       setConnectorState({
         loading: false,
-        items: Array.isArray(data?.connectors) ? data.connectors : [],
+        items: connectorItems,
       });
+      setConnectorDrafts(buildConnectorDraftMap(connectorItems));
     } else if (res.status === 401) {
       navigate('/?auth=1', { replace: true });
     }
@@ -345,14 +482,55 @@ export default function Account() {
           ...prev,
           items: (prev.items || []).map((item) => (item.id === updatedConnector.id ? updatedConnector : item)),
         }));
+        setConnectorDrafts((prev) => ({
+          ...prev,
+          [updatedConnector.id]: buildConnectorDraft(updatedConnector),
+        }));
+        setMessage(`${updatedConnector.label || 'Connector'} settings saved.`);
       } else {
         await refreshConnectors();
+        setMessage('Connector settings saved.');
       }
     } catch (error) {
       setMessage(error.message || 'Unable to update connector.');
     } finally {
       setConnectorPendingId('');
     }
+  };
+
+  const updateConnectorDraft = (connectorId, updates) => {
+    if (!connectorId) return;
+    setConnectorDrafts((prev) => ({
+      ...prev,
+      [connectorId]: {
+        ...(prev[connectorId] || {}),
+        ...(updates || {}),
+      },
+    }));
+  };
+
+  const saveConnectorDraft = async (connector) => {
+    if (!connector?.id) return;
+    const draft = connectorDrafts[connector.id] || buildConnectorDraft(connector);
+    const payload = {
+      connection_status: draft.connection_status === 'connected' ? 'connected' : 'disconnected',
+      sync_mode: String(draft.sync_mode || '').trim(),
+      conflict_policy: String(draft.conflict_policy || '').trim(),
+      auto_sync: Boolean(draft.auto_sync),
+      external_workspace: String(draft.external_workspace || '').trim(),
+    };
+
+    if (connector.id === 'jira_sync') {
+      payload.jira_base_url = String(draft.jira_base_url || '').trim();
+      payload.jira_project_key = String(draft.jira_project_key || '').trim();
+      payload.jira_email = String(draft.jira_email || '').trim();
+      payload.jira_issue_type = String(draft.jira_issue_type || '').trim();
+      if (String(draft.jira_api_token || '').trim()) {
+        payload.jira_api_token = String(draft.jira_api_token || '').trim();
+      }
+    }
+
+    await updateConnector(connector.id, payload);
   };
 
   const toAdminDraft = (user) => {
@@ -524,6 +702,12 @@ export default function Account() {
     : Number(status?.monthly_credit_limit || 0).toLocaleString();
   const modelTypes = catalog?.model_types || FALLBACK_MODEL_TYPES;
   const orderedModelTypes = MODEL_ORDER.map((key) => modelTypes?.[key]).filter(Boolean);
+  const connectorsByGroup = (connectorState.items || []).reduce((grouped, connector) => {
+    const groupKey = normalizeConnectorGroup(connector?.group);
+    if (!grouped[groupKey]) grouped[groupKey] = [];
+    grouped[groupKey].push(connector);
+    return grouped;
+  }, {});
   const formatModelDisplayName = (model) => {
     const label = model?.label || model?.model_type || 'Model';
     const version = String(model?.version || '1.0').trim();
@@ -624,121 +808,265 @@ export default function Account() {
         <section className="account-section" id="connectors">
           <h2>Connectors & PM Sync</h2>
           <p className="account-connectors-subtext">
-            Configure whether external systems feed Jaspen, Jaspen feeds external systems, or both.
+            Use the organized list below to control connector access. Toggle on/off, review what that unlocks, adjust
+            configuration, then save.
           </p>
           {connectorState.loading ? (
             <p className="account-connectors-loading">Loading connector settings...</p>
           ) : (
-            <div className="account-connector-grid">
-              {(connectorState.items || []).map((connector) => {
-                const locked = connector?.status === 'locked' || !connector?.enabled;
-                const connected = Boolean(connector?.connected);
-                const pending = connectorPendingId === connector?.id;
-                const syncModes = Array.isArray(connector?.available_sync_modes) ? connector.available_sync_modes : [];
-                const conflictPolicies = Array.isArray(connector?.available_conflict_policies)
-                  ? connector.available_conflict_policies
-                  : ['latest_wins', 'prefer_external', 'prefer_jaspen', 'manual_review'];
-                const modeValue = connector?.sync_mode || (syncModes.includes('import') ? 'import' : '');
-                const policyValue = connector?.conflict_policy || 'prefer_external';
+            <div className="account-connector-list-wrap">
+              {CONNECTOR_GROUP_ORDER.map((groupKey) => {
+                const groupItems = connectorsByGroup[groupKey] || [];
+                if (!groupItems.length) return null;
+                const groupLabel = groupKey === 'execution' ? 'Execution connectors' : 'Data connectors';
 
                 return (
-                  <article className={`account-connector-card ${connected ? 'is-connected' : ''}`} key={connector.id}>
-                    <div className="account-connector-head">
-                      <h3>{connector.label}</h3>
-                      <span className={`account-connector-badge ${locked ? 'is-locked' : connected ? 'is-connected' : 'is-available'}`}>
-                        {locked ? `${connector.required_min_tier || 'team'}+` : connected ? 'Connected' : 'Available'}
-                      </span>
-                    </div>
-                    <p className="account-connector-group">{connector.group}</p>
-                    <p>{connector.description}</p>
+                  <div className="account-connector-group-block" key={groupKey}>
+                    <h3>{groupLabel}</h3>
+                    <div className="account-connector-list">
+                      {groupItems.map((connector) => {
+                        const locked = connector?.status === 'locked' || !connector?.enabled;
+                        const pending = connectorPendingId === connector?.id;
+                        const syncModes =
+                          Array.isArray(connector?.available_sync_modes) && connector.available_sync_modes.length
+                            ? connector.available_sync_modes
+                            : DEFAULT_SYNC_MODES;
+                        const conflictPolicies =
+                          Array.isArray(connector?.available_conflict_policies) && connector.available_conflict_policies.length
+                            ? connector.available_conflict_policies
+                            : DEFAULT_CONFLICT_POLICIES;
+                        const draft = connectorDrafts[connector.id] || buildConnectorDraft(connector);
+                        const isOn = draft.connection_status === 'connected';
+                        const tierLabel = normalizeTierLabel(connector?.required_min_tier || 'team');
+                        const copy = getConnectorCopy(connector?.id, connector?.group);
+                        const hasChanges = connectorDraftHasChanges(connector, draft);
 
-                    {locked ? (
-                      <button type="button" className="account-secondary-btn" onClick={() => setMessage('Upgrade plan to unlock this connector.')}>
-                        Upgrade to unlock
-                      </button>
-                    ) : (
-                      <>
-                        {connector.id === 'jira_sync' && (
-                          <div className="account-connector-controls account-jira-config">
-                            <label>
-                              Jira URL
-                              <input
-                                type="text"
-                                defaultValue={connector?.jira?.base_url || ''}
-                                placeholder="https://your-company.atlassian.net"
-                                disabled={pending}
-                                onBlur={(e) => {
-                                  const value = String(e.target.value || '').trim();
-                                  const currentValue = String(connector?.jira?.base_url || '').trim();
-                                  if (value !== currentValue) {
-                                    updateConnector(connector.id, { jira_base_url: value });
-                                  }
-                                }}
-                              />
-                            </label>
-                            <label>
-                              Jira project key
-                              <input
-                                type="text"
-                                defaultValue={connector?.jira?.project_key || ''}
-                                placeholder="PROJ"
-                                disabled={pending}
-                                onBlur={(e) => {
-                                  const value = String(e.target.value || '').trim();
-                                  const currentValue = String(connector?.jira?.project_key || '').trim();
-                                  if (value !== currentValue) {
-                                    updateConnector(connector.id, { jira_project_key: value, external_workspace: value });
-                                  }
-                                }}
-                              />
-                            </label>
-                          </div>
-                        )}
-                        <div className="account-connector-controls">
-                          <label>
-                            Sync direction
-                            <select
-                              value={modeValue}
-                              disabled={!connected || pending}
-                              onChange={(e) => updateConnector(connector.id, { sync_mode: e.target.value })}
-                            >
-                              {syncModes.map((mode) => (
-                                <option key={mode} value={mode}>
-                                  {mode === 'import' ? 'External -> Jaspen' : mode === 'push' ? 'Jaspen -> External' : 'Two-way'}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <label>
-                            Conflict policy
-                            <select
-                              value={policyValue}
-                              disabled={!connected || pending}
-                              onChange={(e) => updateConnector(connector.id, { conflict_policy: e.target.value })}
-                            >
-                              {conflictPolicies.map((policy) => (
-                                <option key={policy} value={policy}>
-                                  {policy.replace(/_/g, ' ')}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                        </div>
-                        <button
-                          type="button"
-                          className="account-primary-btn"
-                          onClick={() => updateConnector(connector.id, { connection_status: connected ? 'disconnected' : 'connected' })}
-                          disabled={pending}
-                        >
-                          {pending ? 'Saving...' : connected ? 'Disconnect' : 'Connect'}
-                        </button>
-                      </>
-                    )}
-                  </article>
+                        return (
+                          <article className={`account-connector-row ${isOn ? 'is-on' : ''}`} key={connector.id}>
+                            <div className="account-connector-row-top">
+                              <div className="account-connector-title-wrap">
+                                <h4>{connector.label}</h4>
+                                <p className="account-connector-group">{normalizeConnectorGroup(connector.group)}</p>
+                              </div>
+                              <div className="account-connector-status-wrap">
+                                <span className={`account-connector-badge ${locked ? 'is-locked' : isOn ? 'is-connected' : 'is-available'}`}>
+                                  {locked ? `${tierLabel}+` : isOn ? 'On' : 'Off'}
+                                </span>
+                                <label className={`account-connector-toggle ${locked ? 'is-disabled' : ''}`}>
+                                  <input
+                                    type="checkbox"
+                                    checked={isOn}
+                                    disabled={locked || pending}
+                                    onChange={(e) =>
+                                      updateConnectorDraft(connector.id, {
+                                        connection_status: e.target.checked ? 'connected' : 'disconnected',
+                                      })}
+                                  />
+                                  <span className="account-connector-toggle-track" />
+                                  <span className="account-connector-toggle-label">{isOn ? 'Enabled' : 'Disabled'}</span>
+                                </label>
+                              </div>
+                            </div>
+
+                            <p className="account-connector-description">{connector.description}</p>
+                            <p className="account-connector-impact">
+                              <strong>When on:</strong> {copy.on} <strong>When off:</strong> {copy.off}
+                            </p>
+                            <p className="account-connector-config-note">{copy.config}</p>
+
+                            {locked ? (
+                              <div className="account-connector-row-actions">
+                                <button
+                                  type="button"
+                                  className="account-secondary-btn"
+                                  onClick={() => setMessage(`Upgrade to ${tierLabel} or above to unlock ${connector.label}.`)}
+                                >
+                                  Upgrade to unlock
+                                </button>
+                              </div>
+                            ) : (
+                              <>
+                                <div className="account-connector-controls">
+                                  <label>
+                                    Sync direction
+                                    <select
+                                      value={draft.sync_mode || ''}
+                                      disabled={pending}
+                                      onChange={(e) => updateConnectorDraft(connector.id, { sync_mode: e.target.value })}
+                                    >
+                                      {syncModes.map((mode) => (
+                                        <option key={mode} value={mode}>
+                                          {SYNC_MODE_LABELS[mode] || mode}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                  <label>
+                                    Conflict policy
+                                    <select
+                                      value={draft.conflict_policy || ''}
+                                      disabled={pending}
+                                      onChange={(e) => updateConnectorDraft(connector.id, { conflict_policy: e.target.value })}
+                                    >
+                                      {conflictPolicies.map((policy) => (
+                                        <option key={policy} value={policy}>
+                                          {policy.replace(/_/g, ' ')}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                  <label>
+                                    External workspace / account key
+                                    <input
+                                      type="text"
+                                      value={draft.external_workspace || ''}
+                                      placeholder="Project key, workspace id, or account id"
+                                      disabled={pending}
+                                      onChange={(e) => updateConnectorDraft(connector.id, { external_workspace: e.target.value })}
+                                    />
+                                  </label>
+                                  <label className="account-connector-checkbox">
+                                    <input
+                                      type="checkbox"
+                                      checked={Boolean(draft.auto_sync)}
+                                      disabled={pending}
+                                      onChange={(e) => updateConnectorDraft(connector.id, { auto_sync: e.target.checked })}
+                                    />
+                                    Auto-sync when updates are available
+                                  </label>
+                                </div>
+
+                                {connector.id === 'jira_sync' && (
+                                  <>
+                                    <div className="account-connector-controls account-jira-config">
+                                      <label>
+                                        Jira URL
+                                        <input
+                                          type="text"
+                                          value={draft.jira_base_url || ''}
+                                          placeholder="https://your-company.atlassian.net"
+                                          disabled={pending}
+                                          onChange={(e) => updateConnectorDraft(connector.id, { jira_base_url: e.target.value })}
+                                        />
+                                      </label>
+                                      <label>
+                                        Jira project key
+                                        <input
+                                          type="text"
+                                          value={draft.jira_project_key || ''}
+                                          placeholder="PROJ"
+                                          disabled={pending}
+                                          onChange={(e) => updateConnectorDraft(connector.id, {
+                                            jira_project_key: e.target.value,
+                                            external_workspace: e.target.value,
+                                          })}
+                                        />
+                                      </label>
+                                      <label>
+                                        Jira service account email
+                                        <input
+                                          type="email"
+                                          value={draft.jira_email || ''}
+                                          placeholder="service-account@company.com"
+                                          disabled={pending}
+                                          onChange={(e) => updateConnectorDraft(connector.id, { jira_email: e.target.value })}
+                                        />
+                                      </label>
+                                      <label>
+                                        Jira issue type
+                                        <input
+                                          type="text"
+                                          value={draft.jira_issue_type || ''}
+                                          placeholder="Story"
+                                          disabled={pending}
+                                          onChange={(e) => updateConnectorDraft(connector.id, { jira_issue_type: e.target.value })}
+                                        />
+                                      </label>
+                                      <label>
+                                        Jira API token
+                                        <input
+                                          type="password"
+                                          value={draft.jira_api_token || ''}
+                                          placeholder={
+                                            connector?.jira?.has_api_token
+                                              ? 'Stored token found. Enter a new token to rotate.'
+                                              : 'Enter Jira API token'
+                                          }
+                                          disabled={pending}
+                                          onChange={(e) => updateConnectorDraft(connector.id, { jira_api_token: e.target.value })}
+                                        />
+                                      </label>
+                                    </div>
+                                    {connector?.jira?.has_api_token && !String(draft.jira_api_token || '').trim() && (
+                                      <p className="account-connector-note">
+                                        Jira API token already stored. Leave blank to keep the existing token.
+                                      </p>
+                                    )}
+                                  </>
+                                )}
+
+                                <div className="account-connector-row-actions">
+                                  <button
+                                    type="button"
+                                    className="account-secondary-btn"
+                                    onClick={() => updateConnectorDraft(connector.id, buildConnectorDraft(connector))}
+                                    disabled={pending || !hasChanges}
+                                  >
+                                    Reset
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="account-primary-btn"
+                                    onClick={() => saveConnectorDraft(connector)}
+                                    disabled={pending || !hasChanges}
+                                  >
+                                    {pending ? 'Saving...' : 'Save changes'}
+                                  </button>
+                                </div>
+                              </>
+                            )}
+                          </article>
+                        );
+                      })}
+                    </div>
+                  </div>
                 );
               })}
+
             </div>
           )}
+        </section>
+
+        <section className="account-section" id="connectors-api">
+          <h2>Connector API setup</h2>
+          <p className="account-connectors-subtext">
+            Connector controls in this page use the same API you can automate against with your authenticated bearer token.
+          </p>
+          <div className="account-api-guide">
+            <article className="account-api-step">
+              <h3>1. Read connector state</h3>
+              <p><code>GET /api/connectors/status</code> returns enabled/locked status, sync modes, and current config.</p>
+            </article>
+            <article className="account-api-step">
+              <h3>2. Toggle and configure</h3>
+              <p><code>PATCH /api/connectors/:connector_id</code> with <code>connection_status</code>, sync settings, and connector-specific fields.</p>
+            </article>
+            <article className="account-api-step">
+              <h3>3. Set thread-level PM sync</h3>
+              <p><code>PUT /api/connectors/threads/:thread_id/sync</code> selects connected execution connectors for thread sync.</p>
+            </article>
+          </div>
+          <pre className="account-api-snippet">
+{`PATCH /api/connectors/jira_sync
+{
+  "connection_status": "connected",
+  "sync_mode": "two_way",
+  "conflict_policy": "prefer_external",
+  "external_workspace": "PROJ",
+  "jira_base_url": "https://your-company.atlassian.net",
+  "jira_project_key": "PROJ"
+}`}
+          </pre>
         </section>
 
         <section className="account-section">

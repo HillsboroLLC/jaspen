@@ -225,37 +225,57 @@
   font-size: 0.82rem;
 }
 
-.account-connector-grid {
+.account-connector-list-wrap {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 14px;
 }
 
-.account-connector-card {
+.account-connector-group-block h3 {
+  margin: 0 0 8px;
+  color: #0f2148;
+  font-size: 0.9rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.account-connector-list {
+  display: grid;
+  gap: 8px;
+}
+
+.account-connector-row {
   border: 1px solid #d6e2f2;
   border-radius: 12px;
   padding: 12px;
   background: #ffffff;
   display: grid;
-  gap: 6px;
+  gap: 8px;
 }
 
-.account-connector-card.is-connected {
+.account-connector-row.is-on {
   border-color: rgba(31, 124, 90, 0.35);
   background: linear-gradient(180deg, #f7fffb 0%, #ffffff 100%);
 }
 
-.account-connector-head {
+.account-connector-row-top {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
 }
 
-.account-connector-head h3 {
+.account-connector-title-wrap h4 {
   margin: 0;
-  font-size: 0.95rem;
-  line-height: 1.2;
+  font-size: 0.96rem;
+  color: #10224a;
+}
+
+.account-connector-status-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .account-connector-badge {
@@ -284,10 +304,91 @@
 .account-connector-group {
   margin: 0;
   color: #5a6f92;
-  font-size: 0.74rem !important;
+  font-size: 0.72rem !important;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.06em;
   font-weight: 700;
+}
+
+.account-connector-toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.account-connector-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.account-connector-toggle-track {
+  width: 34px;
+  height: 20px;
+  border-radius: 999px;
+  border: 1px solid #c8d7ec;
+  background: #e9eff8;
+  position: relative;
+  transition: background 0.16s ease;
+}
+
+.account-connector-toggle-track::after {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  top: 2px;
+  left: 2px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(9, 20, 42, 0.2);
+  transition: transform 0.16s ease;
+}
+
+.account-connector-toggle input:checked + .account-connector-toggle-track {
+  background: #132751;
+  border-color: #132751;
+}
+
+.account-connector-toggle input:checked + .account-connector-toggle-track::after {
+  transform: translateX(14px);
+}
+
+.account-connector-toggle-label {
+  font-size: 0.72rem;
+  color: #4f6386;
+  font-weight: 700;
+}
+
+.account-connector-toggle.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.account-connector-description {
+  margin: 0;
+  color: #4f6282;
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
+.account-connector-impact {
+  margin: 0;
+  color: #3d5377;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.account-connector-impact strong {
+  color: #132751;
+}
+
+.account-connector-config-note {
+  margin: 0;
+  color: #5b7194;
+  font-size: 0.76rem;
 }
 
 .account-connector-controls {
@@ -332,8 +433,71 @@
   color: #8a9ab6;
 }
 
+.account-connector-checkbox {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.76rem !important;
+}
+
+.account-connector-checkbox input {
+  width: 14px;
+  height: 14px;
+}
+
 .account-jira-config {
-  margin-bottom: 2px;
+  margin-top: 2px;
+}
+
+.account-connector-note {
+  margin: -2px 0 0;
+  color: #5b7194;
+  font-size: 0.76rem;
+}
+
+.account-connector-row-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.account-api-guide {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.account-api-step {
+  border: 1px solid #d6e2f2;
+  border-radius: 12px;
+  padding: 10px;
+  background: #ffffff;
+}
+
+.account-api-step h3 {
+  margin: 0 0 6px;
+  color: #112147;
+  font-size: 0.84rem;
+}
+
+.account-api-step p {
+  margin: 0;
+  color: #516688;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.account-api-snippet {
+  margin: 10px 0 0;
+  border: 1px solid #d6e2f2;
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: #f7faff;
+  color: #17315f;
+  font-size: 0.74rem;
+  line-height: 1.4;
+  overflow-x: auto;
 }
 
 .account-actions-row {
@@ -510,7 +674,7 @@
 @media (max-width: 860px) {
   .account-plan-grid,
   .account-pack-grid,
-  .account-connector-grid {
+  .account-api-guide {
     grid-template-columns: 1fr;
   }
 
@@ -525,6 +689,15 @@
 
   .account-connector-controls {
     grid-template-columns: 1fr;
+  }
+
+  .account-connector-row-top {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .account-connector-status-wrap {
+    justify-content: flex-start;
   }
 
   .account-admin-layout {
