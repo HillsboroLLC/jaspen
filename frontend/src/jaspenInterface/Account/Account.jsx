@@ -40,6 +40,64 @@ const FALLBACK_MODEL_TYPES = {
     min_plan: 'enterprise',
   },
 };
+const DEFAULT_SYNC_MODES = ['import', 'push', 'two_way'];
+const DEFAULT_CONFLICT_POLICIES = ['latest_wins', 'prefer_external', 'prefer_jaspen', 'manual_review'];
+const SYNC_MODE_LABELS = {
+  import: 'External -> Jaspen',
+  push: 'Jaspen -> External',
+  two_way: 'Two-way',
+};
+
+function buildConnectorDraft(connector) {
+  const syncModes = Array.isArray(connector?.available_sync_modes) && connector.available_sync_modes.length
+    ? connector.available_sync_modes
+    : DEFAULT_SYNC_MODES;
+  const conflictPolicies =
+    Array.isArray(connector?.available_conflict_policies) && connector.available_conflict_policies.length
+      ? connector.available_conflict_policies
+      : DEFAULT_CONFLICT_POLICIES;
+
+  return {
+    connection_status: connector?.connected ? 'connected' : 'disconnected',
+    sync_mode: connector?.sync_mode || (syncModes.includes('import') ? 'import' : syncModes[0] || ''),
+    conflict_policy: connector?.conflict_policy || conflictPolicies[0] || 'prefer_external',
+    external_workspace: String(connector?.external_workspace || ''),
+    jira_base_url: String(connector?.jira?.base_url || ''),
+    jira_project_key: String(connector?.jira?.project_key || ''),
+  };
+}
+
+function buildConnectorDraftMap(items) {
+  const result = {};
+  (Array.isArray(items) ? items : []).forEach((connector) => {
+    if (!connector?.id) return;
+    result[connector.id] = buildConnectorDraft(connector);
+  });
+  return result;
+}
+
+function connectorDraftIsDirty(connector, draft) {
+  const base = buildConnectorDraft(connector);
+  const current = { ...base, ...(draft || {}) };
+  const trim = (value) => String(value || '').trim();
+  const fields = [
+    'connection_status',
+    'sync_mode',
+    'conflict_policy',
+    'external_workspace',
+    'jira_base_url',
+    'jira_project_key',
+  ];
+  return fields.some((field) => trim(base[field]) !== trim(current[field]));
+}
+
+function connectorToggleMeaning(connector) {
+  const isExecution = String(connector?.group || '').toLowerCase() === 'execution';
+  if (isExecution) {
+    return 'On enables execution sync flows. Off blocks plan/status exchange.';
+  }
+  return 'On enables insight ingestion. Off excludes this system from analysis context.';
+}
 
 export default function Account() {
   const navigate = useNavigate();
@@ -49,6 +107,7 @@ export default function Account() {
     loading: true,
     items: [],
   });
+  const [connectorDrafts, setConnectorDrafts] = useState({});
   const [loading, setLoading] = useState(true);
   const [pendingAction, setPendingAction] = useState('');
   const [connectorPendingId, setConnectorPendingId] = useState('');
@@ -108,12 +167,14 @@ export default function Account() {
           return;
         }
         if (mounted) {
+          const connectorItems = Array.isArray(connectorsData?.connectors) ? connectorsData.connectors : [];
           setStatus(statusData);
           setCatalog(catalogData || { plans: {}, overage_packs: {}, model_types: FALLBACK_MODEL_TYPES });
           setConnectorState({
             loading: false,
-            items: Array.isArray(connectorsData?.connectors) ? connectorsData.connectors : [],
+            items: connectorItems,
           });
+          setConnectorDrafts(buildConnectorDraftMap(connectorItems));
           const isAdmin = Boolean(adminCapsRes.ok && adminCapsData?.is_admin);
           setAdminState((prev) => ({
             ...prev,
@@ -171,10 +232,12 @@ export default function Account() {
     });
     const data = await res.json();
     if (res.ok) {
+      const connectorItems = Array.isArray(data?.connectors) ? data.connectors : [];
       setConnectorState({
         loading: false,
-        items: Array.isArray(data?.connectors) ? data.connectors : [],
+        items: connectorItems,
       });
+      setConnectorDrafts(buildConnectorDraftMap(connectorItems));
     } else if (res.status === 401) {
       navigate('/?auth=1', { replace: true });
     }
@@ -345,14 +408,47 @@ export default function Account() {
           ...prev,
           items: (prev.items || []).map((item) => (item.id === updatedConnector.id ? updatedConnector : item)),
         }));
+        setConnectorDrafts((prev) => ({
+          ...prev,
+          [updatedConnector.id]: buildConnectorDraft(updatedConnector),
+        }));
+        setMessage(`${updatedConnector.label || 'Connector'} saved.`);
       } else {
         await refreshConnectors();
+        setMessage('Connector saved.');
       }
     } catch (error) {
       setMessage(error.message || 'Unable to update connector.');
     } finally {
       setConnectorPendingId('');
     }
+  };
+
+  const updateConnectorDraft = (connectorId, updates = {}) => {
+    if (!connectorId) return;
+    setConnectorDrafts((prev) => ({
+      ...prev,
+      [connectorId]: {
+        ...(prev[connectorId] || {}),
+        ...(updates || {}),
+      },
+    }));
+  };
+
+  const saveConnectorDraft = async (connector) => {
+    if (!connector?.id) return;
+    const draft = connectorDrafts[connector.id] || buildConnectorDraft(connector);
+    const payload = {
+      connection_status: draft.connection_status === 'connected' ? 'connected' : 'disconnected',
+      sync_mode: String(draft.sync_mode || '').trim(),
+      conflict_policy: String(draft.conflict_policy || '').trim(),
+      external_workspace: String(draft.external_workspace || '').trim(),
+    };
+    if (connector.id === 'jira_sync') {
+      payload.jira_base_url = String(draft.jira_base_url || '').trim();
+      payload.jira_project_key = String(draft.jira_project_key || '').trim();
+    }
+    await updateConnector(connector.id, payload);
   };
 
   const toAdminDraft = (user) => {
@@ -624,7 +720,7 @@ export default function Account() {
         <section className="account-section" id="connectors">
           <h2>Connectors & PM Sync</h2>
           <p className="account-connectors-subtext">
-            Configure whether external systems feed Jaspen, Jaspen feeds external systems, or both.
+            Compact controls for connector access and sync settings. Toggle, adjust settings, and save per connector.
           </p>
           {connectorState.loading ? (
             <p className="account-connectors-loading">Loading connector settings...</p>
@@ -632,107 +728,122 @@ export default function Account() {
             <div className="account-connector-grid">
               {(connectorState.items || []).map((connector) => {
                 const locked = connector?.status === 'locked' || !connector?.enabled;
-                const connected = Boolean(connector?.connected);
+                const requiredTier = String(connector?.required_min_tier || 'team').trim().toLowerCase();
+                const requiredTierLabel = requiredTier ? `${requiredTier.charAt(0).toUpperCase()}${requiredTier.slice(1)}` : 'Team';
                 const pending = connectorPendingId === connector?.id;
-                const syncModes = Array.isArray(connector?.available_sync_modes) ? connector.available_sync_modes : [];
+                const syncModes =
+                  Array.isArray(connector?.available_sync_modes) && connector.available_sync_modes.length
+                    ? connector.available_sync_modes
+                    : DEFAULT_SYNC_MODES;
                 const conflictPolicies = Array.isArray(connector?.available_conflict_policies)
                   ? connector.available_conflict_policies
-                  : ['latest_wins', 'prefer_external', 'prefer_jaspen', 'manual_review'];
-                const modeValue = connector?.sync_mode || (syncModes.includes('import') ? 'import' : '');
-                const policyValue = connector?.conflict_policy || 'prefer_external';
+                  : DEFAULT_CONFLICT_POLICIES;
+                const draft = connectorDrafts[connector.id] || buildConnectorDraft(connector);
+                const isOn = draft.connection_status === 'connected';
+                const isDirty = connectorDraftIsDirty(connector, draft);
 
                 return (
-                  <article className={`account-connector-card ${connected ? 'is-connected' : ''}`} key={connector.id}>
-                    <div className="account-connector-head">
+                  <article className={`account-connector-card account-connector-card-compact ${isOn ? 'is-connected' : ''} ${locked ? 'is-locked' : ''}`} key={connector.id}>
+                    <div className="account-connector-head account-connector-head-compact">
                       <h3>{connector.label}</h3>
-                      <span className={`account-connector-badge ${locked ? 'is-locked' : connected ? 'is-connected' : 'is-available'}`}>
-                        {locked ? `${connector.required_min_tier || 'team'}+` : connected ? 'Connected' : 'Available'}
-                      </span>
-                    </div>
-                    <p className="account-connector-group">{connector.group}</p>
-                    <p>{connector.description}</p>
-
-                    {locked ? (
-                      <button type="button" className="account-secondary-btn" onClick={() => setMessage('Upgrade plan to unlock this connector.')}>
-                        Upgrade to unlock
-                      </button>
-                    ) : (
-                      <>
-                        {connector.id === 'jira_sync' && (
-                          <div className="account-connector-controls account-jira-config">
-                            <label>
-                              Jira URL
-                              <input
-                                type="text"
-                                defaultValue={connector?.jira?.base_url || ''}
-                                placeholder="https://your-company.atlassian.net"
-                                disabled={pending}
-                                onBlur={(e) => {
-                                  const value = String(e.target.value || '').trim();
-                                  const currentValue = String(connector?.jira?.base_url || '').trim();
-                                  if (value !== currentValue) {
-                                    updateConnector(connector.id, { jira_base_url: value });
-                                  }
-                                }}
-                              />
-                            </label>
-                            <label>
-                              Jira project key
-                              <input
-                                type="text"
-                                defaultValue={connector?.jira?.project_key || ''}
-                                placeholder="PROJ"
-                                disabled={pending}
-                                onBlur={(e) => {
-                                  const value = String(e.target.value || '').trim();
-                                  const currentValue = String(connector?.jira?.project_key || '').trim();
-                                  if (value !== currentValue) {
-                                    updateConnector(connector.id, { jira_project_key: value, external_workspace: value });
-                                  }
-                                }}
-                              />
-                            </label>
-                          </div>
-                        )}
-                        <div className="account-connector-controls">
-                          <label>
-                            Sync direction
-                            <select
-                              value={modeValue}
-                              disabled={!connected || pending}
-                              onChange={(e) => updateConnector(connector.id, { sync_mode: e.target.value })}
-                            >
-                              {syncModes.map((mode) => (
-                                <option key={mode} value={mode}>
-                                  {mode === 'import' ? 'External -> Jaspen' : mode === 'push' ? 'Jaspen -> External' : 'Two-way'}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <label>
-                            Conflict policy
-                            <select
-                              value={policyValue}
-                              disabled={!connected || pending}
-                              onChange={(e) => updateConnector(connector.id, { conflict_policy: e.target.value })}
-                            >
-                              {conflictPolicies.map((policy) => (
-                                <option key={policy} value={policy}>
-                                  {policy.replace(/_/g, ' ')}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                        </div>
+                      <div className="account-connector-actions-inline">
+                        <span className={`account-connector-badge ${locked ? 'is-locked' : isOn ? 'is-connected' : 'is-available'}`}>
+                          {locked ? `${requiredTier}+` : isOn ? 'On' : 'Off'}
+                        </span>
+                        <label className={`account-connector-toggle ${locked ? 'is-disabled' : ''}`}>
+                          <input
+                            type="checkbox"
+                            checked={isOn}
+                            disabled={locked || pending}
+                            onChange={(e) => updateConnectorDraft(connector.id, {
+                              connection_status: e.target.checked ? 'connected' : 'disconnected',
+                            })}
+                          />
+                          <span className="account-connector-toggle-track" />
+                        </label>
                         <button
                           type="button"
-                          className="account-primary-btn"
-                          onClick={() => updateConnector(connector.id, { connection_status: connected ? 'disconnected' : 'connected' })}
-                          disabled={pending}
+                          className="account-primary-btn account-save-btn"
+                          onClick={() => saveConnectorDraft(connector)}
+                          disabled={locked || pending || !isDirty}
                         >
-                          {pending ? 'Saving...' : connected ? 'Disconnect' : 'Connect'}
+                          {pending ? 'Saving...' : 'Save'}
                         </button>
-                      </>
+                      </div>
+                    </div>
+                    <p className="account-connector-group">{connector.group}</p>
+                    <p className="account-connector-description">{connector.description}</p>
+                    <p className="account-connector-toggle-note">{connectorToggleMeaning(connector)}</p>
+
+                    <div className="account-connector-controls account-connector-controls-compact">
+                      <label>
+                        Sync
+                        <select
+                          value={draft.sync_mode || ''}
+                          disabled={locked || pending}
+                          onChange={(e) => updateConnectorDraft(connector.id, { sync_mode: e.target.value })}
+                        >
+                          {syncModes.map((mode) => (
+                            <option key={mode} value={mode}>
+                              {SYNC_MODE_LABELS[mode] || mode}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Conflict
+                        <select
+                          value={draft.conflict_policy || ''}
+                          disabled={locked || pending}
+                          onChange={(e) => updateConnectorDraft(connector.id, { conflict_policy: e.target.value })}
+                        >
+                          {conflictPolicies.map((policy) => (
+                            <option key={policy} value={policy}>
+                              {policy.replace(/_/g, ' ')}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        External workspace
+                        <input
+                          type="text"
+                          value={draft.external_workspace || ''}
+                          placeholder="Workspace or account id"
+                          disabled={locked || pending}
+                          onChange={(e) => updateConnectorDraft(connector.id, { external_workspace: e.target.value })}
+                        />
+                      </label>
+                      {connector.id === 'jira_sync' && (
+                        <>
+                          <label>
+                            Jira URL
+                            <input
+                              type="text"
+                              value={draft.jira_base_url || ''}
+                              placeholder="https://your-company.atlassian.net"
+                              disabled={locked || pending}
+                              onChange={(e) => updateConnectorDraft(connector.id, { jira_base_url: e.target.value })}
+                            />
+                          </label>
+                          <label>
+                            Jira project key
+                            <input
+                              type="text"
+                              value={draft.jira_project_key || ''}
+                              placeholder="PROJ"
+                              disabled={locked || pending}
+                              onChange={(e) => updateConnectorDraft(connector.id, { jira_project_key: e.target.value, external_workspace: e.target.value })}
+                            />
+                          </label>
+                        </>
+                      )}
+                    </div>
+
+                    {locked && (
+                      <p className="account-connector-locked-note">
+                        Upgrade to {requiredTierLabel}+ to enable this toggle and save settings.
+                      </p>
                     )}
                   </article>
                 );

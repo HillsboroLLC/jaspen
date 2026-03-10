@@ -5,10 +5,24 @@ import './JaspenAdmin.css';
 
 
 const PLAN_OPTIONS = ['free', 'essential', 'team', 'enterprise'];
+const CREDIT_MODE_OPTIONS = [
+  { value: 'adjust', label: 'Adjust (+/-)' },
+  { value: 'set', label: 'Set exact value' },
+  { value: 'reset_plan', label: 'Reset to plan default' },
+];
 
 
 function getToken() {
   return localStorage.getItem('access_token') || localStorage.getItem('token');
+}
+
+
+function authHeaders(extra = {}) {
+  const token = getToken();
+  return {
+    ...extra,
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
 }
 
 
@@ -30,6 +44,23 @@ function toDraft(user) {
 }
 
 
+function toConnectorDrafts(connectorList) {
+  const next = {};
+  (Array.isArray(connectorList) ? connectorList : []).forEach((connector) => {
+    const id = String(connector?.id || '').trim();
+    if (!id) return;
+    next[id] = {
+      connection_status: String(connector?.raw_connection_status || connector?.connection_status || 'disconnected'),
+      sync_mode: String(connector?.sync_mode || 'import'),
+      conflict_policy: String(connector?.conflict_policy || 'prefer_external'),
+      auto_sync: Boolean(connector?.auto_sync),
+      external_workspace: String(connector?.external_workspace || ''),
+    };
+  });
+  return next;
+}
+
+
 export default function JaspenAdmin() {
   const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(true);
@@ -39,19 +70,40 @@ export default function JaspenAdmin() {
   const [selectedId, setSelectedId] = useState('');
   const [draft, setDraft] = useState(null);
   const [pending, setPending] = useState(false);
+  const [connectorPendingId, setConnectorPendingId] = useState('');
+  const [opsLoading, setOpsLoading] = useState(false);
   const [message, setMessage] = useState('');
+
+  const [connectors, setConnectors] = useState([]);
+  const [connectorDrafts, setConnectorDrafts] = useState({});
+  const [sessions, setSessions] = useState([]);
+  const [auditEvents, setAuditEvents] = useState([]);
+
+  const [creditOp, setCreditOp] = useState({
+    mode: 'adjust',
+    delta: '',
+    value: '',
+    reason: '',
+  });
+  const [recoveryReason, setRecoveryReason] = useState('');
 
   const selectedUser = useMemo(
     () => (users || []).find((u) => u.id === selectedId) || null,
     [users, selectedId],
   );
 
+  const applySavedUser = (saved) => {
+    if (!saved?.id) return;
+    setUsers((prev) => prev.map((u) => (u.id === saved.id ? saved : u)));
+    setDraft(toDraft(saved));
+    setSelectedId(saved.id);
+  };
+
   const loadUsers = async (nextQuery = query) => {
-    const token = getToken();
     const response = await fetch(
       `${API_BASE}/api/admin/users?limit=200&q=${encodeURIComponent(nextQuery || '')}`,
       {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: authHeaders(),
         credentials: 'include',
       },
     );
@@ -81,13 +133,51 @@ export default function JaspenAdmin() {
     }
   };
 
+  const loadUserOps = async (userId) => {
+    if (!userId) return;
+    setOpsLoading(true);
+    try {
+      const [connectorsRes, sessionsRes, auditRes] = await Promise.all([
+        fetch(`${API_BASE}/api/admin/users/${encodeURIComponent(userId)}/connectors`, {
+          headers: authHeaders(),
+          credentials: 'include',
+        }),
+        fetch(`${API_BASE}/api/admin/users/${encodeURIComponent(userId)}/sessions?limit=20`, {
+          headers: authHeaders(),
+          credentials: 'include',
+        }),
+        fetch(`${API_BASE}/api/admin/audit?user_id=${encodeURIComponent(userId)}&limit=25`, {
+          headers: authHeaders(),
+          credentials: 'include',
+        }),
+      ]);
+
+      const connectorsData = await connectorsRes.json().catch(() => ({}));
+      const sessionsData = await sessionsRes.json().catch(() => ({}));
+      const auditData = await auditRes.json().catch(() => ({}));
+
+      if (!connectorsRes.ok) throw new Error(connectorsData?.error || 'Unable to load connectors.');
+      if (!sessionsRes.ok) throw new Error(sessionsData?.error || 'Unable to load sessions.');
+      if (!auditRes.ok) throw new Error(auditData?.error || 'Unable to load audit events.');
+
+      const connectorList = Array.isArray(connectorsData?.connectors) ? connectorsData.connectors : [];
+      setConnectors(connectorList);
+      setConnectorDrafts(toConnectorDrafts(connectorList));
+      setSessions(Array.isArray(sessionsData?.sessions) ? sessionsData.sessions : []);
+      setAuditEvents(Array.isArray(auditData?.events) ? auditData.events : []);
+    } catch (error) {
+      setMessage(error.message || 'Unable to load user operations.');
+    } finally {
+      setOpsLoading(false);
+    }
+  };
+
   useEffect(() => {
     let mounted = true;
     (async () => {
-      const token = getToken();
       try {
         const capRes = await fetch(`${API_BASE}/api/admin/capabilities`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          headers: authHeaders(),
           credentials: 'include',
         });
         const capData = await capRes.json().catch(() => ({}));
@@ -121,11 +211,14 @@ export default function JaspenAdmin() {
     if (!user?.id) return;
     setSelectedId(user.id);
     setDraft(toDraft(user));
+    setMessage('');
+    setCreditOp((prev) => ({ ...prev, delta: '', value: '', reason: '' }));
+    setRecoveryReason('');
+    loadUserOps(user.id);
   };
 
   const handleSave = async () => {
     if (!draft?.id) return;
-    const token = getToken();
     setPending(true);
     setMessage('');
     try {
@@ -143,10 +236,7 @@ export default function JaspenAdmin() {
 
       const response = await fetch(`${API_BASE}/api/admin/users/${encodeURIComponent(draft.id)}`, {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         credentials: 'include',
         body: JSON.stringify(payload),
       });
@@ -154,13 +244,9 @@ export default function JaspenAdmin() {
       if (!response.ok) {
         throw new Error(data?.error || 'Unable to save user changes.');
       }
-      const saved = data?.user;
-      if (saved?.id) {
-        setUsers((prev) => prev.map((u) => (u.id === saved.id ? saved : u)));
-        setDraft(toDraft(saved));
-        setSelectedId(saved.id);
-      }
-      setMessage(`Saved ${saved?.email || 'user'}.`);
+      applySavedUser(data?.user);
+      setMessage(`Saved ${data?.user?.email || 'user'}.`);
+      await loadUserOps(draft.id);
     } catch (error) {
       setMessage(error.message || 'Unable to save user changes.');
     } finally {
@@ -170,16 +256,12 @@ export default function JaspenAdmin() {
 
   const forcePlan = async (planKey, resetCredits = true) => {
     if (!draft?.id) return;
-    const token = getToken();
     setPending(true);
     setMessage('');
     try {
       const response = await fetch(`${API_BASE}/api/admin/users/${encodeURIComponent(draft.id)}/force-plan`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         credentials: 'include',
         body: JSON.stringify({ plan_key: planKey, reset_credits: resetCredits }),
       });
@@ -187,15 +269,124 @@ export default function JaspenAdmin() {
       if (!response.ok) {
         throw new Error(data?.error || 'Unable to force plan.');
       }
-      const saved = data?.user;
-      if (saved?.id) {
-        setUsers((prev) => prev.map((u) => (u.id === saved.id ? saved : u)));
-        setDraft(toDraft(saved));
-        setSelectedId(saved.id);
-      }
-      setMessage(`Set ${saved?.email || 'user'} to ${planKey}.`);
+      applySavedUser(data?.user);
+      setMessage(`Set ${data?.user?.email || 'user'} to ${planKey}.`);
+      await loadUserOps(draft.id);
     } catch (error) {
       setMessage(error.message || 'Unable to force plan.');
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const runCreditAction = async () => {
+    if (!draft?.id) return;
+    const reason = String(creditOp.reason || '').trim();
+    if (!reason) {
+      setMessage('Credit reason is required.');
+      return;
+    }
+
+    const payload = { mode: creditOp.mode, reason };
+    if (creditOp.mode === 'adjust') {
+      const delta = Number(creditOp.delta);
+      if (!Number.isInteger(delta) || delta === 0) {
+        setMessage('Adjust mode requires a non-zero integer delta.');
+        return;
+      }
+      payload.delta = delta;
+    } else if (creditOp.mode === 'set') {
+      const raw = String(creditOp.value || '').trim();
+      payload.value = raw === '' ? null : Number(raw);
+      if (raw !== '' && (!Number.isFinite(payload.value) || payload.value < 0)) {
+        setMessage('Set mode requires a non-negative number or blank for unlimited.');
+        return;
+      }
+    }
+
+    setPending(true);
+    setMessage('');
+    try {
+      const response = await fetch(`${API_BASE}/api/admin/users/${encodeURIComponent(draft.id)}/credits`, {
+        method: 'POST',
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        credentials: 'include',
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || 'Unable to update credits.');
+      applySavedUser(data?.user);
+      setMessage('Credit action applied.');
+      setCreditOp((prev) => ({ ...prev, delta: '', value: '', reason: '' }));
+      await loadUserOps(draft.id);
+    } catch (error) {
+      setMessage(error.message || 'Unable to update credits.');
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const handleConnectorDraftChange = (connectorId, field, value) => {
+    setConnectorDrafts((prev) => ({
+      ...prev,
+      [connectorId]: {
+        ...(prev[connectorId] || {}),
+        [field]: value,
+      },
+    }));
+  };
+
+  const saveConnector = async (connectorId) => {
+    if (!draft?.id || !connectorId) return;
+    const connectorPayload = connectorDrafts[connectorId] || {};
+    setConnectorPendingId(connectorId);
+    setMessage('');
+    try {
+      const response = await fetch(
+        `${API_BASE}/api/admin/users/${encodeURIComponent(draft.id)}/connectors/${encodeURIComponent(connectorId)}`,
+        {
+          method: 'PATCH',
+          headers: authHeaders({ 'Content-Type': 'application/json' }),
+          credentials: 'include',
+          body: JSON.stringify(connectorPayload),
+        },
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || `Unable to save connector ${connectorId}.`);
+      setMessage(`Saved connector ${connectorId}.`);
+      await loadUserOps(draft.id);
+    } catch (error) {
+      setMessage(error.message || `Unable to save connector ${connectorId}.`);
+    } finally {
+      setConnectorPendingId('');
+    }
+  };
+
+  const runRecoveryAction = async (action, label) => {
+    if (!draft?.id) return;
+    const reason = String(recoveryReason || '').trim();
+    if (!reason) {
+      setMessage('Recovery reason is required.');
+      return;
+    }
+    if (!window.confirm(`Run "${label}" for ${draft.email}?`)) return;
+
+    setPending(true);
+    setMessage('');
+    try {
+      const response = await fetch(`${API_BASE}/api/admin/users/${encodeURIComponent(draft.id)}/recovery`, {
+        method: 'POST',
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        credentials: 'include',
+        body: JSON.stringify({ action, reason }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || `Unable to run ${label}.`);
+      applySavedUser(data?.user);
+      setMessage(`Recovery action completed: ${label}.`);
+      await loadUserOps(draft.id);
+    } catch (error) {
+      setMessage(error.message || `Unable to run ${label}.`);
     } finally {
       setPending(false);
     }
@@ -227,7 +418,9 @@ export default function JaspenAdmin() {
           <div>
             <p className="jas-admin-eyebrow">Jaspen Internal</p>
             <h1>Jaspen Admin</h1>
-            <p className="jas-admin-sub">Search users and directly manage tier, credits, seats, and auth-linked billing fields.</p>
+            <p className="jas-admin-sub">
+              Search users and manage tier, credits, connectors, and recovery actions from one control plane.
+            </p>
           </div>
           <button type="button" className="jas-admin-secondary" onClick={() => navigate('/new')}>
             Back to Jaspen
@@ -271,9 +464,7 @@ export default function JaspenAdmin() {
           </div>
 
           <div className="jas-admin-editor">
-            {!draft && (
-              <p className="jas-admin-empty">Select a user to edit.</p>
-            )}
+            {!draft && <p className="jas-admin-empty">Select a user to edit.</p>}
             {draft && (
               <>
                 <div className="jas-admin-grid">
@@ -304,7 +495,7 @@ export default function JaspenAdmin() {
                     Credits remaining
                     <input
                       type="number"
-                      placeholder="Leave blank for unlimited"
+                      placeholder="Blank = unlimited"
                       value={draft.credits_remaining}
                       onChange={(e) => setDraft((prev) => ({ ...prev, credits_remaining: e.target.value }))}
                     />
@@ -370,17 +561,205 @@ export default function JaspenAdmin() {
                   <button type="button" className="jas-admin-secondary" onClick={() => forcePlan('enterprise', true)} disabled={pending}>
                     Force Enterprise
                   </button>
-                  <button
-                    type="button"
-                    className="jas-admin-secondary"
-                    onClick={() => {
-                      setDraft((prev) => ({ ...prev, credits_remaining: '' }));
-                      setMessage('Set credits blank, then click Save user for unlimited.');
-                    }}
-                    disabled={pending}
-                  >
-                    Set Unlimited Credits
-                  </button>
+                </div>
+
+                <section className="jas-admin-subsection">
+                  <h3>Credit Operations</h3>
+                  <div className="jas-admin-inline-grid">
+                    <label>
+                      Mode
+                      <select
+                        value={creditOp.mode}
+                        onChange={(e) => setCreditOp((prev) => ({ ...prev, mode: e.target.value }))}
+                      >
+                        {CREDIT_MODE_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    {creditOp.mode === 'adjust' && (
+                      <label>
+                        Delta
+                        <input
+                          type="number"
+                          placeholder="e.g. 500 or -100"
+                          value={creditOp.delta}
+                          onChange={(e) => setCreditOp((prev) => ({ ...prev, delta: e.target.value }))}
+                        />
+                      </label>
+                    )}
+                    {creditOp.mode === 'set' && (
+                      <label>
+                        Set value
+                        <input
+                          type="number"
+                          placeholder="Blank = unlimited"
+                          value={creditOp.value}
+                          onChange={(e) => setCreditOp((prev) => ({ ...prev, value: e.target.value }))}
+                        />
+                      </label>
+                    )}
+                    <label className="jas-admin-wide">
+                      Reason
+                      <input
+                        type="text"
+                        placeholder="Required for audit trail"
+                        value={creditOp.reason}
+                        onChange={(e) => setCreditOp((prev) => ({ ...prev, reason: e.target.value }))}
+                      />
+                    </label>
+                  </div>
+                  <div className="jas-admin-actions">
+                    <button type="button" className="jas-admin-primary" onClick={runCreditAction} disabled={pending}>
+                      Apply Credit Action
+                    </button>
+                  </div>
+                </section>
+
+                <section className="jas-admin-subsection">
+                  <h3>Connector Overrides</h3>
+                  {opsLoading && <p className="jas-admin-empty">Loading connector state...</p>}
+                  {!opsLoading && connectors.length === 0 && <p className="jas-admin-empty">No connectors available.</p>}
+                  {!opsLoading && connectors.length > 0 && (
+                    <div className="jas-admin-connectors">
+                      {connectors.map((connector) => {
+                        const connectorId = String(connector.id || '');
+                        const cd = connectorDrafts[connectorId] || {};
+                        const syncModes = Array.isArray(connector.available_sync_modes) && connector.available_sync_modes.length > 0
+                          ? connector.available_sync_modes
+                          : ['import', 'push', 'two_way'];
+                        return (
+                          <div key={connectorId} className="jas-admin-connector-row">
+                            <div className="jas-admin-connector-meta">
+                              <strong>{connector.label || connectorId}</strong>
+                              <span>{connector.description || connectorId}</span>
+                            </div>
+                            <label>
+                              Status
+                              <select
+                                value={cd.connection_status || 'disconnected'}
+                                onChange={(e) => handleConnectorDraftChange(connectorId, 'connection_status', e.target.value)}
+                              >
+                                <option value="disconnected">disconnected</option>
+                                <option value="connected">connected</option>
+                              </select>
+                            </label>
+                            <label>
+                              Sync mode
+                              <select
+                                value={cd.sync_mode || 'import'}
+                                onChange={(e) => handleConnectorDraftChange(connectorId, 'sync_mode', e.target.value)}
+                              >
+                                {syncModes.map((mode) => (
+                                  <option key={mode} value={mode}>{mode}</option>
+                                ))}
+                              </select>
+                            </label>
+                            <label>
+                              Conflict policy
+                              <select
+                                value={cd.conflict_policy || 'prefer_external'}
+                                onChange={(e) => handleConnectorDraftChange(connectorId, 'conflict_policy', e.target.value)}
+                              >
+                                {(connector.available_conflict_policies || ['prefer_external']).map((policy) => (
+                                  <option key={policy} value={policy}>{policy}</option>
+                                ))}
+                              </select>
+                            </label>
+                            <label>
+                              External workspace
+                              <input
+                                type="text"
+                                value={cd.external_workspace || ''}
+                                onChange={(e) => handleConnectorDraftChange(connectorId, 'external_workspace', e.target.value)}
+                              />
+                            </label>
+                            <label className="jas-admin-check-inline">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(cd.auto_sync)}
+                                onChange={(e) => handleConnectorDraftChange(connectorId, 'auto_sync', e.target.checked)}
+                              />
+                              Auto sync
+                            </label>
+                            <button
+                              type="button"
+                              className="jas-admin-secondary"
+                              disabled={connectorPendingId === connectorId}
+                              onClick={() => saveConnector(connectorId)}
+                            >
+                              {connectorPendingId === connectorId ? 'Saving...' : 'Save'}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </section>
+
+                <section className="jas-admin-subsection">
+                  <h3>Recovery Tools</h3>
+                  <div className="jas-admin-inline-grid">
+                    <label className="jas-admin-wide">
+                      Reason
+                      <input
+                        type="text"
+                        placeholder="Required for recovery actions"
+                        value={recoveryReason}
+                        onChange={(e) => setRecoveryReason(e.target.value)}
+                      />
+                    </label>
+                  </div>
+                  <div className="jas-admin-actions">
+                    <button type="button" className="jas-admin-secondary" disabled={pending} onClick={() => runRecoveryAction('clear_sessions', 'Clear sessions')}>
+                      Clear Sessions
+                    </button>
+                    <button type="button" className="jas-admin-secondary" disabled={pending} onClick={() => runRecoveryAction('clear_connectors', 'Clear connectors')}>
+                      Clear Connectors
+                    </button>
+                    <button type="button" className="jas-admin-secondary" disabled={pending} onClick={() => runRecoveryAction('reset_plan_defaults', 'Reset plan defaults')}>
+                      Reset Plan Defaults
+                    </button>
+                    <button type="button" className="jas-admin-secondary" disabled={pending} onClick={() => runRecoveryAction('clear_billing_links', 'Clear billing links')}>
+                      Clear Billing Links
+                    </button>
+                  </div>
+                </section>
+
+                <div className="jas-admin-info-grid">
+                  <section className="jas-admin-subsection">
+                    <h3>Recent Sessions</h3>
+                    {opsLoading && <p className="jas-admin-empty">Loading sessions...</p>}
+                    {!opsLoading && sessions.length === 0 && <p className="jas-admin-empty">No sessions found.</p>}
+                    {!opsLoading && sessions.length > 0 && (
+                      <div className="jas-admin-list">
+                        {sessions.map((session) => (
+                          <div key={session.id || session.session_id} className="jas-admin-list-row">
+                            <strong>{session.name || session.session_id}</strong>
+                            <span>{session.status} • {session.document_type}</span>
+                            <span>{session.updated_at ? new Date(session.updated_at).toLocaleString() : 'n/a'}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+
+                  <section className="jas-admin-subsection">
+                    <h3>Audit Trail</h3>
+                    {opsLoading && <p className="jas-admin-empty">Loading audit...</p>}
+                    {!opsLoading && auditEvents.length === 0 && <p className="jas-admin-empty">No audit events yet.</p>}
+                    {!opsLoading && auditEvents.length > 0 && (
+                      <div className="jas-admin-list">
+                        {auditEvents.map((event, idx) => (
+                          <div key={`${event.timestamp || 'event'}-${idx}`} className="jas-admin-list-row">
+                            <strong>{event.action || 'event'}</strong>
+                            <span>{event.actor_email || 'unknown actor'}</span>
+                            <span>{event.timestamp ? new Date(event.timestamp).toLocaleString() : 'n/a'}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
                 </div>
               </>
             )}
@@ -396,4 +775,3 @@ export default function JaspenAdmin() {
     </div>
   );
 }
-
