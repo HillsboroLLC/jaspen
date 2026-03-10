@@ -276,48 +276,6 @@ const CONNECTOR_DEFINITIONS = {
 };
 
 const CONNECTOR_IDS = Object.keys(CONNECTOR_DEFINITIONS);
-const CONNECTOR_TOGGLE_COPY = {
-  jira_sync: {
-    on: 'Syncs WBS plans with Jira issues, owners, and status updates.',
-    off: 'Jira stays disconnected from Jaspen planning workflows.',
-    config: 'Requires Jira URL, project key, service account, and API token.',
-  },
-  workfront_sync: {
-    on: 'Syncs project milestones and ownership updates with Workfront.',
-    off: 'Workfront project updates are excluded from PM sync.',
-    config: 'Set the external workspace/account identifier before syncing.',
-  },
-  smartsheet_sync: {
-    on: 'Syncs timeline rows and status updates with Smartsheet.',
-    off: 'Smartsheet remains disconnected from execution sync.',
-    config: 'Set the external workspace/account identifier before syncing.',
-  },
-  salesforce_insights: {
-    on: 'Unlocks Salesforce context for customer and pipeline insights.',
-    off: 'Salesforce data is excluded from recommendation context.',
-    config: 'Set the external workspace/account identifier before syncing.',
-  },
-  snowflake_insights: {
-    on: 'Unlocks Snowflake KPI and trend data for analysis context.',
-    off: 'Snowflake data remains excluded from insights.',
-    config: 'Set the external workspace/account identifier before syncing.',
-  },
-  oracle_fusion_insights: {
-    on: 'Unlocks Oracle Fusion operating and finance signals for planning.',
-    off: 'Oracle Fusion data remains excluded from recommendations.',
-    config: 'Set the external workspace/account identifier before syncing.',
-  },
-  servicenow_insights: {
-    on: 'Unlocks ServiceNow service and change signals for risk insights.',
-    off: 'ServiceNow data remains excluded from risk analysis.',
-    config: 'Set the external workspace/account identifier before syncing.',
-  },
-  netsuite_insights: {
-    on: 'Unlocks NetSuite operational and finance trends in recommendations.',
-    off: 'NetSuite signals remain excluded from planning context.',
-    config: 'Set the external workspace/account identifier before syncing.',
-  },
-};
 const PLAN_ORDER = ['free', 'essential', 'team', 'enterprise'];
 const PLAN_RANK = { free: 0, essential: 1, team: 2, enterprise: 3 };
 
@@ -671,9 +629,6 @@ const refreshBundle = async (tid) => {
   const [billingActionLoading, setBillingActionLoading] = useState('');
   const [billingModalOpen, setBillingModalOpen] = useState(false);
   const [connectorsModalOpen, setConnectorsModalOpen] = useState(false);
-  const [connectorDrafts, setConnectorDrafts] = useState({});
-  const [connectorSaveLoading, setConnectorSaveLoading] = useState('');
-  const [connectorMessage, setConnectorMessage] = useState('');
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notificationsMode, setNotificationsMode] = useState('bell');
   const [notificationFeed, setNotificationFeed] = useState(() => buildDefaultNotifications());
@@ -774,26 +729,6 @@ const refreshBundle = async (tid) => {
     () => connectorCatalog.filter((item) => item.connected).length,
     [connectorCatalog]
   );
-  const connectorGroups = useMemo(() => {
-    const grouped = { execution: [], data: [] };
-    connectorCatalog.forEach((item) => {
-      const key = String(item?.group || '').trim().toLowerCase() === 'execution' ? 'execution' : 'data';
-      grouped[key].push(item);
-    });
-    return grouped;
-  }, [connectorCatalog]);
-  useEffect(() => {
-    setConnectorDrafts((prev) => {
-      const next = {};
-      connectorCatalog.forEach((item) => {
-        const current = prev[item.id];
-        next[item.id] = {
-          connection_status: current?.connection_status || (item.connected ? 'connected' : 'disconnected'),
-        };
-      });
-      return next;
-    });
-  }, [connectorCatalog]);
   const isGlobalAdmin = Boolean(billingStatus?.is_admin);
   const monthlyCreditLimit = billingStatus?.monthly_credit_limit;
   const creditsRemaining = billingStatus?.credits_remaining;
@@ -1159,18 +1094,6 @@ const refreshBundle = async (tid) => {
   }, [busy]);
 
   useEffect(() => {
-    if (!connectorsModalOpen) return;
-    setConnectorMessage('');
-    setConnectorDrafts(() => {
-      const next = {};
-      connectorCatalog.forEach((item) => {
-        next[item.id] = { connection_status: item.connected ? 'connected' : 'disconnected' };
-      });
-      return next;
-    });
-  }, [connectorsModalOpen, connectorCatalog]);
-
-  useEffect(() => {
     if (!sidebarState.settings) {
       setAccountQuickMenuOpen(false);
       setKnowledgeMenuOpen(false);
@@ -1272,57 +1195,6 @@ const refreshBundle = async (tid) => {
       setBillingMessage(error.message || 'Unable to open billing settings.');
     } finally {
       setBillingActionLoading('');
-    }
-  };
-
-  const updateConnectorDraft = (connectorId, updates = {}) => {
-    if (!connectorId) return;
-    setConnectorDrafts((prev) => ({
-      ...prev,
-      [connectorId]: {
-        ...(prev[connectorId] || {}),
-        ...(updates || {}),
-      },
-    }));
-  };
-
-  const saveConnectorDraft = async (connector) => {
-    if (!connector?.id) return;
-    if (!connector.enabled) {
-      setConnectorMessage(`Upgrade to ${connector.requiredMinTier} or above to enable ${connector.label}.`);
-      return;
-    }
-
-    const draft = connectorDrafts[connector.id] || {
-      connection_status: connector.connected ? 'connected' : 'disconnected',
-    };
-    const desiredStatus = draft.connection_status === 'connected' ? 'connected' : 'disconnected';
-    const currentStatus = connector.connected ? 'connected' : 'disconnected';
-    if (desiredStatus === currentStatus) return;
-
-    setConnectorSaveLoading(connector.id);
-    setConnectorMessage('');
-    try {
-      const response = await authFetch(`/api/connectors/${encodeURIComponent(connector.id)}`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ connection_status: desiredStatus }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        if (response.status === 401) {
-          await handleUnauthorized();
-        }
-        throw new Error(payload?.error || payload?.msg || 'Unable to save connector.');
-      }
-      await loadBilling();
-      setConnectorMessage(`${connector.label} is now ${desiredStatus === 'connected' ? 'enabled' : 'disabled'}.`);
-    } catch (error) {
-      setConnectorMessage(error.message || 'Unable to save connector.');
-    } finally {
-      setConnectorSaveLoading('');
     }
   };
 
@@ -1489,114 +1361,48 @@ const refreshBundle = async (tid) => {
           </div>
 
           <p className="jas-apps-intro">
-            Toggle connectors on or off, then save. For full field configuration (URLs, project keys, sync policies),
-            use the full account page.
+            Connect your execution systems and data platforms. Availability depends on your current plan.
           </p>
 
-          {connectorMessage && <p className="jas-connector-inline-message">{connectorMessage}</p>}
-
-          <div className="jas-connectors-list-wrap">
-            {['execution', 'data'].map((groupKey) => {
-              const groupItems = connectorGroups[groupKey] || [];
-              if (!groupItems.length) return null;
+          <div className="jas-connectors-grid">
+            {connectorCatalog.map((connector) => {
+              const locked = connector.status === 'locked';
+              const connected = connector.status === 'connected';
+              const available = connector.status === 'available';
               return (
-                <section key={groupKey} className="jas-connectors-group">
-                  <h4>{groupKey === 'execution' ? 'Execution connectors' : 'Data connectors'}</h4>
-                  <div className="jas-connectors-list">
-                    {groupItems.map((connector) => {
-                      const locked = connector.status === 'locked';
-                      const draft = connectorDrafts[connector.id] || {
-                        connection_status: connector.connected ? 'connected' : 'disconnected',
-                      };
-                      const isOn = draft.connection_status === 'connected';
-                      const hasChanges = (connector.connected ? 'connected' : 'disconnected') !== draft.connection_status;
-                      const copy = CONNECTOR_TOGGLE_COPY[connector.id] || {
-                        on: 'Enables connector access for sync and analysis workflows.',
-                        off: 'Disables connector access for sync and analysis workflows.',
-                        config: 'Configure connector details on the full account page.',
-                      };
-
-                      return (
-                        <article key={connector.id} className={`jas-connector-row ${isOn ? 'is-on' : ''}`}>
-                          <div className="jas-connector-row-top">
-                            <div>
-                              <h5>{connector.label}</h5>
-                              <p className="jas-connector-group">{connector.group}</p>
-                            </div>
-                            <div className="jas-connector-status-wrap">
-                              <span className={`jas-connector-badge ${locked ? 'is-locked' : isOn ? 'is-connected' : 'is-available'}`}>
-                                {locked ? `${connector.requiredMinTier}+` : isOn ? 'On' : 'Off'}
-                              </span>
-                              <label className={`jas-connector-toggle ${locked ? 'is-disabled' : ''}`}>
-                                <input
-                                  type="checkbox"
-                                  checked={isOn}
-                                  disabled={locked || connectorSaveLoading === connector.id}
-                                  onChange={(e) => updateConnectorDraft(connector.id, {
-                                    connection_status: e.target.checked ? 'connected' : 'disconnected',
-                                  })}
-                                />
-                                <span className="jas-connector-toggle-track" />
-                              </label>
-                            </div>
-                          </div>
-                          <p className="jas-connector-description">{connector.description}</p>
-                          <p className="jas-connector-impact">
-                            <strong>When on:</strong> {copy.on} <strong>When off:</strong> {copy.off}
-                          </p>
-                          <p className="jas-connector-config-note">{copy.config}</p>
-                          <div className="jas-connector-row-actions">
-                            {locked ? (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setConnectorsModalOpen(false);
-                                  setBillingModalOpen(true);
-                                }}
-                              >
-                                Upgrade to unlock
-                              </button>
-                            ) : (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => updateConnectorDraft(connector.id, {
-                                    connection_status: connector.connected ? 'connected' : 'disconnected',
-                                  })}
-                                  disabled={connectorSaveLoading === connector.id || !hasChanges}
-                                >
-                                  Reset
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => saveConnectorDraft(connector)}
-                                  disabled={connectorSaveLoading === connector.id || !hasChanges}
-                                >
-                                  {connectorSaveLoading === connector.id ? 'Saving...' : 'Save'}
-                                </button>
-                              </>
-                            )}
-                          </div>
-                        </article>
-                      );
-                    })}
+                <article key={connector.id} className={`jas-connector-card ${connected ? 'is-connected' : ''}`}>
+                  <div className="jas-connector-head">
+                    <h4>{connector.label}</h4>
+                    <span className={`jas-connector-badge ${locked ? 'is-locked' : connected ? 'is-connected' : 'is-available'}`}>
+                      {connected ? 'Connected' : available ? 'Available' : `${connector.requiredMinTier}+`}
+                    </span>
                   </div>
-                </section>
+                  <p className="jas-connector-group">{connector.group}</p>
+                  <p>{connector.description}</p>
+                  {locked ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setConnectorsModalOpen(false);
+                        setBillingModalOpen(true);
+                      }}
+                    >
+                      Upgrade to unlock
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setConnectorsModalOpen(false);
+                        navigate('/account#connectors');
+                      }}
+                    >
+                      {connected ? 'Manage connector' : 'Connect'}
+                    </button>
+                  )}
+                </article>
               );
             })}
-          </div>
-
-          <div className="jas-connectors-api-note">
-            <p><strong>API setup:</strong> use <code>GET /api/connectors/status</code> then <code>PATCH /api/connectors/:connector_id</code>.</p>
-            <button
-              type="button"
-              onClick={() => {
-                setConnectorsModalOpen(false);
-                navigate('/account#connectors-api');
-              }}
-            >
-              Open API and full connector setup
-            </button>
           </div>
         </div>
       </div>

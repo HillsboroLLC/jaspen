@@ -1334,71 +1334,42 @@
   width: min(980px, 96vw);
 }
 
-.jas-connector-inline-message {
-  margin: 0 0 10px;
-  font-size: 0.78rem;
-  color: #a21152;
-}
-
-.jas-connectors-list-wrap {
+.jas-connectors-grid {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 
-.jas-connectors-group h4 {
-  margin: 0 0 8px;
-  font-size: 0.8rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--gray-600);
-}
-
-.jas-connectors-list {
-  display: grid;
-  gap: 8px;
-}
-
-.jas-connector-row {
+.jas-connector-card {
   border: 1px solid var(--gray-200);
-  border-radius: 12px;
+  border-radius: 14px;
+  padding: 14px;
   background: #f8fbff;
-  padding: 10px;
-  display: grid;
-  gap: 6px;
 }
 
-.jas-connector-row.is-on {
+.jas-connector-card.is-connected {
   border-color: #9fd2b2;
   background: #f4fff7;
 }
 
-.jas-connector-row-top {
+.jas-connector-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
 
-.jas-connector-row-top h5 {
+.jas-connector-head h4 {
   margin: 0;
-  font-size: 0.9rem;
   color: var(--navy);
 }
 
 .jas-connector-group {
-  margin: 2px 0 0;
+  margin: 4px 0 8px;
   font-size: 0.6875rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--gray-600);
-}
-
-.jas-connector-status-wrap {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
 }
 
 .jas-connector-badge {
@@ -1423,122 +1394,26 @@
   color: #1c7a3d;
 }
 
-.jas-connector-toggle {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  cursor: pointer;
-}
-
-.jas-connector-toggle input {
-  position: absolute;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.jas-connector-toggle-track {
-  width: 32px;
-  height: 18px;
-  border-radius: 999px;
-  border: 1px solid var(--gray-300);
-  background: var(--gray-100);
-  position: relative;
-  transition: background 0.16s ease;
-}
-
-.jas-connector-toggle-track::after {
-  content: '';
-  position: absolute;
-  width: 12px;
-  height: 12px;
-  border-radius: 999px;
-  top: 2px;
-  left: 2px;
-  background: var(--white);
-  transition: transform 0.16s ease;
-}
-
-.jas-connector-toggle input:checked + .jas-connector-toggle-track {
-  background: var(--navy);
-  border-color: var(--navy);
-}
-
-.jas-connector-toggle input:checked + .jas-connector-toggle-track::after {
-  transform: translateX(14px);
-}
-
-.jas-connector-toggle.is-disabled {
-  opacity: 0.62;
-  cursor: not-allowed;
-}
-
-.jas-connector-description,
-.jas-connector-impact,
-.jas-connector-config-note {
+.jas-connector-card p {
   color: var(--gray-700);
-  font-size: 0.765rem;
+  font-size: 0.8125rem;
   line-height: 1.45;
-  margin: 0;
 }
 
-.jas-connector-impact strong {
-  color: var(--navy);
-}
-
-.jas-connector-config-note {
-  color: var(--gray-600);
-}
-
-.jas-connector-row-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.jas-connector-row-actions button {
+.jas-connector-card button {
+  margin-top: 10px;
   border-radius: 10px;
   border: 1px solid var(--gray-300);
   background: var(--white);
   color: var(--navy);
   font-size: 0.75rem;
   font-weight: 600;
-  padding: 6px 10px;
+  padding: 8px 10px;
   cursor: pointer;
 }
 
-.jas-connector-row-actions button:hover {
+.jas-connector-card button:hover {
   border-color: var(--navy);
-}
-
-.jas-connectors-api-note {
-  margin-top: 12px;
-  border: 1px solid var(--gray-200);
-  border-radius: 12px;
-  background: #f7faff;
-  padding: 10px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.jas-connectors-api-note p {
-  margin: 0;
-  font-size: 0.75rem;
-  color: var(--gray-700);
-}
-
-.jas-connectors-api-note button {
-  border-radius: 10px;
-  border: 1px solid var(--gray-300);
-  background: var(--white);
-  color: var(--navy);
-  font-size: 0.75rem;
-  font-weight: 600;
-  padding: 6px 10px;
-  cursor: pointer;
 }
 
 /* === Help Button === */
@@ -3015,17 +2890,8 @@
   .jas-account-summary-grid,
   .jas-account-plan-grid,
   .jas-apps-grid,
-  .jas-connectors-list {
+  .jas-connectors-grid {
     grid-template-columns: 1fr;
-  }
-
-  .jas-connector-row-top {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .jas-connector-status-wrap {
-    justify-content: flex-start;
   }
 
   .jas-app-card p {
