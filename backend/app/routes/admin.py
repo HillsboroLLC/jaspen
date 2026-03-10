@@ -1,19 +1,14 @@
-import os
-
 from flask import Blueprint, current_app, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 from sqlalchemy import or_
 
 from app import db
+from app.admin_policy import is_global_admin_email
 from app.billing_config import apply_plan_to_user, get_plan_catalog, normalize_plan_key, to_public_plan
 from app.models import User
 
 
 admin_bp = Blueprint("admin", __name__)
-
-
-DEFAULT_ADMIN_EMAILS = {"support@jaspen.ai"}
-DEFAULT_ADMIN_BLOCKLIST = {"ldbailey303@gmail.com"}
 
 
 def _to_bool(value, default=False):
@@ -22,37 +17,6 @@ def _to_bool(value, default=False):
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in ("1", "true", "yes", "on")
-
-
-def _admin_email_allowlist():
-    configured = current_app.config.get("ADMIN_EMAILS") or os.getenv("ADMIN_EMAILS") or ""
-    emails = {
-        str(item).strip().lower()
-        for item in str(configured).split(",")
-        if str(item).strip()
-    }
-    return emails or set(DEFAULT_ADMIN_EMAILS)
-
-
-def _admin_email_blocklist():
-    configured = current_app.config.get("ADMIN_BLOCKED_EMAILS") or os.getenv("ADMIN_BLOCKED_EMAILS") or ""
-    emails = {
-        str(item).strip().lower()
-        for item in str(configured).split(",")
-        if str(item).strip()
-    }
-    return emails or set(DEFAULT_ADMIN_BLOCKLIST)
-
-
-def _is_admin_email(email):
-    normalized = str(email or "").strip().lower()
-    if not normalized:
-        return False
-    # Global Jaspen admin is intentionally allowlist-only.
-    # Enterprise org-admin will be handled in a separate org-scoped permission model.
-    if normalized in _admin_email_blocklist():
-        return False
-    return normalized in _admin_email_allowlist()
 
 
 def _serialize_user(user):
@@ -86,7 +50,7 @@ def _require_admin():
     user, err = _current_user()
     if err:
         return None, err
-    if not _is_admin_email(user.email):
+    if not is_global_admin_email(user.email, current_app.config):
         return None, (jsonify({"error": "Admin access required"}), 403)
     return user, None
 
@@ -98,7 +62,7 @@ def capabilities():
     if err:
         return err
     return jsonify({
-        "is_admin": _is_admin_email(user.email),
+        "is_admin": is_global_admin_email(user.email, current_app.config),
         "email": user.email,
         "admin_scope": "global",
         "org_admin_enabled": False,

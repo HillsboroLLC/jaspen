@@ -11,6 +11,7 @@ from flask_jwt_extended import (
 import stripe
 
 from app import db
+from app.admin_policy import is_global_admin_email
 from app.models import User
 from app.billing_config import (
     apply_plan_to_user,
@@ -33,6 +34,27 @@ def _attach_auth_cookie(resp, token):
     # New primary auth cookie name is configured in app config (jaspen_access).
     set_access_cookies(resp, token)
     return resp
+
+
+def _enforce_admin_account_profile(user):
+    """
+    Ensure internal global-admin accounts always have full internal access.
+    This is global Jaspen admin only (allowlist), not future org-admin logic.
+    """
+    if not user or not is_global_admin_email(user.email, current_app.config):
+        return False
+
+    changed = False
+    if to_public_plan(user.subscription_plan) != 'enterprise' or user.credits_remaining is not None:
+        apply_plan_to_user(user, 'enterprise', current_app.config, reset_credits=True)
+        changed = True
+    if not bool(user.unlimited_analysis):
+        user.unlimited_analysis = True
+        changed = True
+    if user.max_concurrent_sessions is not None:
+        user.max_concurrent_sessions = None
+        changed = True
+    return changed
 
 
 @auth_bp.route('/signup', methods=['POST'])
@@ -63,6 +85,7 @@ def signup():
         max_seats=1,
     )
     apply_plan_to_user(user, requested_plan, current_app.config, reset_credits=True)
+    _enforce_admin_account_profile(user)
     db.session.add(user)
     db.session.commit()
 
@@ -145,7 +168,10 @@ def login():
     if not user or not check_password_hash(user.password_hash, password):
         return jsonify(message='Invalid credentials'), 401
 
-    if bootstrap_legacy_credits(user, current_app.config):
+    changed = bootstrap_legacy_credits(user, current_app.config)
+    if _enforce_admin_account_profile(user):
+        changed = True
+    if changed:
         db.session.commit()
 
     token = create_access_token(identity=str(user.id))
@@ -171,7 +197,10 @@ def get_current_user():
     if not user:
         return jsonify(error='User not found'), 404
 
-    if bootstrap_legacy_credits(user, current_app.config):
+    changed = bootstrap_legacy_credits(user, current_app.config)
+    if _enforce_admin_account_profile(user):
+        changed = True
+    if changed:
         db.session.commit()
 
     return jsonify(
@@ -236,7 +265,10 @@ def get_current_user_from_cookie():
     if not user:
         return jsonify(error='User not found'), 404
 
-    if bootstrap_legacy_credits(user, current_app.config):
+    changed = bootstrap_legacy_credits(user, current_app.config)
+    if _enforce_admin_account_profile(user):
+        changed = True
+    if changed:
         db.session.commit()
 
     return jsonify(
