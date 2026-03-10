@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../../shared/auth/AuthContext';
+import { API_BASE } from '../../config/apiBase';
 
 export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChange }) {
   const { login, signup } = useAuth();
@@ -50,7 +51,7 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
 
   const handleGoogle = async () => {
     setError('');
-    window.location.href = "https://api.jaspen.ai/api/auth/google/start";
+    window.location.href = `${API_BASE}/api/auth/google/start?next=${encodeURIComponent('/new')}`;
   };
 
   const handleEmailSubmit = async (event) => {

@@ -76,6 +76,11 @@ def create_app():
         ANTHROPIC_API_KEY              = os.getenv('ANTHROPIC_API_KEY') or os.getenv('CLAUDE_API_KEY'),
         # Backward-compatible alias for old references.
         CLAUDE_API_KEY                 = os.getenv('CLAUDE_API_KEY') or os.getenv('ANTHROPIC_API_KEY'),
+        # Google OAuth
+        GOOGLE_CLIENT_ID               = os.getenv('GOOGLE_CLIENT_ID'),
+        GOOGLE_CLIENT_SECRET           = os.getenv('GOOGLE_CLIENT_SECRET'),
+        GOOGLE_REDIRECT_URI            = os.getenv('GOOGLE_REDIRECT_URI'),
+        GOOGLE_OAUTH_STATE_TTL_SECONDS = int(os.getenv('GOOGLE_OAUTH_STATE_TTL_SECONDS', '900')),
 
         # JWT
         JWT_SECRET_KEY                 = os.getenv('JWT_SECRET_KEY'),

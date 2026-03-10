@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../../shared/auth/AuthContext';
+import { API_BASE } from '../../config/apiBase';
 
 const TARGET_SCORE = 87;
 const ANIMATION_DURATION_MS = 1200;
@@ -61,7 +62,7 @@ export default function StrategyAccessCard() {
 
   const handleGoogleClick = () => {
     setAuthError('');
-    window.location.href = "https://api.jaspen.ai/api/auth/google/start";
+    window.location.href = `${API_BASE}/api/auth/google/start?next=${encodeURIComponent('/new')}`;
   };
 
   const handleEmailSubmit = async (event) => {

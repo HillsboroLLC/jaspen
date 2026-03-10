@@ -1,4 +1,8 @@
-from flask import Blueprint, request, jsonify, current_app
+from urllib.parse import urlencode
+import secrets
+
+import requests
+from flask import Blueprint, request, jsonify, current_app, redirect
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import (
     create_access_token,
@@ -8,6 +12,7 @@ from flask_jwt_extended import (
     set_access_cookies,
     unset_jwt_cookies,
 )
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 import stripe
 
 from app import db
@@ -23,6 +28,9 @@ from app.billing_config import (
 
 
 auth_bp = Blueprint('auth', __name__)
+GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
+GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
+GOOGLE_USERINFO_URL = 'https://openidconnect.googleapis.com/v1/userinfo'
 
 
 @auth_bp.before_app_request
@@ -34,6 +42,39 @@ def _attach_auth_cookie(resp, token):
     # New primary auth cookie name is configured in app config (jaspen_access).
     set_access_cookies(resp, token)
     return resp
+
+
+def _frontend_base_url():
+    return (current_app.config.get('FRONTEND_BASE_URL') or 'http://localhost:3000').rstrip('/')
+
+
+def _safe_next_path(candidate):
+    path = str(candidate or '').strip()
+    if not path or not path.startswith('/') or path.startswith('//'):
+        return '/new'
+    return path
+
+
+def _frontend_callback_url(next_path):
+    return f"{_frontend_base_url()}/auth/callback?{urlencode({'next': _safe_next_path(next_path)})}"
+
+
+def _frontend_login_error_url(reason):
+    return f"{_frontend_base_url()}/?{urlencode({'auth': '1', 'error': reason})}"
+
+
+def _google_state_serializer():
+    secret = current_app.config.get('SECRET_KEY') or current_app.config.get('JWT_SECRET_KEY')
+    if not secret:
+        raise RuntimeError('Missing SECRET_KEY/JWT_SECRET_KEY for Google OAuth state signing')
+    return URLSafeTimedSerializer(secret_key=secret, salt='google-oauth-state')
+
+
+def _google_callback_url():
+    configured = str(current_app.config.get('GOOGLE_REDIRECT_URI') or '').strip()
+    if configured:
+        return configured
+    return f"{request.url_root.rstrip('/')}/api/auth/google/callback"
 
 
 def _enforce_admin_account_profile(user):
@@ -210,6 +251,129 @@ def get_current_user():
         subscription_plan=to_public_plan(user.subscription_plan),
         credits_remaining=user.credits_remaining,
     ), 200
+
+
+@auth_bp.route('/google/start', methods=['GET'])
+def google_start():
+    client_id = str(current_app.config.get('GOOGLE_CLIENT_ID') or '').strip()
+    client_secret = str(current_app.config.get('GOOGLE_CLIENT_SECRET') or '').strip()
+    if not client_id or not client_secret:
+        current_app.logger.error('Google OAuth requested but GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET are not configured')
+        return redirect(_frontend_login_error_url('google_not_configured'), code=302)
+
+    next_path = _safe_next_path(request.args.get('next') or '/new')
+    state = _google_state_serializer().dumps({'next': next_path})
+    auth_query = urlencode({
+        'client_id': client_id,
+        'redirect_uri': _google_callback_url(),
+        'response_type': 'code',
+        'scope': 'openid email profile',
+        'state': state,
+        'prompt': 'select_account',
+    })
+    return redirect(f'{GOOGLE_AUTH_URL}?{auth_query}', code=302)
+
+
+@auth_bp.route('/google/callback', methods=['GET'])
+def google_callback():
+    if request.args.get('error'):
+        return redirect(_frontend_login_error_url('google_access_denied'), code=302)
+
+    code = request.args.get('code')
+    state_token = request.args.get('state')
+    if not code or not state_token:
+        return redirect(_frontend_login_error_url('google_missing_code_or_state'), code=302)
+
+    try:
+        state_ttl_seconds = int(current_app.config.get('GOOGLE_OAUTH_STATE_TTL_SECONDS') or 900)
+        state_data = _google_state_serializer().loads(state_token, max_age=state_ttl_seconds)
+    except SignatureExpired:
+        return redirect(_frontend_login_error_url('google_state_expired'), code=302)
+    except BadSignature:
+        return redirect(_frontend_login_error_url('google_invalid_state'), code=302)
+
+    next_path = _safe_next_path((state_data or {}).get('next') or '/new')
+
+    client_id = str(current_app.config.get('GOOGLE_CLIENT_ID') or '').strip()
+    client_secret = str(current_app.config.get('GOOGLE_CLIENT_SECRET') or '').strip()
+    if not client_id or not client_secret:
+        return redirect(_frontend_login_error_url('google_not_configured'), code=302)
+
+    try:
+        token_response = requests.post(
+            GOOGLE_TOKEN_URL,
+            data={
+                'code': code,
+                'client_id': client_id,
+                'client_secret': client_secret,
+                'redirect_uri': _google_callback_url(),
+                'grant_type': 'authorization_code',
+            },
+            timeout=10,
+        )
+        token_payload = token_response.json() if token_response.content else {}
+    except Exception:
+        current_app.logger.exception('Failed exchanging Google authorization code')
+        return redirect(_frontend_login_error_url('google_token_exchange_failed'), code=302)
+
+    if not token_response.ok:
+        current_app.logger.error('Google token exchange failed: status=%s payload=%s', token_response.status_code, token_payload)
+        return redirect(_frontend_login_error_url('google_token_exchange_failed'), code=302)
+
+    access_token = str((token_payload or {}).get('access_token') or '').strip()
+    if not access_token:
+        return redirect(_frontend_login_error_url('google_missing_access_token'), code=302)
+
+    try:
+        profile_response = requests.get(
+            GOOGLE_USERINFO_URL,
+            headers={'Authorization': f'Bearer {access_token}'},
+            timeout=10,
+        )
+        profile_payload = profile_response.json() if profile_response.content else {}
+    except Exception:
+        current_app.logger.exception('Failed loading Google user profile')
+        return redirect(_frontend_login_error_url('google_profile_fetch_failed'), code=302)
+
+    if not profile_response.ok:
+        current_app.logger.error('Google profile fetch failed: status=%s payload=%s', profile_response.status_code, profile_payload)
+        return redirect(_frontend_login_error_url('google_profile_fetch_failed'), code=302)
+
+    email = str((profile_payload or {}).get('email') or '').strip().lower()
+    email_verified = bool((profile_payload or {}).get('email_verified'))
+    if not email or not email_verified:
+        return redirect(_frontend_login_error_url('google_email_unverified'), code=302)
+
+    display_name = (
+        str((profile_payload or {}).get('name') or '').strip()
+        or (email.split('@')[0] if '@' in email else 'Jaspen User')
+    )
+
+    user = User.query.filter_by(email=email).first()
+    changed = False
+
+    if not user:
+        user = User(
+            name=display_name,
+            email=email,
+            password_hash=generate_password_hash(secrets.token_urlsafe(32)),
+            seat_limit=1,
+            max_seats=1,
+        )
+        apply_plan_to_user(user, 'free', current_app.config, reset_credits=True)
+        _enforce_admin_account_profile(user)
+        db.session.add(user)
+        db.session.commit()
+    else:
+        changed = bootstrap_legacy_credits(user, current_app.config)
+        if _enforce_admin_account_profile(user):
+            changed = True
+        if changed:
+            db.session.commit()
+
+    token = create_access_token(identity=str(user.id))
+    resp = redirect(_frontend_callback_url(next_path), code=302)
+    return _attach_auth_cookie(resp, token)
 
 
 @auth_bp.route('/me', methods=['PATCH'])
