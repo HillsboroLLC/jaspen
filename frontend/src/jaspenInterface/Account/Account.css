@@ -5,7 +5,7 @@
   --account-sand: #f3e7da;
   --account-sand-strong: #e9b57b;
   min-height: calc(100vh - 120px);
-  padding: 22px 16px 40px;
+  padding: 22px 22px 40px;
   background:
     radial-gradient(circle at top right, rgba(160, 3, 108, 0.12), rgba(160, 3, 108, 0) 38%),
     radial-gradient(circle at top left, rgba(253, 107, 2, 0.08), rgba(253, 107, 2, 0) 34%),
@@ -13,13 +13,10 @@
 }
 
 .account-panel {
-  max-width: 1120px;
+  width: min(1520px, 100%);
+  max-width: none;
   margin: 0 auto;
-  background: #ffffff;
-  border: 1px solid rgba(22, 31, 59, 0.14);
-  border-radius: 12px;
-  padding: 18px;
-  box-shadow: 0 12px 34px rgba(22, 31, 59, 0.07);
+  padding: 8px 4px;
 }
 
 .account-header-row {
@@ -103,8 +100,8 @@
 .account-content-layout {
   margin-top: 14px;
   display: grid;
-  grid-template-columns: 200px minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: 18px;
   align-items: start;
 }
 
@@ -115,16 +112,24 @@
 .account-sidebar {
   position: sticky;
   top: 18px;
-  border: 1px solid rgba(22, 31, 59, 0.14);
-  border-radius: 10px;
-  background: #fffdfb;
-  padding: 10px;
+  border: 1px solid rgba(22, 31, 59, 0.12);
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px 12px;
   display: grid;
-  gap: 6px;
+  gap: 2px;
+}
+
+.account-sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
 }
 
 .account-sidebar-title {
-  margin: 0 0 2px;
+  margin: 0;
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -132,32 +137,38 @@
   font-weight: 700;
 }
 
+.account-sidebar-toggle {
+  border: 0;
+  background: transparent;
+  color: rgba(22, 31, 59, 0.72);
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 2px 0;
+}
+
 .account-sidebar-link {
   display: block;
   text-decoration: none;
-  color: #161f3b;
-  border: 1px solid rgba(22, 31, 59, 0.14);
-  border-radius: 8px;
-  padding: 6px 8px;
-  font-size: 0.78rem;
+  color: rgba(22, 31, 59, 0.86);
+  border-left: 2px solid transparent;
+  padding: 6px 0 6px 8px;
+  font-size: 0.8rem;
   font-weight: 600;
 }
 
 .account-sidebar-link:hover {
-  border-color: rgba(160, 3, 108, 0.5);
+  border-left-color: rgba(160, 3, 108, 0.62);
   color: #7a0d58;
 }
 
-.account-sidebar-docs-btn {
+.account-sidebar.is-collapsed {
+  grid-template-columns: 1fr;
+}
+
+.account-sidebar-knowledge {
   margin-top: 4px;
-  border: 1px solid rgba(22, 31, 59, 0.16);
-  background: #161f3b;
-  color: #fff;
-  border-radius: 8px;
-  padding: 7px 9px;
-  font-size: 0.77rem;
-  font-weight: 700;
-  cursor: pointer;
+  color: #7a0d58;
 }
 
 .account-section {
@@ -177,9 +188,9 @@
 }
 
 .account-plan-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   display: grid;
-  gap: 10px;
+  gap: 14px;
 }
 
 .account-pack-grid {
@@ -189,11 +200,11 @@
 .account-plan-card,
 .account-pack-card {
   border: 1px solid rgba(22, 31, 59, 0.14);
-  border-radius: 10px;
-  padding: 11px;
+  border-radius: 8px;
+  padding: 14px;
   background: #ffffff;
   display: grid;
-  gap: 4px;
+  gap: 8px;
   transition: transform 0.16s ease, box-shadow 0.16s ease;
 }
 
@@ -205,7 +216,14 @@
 
 .account-plan-card.is-current {
   border-color: rgba(160, 3, 108, 0.52);
-  background: linear-gradient(180deg, #fff8fc 0%, #ffffff 100%);
+  box-shadow: inset 0 0 0 1px rgba(160, 3, 108, 0.08);
+}
+
+.account-plan-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .account-plan-card h3,
@@ -220,8 +238,28 @@
 .account-pack-card p {
   margin: 0;
   color: rgba(22, 31, 59, 0.76);
-  font-size: 0.82rem;
+  font-size: 0.84rem;
   line-height: 1.35;
+}
+
+.account-plan-meta {
+  font-size: 0.83rem;
+}
+
+.account-plan-features {
+  border: 1px solid rgba(22, 31, 59, 0.12);
+  border-radius: 8px;
+  padding: 8px;
+  min-height: 78px;
+  background: rgba(243, 231, 218, 0.18);
+}
+
+.account-plan-action-row {
+  margin-top: 2px;
+}
+
+.account-plan-action-row .account-primary-btn {
+  width: 100%;
 }
 
 .account-plan-connectors {
@@ -807,6 +845,12 @@
   flex-wrap: wrap;
 }
 
+@media (max-width: 1280px) {
+  .account-plan-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 860px) {
   .account-content-layout {
     grid-template-columns: 1fr;
@@ -818,9 +862,15 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 6px;
+    border-radius: 8px;
   }
 
   .account-sidebar-title {
+    width: 100%;
+    margin-bottom: 0;
+  }
+
+  .account-sidebar-head {
     width: 100%;
     margin-bottom: 0;
   }

@@ -153,6 +153,7 @@ export default function Account() {
   const [jiraConfigError, setJiraConfigError] = useState('');
   const [jiraConfigSaving, setJiraConfigSaving] = useState(false);
   const [message, setMessage] = useState('');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [adminState, setAdminState] = useState({
     checked: false,
     isAdmin: false,
@@ -828,23 +829,33 @@ export default function Account() {
         {message && <p className="account-message">{message}</p>}
 
         <div className="account-content-layout">
-          <aside className="account-sidebar">
-            <p className="account-sidebar-title">Billing menu</p>
-            <a className="account-sidebar-link" href="#overview">Overview</a>
-            <a className="account-sidebar-link" href="#plans">Plans</a>
-            <a className="account-sidebar-link" href="#connectors">Connectors</a>
-            <a className="account-sidebar-link" href="#packs">Credit packs</a>
-            <a className="account-sidebar-link" href="#models">Models</a>
-            {adminState.checked && adminState.isAdmin && (
-              <a className="account-sidebar-link" href="#admin">System admin</a>
+          <aside className={`account-sidebar ${sidebarCollapsed ? 'is-collapsed' : ''}`}>
+            <div className="account-sidebar-head">
+              <p className="account-sidebar-title">Billing menu</p>
+              <button
+                type="button"
+                className="account-sidebar-toggle"
+                onClick={() => setSidebarCollapsed((prev) => !prev)}
+                aria-expanded={!sidebarCollapsed}
+              >
+                {sidebarCollapsed ? 'Expand' : 'Collapse'}
+              </button>
+            </div>
+            {!sidebarCollapsed && (
+              <>
+                <a className="account-sidebar-link" href="#overview">Overview</a>
+                <a className="account-sidebar-link" href="#plans">Plans</a>
+                <a className="account-sidebar-link" href="#connectors">Connectors</a>
+                <a className="account-sidebar-link" href="#packs">Credit packs</a>
+                <a className="account-sidebar-link" href="#models">Models</a>
+                {adminState.checked && adminState.isAdmin && (
+                  <a className="account-sidebar-link" href="#admin">System admin</a>
+                )}
+                <a className="account-sidebar-link account-sidebar-knowledge" href="/knowledge">
+                  Knowledge
+                </a>
+              </>
             )}
-            <button
-              type="button"
-              className="account-sidebar-docs-btn"
-              onClick={() => navigate('/pages/resources/tutorials#docs')}
-            >
-              Open docs
-            </button>
           </aside>
 
           <div className="account-main-content" id="overview">
@@ -861,33 +872,40 @@ export default function Account() {
 
               return (
                 <article className={`account-plan-card ${isCurrent ? 'is-current' : ''}`} key={key}>
-                  <h3>{plan.label}</h3>
+                  <div className="account-plan-head">
+                    <h3>{plan.label}</h3>
+                    {isCurrent && (
+                      <span className="account-pill">Current</span>
+                    )}
+                  </div>
                   <p className="account-plan-price">
                     {hasPrice ? (plan.monthly_price_usd === 0 ? '$0' : `$${plan.monthly_price_usd}/mo`) : 'Contact sales'}
                   </p>
-                  <p>
+                  <p className="account-plan-meta">
                     {plan.monthly_credits == null
                       ? 'Contracted pooled usage'
                       : `${Number(plan.monthly_credits).toLocaleString()} credits/month`}
                   </p>
-                  <p className="account-plan-connectors">
-                    Connectors: {getPlanConnectorSentence(key)}
-                  </p>
+                  <div className="account-plan-features">
+                    <p className="account-plan-connectors">
+                      Connectors: {getPlanConnectorSentence(key)}
+                    </p>
+                  </div>
 
-                  {isCurrent ? (
-                    <span className="account-pill">Current</span>
-                  ) : isSalesOnly ? (
-                    <a href="/login" className="account-primary-btn">Talk to sales</a>
-                  ) : (
-                    <button
-                      type="button"
-                      className="account-primary-btn"
-                      onClick={() => startPlanChange(key)}
-                      disabled={isPending}
-                    >
-                      {isPending ? 'Redirecting...' : key === 'essential' ? 'Upgrade' : 'Switch'}
-                    </button>
-                  )}
+                  <div className="account-plan-action-row">
+                    {isCurrent ? null : isSalesOnly ? (
+                      <a href="/login" className="account-primary-btn">Talk to sales</a>
+                    ) : (
+                      <button
+                        type="button"
+                        className="account-primary-btn"
+                        onClick={() => startPlanChange(key)}
+                        disabled={isPending}
+                      >
+                        {isPending ? 'Redirecting...' : key === 'essential' ? 'Upgrade' : 'Switch'}
+                      </button>
+                    )}
+                  </div>
                 </article>
               );
             })}

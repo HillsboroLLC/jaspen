@@ -901,7 +901,7 @@
   border-radius: 12px;
   background: var(--white);
   box-shadow: 0 16px 28px rgba(22, 31, 59, 0.16);
-  overflow: hidden;
+  overflow: visible;
   z-index: 30;
 }
 
