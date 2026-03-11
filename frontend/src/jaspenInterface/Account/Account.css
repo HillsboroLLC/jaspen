@@ -469,6 +469,10 @@
   font-size: 0.81rem;
 }
 
+.account-connectors-knowledge-link {
+  margin-bottom: 10px;
+}
+
 .account-connector-stack {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));

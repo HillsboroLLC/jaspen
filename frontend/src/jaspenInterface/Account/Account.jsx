@@ -986,6 +986,13 @@ export default function Account() {
           <p className="account-connectors-subtext">
             Start connector setup here. Toggle on, open settings if needed, and save per connector.
           </p>
+          <button
+            type="button"
+            className="account-secondary-btn account-connectors-knowledge-link"
+            onClick={() => window.open('/knowledge', '_blank', 'noopener,noreferrer')}
+          >
+            Open Knowledge
+          </button>
           {connectorState.loading ? (
             <p className="account-connectors-loading">Loading connector settings...</p>
           ) : (
@@ -1513,7 +1520,11 @@ export default function Account() {
             <h2 className="account-tab-title">Knowledge</h2>
             <div className="account-section-card account-knowledge-panel">
               <p>Connector setup, API patterns, and agent component docs are available in your internal Knowledge hub.</p>
-              <button type="button" className="account-primary-btn" onClick={() => navigate('/knowledge')}>
+              <button
+                type="button"
+                className="account-primary-btn"
+                onClick={() => window.open('/knowledge', '_blank', 'noopener,noreferrer')}
+              >
                 Open Knowledge
               </button>
             </div>

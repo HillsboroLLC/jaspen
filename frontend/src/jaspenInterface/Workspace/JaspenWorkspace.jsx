@@ -643,6 +643,7 @@ const refreshBundle = async (tid) => {
   const [knowledgeMenuStyle, setKnowledgeMenuStyle] = useState(null);
   const knowledgeSubmenuWrapRef = useRef(null);
   const knowledgeSubmenuRef = useRef(null);
+  const knowledgeMenuCloseTimerRef = useRef(null);
   const savedEmail = (() => {
     try { return localStorage.getItem('jaspen_last_email'); } catch { return null; }
   })();
@@ -1103,6 +1104,24 @@ const refreshBundle = async (tid) => {
     }
   }, [sidebarState.settings]);
 
+  const clearKnowledgeMenuCloseTimer = useCallback(() => {
+    if (knowledgeMenuCloseTimerRef.current) {
+      clearTimeout(knowledgeMenuCloseTimerRef.current);
+      knowledgeMenuCloseTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleKnowledgeMenuClose = useCallback(() => {
+    clearKnowledgeMenuCloseTimer();
+    knowledgeMenuCloseTimerRef.current = setTimeout(() => {
+      setKnowledgeMenuOpen(false);
+    }, 180);
+  }, [clearKnowledgeMenuCloseTimer]);
+
+  useEffect(() => () => {
+    clearKnowledgeMenuCloseTimer();
+  }, [clearKnowledgeMenuCloseTimer]);
+
   useEffect(() => {
     if (!accountQuickMenuOpen) return;
     const onPointerDown = (event) => {
@@ -1111,17 +1130,19 @@ const refreshBundle = async (tid) => {
       if (!event.target.closest('.jas-ud-footer')) {
         setAccountQuickMenuOpen(false);
         setKnowledgeMenuOpen(false);
+        clearKnowledgeMenuCloseTimer();
       }
     };
     document.addEventListener('mousedown', onPointerDown);
     return () => document.removeEventListener('mousedown', onPointerDown);
-  }, [accountQuickMenuOpen]);
+  }, [accountQuickMenuOpen, clearKnowledgeMenuCloseTimer]);
 
   const dismissSidebars = useCallback(() => {
     dispatchSidebar({ type: 'CLOSE_ALL' });
     setAccountQuickMenuOpen(false);
     setKnowledgeMenuOpen(false);
-  }, []);
+    clearKnowledgeMenuCloseTimer();
+  }, [clearKnowledgeMenuCloseTimer]);
 
   const anySidebarOpen = sidebarState.history || sidebarState.readiness || sidebarState.settings;
 
@@ -1148,11 +1169,11 @@ const refreshBundle = async (tid) => {
     const viewportPadding = 8;
     const estimatedHeight = 360;
     const left = Math.min(
-      Math.max(viewportPadding, rect.right + 8),
+      Math.max(viewportPadding, rect.right + 4),
       window.innerWidth - menuWidth - viewportPadding
     );
     const top = Math.min(
-      Math.max(viewportPadding, rect.top - 2),
+      Math.max(viewportPadding, rect.top + 12),
       Math.max(viewportPadding, window.innerHeight - estimatedHeight - viewportPadding)
     );
     const maxHeight = Math.max(180, window.innerHeight - top - viewportPadding);
@@ -1526,11 +1547,14 @@ const refreshBundle = async (tid) => {
           <div
             className="jas-ud-submenu-wrap"
             ref={knowledgeSubmenuWrapRef}
-            onMouseEnter={() => setKnowledgeMenuOpen(true)}
+            onMouseEnter={() => {
+              clearKnowledgeMenuCloseTimer();
+              setKnowledgeMenuOpen(true);
+            }}
             onMouseLeave={(event) => {
               const nextTarget = event.relatedTarget;
               if (nextTarget instanceof Node && knowledgeSubmenuRef.current?.contains(nextTarget)) return;
-              setKnowledgeMenuOpen(false);
+              scheduleKnowledgeMenuClose();
             }}
           >
             <button
@@ -1550,14 +1574,17 @@ const refreshBundle = async (tid) => {
                 className="jas-ud-submenu jas-ud-submenu-portal"
                 ref={knowledgeSubmenuRef}
                 style={knowledgeMenuStyle}
-                onMouseEnter={() => setKnowledgeMenuOpen(true)}
+                onMouseEnter={() => {
+                  clearKnowledgeMenuCloseTimer();
+                  setKnowledgeMenuOpen(true);
+                }}
                 onMouseLeave={(event) => {
                   const nextTarget = event.relatedTarget;
                   if (nextTarget instanceof Node && knowledgeSubmenuWrapRef.current?.contains(nextTarget)) return;
-                  setKnowledgeMenuOpen(false);
+                  scheduleKnowledgeMenuClose();
                 }}
               >
-                <button type="button" onClick={() => { openExternal('/pages/resources/tutorials'); setAccountQuickMenuOpen(false); setKnowledgeMenuOpen(false); }}>Tutorials</button>
+                <button type="button" onClick={() => { navigate('/knowledge'); setAccountQuickMenuOpen(false); setKnowledgeMenuOpen(false); }}>Tutorials</button>
                 <button type="button" onClick={() => { openExternal('/pages/api'); setAccountQuickMenuOpen(false); setKnowledgeMenuOpen(false); }}>API console</button>
                 <button type="button" onClick={() => { openExternal('/#about'); setAccountQuickMenuOpen(false); setKnowledgeMenuOpen(false); }}>About Jaspen</button>
                 <button type="button" onClick={() => { openExternal('/pages/terms'); setAccountQuickMenuOpen(false); setKnowledgeMenuOpen(false); }}>Usage policy</button>
