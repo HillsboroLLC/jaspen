@@ -53,6 +53,29 @@ def _available_sync_modes(entitlement):
     return ["import"]
 
 
+def _text(value):
+    return str(value or "").strip()
+
+
+def _jira_runtime_fields(settings):
+    settings = settings if isinstance(settings, dict) else {}
+    return {
+        "jira_base_url": _text(settings.get("jira_base_url") or os.getenv("JIRA_BASE_URL")),
+        "jira_project_key": _text(
+            settings.get("jira_project_key")
+            or settings.get("external_workspace")
+            or os.getenv("JIRA_DEFAULT_PROJECT_KEY")
+        ),
+        "jira_email": _text(settings.get("jira_email") or os.getenv("JIRA_EMAIL")),
+        "jira_api_token": _text(settings.get("jira_api_token") or os.getenv("JIRA_API_TOKEN")),
+    }
+
+
+def _missing_jira_required_fields(settings):
+    runtime = _jira_runtime_fields(settings)
+    return [key for key, value in runtime.items() if not value]
+
+
 def _merge_connector_view(connector_id, entitlement, settings):
     meta = get_connector_definition(connector_id) or {"id": connector_id}
     required_min_tier = entitlement.get("required_min_tier")
@@ -97,12 +120,15 @@ def _merge_connector_view(connector_id, entitlement, settings):
         "updated_at": settings.get("updated_at"),
     }
     if connector_id == "jira_sync":
+        missing_fields = _missing_jira_required_fields(settings)
         payload["jira"] = {
             "base_url": settings.get("jira_base_url") or "",
             "project_key": settings.get("jira_project_key") or settings.get("external_workspace") or "",
             "email": settings.get("jira_email") or "",
             "issue_type": settings.get("jira_issue_type") or "",
             "has_api_token": bool(settings.get("jira_api_token")),
+            "configuration_complete": len(missing_fields) == 0,
+            "missing_required_fields": missing_fields,
             "field_mapping": settings.get("jira_field_mapping") if isinstance(settings.get("jira_field_mapping"), dict) else {},
         }
     return payload
@@ -239,6 +265,15 @@ def update_connector(connector_id):
             "jira_issue_type": str(payload.get("jira_issue_type") if "jira_issue_type" in payload else persisted_settings.get("jira_issue_type") or "").strip(),
             "jira_field_mapping": jira_mapping if isinstance(jira_mapping, dict) else (persisted_settings.get("jira_field_mapping") or {}),
         })
+        if desired_status == "connected":
+            missing_required_fields = _missing_jira_required_fields(updates)
+            if missing_required_fields:
+                return jsonify({
+                    "error": "Jira configuration is incomplete. Provide Jira URL, project key, Jira email, and API token before enabling Jira sync.",
+                    "connector_id": connector_id,
+                    "missing_required_fields": missing_required_fields,
+                    "configuration_source_hint": "missing fields can be provided via connector settings or Jira environment variables",
+                }), 400
     saved = update_connector_settings(user.id, connector_id, updates)
     _, updated_views = _connector_views_for_user(user)
     updated_view = next((item for item in updated_views if item["id"] == connector_id), None)
