@@ -819,6 +819,39 @@ export default function Account() {
   return (
     <div className="account-page">
       <div className="account-panel">
+        <div className="account-content-layout">
+          <aside className={`account-sidebar ${sidebarCollapsed ? 'is-collapsed' : ''}`}>
+            <div className="account-sidebar-head">
+              {!sidebarCollapsed && <p className="account-sidebar-title">Billing menu</p>}
+              <button
+                type="button"
+                className="account-sidebar-toggle"
+                onClick={() => setSidebarCollapsed((prev) => !prev)}
+                aria-expanded={!sidebarCollapsed}
+                aria-label={sidebarCollapsed ? 'Expand billing menu' : 'Collapse billing menu'}
+              >
+                <FontAwesomeIcon icon={sidebarCollapsed ? faChevronRight : faChevronLeft} />
+              </button>
+            </div>
+            <nav className="account-sidebar-nav" aria-label="Billing sections">
+              {sidebarItems.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={`account-sidebar-item ${activeTab === item.key ? 'is-active' : ''}`}
+                  onClick={() => setActiveTab(item.key)}
+                  title={sidebarCollapsed ? item.label : undefined}
+                >
+                  <span className="account-sidebar-icon">
+                    <FontAwesomeIcon icon={item.icon} />
+                  </span>
+                  {!sidebarCollapsed && <span className="account-sidebar-label">{item.label}</span>}
+                </button>
+              ))}
+            </nav>
+          </aside>
+
+          <div className="account-main-content">
         <div className="account-header-row">
           <div className="account-title-wrap">
             <p className="account-eyebrow">Account</p>
@@ -856,39 +889,6 @@ export default function Account() {
 
         {message && <p className="account-message">{message}</p>}
 
-        <div className="account-content-layout">
-          <aside className={`account-sidebar ${sidebarCollapsed ? 'is-collapsed' : ''}`}>
-            <div className="account-sidebar-head">
-              {!sidebarCollapsed && <p className="account-sidebar-title">Billing menu</p>}
-              <button
-                type="button"
-                className="account-sidebar-toggle"
-                onClick={() => setSidebarCollapsed((prev) => !prev)}
-                aria-expanded={!sidebarCollapsed}
-                aria-label={sidebarCollapsed ? 'Expand billing menu' : 'Collapse billing menu'}
-              >
-                <FontAwesomeIcon icon={sidebarCollapsed ? faChevronRight : faChevronLeft} />
-              </button>
-            </div>
-            <nav className="account-sidebar-nav" aria-label="Billing sections">
-              {sidebarItems.map((item) => (
-                <button
-                  key={item.key}
-                  type="button"
-                  className={`account-sidebar-item ${activeTab === item.key ? 'is-active' : ''}`}
-                  onClick={() => setActiveTab(item.key)}
-                  title={sidebarCollapsed ? item.label : undefined}
-                >
-                  <span className="account-sidebar-icon">
-                    <FontAwesomeIcon icon={item.icon} />
-                  </span>
-                  {!sidebarCollapsed && <span className="account-sidebar-label">{item.label}</span>}
-                </button>
-              ))}
-            </nav>
-          </aside>
-
-          <div className="account-main-content">
         {activeTab === 'overview' && (
         <section className="account-section">
           <h2 className="account-tab-title">Overview</h2>

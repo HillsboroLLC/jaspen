@@ -1557,15 +1557,12 @@ const refreshBundle = async (tid) => {
                   setKnowledgeMenuOpen(false);
                 }}
               >
-                <button type="button" onClick={() => { navigate('/knowledge'); setAccountQuickMenuOpen(false); setKnowledgeMenuOpen(false); }}>Knowledge home</button>
+                <button type="button" onClick={() => { openExternal('/pages/resources/tutorials'); setAccountQuickMenuOpen(false); setKnowledgeMenuOpen(false); }}>Tutorials</button>
                 <button type="button" onClick={() => { openExternal('/pages/api'); setAccountQuickMenuOpen(false); setKnowledgeMenuOpen(false); }}>API console</button>
                 <button type="button" onClick={() => { openExternal('/#about'); setAccountQuickMenuOpen(false); setKnowledgeMenuOpen(false); }}>About Jaspen</button>
-                <button type="button" onClick={() => { openExternal('/pages/resources/tutorials'); setAccountQuickMenuOpen(false); setKnowledgeMenuOpen(false); }}>Tutorials</button>
-                <button type="button" onClick={() => { openExternal('/pages/resources/tutorials'); setAccountQuickMenuOpen(false); setKnowledgeMenuOpen(false); }}>Courses</button>
                 <button type="button" onClick={() => { openExternal('/pages/terms'); setAccountQuickMenuOpen(false); setKnowledgeMenuOpen(false); }}>Usage policy</button>
                 <button type="button" onClick={() => { openExternal('/pages/privacy'); setAccountQuickMenuOpen(false); setKnowledgeMenuOpen(false); }}>Privacy policy</button>
                 <button type="button" onClick={() => { openExternal('/pages/privacy#choices'); setAccountQuickMenuOpen(false); setKnowledgeMenuOpen(false); }}>Your privacy choices</button>
-                <button type="button" onClick={() => { showToast('Keyboard shortcuts coming soon.', 'info'); setAccountQuickMenuOpen(false); setKnowledgeMenuOpen(false); }}>Keyboard shortcuts</button>
               </div>,
               document.body
             )}
