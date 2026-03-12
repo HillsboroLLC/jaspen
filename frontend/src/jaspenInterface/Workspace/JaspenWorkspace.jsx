@@ -1915,15 +1915,17 @@ const [aiScenarioBusy, setAiScenarioBusy] = useState(false);
     const normalized = normalizeStrategyObjective(nextObjective);
     const shouldPersist = options.persist !== false;
     const persistThreadId = options.threadId || currentSessionId || sessionId || null;
-    const markExplicit = options.markExplicit !== false;
+    const explicitSetting = Object.prototype.hasOwnProperty.call(options, 'explicit')
+      ? Boolean(options.explicit)
+      : options.markExplicit !== false;
     const silent = options.silent === true;
     setStrategyObjective(normalized);
     setAiScenarioProposal((prev) => (prev ? { ...prev, objective: normalized } : prev));
-    if (markExplicit) setObjectiveExplicitlySet(true);
+    setObjectiveExplicitlySet(explicitSetting);
     if (!shouldPersist || !persistThreadId) return normalized;
 
     try {
-      await Jaspen.setThreadObjective(persistThreadId, normalized);
+      await Jaspen.setThreadObjective(persistThreadId, normalized, explicitSetting);
     } catch (err) {
       console.error('[applyStrategyObjective] persist failed', err);
       if (!silent) showToast('Saved locally, but could not sync objective to thread yet.', 'warning');
@@ -2674,6 +2676,25 @@ const renderObjectiveTags = (className = '') => (
     ))}
   </div>
 );
+
+const renderSelectedObjectivePill = (className = '') => {
+  if (!objectiveExplicitlySet) return null;
+  return (
+    <span className={`jas-objective-selection-pill ${className}`.trim()}>
+      <span className="jas-objective-selection-pill-text">{objectiveLabel}</span>
+      <button
+        type="button"
+        className="jas-objective-selection-pill-clear"
+        onClick={() => applyStrategyObjective('balanced', { persist: true, explicit: false, silent: true })}
+        aria-label="Remove selected intention"
+        title="Remove intention"
+        disabled={busy}
+      >
+        <FontAwesomeIcon icon={faTimes} />
+      </button>
+    </span>
+  );
+};
 
 const resizeComposerTextarea = useCallback((el) => {
   if (!el) return;
@@ -5299,6 +5320,7 @@ setView(id === 'chat' ? 'intake' : id);
                             <FontAwesomeIcon icon={faPlus} />
                           </button>
                           {renderModelTypeInlinePicker()}
+                          {renderSelectedObjectivePill()}
                         </div>
 
                         <div className="chatgpt-input-right-controls">
@@ -5728,6 +5750,7 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
                   <FontAwesomeIcon icon={faPaperclip} />
                 </button>
                 {renderModelTypeInlinePicker()}
+                {renderSelectedObjectivePill()}
               </div>
               <div className="jas-chat-input-right-controls">
                 <button

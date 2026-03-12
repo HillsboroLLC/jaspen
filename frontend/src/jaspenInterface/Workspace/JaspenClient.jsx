@@ -440,10 +440,10 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
   generateAiScenario: async (threadId, payload = {}) =>
     postJSON(endpoints.aiScenario(threadId), payload, { withSid: true }),
 
-  setThreadObjective: async (threadId, strategy_objective) =>
+  setThreadObjective: async (threadId, strategy_objective, objective_explicitly_set = true) =>
     patchJSON(
       endpoints.updateThread(threadId),
-      { strategy_objective },
+      { strategy_objective, objective_explicitly_set },
       { withSid: true }
     ),
 

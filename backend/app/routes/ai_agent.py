@@ -1607,7 +1607,8 @@ def update_thread(thread_id):
     data = request.get_json() or {}
     name = str(data.get("name") or "").strip()
     objective_supplied = any(key in data for key in ("strategy_objective", "objective"))
-    if not name and not objective_supplied:
+    objective_explicit_supplied = "objective_explicitly_set" in data
+    if not name and not objective_supplied and not objective_explicit_supplied:
         return jsonify({"error": "name or strategy_objective is required"}), 400
 
     user_id = get_jwt_identity()
@@ -1623,6 +1624,9 @@ def update_thread(thread_id):
         session["strategy_objective"] = normalize_strategy_objective(
             data.get("strategy_objective") or data.get("objective")
         )
+    if objective_explicit_supplied:
+        session["objective_explicitly_set"] = bool(data.get("objective_explicitly_set"))
+    elif objective_supplied:
         session["objective_explicitly_set"] = True
     elif "objective_explicitly_set" not in session:
         session["objective_explicitly_set"] = False
