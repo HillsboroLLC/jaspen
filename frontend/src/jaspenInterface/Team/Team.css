@@ -203,6 +203,12 @@
   background: #f0f9f3;
 }
 
+.team-state.team-state-preview {
+  color: var(--jas-navy);
+  border-color: #c5d3ee;
+  background: #f4f8ff;
+}
+
 .team-empty {
   margin: 0;
   color: var(--jas-gray-500);

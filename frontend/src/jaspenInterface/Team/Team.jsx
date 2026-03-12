@@ -6,6 +6,9 @@ import './Team.css';
 const ROLE_OPTIONS = ['owner', 'admin', 'creator', 'collaborator', 'viewer'];
 const INVITE_ROLE_OPTIONS = ['admin', 'creator', 'collaborator', 'viewer'];
 const VISIBILITY_OPTIONS = ['private', 'team', 'specific'];
+const PREVIEW_ROLE_ACTUAL = '__actual__';
+const MANAGE_ROLE_SET = new Set(['owner', 'admin']);
+const EDIT_ROLE_SET = new Set(['owner', 'admin', 'creator', 'collaborator']);
 
 async function teamFetch(path, options = {}) {
   const token = localStorage.getItem('access_token') || localStorage.getItem('token');
@@ -69,8 +72,14 @@ export default function Team() {
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState('collaborator');
   const [sharingDrafts, setSharingDrafts] = useState({});
+  const [isGlobalAdmin, setIsGlobalAdmin] = useState(false);
+  const [previewRole, setPreviewRole] = useState(PREVIEW_ROLE_ACTUAL);
 
-  const canManageMembers = Boolean(summary?.permissions?.can_manage_members);
+  const actualRole = String(summary?.membership?.role || 'viewer');
+  const previewModeActive = Boolean(isGlobalAdmin && previewRole !== PREVIEW_ROLE_ACTUAL);
+  const effectiveRole = previewModeActive ? previewRole : actualRole;
+  const canManageMembers = MANAGE_ROLE_SET.has(effectiveRole);
+  const canEditProjects = EDIT_ROLE_SET.has(effectiveRole);
   const activeOrg = summary?.organization || null;
   const seatUsage = summary?.seat_usage || {};
 
@@ -90,11 +99,15 @@ export default function Team() {
         teamFetch('/api/team/organizations'),
         teamFetch('/api/team/projects'),
       ]);
+      const adminCapsData = await teamFetch('/api/admin/capabilities').catch(() => ({}));
 
       setSummary(summaryData || null);
       setMembers(Array.isArray(membersData?.members) ? membersData.members : []);
       setInvitations(Array.isArray(invitationsData?.invitations) ? invitationsData.invitations : []);
       setOrganizations(Array.isArray(organizationsData?.organizations) ? organizationsData.organizations : []);
+      const nextIsGlobalAdmin = Boolean(adminCapsData?.is_admin);
+      setIsGlobalAdmin(nextIsGlobalAdmin);
+      if (!nextIsGlobalAdmin) setPreviewRole(PREVIEW_ROLE_ACTUAL);
       const loadedProjects = Array.isArray(projectsData?.projects) ? projectsData.projects : [];
       setProjects(loadedProjects);
 
@@ -170,6 +183,7 @@ export default function Team() {
 
   const onInvite = async (event) => {
     event.preventDefault();
+    if (!canManageMembers || previewModeActive) return;
     setBusy(true);
     setNotice('');
     setError('');
@@ -191,6 +205,7 @@ export default function Team() {
   };
 
   const onRoleChange = async (memberId, role) => {
+    if (!canManageMembers || previewModeActive) return;
     setBusy(true);
     setNotice('');
     setError('');
@@ -209,6 +224,7 @@ export default function Team() {
   };
 
   const onRemoveMember = async (member) => {
+    if (!canManageMembers || previewModeActive) return;
     const label = member?.user?.name || member?.user?.email || member?.user_id;
     if (!window.confirm(`Remove ${label} from this team?`)) return;
     setBusy(true);
@@ -226,6 +242,7 @@ export default function Team() {
   };
 
   const onRevokeInvitation = async (invitationId) => {
+    if (!canManageMembers || previewModeActive) return;
     if (!window.confirm('Revoke this invitation?')) return;
     setBusy(true);
     setNotice('');
@@ -253,6 +270,7 @@ export default function Team() {
   };
 
   const onSaveSharing = async (sessionId) => {
+    if (!canEditProjects || previewModeActive) return;
     const draft = sharingDrafts?.[sessionId] || {};
     const visibility = String(draft.visibility || 'private');
     const sharedIds = normalizeCsvIds(draft.sharedWithCsv || '').filter((id) => memberIdSet.has(id));
@@ -309,12 +327,33 @@ export default function Team() {
               ))}
             </select>
           </label>
+          {isGlobalAdmin && (
+            <label className="team-inline-field">
+              <span>Role Preview</span>
+              <select
+                value={previewRole}
+                onChange={(event) => setPreviewRole(event.target.value)}
+                disabled={busy}
+              >
+                <option value={PREVIEW_ROLE_ACTUAL}>Actual ({actualRole})</option>
+                {ROLE_OPTIONS.map((role) => (
+                  <option key={role} value={role}>{role}</option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
       </header>
 
       {(error || notice) && (
         <div className={`team-state ${error ? 'error' : 'success'}`}>
           {error || notice}
+        </div>
+      )}
+
+      {previewModeActive && (
+        <div className="team-state team-state-preview">
+          Preview mode active: viewing Team as <strong>{effectiveRole}</strong>. Mutating actions are disabled in preview mode.
         </div>
       )}
 
@@ -362,7 +401,7 @@ export default function Team() {
                         {canManageMembers && !isOwner ? (
                           <select
                             value={role}
-                            disabled={busy}
+                            disabled={busy || previewModeActive}
                             onChange={(event) => onRoleChange(member.id, event.target.value)}
                           >
                             {INVITE_ROLE_OPTIONS.map((option) => (
@@ -377,7 +416,12 @@ export default function Team() {
                       <td>{formatDate(member?.last_active_at || member?.updated_at)}</td>
                       <td>
                         {canManageMembers && !isOwner ? (
-                          <button type="button" className="team-btn tiny danger" onClick={() => onRemoveMember(member)} disabled={busy}>
+                          <button
+                            type="button"
+                            className="team-btn tiny danger"
+                            onClick={() => onRemoveMember(member)}
+                            disabled={busy || previewModeActive}
+                          >
                             Remove
                           </button>
                         ) : (
@@ -400,19 +444,19 @@ export default function Team() {
               placeholder="name@company.com"
               value={inviteEmail}
               onChange={(event) => setInviteEmail(event.target.value)}
-              disabled={!canManageMembers || busy}
+              disabled={!canManageMembers || busy || previewModeActive}
               required
             />
             <select
               value={inviteRole}
               onChange={(event) => setInviteRole(event.target.value)}
-              disabled={!canManageMembers || busy}
+              disabled={!canManageMembers || busy || previewModeActive}
             >
               {INVITE_ROLE_OPTIONS.map((role) => (
                 <option key={role} value={role}>{role}</option>
               ))}
             </select>
-            <button type="submit" className="team-btn" disabled={!canManageMembers || busy}>
+            <button type="submit" className="team-btn" disabled={!canManageMembers || busy || previewModeActive}>
               Send invite
             </button>
           </form>
@@ -426,19 +470,21 @@ export default function Team() {
                   <p>{row.role} • expires {formatDate(row.expires_at)}</p>
                 </div>
                 <div className="team-inline-actions">
-                  <button
-                    type="button"
-                    className="team-btn tiny ghost"
-                    onClick={() => navigator.clipboard?.writeText?.(`${window.location.origin}/team?invite=${row.token}`)}
-                  >
-                    Copy link
-                  </button>
+                  {canManageMembers && (
+                    <button
+                      type="button"
+                      className="team-btn tiny ghost"
+                      onClick={() => navigator.clipboard?.writeText?.(`${window.location.origin}/team?invite=${row.token}`)}
+                    >
+                      Copy link
+                    </button>
+                  )}
                   {canManageMembers && (
                     <button
                       type="button"
                       className="team-btn tiny danger"
                       onClick={() => onRevokeInvitation(row.id)}
-                      disabled={busy}
+                      disabled={busy || previewModeActive}
                     >
                       Revoke
                     </button>
@@ -472,6 +518,10 @@ export default function Team() {
             </thead>
             <tbody>
               {(projects || []).map((project) => {
+                const projectOwnerId = String(project?.created_by_user_id || '');
+                const currentUserId = String(summary?.membership?.user_id || '');
+                const isOwnerProject = Boolean(projectOwnerId && currentUserId && projectOwnerId === currentUserId);
+                const canSaveSharing = canManageMembers || (canEditProjects && isOwnerProject);
                 const draft = sharingDrafts?.[project.session_id] || {
                   visibility: project.visibility || 'private',
                   sharedWithCsv: (project.shared_with_user_ids || []).join(', '),
@@ -484,7 +534,7 @@ export default function Team() {
                     <td>
                       <select
                         value={draft.visibility}
-                        disabled={busy}
+                        disabled={busy || previewModeActive || !canSaveSharing}
                         onChange={(event) => onSharingDraftChange(project.session_id, { visibility: event.target.value })}
                       >
                         {VISIBILITY_OPTIONS.map((option) => (
@@ -496,7 +546,7 @@ export default function Team() {
                       <input
                         type="text"
                         value={draft.sharedWithCsv}
-                        disabled={busy}
+                        disabled={busy || previewModeActive || !canSaveSharing}
                         onChange={(event) => onSharingDraftChange(project.session_id, { sharedWithCsv: event.target.value })}
                         placeholder="user_id_1, user_id_2"
                       />
@@ -508,7 +558,7 @@ export default function Team() {
                         type="button"
                         className="team-btn tiny"
                         onClick={() => onSaveSharing(project.session_id)}
-                        disabled={busy}
+                        disabled={busy || previewModeActive || !canSaveSharing}
                       >
                         Save
                       </button>
