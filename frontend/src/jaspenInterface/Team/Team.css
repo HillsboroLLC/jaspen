@@ -1,0 +1,263 @@
+.team-page {
+  padding: 24px;
+  color: var(--jas-navy);
+}
+
+.team-topbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.team-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.team-header h1 {
+  margin: 0;
+  font-size: 1.85rem;
+}
+
+.team-header p {
+  margin: 6px 0 0;
+  color: var(--jas-gray-500);
+}
+
+.team-header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.team-inline-field {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--jas-gray-500);
+}
+
+.team-inline-field select {
+  min-width: 220px;
+}
+
+.team-seat-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.team-seat-card {
+  background: #fff;
+  border: 1px solid var(--jas-border);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.team-seat-card h3 {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.team-seat-main {
+  margin: 8px 0 2px;
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.team-seat-sub {
+  margin: 0;
+  color: var(--jas-gray-500);
+  font-size: 0.78rem;
+}
+
+.team-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.team-card {
+  background: #fff;
+  border: 1px solid var(--jas-border);
+  border-radius: 12px;
+  padding: 14px;
+}
+
+.team-card h2 {
+  margin: 0 0 12px;
+  font-size: 1.05rem;
+}
+
+.team-subhead {
+  margin: 14px 0 8px;
+  font-size: 0.9rem;
+}
+
+.team-subcopy {
+  margin: -4px 0 12px;
+  color: var(--jas-gray-500);
+}
+
+.team-table-wrap {
+  overflow: auto;
+  border: 1px solid var(--jas-border);
+  border-radius: 10px;
+}
+
+.team-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 900px;
+}
+
+.team-table th,
+.team-table td {
+  border-bottom: 1px solid var(--jas-border);
+  padding: 10px 12px;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.team-table th {
+  background: #f6f8fc;
+  font-size: 0.78rem;
+}
+
+.team-table select,
+.team-table input,
+.team-invite-form input,
+.team-invite-form select,
+.team-inline-field select {
+  width: 100%;
+  border: 1px solid var(--jas-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #fff;
+}
+
+.team-invite-form {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(140px, 1fr) auto;
+  gap: 8px;
+}
+
+.team-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.team-list-item {
+  border: 1px solid var(--jas-border);
+  border-radius: 10px;
+  padding: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.team-list-item p {
+  margin: 4px 0 0;
+  color: var(--jas-gray-500);
+  font-size: 0.8rem;
+}
+
+.team-inline-actions {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.team-pill {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--jas-border);
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  background: #f9fafc;
+}
+
+.team-state {
+  background: #fff;
+  border: 1px solid var(--jas-border);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.team-state.error {
+  color: #b52626;
+}
+
+.team-state.success {
+  color: #0f5132;
+  border-color: #badbcc;
+  background: #f0f9f3;
+}
+
+.team-empty {
+  margin: 0;
+  color: var(--jas-gray-500);
+}
+
+.team-btn {
+  border: 1px solid var(--jas-navy);
+  background: var(--jas-navy);
+  color: #fff;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.team-btn.ghost {
+  background: #fff;
+  color: var(--jas-navy);
+}
+
+.team-btn.danger {
+  border-color: #9d174d;
+  background: #9d174d;
+}
+
+.team-btn.tiny {
+  padding: 4px 8px;
+  font-size: 0.78rem;
+}
+
+.team-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@media (max-width: 1180px) {
+  .team-seat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .team-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 820px) {
+  .team-page {
+    padding: 16px;
+  }
+
+  .team-header {
+    flex-direction: column;
+  }
+
+  .team-invite-form {
+    grid-template-columns: 1fr;
+  }
+}

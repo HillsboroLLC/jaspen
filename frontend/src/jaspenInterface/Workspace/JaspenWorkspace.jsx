@@ -1587,6 +1587,9 @@ const refreshBundle = async (tid) => {
           <button type="button" onClick={() => { openExternal('/login'); setAccountQuickMenuOpen(false); }}>
             Gift Jaspen
           </button>
+          <button type="button" onClick={() => { navigate('/team'); setAccountQuickMenuOpen(false); }}>
+            Team
+          </button>
           <div
             className="jas-ud-submenu-wrap"
             ref={knowledgeSubmenuWrapRef}
@@ -1665,6 +1668,10 @@ const refreshBundle = async (tid) => {
           <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/scores'); }}>
             <FontAwesomeIcon icon={faChartLine} />
             <span className="jas-ud-item-label">Scores</span>
+          </button>
+          <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/team'); }}>
+            <FontAwesomeIcon icon={faUser} />
+            <span className="jas-ud-item-label">Team</span>
           </button>
         </div>
 

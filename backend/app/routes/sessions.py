@@ -18,6 +18,14 @@ sessions_bp = Blueprint('sessions', __name__)
 
 # Legacy file storage path used before DB persistence.
 SESSIONS_DIR = 'sessions_data'
+SESSION_VISIBILITY_PRIVATE = 'private'
+SESSION_VISIBILITY_TEAM = 'team'
+SESSION_VISIBILITY_SPECIFIC = 'specific'
+SESSION_VISIBILITY_OPTIONS = {
+    SESSION_VISIBILITY_PRIVATE,
+    SESSION_VISIBILITY_TEAM,
+    SESSION_VISIBILITY_SPECIFIC,
+}
 
 
 def _iso_now():
@@ -55,6 +63,25 @@ def _as_int(value, default=1):
         return default
 
 
+def _normalize_visibility(value):
+    key = str(value or '').strip().lower()
+    return key if key in SESSION_VISIBILITY_OPTIONS else SESSION_VISIBILITY_PRIVATE
+
+
+def _normalize_user_id_list(value):
+    if not isinstance(value, (list, tuple, set)):
+        return []
+    out = []
+    seen = set()
+    for raw in value:
+        candidate = str(raw or '').strip()
+        if not candidate or candidate in seen:
+            continue
+        out.append(candidate)
+        seen.add(candidate)
+    return out
+
+
 def _normalize_session_payload(user_id, session_id, payload):
     now_iso = _iso_now()
     src = payload if isinstance(payload, dict) else {}
@@ -74,6 +101,10 @@ def _normalize_session_payload(user_id, session_id, payload):
         'timestamp': timestamp,
         'status': src.get('status') or 'in_progress',
         'user_id': str(user_id),
+        'organization_id': str(src.get('organization_id') or '').strip() or None,
+        'created_by_user_id': str(src.get('created_by_user_id') or src.get('owner_user_id') or user_id),
+        'visibility': _normalize_visibility(src.get('visibility')),
+        'shared_with_user_ids': _normalize_user_id_list(src.get('shared_with_user_ids')),
     }
     return normalized
 
@@ -88,6 +119,10 @@ def _session_row_to_payload(row):
         normalized['document_type'] = row.document_type
     if row.status:
         normalized['status'] = row.status
+    normalized['organization_id'] = row.organization_id
+    normalized['created_by_user_id'] = row.created_by_user_id
+    normalized['visibility'] = _normalize_visibility(row.visibility)
+    normalized['shared_with_user_ids'] = _normalize_user_id_list(row.shared_with_user_ids)
     if row.created_at:
         normalized['created'] = row.created_at.isoformat()
     if row.updated_at:
@@ -103,6 +138,10 @@ def _upsert_session_row(user_id, session_id, payload, existing=None):
     row.name = normalized.get('name') or 'Jaspen Intake'
     row.document_type = normalized.get('document_type') or 'strategy'
     row.status = normalized.get('status') or 'in_progress'
+    row.organization_id = normalized.get('organization_id')
+    row.created_by_user_id = normalized.get('created_by_user_id') or str(user_id)
+    row.visibility = _normalize_visibility(normalized.get('visibility'))
+    row.shared_with_user_ids = _normalize_user_id_list(normalized.get('shared_with_user_ids'))
     row.payload = normalized
 
     created_dt = _parse_dt(normalized.get('created'))

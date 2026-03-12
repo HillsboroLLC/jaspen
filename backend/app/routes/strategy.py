@@ -27,6 +27,7 @@ from app.tool_registry import (
 )
 from app.jira_sync import sync_wbs_to_jira
 from app.connector_store import get_thread_sync_profile
+from app.orgs import resolve_active_org_for_user
 from .sessions import load_user_sessions, save_user_sessions
 
 strategy_bp = Blueprint('strategy', __name__)
@@ -328,6 +329,8 @@ def analyze_project():
             return jsonify({'error': 'User not found'}), 404
         if bootstrap_legacy_credits(user, current_app.config):
             db.session.commit()
+        active_org, _ = resolve_active_org_for_user(user)
+        active_org_id = active_org.id if active_org else user.active_organization_id
 
         thread_id = data.get('thread_id') or request.headers.get('X-Session-ID')
         project_name = data.get('name') or data.get('project_name') or 'Jaspen Project'
@@ -452,6 +455,10 @@ def analyze_project():
                 'timestamp': generated_at,
                 'status': 'in_progress',
                 'user_id': str(current_user_id),
+                'created_by_user_id': str(current_user_id),
+                'organization_id': active_org_id,
+                'visibility': 'private',
+                'shared_with_user_ids': [],
             }
             session_key = resolved_thread_id
 
@@ -476,6 +483,11 @@ def analyze_project():
         session['name'] = project_name or session.get('name') or 'Jaspen Intake'
         session['document_type'] = session.get('document_type') or 'strategy'
         session['model_type'] = model_selection['model_type']
+        session['organization_id'] = session.get('organization_id') or active_org_id
+        session['created_by_user_id'] = session.get('created_by_user_id') or str(current_user_id)
+        session['visibility'] = str(session.get('visibility') or 'private').strip().lower() or 'private'
+        if not isinstance(session.get('shared_with_user_ids'), list):
+            session['shared_with_user_ids'] = []
         session['strategy_objective'] = _normalize_strategy_objective(session.get('strategy_objective'))
         if 'objective_explicitly_set' not in session:
             session['objective_explicitly_set'] = False

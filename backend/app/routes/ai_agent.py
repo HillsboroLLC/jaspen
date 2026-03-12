@@ -26,6 +26,7 @@ from app.tool_registry import (
     get_tool_catalog,
     get_tool_entitlements,
 )
+from app.orgs import resolve_active_org_for_user
 
 from .sessions import load_user_sessions, save_user_sessions
 
@@ -348,7 +349,16 @@ def _build_readiness_items(spec, version, categories, user_text, user_turns):
     return items, summary
 
 
-def _new_session(user_id, thread_id, name, model_type=None, strategy_objective=None, objective_explicit=False):
+def _new_session(
+    user_id,
+    thread_id,
+    name,
+    model_type=None,
+    strategy_objective=None,
+    objective_explicit=False,
+    organization_id=None,
+    visibility="private",
+):
     now = _iso_now()
     return {
         "session_id": thread_id,
@@ -362,6 +372,10 @@ def _new_session(user_id, thread_id, name, model_type=None, strategy_objective=N
         "timestamp": now,
         "status": "in_progress",
         "user_id": user_id,
+        "created_by_user_id": user_id,
+        "organization_id": organization_id,
+        "visibility": str(visibility or "private").strip().lower() or "private",
+        "shared_with_user_ids": [],
         "strategy_objective": normalize_strategy_objective(strategy_objective),
         "objective_explicitly_set": bool(objective_explicit),
     }
@@ -1212,6 +1226,8 @@ def conversation_start():
         return jsonify({"error": "User not found"}), 404
     if bootstrap_legacy_credits(user, current_app.config):
         db.session.commit()
+    active_org, _ = resolve_active_org_for_user(user)
+    active_org_id = active_org.id if active_org else user.active_organization_id
 
     user_message = str(data.get("message") or data.get("description") or "").strip()
     if not user_message:
@@ -1234,7 +1250,13 @@ def conversation_start():
         model_selection["model_type"],
         strategy_objective=requested_objective,
         objective_explicit=objective_supplied,
+        organization_id=active_org_id,
     )
+    session["organization_id"] = session.get("organization_id") or active_org_id
+    session["created_by_user_id"] = session.get("created_by_user_id") or user_id
+    session["visibility"] = str(session.get("visibility") or "private").strip().lower() or "private"
+    if not isinstance(session.get("shared_with_user_ids"), list):
+        session["shared_with_user_ids"] = []
     existing_objective = normalize_strategy_objective(session.get("strategy_objective"))
     session["strategy_objective"] = requested_objective if objective_supplied else existing_objective
     if objective_supplied:
@@ -1305,6 +1327,8 @@ def conversation_start():
         "status": "gathering_info",
         "strategy_objective": session.get("strategy_objective") or "balanced",
         "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
+        "organization_id": session.get("organization_id"),
+        "visibility": session.get("visibility") or "private",
         "objective_options": list(STRATEGY_OBJECTIVE_OPTIONS),
     }), 200
 
@@ -1319,6 +1343,8 @@ def conversation_continue():
         return jsonify({"error": "User not found"}), 404
     if bootstrap_legacy_credits(user, current_app.config):
         db.session.commit()
+    active_org, _ = resolve_active_org_for_user(user)
+    active_org_id = active_org.id if active_org else user.active_organization_id
 
     thread_id = str(data.get("thread_id") or data.get("session_id") or request.headers.get("X-Session-ID") or "").strip()
     user_message = str(data.get("message") or data.get("user_message") or "").strip()
@@ -1349,7 +1375,13 @@ def conversation_continue():
         model_selection["model_type"],
         strategy_objective=requested_objective,
         objective_explicit=objective_supplied,
+        organization_id=active_org_id,
     )
+    session["organization_id"] = session.get("organization_id") or active_org_id
+    session["created_by_user_id"] = session.get("created_by_user_id") or user_id
+    session["visibility"] = str(session.get("visibility") or "private").strip().lower() or "private"
+    if not isinstance(session.get("shared_with_user_ids"), list):
+        session["shared_with_user_ids"] = []
     existing_objective = normalize_strategy_objective(session.get("strategy_objective"))
     session["strategy_objective"] = requested_objective if objective_supplied else existing_objective
     if objective_supplied:
@@ -1419,6 +1451,8 @@ def conversation_continue():
         "status": "ready_to_analyze" if readiness["overall"]["percent"] >= 85 else "gathering_info",
         "strategy_objective": session.get("strategy_objective") or "balanced",
         "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
+        "organization_id": session.get("organization_id"),
+        "visibility": session.get("visibility") or "private",
         "objective_options": list(STRATEGY_OBJECTIVE_OPTIONS),
     }), 200
 
@@ -1508,6 +1542,10 @@ def list_threads():
             "model_type": normalize_model_type(candidate.get("model_type")) or None,
             "strategy_objective": normalize_strategy_objective(candidate.get("strategy_objective")),
             "objective_explicitly_set": bool(candidate.get("objective_explicitly_set")),
+            "organization_id": candidate.get("organization_id"),
+            "created_by_user_id": candidate.get("created_by_user_id"),
+            "visibility": candidate.get("visibility") or "private",
+            "shared_with_user_ids": candidate.get("shared_with_user_ids") if isinstance(candidate.get("shared_with_user_ids"), list) else [],
             "chat_history": chat_history,
             "readiness": readiness,
         })
@@ -1573,6 +1611,10 @@ def get_thread(thread_id):
         "model_type": normalize_model_type(session.get("model_type")) or None,
         "strategy_objective": normalize_strategy_objective(session.get("strategy_objective")),
         "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
+        "organization_id": session.get("organization_id"),
+        "created_by_user_id": session.get("created_by_user_id"),
+        "visibility": session.get("visibility") or "private",
+        "shared_with_user_ids": session.get("shared_with_user_ids") if isinstance(session.get("shared_with_user_ids"), list) else [],
         "status": session.get("status") or ("completed" if analyses else "in_progress"),
         "created_at": session.get("created"),
         "updated_at": session.get("timestamp"),
@@ -1586,6 +1628,10 @@ def get_thread(thread_id):
         "model_type": normalize_model_type(session.get("model_type")) or None,
         "strategy_objective": normalize_strategy_objective(session.get("strategy_objective")),
         "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
+        "organization_id": session.get("organization_id"),
+        "created_by_user_id": session.get("created_by_user_id"),
+        "visibility": session.get("visibility") or "private",
+        "shared_with_user_ids": session.get("shared_with_user_ids") if isinstance(session.get("shared_with_user_ids"), list) else [],
         "chat_history": chat_history,
         "readiness": readiness,
     }
@@ -1607,9 +1653,11 @@ def update_thread(thread_id):
     data = request.get_json() or {}
     name = str(data.get("name") or "").strip()
     objective_supplied = any(key in data for key in ("strategy_objective", "objective"))
+    visibility_supplied = "visibility" in data
+    shared_users_supplied = "shared_with_user_ids" in data
     objective_explicit_supplied = "objective_explicitly_set" in data
-    if not name and not objective_supplied and not objective_explicit_supplied:
-        return jsonify({"error": "name or strategy_objective is required"}), 400
+    if not name and not objective_supplied and not objective_explicit_supplied and not visibility_supplied and not shared_users_supplied:
+        return jsonify({"error": "name, strategy_objective, visibility, or shared_with_user_ids is required"}), 400
 
     user_id = get_jwt_identity()
     sessions = load_user_sessions(user_id) or {}
@@ -1630,6 +1678,24 @@ def update_thread(thread_id):
         session["objective_explicitly_set"] = True
     elif "objective_explicitly_set" not in session:
         session["objective_explicitly_set"] = False
+    if visibility_supplied:
+        raw_visibility = str(data.get("visibility") or "").strip().lower()
+        if raw_visibility in {"private", "team", "specific"}:
+            session["visibility"] = raw_visibility
+    if shared_users_supplied:
+        raw_ids = data.get("shared_with_user_ids")
+        if isinstance(raw_ids, list):
+            cleaned = []
+            seen = set()
+            for item in raw_ids:
+                candidate = str(item or "").strip()
+                if not candidate or candidate in seen:
+                    continue
+                cleaned.append(candidate)
+                seen.add(candidate)
+            session["shared_with_user_ids"] = cleaned
+    if not session.get("created_by_user_id"):
+        session["created_by_user_id"] = str(user_id)
     session["timestamp"] = _iso_now()
     sessions[session_key or resolved_thread_id] = session
     save_user_sessions(user_id, sessions)
@@ -1641,6 +1707,8 @@ def update_thread(thread_id):
         "session_id": resolved_thread_id,
         "strategy_objective": normalize_strategy_objective(session.get("strategy_objective")),
         "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
+        "visibility": session.get("visibility") or "private",
+        "shared_with_user_ids": session.get("shared_with_user_ids") if isinstance(session.get("shared_with_user_ids"), list) else [],
         "chat_history": chat_history,
         "readiness": readiness,
     }
@@ -1652,6 +1720,8 @@ def update_thread(thread_id):
             "name": session.get("name") or "Jaspen Intake",
             "strategy_objective": normalize_strategy_objective(session.get("strategy_objective")),
             "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
+            "visibility": session.get("visibility") or "private",
+            "shared_with_user_ids": session.get("shared_with_user_ids") if isinstance(session.get("shared_with_user_ids"), list) else [],
             "status": session.get("status") or "in_progress",
             "updated_at": session.get("timestamp"),
         },

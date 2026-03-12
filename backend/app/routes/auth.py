@@ -25,6 +25,7 @@ from app.billing_config import (
     normalize_plan_key,
     to_public_plan,
 )
+from app.orgs import ensure_default_organization_for_user
 
 
 auth_bp = Blueprint('auth', __name__)
@@ -98,6 +99,22 @@ def _enforce_admin_account_profile(user):
     return changed
 
 
+def _ensure_user_org(user):
+    _, _, changed = ensure_default_organization_for_user(user)
+    return changed
+
+
+def _user_payload(user):
+    return {
+        'id': user.id,
+        'email': user.email,
+        'name': user.name,
+        'subscription_plan': to_public_plan(user.subscription_plan),
+        'credits_remaining': user.credits_remaining,
+        'active_organization_id': user.active_organization_id,
+    }
+
+
 @auth_bp.route('/signup', methods=['POST'])
 def signup():
     data = request.get_json() or {}
@@ -129,6 +146,8 @@ def signup():
     _enforce_admin_account_profile(user)
     db.session.add(user)
     db.session.commit()
+    if _ensure_user_org(user):
+        db.session.commit()
 
     access_token = create_access_token(identity=str(user.id))
 
@@ -137,13 +156,7 @@ def signup():
         resp = jsonify(
             message='User created',
             token=access_token,
-            user={
-                'id': user.id,
-                'email': user.email,
-                'name': user.name,
-                'subscription_plan': to_public_plan(user.subscription_plan),
-                'credits_remaining': user.credits_remaining,
-            },
+            user=_user_payload(user),
         )
         resp.status_code = 201
         return _attach_auth_cookie(resp, access_token)
@@ -178,13 +191,7 @@ def signup():
         token=access_token,
         checkout_session_id=session.id,
         checkout_url=session.url,
-        user={
-            'id': user.id,
-            'email': user.email,
-            'name': user.name,
-            'subscription_plan': to_public_plan(user.subscription_plan),
-            'credits_remaining': user.credits_remaining,
-        },
+        user=_user_payload(user),
     )
     resp.status_code = 201
     return _attach_auth_cookie(resp, access_token)
@@ -212,19 +219,15 @@ def login():
     changed = bootstrap_legacy_credits(user, current_app.config)
     if _enforce_admin_account_profile(user):
         changed = True
+    if _ensure_user_org(user):
+        changed = True
     if changed:
         db.session.commit()
 
     token = create_access_token(identity=str(user.id))
     resp = jsonify(
         token=token,
-        user={
-            'id': user.id,
-            'email': user.email,
-            'name': user.name,
-            'subscription_plan': to_public_plan(user.subscription_plan),
-            'credits_remaining': user.credits_remaining,
-        },
+        user=_user_payload(user),
     )
     resp.status_code = 200
     return _attach_auth_cookie(resp, token)
@@ -241,16 +244,12 @@ def get_current_user():
     changed = bootstrap_legacy_credits(user, current_app.config)
     if _enforce_admin_account_profile(user):
         changed = True
+    if _ensure_user_org(user):
+        changed = True
     if changed:
         db.session.commit()
 
-    return jsonify(
-        id=user.id,
-        email=user.email,
-        name=user.name,
-        subscription_plan=to_public_plan(user.subscription_plan),
-        credits_remaining=user.credits_remaining,
-    ), 200
+    return jsonify(**_user_payload(user)), 200
 
 
 @auth_bp.route('/google/start', methods=['GET'])
@@ -364,9 +363,13 @@ def google_callback():
         _enforce_admin_account_profile(user)
         db.session.add(user)
         db.session.commit()
+        if _ensure_user_org(user):
+            db.session.commit()
     else:
         changed = bootstrap_legacy_credits(user, current_app.config)
         if _enforce_admin_account_profile(user):
+            changed = True
+        if _ensure_user_org(user):
             changed = True
         if changed:
             db.session.commit()
@@ -394,13 +397,9 @@ def update_current_user():
     user.name = name
     db.session.commit()
 
-    return jsonify(
-        id=user.id,
-        email=user.email,
-        name=user.name,
-        subscription_plan=to_public_plan(user.subscription_plan),
-        credits_remaining=user.credits_remaining,
-    ), 200
+    if _ensure_user_org(user):
+        db.session.commit()
+    return jsonify(**_user_payload(user)), 200
 
 
 @auth_bp.route('/logout', methods=['POST'])
@@ -432,13 +431,9 @@ def get_current_user_from_cookie():
     changed = bootstrap_legacy_credits(user, current_app.config)
     if _enforce_admin_account_profile(user):
         changed = True
+    if _ensure_user_org(user):
+        changed = True
     if changed:
         db.session.commit()
 
-    return jsonify(
-        id=user.id,
-        email=user.email,
-        name=user.name,
-        subscription_plan=to_public_plan(user.subscription_plan),
-        credits_remaining=user.credits_remaining,
-    ), 200
+    return jsonify(**_user_payload(user)), 200
