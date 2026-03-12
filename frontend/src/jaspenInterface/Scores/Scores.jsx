@@ -372,15 +372,17 @@ export default function Scores() {
 
   return (
     <div className="scores-page">
+      <div className="scores-topbar">
+        <button type="button" className="scores-btn ghost" onClick={() => navigate('/new')}>
+          Back to Jaspen
+        </button>
+      </div>
       <div className="scores-header">
         <div>
           <h1>Completed Scores</h1>
           <p>All completed analyses with history, adopted scenarios, and trends.</p>
         </div>
         <div className="scores-header-actions">
-          <button type="button" className="scores-btn ghost" onClick={() => navigate('/new')}>
-            Back to Workspace
-          </button>
           <button type="button" className="scores-btn" onClick={exportPdf} disabled={filteredSortedRows.length === 0}>
             Export PDF
           </button>

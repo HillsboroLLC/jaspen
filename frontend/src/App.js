@@ -103,7 +103,14 @@ export default function App() {
         />
         <Route path="/strategy" element={<Navigate to="/new" replace />} />
         <Route path="/sessions"  element={<ProtectedRoute>{withShell(<Sessions />)}</ProtectedRoute>} />
-        <Route path="/scores"    element={<ProtectedRoute>{withShell(<Scores />)}</ProtectedRoute>} />
+        <Route
+          path="/scores"
+          element={
+            <ProtectedRoute>
+              {withShell(<Scores />, { showHeader: false, fullBleed: true, noPadding: true })}
+            </ProtectedRoute>
+          }
+        />
         <Route
           path="/account"
           element={

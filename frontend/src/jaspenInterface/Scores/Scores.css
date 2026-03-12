@@ -3,6 +3,12 @@
   color: var(--jas-navy);
 }
 
+.scores-topbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
 .scores-header {
   display: flex;
   justify-content: space-between;
