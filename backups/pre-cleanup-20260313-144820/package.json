@@ -33,7 +33,10 @@
   "scripts": {
     "start": "react-scripts start",
     "build": "react-scripts build",
-    "css:organize:pretty": "postcss src/jaspenInterface/Workspace/JaspenWorkspace.css -o src/jaspenInterface/Workspace/JaspenWorkspace.organized.css && prettier --write src/jaspenInterface/Workspace/JaspenWorkspace.organized.css",
+    "css:organize": "postcss src/jaspenInterface/Workspace/JaspenWorkspace.css -o src/jaspenInterface/Workspace/JaspenWorkspace.organized.css",
+    "css:format": "prettier --write src/jaspenInterface/Workspace/JaspenWorkspace.organized.css",
+    "css:organize:pretty": "npm run css:organize && npm run css:format",
+    "css:dedupe": "node scripts/css-dedupe.mjs",
     "deploy": "node ./scripts/deploy.mjs",
     "build:deploy": "npm run build && npm run deploy",
     "env:check": "node ./scripts/check-env.mjs",
