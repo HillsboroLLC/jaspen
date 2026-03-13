@@ -771,12 +771,14 @@ export default function Team({ mode = 'team' }) {
   const activePlanLabel = activeOrgPlanKey
     ? `${activeOrgPlanKey.charAt(0).toUpperCase()}${activeOrgPlanKey.slice(1)}`
     : 'Current';
-  const seatSummaryLabel = [
-    `Admin: ${(seatUsage?.admin?.used ?? 0)}/${seatUsage?.admin?.limit ?? '∞'}`,
-    `Creator: ${(seatUsage?.creator?.used ?? 0)}/${seatUsage?.creator?.limit ?? '∞'}`,
-    `Collaborator: ${(seatUsage?.collaborator?.used ?? 0)}/${seatUsage?.collaborator?.limit ?? '∞'}`,
-    `Viewer: ${(seatUsage?.viewer?.used ?? 0)}/${seatUsage?.viewer?.limit ?? '∞'}`,
-  ].join(' · ');
+  const seatSummaryLabel = ['admin', 'creator', 'collaborator', 'viewer']
+    .map((role) => {
+      const used = Number(seatUsage?.[role]?.used ?? 0);
+      const roleDefaultLimit = seatLimitForPlanRole(routePlanForCopy, role);
+      const cap = roleDefaultLimit == null ? '∞' : String(roleDefaultLimit);
+      return `${roleLabel(role)}: ${used}/${cap}`;
+    })
+    .join(' · ');
   const activePolicyPlanKey = PLAN_SEAT_MATRIX?.[activeOrgPlanKey] ? activeOrgPlanKey : null;
   const showingPlanMismatch = Boolean(activePolicyPlanKey && activePolicyPlanKey !== routePlanForCopy);
 
