@@ -2,6 +2,18 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../../shared/auth/AuthContext';
 import { API_BASE } from '../../../config/apiBase';
+import {
+  ArcElement,
+  BarElement,
+  CategoryScale,
+  Chart as ChartJS,
+  Legend,
+  LineElement,
+  LinearScale,
+  PointElement,
+  Tooltip,
+} from 'chart.js';
+import { Bar, Line, Pie } from 'react-chartjs-2';
 import './Dashboard.css';
 
 const STATUS_LABELS = {
@@ -10,6 +22,17 @@ const STATUS_LABELS = {
   in_progress: 'Active',
   active: 'Active',
 };
+
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  BarElement,
+  ArcElement,
+  Tooltip,
+  Legend
+);
 
 function getToken() {
   return localStorage.getItem('access_token') || localStorage.getItem('token') || '';
@@ -44,6 +67,45 @@ function scoreTone(value) {
   if (num >= 40) return 'fair';
   return 'risk';
 }
+
+function safeList(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function chartDataFor(chart = {}, idx = 0) {
+  const labels = safeList(chart?.data?.labels).map((item) => String(item ?? ''));
+  const values = safeList(chart?.data?.values).map((value) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  });
+  const palette = ['#3554b3', '#5b74cb', '#7d95dd', '#9db0ea', '#c2cff5', '#dce6fb'];
+  const tone = palette[idx % palette.length];
+  return {
+    labels,
+    datasets: [
+      {
+        label: chart?.title || 'Series',
+        data: values,
+        backgroundColor: chart?.type === 'pie' ? labels.map((_, i) => palette[i % palette.length]) : tone,
+        borderColor: tone,
+        borderWidth: 1.5,
+        tension: 0.25,
+        fill: false,
+      },
+    ],
+  };
+}
+
+const CHART_OPTIONS = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: {
+    legend: {
+      display: true,
+      position: 'bottom',
+    },
+  },
+};
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -99,6 +161,8 @@ export default function Dashboard() {
   const metrics = data?.metrics || {};
   const projects = Array.isArray(data?.projects) ? data.projects : [];
   const activity = Array.isArray(data?.activity) ? data.activity : [];
+  const widgetCharts = safeList(data?.insights_widget?.charts);
+  const widgetCards = safeList(data?.insights_widget?.cards);
 
   const scopeLabel = useMemo(() => {
     const scope = String(data?.scope || '').toLowerCase();
@@ -168,6 +232,61 @@ export default function Dashboard() {
               <p>{metrics.team_members ?? 0}</p>
               <small>{metrics.collaborator_viewer_activity ?? 0} collaborator/viewer actions</small>
             </article>
+          </section>
+
+          <section className="dash-card dash-insights-widget">
+            <div className="dash-section-header">
+              <h2>Insights Snapshot</h2>
+              <span>{widgetCards.length} recent cards</span>
+            </div>
+            {widgetCharts.length > 0 ? (
+              <div className="dash-insights-chart-grid">
+                {widgetCharts.map((chart, idx) => {
+                  const chartType = String(chart?.type || '').toLowerCase();
+                  const dataPayload = chartDataFor(chart, idx);
+                  const valid = safeList(dataPayload.labels).length > 0 && safeList(dataPayload.datasets?.[0]?.data).length > 0;
+                  return (
+                    <article className="dash-chart-card" key={`dash_chart_${idx}`}>
+                      <h3>{chart?.title || `Chart ${idx + 1}`}</h3>
+                      {!valid && <p className="dash-empty">No chart data available.</p>}
+                      {valid && chartType === 'bar' && <Bar data={dataPayload} options={CHART_OPTIONS} />}
+                      {valid && chartType === 'line' && <Line data={dataPayload} options={CHART_OPTIONS} />}
+                      {valid && chartType === 'pie' && <Pie data={dataPayload} options={CHART_OPTIONS} />}
+                      {valid && !['bar', 'line', 'pie'].includes(chartType) && (
+                        <p className="dash-empty">Unsupported chart type: {chartType || 'unknown'}.</p>
+                      )}
+                    </article>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="dash-empty">No chart data yet.</p>
+            )}
+
+            <div className="dash-insight-card-grid">
+              {widgetCards.length === 0 ? (
+                <p className="dash-empty">No insight cards yet. Upload and analyze data in Insights.</p>
+              ) : widgetCards.map((card, idx) => (
+                <article className="dash-insight-card" key={card.id || `insight_${idx}`}>
+                  <div className="dash-insight-meta">
+                    <strong>{card.project_name || 'Project Insight'}</strong>
+                    <span>{card.owner_name || 'Unknown owner'}</span>
+                    <time>{formatRelative(card.timestamp)}</time>
+                  </div>
+                  <p>{card.summary || 'Insight captured.'}</p>
+                  {card.file_name ? <small>Source: {card.file_name}</small> : null}
+                  {card.thread_id ? (
+                    <button
+                      type="button"
+                      className="dash-link"
+                      onClick={() => navigate(`/new?session_id=${encodeURIComponent(card.thread_id)}`)}
+                    >
+                      Open project
+                    </button>
+                  ) : null}
+                </article>
+              ))}
+            </div>
           </section>
 
           <section className="dash-grid">

@@ -130,6 +130,113 @@ def _collect_project_activity(rows, *, user_name_by_id, role_by_user_id, creator
     return events[:50], collaborator_viewer_events
 
 
+def _safe_project_label(name, max_len=22):
+    label = str(name or "").strip() or "Untitled"
+    return label if len(label) <= max_len else f"{label[:max_len - 1]}…"
+
+
+def _build_score_trend_chart(projects):
+    scored = [item for item in projects if item.get("jaspen_score") is not None]
+    recent = scored[:8]
+    return {
+        "type": "line",
+        "title": "Recent Project Scores",
+        "data": {
+            "labels": [_safe_project_label(item.get("project_name")) for item in recent],
+            "values": [round(float(item.get("jaspen_score")), 2) for item in recent],
+        },
+    }
+
+
+def _build_status_mix_chart(counts):
+    return {
+        "type": "pie",
+        "title": "Project Status Mix",
+        "data": {
+            "labels": ["Active", "Completed", "Archived"],
+            "values": [
+                int(counts.get("active") or 0),
+                int(counts.get("completed") or 0),
+                int(counts.get("archived") or 0),
+            ],
+        },
+    }
+
+
+def _build_activity_volume_chart(events):
+    buckets = {}
+    for event in events or []:
+        dt = _parse_dt(event.get("timestamp"))
+        if not dt:
+            continue
+        key = dt.date().isoformat()
+        buckets[key] = int(buckets.get(key) or 0) + 1
+
+    ordered_days = sorted(buckets.keys(), reverse=True)[:7]
+    ordered_days.reverse()
+    labels = []
+    values = []
+    for day in ordered_days:
+        try:
+            labels.append(datetime.fromisoformat(day).strftime("%b %d"))
+        except Exception:
+            labels.append(day)
+        values.append(int(buckets.get(day) or 0))
+
+    return {
+        "type": "bar",
+        "title": "Team Activity (7 days)",
+        "data": {
+            "labels": labels,
+            "values": values,
+        },
+    }
+
+
+def _latest_insight_cards(rows, *, user_name_by_id):
+    cards = []
+    for row in rows:
+        payload = row.payload if isinstance(row.payload, dict) else {}
+        result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+        insight_list = result.get("ai_insights")
+        if not isinstance(insight_list, list):
+            insight_list = payload.get("ai_insights")
+        if not isinstance(insight_list, list):
+            continue
+
+        project_name = _project_name(row)
+        owner_id = _project_owner_id(row)
+        owner_name = user_name_by_id.get(owner_id, "Unknown")
+        for insight in insight_list:
+            if not isinstance(insight, dict):
+                continue
+            timestamp = _parse_dt(insight.get("timestamp"))
+            cards.append(
+                {
+                    "id": str(insight.get("id") or f"insight_{row.session_id}_{len(cards)}"),
+                    "thread_id": str(row.session_id),
+                    "project_name": project_name,
+                    "owner_name": owner_name,
+                    "summary": str(
+                        insight.get("summary")
+                        or (insight.get("insight") or {}).get("insight_text")
+                        or "Insight captured."
+                    ).strip(),
+                    "file_name": str(insight.get("file_name") or (insight.get("insight") or {}).get("file_name") or "").strip() or None,
+                    "timestamp": timestamp.isoformat() if timestamp else None,
+                    "_sort": timestamp or row.updated_at or row.created_at or datetime.min,
+                }
+            )
+
+    cards.sort(key=lambda item: item["_sort"], reverse=True)
+    trimmed = []
+    for item in cards[:6]:
+        cloned = dict(item)
+        cloned.pop("_sort", None)
+        trimmed.append(cloned)
+    return trimmed
+
+
 @dashboard_bp.route("/api/dashboard", methods=["GET"])
 @jwt_required()
 def get_dashboard_data():
@@ -225,6 +332,22 @@ def get_dashboard_data():
         creator_scope_owner_id=None if manager_scope else str(user.id),
     )
 
+    insight_cards = _latest_insight_cards(visible_rows, user_name_by_id=user_name_by_id)
+    insight_charts = [
+        _build_score_trend_chart(projects),
+        _build_status_mix_chart(counts),
+        _build_activity_volume_chart(activities),
+    ]
+    insight_charts = [
+        chart for chart in insight_charts
+        if isinstance(chart, dict)
+        and isinstance(chart.get("data"), dict)
+        and isinstance(chart["data"].get("labels"), list)
+        and isinstance(chart["data"].get("values"), list)
+        and len(chart["data"]["labels"]) > 0
+        and len(chart["data"]["values"]) > 0
+    ]
+
     return jsonify(
         {
             "organization": {
@@ -249,5 +372,9 @@ def get_dashboard_data():
             },
             "projects": projects[:40],
             "activity": activities[:40],
+            "insights_widget": {
+                "charts": insight_charts,
+                "cards": insight_cards,
+            },
         }
     ), 200

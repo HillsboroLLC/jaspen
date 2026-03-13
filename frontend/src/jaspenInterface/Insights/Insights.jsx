@@ -8,8 +8,31 @@ import {
   faLightbulb,
   faSpinner,
 } from '@fortawesome/free-solid-svg-icons';
+import {
+  ArcElement,
+  BarElement,
+  CategoryScale,
+  Chart as ChartJS,
+  Legend,
+  LineElement,
+  LinearScale,
+  PointElement,
+  Tooltip,
+} from 'chart.js';
+import { Bar, Line, Pie } from 'react-chartjs-2';
 import { Jaspen } from '../Workspace/JaspenClient';
 import './Insights.css';
+
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  BarElement,
+  ArcElement,
+  Tooltip,
+  Legend
+);
 
 function formatDate(value) {
   if (!value) return '—';
@@ -21,6 +44,53 @@ function formatDate(value) {
 function safeList(value) {
   return Array.isArray(value) ? value : [];
 }
+
+function normalizeChartPayload(chart = {}) {
+  const labels = safeList(chart?.data?.labels).map((item) => String(item ?? ''));
+  const values = safeList(chart?.data?.values).map((value) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  });
+  return { labels, values };
+}
+
+function chartDataFor(chart = {}, idx = 0) {
+  const { labels, values } = normalizeChartPayload(chart);
+  const palette = [
+    '#3451b2',
+    '#5f76cc',
+    '#7d92da',
+    '#9bafe9',
+    '#b7c8f2',
+    '#d3e0f9',
+  ];
+  const barColor = palette[idx % palette.length];
+  return {
+    labels,
+    datasets: [
+      {
+        label: chart?.title || 'Series',
+        data: values,
+        backgroundColor: chart?.type === 'pie' ? labels.map((_, i) => palette[i % palette.length]) : barColor,
+        borderColor: barColor,
+        borderWidth: 1.5,
+        tension: 0.25,
+        fill: false,
+      },
+    ],
+  };
+}
+
+const CHART_OPTIONS = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: {
+    legend: {
+      display: true,
+      position: 'bottom',
+    },
+  },
+};
 
 export default function Insights() {
   const fileInputRef = useRef(null);
@@ -227,6 +297,31 @@ export default function Insights() {
               <h3><FontAwesomeIcon icon={faCircleExclamation} /> Risks</h3>
               <ul>{safeList(analysis.risks).map((item, idx) => <li key={`risk_${idx}`}>{item}</li>)}</ul>
             </article>
+
+            {safeList(analysis.charts).length > 0 && (
+              <section className="insights-charts">
+                <h3>Visualizations</h3>
+                <div className="insights-chart-grid">
+                  {safeList(analysis.charts).map((chart, idx) => {
+                    const chartType = String(chart?.type || '').toLowerCase();
+                    const data = chartDataFor(chart, idx);
+                    const canRender = safeList(data.labels).length > 0 && safeList(data.datasets?.[0]?.data).length > 0;
+                    return (
+                      <div key={`chart_${idx}`} className="insights-chart-card">
+                        <h4>{chart?.title || `Chart ${idx + 1}`}</h4>
+                        {!canRender && <div className="insights-chart-empty">No chart data available.</div>}
+                        {canRender && chartType === 'bar' && <Bar data={data} options={CHART_OPTIONS} />}
+                        {canRender && chartType === 'line' && <Line data={data} options={CHART_OPTIONS} />}
+                        {canRender && chartType === 'pie' && <Pie data={data} options={CHART_OPTIONS} />}
+                        {canRender && !['bar', 'line', 'pie'].includes(chartType) && (
+                          <div className="insights-chart-empty">Unsupported chart type: {chartType || 'unknown'}.</div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
           </div>
         )}
       </section>
