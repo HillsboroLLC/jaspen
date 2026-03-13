@@ -1,0 +1,144 @@
+.reports-page {
+  width: min(1280px, 94vw);
+  margin: 0 auto;
+  padding: 28px;
+  background: #f6f8fc;
+  color: #182441;
+}
+
+.reports-header h1 {
+  margin: 0;
+  font-size: 38px;
+}
+
+.reports-header p {
+  margin: 8px 0 0;
+  color: #5b6b90;
+}
+
+.reports-generate-card,
+.reports-list-card {
+  margin-top: 16px;
+  border: 1px solid #ccd7eb;
+  border-radius: 14px;
+  background: #fff;
+  padding: 16px;
+}
+
+.reports-generate-card h2,
+.reports-list-card h2 {
+  margin: 0 0 12px;
+  font-size: 24px;
+}
+
+.reports-generate-form {
+  display: grid;
+  grid-template-columns: 2fr 1fr auto;
+  gap: 10px;
+}
+
+.reports-generate-form select,
+.reports-generate-form button {
+  height: 42px;
+  border-radius: 10px;
+  border: 1px solid #bcc9e0;
+}
+
+.reports-generate-form select {
+  background: #fff;
+  color: #203560;
+  padding: 0 12px;
+}
+
+.reports-generate-form button {
+  background: #182f63;
+  color: #fff;
+  border-color: #182f63;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.reports-generate-form button:disabled {
+  opacity: 0.55;
+}
+
+.reports-generate-context {
+  margin: 10px 0 0;
+  color: #43547d;
+}
+
+.reports-state {
+  margin-top: 12px;
+  border: 1px solid #d3dced;
+  background: #fff;
+  border-radius: 12px;
+  padding: 14px;
+  color: #41527b;
+}
+
+.reports-state-error {
+  border-color: #dca5ad;
+  color: #952130;
+}
+
+.reports-state-success {
+  border-color: #9ed2b0;
+  color: #1f7f45;
+}
+
+.reports-table-wrap {
+  overflow-x: auto;
+}
+
+.reports-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 840px;
+}
+
+.reports-table th,
+.reports-table td {
+  padding: 12px 10px;
+  border-bottom: 1px solid #e4eaf6;
+  text-align: left;
+}
+
+.reports-table th {
+  background: #f8fafd;
+  color: #44557d;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.reports-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #bbc8df;
+  background: #fff;
+  color: #203c73;
+  border-radius: 8px;
+  height: 34px;
+  padding: 0 10px;
+  margin-right: 6px;
+  text-decoration: none;
+}
+
+.reports-action-danger {
+  color: #8b2534;
+  border-color: #d8aab0;
+}
+
+@media (max-width: 900px) {
+  .reports-page {
+    width: 100%;
+    padding: 18px 14px 24px;
+  }
+
+  .reports-generate-form {
+    grid-template-columns: 1fr;
+  }
+}

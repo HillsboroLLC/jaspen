@@ -1,0 +1,278 @@
+.projects-page {
+  width: min(1320px, 95vw);
+  margin: 0 auto;
+  padding: 28px 28px 40px;
+  background: #f6f8fc;
+  color: #1a2443;
+}
+
+.projects-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.projects-header h1 {
+  margin: 0;
+  font-size: 40px;
+}
+
+.projects-header p {
+  margin: 8px 0 0;
+  color: #5b6b90;
+}
+
+.projects-header-actions {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.projects-view-toggle {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  border: 1px solid #b8c4de;
+  background: #fff;
+  color: #3f537f;
+}
+
+.projects-view-toggle.is-active {
+  background: #1f3a7a;
+  color: #fff;
+  border-color: #1f3a7a;
+}
+
+.projects-filters {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr;
+  gap: 10px;
+}
+
+.projects-filters input,
+.projects-filters select {
+  height: 42px;
+  border-radius: 10px;
+  border: 1px solid #c5d0e6;
+  background: #fff;
+  color: #1a2443;
+  padding: 0 12px;
+}
+
+.projects-bulk-actions {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.projects-select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #40527b;
+  margin-right: 8px;
+}
+
+.projects-bulk-actions button {
+  height: 36px;
+  border-radius: 9px;
+  border: 1px solid #afbdd9;
+  background: #fff;
+  color: #23345e;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.projects-bulk-actions button:disabled {
+  opacity: 0.5;
+}
+
+.projects-state {
+  margin-top: 16px;
+  border-radius: 14px;
+  border: 1px solid #d2daeb;
+  background: #fff;
+  padding: 18px;
+  color: #3e5079;
+}
+
+.projects-state-error {
+  border-color: #d89ca4;
+  color: #8a2534;
+}
+
+.projects-group {
+  margin-top: 18px;
+}
+
+.projects-group h2 {
+  font-size: 16px;
+  margin: 0 0 10px;
+  color: #2b3f70;
+}
+
+.projects-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.project-card {
+  border-radius: 14px;
+  border: 1px solid #ccd6ea;
+  background: #fff;
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.project-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.project-card h3 {
+  margin: 0;
+  font-size: 19px;
+}
+
+.project-updated {
+  margin: 0;
+  color: #617399;
+  font-size: 13px;
+}
+
+.project-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.project-card-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.project-card-actions button {
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid #c0cbe1;
+  background: #fff;
+  color: #253865;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.project-status {
+  display: inline-flex;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.project-status.active {
+  background: #e8f2ff;
+  color: #2258a7;
+}
+
+.project-status.completed {
+  background: #e7f7ed;
+  color: #1a7d43;
+}
+
+.project-status.archived {
+  background: #eef0f4;
+  color: #5c6d8f;
+}
+
+.project-score-badge {
+  display: inline-flex;
+  min-width: 38px;
+  justify-content: center;
+  align-items: center;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.project-score-badge.is-excellent {
+  background: #e0f6ea;
+  color: #11753b;
+}
+
+.project-score-badge.is-good {
+  background: #e9f0ff;
+  color: #285ab2;
+}
+
+.project-score-badge.is-fair {
+  background: #fff5db;
+  color: #8a6805;
+}
+
+.project-score-badge.is-risk {
+  background: #ffe7ea;
+  color: #a82b3e;
+}
+
+.project-score-badge.is-unknown {
+  background: #ebedf3;
+  color: #5f6f90;
+}
+
+.projects-table-wrap {
+  border: 1px solid #ccd6ea;
+  border-radius: 14px;
+  background: #fff;
+  overflow-x: auto;
+}
+
+.projects-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 900px;
+}
+
+.projects-table th,
+.projects-table td {
+  padding: 12px 10px;
+  border-bottom: 1px solid #e5ebf7;
+  text-align: left;
+}
+
+.projects-table th {
+  background: #f7f9fd;
+  color: #41547e;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.projects-link {
+  border: none;
+  background: none;
+  color: #204a9a;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+@media (max-width: 960px) {
+  .projects-page {
+    width: 100%;
+    padding: 18px 16px 28px;
+  }
+
+  .projects-filters {
+    grid-template-columns: 1fr;
+  }
+}

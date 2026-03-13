@@ -469,6 +469,13 @@
   font-size: 0.81rem;
 }
 
+.account-connectors-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .account-connectors-knowledge-link {
   margin-bottom: 10px;
 }

@@ -200,6 +200,8 @@ def create_app():
     from .routes.dashboard import dashboard_bp
     from .routes.ai_agent  import ai_agent_bp
     from .routes.insights import insights_bp
+    from .routes.activity import activity_bp
+    from .routes.reports import reports_bp
     from .routes.starters import starters_bp
     from .routes.team import team_bp
     from .routes.teams import teams_bp
@@ -213,6 +215,8 @@ def create_app():
     app.register_blueprint(dashboard_bp)  # includes its own /api/dashboard path
     app.register_blueprint(ai_agent_bp,  url_prefix='/api/ai-agent')
     app.register_blueprint(insights_bp,  url_prefix='/api/insights')
+    app.register_blueprint(activity_bp,  url_prefix='/api/activity')
+    app.register_blueprint(reports_bp,   url_prefix='/api/reports')
     app.register_blueprint(starters_bp,  url_prefix='/api/starters')
     app.register_blueprint(team_bp, url_prefix='/api/team')
     app.register_blueprint(teams_bp, url_prefix='/api/teams')

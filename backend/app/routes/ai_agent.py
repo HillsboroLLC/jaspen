@@ -2123,6 +2123,7 @@ def get_thread(thread_id):
 def update_thread(thread_id):
     data = request.get_json() or {}
     name = str(data.get("name") or "").strip()
+    status_supplied = "status" in data
     objective_supplied = any(key in data for key in ("strategy_objective", "objective"))
     visibility_supplied = "visibility" in data
     shared_users_supplied = "shared_with_user_ids" in data
@@ -2135,11 +2136,12 @@ def update_thread(thread_id):
         and not objective_explicit_supplied
         and not visibility_supplied
         and not shared_users_supplied
+        and not status_supplied
         and not intake_context_supplied
         and not starter_lever_defaults_supplied
     ):
         return jsonify(
-            {"error": "name, strategy_objective, intake_context, visibility, or shared_with_user_ids is required"}
+            {"error": "name, status, strategy_objective, intake_context, visibility, or shared_with_user_ids is required"}
         ), 400
 
     user_id = get_jwt_identity()
@@ -2198,6 +2200,11 @@ def update_thread(thread_id):
                 cleaned.append(candidate)
                 seen.add(candidate)
             session["shared_with_user_ids"] = cleaned
+    if status_supplied:
+        raw_status = str(data.get("status") or "").strip().lower()
+        if raw_status not in {"in_progress", "ready_to_analyze", "completed", "archived"}:
+            return jsonify({"error": "status must be one of in_progress, ready_to_analyze, completed, archived"}), 400
+        session["status"] = raw_status
     if not session.get("created_by_user_id"):
         session["created_by_user_id"] = str(user_id)
     session["timestamp"] = _iso_now()

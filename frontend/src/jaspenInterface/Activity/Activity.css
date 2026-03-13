@@ -1,0 +1,148 @@
+.activity-page {
+  width: min(1220px, 94vw);
+  margin: 0 auto;
+  padding: 28px;
+  background: #f6f8fc;
+  color: #17233f;
+}
+
+.activity-header h1 {
+  margin: 0;
+  font-size: 38px;
+}
+
+.activity-header p {
+  margin: 8px 0 0;
+  color: #5d6d92;
+}
+
+.activity-controls {
+  margin-top: 16px;
+}
+
+.activity-controls select {
+  height: 42px;
+  min-width: 260px;
+  border-radius: 10px;
+  border: 1px solid #c0cce2;
+  background: #fff;
+  color: #24355f;
+  padding: 0 12px;
+}
+
+.activity-state {
+  margin-top: 14px;
+  border-radius: 12px;
+  border: 1px solid #d1daec;
+  background: #fff;
+  color: #3f517b;
+  padding: 14px;
+}
+
+.activity-state-error {
+  border-color: #deadb3;
+  color: #962739;
+}
+
+.activity-timeline {
+  margin-top: 16px;
+  border-left: 2px solid #d0dbef;
+  padding-left: 22px;
+  display: grid;
+  gap: 12px;
+}
+
+.activity-item {
+  position: relative;
+}
+
+.activity-dot {
+  position: absolute;
+  left: -30px;
+  top: 8px;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: #2857ad;
+  box-shadow: 0 0 0 3px #edf2fb;
+}
+
+.activity-content {
+  border: 1px solid #cad5ea;
+  border-radius: 12px;
+  background: #fff;
+  padding: 12px;
+}
+
+.activity-content header {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.activity-type {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #3b4f7d;
+}
+
+.activity-content time {
+  color: #617295;
+  font-size: 12px;
+}
+
+.activity-content p {
+  margin: 8px 0;
+  font-size: 15px;
+}
+
+.activity-meta {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  color: #607198;
+  font-size: 13px;
+}
+
+.activity-pagination {
+  margin-top: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: #4e6088;
+}
+
+.activity-pagination button {
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid #bccae2;
+  background: #fff;
+  color: #1f3a70;
+  padding: 0 10px;
+  margin-left: 8px;
+}
+
+.activity-pagination button:disabled {
+  opacity: 0.45;
+}
+
+@media (max-width: 900px) {
+  .activity-page {
+    width: 100%;
+    padding: 18px 14px 24px;
+  }
+
+  .activity-content header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .activity-pagination {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+}

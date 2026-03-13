@@ -1572,7 +1572,7 @@ const refreshBundle = async (tid) => {
           title="Get apps and extensions"
           aria-label="Get apps and extensions"
           onClick={() => {
-            navigate('/account#connectors');
+            navigate('/connectors-manage');
             setAccountQuickMenuOpen(false);
             setKnowledgeMenuOpen(false);
           }}
@@ -1693,6 +1693,10 @@ const refreshBundle = async (tid) => {
             <span className="jas-ud-item-label">PM Dashboard</span>
             {(PLAN_RANK[currentPlanKey] || 0) < 1 && <span className="jas-ud-item-badge">Essential+</span>}
           </button>
+          <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/projects'); }}>
+            <FontAwesomeIcon icon={faLayerGroup} />
+            <span className="jas-ud-item-label">Projects</span>
+          </button>
           <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/sessions'); }}>
             <FontAwesomeIcon icon={faLayerGroup} />
             <span className="jas-ud-item-label">Sessions</span>
@@ -1704,6 +1708,14 @@ const refreshBundle = async (tid) => {
           <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/insights'); }}>
             <FontAwesomeIcon icon={faChartLine} />
             <span className="jas-ud-item-label">Insights</span>
+          </button>
+          <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/reports'); }}>
+            <FontAwesomeIcon icon={faDownload} />
+            <span className="jas-ud-item-label">Reports</span>
+          </button>
+          <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/activity'); }}>
+            <FontAwesomeIcon icon={faClockRotateLeft} />
+            <span className="jas-ud-item-label">Activity</span>
           </button>
           <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/sessions?view=queue'); }}>
             <FontAwesomeIcon icon={faClockRotateLeft} />
@@ -1751,7 +1763,7 @@ const refreshBundle = async (tid) => {
           <button
             className="jas-ud-item"
             onClick={() => {
-              navigate('/account#connectors');
+              navigate('/connectors-manage');
               setAccountQuickMenuOpen(false);
               setKnowledgeMenuOpen(false);
             }}

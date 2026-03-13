@@ -31,8 +31,12 @@ import PluginsPage from './pages/Resources/PluginsPage';
 import PricingResult from './jaspenInterface/PricingResult/PricingResult';
 import Dashboard     from './jaspenInterface/Jaspen Cleanup/Dashboard/Dashboard';
 import Sessions      from './jaspenInterface/Sessions/Sessions';
+import Projects      from './jaspenInterface/Projects/Projects';
 import Scores        from './jaspenInterface/Scores/Scores';
 import Insights      from './jaspenInterface/Insights/Insights';
+import Reports       from './jaspenInterface/Reports/Reports';
+import Activity      from './jaspenInterface/Activity/Activity';
+import ConnectorsManage from './jaspenInterface/Connectors/ConnectorsManage';
 import Account       from './jaspenInterface/Account/Account';
 import PaymentPage   from './jaspenInterface/PaymentPage/PaymentPage';
 import JaspenAdmin   from './jaspenInterface/Admin/JaspenAdmin';
@@ -106,6 +110,7 @@ export default function App() {
           element={withShell(<JaspenWorkspace />, { title: 'Jaspen', showHeader: false, fullBleed: true, noPadding: true })}
         />
         <Route path="/strategy" element={<Navigate to="/new" replace />} />
+        <Route path="/projects"  element={<ProtectedRoute>{withShell(<Projects />, { showHeader: false, fullBleed: true, noPadding: true })}</ProtectedRoute>} />
         <Route path="/sessions"  element={<ProtectedRoute>{withShell(<Sessions />)}</ProtectedRoute>} />
         <Route
           path="/scores"
@@ -120,6 +125,30 @@ export default function App() {
           element={
             <ProtectedRoute>
               {withShell(<Insights />, { showHeader: false, fullBleed: true, noPadding: true })}
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/reports"
+          element={
+            <ProtectedRoute>
+              {withShell(<Reports />, { showHeader: false, fullBleed: true, noPadding: true })}
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/activity"
+          element={
+            <ProtectedRoute>
+              {withShell(<Activity />, { showHeader: false, fullBleed: true, noPadding: true })}
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/connectors-manage"
+          element={
+            <ProtectedRoute>
+              {withShell(<ConnectorsManage />, { showHeader: false, fullBleed: true, noPadding: true })}
             </ProtectedRoute>
           }
         />
