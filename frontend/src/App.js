@@ -7,6 +7,7 @@ import './App.css';
 
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import ProtectedRoute from './homeSections/ProtectedRoute';
+import RequireTeamAccess from './shared/auth/RequireTeamAccess';
 import { AppShell } from './jaspenInterface/layout';
 
 // Shared
@@ -139,12 +140,14 @@ export default function App() {
           path="/team"
           element={
             <ProtectedRoute>
-              {withShell(<Team />, {
-                title: 'Team',
-                showHeader: false,
-                fullBleed: true,
-                noPadding: true,
-              })}
+              <RequireTeamAccess>
+                {withShell(<Team />, {
+                  title: 'Team',
+                  showHeader: false,
+                  fullBleed: true,
+                  noPadding: true,
+                })}
+              </RequireTeamAccess>
             </ProtectedRoute>
           }
         />

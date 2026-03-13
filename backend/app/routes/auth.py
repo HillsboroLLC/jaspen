@@ -25,7 +25,7 @@ from app.billing_config import (
     normalize_plan_key,
     to_public_plan,
 )
-from app.orgs import ensure_default_organization_for_user
+from app.orgs import ensure_default_organization_for_user, organization_access_payload_for_user
 
 
 auth_bp = Blueprint('auth', __name__)
@@ -112,6 +112,7 @@ def _user_payload(user):
         'subscription_plan': to_public_plan(user.subscription_plan),
         'credits_remaining': user.credits_remaining,
         'active_organization_id': user.active_organization_id,
+        **organization_access_payload_for_user(user),
     }
 
 

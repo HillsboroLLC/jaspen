@@ -1695,6 +1695,53 @@
   width: 100%;
 }
 
+.jas-starter-selector {
+  max-width: 920px;
+  margin: 0 auto 10px;
+}
+
+.jas-starter-selector label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--gray-600);
+}
+
+.jas-starter-selector-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.jas-starter-selector-row select {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--gray-300);
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  color: var(--navy);
+  background: var(--white);
+}
+
+.jas-starter-clear-btn {
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--gray-300);
+  background: var(--white);
+  color: var(--gray-700);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.jas-starter-description {
+  margin: 6px 0 0;
+  font-size: 0.75rem;
+  color: var(--gray-600);
+}
+
 .jas-objective-tags {
   display: flex;
   align-items: center;
@@ -3802,6 +3849,69 @@
 .begin-project-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.save-starter-btn {
+  background: var(--white);
+  color: var(--navy);
+  border: 1px solid var(--gray-300);
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+  font-family: var(--font);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.save-starter-btn:hover {
+  border-color: var(--navy);
+  background: var(--gray-50);
+}
+
+.save-starter-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.jas-save-starter-modal {
+  width: min(460px, 100%);
+}
+
+.jas-save-starter-form {
+  display: grid;
+  gap: 10px;
+}
+
+.jas-save-starter-form label {
+  font-size: 0.78rem;
+  color: var(--gray-700);
+  font-weight: 600;
+}
+
+.jas-save-starter-form input,
+.jas-save-starter-form textarea {
+  width: 100%;
+  border: 1px solid var(--gray-300);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: 0.84rem;
+  font-family: var(--font);
+  color: var(--navy);
+  background: var(--white);
+}
+
+.jas-save-starter-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
 }
 
 /* Workspace content */

@@ -48,6 +48,8 @@ export const endpoints = {
   insightsUpload:   `${API_BASE}/api/insights/upload`,
   insightsAnalyze:  `${API_BASE}/api/insights/analyze`,
   insightsDatasets: `${API_BASE}/api/insights/datasets`,
+  starters:         `${API_BASE}/api/starters`,
+  starterById:      (starterId) => `${API_BASE}/api/starters/${encodeURIComponent(starterId)}`,
   deleteAnalysis:   (analysisId) => `${API_BASE}/api/strategy/analyses/${encodeURIComponent(analysisId)}`,
   // Connector settings and PM sync profile
   connectorStatus: `${API_BASE}/api/connectors/status`,
@@ -230,7 +232,7 @@ export const Jaspen = {
   },
 
   // ---------- Conversational intake (Claude via /api/chat) ----------
-async convoStart({ description, project_id, model_type, strategy_objective }) {
+async convoStart({ description, project_id, model_type, strategy_objective, intake_context, lever_defaults, starter_id }) {
     console.log('[JaspenClient.convoStart] ENTRY', {
       description: description?.substring(0, 50),
       project_id,
@@ -247,6 +249,9 @@ async convoStart({ description, project_id, model_type, strategy_objective }) {
         name: description.substring(0, 60) || 'New Idea',
         model_type: model_type || undefined,
         strategy_objective: strategy_objective || undefined,
+        intake_context: intake_context && typeof intake_context === 'object' ? intake_context : undefined,
+        lever_defaults: lever_defaults && typeof lever_defaults === 'object' ? lever_defaults : undefined,
+        starter_id: starter_id || undefined,
       },
       { withSid: true }
     );
@@ -265,6 +270,7 @@ async convoStart({ description, project_id, model_type, strategy_objective }) {
       readiness: data.readiness || { percent: 0, categories: [] },
       model_type: data.model_type || null,
       strategy_objective: data.strategy_objective || null,
+      intake_context: data.intake_context || null,
       status: data.status || 'gathering_info',
     };
   },
@@ -536,6 +542,27 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
       { dataset_id, question: String(question || '').trim() },
       { withSid: true }
     ),
+
+  listStarters: async () =>
+    getJSON(endpoints.starters, { withSid: true }),
+
+  createStarter: async ({ thread_id, name, description = '', is_shared = false } = {}) =>
+    postJSON(
+      endpoints.starters,
+      {
+        thread_id,
+        name,
+        description: String(description || '').trim() || undefined,
+        is_shared: Boolean(is_shared),
+      },
+      { withSid: true }
+    ),
+
+  updateStarter: async (starterId, payload = {}) =>
+    patchJSON(endpoints.starterById(starterId), payload, { withSid: true }),
+
+  deleteStarter: async (starterId) =>
+    del(endpoints.starterById(starterId), { withSid: true }),
   
   async getLevers(threadId) {
     return getJSON(endpoints.getLevers(threadId));

@@ -399,6 +399,13 @@ const selectedVariant = useMemo(() => {
   const [analysisHistory, setAnalysisHistory] = useState([]);
   const [clearingHistory, setClearingHistory] = useState(false);
   const [savedScenarios, setSavedScenarios] = useState([]);
+  const [savedStarterConfigs, setSavedStarterConfigs] = useState([]);
+  const [startersLoading, setStartersLoading] = useState(false);
+  const [selectedStarterId, setSelectedStarterId] = useState('');
+  const [saveStarterModalOpen, setSaveStarterModalOpen] = useState(false);
+  const [newStarterName, setNewStarterName] = useState('');
+  const [newStarterDescription, setNewStarterDescription] = useState('');
+  const [savingStarter, setSavingStarter] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [helpMessages, setHelpMessages] = useState([]);
 const [helpInput, setHelpInput] = useState('');
@@ -694,6 +701,7 @@ const refreshBundle = async (tid) => {
   const userInitials = getInitials(displayName || user?.name || user?.email || savedEmail || 'User');
   const userName = displayName || user?.name || user?.email?.split('@')[0] || savedEmail?.split?.('@')[0] || 'User';
   const userEmail = user?.email || savedEmail || 'user@example.com';
+  const canAccessTeam = Boolean(user?.can_access_team);
   const notificationsStorageKey = useMemo(() => {
     if (user?.id) return `jaspen_notifications_id_${user.id}`;
     if (user?.email) return `jaspen_notifications_email_${String(user.email).toLowerCase()}`;
@@ -1589,9 +1597,11 @@ const refreshBundle = async (tid) => {
           <button type="button" onClick={() => { openExternal('/login'); setAccountQuickMenuOpen(false); }}>
             Gift Jaspen
           </button>
-          <button type="button" onClick={() => { navigate('/team'); setAccountQuickMenuOpen(false); }}>
-            Team
-          </button>
+          {canAccessTeam && (
+            <button type="button" onClick={() => { navigate('/team'); setAccountQuickMenuOpen(false); }}>
+              Team
+            </button>
+          )}
           {canAccessEnterpriseAdmin && (
             <button type="button" onClick={() => { navigate('/enterprise-admin'); setAccountQuickMenuOpen(false); }}>
               Enterprise Admin
@@ -1707,10 +1717,12 @@ const refreshBundle = async (tid) => {
             <span className="jas-ud-item-label">Notifications</span>
             <span className="jas-ud-item-badge">{unreadNotificationCount}</span>
           </button>
-          <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/team'); }}>
-            <FontAwesomeIcon icon={faUser} />
-            <span className="jas-ud-item-label">Team</span>
-          </button>
+          {canAccessTeam && (
+            <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/team'); }}>
+              <FontAwesomeIcon icon={faUser} />
+              <span className="jas-ud-item-label">Team</span>
+            </button>
+          )}
           <button className="jas-ud-item" onClick={openDisplayNameEditor}>
             <FontAwesomeIcon icon={faUser} />
             <span className="jas-ud-item-label">Edit display name</span>
@@ -1938,6 +1950,10 @@ const [aiScenarioBusy, setAiScenarioBusy] = useState(false);
   // Toast notifications for chat actions
   const { toasts, showToast, dismissToast } = useToast();
   const objectiveLabel = OBJECTIVE_LABEL_BY_KEY[strategyObjective] || OBJECTIVE_LABEL_BY_KEY.balanced;
+  const selectedStarter = useMemo(
+    () => savedStarterConfigs.find((starter) => starter?.id === selectedStarterId) || null,
+    [savedStarterConfigs, selectedStarterId]
+  );
 
   const applyStrategyObjective = useCallback(async (nextObjective, options = {}) => {
     const normalized = normalizeStrategyObjective(nextObjective);
@@ -2000,6 +2016,33 @@ const [aiScenarioBusy, setAiScenarioBusy] = useState(false);
   useEffect(() => {
     fetchSessions();
   }, []);
+
+  const loadSavedStarters = useCallback(async () => {
+    setStartersLoading(true);
+    try {
+      const resp = await Jaspen.listStarters();
+      const rows = Array.isArray(resp?.starters) ? resp.starters : [];
+      setSavedStarterConfigs(rows);
+    } catch (err) {
+      console.error('[loadSavedStarters] failed', err);
+      setSavedStarterConfigs([]);
+    } finally {
+      setStartersLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadSavedStarters();
+  }, [loadSavedStarters]);
+
+  useEffect(() => {
+    if (sessionId || messages.length > 0) return;
+    if (!selectedStarter) return;
+    const starterObjective = normalizeStrategyObjective(
+      selectedStarter?.objective || selectedStarter?.intake_context?.objective || 'balanced'
+    );
+    applyStrategyObjective(starterObjective, { persist: false, markExplicit: true, silent: true });
+  }, [selectedStarter, sessionId, messages.length, applyStrategyObjective]);
 
   // --- Chat helper that returns reply + readiness ---
   const chatWithReadiness = async (message, forcedSid) => {
@@ -2729,6 +2772,46 @@ const renderSelectedObjectivePill = (className = '') => {
   );
 };
 
+const renderStarterSelector = (className = '') => {
+  if (sessionId || messages.length > 0) return null;
+  if (!startersLoading && savedStarterConfigs.length === 0) return null;
+  return (
+    <div className={`jas-starter-selector ${className}`.trim()}>
+      <label htmlFor="jas-starter-select">Start from saved configuration</label>
+      <div className="jas-starter-selector-row">
+        <select
+          id="jas-starter-select"
+          value={selectedStarterId}
+          onChange={(e) => setSelectedStarterId(e.target.value)}
+          disabled={busy || startersLoading}
+        >
+          <option value="">
+            {startersLoading ? 'Loading configurations…' : 'Choose saved configuration'}
+          </option>
+          {savedStarterConfigs.map((starter) => (
+            <option key={starter.id} value={starter.id}>
+              {starter.name}
+            </option>
+          ))}
+        </select>
+        {selectedStarterId && (
+          <button
+            type="button"
+            className="jas-starter-clear-btn"
+            onClick={() => setSelectedStarterId('')}
+            disabled={busy}
+          >
+            Clear
+          </button>
+        )}
+      </div>
+      {selectedStarter?.description && (
+        <p className="jas-starter-description">{selectedStarter.description}</p>
+      )}
+    </div>
+  );
+};
+
 const resizeComposerTextarea = useCallback((el) => {
   if (!el) return;
   el.style.height = 'auto';
@@ -2781,7 +2864,7 @@ useEffect(() => {
 
   // === Conversation Start ===
   // Flow: Call Jaspen.convoStart → set session → await audit → append message → save
-  async function startConversation(description) {
+  async function startConversation(description, options = {}) {
     console.log('[startConversation] ENTRY', { description: description?.substring(0, 50) });
     setBusy(true); setError(null);
 
@@ -2789,12 +2872,28 @@ useEffect(() => {
     setReadinessAudit(null);
 
     try {
+      const starterIntakeContext = (selectedStarter && typeof selectedStarter.intake_context === 'object')
+        ? selectedStarter.intake_context
+        : {};
+      const selectedObjectiveLabel = OBJECTIVE_LABEL_BY_KEY[strategyObjective] || OBJECTIVE_LABEL_BY_KEY.balanced;
+      const intakeContext = {
+        ...starterIntakeContext,
+        ...(options.intake_context && typeof options.intake_context === 'object' ? options.intake_context : {}),
+        objective: selectedObjectiveLabel,
+      };
+      const leverDefaults = (options.lever_defaults && typeof options.lever_defaults === 'object')
+        ? options.lever_defaults
+        : (selectedStarter && typeof selectedStarter.lever_defaults === 'object' ? selectedStarter.lever_defaults : undefined);
+
       // Step 1: Call Jaspen.convoStart (client wrapper)
       const data = await Jaspen.convoStart({
         description,
         system_prompt: null,
         model_type: selectedModelType,
         strategy_objective: strategyObjective,
+        intake_context: intakeContext,
+        lever_defaults: leverDefaults,
+        starter_id: selectedStarter?.id || undefined,
       });
 
       console.log('[startConversation] convoStart returned:', {
@@ -2829,6 +2928,7 @@ useEffect(() => {
       }
       setStrategyObjective(normalizeStrategyObjective(data?.strategy_objective || strategyObjective));
       setObjectiveExplicitlySet(Boolean(data?.objective_explicitly_set) || objectiveExplicitlySet);
+      setSelectedStarterId('');
 
 
       // REMOVED - AI Agent backend handles persistence automatically
@@ -3067,6 +3167,47 @@ async function onBeginProject() {
         setTimeout(() => setBeginBusy(false), 1200);
     }
 }
+
+const openSaveStarterModal = () => {
+  const defaultName = deriveIdeaTitle({
+    result: activeScorecard || analysisResult,
+    messages,
+    fallback: 'Starter Configuration',
+  });
+  setNewStarterName(defaultName.slice(0, 255));
+  setNewStarterDescription('');
+  setSaveStarterModalOpen(true);
+};
+
+const handleSaveStarter = async () => {
+  const threadId = currentSessionId || sessionId;
+  const name = String(newStarterName || '').trim();
+  if (!threadId) {
+    showToast('No active thread to save.', 'error');
+    return;
+  }
+  if (!name) {
+    showToast('Starter name is required.', 'error');
+    return;
+  }
+
+  setSavingStarter(true);
+  try {
+    await Jaspen.createStarter({
+      thread_id: threadId,
+      name,
+      description: String(newStarterDescription || '').trim(),
+    });
+    await loadSavedStarters();
+    setSaveStarterModalOpen(false);
+    showToast('Saved as starter configuration.', 'success');
+  } catch (err) {
+    console.error('[handleSaveStarter] failed', err);
+    showToast(err?.message || 'Failed to save starter.', 'error');
+  } finally {
+    setSavingStarter(false);
+  }
+};
 
 
 
@@ -5181,6 +5322,14 @@ setView(id === 'chat' ? 'intake' : id);
                     <FontAwesomeIcon icon={beginBusy ? faSpinner : faPlay} spin={beginBusy} />
                     <span>{beginBusy ? "Working…" : "Project"}</span>
                   </button>
+                  <button
+                    type="button"
+                    className="save-starter-btn"
+                    onClick={openSaveStarterModal}
+                    disabled={savingStarter || beginBusy || !(currentSessionId || sessionId)}
+                  >
+                    <span>{savingStarter ? 'Saving…' : 'Save as Starter'}</span>
+                  </button>
                 </div>
               )}
 
@@ -5737,6 +5886,66 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
       {renderNotificationsModal()}
       {renderNameModal()}
       {renderBillingModal()}
+      {saveStarterModalOpen && (
+        <div className="jas-modal-overlay" role="dialog" aria-modal="true" aria-label="Save starter configuration">
+          <div className="jas-modal-card jas-save-starter-modal">
+            <div className="jas-modal-head">
+              <h3>Save as Starter</h3>
+              <button
+                type="button"
+                className="jas-ai-mini-btn"
+                onClick={() => setSaveStarterModalOpen(false)}
+                disabled={savingStarter}
+              >
+                Close
+              </button>
+            </div>
+            <div className="jas-modal-body">
+              <div className="jas-save-starter-form">
+                <label htmlFor="jas-starter-name">Name</label>
+                <input
+                  id="jas-starter-name"
+                  type="text"
+                  value={newStarterName}
+                  maxLength={255}
+                  onChange={(e) => setNewStarterName(e.target.value)}
+                  disabled={savingStarter}
+                  placeholder="Growth Playbook Starter"
+                />
+
+                <label htmlFor="jas-starter-description">Description (optional)</label>
+                <textarea
+                  id="jas-starter-description"
+                  rows={3}
+                  value={newStarterDescription}
+                  onChange={(e) => setNewStarterDescription(e.target.value)}
+                  disabled={savingStarter}
+                  placeholder="Context and assumptions this starter captures."
+                />
+
+                <div className="jas-save-starter-actions">
+                  <button
+                    type="button"
+                    className="jas-ai-mini-btn secondary"
+                    onClick={() => setSaveStarterModalOpen(false)}
+                    disabled={savingStarter}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="jas-ai-mini-btn primary"
+                    onClick={handleSaveStarter}
+                    disabled={savingStarter || !String(newStarterName || '').trim()}
+                  >
+                    {savingStarter ? 'Saving…' : 'Save Starter'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Content */}
       <div className="jas-chat-content">
@@ -5773,6 +5982,7 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
 
         {/* Input Area - Manus Style */}
         <div className="jas-chat-input-area">
+          {renderStarterSelector()}
           <input
             ref={fileInputRef}
             id="jas-file-input"

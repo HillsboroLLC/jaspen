@@ -85,7 +85,7 @@ class User(db.Model):
     created_at = db.Column(
         db.DateTime,
         nullable=False,
-        default=datetime.utcnow
+        default=datetime.utcnow,
     )
     updated_at = db.Column(
         db.DateTime,
@@ -160,7 +160,8 @@ class Organization(db.Model):
     created_at = db.Column(
         db.DateTime,
         nullable=False,
-        default=datetime.utcnow
+        default=datetime.utcnow,
+        index=True,
     )
     updated_at = db.Column(
         db.DateTime,
@@ -233,7 +234,8 @@ class OrganizationMember(db.Model):
     created_at = db.Column(
         db.DateTime,
         nullable=False,
-        default=datetime.utcnow
+        default=datetime.utcnow,
+        index=True,
     )
     updated_at = db.Column(
         db.DateTime,
@@ -395,6 +397,58 @@ class UserDataset(db.Model):
             'column_names': self.column_names if isinstance(self.column_names, list) else [],
             'data_preview': self.data_preview if isinstance(self.data_preview, list) else [],
             'status': self.status,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class SavedStarter(db.Model):
+    __tablename__ = 'saved_starters'
+
+    id = db.Column(
+        db.String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4())
+    )
+    user_id = db.Column(
+        db.String(36),
+        db.ForeignKey('users.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    organization_id = db.Column(
+        db.String(36),
+        db.ForeignKey('organizations.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    name = db.Column(db.String(255), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    objective = db.Column(db.String(100), nullable=True)
+    lever_defaults = db.Column(db.JSON, nullable=True)
+    scoring_weights = db.Column(db.JSON, nullable=True)
+    intake_context = db.Column(db.JSON, nullable=True)
+    is_shared = db.Column(db.Boolean, nullable=False, default=False, index=True)
+    source_thread_id = db.Column(db.String(255), nullable=True, index=True)
+    created_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        index=True,
+    )
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'organization_id': self.organization_id,
+            'name': self.name,
+            'description': self.description,
+            'objective': self.objective,
+            'lever_defaults': self.lever_defaults if isinstance(self.lever_defaults, dict) else {},
+            'scoring_weights': self.scoring_weights if isinstance(self.scoring_weights, dict) else {},
+            'intake_context': self.intake_context if isinstance(self.intake_context, dict) else {},
+            'is_shared': bool(self.is_shared),
+            'source_thread_id': self.source_thread_id,
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }
 

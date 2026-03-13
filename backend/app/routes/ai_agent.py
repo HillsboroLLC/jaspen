@@ -53,6 +53,36 @@ STRATEGY_OBJECTIVE_ALIASES = {
     "expansion": "growth",
 }
 
+INTAKE_COMPANY_SIZE_ALIASES = {
+    "startup": "startup",
+    "start-up": "startup",
+    "small business": "smb",
+    "small-business": "smb",
+    "smb": "smb",
+    "mid market": "mid-market",
+    "mid-market": "mid-market",
+    "enterprise": "enterprise",
+}
+
+INTAKE_OBJECTIVE_GUIDANCE = {
+    "balanced": (
+        "Balance decisions across financial impact, execution feasibility, market position, and "
+        "operational efficiency. Ask tradeoff questions when one area improves at the expense of another."
+    ),
+    "cost": (
+        "Prioritize discovery on cost structure, budget constraints, waste reduction opportunities, "
+        "efficiency gaps, and ROI targets."
+    ),
+    "speed": (
+        "Prioritize discovery on timeline compression, critical-path blockers, dependency sequencing, "
+        "resource bottlenecks, and fast delivery milestones."
+    ),
+    "growth": (
+        "Prioritize discovery on market opportunity size, customer acquisition, competitive positioning, "
+        "revenue expansion paths, and scaling constraints."
+    ),
+}
+
 
 def normalize_strategy_objective(value, default="balanced"):
     text = str(value or "").strip().lower()
@@ -62,6 +92,69 @@ def normalize_strategy_objective(value, default="balanced"):
         return STRATEGY_OBJECTIVE_ALIASES[text]
     compact = text.replace("_", " ").replace("-", " ")
     return STRATEGY_OBJECTIVE_ALIASES.get(compact, default)
+
+
+def _normalize_company_size(value):
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    if text in INTAKE_COMPANY_SIZE_ALIASES:
+        return INTAKE_COMPANY_SIZE_ALIASES[text]
+    compact = text.replace("_", " ").replace("-", " ")
+    return INTAKE_COMPANY_SIZE_ALIASES.get(compact)
+
+
+def _sanitize_intake_context(raw_context, fallback_objective="balanced"):
+    base_objective = normalize_strategy_objective(fallback_objective)
+    context = raw_context if isinstance(raw_context, dict) else {}
+
+    objective = normalize_strategy_objective(context.get("objective"), default=base_objective)
+    industry = str(context.get("industry") or "").strip()
+    company_size = _normalize_company_size(context.get("company_size"))
+
+    cleaned = {"objective": objective}
+    if industry:
+        cleaned["industry"] = industry[:120]
+    if company_size:
+        cleaned["company_size"] = company_size
+    return cleaned
+
+
+def _intake_context_prompt_suffix(intake_context):
+    if not isinstance(intake_context, dict):
+        return ""
+
+    objective = normalize_strategy_objective(intake_context.get("objective"), default="balanced")
+    guidance = INTAKE_OBJECTIVE_GUIDANCE.get(objective, INTAKE_OBJECTIVE_GUIDANCE["balanced"])
+
+    context_lines = [
+        "Intake context:",
+        f"- Objective: {objective}",
+        f"- Focus guidance: {guidance}",
+    ]
+
+    industry = str(intake_context.get("industry") or "").strip()
+    if industry:
+        context_lines.append(f"- Industry: {industry}")
+
+    company_size = _normalize_company_size(intake_context.get("company_size"))
+    if company_size:
+        context_lines.append(f"- Company size: {company_size}")
+
+    return "\n" + "\n".join(context_lines)
+
+
+def _sanitize_lever_defaults(raw_defaults):
+    if not isinstance(raw_defaults, dict):
+        return {}
+    cleaned = {}
+    for key, value in raw_defaults.items():
+        lever_id = str(key or "").strip()
+        if not lever_id:
+            continue
+        if isinstance(value, (int, float, bool, str)) or value is None:
+            cleaned[lever_id] = value
+    return cleaned
 
 
 READINESS_SPEC_V1 = {
@@ -359,8 +452,11 @@ def _new_session(
     objective_explicit=False,
     organization_id=None,
     visibility="private",
+    intake_context=None,
+    starter_lever_defaults=None,
 ):
     now = _iso_now()
+    normalized_objective = normalize_strategy_objective(strategy_objective)
     return {
         "session_id": thread_id,
         "name": name or "Jaspen Intake",
@@ -377,8 +473,10 @@ def _new_session(
         "organization_id": organization_id,
         "visibility": str(visibility or "private").strip().lower() or "private",
         "shared_with_user_ids": [],
-        "strategy_objective": normalize_strategy_objective(strategy_objective),
+        "strategy_objective": normalized_objective,
         "objective_explicitly_set": bool(objective_explicit),
+        "intake_context": _sanitize_intake_context(intake_context, fallback_objective=normalized_objective),
+        "starter_lever_defaults": _sanitize_lever_defaults(starter_lever_defaults),
     }
 
 
@@ -937,6 +1035,7 @@ def _generate_assistant_reply(
     user=None,
     user_id=None,
     thread_id=None,
+    intake_context=None,
 ):
     fallback_reply = _next_question(readiness)
     api_key = _anthropic_api_key()
@@ -965,6 +1064,7 @@ def _generate_assistant_reply(
         "When the user asks to modify scenarios or WBS tasks, call the relevant tools instead of only describing steps. "
         "After a tool succeeds, summarize exactly what was changed."
     )
+    system_prompt = f"{system_prompt}{_intake_context_prompt_suffix(intake_context)}"
     max_turns = int((context_budget or {}).get("recent_turns") or 16)
     max_turns = max(8, min(80, max_turns))
     messages = _anthropic_messages_from_history(chat_history, max_turns=max_turns)
@@ -1528,6 +1628,15 @@ def conversation_start():
 
     objective_supplied = any(key in data for key in ("strategy_objective", "objective"))
     requested_objective = normalize_strategy_objective(data.get("strategy_objective") or data.get("objective"))
+    intake_context_supplied = isinstance(data.get("intake_context"), dict)
+    intake_context_raw = data.get("intake_context") if intake_context_supplied else None
+    intake_objective_raw = (intake_context_raw or {}).get("objective") if isinstance(intake_context_raw, dict) else None
+    if intake_objective_raw:
+        intake_objective = normalize_strategy_objective(intake_objective_raw, default=requested_objective)
+        if not objective_supplied:
+            requested_objective = intake_objective
+            objective_supplied = True
+    starter_lever_defaults = _sanitize_lever_defaults(data.get("lever_defaults"))
 
     sessions = load_user_sessions(user_id)
     session = sessions.get(thread_id) or _new_session(
@@ -1538,6 +1647,8 @@ def conversation_start():
         strategy_objective=requested_objective,
         objective_explicit=objective_supplied,
         organization_id=active_org_id,
+        intake_context=intake_context_raw,
+        starter_lever_defaults=starter_lever_defaults,
     )
     session["organization_id"] = session.get("organization_id") or active_org_id
     session["created_by_user_id"] = session.get("created_by_user_id") or user_id
@@ -1550,6 +1661,24 @@ def conversation_start():
         session["objective_explicitly_set"] = True
     elif "objective_explicitly_set" not in session:
         session["objective_explicitly_set"] = False
+    if intake_context_supplied:
+        session["intake_context"] = _sanitize_intake_context(
+            intake_context_raw,
+            fallback_objective=session.get("strategy_objective"),
+        )
+    else:
+        session["intake_context"] = _sanitize_intake_context(
+            session.get("intake_context"),
+            fallback_objective=session.get("strategy_objective"),
+        )
+    session["intake_context"]["objective"] = normalize_strategy_objective(
+        session.get("strategy_objective"),
+        default=session["intake_context"].get("objective") or "balanced",
+    )
+    if starter_lever_defaults:
+        session["starter_lever_defaults"] = starter_lever_defaults
+    elif not isinstance(session.get("starter_lever_defaults"), dict):
+        session["starter_lever_defaults"] = {}
 
     chat_history = session.get("chat_history")
     if not isinstance(chat_history, list):
@@ -1567,6 +1696,7 @@ def conversation_start():
         user=user,
         user_id=user_id,
         thread_id=thread_id,
+        intake_context=session.get("intake_context"),
     )
 
     credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"])
@@ -1618,6 +1748,7 @@ def conversation_start():
         "status": "gathering_info",
         "strategy_objective": session.get("strategy_objective") or "balanced",
         "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
+        "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
         "organization_id": session.get("organization_id"),
         "visibility": session.get("visibility") or "private",
         "objective_options": list(STRATEGY_OBJECTIVE_OPTIONS),
@@ -1658,6 +1789,15 @@ def conversation_continue():
 
     objective_supplied = any(key in data for key in ("strategy_objective", "objective"))
     requested_objective = normalize_strategy_objective(data.get("strategy_objective") or data.get("objective"))
+    intake_context_supplied = isinstance(data.get("intake_context"), dict)
+    intake_context_raw = data.get("intake_context") if intake_context_supplied else None
+    intake_objective_raw = (intake_context_raw or {}).get("objective") if isinstance(intake_context_raw, dict) else None
+    if intake_objective_raw:
+        intake_objective = normalize_strategy_objective(intake_objective_raw, default=requested_objective)
+        if not objective_supplied:
+            requested_objective = intake_objective
+            objective_supplied = True
+    starter_lever_defaults = _sanitize_lever_defaults(data.get("lever_defaults"))
 
     session = session or _new_session(
         user_id,
@@ -1667,6 +1807,8 @@ def conversation_continue():
         strategy_objective=requested_objective,
         objective_explicit=objective_supplied,
         organization_id=active_org_id,
+        intake_context=intake_context_raw,
+        starter_lever_defaults=starter_lever_defaults,
     )
     session["organization_id"] = session.get("organization_id") or active_org_id
     session["created_by_user_id"] = session.get("created_by_user_id") or user_id
@@ -1679,6 +1821,24 @@ def conversation_continue():
         session["objective_explicitly_set"] = True
     elif "objective_explicitly_set" not in session:
         session["objective_explicitly_set"] = False
+    if intake_context_supplied:
+        session["intake_context"] = _sanitize_intake_context(
+            intake_context_raw,
+            fallback_objective=session.get("strategy_objective"),
+        )
+    else:
+        session["intake_context"] = _sanitize_intake_context(
+            session.get("intake_context"),
+            fallback_objective=session.get("strategy_objective"),
+        )
+    session["intake_context"]["objective"] = normalize_strategy_objective(
+        session.get("strategy_objective"),
+        default=session["intake_context"].get("objective") or "balanced",
+    )
+    if starter_lever_defaults:
+        session["starter_lever_defaults"] = starter_lever_defaults
+    elif not isinstance(session.get("starter_lever_defaults"), dict):
+        session["starter_lever_defaults"] = {}
     chat_history = session.get("chat_history")
     if not isinstance(chat_history, list):
         chat_history = []
@@ -1695,6 +1855,7 @@ def conversation_continue():
         user=user,
         user_id=user_id,
         thread_id=thread_id,
+        intake_context=session.get("intake_context"),
     )
 
     credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"])
@@ -1745,6 +1906,7 @@ def conversation_continue():
         "status": "ready_to_analyze" if readiness["overall"]["percent"] >= 85 else "gathering_info",
         "strategy_objective": session.get("strategy_objective") or "balanced",
         "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
+        "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
         "organization_id": session.get("organization_id"),
         "visibility": session.get("visibility") or "private",
         "objective_options": list(STRATEGY_OBJECTIVE_OPTIONS),
@@ -1836,6 +1998,11 @@ def list_threads():
             "model_type": normalize_model_type(candidate.get("model_type")) or None,
             "strategy_objective": normalize_strategy_objective(candidate.get("strategy_objective")),
             "objective_explicitly_set": bool(candidate.get("objective_explicitly_set")),
+            "intake_context": _sanitize_intake_context(
+                candidate.get("intake_context"),
+                fallback_objective=candidate.get("strategy_objective"),
+            ),
+            "starter_lever_defaults": _sanitize_lever_defaults(candidate.get("starter_lever_defaults")),
             "organization_id": candidate.get("organization_id"),
             "created_by_user_id": candidate.get("created_by_user_id"),
             "visibility": candidate.get("visibility") or "private",
@@ -1905,6 +2072,11 @@ def get_thread(thread_id):
         "model_type": normalize_model_type(session.get("model_type")) or None,
         "strategy_objective": normalize_strategy_objective(session.get("strategy_objective")),
         "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
+        "intake_context": _sanitize_intake_context(
+            session.get("intake_context"),
+            fallback_objective=session.get("strategy_objective"),
+        ),
+        "starter_lever_defaults": _sanitize_lever_defaults(session.get("starter_lever_defaults")),
         "organization_id": session.get("organization_id"),
         "created_by_user_id": session.get("created_by_user_id"),
         "visibility": session.get("visibility") or "private",
@@ -1922,6 +2094,11 @@ def get_thread(thread_id):
         "model_type": normalize_model_type(session.get("model_type")) or None,
         "strategy_objective": normalize_strategy_objective(session.get("strategy_objective")),
         "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
+        "intake_context": _sanitize_intake_context(
+            session.get("intake_context"),
+            fallback_objective=session.get("strategy_objective"),
+        ),
+        "starter_lever_defaults": _sanitize_lever_defaults(session.get("starter_lever_defaults")),
         "organization_id": session.get("organization_id"),
         "created_by_user_id": session.get("created_by_user_id"),
         "visibility": session.get("visibility") or "private",
@@ -1950,8 +2127,20 @@ def update_thread(thread_id):
     visibility_supplied = "visibility" in data
     shared_users_supplied = "shared_with_user_ids" in data
     objective_explicit_supplied = "objective_explicitly_set" in data
-    if not name and not objective_supplied and not objective_explicit_supplied and not visibility_supplied and not shared_users_supplied:
-        return jsonify({"error": "name, strategy_objective, visibility, or shared_with_user_ids is required"}), 400
+    intake_context_supplied = "intake_context" in data
+    starter_lever_defaults_supplied = "starter_lever_defaults" in data or "lever_defaults" in data
+    if (
+        not name
+        and not objective_supplied
+        and not objective_explicit_supplied
+        and not visibility_supplied
+        and not shared_users_supplied
+        and not intake_context_supplied
+        and not starter_lever_defaults_supplied
+    ):
+        return jsonify(
+            {"error": "name, strategy_objective, intake_context, visibility, or shared_with_user_ids is required"}
+        ), 400
 
     user_id = get_jwt_identity()
     sessions = load_user_sessions(user_id) or {}
@@ -1972,6 +2161,27 @@ def update_thread(thread_id):
         session["objective_explicitly_set"] = True
     elif "objective_explicitly_set" not in session:
         session["objective_explicitly_set"] = False
+    if intake_context_supplied:
+        session["intake_context"] = _sanitize_intake_context(
+            data.get("intake_context"),
+            fallback_objective=session.get("strategy_objective"),
+        )
+    else:
+        session["intake_context"] = _sanitize_intake_context(
+            session.get("intake_context"),
+            fallback_objective=session.get("strategy_objective"),
+        )
+    session["intake_context"]["objective"] = normalize_strategy_objective(
+        session.get("strategy_objective"),
+        default=session["intake_context"].get("objective") or "balanced",
+    )
+    if starter_lever_defaults_supplied:
+        incoming_defaults = data.get("starter_lever_defaults")
+        if incoming_defaults is None and "lever_defaults" in data:
+            incoming_defaults = data.get("lever_defaults")
+        session["starter_lever_defaults"] = _sanitize_lever_defaults(incoming_defaults)
+    elif not isinstance(session.get("starter_lever_defaults"), dict):
+        session["starter_lever_defaults"] = {}
     if visibility_supplied:
         raw_visibility = str(data.get("visibility") or "").strip().lower()
         if raw_visibility in {"private", "team", "specific"}:
@@ -2001,6 +2211,11 @@ def update_thread(thread_id):
         "session_id": resolved_thread_id,
         "strategy_objective": normalize_strategy_objective(session.get("strategy_objective")),
         "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
+        "intake_context": _sanitize_intake_context(
+            session.get("intake_context"),
+            fallback_objective=session.get("strategy_objective"),
+        ),
+        "starter_lever_defaults": _sanitize_lever_defaults(session.get("starter_lever_defaults")),
         "visibility": session.get("visibility") or "private",
         "shared_with_user_ids": session.get("shared_with_user_ids") if isinstance(session.get("shared_with_user_ids"), list) else [],
         "chat_history": chat_history,
@@ -2014,6 +2229,11 @@ def update_thread(thread_id):
             "name": session.get("name") or "Jaspen Intake",
             "strategy_objective": normalize_strategy_objective(session.get("strategy_objective")),
             "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
+            "intake_context": _sanitize_intake_context(
+                session.get("intake_context"),
+                fallback_objective=session.get("strategy_objective"),
+            ),
+            "starter_lever_defaults": _sanitize_lever_defaults(session.get("starter_lever_defaults")),
             "visibility": session.get("visibility") or "private",
             "shared_with_user_ids": session.get("shared_with_user_ids") if isinstance(session.get("shared_with_user_ids"), list) else [],
             "status": session.get("status") or "in_progress",

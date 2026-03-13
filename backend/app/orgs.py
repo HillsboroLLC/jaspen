@@ -396,6 +396,40 @@ def active_membership_for_user(org_id, user_id):
     ).first()
 
 
+def organization_access_payload_for_user(user):
+    if not isinstance(user, User):
+        return {
+            "active_organization_plan_key": None,
+            "can_access_team": False,
+            "can_access_enterprise_admin": False,
+        }
+
+    active_org = None
+    if user.active_organization_id:
+        active_org = Organization.query.filter_by(id=user.active_organization_id).first()
+
+    membership_plans = (
+        db.session.query(Organization.plan_key)
+        .join(OrganizationMember, OrganizationMember.organization_id == Organization.id)
+        .filter(
+            OrganizationMember.user_id == user.id,
+            OrganizationMember.status == "active",
+        )
+        .all()
+    )
+    normalized_plans = {
+        to_public_plan(plan_key)
+        for (plan_key,) in membership_plans
+        if str(plan_key or "").strip()
+    }
+
+    return {
+        "active_organization_plan_key": to_public_plan(active_org.plan_key) if active_org else None,
+        "can_access_team": bool(normalized_plans.intersection({"team", "enterprise"})),
+        "can_access_enterprise_admin": "enterprise" in normalized_plans,
+    }
+
+
 def invitation_payload(invite):
     if not isinstance(invite, OrganizationInvitation):
         return {}
