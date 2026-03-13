@@ -23,6 +23,7 @@ from app.orgs import (
     resolve_active_org_for_user,
     role_has_capacity,
     role_label,
+    seat_policy_for_plan,
     seat_policy_overrides_for_org,
     touch_member_activity,
 )
@@ -42,7 +43,7 @@ def _normalized_role_key(value):
     return key if key in ORG_ROLES else None
 
 
-def _parse_seat_overrides(raw_overrides, used_by_role):
+def _parse_seat_overrides(raw_overrides, used_by_role, base_policy):
     if not isinstance(raw_overrides, dict):
         return None, "seat_policy_overrides must be an object keyed by role"
 
@@ -61,6 +62,13 @@ def _parse_seat_overrides(raw_overrides, used_by_role):
         used = int(used_by_role.get(role, 0))
         if parsed is not None and parsed < used:
             return None, f"Seat limit for '{role}' cannot be lower than current usage ({used})"
+
+        default_limit = base_policy.get(role)
+        if default_limit is not None:
+            if parsed is None:
+                return None, f"Unlimited is not available for role '{role}' on the current plan"
+            if int(parsed) > int(default_limit):
+                return None, f"Seat limit for '{role}' cannot exceed plan cap ({int(default_limit)})"
 
         normalized[role] = parsed
     return normalized, None
@@ -221,7 +229,8 @@ def update_seat_policy():
 
     usage = build_seat_usage(org)
     used_by_role = {role: int((usage.get(role) or {}).get("used") or 0) for role in ORG_ROLES}
-    parsed, parse_error = _parse_seat_overrides(raw_overrides, used_by_role)
+    base_policy = seat_policy_for_plan(org.plan_key)
+    parsed, parse_error = _parse_seat_overrides(raw_overrides, used_by_role, base_policy)
     if parse_error:
         return jsonify({"error": parse_error}), 400
 

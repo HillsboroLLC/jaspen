@@ -7,6 +7,9 @@ const ROLE_OPTIONS = ['owner', 'admin', 'creator', 'collaborator', 'viewer'];
 const INVITE_ROLE_OPTIONS = ['admin', 'creator', 'collaborator', 'viewer'];
 const VISIBILITY_OPTIONS = ['private', 'team', 'specific'];
 const SEAT_EDITABLE_ROLES = ROLE_OPTIONS.filter((role) => role !== 'owner');
+const SEAT_MODE_DEFAULT = 'default';
+const SEAT_MODE_LIMITED = 'limited';
+const SEAT_MODE_UNLIMITED = 'unlimited';
 const PREVIEW_ROLE_ACTUAL = '__actual__';
 const MANAGE_ROLE_SET = new Set(['owner', 'admin']);
 const EDIT_ROLE_SET = new Set(['owner', 'admin', 'creator', 'collaborator']);
@@ -59,12 +62,24 @@ function normalizeCsvIds(value) {
 
 function buildSeatDraft(organization) {
   const policy = organization?.seat_policy || {};
+  const defaults = organization?.seat_policy_defaults || {};
   const next = {};
   SEAT_EDITABLE_ROLES.forEach((role) => {
     const row = policy?.[role] || {};
+    const baseline = defaults?.[role] || {};
     const unlimited = Boolean(row?.is_unlimited || row?.limit == null);
+    const baselineUnlimited = Boolean(baseline?.is_unlimited || baseline?.limit == null);
+    const baselineLimit = baselineUnlimited ? null : Number(baseline?.limit);
+    const rowLimit = unlimited ? null : Number(row?.limit);
+    const sameAsDefault =
+      (baselineUnlimited && unlimited) ||
+      (!baselineUnlimited && !unlimited && Number.isFinite(baselineLimit) && Number.isFinite(rowLimit) && baselineLimit === rowLimit);
+
+    const mode = sameAsDefault
+      ? (baselineUnlimited ? SEAT_MODE_UNLIMITED : SEAT_MODE_DEFAULT)
+      : (unlimited ? SEAT_MODE_UNLIMITED : SEAT_MODE_LIMITED);
     next[role] = {
-      mode: unlimited ? 'unlimited' : 'limited',
+      mode,
       limit: unlimited ? '' : String(row?.limit ?? ''),
     };
   });
@@ -101,10 +116,16 @@ export default function Team({ mode = 'team' }) {
   const activeOrg = summary?.organization || null;
   const activeOrgPlanKey = String(activeOrg?.plan_key || '').toLowerCase();
   const canAccessEnterpriseView = isGlobalAdmin || activeOrgPlanKey === 'enterprise';
+  const seatPolicyDefaults = activeOrg?.seat_policy_defaults || {};
   const seatUsage = summary?.seat_usage || {};
   const seatDraftDirty = useMemo(
     () => JSON.stringify(seatDraft || {}) !== JSON.stringify(savedSeatDraft || {}),
     [seatDraft, savedSeatDraft]
+  );
+  const canEditSeatPolicy = canManageMembers && !previewModeActive && (!isEnterpriseMode || canAccessEnterpriseView);
+  const pendingInvitations = useMemo(
+    () => (invitations || []).filter((row) => row?.status === 'pending'),
+    [invitations]
   );
 
   const memberIdSet = useMemo(
@@ -298,13 +319,16 @@ export default function Team({ mode = 'team' }) {
 
   const onSeatModeChange = (role, nextMode) => {
     if (!SEAT_EDITABLE_ROLES.includes(role)) return;
+    const baseline = seatPolicyDefaults?.[role] || {};
+    const baselineUnlimited = Boolean(baseline?.is_unlimited || baseline?.limit == null);
+    const baselineLimit = baselineUnlimited ? '' : String(baseline?.limit ?? '');
     setSeatDraft((prev) => ({
       ...prev,
       [role]: {
-        mode: nextMode === 'limited' ? 'limited' : 'unlimited',
-        limit: nextMode === 'limited'
+        mode: nextMode,
+        limit: nextMode === SEAT_MODE_LIMITED
           ? (prev?.[role]?.limit || String((seatUsage?.[role]?.used ?? 1)))
-          : '',
+          : (nextMode === SEAT_MODE_DEFAULT ? baselineLimit : ''),
       },
     }));
   };
@@ -314,10 +338,16 @@ export default function Team({ mode = 'team' }) {
     setSeatDraft((prev) => ({
       ...prev,
       [role]: {
-        mode: prev?.[role]?.mode === 'limited' ? 'limited' : 'limited',
+        mode: SEAT_MODE_LIMITED,
         limit: nextLimit,
       },
     }));
+  };
+
+  const onDiscardSeatPolicy = () => {
+    setSeatDraft(savedSeatDraft || {});
+    setError('');
+    setNotice('Seat policy edits discarded.');
   };
 
   const onResetSeatPolicy = async () => {
@@ -340,12 +370,24 @@ export default function Team({ mode = 'team' }) {
   };
 
   const onSaveSeatPolicy = async () => {
-    if (!canManageMembers || previewModeActive) return;
+    if (!canEditSeatPolicy) return;
 
     const payload = {};
     for (const role of SEAT_EDITABLE_ROLES) {
       const draft = seatDraft?.[role] || {};
-      if (draft.mode !== 'limited') {
+      const baseline = seatPolicyDefaults?.[role] || {};
+      const baselineUnlimited = Boolean(baseline?.is_unlimited || baseline?.limit == null);
+      const baselineLimit = baselineUnlimited ? null : Number(baseline?.limit);
+
+      if (draft.mode === SEAT_MODE_DEFAULT) {
+        payload[role] = null;
+        continue;
+      }
+      if (draft.mode === SEAT_MODE_UNLIMITED) {
+        if (!baselineUnlimited) {
+          setError(`Unlimited is not available for ${role} on the ${activeOrgPlanKey || 'current'} plan.`);
+          return;
+        }
         payload[role] = null;
         continue;
       }
@@ -353,6 +395,14 @@ export default function Team({ mode = 'team' }) {
       if (!Number.isFinite(next) || next < 0) {
         setError(`Seat limit for ${role} must be a non-negative integer.`);
         return;
+      }
+      if (!baselineUnlimited && Number.isFinite(baselineLimit) && next > baselineLimit) {
+        setError(`Seat limit for ${role} cannot exceed plan cap (${baselineLimit}).`);
+        return;
+      }
+      if (!baselineUnlimited && Number.isFinite(baselineLimit) && next === baselineLimit) {
+        payload[role] = null;
+        continue;
       }
       payload[role] = next;
     }
@@ -401,27 +451,39 @@ export default function Team({ mode = 'team' }) {
   };
 
   if (loading) {
-    return <div className="team-page"><div className="team-state">Loading team data…</div></div>;
+    return (
+      <div className="team-page">
+        <div className="team-panel">
+          <div className="team-state">Loading team data…</div>
+        </div>
+      </div>
+    );
   }
+
+  const activePlanLabel = activeOrgPlanKey
+    ? `${activeOrgPlanKey.charAt(0).toUpperCase()}${activeOrgPlanKey.slice(1)}`
+    : 'Current';
 
   return (
     <div className="team-page">
-      <div className="team-topbar">
-        <button type="button" className="team-btn ghost" onClick={() => navigate('/new')}>
-          Back to Jaspen
-        </button>
-      </div>
-
-      <header className="team-header">
+      <div className="team-panel">
+      <header className="team-head">
         <div>
+          <p className="team-eyebrow">{isEnterpriseMode ? 'Jaspen Enterprise' : 'Jaspen Team'}</p>
           <h1>{isEnterpriseMode ? 'Enterprise Admin' : 'Team'}</h1>
-          <p>
+          <p className="team-sub">
             {isEnterpriseMode
               ? 'Manage enterprise role capacity, members, invitations, and shared project visibility.'
               : 'Manage members, invitations, role capacity, and shared project visibility.'}
           </p>
         </div>
-        <div className="team-header-actions">
+        <button type="button" className="team-btn ghost team-back-btn" onClick={() => navigate('/new')}>
+          Back to Jaspen
+        </button>
+      </header>
+
+      <section className="team-toolbar">
+        <div className="team-toolbar-fields">
           <label className="team-inline-field">
             <span>Organization</span>
             <select
@@ -452,7 +514,7 @@ export default function Team({ mode = 'team' }) {
             </label>
           )}
         </div>
-      </header>
+      </section>
 
       {(error || notice) && (
         <div className={`team-state ${error ? 'error' : 'success'}`}>
@@ -473,31 +535,55 @@ export default function Team({ mode = 'team' }) {
       )}
 
       {canManageMembers && (
-        <div className="team-seat-actions">
-          <button
-            type="button"
-            className="team-btn"
-            onClick={onSaveSeatPolicy}
-            disabled={busy || previewModeActive || !seatDraftDirty || (isEnterpriseMode && !canAccessEnterpriseView)}
-          >
-            Save seat policy
-          </button>
-          <button
-            type="button"
-            className="team-btn ghost"
-            onClick={onResetSeatPolicy}
-            disabled={busy || previewModeActive || (isEnterpriseMode && !canAccessEnterpriseView)}
-          >
-            Reset to plan defaults
-          </button>
-        </div>
+        <section className={`team-seat-policy-bar ${seatDraftDirty ? 'is-dirty' : ''}`}>
+          <div className="team-seat-policy-copy">
+            <strong>{seatDraftDirty ? 'Unsaved seat policy changes' : 'Seat policy saved'}</strong>
+            <span>Plan defaults ({activePlanLabel}) are enforced: Team (2/5/10/Unlimited), Enterprise (5/25/Unlimited/Unlimited).</span>
+          </div>
+          <div className="team-seat-policy-actions">
+            <button
+              type="button"
+              className="team-btn ghost"
+              onClick={onDiscardSeatPolicy}
+              disabled={busy || !seatDraftDirty || !canEditSeatPolicy}
+            >
+              Discard changes
+            </button>
+            <button
+              type="button"
+              className="team-btn"
+              onClick={onSaveSeatPolicy}
+              disabled={busy || !seatDraftDirty || !canEditSeatPolicy}
+            >
+              {busy ? 'Saving…' : 'Save seat policy'}
+            </button>
+            <button
+              type="button"
+              className="team-btn ghost"
+              onClick={onResetSeatPolicy}
+              disabled={busy || !canEditSeatPolicy}
+            >
+              Reset to plan defaults
+            </button>
+          </div>
+        </section>
       )}
 
       <section className="team-seat-grid">
         {ROLE_OPTIONS.map((role) => {
           const row = seatUsage?.[role] || {};
           const draft = seatDraft?.[role] || {};
-          const canEditSeatRole = canManageMembers && role !== 'owner';
+          const saved = savedSeatDraft?.[role] || {};
+          const defaultRow = seatPolicyDefaults?.[role] || {};
+          const defaultLabel = limitLabel(defaultRow?.limit, defaultRow?.is_unlimited);
+          const baselineUnlimited = Boolean(defaultRow?.is_unlimited || defaultRow?.limit == null);
+          const maxCap = baselineUnlimited ? null : Number(defaultRow?.limit);
+          const canEditSeatRole = canEditSeatPolicy && role !== 'owner';
+          const roleIsDirty = role !== 'owner' && JSON.stringify(draft || {}) !== JSON.stringify(saved || {});
+          const pendingLabel = draft?.mode === SEAT_MODE_LIMITED
+            ? (String(draft?.limit || '').trim() || '—')
+            : (draft?.mode === SEAT_MODE_DEFAULT ? defaultLabel : 'Unlimited');
+          const roleMode = draft?.mode || (baselineUnlimited ? SEAT_MODE_UNLIMITED : SEAT_MODE_DEFAULT);
           return (
             <article key={role} className="team-seat-card">
               <h3>{row?.label || role}</h3>
@@ -507,25 +593,39 @@ export default function Team({ mode = 'team' }) {
               <p className="team-seat-sub">
                 {row?.is_unlimited ? 'No cap for this role' : `${row?.available ?? 0} seats remaining`}
               </p>
+              <p className="team-seat-meta">Plan default: {defaultLabel}</p>
+              {role !== 'owner' && (
+                <p className={`team-seat-meta ${roleIsDirty ? 'is-pending' : ''}`}>
+                  {roleIsDirty ? `Pending: ${pendingLabel}` : `Current policy: ${limitLabel(row?.limit, row?.is_unlimited)}`}
+                </p>
+              )}
               {canEditSeatRole && (
                 <div className="team-seat-editor">
                   <select
-                    value={draft?.mode || 'unlimited'}
+                    value={roleMode}
                     onChange={(event) => onSeatModeChange(role, event.target.value)}
-                    disabled={busy || previewModeActive || (isEnterpriseMode && !canAccessEnterpriseView)}
+                    disabled={busy}
                   >
-                    <option value="unlimited">Unlimited</option>
-                    <option value="limited">Custom cap</option>
+                    {baselineUnlimited ? (
+                      <option value={SEAT_MODE_UNLIMITED}>Unlimited (plan default)</option>
+                    ) : (
+                      <option value={SEAT_MODE_DEFAULT}>Plan default ({defaultLabel})</option>
+                    )}
+                    <option value={SEAT_MODE_LIMITED}>Custom cap</option>
                   </select>
-                  {draft?.mode === 'limited' && (
+                  {roleMode === SEAT_MODE_LIMITED && (
                     <input
                       type="number"
                       min={Math.max(0, Number(row?.used || 0))}
                       value={draft?.limit || ''}
                       onChange={(event) => onSeatLimitChange(role, event.target.value)}
-                      disabled={busy || previewModeActive || (isEnterpriseMode && !canAccessEnterpriseView)}
+                      disabled={busy}
+                      max={maxCap == null ? undefined : String(maxCap)}
                       placeholder={`Min ${Math.max(0, Number(row?.used || 0))}`}
                     />
+                  )}
+                  {maxCap != null && roleMode === SEAT_MODE_LIMITED && (
+                    <p className="team-seat-cap-note">Max for {activePlanLabel}: {maxCap}</p>
                   )}
                 </div>
               )}
@@ -623,7 +723,7 @@ export default function Team({ mode = 'team' }) {
 
           <h3 className="team-subhead">Pending Invitations</h3>
           <div className="team-list">
-            {(invitations || []).filter((row) => row?.status === 'pending').map((row) => (
+            {pendingInvitations.map((row) => (
               <article key={row.id} className="team-list-item">
                 <div>
                   <strong>{row.email}</strong>
@@ -652,7 +752,7 @@ export default function Team({ mode = 'team' }) {
                 </div>
               </article>
             ))}
-            {(invitations || []).filter((row) => row?.status === 'pending').length === 0 && (
+            {pendingInvitations.length === 0 && (
               <p className="team-empty">No pending invites.</p>
             )}
           </div>
@@ -737,6 +837,7 @@ export default function Team({ mode = 'team' }) {
           </table>
         </div>
       </section>
+      </div>
     </div>
   );
 }

@@ -404,6 +404,7 @@ def org_payload(org):
         "slug": org.slug,
         "owner_user_id": org.owner_user_id,
         "plan_key": to_public_plan(org.plan_key),
+        "seat_policy_defaults": serialize_seat_policy(org.plan_key),
         "seat_policy": serialize_seat_policy(org),
         "seat_policy_overrides": seat_policy_overrides_for_org(org),
     }
