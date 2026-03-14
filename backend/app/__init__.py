@@ -1,3 +1,4 @@
+import logging
 import os
 from datetime import timedelta
 from flask import Flask, jsonify
@@ -7,6 +8,7 @@ import stripe
 from flask_jwt_extended import JWTManager
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from pythonjsonlogger import jsonlogger
 from sqlalchemy import text
 from flask_sqlalchemy import SQLAlchemy
 from flask_mail import Mail
@@ -63,12 +65,26 @@ def _should_enable_flask_cors(frontend_base_url):
     return app_env in ('development', 'dev', 'local')
 
 
+def _setup_logging(app):
+    handler = logging.StreamHandler()
+    formatter = jsonlogger.JsonFormatter(
+        fmt='%(asctime)s %(name)s %(levelname)s %(message)s',
+        datefmt='%Y-%m-%dT%H:%M:%S',
+    )
+    handler.setFormatter(formatter)
+    app.logger.handlers = [handler]
+    app.logger.setLevel(logging.INFO)
+    logging.root.handlers = [handler]
+    logging.root.setLevel(logging.WARNING)
+
+
 def create_app():
     global limiter
 
     frontend_base_raw = os.getenv('FRONTEND_BASE_URL')
     frontend_base = frontend_base_raw or 'http://localhost:3000'
     app = Flask(__name__, instance_relative_config=False)
+    _setup_logging(app)
     app.config.from_mapping(
         SECRET_KEY                     = os.getenv('SECRET_KEY'),
         SQLALCHEMY_DATABASE_URI        = os.getenv('DATABASE_URL'),
