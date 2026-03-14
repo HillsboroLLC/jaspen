@@ -51,8 +51,6 @@ function toDraft(user) {
     max_seats: user.max_seats == null ? '' : String(user.max_seats),
     unlimited_analysis: Boolean(user.unlimited_analysis),
     max_concurrent_sessions: user.max_concurrent_sessions == null ? '' : String(user.max_concurrent_sessions),
-    stripe_customer_id: user.stripe_customer_id || '',
-    stripe_subscription_id: user.stripe_subscription_id || '',
   };
 }
 
@@ -63,11 +61,8 @@ function toConnectorDrafts(connectorList) {
     const id = String(connector?.id || '').trim();
     if (!id) return;
     next[id] = {
-      connection_status: String(connector?.raw_connection_status || connector?.connection_status || 'disconnected'),
-      sync_mode: String(connector?.sync_mode || 'import'),
-      conflict_policy: String(connector?.conflict_policy || 'prefer_external'),
+      connection_status: String(connector?.connection_status || 'disconnected'),
       auto_sync: Boolean(connector?.auto_sync),
-      external_workspace: String(connector?.external_workspace || ''),
     };
   });
   return next;
@@ -247,8 +242,6 @@ export default function JaspenAdmin() {
         max_seats: draft.max_seats === '' ? 0 : Number(draft.max_seats),
         unlimited_analysis: Boolean(draft.unlimited_analysis),
         max_concurrent_sessions: draft.max_concurrent_sessions === '' ? null : Number(draft.max_concurrent_sessions),
-        stripe_customer_id: String(draft.stripe_customer_id || '').trim(),
-        stripe_subscription_id: String(draft.stripe_subscription_id || '').trim(),
       };
 
       const response = await fetch(`${API_BASE}/api/admin/users/${encodeURIComponent(draft.id)}`, {
@@ -355,7 +348,9 @@ export default function JaspenAdmin() {
 
   const saveConnector = async (connectorId) => {
     if (!draft?.id || !connectorId) return;
-    const connectorPayload = connectorDrafts[connectorId] || {};
+    const connectorPayload = {
+      auto_sync: Boolean(connectorDrafts[connectorId]?.auto_sync),
+    };
     setConnectorPendingId(connectorId);
     setMessage('');
     try {
@@ -598,22 +593,6 @@ export default function JaspenAdmin() {
                       onChange={(e) => setDraft((prev) => ({ ...prev, max_concurrent_sessions: e.target.value }))}
                     />
                   </label>
-                  <label>
-                    Stripe customer id
-                    <input
-                      type="text"
-                      value={draft.stripe_customer_id}
-                      onChange={(e) => setDraft((prev) => ({ ...prev, stripe_customer_id: e.target.value }))}
-                    />
-                  </label>
-                  <label>
-                    Stripe subscription id
-                    <input
-                      type="text"
-                      value={draft.stripe_subscription_id}
-                      onChange={(e) => setDraft((prev) => ({ ...prev, stripe_subscription_id: e.target.value }))}
-                    />
-                  </label>
                   <label className="jas-admin-check">
                     <input
                       type="checkbox"
@@ -690,7 +669,7 @@ export default function JaspenAdmin() {
                 </section>
 
                 <section className="jas-admin-subsection">
-                  <h3>Connector Overrides</h3>
+                  <h3>Connector Status</h3>
                   {opsLoading && <p className="jas-admin-empty">Loading connector state...</p>}
                   {!opsLoading && connectors.length === 0 && <p className="jas-admin-empty">No connectors available.</p>}
                   {!opsLoading && connectors.length > 0 && (
@@ -698,55 +677,35 @@ export default function JaspenAdmin() {
                       {connectors.map((connector) => {
                         const connectorId = String(connector.id || '');
                         const cd = connectorDrafts[connectorId] || {};
-                        const syncModes = Array.isArray(connector.available_sync_modes) && connector.available_sync_modes.length > 0
-                          ? connector.available_sync_modes
-                          : ['import', 'push', 'two_way'];
+                        const connectionStatus = String(connector.connection_status || 'disconnected');
+                        const healthStatus = String(connector.health_status || 'unknown');
+                        const lastSyncAt = connector.last_sync_at
+                          ? new Date(connector.last_sync_at).toLocaleString()
+                          : 'Never';
                         return (
                           <div key={connectorId} className="jas-admin-connector-row">
                             <div className="jas-admin-connector-meta">
                               <strong>{connector.label || connectorId}</strong>
-                              <span>{connector.description || connectorId}</span>
+                              <span>{connector.group || 'connector'}</span>
                             </div>
-                            <label>
-                              Status
-                              <select
-                                value={cd.connection_status || 'disconnected'}
-                                onChange={(e) => handleConnectorDraftChange(connectorId, 'connection_status', e.target.value)}
-                              >
-                                <option value="disconnected">disconnected</option>
-                                <option value="connected">connected</option>
-                              </select>
-                            </label>
-                            <label>
-                              Sync mode
-                              <select
-                                value={cd.sync_mode || 'import'}
-                                onChange={(e) => handleConnectorDraftChange(connectorId, 'sync_mode', e.target.value)}
-                              >
-                                {syncModes.map((mode) => (
-                                  <option key={mode} value={mode}>{mode}</option>
-                                ))}
-                              </select>
-                            </label>
-                            <label>
-                              Conflict policy
-                              <select
-                                value={cd.conflict_policy || 'prefer_external'}
-                                onChange={(e) => handleConnectorDraftChange(connectorId, 'conflict_policy', e.target.value)}
-                              >
-                                {(connector.available_conflict_policies || ['prefer_external']).map((policy) => (
-                                  <option key={policy} value={policy}>{policy}</option>
-                                ))}
-                              </select>
-                            </label>
-                            <label>
-                              External workspace
-                              <input
-                                type="text"
-                                value={cd.external_workspace || ''}
-                                onChange={(e) => handleConnectorDraftChange(connectorId, 'external_workspace', e.target.value)}
-                              />
-                            </label>
+                            <div className="jas-admin-connector-stat">
+                              <span className="jas-admin-connector-label">Connection</span>
+                              <span className={`jas-admin-status-badge is-${connectionStatus}`}>
+                                {connectionStatus}
+                              </span>
+                            </div>
+                            <div className="jas-admin-connector-stat">
+                              <span className="jas-admin-connector-label">Health</span>
+                              <strong>{healthStatus}</strong>
+                            </div>
+                            <div className="jas-admin-connector-stat">
+                              <span className="jas-admin-connector-label">Last sync</span>
+                              <strong>{lastSyncAt}</strong>
+                            </div>
+                            <div className="jas-admin-connector-stat">
+                              <span className="jas-admin-connector-label">Failures</span>
+                              <strong>{Number(connector.consecutive_failures || 0)}</strong>
+                            </div>
                             <label className="jas-admin-check-inline">
                               <input
                                 type="checkbox"
@@ -761,7 +720,7 @@ export default function JaspenAdmin() {
                               disabled={connectorPendingId === connectorId}
                               onClick={() => saveConnector(connectorId)}
                             >
-                              {connectorPendingId === connectorId ? 'Saving...' : 'Save'}
+                              {connectorPendingId === connectorId ? 'Saving...' : 'Save Auto Sync'}
                             </button>
                           </div>
                         );
