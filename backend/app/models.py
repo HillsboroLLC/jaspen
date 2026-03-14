@@ -1,7 +1,7 @@
 # backend/app/models.py
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from . import db
 
 class User(db.Model):
@@ -506,4 +506,47 @@ class ConnectorSyncLog(db.Model):
             'items_synced': int(self.items_synced or 0),
             'error_message': self.error_message,
             'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class AdminAuditEvent(db.Model):
+    __tablename__ = 'admin_audit_events'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    timestamp = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        index=True,
+    )
+    actor_user_id = db.Column(
+        db.String(36),
+        db.ForeignKey('users.id'),
+        nullable=True,
+        index=True,
+    )
+    actor_email = db.Column(db.String(255), nullable=True)
+    action = db.Column(db.String(100), nullable=False, index=True)
+    target_user_id = db.Column(
+        db.String(36),
+        db.ForeignKey('users.id'),
+        nullable=True,
+        index=True,
+    )
+    target_email = db.Column(db.String(255), nullable=True)
+    details = db.Column(db.JSON, nullable=True)
+    remote_addr = db.Column(db.String(45), nullable=True)
+    user_agent = db.Column(db.String(512), nullable=True)
+
+    def to_dict(self):
+        return {
+            'timestamp': self.timestamp.isoformat() if self.timestamp else None,
+            'actor_user_id': self.actor_user_id,
+            'actor_email': self.actor_email,
+            'action': self.action,
+            'target_user_id': self.target_user_id,
+            'target_email': self.target_email,
+            'details': self.details if isinstance(self.details, dict) else {},
+            'remote_addr': self.remote_addr,
+            'user_agent': self.user_agent,
         }
