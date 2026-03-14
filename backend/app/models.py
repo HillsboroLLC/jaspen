@@ -62,6 +62,15 @@ class User(db.Model):
         nullable=True,
         default=300
     )
+    failed_login_attempts = db.Column(
+        db.Integer,
+        nullable=False,
+        default=0,
+    )
+    locked_until = db.Column(
+        db.DateTime,
+        nullable=True,
+    )
 
     # Referrals & feedback
     referral_code = db.Column(

@@ -1,4 +1,5 @@
 from urllib.parse import urlencode
+from datetime import datetime, timedelta, timezone
 import re
 import secrets
 
@@ -33,6 +34,8 @@ auth_bp = Blueprint('auth', __name__)
 GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 GOOGLE_USERINFO_URL = 'https://openidconnect.googleapis.com/v1/userinfo'
+MAX_FAILED_ATTEMPTS = 5
+LOCKOUT_DURATION_MINUTES = 15
 
 
 def _validate_password(password):
@@ -48,6 +51,18 @@ def _validate_password(password):
     if not re.search(r'[0-9]', password):
         return False, "Password must contain at least one digit."
     return True, None
+
+
+def _utc_now():
+    return datetime.now(timezone.utc)
+
+
+def _normalize_locked_until(value):
+    if not value:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 @auth_bp.before_app_request
@@ -234,18 +249,38 @@ def register_alias():
 @auth_bp.route('/login', methods=['POST'])
 @limiter.limit("5 per minute")
 def login():
-    data = request.get_json() or {}
-    email = data.get('email', '').strip().lower()
+    data = request.get_json(silent=True) or {}
+    email = (data.get('email') or '').strip().lower()
     password = data.get('password', '')
 
     if not email or not password:
-        return jsonify(message='Email and password required'), 400
+        return jsonify(message='Email and password are required'), 400
 
     user = User.query.filter_by(email=email).first()
-    if not user or not check_password_hash(user.password_hash, password):
+    if not user:
         return jsonify(message='Invalid credentials'), 401
 
-    changed = bootstrap_legacy_credits(user, current_app.config)
+    now = _utc_now()
+    locked_until = _normalize_locked_until(user.locked_until)
+    if locked_until and locked_until > now:
+        remaining = int((locked_until - now).total_seconds() / 60) + 1
+        return jsonify(message=f'Account locked. Try again in {remaining} minute(s).'), 429
+
+    if not check_password_hash(user.password_hash, password):
+        user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
+        if user.failed_login_attempts >= MAX_FAILED_ATTEMPTS:
+            user.locked_until = (now + timedelta(minutes=LOCKOUT_DURATION_MINUTES)).replace(tzinfo=None)
+            user.failed_login_attempts = 0
+        db.session.commit()
+        return jsonify(message='Invalid credentials'), 401
+
+    changed = False
+    if user.failed_login_attempts or user.locked_until is not None:
+        user.failed_login_attempts = 0
+        user.locked_until = None
+        changed = True
+    if bootstrap_legacy_credits(user, current_app.config):
+        changed = True
     if _enforce_admin_account_profile(user):
         changed = True
     if _ensure_user_org(user):

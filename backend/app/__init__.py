@@ -1,4 +1,5 @@
 import os
+from datetime import timedelta
 from flask import Flask, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -91,6 +92,7 @@ def create_app():
         # JWT
         JWT_SECRET_KEY                 = os.getenv('JWT_SECRET_KEY'),
         JWT_TOKEN_LOCATION             = ['cookies', 'headers'],
+        JWT_ACCESS_TOKEN_EXPIRES       = timedelta(hours=int(os.getenv('JWT_ACCESS_TOKEN_EXPIRES_HOURS', '2'))),
         JWT_ACCESS_COOKIE_NAME         = os.getenv('JWT_ACCESS_COOKIE_NAME', 'jaspen_access'),
         JWT_COOKIE_SECURE              = _as_bool(os.getenv('JWT_COOKIE_SECURE'), default=True),
         JWT_COOKIE_SAMESITE            = os.getenv('JWT_COOKIE_SAMESITE', 'Lax'),
