@@ -1191,7 +1191,7 @@ def _build_lever_context(baseline_inputs, suggested_deltas):
 def _thread_levers_for_scenario_ai(user_id, thread_id, baseline_inputs, suggested_deltas=None):
     """
     Build lever metadata using the same internal helper as
-    GET /api/ai-agent/threads/<thread_id>/levers when possible.
+    GET /api/v1/ai-agent/threads/<thread_id>/levers when possible.
     """
     try:
         from .ai_agent import _build_thread_levers as _agent_build_thread_levers

@@ -116,7 +116,7 @@ def _salesforce_callback_url():
     )
     if configured:
         return configured
-    return f"{request.url_root.rstrip('/')}/api/connectors/salesforce/oauth/callback"
+    return f"{request.url_root.rstrip('/')}/api/v1/connectors/salesforce/oauth/callback"
 
 
 def _runtime_fields(connector_id, settings):

@@ -195,7 +195,7 @@ def create_app():
         CORS(
             app,
             supports_credentials=True,
-            resources={r"/api/*": {"origins": cors_origins}},
+            resources={r"/api/v1/*": {"origins": cors_origins}},
         )
     else:
         # Ensure upstream app does not emit CORS headers when edge (e.g., Nginx)
@@ -229,22 +229,22 @@ def create_app():
     from .routes.teams import teams_bp
     from .routes.strategy import strategy_bp, analyze_project
 
-    app.register_blueprint(auth_bp,      url_prefix='/api/auth')
-    app.register_blueprint(admin_bp,     url_prefix='/api/admin')
-    app.register_blueprint(chat_bp,      url_prefix='/api/chat')
-    app.register_blueprint(billing_bp,   url_prefix='/api/billing')
-    app.register_blueprint(connectors_bp, url_prefix='/api/connectors')
-    app.register_blueprint(dashboard_bp)  # includes its own /api/dashboard path
-    app.register_blueprint(ai_agent_bp,  url_prefix='/api/ai-agent')
-    app.register_blueprint(insights_bp,  url_prefix='/api/insights')
-    app.register_blueprint(activity_bp,  url_prefix='/api/activity')
-    app.register_blueprint(reports_bp,   url_prefix='/api/reports')
-    app.register_blueprint(starters_bp,  url_prefix='/api/starters')
-    app.register_blueprint(team_bp, url_prefix='/api/team')
-    app.register_blueprint(teams_bp, url_prefix='/api/teams')
-    app.register_blueprint(strategy_bp, url_prefix='/api/strategy')
+    app.register_blueprint(auth_bp,      url_prefix='/api/v1/auth')
+    app.register_blueprint(admin_bp,     url_prefix='/api/v1/admin')
+    app.register_blueprint(chat_bp,      url_prefix='/api/v1/chat')
+    app.register_blueprint(billing_bp,   url_prefix='/api/v1/billing')
+    app.register_blueprint(connectors_bp, url_prefix='/api/v1/connectors')
+    app.register_blueprint(dashboard_bp, url_prefix='/api/v1/dashboard')
+    app.register_blueprint(ai_agent_bp,  url_prefix='/api/v1/ai-agent')
+    app.register_blueprint(insights_bp,  url_prefix='/api/v1/insights')
+    app.register_blueprint(activity_bp,  url_prefix='/api/v1/activity')
+    app.register_blueprint(reports_bp,   url_prefix='/api/v1/reports')
+    app.register_blueprint(starters_bp,  url_prefix='/api/v1/starters')
+    app.register_blueprint(team_bp, url_prefix='/api/v1/team')
+    app.register_blueprint(teams_bp, url_prefix='/api/v1/teams')
+    app.register_blueprint(strategy_bp, url_prefix='/api/v1/strategy')
     app.add_url_rule(
-        '/api/ai-agent/analyze',
+        '/api/v1/ai-agent/analyze',
         endpoint='ai_agent_analyze',
         view_func=analyze_project,
         methods=['POST'],
@@ -253,12 +253,12 @@ def create_app():
     # Optional sessions blueprint
     try:
         from .routes.sessions import sessions_bp
-        app.register_blueprint(sessions_bp, url_prefix='/api/sessions')
+        app.register_blueprint(sessions_bp, url_prefix='/api/v1/sessions')
     except ImportError:
         app.logger.warning("sessions blueprint not found; session saving will not work")
 
     # Jaspen strategy blueprint
-    app.logger.info("Jaspen strategy API registered successfully at /api/strategy")
+    app.logger.info("Jaspen strategy API registered successfully at /api/v1/strategy")
 
     # Statistical Analysis blueprint
     app.logger.info("About to register statistical analysis blueprint")
@@ -266,7 +266,7 @@ def create_app():
         app.logger.info("Attempting statistical analysis blueprint import")
         from .statistical_analysis_api import statistical_bp
         app.logger.info("Statistical analysis blueprint import successful; registering blueprint")
-        app.register_blueprint(statistical_bp, url_prefix='/api/statistical-analysis')
+        app.register_blueprint(statistical_bp, url_prefix='/api/v1/statistical-analysis')
         app.logger.info("Statistical Analysis API registered successfully")
     except ImportError as e:
         app.logger.warning("Statistical analysis blueprint import failed: %s", e)

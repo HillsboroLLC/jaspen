@@ -106,7 +106,7 @@ def _google_callback_url():
     configured = str(current_app.config.get('GOOGLE_REDIRECT_URI') or '').strip()
     if configured:
         return configured
-    return f"{request.url_root.rstrip('/')}/api/auth/google/callback"
+    return f"{request.url_root.rstrip('/')}/api/v1/auth/google/callback"
 
 
 def _enforce_admin_account_profile(user):

@@ -348,7 +348,7 @@ def generate_report():
         'report_type_label': REPORT_TYPE_DEFS[report_type]['label'],
         'filename': filename,
         'created_at': _iso_now(),
-        'download_url': f'/api/reports/{report_id}/download',
+        'download_url': f'/api/v1/reports/{report_id}/download',
     }
     _write_report_metadata(user_id, report_id, metadata)
 

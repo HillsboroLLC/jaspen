@@ -237,7 +237,7 @@ def _latest_insight_cards(rows, *, user_name_by_id):
     return trimmed
 
 
-@dashboard_bp.route("/api/dashboard", methods=["GET"])
+@dashboard_bp.route("", methods=["GET"])
 @jwt_required()
 def get_dashboard_data():
     user_id = str(get_jwt_identity() or "").strip()
