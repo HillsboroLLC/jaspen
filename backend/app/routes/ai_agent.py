@@ -8,7 +8,7 @@ import os
 import re
 import uuid
 
-from app import db
+from app import db, limiter
 from app.models import User
 from app.billing_config import (
     bootstrap_legacy_credits,
@@ -1745,6 +1745,7 @@ def _persist_thread_insight(user_id, thread_id, filename, insight_payload, summa
 
 @ai_agent_bp.route("/conversation/start", methods=["POST"])
 @jwt_required()
+@limiter.limit("20 per minute")
 def conversation_start():
     data = request.get_json() or {}
     user_id = get_jwt_identity()
@@ -1899,6 +1900,7 @@ def conversation_start():
 
 @ai_agent_bp.route("/conversation/continue", methods=["POST"])
 @jwt_required()
+@limiter.limit("30 per minute")
 def conversation_continue():
     data = request.get_json() or {}
     user_id = get_jwt_identity()

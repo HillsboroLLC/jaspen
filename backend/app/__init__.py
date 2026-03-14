@@ -4,6 +4,8 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 import stripe
 from flask_jwt_extended import JWTManager
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from flask_sqlalchemy import SQLAlchemy
 from flask_mail import Mail
 
@@ -13,6 +15,7 @@ load_dotenv()  # pull in .env
 db  = SQLAlchemy()
 jwt = JWTManager()
 mail = Mail()
+limiter = None
 
 
 def _as_bool(value, default=False):
@@ -59,6 +62,8 @@ def _should_enable_flask_cors(frontend_base_url):
 
 
 def create_app():
+    global limiter
+
     frontend_base_raw = os.getenv('FRONTEND_BASE_URL')
     frontend_base = frontend_base_raw or 'http://localhost:3000'
     app = Flask(__name__, instance_relative_config=False)
@@ -161,6 +166,13 @@ def create_app():
     if not app.config['JWT_SECRET_KEY']:
         raise RuntimeError("JWT_SECRET_KEY not set in environment")
     jwt.init_app(app)
+
+    limiter = Limiter(
+        key_func=get_remote_address,
+        default_limits=["200 per minute"],
+        storage_uri=os.getenv("RATELIMIT_STORAGE_URI", "memory://"),
+    )
+    limiter.init_app(app)
 
     # —— Mail setup —— #
     mail.init_app(app)

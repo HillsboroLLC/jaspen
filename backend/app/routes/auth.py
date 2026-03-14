@@ -15,7 +15,7 @@ from flask_jwt_extended import (
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 import stripe
 
-from app import db
+from app import db, limiter
 from app.admin_policy import is_global_admin_email
 from app.models import User
 from app.billing_config import (
@@ -118,6 +118,7 @@ def _user_payload(user):
 
 
 @auth_bp.route('/signup', methods=['POST'])
+@limiter.limit("5 per minute")
 def signup():
     data = request.get_json() or {}
     name = data.get('name', '').strip()
@@ -206,6 +207,7 @@ def register_alias():
 
 
 @auth_bp.route('/login', methods=['POST'])
+@limiter.limit("5 per minute")
 def login():
     data = request.get_json() or {}
     email = data.get('email', '').strip().lower()
@@ -255,6 +257,7 @@ def get_current_user():
 
 
 @auth_bp.route('/google/start', methods=['GET'])
+@limiter.limit("10 per minute")
 def google_start():
     client_id = str(current_app.config.get('GOOGLE_CLIENT_ID') or '').strip()
     client_secret = str(current_app.config.get('GOOGLE_CLIENT_SECRET') or '').strip()

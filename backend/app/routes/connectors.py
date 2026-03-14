@@ -4,6 +4,7 @@ from urllib.parse import urlencode
 from flask import Blueprint, current_app, jsonify, redirect, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
+from app import limiter
 from app.billing_config import to_public_plan
 from app.connectors.smartsheet import smartsheet_connect, smartsheet_list_sheets
 from app.connectors.workfront import workfront_connect, workfront_sync_status
@@ -1289,6 +1290,7 @@ def sync_thread_to_smartsheet(thread_id):
 
 
 @connectors_bp.route("/jira/webhook", methods=["POST"])
+@limiter.limit("60 per minute")
 def jira_webhook():
     unauthorized = _require_webhook_secret("JIRA_WEBHOOK_SECRET", "JIRA_WEBHOOK_SECRET")
     if unauthorized:
@@ -1335,6 +1337,7 @@ def jira_webhook():
 
 
 @connectors_bp.route("/workfront/webhook", methods=["POST"])
+@limiter.limit("60 per minute")
 def workfront_webhook():
     unauthorized = _require_webhook_secret("WORKFRONT_WEBHOOK_SECRET", "WORKFRONT_WEBHOOK_SECRET")
     if unauthorized:
@@ -1382,6 +1385,7 @@ def workfront_webhook():
 
 
 @connectors_bp.route("/smartsheet/webhook", methods=["POST"])
+@limiter.limit("60 per minute")
 def smartsheet_webhook():
     unauthorized = _require_webhook_secret("SMARTSHEET_WEBHOOK_SECRET", "SMARTSHEET_WEBHOOK_SECRET")
     if unauthorized:

@@ -2,7 +2,7 @@ from flask import Blueprint, current_app, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 from sqlalchemy import or_
 
-from app import db
+from app import db, limiter
 from app.admin_audit import append_admin_audit_event, list_admin_audit_events
 from app.admin_policy import is_global_admin_email
 from app.billing_config import (
@@ -270,6 +270,7 @@ def get_user(user_id):
 
 @admin_bp.route("/users/<user_id>", methods=["PATCH"])
 @jwt_required()
+@limiter.limit("30 per minute")
 def patch_user(user_id):
     admin_user, err = _require_admin()
     if err:
@@ -359,6 +360,7 @@ def patch_user(user_id):
 
 @admin_bp.route("/users/<user_id>/force-plan", methods=["POST"])
 @jwt_required()
+@limiter.limit("20 per minute")
 def force_plan(user_id):
     admin_user, err = _require_admin()
     if err:
@@ -397,6 +399,7 @@ def force_plan(user_id):
 
 @admin_bp.route("/users/<user_id>/credits", methods=["POST"])
 @jwt_required()
+@limiter.limit("20 per minute")
 def adjust_user_credits(user_id):
     admin_user, err = _require_admin()
     if err:
@@ -483,6 +486,7 @@ def get_user_connectors(user_id):
 
 @admin_bp.route("/users/<user_id>/connectors/<connector_id>", methods=["PATCH"])
 @jwt_required()
+@limiter.limit("30 per minute")
 def patch_user_connector(user_id, connector_id):
     admin_user, err = _require_admin()
     if err:
@@ -593,6 +597,7 @@ def list_user_sessions(user_id):
 
 @admin_bp.route("/users/<user_id>/recovery", methods=["POST"])
 @jwt_required()
+@limiter.limit("5 per minute")
 def run_user_recovery(user_id):
     admin_user, err = _require_admin()
     if err:
