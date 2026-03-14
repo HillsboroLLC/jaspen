@@ -1557,7 +1557,14 @@ def _dataset_from_upload(uploaded_file):
     except Exception as e:
         raise RuntimeError(f"pandas is required for data analysis: {e}")
 
-    filename = str(getattr(uploaded_file, "filename", "") or "upload").strip() or "upload"
+    uploaded_file.seek(0, 2)
+    file_size = uploaded_file.tell()
+    uploaded_file.seek(0)
+    if file_size > 10 * 1024 * 1024:
+        raise ValueError("File size exceeds 10 MB limit.")
+
+    raw_name = str(getattr(uploaded_file, "filename", "") or "upload").strip() or "upload"
+    filename = re.sub(r"[^a-zA-Z0-9._-]", "_", raw_name)[:255] or "upload"
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     content = uploaded_file.read()
     if not content:
