@@ -115,6 +115,15 @@ const normalizeUser = (raw) => {
 
 const normalizePlanKey = (plan) => String(plan || '').trim().toLowerCase();
 const isSelfServePlan = (plan) => ['free', 'essential'].includes(normalizePlanKey(plan));
+const resolvePlanCategory = (user) => {
+  const rankedPlans = [
+    normalizePlanKey(user?.active_organization_plan_key),
+    normalizePlanKey(user?.subscription_plan),
+  ];
+  if (rankedPlans.includes('enterprise')) return 'enterprise';
+  if (rankedPlans.includes('team')) return 'team';
+  return 'individual';
+};
 const AUTH_STORAGE_OWNER_KEY = 'jas_storage_owner_id';
 
 const clearLegacySessionCaches = () => {
@@ -535,6 +544,14 @@ export function AuthProvider({ children }) {
   // Helper function to check if user is authenticated
   const isAuthenticated = () => !!user; // cookie session populates user
 
+  const planCategory = resolvePlanCategory(user);
+  const orgDisplayName = planCategory === 'individual'
+    ? 'Personal Workspace'
+    : (String(user?.active_organization_name || '').trim() || 'Organization');
+  const isPlatformAdmin = Boolean(user?.is_admin);
+  const isEnterpriseAdmin = Boolean(user?.can_access_enterprise_admin || isPlatformAdmin);
+  const canAccessOrgSettings = Boolean(user?.can_access_team || user?.can_access_enterprise_admin || isPlatformAdmin);
+
   const value = {
     // Original functionality (preserved)
     user,
@@ -546,6 +563,11 @@ export function AuthProvider({ children }) {
     checkAuthStatus,
     updateDisplayName,
     isAuthenticated,
+    planCategory,
+    orgDisplayName,
+    isPlatformAdmin,
+    isEnterpriseAdmin,
+    canAccessOrgSettings,
 
     // LSS functionality
     lssUsers,

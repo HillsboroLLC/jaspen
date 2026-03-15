@@ -660,6 +660,14 @@
   color: var(--navy);
 }
 
+.jas-ud-item.is-locked {
+  opacity: 0.72;
+}
+
+.jas-ud-item.is-locked:hover {
+  opacity: 0.92;
+}
+
 .jas-ud-item svg {
   width: 16px;
   height: 16px;
@@ -858,7 +866,7 @@
   text-align: left;
 }
 
-.jas-ud-footer-meta span:first-child {
+.jas-ud-footer-name {
   font-size: 0.8125rem;
   font-weight: 600;
   color: var(--navy);
@@ -867,7 +875,15 @@
   text-overflow: ellipsis;
 }
 
-.jas-ud-footer-meta span:last-child {
+.jas-ud-footer-org {
+  font-size: 0.6875rem;
+  color: var(--gray-700);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.jas-ud-footer-plan {
   font-size: 0.6875rem;
   color: var(--gray-600);
 }

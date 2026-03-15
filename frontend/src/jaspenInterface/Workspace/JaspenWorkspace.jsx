@@ -5,7 +5,6 @@
 // ============================================================================
 
 import React, { useEffect, useRef, useState, useMemo, useReducer, useCallback } from 'react';
-import { createPortal } from 'react-dom';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { API_BASE } from '../../config/apiBase';
 import { useChatCommands, parseUIActions, ChatActionTypes } from "../../shared/hooks/useChatCommands"
@@ -19,7 +18,7 @@ import {
   faPaperPlane, faSpinner, faTimes, faBars, faCheck, faExclamationTriangle,
   faChartLine, faTrash, faPlus, faMinus, faMicrophone,
   faBolt, faLayerGroup, faPlay, faListCheck, faArrowUpRightFromSquare, faGaugeHigh, faClockRotateLeft, faPaperclip, faArrowUp,
-  faDownload, faChevronDown, faChevronUp, faUser, faBell
+  faDownload, faChevronDown, faUser, faBell, faLock
 } from '@fortawesome/free-solid-svg-icons';
 import {
   MonitorCheck, MessageCircleQuestion,
@@ -33,6 +32,7 @@ import { Jaspen, storage } from './JaspenClient';
 import ScoreDashboard   from './ScoreDashboard';
 import ScenarioModeler  from './ScenarioModeler';
 import ComparisonView   from './ComparisonView';
+import SidebarIdentityFooter from './components/SidebarIdentityFooter';
 import ThreadEditModal from '../components/ThreadEditModal';
 
 // Styles - Single source of truth
@@ -278,7 +278,16 @@ export default function JaspenWorkspace() {
   const [view, setView] = useState('intake');
   const [activeTab, setActiveTab] = useState('summary');
 
-  const { user, logout, checkAuthStatus, updateDisplayName } = useAuth();
+  const {
+    user,
+    logout,
+    checkAuthStatus,
+    updateDisplayName,
+    planCategory,
+    isPlatformAdmin,
+    isEnterpriseAdmin,
+    canAccessOrgSettings,
+  } = useAuth();
 
   // Imperative control for scenario modeling (used by interactive chat actions)
   const scenarioModelerRef = useRef(null);
@@ -725,13 +734,6 @@ useEffect(() => {
     return fetch(fullUrl, { credentials: 'include', ...options, headers });
   };
 
-  // User menu helpers
-  const getInitials = (name) => {
-    if (!name) return 'U';
-    const parts = name.split(' ');
-    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
-    return name.substring(0, 2).toUpperCase();
-  };
   const getUserStorageKeys = (u) => {
     const keys = [];
     if (u?.id) keys.push(`jaspen_display_name_id_${u.id}`);
@@ -761,15 +763,10 @@ useEffect(() => {
   const [threadUsage, setThreadUsage] = useState(null);
   const [threadUsageLoading, setThreadUsageLoading] = useState(false);
   const [threadUsageError, setThreadUsageError] = useState('');
-  const [accountQuickMenuOpen, setAccountQuickMenuOpen] = useState(false);
-  const [knowledgeMenuOpen, setKnowledgeMenuOpen] = useState(false);
-  const [knowledgeMenuStyle, setKnowledgeMenuStyle] = useState(null);
-  const knowledgeSubmenuWrapRef = useRef(null);
-  const knowledgeSubmenuRef = useRef(null);
-  const knowledgeMenuCloseTimerRef = useRef(null);
   const savedEmail = (() => {
     try { return localStorage.getItem('jaspen_last_email'); } catch { return null; }
   })();
+  const userName = displayName || user?.name || user?.email?.split('@')[0] || savedEmail?.split?.('@')[0] || 'User';
   const adminWorkspacePreviewPlan = useMemo(() => {
     if (!Boolean(user?.is_admin)) return '';
     const params = new URLSearchParams(location.search);
@@ -777,9 +774,6 @@ useEffect(() => {
     const planKey = String(params.get('plan_key') || '').trim().toLowerCase();
     return ADMIN_PREVIEW_PLAN_KEYS.has(planKey) ? planKey : '';
   }, [location.search, user?.is_admin]);
-  const userInitials = getInitials(displayName || user?.name || user?.email || savedEmail || 'User');
-  const userName = displayName || user?.name || user?.email?.split('@')[0] || savedEmail?.split?.('@')[0] || 'User';
-  const userEmail = user?.email || savedEmail || 'user@example.com';
   const notificationsStorageKey = useMemo(() => {
     if (user?.id) return `jaspen_notifications_id_${user.id}`;
     if (user?.email) return `jaspen_notifications_email_${String(user.email).toLowerCase()}`;
@@ -790,6 +784,12 @@ useEffect(() => {
   const modelTypes = useMemo(() => billingCatalog?.model_types || {}, [billingCatalog]);
   const currentPlanKey = String(billingStatus?.plan_key || 'free').toLowerCase();
   const currentPlanLabel = plans[currentPlanKey]?.label || (currentPlanKey[0]?.toUpperCase() + currentPlanKey.slice(1));
+  const footerPlanKey = planCategory === 'enterprise'
+    ? 'enterprise'
+    : planCategory === 'team'
+    ? 'team'
+    : currentPlanKey;
+  const footerPlanLabel = plans[footerPlanKey]?.label || (footerPlanKey[0]?.toUpperCase() + footerPlanKey.slice(1));
   const adminWorkspacePreviewActive = Boolean(
     billingStatus?.preview && String(billingStatus?.preview_type || '').toLowerCase() === 'workspace'
   );
@@ -835,17 +835,8 @@ useEffect(() => {
   }, [toolEntitlementById, fallbackMinPlanByTool, currentPlanKey]);
   const canUseScenarios = canUseTool('scenario_create', 'write');
   const canUseWbsWrite = canUseTool('wbs_write', 'write');
-  const isGlobalAdmin = Boolean(user?.is_admin || billingStatus?.is_admin);
-  const userOrganizationPlanKey = String(user?.active_organization_plan_key || '').toLowerCase();
-  const canAccessDashboard =
-    isGlobalAdmin ||
-    ['team', 'enterprise'].includes(currentPlanKey) ||
-    ['team', 'enterprise'].includes(userOrganizationPlanKey) ||
-    Boolean(user?.can_access_team) ||
-    Boolean(user?.can_access_enterprise_admin);
-  const canAccessTeamAdmin = isGlobalAdmin || Boolean(user?.can_access_team);
-  const canAccessEnterpriseAdmin =
-    isGlobalAdmin || Boolean(user?.can_access_enterprise_admin) || currentPlanKey === 'enterprise';
+  const showRealDashboard = planCategory !== 'individual' || isPlatformAdmin;
+  const showLockedDashboard = !showRealDashboard;
   const monthlyCreditLimit = billingStatus?.monthly_credit_limit;
   const creditsRemaining = billingStatus?.credits_remaining;
   const monthlyCreditsUsed = billingStatus?.credits_used;
@@ -1212,52 +1203,9 @@ useEffect(() => {
     if (busy) setModelMenuOpen(false);
   }, [busy]);
 
-  useEffect(() => {
-    if (!sidebarState.settings) {
-      setAccountQuickMenuOpen(false);
-      setKnowledgeMenuOpen(false);
-    }
-  }, [sidebarState.settings]);
-
-  const clearKnowledgeMenuCloseTimer = useCallback(() => {
-    if (knowledgeMenuCloseTimerRef.current) {
-      clearTimeout(knowledgeMenuCloseTimerRef.current);
-      knowledgeMenuCloseTimerRef.current = null;
-    }
-  }, []);
-
-  const scheduleKnowledgeMenuClose = useCallback(() => {
-    clearKnowledgeMenuCloseTimer();
-    knowledgeMenuCloseTimerRef.current = setTimeout(() => {
-      setKnowledgeMenuOpen(false);
-    }, 180);
-  }, [clearKnowledgeMenuCloseTimer]);
-
-  useEffect(() => () => {
-    clearKnowledgeMenuCloseTimer();
-  }, [clearKnowledgeMenuCloseTimer]);
-
-  useEffect(() => {
-    if (!accountQuickMenuOpen) return;
-    const onPointerDown = (event) => {
-      if (!(event.target instanceof Element)) return;
-      if (event.target.closest('.jas-ud-submenu-portal')) return;
-      if (!event.target.closest('.jas-ud-footer')) {
-        setAccountQuickMenuOpen(false);
-        setKnowledgeMenuOpen(false);
-        clearKnowledgeMenuCloseTimer();
-      }
-    };
-    document.addEventListener('mousedown', onPointerDown);
-    return () => document.removeEventListener('mousedown', onPointerDown);
-  }, [accountQuickMenuOpen, clearKnowledgeMenuCloseTimer]);
-
   const dismissSidebars = useCallback(() => {
     dispatchSidebar({ type: 'CLOSE_ALL' });
-    setAccountQuickMenuOpen(false);
-    setKnowledgeMenuOpen(false);
-    clearKnowledgeMenuCloseTimer();
-  }, [clearKnowledgeMenuCloseTimer]);
+  }, []);
 
   const anySidebarOpen = sidebarState.history || sidebarState.readiness || sidebarState.settings;
 
@@ -1276,43 +1224,6 @@ useEffect(() => {
     document.addEventListener('pointerdown', onPointerDown);
     return () => document.removeEventListener('pointerdown', onPointerDown);
   }, [anySidebarOpen, dismissSidebars]);
-
-  const updateKnowledgeMenuPosition = useCallback(() => {
-    if (!knowledgeSubmenuWrapRef.current) return;
-    const rect = knowledgeSubmenuWrapRef.current.getBoundingClientRect();
-    const menuWidth = 260;
-    const viewportPadding = 8;
-    const estimatedHeight = 360;
-    const left = Math.min(
-      Math.max(viewportPadding, rect.right + 4),
-      window.innerWidth - menuWidth - viewportPadding
-    );
-    const top = Math.min(
-      Math.max(viewportPadding, rect.top + 12),
-      Math.max(viewportPadding, window.innerHeight - estimatedHeight - viewportPadding)
-    );
-    const maxHeight = Math.max(180, window.innerHeight - top - viewportPadding);
-    setKnowledgeMenuStyle({
-      left: `${left}px`,
-      top: `${top}px`,
-      maxHeight: `${maxHeight}px`,
-    });
-  }, []);
-
-  useEffect(() => {
-    if (!knowledgeMenuOpen || !accountQuickMenuOpen) {
-      setKnowledgeMenuStyle(null);
-      return;
-    }
-    updateKnowledgeMenuPosition();
-    const onReposition = () => updateKnowledgeMenuPosition();
-    window.addEventListener('resize', onReposition);
-    window.addEventListener('scroll', onReposition, true);
-    return () => {
-      window.removeEventListener('resize', onReposition);
-      window.removeEventListener('scroll', onReposition, true);
-    };
-  }, [knowledgeMenuOpen, accountQuickMenuOpen, updateKnowledgeMenuPosition]);
 
   const startPlanChange = async (planKey) => {
     const token = getAuthToken();
@@ -1581,153 +1492,28 @@ useEffect(() => {
     setNameError('');
     setNameInput(displayName || user?.name || user?.email?.split?.('@')[0] || '');
     setNameModalOpen(true);
-    setAccountQuickMenuOpen(false);
-    setKnowledgeMenuOpen(false);
   };
-
-  const renderSidebarFooter = (onClose) => (
-    <div className="jas-ud-footer">
-      <button
-        type="button"
-        className="jas-ud-footer-profile"
-        onClick={() => {
-          setAccountQuickMenuOpen((prev) => !prev);
-          setKnowledgeMenuOpen(false);
-        }}
-      >
-        <div className="jas-ud-footer-avatar">{userInitials}</div>
-        <div className="jas-ud-footer-meta">
-          <span>{userName}</span>
-          <span>{currentPlanLabel}</span>
-        </div>
-      </button>
-      <div className="jas-ud-footer-actions">
-        <button
-          type="button"
-          className="jas-ud-footer-icon"
-          title="Get apps and extensions"
-          aria-label="Get apps and extensions"
-          onClick={() => {
-            navigate('/connectors-manage');
-            setAccountQuickMenuOpen(false);
-            setKnowledgeMenuOpen(false);
-          }}
-        >
-          <FontAwesomeIcon icon={faDownload} />
-        </button>
-        <button
-          type="button"
-          className="jas-ud-footer-icon"
-          title="Account menu"
-          aria-label="Account menu"
-          onClick={() => {
-            setAccountQuickMenuOpen((prev) => !prev);
-            setKnowledgeMenuOpen(false);
-          }}
-        >
-          <FontAwesomeIcon icon={accountQuickMenuOpen ? faChevronUp : faChevronDown} />
-        </button>
-      </div>
-      {accountQuickMenuOpen && (
-        <div className="jas-ud-footer-menu">
-          <div className="jas-ud-footer-email">{userEmail}</div>
-          <button
-            type="button"
-            onClick={openDisplayNameEditor}
-          >
-            Edit display name
-          </button>
-          <button type="button" onClick={() => { setBillingModalOpen(true); setAccountQuickMenuOpen(false); }}>
-            Upgrade plan
-          </button>
-          {isGlobalAdmin && (
-            <button type="button" onClick={() => { navigate('/jaspen-admin'); setAccountQuickMenuOpen(false); }}>
-              Jaspen Admin
-            </button>
-          )}
-          <button type="button" onClick={() => { openExternal('/login'); setAccountQuickMenuOpen(false); }}>
-            Gift Jaspen
-          </button>
-          {canAccessTeamAdmin && (
-            <button type="button" onClick={() => { navigate('/team'); setAccountQuickMenuOpen(false); }}>
-              Team Admin
-            </button>
-          )}
-          {canAccessEnterpriseAdmin && (
-            <button type="button" onClick={() => { navigate('/enterprise-admin'); setAccountQuickMenuOpen(false); }}>
-              Enterprise Admin
-            </button>
-          )}
-          <div
-            className="jas-ud-submenu-wrap"
-            ref={knowledgeSubmenuWrapRef}
-            onMouseEnter={() => {
-              clearKnowledgeMenuCloseTimer();
-              setKnowledgeMenuOpen(true);
-            }}
-            onMouseLeave={(event) => {
-              const nextTarget = event.relatedTarget;
-              if (nextTarget instanceof Node && knowledgeSubmenuRef.current?.contains(nextTarget)) return;
-              scheduleKnowledgeMenuClose();
-            }}
-          >
-            <button
-              type="button"
-              className="jas-ud-submenu-trigger"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setKnowledgeMenuOpen((prev) => !prev);
-              }}
-            >
-              <span>Knowledge</span>
-              <span className="jas-ud-submenu-caret">›</span>
-            </button>
-            {knowledgeMenuOpen && accountQuickMenuOpen && knowledgeMenuStyle && createPortal(
-              <div
-                className="jas-ud-submenu jas-ud-submenu-portal"
-                ref={knowledgeSubmenuRef}
-                style={knowledgeMenuStyle}
-                onMouseEnter={() => {
-                  clearKnowledgeMenuCloseTimer();
-                  setKnowledgeMenuOpen(true);
-                }}
-                onMouseLeave={(event) => {
-                  const nextTarget = event.relatedTarget;
-                  if (nextTarget instanceof Node && knowledgeSubmenuWrapRef.current?.contains(nextTarget)) return;
-                  scheduleKnowledgeMenuClose();
-                }}
-              >
-                <button type="button" onClick={() => { navigate('/knowledge'); setAccountQuickMenuOpen(false); setKnowledgeMenuOpen(false); }}>Tutorials</button>
-                <button type="button" onClick={() => { openExternal('/pages/api'); setAccountQuickMenuOpen(false); setKnowledgeMenuOpen(false); }}>API console</button>
-                <button type="button" onClick={() => { openExternal('/#about'); setAccountQuickMenuOpen(false); setKnowledgeMenuOpen(false); }}>About Jaspen</button>
-                <button type="button" onClick={() => { openExternal('/pages/terms'); setAccountQuickMenuOpen(false); setKnowledgeMenuOpen(false); }}>Usage policy</button>
-                <button type="button" onClick={() => { openExternal('/pages/privacy'); setAccountQuickMenuOpen(false); setKnowledgeMenuOpen(false); }}>Privacy policy</button>
-                <button type="button" onClick={() => { openExternal('/pages/privacy#choices'); setAccountQuickMenuOpen(false); setKnowledgeMenuOpen(false); }}>Your privacy choices</button>
-              </div>,
-              document.body
-            )}
-          </div>
-          <button type="button" onClick={() => { openExternal('/pages/support'); setAccountQuickMenuOpen(false); }}>
-            Get help
-          </button>
-          <button type="button" onClick={() => { onClose?.(); handleLogout(); }} className="danger">
-            Log out
-          </button>
-        </div>
-      )}
-    </div>
-  );
 
   const renderUserMenuContent = (onClose) => (
     <div className="jas-ud-layout">
       <div className="jas-ud-scroll">
         <div className="jas-ud-section">
           <div className="jas-ud-section-label">Navigate</div>
-          {canAccessDashboard && (
+          {showRealDashboard && (
             <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/dashboard'); }}>
               <FontAwesomeIcon icon={faListCheck} />
               <span className="jas-ud-item-label">Dashboard</span>
+            </button>
+          )}
+          {showLockedDashboard && (
+            <button
+              className="jas-ud-item is-locked"
+              onClick={() => setBillingModalOpen(true)}
+              title="Upgrade to Team to unlock shared dashboards"
+            >
+              <FontAwesomeIcon icon={faListCheck} />
+              <span className="jas-ud-item-label">Dashboard</span>
+              <span className="jas-ud-item-ext"><FontAwesomeIcon icon={faLock} /></span>
             </button>
           )}
           <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/new'); }}>
@@ -1754,13 +1540,13 @@ useEffect(() => {
             <FontAwesomeIcon icon={faClockRotateLeft} />
             <span className="jas-ud-item-label">Activity</span>
           </button>
-          {canAccessTeamAdmin && (
+          {canAccessOrgSettings && (
             <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/team'); }}>
               <FontAwesomeIcon icon={faUser} />
-              <span className="jas-ud-item-label">Team Admin</span>
+              <span className="jas-ud-item-label">Organization</span>
             </button>
           )}
-          {canAccessEnterpriseAdmin && (
+          {isEnterpriseAdmin && (
             <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/enterprise-admin'); }}>
               <FontAwesomeIcon icon={faGaugeHigh} />
               <span className="jas-ud-item-label">Enterprise Admin</span>
@@ -1778,7 +1564,7 @@ useEffect(() => {
             <FontAwesomeIcon icon={faUser} />
             <span className="jas-ud-item-label">Account</span>
           </button>
-          {isGlobalAdmin && (
+          {isPlatformAdmin && (
             <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/jaspen-admin'); }}>
               <FontAwesomeIcon icon={faUser} />
               <span className="jas-ud-item-label">Admin</span>
@@ -1793,8 +1579,6 @@ useEffect(() => {
             onClick={() => {
               setNotificationsMode('settings');
               setNotificationsOpen(true);
-              setAccountQuickMenuOpen(false);
-              setKnowledgeMenuOpen(false);
             }}
           >
             <FontAwesomeIcon icon={faBell} />
@@ -1806,7 +1590,7 @@ useEffect(() => {
             <span className="jas-ud-item-label">Edit display name</span>
             <span className="jas-ud-item-badge">{displayName || user?.name || 'Set name'}</span>
           </button>
-          <button className="jas-ud-item" onClick={() => { setBillingModalOpen(true); setAccountQuickMenuOpen(false); }}>
+          <button className="jas-ud-item" onClick={() => { setBillingModalOpen(true); }}>
             <FontAwesomeIcon icon={faBolt} />
             <span className="jas-ud-item-label">Credits</span>
             <span className="jas-ud-item-badge">{billingLoading ? '...' : creditsBadge}</span>
@@ -1907,7 +1691,7 @@ useEffect(() => {
         </div>
 
         <div className="jas-ud-section">
-          <button className="jas-ud-item" onClick={() => { openExternal('/pages/support'); setAccountQuickMenuOpen(false); }}>
+          <button className="jas-ud-item" onClick={() => { openExternal('/pages/support'); }}>
             <FontAwesomeIcon icon={faQuestionCircle} />
             <span className="jas-ud-item-label">Get help</span>
             <span className="jas-ud-item-ext"><FontAwesomeIcon icon={faArrowUpRightFromSquare} /></span>
@@ -1915,7 +1699,14 @@ useEffect(() => {
         </div>
       </div>
 
-      {renderSidebarFooter(onClose)}
+      <SidebarIdentityFooter
+        displayName={displayName}
+        planLabel={footerPlanLabel}
+        onOpenDisplayNameEditor={openDisplayNameEditor}
+        onOpenBilling={() => setBillingModalOpen(true)}
+        onLogout={handleLogout}
+        onClose={onClose}
+      />
     </div>
   );
 
@@ -5016,7 +4807,14 @@ setView(id === 'chat' ? 'intake' : id);
 
         {renderReadinessChecklist()}
       </div>
-      {renderSidebarFooter(() => dispatchSidebar({ type: 'CLOSE_READINESS' }))}
+      <SidebarIdentityFooter
+        displayName={displayName}
+        planLabel={footerPlanLabel}
+        onOpenDisplayNameEditor={openDisplayNameEditor}
+        onOpenBilling={() => setBillingModalOpen(true)}
+        onLogout={handleLogout}
+        onClose={() => dispatchSidebar({ type: 'CLOSE_READINESS' })}
+      />
     </div>
 
     {sessionId && messages.length > 0 && !sidebarState.readiness && (
@@ -5277,7 +5075,14 @@ setView(id === 'chat' ? 'intake' : id);
         {renderMiniScorecard(activeScorecard)}
       </div>
     )}
-    {renderSidebarFooter(() => setAiDrawerOpen(false))}
+    <SidebarIdentityFooter
+      displayName={displayName}
+      planLabel={footerPlanLabel}
+      onOpenDisplayNameEditor={openDisplayNameEditor}
+      onOpenBilling={() => setBillingModalOpen(true)}
+      onLogout={handleLogout}
+      onClose={() => setAiDrawerOpen(false)}
+    />
   </div>
 )}
 
@@ -5841,7 +5646,14 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
 
 {renderReadinessChecklist()}
         </div>
-        {renderSidebarFooter(() => dispatchSidebar({ type: 'CLOSE_READINESS' }))}
+        <SidebarIdentityFooter
+          displayName={displayName}
+          planLabel={footerPlanLabel}
+          onOpenDisplayNameEditor={openDisplayNameEditor}
+          onOpenBilling={() => setBillingModalOpen(true)}
+          onLogout={handleLogout}
+          onClose={() => dispatchSidebar({ type: 'CLOSE_READINESS' })}
+        />
       </div>
 
       {/* LEFT SIDEBAR - History */}
