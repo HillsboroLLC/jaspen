@@ -1603,11 +1603,11 @@ useEffect(() => {
             <p className="jas-ud-usage-empty">Loading usage...</p>
           )}
           {!billingLoading && monthlyCreditLimit == null && (
-            <p className="jas-ud-usage-empty">Contracted pooled credits on {currentPlanLabel} plan.</p>
+            <p className="jas-ud-usage-note">Monthly limit: Contracted pooled credits on {currentPlanLabel} plan.</p>
           )}
           {!billingLoading && monthlyCreditLimit != null && (
             <>
-              <div className="jas-ud-usage-grid">
+              <div className="jas-ud-usage-grid jas-ud-usage-grid-compact">
                 <div className="jas-ud-usage-stat">
                   <span>Used</span>
                   <strong>{Number(resolvedMonthlyCreditsUsed || 0).toLocaleString()}</strong>
@@ -1616,18 +1616,10 @@ useEffect(() => {
                   <span>Remaining</span>
                   <strong>{Number(creditsRemaining || 0).toLocaleString()}</strong>
                 </div>
-                <div className="jas-ud-usage-stat">
-                  <span>Monthly limit</span>
-                  <strong>{Number(monthlyCreditLimit || 0).toLocaleString()}</strong>
-                </div>
-                <div className="jas-ud-usage-stat">
-                  <span>Utilization</span>
-                  <strong>{monthlyUsagePercent == null ? '0%' : `${monthlyUsagePercent}%`}</strong>
-                </div>
               </div>
-              <div className="jas-ud-usage-meter" aria-label="Monthly credit usage">
-                <span style={{ width: `${monthlyUsagePercent == null ? 0 : monthlyUsagePercent}%` }} />
-              </div>
+              <p className="jas-ud-usage-note">
+                Monthly limit: {Number(monthlyCreditLimit || 0).toLocaleString()} credits on {currentPlanLabel}.
+              </p>
             </>
           )}
         </div>
