@@ -399,6 +399,7 @@ def active_membership_for_user(org_id, user_id):
 def organization_access_payload_for_user(user):
     if not isinstance(user, User):
         return {
+            "active_organization_name": None,
             "active_organization_plan_key": None,
             "can_access_team": False,
             "can_access_enterprise_admin": False,
@@ -424,6 +425,7 @@ def organization_access_payload_for_user(user):
     }
 
     return {
+        "active_organization_name": active_org.name if active_org else None,
         "active_organization_plan_key": to_public_plan(active_org.plan_key) if active_org else None,
         "can_access_team": bool(normalized_plans.intersection({"team", "enterprise"})),
         "can_access_enterprise_admin": "enterprise" in normalized_plans,
