@@ -278,9 +278,8 @@ const SUPPORT_ROLE_SWITCH_OPTIONS = [
   { value: 'workspace:essential', label: 'Personal · Essential', path: '/new?admin_preview=workspace&plan_key=essential' },
   { value: 'team:viewer', label: 'Team · Viewer', path: '/team?admin_preview=team&role=viewer' },
   { value: 'team:collaborator', label: 'Team · Collaborator', path: '/team?admin_preview=team&role=collaborator' },
+  { value: 'team:creator', label: 'Team · Creator', path: '/team?admin_preview=team&role=creator' },
   { value: 'team:admin', label: 'Team · Admin', path: '/team?admin_preview=team&role=admin' },
-  { value: 'enterprise:viewer', label: 'Enterprise · Viewer', path: '/enterprise-admin?admin_preview=enterprise&role=viewer' },
-  { value: 'enterprise:collaborator', label: 'Enterprise · Collaborator', path: '/enterprise-admin?admin_preview=enterprise&role=collaborator' },
   { value: 'enterprise:admin', label: 'Enterprise · Admin', path: '/enterprise-admin?admin_preview=enterprise&role=admin' },
 ];
 
@@ -880,6 +879,8 @@ useEffect(() => {
   const showLockedDashboard = !showRealDashboard;
   const showRealConnectors = isPlatformAdmin || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.essential;
   const showLockedConnectors = !showRealConnectors;
+  const supportPreviewShowsTeamSettings = isPlatformAdmin && supportRoleSwitchValue === 'team:admin';
+  const supportPreviewShowsEnterpriseSettings = isPlatformAdmin && supportRoleSwitchValue === 'enterprise:admin';
   const connectorsManagePath = adminWorkspacePreviewPlan
     ? `/connectors-manage?admin_preview=workspace&plan_key=${encodeURIComponent(adminWorkspacePreviewPlan)}`
     : '/connectors-manage';
@@ -1619,13 +1620,13 @@ useEffect(() => {
             <FontAwesomeIcon icon={faClockRotateLeft} />
             <span className="jas-ud-item-label">Activity</span>
           </button>
-          {!isPlatformAdmin && canAccessOrgSettings && (
+          {((!isPlatformAdmin && canAccessOrgSettings) || supportPreviewShowsTeamSettings) && (
             <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/team'); }}>
               <FontAwesomeIcon icon={faUser} />
               <span className="jas-ud-item-label">Team</span>
             </button>
           )}
-          {!isPlatformAdmin && isEnterpriseAdmin && (
+          {((!isPlatformAdmin && isEnterpriseAdmin) || supportPreviewShowsEnterpriseSettings) && (
             <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/enterprise-admin'); }}>
               <FontAwesomeIcon icon={faGaugeHigh} />
               <span className="jas-ud-item-label">Enterprise Admin</span>
