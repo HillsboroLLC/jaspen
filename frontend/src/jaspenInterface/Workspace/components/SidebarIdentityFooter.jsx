@@ -36,7 +36,7 @@ export default function SidebarIdentityFooter({
     orgDisplayName,
     isPlatformAdmin,
     isEnterpriseAdmin,
-    canAccessOrgSettings,
+    canManageOrg,
   } = useAuth();
 
   const [accountQuickMenuOpen, setAccountQuickMenuOpen] = useState(false);
@@ -55,7 +55,13 @@ export default function SidebarIdentityFooter({
     const params = new URLSearchParams(location.search);
     if (String(params.get('admin_preview') || '').trim().toLowerCase() !== 'workspace') return '/connectors-manage';
     const planKey = String(params.get('plan_key') || '').trim().toLowerCase();
-    return planKey ? `/connectors-manage?admin_preview=workspace&plan_key=${encodeURIComponent(planKey)}` : '/connectors-manage';
+    const role = String(params.get('role') || '').trim().toLowerCase();
+    const next = new URLSearchParams();
+    if (planKey) next.set('admin_preview', 'workspace');
+    if (planKey) next.set('plan_key', planKey);
+    if (role) next.set('role', role);
+    const query = next.toString();
+    return query ? `/connectors-manage?${query}` : '/connectors-manage';
   })();
 
   const clearKnowledgeMenuCloseTimer = useCallback(() => {
@@ -208,7 +214,7 @@ export default function SidebarIdentityFooter({
           <button type="button" onClick={() => { openExternal('/login'); closeMenus(); }}>
             Gift Jaspen
           </button>
-          {!isPlatformAdmin && canAccessOrgSettings && (
+          {!isPlatformAdmin && canManageOrg && (
             <button type="button" onClick={() => navigateInternal('/team')}>
               Team
             </button>

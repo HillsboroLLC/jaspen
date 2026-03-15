@@ -104,24 +104,25 @@ def _plan_caps_for_org(org):
     plan = catalog.get(plan_key) or {}
 
     default_admin = plan.get("max_admin_seats")
-    default_creator = plan.get("max_creator_seats")
-    default_collab = plan.get("max_collaborator_seats")
     default_viewer = plan.get("max_viewer_seats")
 
-    # Keep org-level columns as explicit overrides where present.
     admin_cap = org.max_admin_seats if getattr(org, "max_admin_seats", None) is not None else default_admin
-    creator_cap = org.max_creator_seats if getattr(org, "max_creator_seats", None) is not None else default_creator
-
-    # Preserve enterprise unlimited collaborator behavior from plan config.
-    collaborator_cap = default_collab if default_collab is None else (
-        org.max_collaborator_seats if getattr(org, "max_collaborator_seats", None) is not None else default_collab
+    creator_cap = None if plan_key in {"team", "enterprise"} else (
+        org.max_creator_seats if getattr(org, "max_creator_seats", None) is not None else plan.get("max_creator_seats")
     )
+    collaborator_cap = None if plan_key in {"team", "enterprise"} else (
+        org.max_collaborator_seats if getattr(org, "max_collaborator_seats", None) is not None else plan.get("max_collaborator_seats")
+    )
+    total_paid_cap = getattr(org, "max_total_paid_seats", None)
+    if total_paid_cap is None:
+        total_paid_cap = plan.get("max_total_paid_seats")
 
     return {
         ROLE_ADMIN: admin_cap,
         ROLE_CREATOR: creator_cap,
         ROLE_COLLABORATOR: collaborator_cap,
         ROLE_VIEWER: default_viewer,
+        "total_paid": total_paid_cap,
     }
 
 
@@ -141,12 +142,15 @@ def _seat_usage(org):
     viewer_used = int(counts.get(ROLE_VIEWER, 0))
 
     caps = _plan_caps_for_org(org)
+    total_paid_used = admin_used + creator_used + collaborator_used
     return {
         ROLE_ADMIN: {"used": admin_used, "max": caps.get(ROLE_ADMIN)},
         ROLE_CREATOR: {"used": creator_used, "max": caps.get(ROLE_CREATOR)},
         ROLE_COLLABORATOR: {"used": collaborator_used, "max": caps.get(ROLE_COLLABORATOR)},
         ROLE_VIEWER: {"used": viewer_used, "max": caps.get(ROLE_VIEWER)},
         ROLE_OWNER: {"used": owner_used, "max": 1},
+        "total_paid_used": total_paid_used,
+        "total_paid_limit": caps.get("total_paid"),
     }
 
 
@@ -156,16 +160,35 @@ def _role_has_capacity(org, role, exclude_member=None):
         return False
 
     usage = _seat_usage(org)
+    plan_key = to_public_plan(org.plan_key)
+    ex_role = _normalize_role(getattr(exclude_member, "role", ""), default="") if exclude_member is not None else ""
+
+    if plan_key in {"team", "enterprise"}:
+        if role == ROLE_ADMIN:
+            admin_used = int((usage.get(ROLE_ADMIN) or {}).get("used") or 0)
+            if ex_role in {ROLE_OWNER, ROLE_ADMIN}:
+                admin_used = max(0, admin_used - 1)
+            admin_cap = (usage.get(ROLE_ADMIN) or {}).get("max")
+            if admin_cap is not None and admin_used >= int(admin_cap):
+                return False
+
+        if role in {ROLE_ADMIN, ROLE_CREATOR, ROLE_COLLABORATOR}:
+            total_paid_used = int(usage.get("total_paid_used") or 0)
+            if ex_role in {ROLE_OWNER, ROLE_ADMIN, ROLE_CREATOR, ROLE_COLLABORATOR}:
+                total_paid_used = max(0, total_paid_used - 1)
+            total_paid_limit = usage.get("total_paid_limit")
+            if total_paid_limit is not None and total_paid_used >= int(total_paid_limit):
+                return False
+        return True
+
     target = usage.get(role) or {"used": 0, "max": None}
     used = int(target.get("used") or 0)
     max_allowed = target.get("max")
 
-    if exclude_member is not None:
-        ex_role = _normalize_role(getattr(exclude_member, "role", ""), default="")
-        if role == ROLE_ADMIN and ex_role in {ROLE_OWNER, ROLE_ADMIN}:
-            used = max(0, used - 1)
-        elif role == ex_role:
-            used = max(0, used - 1)
+    if role == ROLE_ADMIN and ex_role in {ROLE_OWNER, ROLE_ADMIN}:
+        used = max(0, used - 1)
+    elif role == ex_role:
+        used = max(0, used - 1)
 
     if max_allowed is None:
         return True
@@ -180,6 +203,7 @@ def _org_payload(org, membership_role=None):
         "owner_id": org.owner_user_id,
         "plan": to_public_plan(org.plan_key),
         "max_admin_seats": getattr(org, "max_admin_seats", None),
+        "max_total_paid_seats": getattr(org, "max_total_paid_seats", None),
         "max_creator_seats": getattr(org, "max_creator_seats", None),
         "max_collaborator_seats": getattr(org, "max_collaborator_seats", None),
         "settings": org.settings if isinstance(org.settings, dict) else {},
@@ -269,6 +293,11 @@ def create_team_org():
         owner_user_id=user.id,
         plan_key=plan_key,
         max_admin_seats=int(plan_cfg.get("max_admin_seats") or 2),
+        max_total_paid_seats=(
+            int(plan_cfg.get("min_seats"))
+            if plan_cfg.get("price_model") == "per_seat" and plan_cfg.get("min_seats") is not None
+            else plan_cfg.get("max_total_paid_seats")
+        ),
         max_creator_seats=int(plan_cfg.get("max_creator_seats") or 5),
         max_collaborator_seats=int(plan_cfg.get("max_collaborator_seats") or 10),
     )

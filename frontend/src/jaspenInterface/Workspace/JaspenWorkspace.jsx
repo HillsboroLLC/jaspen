@@ -276,10 +276,13 @@ const SUPPORT_ROLE_SWITCH_OPTIONS = [
   { value: 'actual', label: 'Actual account', path: '/new' },
   { value: 'workspace:free', label: 'Personal · Free', path: '/new?admin_preview=workspace&plan_key=free' },
   { value: 'workspace:essential', label: 'Personal · Essential', path: '/new?admin_preview=workspace&plan_key=essential' },
-  { value: 'team:viewer', label: 'Team · Viewer', path: '/team?admin_preview=team&role=viewer' },
-  { value: 'team:collaborator', label: 'Team · Collaborator', path: '/team?admin_preview=team&role=collaborator' },
-  { value: 'team:creator', label: 'Team · Creator', path: '/team?admin_preview=team&role=creator' },
-  { value: 'team:admin', label: 'Team · Admin', path: '/team?admin_preview=team&role=admin' },
+  { value: 'workspace:team:viewer', label: 'Team · Viewer', path: '/new?admin_preview=workspace&plan_key=team&role=viewer' },
+  { value: 'workspace:team:collaborator', label: 'Team · Collaborator', path: '/new?admin_preview=workspace&plan_key=team&role=collaborator' },
+  { value: 'workspace:team:creator', label: 'Team · Creator', path: '/new?admin_preview=workspace&plan_key=team&role=creator' },
+  { value: 'workspace:team:admin', label: 'Team · Admin', path: '/new?admin_preview=workspace&plan_key=team&role=admin' },
+  { value: 'workspace:enterprise:viewer', label: 'Enterprise · Viewer', path: '/new?admin_preview=workspace&plan_key=enterprise&role=viewer' },
+  { value: 'workspace:enterprise:collaborator', label: 'Enterprise · Collaborator', path: '/new?admin_preview=workspace&plan_key=enterprise&role=collaborator' },
+  { value: 'workspace:enterprise:creator', label: 'Enterprise · Creator', path: '/new?admin_preview=workspace&plan_key=enterprise&role=creator' },
   { value: 'enterprise:admin', label: 'Enterprise · Admin', path: '/enterprise-admin?admin_preview=enterprise&role=admin' },
 ];
 
@@ -295,7 +298,12 @@ function resolveSupportRoleSwitchValue(location) {
   const previewType = String(params.get('admin_preview') || '').trim().toLowerCase();
   if (previewType === 'workspace') {
     const planKey = normalizePlanKey(params.get('plan_key'));
-    return ADMIN_PREVIEW_PLAN_KEYS.has(planKey) ? `workspace:${planKey}` : 'actual';
+    if (!ADMIN_PREVIEW_PLAN_KEYS.has(planKey)) return 'actual';
+    const role = String(params.get('role') || '').trim().toLowerCase();
+    if (['team', 'enterprise'].includes(planKey) && ['viewer', 'collaborator', 'creator', 'admin'].includes(role)) {
+      return `workspace:${planKey}:${role}`;
+    }
+    return `workspace:${planKey}`;
   }
   if (previewType === 'team' || previewType === 'enterprise') {
     const role = String(params.get('role') || '').trim().toLowerCase();
@@ -317,7 +325,10 @@ export default function JaspenWorkspace() {
     planCategory,
     isPlatformAdmin,
     isEnterpriseAdmin,
-    canAccessOrgSettings,
+    canManageOrg,
+    isOrgViewer,
+    isOrgCollaborator,
+    isOrgCreator,
   } = useAuth();
 
   // Imperative control for scenario modeling (used by interactive chat actions)
@@ -349,6 +360,8 @@ export default function JaspenWorkspace() {
 
   const [input, setInput] = useState('');
   const [pendingFiles, setPendingFiles] = useState([]);
+  const [sharedProjects, setSharedProjects] = useState([]);
+  const [sharedProjectsLoading, setSharedProjectsLoading] = useState(false);
   const [strategyObjective, setStrategyObjective] = useState('balanced');
   const [objectiveExplicitlySet, setObjectiveExplicitlySet] = useState(false);
 
@@ -754,7 +767,7 @@ useEffect(() => {
     }
   }, [checkAuthStatus, navigate]);
 
-  const authFetch = (url, options = {}) => {
+  const authFetch = useCallback((url, options = {}) => {
     const apiBase = API_BASE;
     const fullUrl = url.startsWith('http') ? url : `${apiBase}${url}`;
     const token = localStorage.getItem('access_token') || localStorage.getItem('token');
@@ -763,7 +776,7 @@ useEffect(() => {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     };
     return fetch(fullUrl, { credentials: 'include', ...options, headers });
-  };
+  }, []);
 
   const getUserStorageKeys = (u) => {
     const keys = [];
@@ -805,6 +818,12 @@ useEffect(() => {
     const planKey = String(params.get('plan_key') || '').trim().toLowerCase();
     return ADMIN_PREVIEW_PLAN_KEYS.has(planKey) ? planKey : '';
   }, [location.search, user?.is_admin]);
+  const adminPreviewRole = useMemo(() => {
+    if (!isPlatformAdmin || !['team', 'enterprise'].includes(adminWorkspacePreviewPlan)) return null;
+    const params = new URLSearchParams(location.search);
+    const role = String(params.get('role') || '').trim().toLowerCase();
+    return ['viewer', 'collaborator', 'creator', 'admin'].includes(role) ? role : null;
+  }, [adminWorkspacePreviewPlan, isPlatformAdmin, location.search]);
   const notificationsStorageKey = useMemo(() => {
     if (user?.id) return `jaspen_notifications_id_${user.id}`;
     if (user?.email) return `jaspen_notifications_email_${String(user.email).toLowerCase()}`;
@@ -819,20 +838,26 @@ useEffect(() => {
     user?.active_organization_plan_key,
     user?.subscription_plan,
   );
-  const currentPlanLabel = plans[currentPlanKey]?.label || (currentPlanKey[0]?.toUpperCase() + currentPlanKey.slice(1));
-  const footerPlanKey = planCategory === 'enterprise'
+  const previewPlanCategory = effectivePlanKey === 'enterprise'
     ? 'enterprise'
-    : planCategory === 'team'
+    : effectivePlanKey === 'team'
     ? 'team'
-    : currentPlanKey;
-  const footerPlanLabel = plans[footerPlanKey]?.label || (footerPlanKey[0]?.toUpperCase() + footerPlanKey.slice(1));
+    : 'individual';
+  const currentPlanLabel = plans[currentPlanKey]?.label || (currentPlanKey[0]?.toUpperCase() + currentPlanKey.slice(1));
   const supportRoleSwitchValue = useMemo(
     () => resolveSupportRoleSwitchValue(location),
     [location]
   );
-  const adminWorkspacePreviewActive = Boolean(
-    billingStatus?.preview && String(billingStatus?.preview_type || '').toLowerCase() === 'workspace'
+  const customerPreviewActive = Boolean(isPlatformAdmin && supportRoleSwitchValue !== 'actual');
+  const footerPlanKey = customerPreviewActive ? effectivePlanKey : (
+    planCategory === 'enterprise'
+      ? 'enterprise'
+      : planCategory === 'team'
+      ? 'team'
+      : currentPlanKey
   );
+  const footerPlanLabel = plans[footerPlanKey]?.label || (footerPlanKey[0]?.toUpperCase() + footerPlanKey.slice(1));
+  const adminWorkspacePreviewActive = Boolean(adminWorkspacePreviewPlan);
   const toolEntitlements = useMemo(
     () => (Array.isArray(billingStatus?.tool_entitlements) ? billingStatus.tool_entitlements : []),
     [billingStatus]
@@ -875,14 +900,19 @@ useEffect(() => {
   }, [toolEntitlementById, fallbackMinPlanByTool, currentPlanKey]);
   const canUseScenarios = canUseTool('scenario_create', 'write');
   const canUseWbsWrite = canUseTool('wbs_write', 'write');
-  const showRealDashboard = planCategory !== 'individual' || isPlatformAdmin;
-  const showLockedDashboard = !showRealDashboard;
-  const showRealConnectors = isPlatformAdmin || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.essential;
+  const effectiveCanManageOrg = adminPreviewRole ? adminPreviewRole === 'admin' : canManageOrg;
+  const effectiveIsViewer = adminPreviewRole ? adminPreviewRole === 'viewer' : isOrgViewer;
+  const effectiveIsCollaborator = adminPreviewRole ? adminPreviewRole === 'collaborator' : isOrgCollaborator;
+  const effectiveIsCreator = adminPreviewRole
+    ? ['admin', 'creator'].includes(adminPreviewRole)
+    : isOrgCreator;
+  const canStartOrgProjects = previewPlanCategory === 'individual' || effectiveIsCreator || (isPlatformAdmin && !customerPreviewActive);
+  const showRealDashboard = previewPlanCategory !== 'individual' || (isPlatformAdmin && !customerPreviewActive);
+  const showLockedDashboard = previewPlanCategory === 'individual' && (!isPlatformAdmin || customerPreviewActive);
+  const showRealConnectors = (isPlatformAdmin && !customerPreviewActive) || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.essential;
   const showLockedConnectors = !showRealConnectors;
-  const supportPreviewShowsTeamSettings = isPlatformAdmin && supportRoleSwitchValue === 'team:admin';
-  const supportPreviewShowsEnterpriseSettings = isPlatformAdmin && supportRoleSwitchValue === 'enterprise:admin';
   const connectorsManagePath = adminWorkspacePreviewPlan
-    ? `/connectors-manage?admin_preview=workspace&plan_key=${encodeURIComponent(adminWorkspacePreviewPlan)}`
+    ? `/connectors-manage?admin_preview=workspace&plan_key=${encodeURIComponent(adminWorkspacePreviewPlan)}${adminPreviewRole ? `&role=${encodeURIComponent(adminPreviewRole)}` : ''}`
     : '/connectors-manage';
   const monthlyCreditLimit = billingStatus?.monthly_credit_limit;
   const creditsRemaining = billingStatus?.credits_remaining;
@@ -918,6 +948,54 @@ useEffect(() => {
       ? '--'
       : Number(intakeCreditsValue).toLocaleString();
   const creditsBadge = creditsRemaining == null ? 'Contracted' : Number(creditsRemaining || 0).toLocaleString();
+  useEffect(() => {
+    if (planCategory === 'individual' || !user) {
+      setSharedProjects([]);
+      setSharedProjectsLoading(false);
+      return;
+    }
+    if (!effectiveIsCollaborator && !effectiveIsViewer) {
+      setSharedProjects([]);
+      setSharedProjectsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setSharedProjectsLoading(true);
+    authFetch('/api/v1/team/projects')
+      .then((response) => response.json().catch(() => ({})))
+      .then((payload) => {
+        if (!cancelled) {
+          setSharedProjects(Array.isArray(payload?.projects) ? payload.projects : []);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSharedProjects([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setSharedProjectsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authFetch, effectiveIsCollaborator, effectiveIsViewer, planCategory, user]);
+  const visibleSharedProjects = useMemo(() => {
+    const currentUserId = String(user?.id || '').trim();
+    return (Array.isArray(sharedProjects) ? sharedProjects : []).filter((project) => {
+      const ownerId = String(project?.created_by_user_id || '').trim();
+      const visibility = String(project?.visibility || 'private').trim().toLowerCase();
+      const sharedWith = Array.isArray(project?.shared_with_user_ids) ? project.shared_with_user_ids.map((id) => String(id)) : [];
+      if (ownerId && currentUserId && ownerId === currentUserId) return true;
+      if (visibility === 'team') return true;
+      if (visibility === 'specific') return sharedWith.includes(currentUserId);
+      return false;
+    });
+  }, [sharedProjects, user?.id]);
   const notificationFeedWithFallback = useMemo(() => {
     const normalized = normalizeNotificationFeed(notificationFeed);
     return normalized.length > 0 ? normalized : buildDefaultNotifications();
@@ -1572,7 +1650,7 @@ useEffect(() => {
               <p className="jas-ud-role-switcher-note">
                 {supportRoleSwitchValue === 'actual'
                   ? 'Showing your actual admin account.'
-                  : `Previewing ${SUPPORT_ROLE_SWITCH_OPTIONS.find((option) => option.value === supportRoleSwitchValue)?.label || 'support mode'}.`}
+                  : `Previewing ${SUPPORT_ROLE_SWITCH_OPTIONS.find((option) => option.value === supportRoleSwitchValue)?.label || 'support mode'} using your active org data.`}
               </p>
             </div>
           </div>
@@ -1620,13 +1698,13 @@ useEffect(() => {
             <FontAwesomeIcon icon={faClockRotateLeft} />
             <span className="jas-ud-item-label">Activity</span>
           </button>
-          {((!isPlatformAdmin && canAccessOrgSettings) || supportPreviewShowsTeamSettings) && (
+          {!isPlatformAdmin && effectiveCanManageOrg && (
             <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/team'); }}>
               <FontAwesomeIcon icon={faUser} />
               <span className="jas-ud-item-label">Team</span>
             </button>
           )}
-          {((!isPlatformAdmin && isEnterpriseAdmin) || supportPreviewShowsEnterpriseSettings) && (
+          {!isPlatformAdmin && isEnterpriseAdmin && (
             <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/enterprise-admin'); }}>
               <FontAwesomeIcon icon={faGaugeHigh} />
               <span className="jas-ud-item-label">Enterprise Admin</span>
@@ -1660,7 +1738,7 @@ useEffect(() => {
           {isPlatformAdmin && (
             <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/jaspen-admin'); }}>
               <FontAwesomeIcon icon={faUser} />
-              <span className="jas-ud-item-label">Admin</span>
+              <span className="jas-ud-item-label">Jaspen Admin</span>
             </button>
           )}
         </div>
@@ -3038,6 +3116,10 @@ const [beginBusy, setBeginBusy] = useState(false);
 const [beginMsg, setBeginMsg] = useState("Generating your project plan…");
 
 async function onBeginProject() {
+    if (!canStartOrgProjects) {
+      showToast('Only creators and admins can start new projects in a shared workspace.', 'info');
+      return;
+    }
     const suggestedName = deriveIdeaTitle({
       result: activeScorecard || analysisResult,
       messages,
@@ -3389,7 +3471,15 @@ console.log('[Finish&Analyze] data.analysis_result.meta.extracted_levers?', data
 
     const text = (input || '').trim();
     if (busy) return;
+    if (effectiveIsViewer) {
+      showToast('Viewers can review shared projects but cannot edit or rescore them.', 'info');
+      return;
+    }
     if (!text && (!pendingFiles || pendingFiles.length === 0)) return;
+    if (!sessionId && !canStartOrgProjects) {
+      showToast('This role can work inside shared projects but cannot start new ones.', 'info');
+      return;
+    }
 
     const filesToAnalyze = [...(pendingFiles || [])];
     const attachments = filesToAnalyze.map(f => ({
@@ -3710,6 +3800,10 @@ console.log('[Finish&Analyze] data.analysis_result.meta.extracted_levers?', data
 },
     
         [ChatActionTypes.SCENARIO_SET_INPUT]: (payload) => {
+      if (effectiveIsViewer) {
+        showToast('Viewers cannot modify scenarios.', 'info');
+        return;
+      }
       if (!canUseScenarios) {
         showToast('Scenario tools require Essential or higher.', 'info');
         setBillingModalOpen(true);
@@ -3734,6 +3828,10 @@ console.log('[Finish&Analyze] data.analysis_result.meta.extracted_levers?', data
 
     
         [ChatActionTypes.SCENARIO_RUN]: async (payload) => {
+      if (effectiveIsViewer) {
+        showToast('Viewers cannot run scenarios.', 'info');
+        return;
+      }
       if (!canUseScenarios) {
         showToast('Scenario tools require Essential or higher.', 'info');
         setBillingModalOpen(true);
@@ -3760,6 +3858,10 @@ console.log('[Finish&Analyze] data.analysis_result.meta.extracted_levers?', data
 
     
         [ChatActionTypes.SCENARIO_ADOPT]: async (payload) => {
+      if (effectiveIsViewer) {
+        showToast('Viewers cannot adopt scenarios.', 'info');
+        return;
+      }
       if (!canUseScenarios) {
         showToast('Scenario tools require Essential or higher.', 'info');
         setBillingModalOpen(true);
@@ -4183,6 +4285,10 @@ console.log('[Finish&Analyze] data.analysis_result.meta.extracted_levers?', data
 const sendAIMessage = async () => {
   const text = (aiInput || '').trim();
   if (!text || !sessionId || busy) return;
+  if (effectiveIsViewer) {
+    showToast('Viewers can review shared projects but cannot modify them.', 'info');
+    return;
+  }
 
   setAiInput('');
   setBusy(true);
@@ -4803,7 +4909,7 @@ const handleSaveScenario = async (scenario) => {
     const scoreSelectValue = useSnapshotSelect
       ? (selectedScorecardId || snapshotOptions[0]?.id || '')
       : selectedVariantId;
-    const scenarioTabLocked = !canUseScenarios;
+    const scenarioTabLocked = !canUseScenarios || effectiveIsViewer;
     const TabButton = ({ id, label }) => (
       <button
         className={`jas-top-tab ${activeTab === id ? 'active' : ''} ${id === 'scenario' && scenarioTabLocked ? 'disabled' : ''}`}
@@ -4812,8 +4918,12 @@ const handleSaveScenario = async (scenario) => {
         aria-disabled={id === 'scenario' && scenarioTabLocked}
 onClick={async () => {
   if (id === 'scenario' && scenarioTabLocked) {
-    showToast('Scenarios are available on Essential, Team, and Enterprise plans.', 'info');
-    setBillingModalOpen(true);
+    if (effectiveIsViewer) {
+      showToast('Viewers can review shared project results but cannot use scenario tools.', 'info');
+    } else {
+      showToast('Scenarios are available on Essential, Team, and Enterprise plans.', 'info');
+      setBillingModalOpen(true);
+    }
     return;
   }
   setActiveTab(id);
@@ -5193,7 +5303,13 @@ setView(id === 'chat' ? 'intake' : id);
           <div className="jas-workspace-header">
             {adminWorkspacePreviewActive && (
               <div className="jas-admin-preview-banner">
-                Previewing Workspace as <strong>{currentPlanLabel}</strong> from Jaspen Admin. Live billing, connector, and organization state are hidden.
+                Previewing Workspace as <strong>{supportRoleSwitchValue === 'actual' ? currentPlanLabel : (SUPPORT_ROLE_SWITCH_OPTIONS.find((option) => option.value === supportRoleSwitchValue)?.label || currentPlanLabel)}</strong> using your active organization data.
+              </div>
+            )}
+            {effectiveIsViewer && sessionId && (
+              <div className="jas-viewer-badge">
+                <FontAwesomeIcon icon={faLock} />
+                Viewing as read-only
               </div>
             )}
             <div className="jas-workspace-header-top">
@@ -5489,7 +5605,7 @@ setView(id === 'chat' ? 'intake' : id);
                         placeholder="Refine the conversation to improve your scorecard..."
                         className="agent-chat-input"
                         rows={2}
-                        disabled={busy}
+                        disabled={busy || effectiveIsViewer}
                       />
 
                       <div className="agent-chat-input-toolbar">
@@ -5499,7 +5615,7 @@ setView(id === 'chat' ? 'intake' : id);
                             className="agent-chat-plus"
                             aria-label="Attach files"
                             title="Attach files"
-                            disabled={busy}
+                            disabled={busy || effectiveIsViewer}
                             onClick={() => fileInputRef.current?.click()}
                           >
                             <FontAwesomeIcon icon={faPlus} />
@@ -5515,7 +5631,7 @@ setView(id === 'chat' ? 'intake' : id);
                             aria-label={isRecording ? 'Stop recording' : 'Start recording'}
                             aria-pressed={isRecording}
                             title={isRecording ? 'Stop recording' : 'Start recording'}
-                            disabled={busy}
+                            disabled={busy || effectiveIsViewer}
                             onClick={() => setIsRecording(prev => !prev)}
                           >
                             <FontAwesomeIcon icon={faMicrophone} />
@@ -5524,7 +5640,7 @@ setView(id === 'chat' ? 'intake' : id);
                           <button
                             className="agent-chat-send"
                             onClick={onSubmit}
-                            disabled={busy || (!input.trim() && pendingFiles.length === 0)}
+                            disabled={busy || effectiveIsViewer || (!input.trim() && pendingFiles.length === 0)}
                             title="Send"
                           >
                             {busy ? <FontAwesomeIcon icon={faSpinner} spin /> : <FontAwesomeIcon icon={faPaperPlane} />}
@@ -5546,8 +5662,8 @@ setView(id === 'chat' ? 'intake' : id);
                         <button
                           className="finish-analyze-btn"
                           onClick={onFinishAnalyze}
-                          disabled={!canAnalyze || busy}
-                          title={canAnalyze ? "Regenerate your Jaspen score" : "Keep chatting to gather more information"}
+                          disabled={!canAnalyze || busy || effectiveIsViewer}
+                          title={effectiveIsViewer ? 'Viewers cannot rescore shared projects' : (canAnalyze ? "Regenerate your Jaspen score" : "Keep chatting to gather more information")}
                         >
                           <FontAwesomeIcon icon={faCheck} />
                           <span>Finish & Analyze</span>
@@ -5621,6 +5737,7 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
   const intakeShellOpen = sidebarState.history || sidebarState.readiness || sidebarState.settings;
   const intakeHasReadinessTab = sessionId && messages.length > 0 && !sidebarState.readiness;
   const showIntakeTopbarUtilities = !sessionId && messages.length === 0;
+  const showSharedProjectsLanding = !sessionId && messages.length === 0 && planCategory !== 'individual' && (effectiveIsCollaborator || effectiveIsViewer);
   const intakeTabs = [];
   if (!sidebarState.settings) intakeTabs.push('settings');
   if (hasHistory && !sidebarState.history) intakeTabs.push('history');
@@ -5919,7 +6036,52 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
 
       {/* Content */}
       <div className="jas-chat-content">
-        {messages.length === 0 ? (
+        {showSharedProjectsLanding ? (
+          <div className="jas-shared-projects-landing">
+            <h2>Shared Projects</h2>
+            <p className="jas-shared-projects-sub">
+              {effectiveIsViewer
+                ? 'Projects shared with you for viewing.'
+                : 'Projects shared with you for collaboration.'}
+            </p>
+
+            {sharedProjectsLoading && (
+              <p className="jas-shared-projects-empty">Loading shared projects...</p>
+            )}
+
+            {!sharedProjectsLoading && visibleSharedProjects.length === 0 && (
+              <div className="jas-shared-projects-empty-state">
+                <p>
+                  {effectiveIsViewer
+                    ? "You haven't been invited to view any projects yet."
+                    : "You haven't been invited to collaborate on any projects yet."}
+                </p>
+                <p>When a project owner shares a project with you, it will appear here.</p>
+              </div>
+            )}
+
+            {!sharedProjectsLoading && visibleSharedProjects.length > 0 && (
+              <div className="jas-shared-projects-list">
+                {visibleSharedProjects.map((project) => (
+                  <button
+                    key={project.session_id}
+                    type="button"
+                    className="jas-shared-project-card"
+                    onClick={() => navigate(`/new?session_id=${encodeURIComponent(project.session_id)}`)}
+                  >
+                    <strong>{project.name || 'Untitled Project'}</strong>
+                    <span>Owner: {project.owner_name || 'Unknown'}</span>
+                    <span>Status: {project.status || 'active'}</span>
+                    <span>Updated: {project.updated_at ? new Date(project.updated_at).toLocaleString() : '—'}</span>
+                    <span className="jas-shared-project-access">
+                      {effectiveIsViewer ? 'View only' : 'Can edit'}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : messages.length === 0 ? (
           <div className="jas-chat-welcome">
             <h2 className="jas-chat-welcome-title">
               <img
@@ -5951,6 +6113,7 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
         )}
 
         {/* Input Area - Manus Style */}
+        {!showSharedProjectsLanding && (
         <div className="jas-chat-input-area">
           {renderStarterSelector()}
           <input
@@ -5989,7 +6152,7 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
               onKeyDown={onKey}
               placeholder={sessionId ? "Continue the conversation..." : "Describe your project or goal..."}
               rows={2}
-              disabled={busy}
+              disabled={busy || effectiveIsViewer}
             />
             <div className="jas-chat-input-toolbar">
               <div className="jas-chat-input-left-controls">
@@ -5998,7 +6161,7 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
                   className="jas-ci-btn"
                   aria-label="Attach files"
                   title="Attach"
-                  disabled={busy}
+                  disabled={busy || effectiveIsViewer}
                   onClick={() => fileInputRef.current?.click()}
                 >
                   <FontAwesomeIcon icon={faPaperclip} />
@@ -6012,7 +6175,7 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
                   className={`jas-ci-btn ${isRecording ? 'recording' : ''}`}
                   aria-label={isRecording ? 'Stop recording' : 'Start recording'}
                   title="Voice"
-                  disabled={busy}
+                  disabled={busy || effectiveIsViewer}
                   onClick={() => setIsRecording(prev => !prev)}
                 >
                   <FontAwesomeIcon icon={faMicrophone} />
@@ -6020,7 +6183,7 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
                 <button
                   className="jas-ci-btn send"
                   onClick={onSubmit}
-                  disabled={busy || (!input.trim() && pendingFiles.length === 0)}
+                  disabled={busy || effectiveIsViewer || (!input.trim() && pendingFiles.length === 0)}
                   title="Send"
                 >
                   {busy ? <FontAwesomeIcon icon={faSpinner} spin /> : <FontAwesomeIcon icon={faArrowUp} />}
@@ -6042,8 +6205,8 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
               <button
                 className="finish-analyze-btn"
                 onClick={onFinishAnalyze}
-                disabled={!canAnalyze || busy}
-                title={canAnalyze ? "Generate your Jaspen score" : "Keep chatting to gather more information"}
+                disabled={!canAnalyze || busy || effectiveIsViewer}
+                title={effectiveIsViewer ? 'Viewers cannot generate new scorecards' : (canAnalyze ? "Generate your Jaspen score" : "Keep chatting to gather more information")}
               >
                 <FontAwesomeIcon icon={faCheck} />
                 <span>Finish & Analyze</span>
@@ -6051,6 +6214,7 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
             </div>
           )}
         </div>
+        )}
       </div>
 
       {/* Help Modal */}

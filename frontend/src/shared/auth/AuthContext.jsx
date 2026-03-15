@@ -548,9 +548,15 @@ export function AuthProvider({ children }) {
   const orgDisplayName = planCategory === 'individual'
     ? 'Personal Workspace'
     : (String(user?.active_organization_name || '').trim() || 'Organization');
+  const orgRole = String(user?.active_organization_role || '').toLowerCase() || null;
   const isPlatformAdmin = Boolean(user?.is_admin);
   const isEnterpriseAdmin = Boolean(user?.can_access_enterprise_admin || isPlatformAdmin);
   const canAccessOrgSettings = Boolean(user?.can_access_team || user?.can_access_enterprise_admin || isPlatformAdmin);
+  const canManageOrg = orgRole === 'owner' || orgRole === 'admin' || isPlatformAdmin;
+  const canEditProjects = ['owner', 'admin', 'creator', 'collaborator'].includes(orgRole) || isPlatformAdmin;
+  const isOrgViewer = orgRole === 'viewer';
+  const isOrgCollaborator = orgRole === 'collaborator';
+  const isOrgCreator = ['owner', 'admin', 'creator'].includes(orgRole) || isPlatformAdmin;
 
   const value = {
     // Original functionality (preserved)
@@ -568,6 +574,12 @@ export function AuthProvider({ children }) {
     isPlatformAdmin,
     isEnterpriseAdmin,
     canAccessOrgSettings,
+    orgRole,
+    canManageOrg,
+    canEditProjects,
+    isOrgViewer,
+    isOrgCollaborator,
+    isOrgCreator,
 
     // LSS functionality
     lssUsers,

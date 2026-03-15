@@ -27,18 +27,18 @@ ORG_ROLE_SET = set(ORG_ROLES)
 ORG_MANAGE_ROLES = {ORG_ROLE_OWNER, ORG_ROLE_ADMIN}
 ORG_EDIT_ROLES = {ORG_ROLE_OWNER, ORG_ROLE_ADMIN, ORG_ROLE_CREATOR, ORG_ROLE_COLLABORATOR}
 
-TEAM_SEAT_POLICY = {
+DEFAULT_SEAT_POLICIES = {
     "team": {
         ORG_ROLE_OWNER: 1,
-        ORG_ROLE_ADMIN: 2,
-        ORG_ROLE_CREATOR: 5,
-        ORG_ROLE_COLLABORATOR: 10,
+        ORG_ROLE_ADMIN: 3,
+        ORG_ROLE_CREATOR: None,
+        ORG_ROLE_COLLABORATOR: None,
         ORG_ROLE_VIEWER: None,
     },
     "enterprise": {
         ORG_ROLE_OWNER: 1,
-        ORG_ROLE_ADMIN: 5,
-        ORG_ROLE_CREATOR: 25,
+        ORG_ROLE_ADMIN: 10,
+        ORG_ROLE_CREATOR: None,
         ORG_ROLE_COLLABORATOR: None,
         ORG_ROLE_VIEWER: None,
     },
@@ -102,7 +102,7 @@ def can_edit_projects(role):
 
 def seat_policy_for_plan(plan_key):
     canonical = normalize_plan_key(plan_key)
-    return TEAM_SEAT_POLICY.get(canonical, TEAM_SEAT_POLICY["essential"])
+    return DEFAULT_SEAT_POLICIES.get(canonical, DEFAULT_SEAT_POLICIES["essential"])
 
 
 def normalize_seat_limit_value(value):
@@ -328,6 +328,7 @@ def build_seat_usage(org):
     policy = seat_policy_for_org(org)
     usage = {}
     owner_used = int(role_counts.get(ORG_ROLE_OWNER, 0))
+    total_paid_used = 0
     for role in ORG_ROLES:
         used = int(role_counts.get(role, 0))
         if role == ORG_ROLE_ADMIN:
@@ -341,12 +342,47 @@ def build_seat_usage(org):
             "available": None if limit is None else max(int(limit) - used, 0),
             "is_unlimited": limit is None,
         }
+        if role in {ORG_ROLE_ADMIN, ORG_ROLE_CREATOR, ORG_ROLE_COLLABORATOR}:
+            total_paid_used += used
+    total_paid_limit = getattr(org, "max_total_paid_seats", None)
+    usage["total_paid_used"] = total_paid_used
+    usage["total_paid_limit"] = total_paid_limit
+    usage["total_paid_available"] = None if total_paid_limit is None else max(int(total_paid_limit) - total_paid_used, 0)
     return usage
 
 
 def role_has_capacity(org, role, exclude_member_id=None):
     role = normalize_org_role(role)
-    limit = seat_policy_for_org(org).get(role)
+    public_plan = to_public_plan(getattr(org, "plan_key", None))
+    policy = seat_policy_for_org(org)
+    limit = policy.get(role)
+
+    excluded = None
+    if exclude_member_id is not None:
+        excluded = OrganizationMember.query.filter_by(
+            id=int(exclude_member_id),
+            organization_id=org.id,
+            status="active",
+        ).first()
+
+    if public_plan in {"team", "enterprise"}:
+        usage = build_seat_usage(org)
+        if role == ORG_ROLE_ADMIN:
+            admin_used = int((usage.get(ORG_ROLE_ADMIN) or {}).get("used") or 0)
+            if excluded and normalize_org_role(excluded.role) in {ORG_ROLE_OWNER, ORG_ROLE_ADMIN}:
+                admin_used = max(0, admin_used - 1)
+            if limit is not None and admin_used >= int(limit):
+                return False
+
+        if role in {ORG_ROLE_ADMIN, ORG_ROLE_CREATOR, ORG_ROLE_COLLABORATOR}:
+            paid_used = int(usage.get("total_paid_used") or 0)
+            if excluded and normalize_org_role(excluded.role) in {ORG_ROLE_OWNER, ORG_ROLE_ADMIN, ORG_ROLE_CREATOR, ORG_ROLE_COLLABORATOR}:
+                paid_used = max(0, paid_used - 1)
+            total_paid_limit = getattr(org, "max_total_paid_seats", None)
+            if total_paid_limit is not None and paid_used >= int(total_paid_limit):
+                return False
+        return True
+
     if limit is None:
         return True
 
@@ -357,13 +393,8 @@ def role_has_capacity(org, role, exclude_member_id=None):
             OrganizationMember.role.in_([ORG_ROLE_OWNER, ORG_ROLE_ADMIN]),
         )
         used = query.count()
-        if exclude_member_id is not None:
-            excluded = OrganizationMember.query.filter_by(
-                id=int(exclude_member_id),
-                organization_id=org.id,
-                status="active",
-            ).first()
-            if excluded and normalize_org_role(excluded.role) in {ORG_ROLE_OWNER, ORG_ROLE_ADMIN}:
+        if excluded is not None:
+            if normalize_org_role(excluded.role) in {ORG_ROLE_OWNER, ORG_ROLE_ADMIN}:
                 used = max(0, used - 1)
     else:
         query = OrganizationMember.query.filter_by(
@@ -400,14 +431,22 @@ def organization_access_payload_for_user(user):
     if not isinstance(user, User):
         return {
             "active_organization_name": None,
+            "active_organization_role": None,
             "active_organization_plan_key": None,
             "can_access_team": False,
             "can_access_enterprise_admin": False,
         }
 
     active_org = None
+    active_membership = None
     if user.active_organization_id:
         active_org = Organization.query.filter_by(id=user.active_organization_id).first()
+        if active_org:
+            active_membership = OrganizationMember.query.filter_by(
+                organization_id=active_org.id,
+                user_id=user.id,
+                status="active",
+            ).first()
 
     membership_plans = (
         db.session.query(Organization.plan_key)
@@ -426,6 +465,7 @@ def organization_access_payload_for_user(user):
 
     return {
         "active_organization_name": active_org.name if active_org else None,
+        "active_organization_role": active_membership.role if active_membership else None,
         "active_organization_plan_key": to_public_plan(active_org.plan_key) if active_org else None,
         "can_access_team": bool(normalized_plans.intersection({"team", "enterprise"})),
         "can_access_enterprise_admin": "enterprise" in normalized_plans,
@@ -463,5 +503,6 @@ def org_payload(org):
         "seat_policy_defaults": serialize_seat_policy(org.plan_key),
         "seat_policy": serialize_seat_policy(org),
         "seat_policy_overrides": seat_policy_overrides_for_org(org),
+        "max_total_paid_seats": getattr(org, "max_total_paid_seats", None),
         "settings": org.settings if isinstance(org.settings, dict) else {},
     }

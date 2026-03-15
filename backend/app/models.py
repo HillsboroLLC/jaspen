@@ -165,6 +165,11 @@ class Organization(db.Model):
         nullable=False,
         default=2,
     )
+    max_total_paid_seats = db.Column(
+        db.Integer,
+        nullable=True,
+        default=None,
+    )
     max_creator_seats = db.Column(
         db.Integer,
         nullable=False,
@@ -224,6 +229,7 @@ class Organization(db.Model):
             'owner_user_id': self.owner_user_id,
             'plan_key': self.plan_key,
             'max_admin_seats': self.max_admin_seats,
+            'max_total_paid_seats': self.max_total_paid_seats,
             'max_creator_seats': self.max_creator_seats,
             'max_collaborator_seats': self.max_collaborator_seats,
             'seat_policy_overrides': self.seat_policy_overrides if isinstance(self.seat_policy_overrides, dict) else {},

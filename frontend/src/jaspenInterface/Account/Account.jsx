@@ -20,6 +20,19 @@ function getToken() {
 }
 
 const PLAN_ORDER = ['free', 'essential', 'team', 'enterprise'];
+
+function priceDisplay(plan) {
+  if (plan?.price_model === 'per_seat' && Number.isFinite(plan?.monthly_price_usd)) {
+    return `$${plan.monthly_price_usd}/seat/mo`;
+  }
+  if (plan?.price_model === 'custom') {
+    return 'Contact sales';
+  }
+  if (Number.isFinite(plan?.monthly_price_usd)) {
+    return plan.monthly_price_usd === 0 ? '$0' : `$${plan.monthly_price_usd}/mo`;
+  }
+  return 'Contact sales';
+}
 const PACK_ORDER = ['pack_1000', 'pack_5000', 'pack_20000'];
 const MODEL_ORDER = ['pluto', 'orbit', 'titan'];
 const PLAN_RANK = {
@@ -1521,8 +1534,6 @@ export default function Account() {
               const isCurrent = currentPlan === key;
               const isSalesOnly = !!plan.sales_only;
               const isPending = pendingAction === key;
-              const hasPrice = Number.isFinite(plan.monthly_price_usd);
-
               return (
                 <article className={`account-plan-card ${isCurrent ? 'is-current' : ''}`} key={key}>
                   <div className="account-plan-head">
@@ -1532,10 +1543,12 @@ export default function Account() {
                     )}
                   </div>
                   <p className="account-plan-price">
-                    {hasPrice ? (plan.monthly_price_usd === 0 ? '$0' : `$${plan.monthly_price_usd}/mo`) : 'Contact sales'}
+                    {priceDisplay(plan)}
                   </p>
                   <p className="account-plan-meta">
-                    {plan.monthly_credits == null
+                    {key === 'team'
+                      ? '5 seat minimum · pooled credits scale with team size'
+                      : plan.monthly_credits == null
                       ? 'Contracted pooled usage'
                       : `${Number(plan.monthly_credits).toLocaleString()} credits/month`}
                   </p>

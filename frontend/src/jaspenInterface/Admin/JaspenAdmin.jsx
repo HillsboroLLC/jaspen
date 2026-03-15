@@ -10,18 +10,57 @@ const CREDIT_MODE_OPTIONS = [
   { value: 'set', label: 'Set exact value' },
   { value: 'reset_plan', label: 'Reset to plan default' },
 ];
-const WORKSPACE_PREVIEW_OPTIONS = [
-  { label: 'Free', planKey: 'free' },
-  { label: 'Essential', planKey: 'essential' },
-  { label: 'Team', planKey: 'team' },
-  { label: 'Enterprise', planKey: 'enterprise' },
-];
-const TEAM_ROLE_PREVIEW_OPTIONS = [
-  { label: 'Owner', role: 'owner' },
-  { label: 'Admin', role: 'admin' },
-  { label: 'Creator', role: 'creator' },
-  { label: 'Collaborator', role: 'collaborator' },
-  { label: 'Viewer', role: 'viewer' },
+const ROLE_EXPERIENCE_OPTIONS = [
+  {
+    label: 'Individual · Free',
+    description: 'Personal workspace, 300 credits, Pluto only. No org features or shared dashboards.',
+    path: '/new?admin_preview=workspace&plan_key=free',
+  },
+  {
+    label: 'Individual · Essential',
+    description: 'Personal workspace with higher limits and starter data-source access.',
+    path: '/new?admin_preview=workspace&plan_key=essential',
+  },
+  {
+    label: 'Team · Viewer',
+    description: 'Read-only access to shared projects in the active team. No editing or admin controls.',
+    path: '/new?admin_preview=workspace&plan_key=team&role=viewer',
+  },
+  {
+    label: 'Team · Collaborator',
+    description: 'Can interact inside shared projects in the active team, but cannot start new ones.',
+    path: '/new?admin_preview=workspace&plan_key=team&role=collaborator',
+  },
+  {
+    label: 'Team · Creator',
+    description: 'Can create and develop projects in the active team, but cannot manage users or settings.',
+    path: '/new?admin_preview=workspace&plan_key=team&role=creator',
+  },
+  {
+    label: 'Team · Admin',
+    description: 'Can manage team users and settings in the active org and create projects.',
+    path: '/new?admin_preview=workspace&plan_key=team&role=admin',
+  },
+  {
+    label: 'Enterprise · Viewer',
+    description: 'Read-only access to shared enterprise projects using the active org data.',
+    path: '/new?admin_preview=workspace&plan_key=enterprise&role=viewer',
+  },
+  {
+    label: 'Enterprise · Collaborator',
+    description: 'Can work inside shared enterprise projects but cannot start new ones.',
+    path: '/new?admin_preview=workspace&plan_key=enterprise&role=collaborator',
+  },
+  {
+    label: 'Enterprise · Creator',
+    description: 'Can create and develop projects in the active enterprise org without org admin controls.',
+    path: '/new?admin_preview=workspace&plan_key=enterprise&role=creator',
+  },
+  {
+    label: 'Enterprise · Admin',
+    description: 'Enterprise governance and admin controls using the active enterprise org.',
+    path: '/enterprise-admin?admin_preview=enterprise&role=admin',
+  },
 ];
 
 
@@ -454,58 +493,24 @@ export default function JaspenAdmin() {
         {message && <p className="jas-admin-message">{message}</p>}
 
         <section className="jas-admin-subsection">
-          <h3>Experience Preview</h3>
+          <h3>Role Experience Preview</h3>
           <p className="jas-admin-empty">
-            Launch support previews for customer-facing interfaces without loading real organization data.
+            Preview the customer-facing interface using your active organization data and the selected role restrictions.
           </p>
-          <div className="jas-admin-preview-groups">
-            <div className="jas-admin-preview-group">
-              <strong>Workspace</strong>
-              <div className="jas-admin-preview-actions">
-                {WORKSPACE_PREVIEW_OPTIONS.map((option) => (
-                  <button
-                    key={option.planKey}
-                    type="button"
-                    className="jas-admin-secondary"
-                    onClick={() => openPreview(`/new?admin_preview=workspace&plan_key=${encodeURIComponent(option.planKey)}`)}
-                  >
-                    {option.label}
-                  </button>
-                ))}
+          <div className="jas-admin-role-grid">
+            {ROLE_EXPERIENCE_OPTIONS.map((option) => (
+              <div key={option.label} className="jas-admin-role-card">
+                <strong>{option.label}</strong>
+                <p>{option.description}</p>
+                <button
+                  type="button"
+                  className="jas-admin-secondary"
+                  onClick={() => openPreview(option.path)}
+                >
+                  Preview
+                </button>
               </div>
-            </div>
-
-            <div className="jas-admin-preview-group">
-              <strong>Team</strong>
-              <div className="jas-admin-preview-actions">
-                {TEAM_ROLE_PREVIEW_OPTIONS.map((option) => (
-                  <button
-                    key={`team-${option.role}`}
-                    type="button"
-                    className="jas-admin-secondary"
-                    onClick={() => openPreview(`/team?admin_preview=team&role=${encodeURIComponent(option.role)}`)}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="jas-admin-preview-group">
-              <strong>Enterprise</strong>
-              <div className="jas-admin-preview-actions">
-                {TEAM_ROLE_PREVIEW_OPTIONS.map((option) => (
-                  <button
-                    key={`enterprise-${option.role}`}
-                    type="button"
-                    className="jas-admin-secondary"
-                    onClick={() => openPreview(`/enterprise-admin?admin_preview=enterprise&role=${encodeURIComponent(option.role)}`)}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            ))}
           </div>
         </section>
 
