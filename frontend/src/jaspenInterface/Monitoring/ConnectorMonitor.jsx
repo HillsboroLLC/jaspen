@@ -39,7 +39,7 @@ function trendGlyph(direction) {
   return '→';
 }
 
-export default function ConnectorMonitor({ selectedThreadId = '', onResynced = null }) {
+export default function ConnectorMonitor({ selectedThreadId = '', onResynced = null, allowedConnectorIds = null }) {
   const [report, setReport] = useState({ connectors: [], alerts: [], checked_at: null });
   const [expandedId, setExpandedId] = useState('');
   const [insightsByConnector, setInsightsByConnector] = useState({});
@@ -165,6 +165,23 @@ export default function ConnectorMonitor({ selectedThreadId = '', onResynced = n
     return grouped;
   }, [report.alerts]);
 
+  const allowedSet = useMemo(() => {
+    if (!Array.isArray(allowedConnectorIds) || allowedConnectorIds.length === 0) return null;
+    return new Set(allowedConnectorIds);
+  }, [allowedConnectorIds]);
+
+  const visibleConnectors = useMemo(() => (
+    allowedSet
+      ? (report.connectors || []).filter((connector) => allowedSet.has(connector.id))
+      : (report.connectors || [])
+  ), [allowedSet, report.connectors]);
+
+  const visibleAlerts = useMemo(() => (
+    allowedSet
+      ? (report.alerts || []).filter((alert) => allowedSet.has(String(alert?.connector_id || '').trim()))
+      : (report.alerts || [])
+  ), [allowedSet, report.alerts]);
+
   return (
     <section className="connector-monitor-panel">
       <header className="connector-monitor-header">
@@ -185,13 +202,13 @@ export default function ConnectorMonitor({ selectedThreadId = '', onResynced = n
       {!loading && !error && (
         <>
           <div className="connector-alert-grid">
-            {(report.alerts || []).length === 0 ? (
+            {visibleAlerts.length === 0 ? (
               <article className="connector-alert-card is-healthy">
                 <strong>No active connector alerts.</strong>
                 <span>Connected systems look healthy right now.</span>
               </article>
             ) : (
-              report.alerts.map((alert, index) => (
+              visibleAlerts.map((alert, index) => (
                 <article key={`${alert.connector_id}-${alert.type}-${index}`} className={`connector-alert-card ${severityClass(alert.severity)}`}>
                   <strong>{alert.connector_id}</strong>
                   <p>{alert.message}</p>
@@ -202,7 +219,7 @@ export default function ConnectorMonitor({ selectedThreadId = '', onResynced = n
           </div>
 
           <div className="connector-monitor-grid">
-            {(report.connectors || []).map((connector) => {
+            {visibleConnectors.map((connector) => {
               const expanded = expandedId === connector.id;
               const insightsPayload = insightsByConnector[connector.id] || {};
               const insights = Array.isArray(insightsPayload?.insights) ? insightsPayload.insights : [];

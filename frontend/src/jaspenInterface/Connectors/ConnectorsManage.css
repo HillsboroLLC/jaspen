@@ -35,6 +35,82 @@
   color: #1d7b42;
 }
 
+.connectors-plan-note,
+.connectors-plan-gate {
+  margin-top: 14px;
+  border: 1px solid #ccd8ec;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #ffffff 0%, #f5f8ff 100%);
+  padding: 18px 20px;
+  color: #30456f;
+}
+
+.connectors-plan-note {
+  display: grid;
+  gap: 4px;
+}
+
+.connectors-plan-note strong,
+.connectors-plan-gate strong {
+  color: #1b2d58;
+}
+
+.connectors-plan-gate-kicker {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #5870a0;
+}
+
+.connectors-plan-gate h2 {
+  margin: 0;
+  font-size: 28px;
+  color: #182543;
+}
+
+.connectors-plan-gate > p {
+  margin: 10px 0 0;
+  max-width: 840px;
+  line-height: 1.55;
+}
+
+.connectors-plan-gate-grid {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.connectors-plan-gate-grid article {
+  border: 1px solid #d8e1f2;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.82);
+  padding: 12px 14px;
+  display: grid;
+  gap: 6px;
+}
+
+.connectors-plan-gate-grid span {
+  color: #5d6e93;
+  line-height: 1.45;
+}
+
+.connectors-plan-gate-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 16px;
+  min-height: 42px;
+  padding: 0 16px;
+  border-radius: 999px;
+  background: #1f3f78;
+  color: #fff;
+  text-decoration: none;
+  font-weight: 700;
+}
+
 .connectors-manage-layout {
   margin-top: 14px;
   display: grid;
@@ -259,6 +335,10 @@
 
 @media (max-width: 1180px) {
   .connectors-manage-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .connectors-plan-gate-grid {
     grid-template-columns: 1fr;
   }
 }

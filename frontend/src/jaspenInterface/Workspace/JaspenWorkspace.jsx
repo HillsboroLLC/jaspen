@@ -272,6 +272,38 @@ function isSelfServePlan(plan) {
 
 const PLAN_ORDER = ['free', 'essential', 'team', 'enterprise'];
 const PLAN_RANK = { free: 0, essential: 1, team: 2, enterprise: 3 };
+const SUPPORT_ROLE_SWITCH_OPTIONS = [
+  { value: 'actual', label: 'Actual account', path: '/new' },
+  { value: 'workspace:free', label: 'Personal · Free', path: '/new?admin_preview=workspace&plan_key=free' },
+  { value: 'workspace:essential', label: 'Personal · Essential', path: '/new?admin_preview=workspace&plan_key=essential' },
+  { value: 'team:viewer', label: 'Team · Viewer', path: '/team?admin_preview=team&role=viewer' },
+  { value: 'team:collaborator', label: 'Team · Collaborator', path: '/team?admin_preview=team&role=collaborator' },
+  { value: 'team:admin', label: 'Team · Admin', path: '/team?admin_preview=team&role=admin' },
+  { value: 'enterprise:viewer', label: 'Enterprise · Viewer', path: '/enterprise-admin?admin_preview=enterprise&role=viewer' },
+  { value: 'enterprise:collaborator', label: 'Enterprise · Collaborator', path: '/enterprise-admin?admin_preview=enterprise&role=collaborator' },
+  { value: 'enterprise:admin', label: 'Enterprise · Admin', path: '/enterprise-admin?admin_preview=enterprise&role=admin' },
+];
+
+function highestPlanKey(...plans) {
+  return plans
+    .map((plan) => normalizePlanKey(plan))
+    .filter((plan) => Object.prototype.hasOwnProperty.call(PLAN_RANK, plan))
+    .sort((a, b) => PLAN_RANK[b] - PLAN_RANK[a])[0] || 'free';
+}
+
+function resolveSupportRoleSwitchValue(location) {
+  const params = new URLSearchParams(location.search);
+  const previewType = String(params.get('admin_preview') || '').trim().toLowerCase();
+  if (previewType === 'workspace') {
+    const planKey = normalizePlanKey(params.get('plan_key'));
+    return ADMIN_PREVIEW_PLAN_KEYS.has(planKey) ? `workspace:${planKey}` : 'actual';
+  }
+  if (previewType === 'team' || previewType === 'enterprise') {
+    const role = String(params.get('role') || '').trim().toLowerCase();
+    if (role) return `${previewType}:${role}`;
+  }
+  return 'actual';
+}
 
 export default function JaspenWorkspace() {
   // View states: intake | summary | scenario | comparison | chat
@@ -783,6 +815,11 @@ useEffect(() => {
   const plans = billingCatalog?.plans || {};
   const modelTypes = useMemo(() => billingCatalog?.model_types || {}, [billingCatalog]);
   const currentPlanKey = String(billingStatus?.plan_key || 'free').toLowerCase();
+  const effectivePlanKey = adminWorkspacePreviewPlan || highestPlanKey(
+    currentPlanKey,
+    user?.active_organization_plan_key,
+    user?.subscription_plan,
+  );
   const currentPlanLabel = plans[currentPlanKey]?.label || (currentPlanKey[0]?.toUpperCase() + currentPlanKey.slice(1));
   const footerPlanKey = planCategory === 'enterprise'
     ? 'enterprise'
@@ -790,6 +827,10 @@ useEffect(() => {
     ? 'team'
     : currentPlanKey;
   const footerPlanLabel = plans[footerPlanKey]?.label || (footerPlanKey[0]?.toUpperCase() + footerPlanKey.slice(1));
+  const supportRoleSwitchValue = useMemo(
+    () => resolveSupportRoleSwitchValue(location),
+    [location]
+  );
   const adminWorkspacePreviewActive = Boolean(
     billingStatus?.preview && String(billingStatus?.preview_type || '').toLowerCase() === 'workspace'
   );
@@ -837,6 +878,11 @@ useEffect(() => {
   const canUseWbsWrite = canUseTool('wbs_write', 'write');
   const showRealDashboard = planCategory !== 'individual' || isPlatformAdmin;
   const showLockedDashboard = !showRealDashboard;
+  const showRealConnectors = isPlatformAdmin || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.essential;
+  const showLockedConnectors = !showRealConnectors;
+  const connectorsManagePath = adminWorkspacePreviewPlan
+    ? `/connectors-manage?admin_preview=workspace&plan_key=${encodeURIComponent(adminWorkspacePreviewPlan)}`
+    : '/connectors-manage';
   const monthlyCreditLimit = billingStatus?.monthly_credit_limit;
   const creditsRemaining = billingStatus?.credits_remaining;
   const monthlyCreditsUsed = billingStatus?.credits_used;
@@ -1494,9 +1540,42 @@ useEffect(() => {
     setNameModalOpen(true);
   };
 
+  const handleSupportRoleSwitch = (value) => {
+    const option = SUPPORT_ROLE_SWITCH_OPTIONS.find((item) => item.value === value);
+    if (!option) return;
+    navigate(option.path);
+  };
+
   const renderUserMenuContent = (onClose) => (
     <div className="jas-ud-layout">
       <div className="jas-ud-scroll">
+        {isPlatformAdmin && (
+          <div className="jas-ud-section">
+            <div className="jas-ud-section-label">Role Switcher</div>
+            <div className="jas-ud-role-switcher">
+              <label className="jas-ud-role-switcher-label" htmlFor="jas-support-role-switcher">
+                Preview customer-facing access
+              </label>
+              <select
+                id="jas-support-role-switcher"
+                value={supportRoleSwitchValue}
+                onChange={(event) => {
+                  onClose?.();
+                  handleSupportRoleSwitch(event.target.value);
+                }}
+              >
+                {SUPPORT_ROLE_SWITCH_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+              <p className="jas-ud-role-switcher-note">
+                {supportRoleSwitchValue === 'actual'
+                  ? 'Showing your actual admin account.'
+                  : `Previewing ${SUPPORT_ROLE_SWITCH_OPTIONS.find((option) => option.value === supportRoleSwitchValue)?.label || 'support mode'}.`}
+              </p>
+            </div>
+          </div>
+        )}
         <div className="jas-ud-section">
           <div className="jas-ud-section-label">Navigate</div>
           {showRealDashboard && (
@@ -1540,22 +1619,35 @@ useEffect(() => {
             <FontAwesomeIcon icon={faClockRotateLeft} />
             <span className="jas-ud-item-label">Activity</span>
           </button>
-          {canAccessOrgSettings && (
+          {!isPlatformAdmin && canAccessOrgSettings && (
             <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/team'); }}>
               <FontAwesomeIcon icon={faUser} />
-              <span className="jas-ud-item-label">Organization</span>
+              <span className="jas-ud-item-label">Team</span>
             </button>
           )}
-          {isEnterpriseAdmin && (
+          {!isPlatformAdmin && isEnterpriseAdmin && (
             <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/enterprise-admin'); }}>
               <FontAwesomeIcon icon={faGaugeHigh} />
               <span className="jas-ud-item-label">Enterprise Admin</span>
             </button>
           )}
-          <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/connectors-manage'); }}>
-            <FontAwesomeIcon icon={faLayerGroup} />
-            <span className="jas-ud-item-label">Connectors</span>
-          </button>
+          {showRealConnectors && (
+            <button className="jas-ud-item" onClick={() => { onClose?.(); navigate(connectorsManagePath); }}>
+              <FontAwesomeIcon icon={faLayerGroup} />
+              <span className="jas-ud-item-label">Data Sources</span>
+            </button>
+          )}
+          {showLockedConnectors && (
+            <button
+              className="jas-ud-item is-locked"
+              onClick={() => setBillingModalOpen(true)}
+              title="Upgrade to Essential to unlock starter data sources"
+            >
+              <FontAwesomeIcon icon={faLayerGroup} />
+              <span className="jas-ud-item-label">Data Sources</span>
+              <span className="jas-ud-item-ext"><FontAwesomeIcon icon={faLock} /></span>
+            </button>
+          )}
           <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/knowledge'); }}>
             <FontAwesomeIcon icon={faQuestionCircle} />
             <span className="jas-ud-item-label">Knowledge</span>

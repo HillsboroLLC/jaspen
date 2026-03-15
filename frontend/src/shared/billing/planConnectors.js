@@ -1,6 +1,6 @@
 export const PLAN_CONNECTORS = {
   free: [],
-  essential: [],
+  essential: ['Jira'],
   team: ['Jira', 'Workfront', 'Smartsheet'],
   enterprise: ['Jira', 'Workfront', 'Smartsheet', 'Salesforce', 'Snowflake', 'Oracle Fusion', 'ServiceNow', 'NetSuite'],
 };

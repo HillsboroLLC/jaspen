@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faChevronDown,
@@ -30,6 +30,7 @@ export default function SidebarIdentityFooter({
   onClose,
 }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const {
     user,
     orgDisplayName,
@@ -49,6 +50,13 @@ export default function SidebarIdentityFooter({
   const userName = displayName || user?.name || userEmail.split('@')[0] || 'User';
   const currentPlanLabel = String(planLabel || '').trim() || 'Individual';
   const userInitials = getInitials(userName);
+  const connectorsPath = (() => {
+    if (!Boolean(user?.is_admin)) return '/connectors-manage';
+    const params = new URLSearchParams(location.search);
+    if (String(params.get('admin_preview') || '').trim().toLowerCase() !== 'workspace') return '/connectors-manage';
+    const planKey = String(params.get('plan_key') || '').trim().toLowerCase();
+    return planKey ? `/connectors-manage?admin_preview=workspace&plan_key=${encodeURIComponent(planKey)}` : '/connectors-manage';
+  })();
 
   const clearKnowledgeMenuCloseTimer = useCallback(() => {
     if (knowledgeMenuCloseTimerRef.current) {
@@ -154,7 +162,7 @@ export default function SidebarIdentityFooter({
           className="jas-ud-footer-icon"
           title="Get apps and extensions"
           aria-label="Get apps and extensions"
-          onClick={() => navigateInternal('/connectors-manage')}
+          onClick={() => navigateInternal(connectorsPath)}
         >
           <FontAwesomeIcon icon={faDownload} />
         </button>
@@ -200,12 +208,12 @@ export default function SidebarIdentityFooter({
           <button type="button" onClick={() => { openExternal('/login'); closeMenus(); }}>
             Gift Jaspen
           </button>
-          {canAccessOrgSettings && (
+          {!isPlatformAdmin && canAccessOrgSettings && (
             <button type="button" onClick={() => navigateInternal('/team')}>
-              Organization
+              Team
             </button>
           )}
-          {isEnterpriseAdmin && (
+          {!isPlatformAdmin && isEnterpriseAdmin && (
             <button type="button" onClick={() => navigateInternal('/enterprise-admin')}>
               Enterprise Admin
             </button>

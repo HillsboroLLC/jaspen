@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faArrowRightArrowLeft,
@@ -9,6 +10,8 @@ import {
   faSitemap,
 } from '@fortawesome/free-solid-svg-icons';
 import { API_BASE } from '../../config/apiBase';
+import { useAuth } from '../../shared/auth/AuthContext';
+import { getPlanConnectors } from '../../shared/billing/planConnectors';
 import ConnectorMonitor from '../Monitoring/ConnectorMonitor';
 import './ConnectorsManage.css';
 
@@ -23,12 +26,32 @@ const CONNECTOR_ORDER = [
   'netsuite_insights',
 ];
 
+const PLAN_CONNECTOR_IDS = {
+  free: [],
+  essential: ['jira_sync'],
+  team: ['jira_sync', 'workfront_sync', 'smartsheet_sync'],
+  enterprise: CONNECTOR_ORDER,
+};
+const PLAN_ORDER = ['free', 'essential', 'team', 'enterprise'];
+const PLAN_RANK = { free: 0, essential: 1, team: 2, enterprise: 3 };
+
 function authHeaders(json = false) {
   const token = localStorage.getItem('access_token') || localStorage.getItem('token');
   return {
     ...(json ? { 'Content-Type': 'application/json' } : {}),
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
+}
+
+function normalizePlanKey(planKey) {
+  return String(planKey || '').trim().toLowerCase();
+}
+
+function highestPlanKey(...plans) {
+  return plans
+    .map((plan) => normalizePlanKey(plan))
+    .filter((plan) => Object.prototype.hasOwnProperty.call(PLAN_RANK, plan))
+    .sort((a, b) => PLAN_RANK[b] - PLAN_RANK[a])[0] || 'free';
 }
 
 function connectorIcon(connectorId) {
@@ -183,6 +206,8 @@ function buildUpdatePayload(connectorId, draft) {
 }
 
 export default function ConnectorsManage() {
+  const location = useLocation();
+  const { user } = useAuth();
   const [connectors, setConnectors] = useState([]);
   const [drafts, setDrafts] = useState({});
   const [selectedConnectorId, setSelectedConnectorId] = useState('');
@@ -193,6 +218,25 @@ export default function ConnectorsManage() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+
+  const adminPreviewPlan = useMemo(() => {
+    if (!Boolean(user?.is_admin)) return '';
+    const params = new URLSearchParams(location.search);
+    if (String(params.get('admin_preview') || '').trim().toLowerCase() !== 'workspace') return '';
+    const planKey = normalizePlanKey(params.get('plan_key'));
+    return PLAN_ORDER.includes(planKey) ? planKey : '';
+  }, [location.search, user?.is_admin]);
+
+  const effectivePlanKey = useMemo(() => (
+    adminPreviewPlan || highestPlanKey(user?.active_organization_plan_key, user?.subscription_plan)
+  ), [adminPreviewPlan, user?.active_organization_plan_key, user?.subscription_plan]);
+
+  const allowedConnectorIds = useMemo(() => (
+    PLAN_CONNECTOR_IDS[effectivePlanKey] || []
+  ), [effectivePlanKey]);
+
+  const planConnectorNames = useMemo(() => getPlanConnectors(effectivePlanKey), [effectivePlanKey]);
+  const isFreePlan = effectivePlanKey === 'free';
 
   const loadConnectors = useCallback(async () => {
     const res = await fetch(`${API_BASE}/api/v1/connectors/status`, {
@@ -256,6 +300,16 @@ export default function ConnectorsManage() {
   }, []);
 
   const refresh = useCallback(async () => {
+    if (isFreePlan) {
+      setConnectors([]);
+      setDrafts({});
+      setAuditRows([]);
+      setThreads([]);
+      setSelectedConnectorId('');
+      setLoading(false);
+      setError('');
+      return;
+    }
     setLoading(true);
     setError('');
     try {
@@ -265,7 +319,7 @@ export default function ConnectorsManage() {
     } finally {
       setLoading(false);
     }
-  }, [loadConnectors, loadThreads]);
+  }, [isFreePlan, loadConnectors, loadThreads]);
 
   useEffect(() => {
     refresh();
@@ -276,11 +330,26 @@ export default function ConnectorsManage() {
   }, [loadAudit, selectedConnectorId]);
 
   const selectedConnector = useMemo(
-    () => connectors.find((item) => item.id === selectedConnectorId) || null,
-    [connectors, selectedConnectorId]
+    () => connectors.find((item) => item.id === selectedConnectorId && allowedConnectorIds.includes(item.id)) || null,
+    [allowedConnectorIds, connectors, selectedConnectorId]
+  );
+
+  const visibleConnectors = useMemo(
+    () => connectors.filter((item) => allowedConnectorIds.includes(item.id)),
+    [allowedConnectorIds, connectors]
   );
 
   const selectedDraft = selectedConnector ? drafts[selectedConnector.id] || normalizeDraft(selectedConnector) : null;
+
+  useEffect(() => {
+    if (!visibleConnectors.length) {
+      setSelectedConnectorId('');
+      return;
+    }
+    if (!visibleConnectors.some((item) => item.id === selectedConnectorId)) {
+      setSelectedConnectorId(visibleConnectors[0].id);
+    }
+  }, [selectedConnectorId, visibleConnectors]);
 
   function updateDraft(field, value) {
     if (!selectedConnector) return;
@@ -504,10 +573,51 @@ export default function ConnectorsManage() {
 
       {!loading && !error && (
         <>
-          <ConnectorMonitor selectedThreadId={selectedThreadId} onResynced={refresh} />
+          {isFreePlan ? (
+            <section className="connectors-plan-gate">
+              <p className="connectors-plan-gate-kicker">Free plan</p>
+              <h2>Upgrade to Essential to unlock data sources</h2>
+              <p>
+                Free accounts can preview the category, but setup, monitoring, and sync controls start on paid plans.
+                Essential unlocks starter integrations, Team expands execution sync, and Enterprise unlocks business-system sources.
+              </p>
+              <div className="connectors-plan-gate-grid">
+                <article>
+                  <strong>Essential</strong>
+                  <span>{getPlanConnectors('essential').join(', ') || 'Starter connectors'}</span>
+                </article>
+                <article>
+                  <strong>Team</strong>
+                  <span>{getPlanConnectors('team').join(', ')}</span>
+                </article>
+                <article>
+                  <strong>Enterprise</strong>
+                  <span>{getPlanConnectors('enterprise').join(', ')}</span>
+                </article>
+              </div>
+              <a className="connectors-plan-gate-btn" href="/account">Upgrade in Account</a>
+            </section>
+          ) : (
+            <>
+              <div className="connectors-plan-note">
+                <strong>{adminPreviewPlan ? 'Preview mode' : 'Current access'}</strong>
+                <span>
+                  {adminPreviewPlan
+                    ? `Viewing Data Sources as ${effectivePlanKey}.`
+                    : `Your ${effectivePlanKey} plan includes: ${planConnectorNames.join(', ')}.`}
+                </span>
+              </div>
+              <ConnectorMonitor
+                selectedThreadId={selectedThreadId}
+                onResynced={refresh}
+                allowedConnectorIds={allowedConnectorIds}
+              />
+            </>
+          )}
+          {!isFreePlan && (
           <div className="connectors-manage-layout">
             <section className="connectors-card-grid">
-              {connectors.map((connector) => (
+              {visibleConnectors.map((connector) => (
                 <button
                   key={connector.id}
                   type="button"
@@ -630,6 +740,7 @@ export default function ConnectorsManage() {
               )}
             </section>
           </div>
+          )}
         </>
       )}
     </div>
