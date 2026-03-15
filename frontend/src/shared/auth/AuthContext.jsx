@@ -547,7 +547,10 @@ export function AuthProvider({ children }) {
   const planCategory = resolvePlanCategory(user);
   const orgDisplayName = planCategory === 'individual'
     ? 'Personal Workspace'
-    : (String(user?.active_organization_name || '').trim() || 'Organization');
+    : (
+        String(user?.active_organization_name || '').trim()
+        || (planCategory === 'enterprise' ? 'Enterprise Workspace' : 'Team Workspace')
+      );
   const orgRole = String(user?.active_organization_role || '').toLowerCase() || null;
   const isPlatformAdmin = Boolean(user?.is_admin);
   const isEnterpriseAdmin = Boolean(user?.can_access_enterprise_admin || isPlatformAdmin);

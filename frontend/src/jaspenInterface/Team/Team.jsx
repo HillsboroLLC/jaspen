@@ -155,6 +155,9 @@ export default function Team({ mode = 'team' }) {
 
   const isEnterpriseMode = String(mode || '').toLowerCase() === 'enterprise';
   const routePlanForCopy = isEnterpriseMode ? 'enterprise' : 'team';
+  const teamLabel = isEnterpriseMode ? 'Enterprise' : 'Team';
+  const teamLabelLower = teamLabel.toLowerCase();
+  const teamNameLabel = isEnterpriseMode ? 'Enterprise name' : 'Team name';
   const routePreviewRole = useMemo(() => {
     if (!Boolean(user?.is_admin)) return null;
     const params = new URLSearchParams(location.search);
@@ -268,7 +271,7 @@ export default function Team({ mode = 'team' }) {
           method: 'POST',
         });
         if (cancelled) return;
-        setNotice('Invitation accepted. You are now part of this organization.');
+        setNotice(`Invitation accepted. You are now part of this ${teamLabelLower}.`);
         await loadAll();
       } catch (err) {
         if (!cancelled) setError(err?.message || 'Could not accept invitation');
@@ -281,7 +284,7 @@ export default function Team({ mode = 'team' }) {
     return () => {
       cancelled = true;
     };
-  }, [loadAll]);
+  }, [loadAll, teamLabelLower]);
 
   const onSwitchOrganization = async (orgId) => {
     if (!orgId) return;
@@ -294,9 +297,9 @@ export default function Team({ mode = 'team' }) {
         body: JSON.stringify({ organization_id: orgId }),
       });
       await loadAll();
-      setNotice('Switched active organization.');
+      setNotice(`Switched active ${teamLabelLower}.`);
     } catch (err) {
-      setError(err?.message || 'Could not switch organization');
+      setError(err?.message || `Could not switch ${teamLabelLower}`);
     } finally {
       setBusy(false);
     }
@@ -306,7 +309,7 @@ export default function Team({ mode = 'team' }) {
     if (!canManageMembers || previewModeActive || !activeOrgId) return;
     const nextName = String(orgNameDraft || '').trim();
     if (!nextName) {
-      setError('Organization name is required.');
+      setError(`${teamNameLabel} is required.`);
       return;
     }
     if (nextName === String(activeOrg?.name || '').trim()) return;
@@ -319,9 +322,9 @@ export default function Team({ mode = 'team' }) {
         body: JSON.stringify({ name: nextName }),
       });
       await loadAll();
-      setNotice('Organization name updated.');
+      setNotice(`${teamLabel} name updated.`);
     } catch (err) {
-      setError(err?.message || 'Failed to update organization name');
+      setError(err?.message || `Failed to update ${teamLabelLower} name`);
     } finally {
       setBusy(false);
     }
@@ -607,6 +610,13 @@ export default function Team({ mode = 'team' }) {
         .join(' · ');
   const activePolicyPlanKey = PLAN_SEAT_MATRIX?.[activeOrgPlanKey] ? activeOrgPlanKey : null;
   const showingPlanMismatch = Boolean(activePolicyPlanKey && activePolicyPlanKey !== routePlanForCopy);
+  const totalPaidUsed = Number(seatUsage?.total_paid_used || 0);
+  const totalPaidLimit = seatUsage?.total_paid_limit;
+  const totalPaidAvailable = totalPaidLimit == null ? null : Math.max(Number(totalPaidLimit) - totalPaidUsed, 0);
+  const viewerUsed = Number(seatUsage?.viewer?.used || 0);
+  const seatPolicyHelperCopy = (routePlanForCopy === 'team' || routePlanForCopy === 'enterprise')
+    ? `Admin cap can be managed here. Paid seats are pooled across admin, creator, and collaborator and are managed ${routePlanForCopy === 'team' ? 'in Billing' : 'by contract'}. Viewers remain unlimited.`
+    : `${routePlanForCopy.charAt(0).toUpperCase() + routePlanForCopy.slice(1)} defaults: ${planSeatSummary(routePlanForCopy)}.`;
 
   return (
     <div className="team-page">
@@ -633,7 +643,7 @@ export default function Team({ mode = 'team' }) {
       <section className="team-toolbar">
         <div className="team-toolbar-fields">
           <label className="team-inline-field">
-            <span>Organization name</span>
+            <span>{teamNameLabel}</span>
             <div style={{ display: 'inline-flex', gap: 8 }}>
               <input
                 type="text"
@@ -653,7 +663,7 @@ export default function Team({ mode = 'team' }) {
             </div>
           </label>
           <label className="team-inline-field">
-            <span>Organization</span>
+            <span>{teamLabel}</span>
             <select
               value={activeOrg?.id || ''}
               onChange={(event) => onSwitchOrganization(event.target.value)}
@@ -661,7 +671,7 @@ export default function Team({ mode = 'team' }) {
             >
               {(organizations || []).map((entry) => (
                 <option key={entry?.organization?.id} value={entry?.organization?.id}>
-                  {entry?.organization?.name || 'Organization'}
+                  {entry?.organization?.name || teamLabel}
                 </option>
               ))}
             </select>
@@ -700,7 +710,7 @@ export default function Team({ mode = 'team' }) {
 
       {routePreviewRole && (
         <div className="team-state team-state-preview">
-          Jaspen Admin preview: viewing the <strong>{activePlanLabel}</strong> {isEnterpriseMode ? 'Enterprise' : 'Team'} interface as <strong>{effectiveRole}</strong> using your active organization data. Mutating actions remain disabled while previewing.
+          Jaspen Admin preview: viewing the <strong>{activePlanLabel}</strong> {teamLabel} interface as <strong>{effectiveRole}</strong> using your active {teamLabelLower} data. Mutating actions remain disabled while previewing.
         </div>
       )}
 
@@ -712,13 +722,13 @@ export default function Team({ mode = 'team' }) {
 
       {isEnterpriseMode && !canAccessEnterpriseView && (
         <div className="team-state error">
-          Enterprise Admin requires an Enterprise organization. Switch to an Enterprise org or upgrade in Billing.
+          Enterprise Admin requires an Enterprise plan. Switch to an Enterprise team or upgrade in Billing.
         </div>
       )}
 
       {showingPlanMismatch && (
         <div className="team-state team-state-preview">
-          Active organization is <strong>{activePlanLabel}</strong>, but this page is using <strong>{routePlanForCopy}</strong> seat policy for preview and editing.
+          Active {teamLabelLower} plan is <strong>{activePlanLabel}</strong>, but this page is using <strong>{routePlanForCopy}</strong> seat policy for preview and editing.
         </div>
       )}
 
@@ -726,7 +736,7 @@ export default function Team({ mode = 'team' }) {
         <section className={`team-seat-policy-bar ${seatDraftDirty ? 'is-dirty' : ''}`}>
           <div className="team-seat-policy-copy">
             <strong>{seatDraftDirty ? 'Unsaved seat policy changes' : 'Seat policy saved'}</strong>
-            <span>{routePlanForCopy.charAt(0).toUpperCase() + routePlanForCopy.slice(1)} defaults: {planSeatSummary(routePlanForCopy)}.</span>
+            <span>{seatPolicyHelperCopy}</span>
           </div>
           <div className="team-seat-policy-actions">
             <button
@@ -832,10 +842,27 @@ export default function Team({ mode = 'team' }) {
           <article className="team-seat-card">
             <h3>Total Paid Seats</h3>
             <p className="team-seat-main">
-              {Number(seatUsage?.total_paid_used || 0)} / {seatUsage?.total_paid_limit == null ? '∞' : seatUsage.total_paid_limit}
+              {totalPaidUsed} / {totalPaidLimit == null ? '∞' : totalPaidLimit}
             </p>
             <p className="team-seat-sub">Admin + Creator + Collaborator seats</p>
-            <p className="team-seat-meta">Viewers remain unlimited.</p>
+            <p className="team-seat-meta">
+              {totalPaidAvailable == null ? 'Managed by contract or billing.' : `${totalPaidAvailable} paid seats remaining.`}
+            </p>
+            <p className="team-seat-meta">
+              {routePlanForCopy === 'team'
+                ? 'Adjust this in Billing when you need to add paid seats.'
+                : 'Adjust this through your enterprise contract or billing admin.'}
+            </p>
+          </article>
+        )}
+        {(routePlanForCopy === 'team' || routePlanForCopy === 'enterprise') && (
+          <article className="team-seat-card">
+            <h3>Viewer Seats</h3>
+            <p className="team-seat-main">
+              {viewerUsed} / Unlimited
+            </p>
+            <p className="team-seat-sub">Read-only members stay outside the paid seat pool.</p>
+            <p className="team-seat-meta">Viewer access is intended for invited read-only participants.</p>
           </article>
         )}
       </section>
@@ -987,7 +1014,7 @@ export default function Team({ mode = 'team' }) {
 
       <section className="team-card">
         <h2>Shared Projects</h2>
-        <p className="team-subcopy">Projects belong to the active organization. Set visibility for private, team-wide, or specific members.</p>
+        <p className="team-subcopy">Projects belong to the active {teamLabelLower}. Set visibility for private, team-wide, or specific members.</p>
         <div className="team-table-wrap">
           <table className="team-table">
             <thead>

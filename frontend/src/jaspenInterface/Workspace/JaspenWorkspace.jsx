@@ -1674,10 +1674,12 @@ useEffect(() => {
               <span className="jas-ud-item-ext"><FontAwesomeIcon icon={faLock} /></span>
             </button>
           )}
-          <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/new'); }}>
-            <FontAwesomeIcon icon={faPlus} />
-            <span className="jas-ud-item-label">New Project</span>
-          </button>
+          {canStartOrgProjects && (
+            <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/new'); }}>
+              <FontAwesomeIcon icon={faPlus} />
+              <span className="jas-ud-item-label">New Project</span>
+            </button>
+          )}
           <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/projects'); }}>
             <FontAwesomeIcon icon={faLayerGroup} />
             <span className="jas-ud-item-label">Projects</span>
@@ -5392,14 +5394,16 @@ setView(id === 'chat' ? 'intake' : id);
                       ))}
                   </select>
 
-                  <button
-                    className="begin-project-btn"
-                    onClick={onBeginProject}
-                    disabled={beginBusy}
-                  >
-                    <FontAwesomeIcon icon={beginBusy ? faSpinner : faPlay} spin={beginBusy} />
-                    <span>{beginBusy ? "Working…" : "Project"}</span>
-                  </button>
+                  {canStartOrgProjects && (
+                    <button
+                      className="begin-project-btn"
+                      onClick={onBeginProject}
+                      disabled={beginBusy}
+                    >
+                      <FontAwesomeIcon icon={beginBusy ? faSpinner : faPlay} spin={beginBusy} />
+                      <span>{beginBusy ? "Working…" : "Project"}</span>
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="save-starter-btn"
@@ -5927,14 +5931,16 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
           >
             Jaspen
           </button>
-          <button
-            className="jas-topbar-new"
-            onClick={() => handleNewAnalysis(true)}
-            title="New Session"
-            aria-label="New Session"
-          >
-            <FontAwesomeIcon icon={faPlus} />
-          </button>
+          {canStartOrgProjects && (
+            <button
+              className="jas-topbar-new"
+              onClick={() => handleNewAnalysis(true)}
+              title="New Session"
+              aria-label="New Session"
+            >
+              <FontAwesomeIcon icon={faPlus} />
+            </button>
+          )}
         </div>
 
         <div className="jas-topbar-right">
