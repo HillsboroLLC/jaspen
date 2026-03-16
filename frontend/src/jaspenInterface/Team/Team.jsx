@@ -170,6 +170,7 @@ export default function Team({ mode = 'team' }) {
   const actualRole = String(summary?.membership?.role || 'viewer');
   const previewModeActive = Boolean(routePreviewRole) || Boolean(isGlobalAdmin && previewRole !== PREVIEW_ROLE_ACTUAL);
   const effectiveRole = routePreviewRole || (previewModeActive ? previewRole : actualRole);
+  const isOwnerRole = actualRole === 'owner';
   const canManageMembers = MANAGE_ROLE_SET.has(effectiveRole);
   const canEditProjects = EDIT_ROLE_SET.has(effectiveRole);
   const activeOrg = summary?.organization || null;
@@ -190,6 +191,7 @@ export default function Team({ mode = 'team' }) {
   const showSeatPolicy = canManageMembers;
   const showInviteForm = canManageMembers;
   const showOrgNameSave = canManageMembers && !previewModeActive;
+  const showOwnershipCard = !previewModeActive && MANAGE_ROLE_SET.has(actualRole);
   const visibleProjects = useMemo(() => {
     if (canManageMembers) return projects || [];
     const currentUserId = String(summary?.membership?.user_id || '');
@@ -931,85 +933,121 @@ export default function Team({ mode = 'team' }) {
           </div>
         </div>
 
-        {showInviteForm && (
-        <div className="team-card">
-          <h2>Invite Members</h2>
-          <form className="team-invite-form" onSubmit={onInvite}>
-            <input
-              type="email"
-              placeholder="name@company.com"
-              value={inviteEmail}
-              onChange={(event) => setInviteEmail(event.target.value)}
-              disabled={!canManageMembers || busy || previewModeActive}
-              required
-            />
-            <select
-              value={inviteRole}
-              onChange={(event) => setInviteRole(event.target.value)}
-              disabled={!canManageMembers || busy || previewModeActive}
-            >
-              {INVITE_ROLE_OPTIONS.map((role) => (
-                <option key={role} value={role}>{role}</option>
-              ))}
-            </select>
-            <button type="submit" className="team-btn" disabled={!canManageMembers || busy || previewModeActive}>
-              Send invite
-            </button>
-          </form>
+        <div className="team-side-column">
+          {showInviteForm && (
+            <div className="team-card">
+              <h2>Invite Members</h2>
+              <form className="team-invite-form" onSubmit={onInvite}>
+                <input
+                  type="email"
+                  placeholder="name@company.com"
+                  value={inviteEmail}
+                  onChange={(event) => setInviteEmail(event.target.value)}
+                  disabled={!canManageMembers || busy || previewModeActive}
+                  required
+                />
+                <select
+                  value={inviteRole}
+                  onChange={(event) => setInviteRole(event.target.value)}
+                  disabled={!canManageMembers || busy || previewModeActive}
+                >
+                  {INVITE_ROLE_OPTIONS.map((role) => (
+                    <option key={role} value={role}>{role}</option>
+                  ))}
+                </select>
+                <button type="submit" className="team-btn" disabled={!canManageMembers || busy || previewModeActive}>
+                  Send invite
+                </button>
+              </form>
 
-          <h3 className="team-subhead">Pending Invitations</h3>
-          <div className="team-table-wrap">
-            <table className="team-table">
-              <thead>
-                <tr>
-                  <th>Email</th>
-                  <th>Role</th>
-                  <th>Invited by</th>
-                  <th>Sent</th>
-                  <th>Status</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {pendingInvitations.length === 0 && (
-                  <tr>
-                    <td colSpan={6} className="team-empty">No pending invites.</td>
-                  </tr>
-                )}
-                {pendingInvitations.map((row) => (
-                  <tr key={row.id}>
-                    <td>{row.email}</td>
-                    <td>{row.role}</td>
-                    <td>{row.invited_by_name || row.invited_by || '—'}</td>
-                    <td>{formatDate(row.created_at)}</td>
-                    <td>{row.status}</td>
-                    <td>
-                      <div className="team-inline-actions">
-                        <button
-                          type="button"
-                          className="team-btn tiny ghost"
-                          onClick={() => onResendInvitation(row.id)}
-                          disabled={!canManageMembers || busy || previewModeActive}
-                        >
-                          Resend
-                        </button>
-                        <button
-                          type="button"
-                          className="team-btn tiny danger"
-                          onClick={() => onCancelInvitation(row.id)}
-                          disabled={!canManageMembers || busy || previewModeActive}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+              <h3 className="team-subhead">Pending Invitations</h3>
+              <div className="team-table-wrap">
+                <table className="team-table">
+                  <thead>
+                    <tr>
+                      <th>Email</th>
+                      <th>Role</th>
+                      <th>Invited by</th>
+                      <th>Sent</th>
+                      <th>Status</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pendingInvitations.length === 0 && (
+                      <tr>
+                        <td colSpan={6} className="team-empty">No pending invites.</td>
+                      </tr>
+                    )}
+                    {pendingInvitations.map((row) => (
+                      <tr key={row.id}>
+                        <td>{row.email}</td>
+                        <td>{row.role}</td>
+                        <td>{row.invited_by_name || row.invited_by || '—'}</td>
+                        <td>{formatDate(row.created_at)}</td>
+                        <td>{row.status}</td>
+                        <td>
+                          <div className="team-inline-actions">
+                            <button
+                              type="button"
+                              className="team-btn tiny ghost"
+                              onClick={() => onResendInvitation(row.id)}
+                              disabled={!canManageMembers || busy || previewModeActive}
+                            >
+                              Resend
+                            </button>
+                            <button
+                              type="button"
+                              className="team-btn tiny danger"
+                              onClick={() => onCancelInvitation(row.id)}
+                              disabled={!canManageMembers || busy || previewModeActive}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {showOwnershipCard && (
+            <div className="team-card">
+              <h2>Ownership & Billing</h2>
+              {isOwnerRole ? (
+                <>
+                  <p className="team-subcopy">
+                    Owners manage billing for this {teamLabelLower}. Member access, seat policy, and project controls remain shared with admins.
+                  </p>
+                  <div className="team-inline-actions">
+                    <button
+                      type="button"
+                      className="team-btn"
+                      onClick={() => navigate('/account')}
+                    >
+                      Open Billing
+                    </button>
+                  </div>
+                  <p className="team-meta-note">
+                    Ownership transfer and {teamLabelLower} deletion remain owner-only operations, but they are not exposed in self-serve UI yet.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="team-subcopy">
+                    Admins can manage members, seats, and shared projects, but billing and ownership actions stay with the owner.
+                  </p>
+                  <p className="team-meta-note">
+                    Ask the owner to manage billing, ownership transfer, or account-level changes.
+                  </p>
+                </>
+              )}
+            </div>
+          )}
         </div>
-        )}
       </section>
 
       <section className="team-card">

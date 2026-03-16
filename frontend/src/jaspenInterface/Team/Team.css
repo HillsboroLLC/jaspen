@@ -228,6 +228,12 @@
   margin-bottom: 14px;
 }
 
+.team-side-column {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
 .team-card {
   background: #ffffff;
   border: 1px solid #d8e1f0;
@@ -250,6 +256,13 @@
 .team-subcopy {
   margin: -4px 0 12px;
   color: #4f628a;
+}
+
+.team-meta-note {
+  margin: 10px 0 0;
+  color: #5a709f;
+  font-size: 0.8rem;
+  line-height: 1.5;
 }
 
 .team-table-wrap {

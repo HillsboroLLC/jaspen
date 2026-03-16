@@ -298,8 +298,6 @@ def create_team_org():
             if plan_cfg.get("price_model") == "per_seat" and plan_cfg.get("min_seats") is not None
             else plan_cfg.get("max_total_paid_seats")
         ),
-        max_creator_seats=int(plan_cfg.get("max_creator_seats") or 5),
-        max_collaborator_seats=int(plan_cfg.get("max_collaborator_seats") or 10),
     )
     db.session.add(org)
     db.session.flush()
