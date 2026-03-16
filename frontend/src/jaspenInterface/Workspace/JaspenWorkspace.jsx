@@ -907,8 +907,16 @@ useEffect(() => {
     ? ['admin', 'creator'].includes(adminPreviewRole)
     : isOrgCreator;
   const canStartOrgProjects = previewPlanCategory === 'individual' || effectiveIsCreator || (isPlatformAdmin && !customerPreviewActive);
+  const showRealTeam = !isPlatformAdmin && effectiveCanManageOrg;
+  const showLockedTeam = previewPlanCategory === 'individual' && (!isPlatformAdmin || customerPreviewActive);
   const showRealDashboard = previewPlanCategory !== 'individual' || (isPlatformAdmin && !customerPreviewActive);
   const showLockedDashboard = previewPlanCategory === 'individual' && (!isPlatformAdmin || customerPreviewActive);
+  const showRealInsights = (isPlatformAdmin && !customerPreviewActive) || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.team;
+  const showLockedInsights = !showRealInsights;
+  const showRealReports = (isPlatformAdmin && !customerPreviewActive) || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.team;
+  const showLockedReports = !showRealReports;
+  const showRealActivity = (isPlatformAdmin && !customerPreviewActive) || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.essential;
+  const showLockedActivity = !showRealActivity;
   const showRealConnectors = (isPlatformAdmin && !customerPreviewActive) || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.essential;
   const showLockedConnectors = !showRealConnectors;
   const connectorsManagePath = adminWorkspacePreviewPlan
@@ -1688,22 +1696,72 @@ useEffect(() => {
             <FontAwesomeIcon icon={faChartLine} />
             <span className="jas-ud-item-label">Scores</span>
           </button>
-          <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/insights'); }}>
-            <FontAwesomeIcon icon={faChartLine} />
-            <span className="jas-ud-item-label">Insights</span>
-          </button>
-          <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/reports'); }}>
-            <FontAwesomeIcon icon={faDownload} />
-            <span className="jas-ud-item-label">Reports</span>
-          </button>
-          <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/activity'); }}>
-            <FontAwesomeIcon icon={faClockRotateLeft} />
-            <span className="jas-ud-item-label">Activity</span>
-          </button>
-          {!isPlatformAdmin && effectiveCanManageOrg && (
+          {showRealInsights && (
+            <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/insights'); }}>
+              <FontAwesomeIcon icon={faChartLine} />
+              <span className="jas-ud-item-label">Insights</span>
+            </button>
+          )}
+          {showLockedInsights && (
+            <button
+              className="jas-ud-item is-locked"
+              onClick={() => setBillingModalOpen(true)}
+              title="Upgrade to Team to unlock connected insights"
+            >
+              <FontAwesomeIcon icon={faChartLine} />
+              <span className="jas-ud-item-label">Insights</span>
+              <span className="jas-ud-item-ext"><FontAwesomeIcon icon={faLock} /></span>
+            </button>
+          )}
+          {showRealReports && (
+            <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/reports'); }}>
+              <FontAwesomeIcon icon={faDownload} />
+              <span className="jas-ud-item-label">Reports</span>
+            </button>
+          )}
+          {showLockedReports && (
+            <button
+              className="jas-ud-item is-locked"
+              onClick={() => setBillingModalOpen(true)}
+              title="Upgrade to Team to unlock reports"
+            >
+              <FontAwesomeIcon icon={faDownload} />
+              <span className="jas-ud-item-label">Reports</span>
+              <span className="jas-ud-item-ext"><FontAwesomeIcon icon={faLock} /></span>
+            </button>
+          )}
+          {showRealActivity && (
+            <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/activity'); }}>
+              <FontAwesomeIcon icon={faClockRotateLeft} />
+              <span className="jas-ud-item-label">Activity</span>
+            </button>
+          )}
+          {showLockedActivity && (
+            <button
+              className="jas-ud-item is-locked"
+              onClick={() => setBillingModalOpen(true)}
+              title="Upgrade to Essential to unlock activity history"
+            >
+              <FontAwesomeIcon icon={faClockRotateLeft} />
+              <span className="jas-ud-item-label">Activity</span>
+              <span className="jas-ud-item-ext"><FontAwesomeIcon icon={faLock} /></span>
+            </button>
+          )}
+          {showRealTeam && (
             <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/team'); }}>
               <FontAwesomeIcon icon={faUser} />
               <span className="jas-ud-item-label">Team</span>
+            </button>
+          )}
+          {showLockedTeam && (
+            <button
+              className="jas-ud-item is-locked"
+              onClick={() => setBillingModalOpen(true)}
+              title="Upgrade to Team to unlock shared members and settings"
+            >
+              <FontAwesomeIcon icon={faUser} />
+              <span className="jas-ud-item-label">Team</span>
+              <span className="jas-ud-item-ext"><FontAwesomeIcon icon={faLock} /></span>
             </button>
           )}
           {!isPlatformAdmin && isEnterpriseAdmin && (
