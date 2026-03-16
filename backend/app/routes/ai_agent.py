@@ -885,7 +885,20 @@ def _anthropic_tool_definitions(enable_mutation_tools=False):
                     "type": "object",
                     "properties": {
                         "task_id": {"type": "string"},
-                        "field": {"type": "string", "enum": ["title", "description", "priority", "estimated_days", "suggested_role"]},
+                        "field": {
+                            "type": "string",
+                            "enum": [
+                                "title",
+                                "description",
+                                "priority",
+                                "estimated_days",
+                                "suggested_role",
+                                "status",
+                                "owner",
+                                "due_date",
+                                "phase",
+                            ],
+                        },
                         "new_value": {},
                     },
                     "required": ["task_id", "field", "new_value"],
@@ -1077,6 +1090,22 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id):
                 role = str(new_value or "").strip()
                 task["suggested_role"] = role
                 task["owner"] = role
+            elif field == "status":
+                status = str(new_value or "").strip().lower()
+                if status not in {"todo", "in_progress", "blocked", "done"}:
+                    return _tool_error(
+                        "Status must be todo, in_progress, blocked, or done.",
+                        code="invalid_status",
+                    )
+                task["status"] = status
+            elif field == "owner":
+                task["owner"] = str(new_value or "").strip()
+            elif field == "due_date":
+                due_date = str(new_value or "").strip()
+                task["due_date"] = due_date or None
+            elif field == "phase":
+                phase = str(new_value or "").strip()
+                task["phase"] = phase or "Execution"
             else:
                 return _tool_error("Unsupported WBS update field.", code="invalid_field")
             tasks[idx] = task
@@ -1208,6 +1237,7 @@ def _generate_assistant_reply(
     system_prompt = (
         "You are Jaspen's intake agent. Ask one concise next question that advances readiness when intake is incomplete. "
         "When the user asks to modify scenarios or WBS tasks, call the relevant tools instead of only describing steps. "
+        "The workspace includes an Execution tab that visualizes the current execution plan/WBS, so reference it when discussing task updates. "
         "After a tool succeeds, summarize exactly what was changed. "
         "After a scorecard is generated, proactively suggest scenario modeling when it can improve outcomes. "
         "For example: 'Your Resource Allocation score is 42 — would you like me to create a scenario "

@@ -32,6 +32,7 @@ import { Jaspen, storage } from './JaspenClient';
 import ScoreDashboard   from './ScoreDashboard';
 import ScenarioModeler  from './ScenarioModeler';
 import ComparisonView   from './ComparisonView';
+import ExecutionPanel from './components/ExecutionPanel';
 import SidebarIdentityFooter from './components/SidebarIdentityFooter';
 import ThreadEditModal from '../components/ThreadEditModal';
 
@@ -313,7 +314,7 @@ function resolveSupportRoleSwitchValue(location) {
 }
 
 export default function JaspenWorkspace() {
-  // View states: intake | summary | scenario | comparison | chat
+  // View states: intake | summary | scenario | comparison | execution | chat
   const [view, setView] = useState('intake');
   const [activeTab, setActiveTab] = useState('summary');
 
@@ -411,7 +412,7 @@ const selectedVariant = useMemo(() => {
   const [savedScenarios, setSavedScenarios] = useState([]);
   const [scenarioMutationVersion, setScenarioMutationVersion] = useState(0);
   const [wbsMutationVersion, setWbsMutationVersion] = useState(0);
-  const [, setThreadWbs] = useState(null);
+  const [threadWbs, setThreadWbs] = useState(null);
   const [savedStarterConfigs, setSavedStarterConfigs] = useState([]);
   const [startersLoading, setStartersLoading] = useState(false);
   const [selectedStarterId, setSelectedStarterId] = useState('');
@@ -907,6 +908,21 @@ useEffect(() => {
     ? ['admin', 'creator'].includes(adminPreviewRole)
     : isOrgCreator;
   const canStartOrgProjects = previewPlanCategory === 'individual' || effectiveIsCreator || (isPlatformAdmin && !customerPreviewActive);
+  const canAccessExecutionTab = (isPlatformAdmin && !customerPreviewActive) || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.essential;
+  const executionTabLocked = !canAccessExecutionTab;
+  const canEditExecutionFields = canAccessExecutionTab && canUseWbsWrite && (
+    previewPlanCategory === 'individual' ||
+    effectiveIsCreator ||
+    effectiveIsCollaborator ||
+    (isPlatformAdmin && !customerPreviewActive)
+  );
+  const canEditExecutionStructure = canAccessExecutionTab && canUseWbsWrite && (
+    previewPlanCategory === 'individual' ||
+    effectiveIsCreator ||
+    (isPlatformAdmin && !customerPreviewActive)
+  );
+  const canEditExecutionDependencies = canEditExecutionStructure;
+  const executionReadOnly = previewPlanCategory !== 'individual' && effectiveIsViewer;
   const showRealTeam = !isPlatformAdmin && effectiveCanManageOrg;
   const showLockedTeam = previewPlanCategory === 'individual' && (!isPlatformAdmin || customerPreviewActive);
   const showRealDashboard = previewPlanCategory !== 'individual' || (isPlatformAdmin && !customerPreviewActive);
@@ -1251,6 +1267,13 @@ useEffect(() => {
       setView('summary');
     }
   }, [canUseScenarios, activeTab]);
+
+  useEffect(() => {
+    if (!canAccessExecutionTab && activeTab === 'execution') {
+      setActiveTab('summary');
+      setView('summary');
+    }
+  }, [canAccessExecutionTab, activeTab]);
 
   const loadThreadUsage = useCallback(async (targetThreadId = activeThreadId) => {
     if (!targetThreadId) {
@@ -3977,6 +4000,11 @@ console.log('[Finish&Analyze] data.analysis_result.meta.extracted_levers?', data
           status: String(payload?.status || 'todo').toLowerCase(),
           owner: payload?.owner || '',
           due_date: payload?.due_date || payload?.dueDate || null,
+          phase: String(payload?.phase || payload?.phase_name || 'Execution'),
+          description: String(payload?.description || ''),
+          priority: String(payload?.priority || 'medium').toLowerCase(),
+          estimated_days: Number(payload?.estimated_days || payload?.timeline_days || 1),
+          timeline_days: Number(payload?.timeline_days || payload?.estimated_days || 1),
           depends_on: Array.isArray(payload?.depends_on) ? payload.depends_on : [],
         });
 
@@ -4025,6 +4053,14 @@ console.log('[Finish&Analyze] data.analysis_result.meta.extracted_levers?', data
           ...(payload?.status ? { status: String(payload.status).toLowerCase() } : {}),
           ...(payload?.owner != null ? { owner: String(payload.owner) } : {}),
           ...(payload?.due_date != null ? { due_date: payload.due_date } : {}),
+          ...(payload?.phase ? { phase: String(payload.phase) } : {}),
+          ...(payload?.description != null ? { description: String(payload.description) } : {}),
+          ...(payload?.priority ? { priority: String(payload.priority).toLowerCase() } : {}),
+          ...(payload?.estimated_days != null ? {
+            estimated_days: Number(payload.estimated_days),
+            timeline_days: Number(payload.estimated_days),
+          } : {}),
+          ...(payload?.suggested_role != null ? { suggested_role: String(payload.suggested_role) } : {}),
         };
 
         await Jaspen.upsertThreadWbs(tid, { ...currentWbs, tasks });
@@ -4077,6 +4113,54 @@ console.log('[Finish&Analyze] data.analysis_result.meta.extracted_levers?', data
         console.error('[WBS_ADD_DEPENDENCY] failed', e);
         if (e?.status === 403) setBillingModalOpen(true);
         showToast(e?.message || 'Failed to add dependency', 'error');
+      }
+    },
+
+    [ChatActionTypes.WBS_REMOVE_TASK]: async (payload) => {
+      if (!canUseWbsWrite) {
+        showToast('WBS write tools require Essential or higher.', 'info');
+        setBillingModalOpen(true);
+        return;
+      }
+      const tid = currentSessionId || sessionId;
+      if (!tid) {
+        showToast('Start a thread before updating WBS.', 'error');
+        return;
+      }
+
+      const taskId = String(payload?.id || payload?.task_id || '').trim();
+      if (!taskId) {
+        showToast('Task id is required.', 'error');
+        return;
+      }
+
+      try {
+        const wbsResp = await Jaspen.getThreadWbs(tid);
+        const currentWbs = (wbsResp?.project_wbs && typeof wbsResp.project_wbs === 'object')
+          ? wbsResp.project_wbs
+          : { name: 'Execution WBS', tasks: [] };
+        let tasks = Array.isArray(currentWbs.tasks) ? [...currentWbs.tasks] : [];
+
+        const beforeCount = tasks.length;
+        tasks = tasks.filter((task) => String(task?.id || '') !== taskId);
+        if (tasks.length === beforeCount) {
+          showToast('Task not found in WBS', 'error');
+          return;
+        }
+
+        tasks = tasks.map((task) => ({
+          ...task,
+          depends_on: Array.isArray(task?.depends_on)
+            ? task.depends_on.filter((dep) => dep !== taskId)
+            : [],
+        }));
+
+        await Jaspen.upsertThreadWbs(tid, { ...currentWbs, tasks });
+        showToast('Task removed from WBS', 'success');
+      } catch (e) {
+        console.error('[WBS_REMOVE_TASK] failed', e);
+        if (e?.status === 403) setBillingModalOpen(true);
+        showToast(e?.message || 'Failed to remove task', 'error');
       }
     },
 
@@ -4970,18 +5054,28 @@ const handleSaveScenario = async (scenario) => {
       ? (selectedScorecardId || snapshotOptions[0]?.id || '')
       : selectedVariantId;
     const scenarioTabLocked = !canUseScenarios || effectiveIsViewer;
-    const TabButton = ({ id, label }) => (
+    const TabButton = ({ id, label }) => {
+      const isLocked = (id === 'scenario' && scenarioTabLocked) || (id === 'execution' && executionTabLocked);
+      const badgeLabel = id === 'scenario' && isLocked
+        ? 'Essential+'
+        : id === 'execution' && isLocked
+        ? 'Locked'
+        : '';
+      return (
       <button
-        className={`jas-top-tab ${activeTab === id ? 'active' : ''} ${id === 'scenario' && scenarioTabLocked ? 'disabled' : ''}`}
+        className={`jas-top-tab ${activeTab === id ? 'active' : ''} ${isLocked ? 'disabled' : ''}`}
         role="tab"
         aria-selected={activeTab === id}
-        aria-disabled={id === 'scenario' && scenarioTabLocked}
+        aria-disabled={isLocked}
 onClick={async () => {
-  if (id === 'scenario' && scenarioTabLocked) {
-    if (effectiveIsViewer) {
+  if (isLocked) {
+    if (id === 'scenario' && effectiveIsViewer) {
       showToast('Viewers can review shared project results but cannot use scenario tools.', 'info');
-    } else {
+    } else if (id === 'scenario') {
       showToast('Scenarios are available on Essential, Team, and Enterprise plans.', 'info');
+      setBillingModalOpen(true);
+    } else if (id === 'execution') {
+      showToast('Execution planning is available on Essential, Team, and Enterprise plans.', 'info');
       setBillingModalOpen(true);
     }
     return;
@@ -4996,12 +5090,23 @@ setView(id === 'chat' ? 'intake' : id);
       await refreshBundle(tid);
     } catch {}
   }
+
+  if (id === 'execution') {
+    const tid = sessionId || currentSessionId || analysisResult?.analysis_id;
+    if (tid) {
+      try {
+        await refreshThreadWbs(tid);
+      } catch {}
+    }
+  }
 }}
       >
         {label}
-        {id === 'scenario' && scenarioTabLocked && <span className="jas-ud-item-badge" style={{ marginLeft: 8 }}>Essential+</span>}
+        {id === 'execution' && executionTabLocked && <FontAwesomeIcon icon={faLock} style={{ marginLeft: 8 }} />}
+        {badgeLabel && <span className="jas-ud-item-badge" style={{ marginLeft: 8 }}>{badgeLabel}</span>}
       </button>
-    );
+      );
+    };
 
     if (process.env.NODE_ENV === "development" && activeTab === 'summary') {
       const activeAnalysis = activeScorecard;
@@ -5406,6 +5511,7 @@ setView(id === 'chat' ? 'intake' : id);
             <nav className="jas-top-tabs" role="tablist" aria-label="Jaspen views">
               <TabButton id="summary"  label="Score" />
               <TabButton id="scenario" label="Scenarios" />
+              <TabButton id="execution" label="Execution" />
               <TabButton id="chat"     label="Refine & Rescore" />
 
               {/* Only show dropdowns and Begin Project on Score tab */}
@@ -5566,6 +5672,43 @@ setView(id === 'chat' ? 'intake' : id);
     />
   </div>
 )}
+
+            {activeTab === 'execution' && (
+              <ExecutionPanel
+                threadId={sessionId || currentSessionId || analysisResult?.analysis_id || ''}
+                wbs={threadWbs}
+                authFetch={authFetch}
+                onRefresh={async () => {
+                  const tid = sessionId || currentSessionId || analysisResult?.analysis_id;
+                  if (tid) await refreshThreadWbs(tid);
+                }}
+                onUpdateTask={async (taskId, updates) => {
+                  await chatCommandHandlers[ChatActionTypes.WBS_UPDATE_TASK]({
+                    id: taskId,
+                    ...updates,
+                  });
+                }}
+                onAddTask={async (taskData) => {
+                  await chatCommandHandlers[ChatActionTypes.WBS_ADD_TASK](taskData);
+                }}
+                onRemoveTask={async (taskId) => {
+                  await chatCommandHandlers[ChatActionTypes.WBS_REMOVE_TASK]({ id: taskId });
+                }}
+                onAddDependency={async (taskId, dependsOnId) => {
+                  await chatCommandHandlers[ChatActionTypes.WBS_ADD_DEPENDENCY]({
+                    task_id: taskId,
+                    depends_on: dependsOnId,
+                  });
+                }}
+                canEditFields={canEditExecutionFields}
+                canEditStructure={canEditExecutionStructure}
+                canEditDependencies={canEditExecutionDependencies}
+                isViewer={executionReadOnly}
+                isLocked={executionTabLocked}
+                onOpenChat={() => { setActiveTab('chat'); setView('intake'); }}
+                onOpenBilling={() => setBillingModalOpen(true)}
+              />
+            )}
 
             {activeTab === 'chat' && (
               <div className="jas-chat-tab">
