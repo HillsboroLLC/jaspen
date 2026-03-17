@@ -340,6 +340,90 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
       strategy_objective: data.strategy_objective || null,
     };
   },
+  async streamConversationStart({
+    description,
+    project_id,
+    model_type,
+    strategy_objective,
+    intake_context,
+    lever_defaults,
+    starter_id,
+    onDelta,
+    onToolUse,
+    onToolResult,
+    onDone,
+  }) {
+    const url = `${endpoints.convoStart}?stream=true`;
+    const pid = project_id || 'default-jas-project';
+    const resp = await fetch(url, {
+      method: 'POST',
+      credentials: 'include',
+      cache: 'no-store',
+      headers: {
+        ...buildAuthHeaders({
+          'Content-Type': 'application/json',
+          'Accept': 'text/event-stream',
+        }, 'POST'),
+        'X-Session-ID': getSid(),
+      },
+      body: JSON.stringify({
+        message: description,
+        project_id: pid,
+        name: description.substring(0, 60) || 'New Idea',
+        model_type: model_type || undefined,
+        strategy_objective: strategy_objective || undefined,
+        intake_context: intake_context && typeof intake_context === 'object' ? intake_context : undefined,
+        lever_defaults: lever_defaults && typeof lever_defaults === 'object' ? lever_defaults : undefined,
+        starter_id: starter_id || undefined,
+      }),
+    });
+
+    if (!resp.ok) {
+      return parseErrorResponse(resp);
+    }
+
+    const reader = resp.body?.getReader();
+    if (!reader) {
+      throw new Error('Streaming not supported by this browser.');
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let donePayload = null;
+
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+
+      let boundary = buffer.indexOf('\n\n');
+      while (boundary >= 0) {
+        const rawChunk = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        const payload = parseSseChunk(rawChunk);
+        if (payload) {
+          if (payload.type === 'delta' && payload.text) onDelta?.(payload.text);
+          else if (payload.type === 'tool_use') onToolUse?.(payload);
+          else if (payload.type === 'tool_result') onToolResult?.(payload);
+          else if (payload.type === 'done') {
+            donePayload = payload;
+            onDone?.(payload);
+          } else if (payload.type === 'error') {
+            const err = new Error(payload.error || 'Streaming request failed');
+            err.data = payload;
+            throw err;
+          }
+        }
+        boundary = buffer.indexOf('\n\n');
+      }
+
+      if (done) break;
+    }
+
+    if (!donePayload) {
+      throw new Error('Streaming response ended without a done event.');
+    }
+    return donePayload;
+  },
   async streamConversation({
     session_id,
     user_message,

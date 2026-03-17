@@ -371,6 +371,7 @@ export default function JaspenWorkspace() {
   const [objectiveExplicitlySet, setObjectiveExplicitlySet] = useState(false);
 
   const [busy, setBusy] = useState(false);
+  const [isStreamingReply, setIsStreamingReply] = useState(false);
   const [streamToolStatus, setStreamToolStatus] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [error, setError] = useState(null);
@@ -3003,6 +3004,7 @@ useEffect(() => {
     modelType,
     objective,
   }) => {
+    setIsStreamingReply(true);
     const placeholderId = createStreamingAssistantPlaceholder();
     let finalPayload = null;
     try {
@@ -3027,6 +3029,54 @@ useEffect(() => {
       setStreamToolStatus('');
       setStreamingAssistantError(placeholderId, 'Sorry — I hit an error. Please try again.');
       throw streamErr;
+    } finally {
+      setIsStreamingReply(false);
+    }
+  }, [
+    appendStreamingAssistantDelta,
+    createStreamingAssistantPlaceholder,
+    finalizeStreamingAssistant,
+    setStreamingAssistantError,
+    toolStatusLabel,
+  ]);
+
+  const streamConversationStartReply = useCallback(async ({
+    description,
+    modelType,
+    objective,
+    intakeContext,
+    leverDefaults,
+    starterId,
+  }) => {
+    setIsStreamingReply(true);
+    const placeholderId = createStreamingAssistantPlaceholder();
+    let finalPayload = null;
+    try {
+      finalPayload = await Jaspen.streamConversationStart({
+        description,
+        model_type: modelType,
+        strategy_objective: objective,
+        intake_context: intakeContext,
+        lever_defaults: leverDefaults,
+        starter_id: starterId,
+        onDelta: (text) => appendStreamingAssistantDelta(placeholderId, text),
+        onToolUse: (event) => setStreamToolStatus(toolStatusLabel(event?.tool)),
+        onToolResult: () => setStreamToolStatus(''),
+        onDone: (payload) => {
+          finalPayload = payload;
+          setStreamToolStatus('');
+          finalizeStreamingAssistant(placeholderId, payload?.reply || payload?.message || '');
+        },
+      });
+      finalizeStreamingAssistant(placeholderId, finalPayload?.reply || finalPayload?.message || '');
+      setStreamToolStatus('');
+      return finalPayload;
+    } catch (streamErr) {
+      setStreamToolStatus('');
+      setStreamingAssistantError(placeholderId, 'Sorry — I hit an error. Please try again.');
+      throw streamErr;
+    } finally {
+      setIsStreamingReply(false);
     }
   }, [
     appendStreamingAssistantDelta,
@@ -3076,16 +3126,19 @@ useEffect(() => {
         ? options.lever_defaults
         : (selectedStarter && typeof selectedStarter.lever_defaults === 'object' ? selectedStarter.lever_defaults : undefined);
 
-      // Step 1: Call Jaspen.convoStart (client wrapper)
-      const data = await Jaspen.convoStart({
+      // Step 1: Stream the initial assistant reply, not just follow-up turns.
+      const dataPromise = streamConversationStartReply({
         description,
-        system_prompt: null,
-        model_type: selectedModelType,
-        strategy_objective: strategyObjective,
-        intake_context: intakeContext,
-        lever_defaults: leverDefaults,
-        starter_id: selectedStarter?.id || undefined,
+        modelType: selectedModelType,
+        objective: strategyObjective,
+        intakeContext,
+        leverDefaults,
+        starterId: selectedStarter?.id || undefined,
       });
+
+      // Let the placeholder stream render instead of showing a blocking overlay.
+      setBusy(false);
+      const data = await dataPromise;
 
       console.log('[startConversation] convoStart returned:', {
         thread_id: data.thread_id,
@@ -3110,10 +3163,6 @@ useEffect(() => {
       const reply = (typeof data?.message === 'string' && data.message.trim()) ||
                     (typeof data?.reply === 'string' && data.reply.trim());
 
-      // Step 4: Append assistant message ONLY if backend returned one
-      if (reply) {
-        appendAssistant(reply);
-      }
       if (data?.model_type) {
         setSelectedModelType(String(data.model_type).toLowerCase());
       }
@@ -5287,7 +5336,7 @@ setView(id === 'chat' ? 'intake' : id);
         </div>
       )}
 
-      {busy && (
+      {busy && !isStreamingReply && (
         <div className="thinking-overlay">
           <div className="thinking-content">
             <FontAwesomeIcon icon={faSpinner} spin />
@@ -6027,7 +6076,7 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
     <div className={`jas jas-shell ${intakeShellOpen ? 'drawer-open' : ''}`}>
       <main className="jas-main">
         <div className="agent-chat-interface">
-      {busy && (
+      {busy && !isStreamingReply && (
         <div className="thinking-overlay">
           <div className="thinking-content">
             <FontAwesomeIcon icon={faSpinner} spin />

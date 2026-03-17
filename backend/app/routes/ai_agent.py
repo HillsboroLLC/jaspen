@@ -2684,6 +2684,105 @@ def conversation_start():
     chat_history.append({"role": "user", "content": user_message, "timestamp": _iso_now()})
     readiness = _compute_readiness(chat_history)
     context_budget = get_context_budget(to_public_plan(user.subscription_plan))
+    stream_requested = str(request.args.get("stream") or "").strip().lower() in {"1", "true", "yes"}
+
+    if stream_requested:
+        @stream_with_context
+        def event_stream():
+            state = {}
+            for payload in _stream_assistant_reply_events(
+                user_message,
+                chat_history,
+                readiness,
+                model_selection,
+                context_budget=context_budget,
+                user=user,
+                user_id=user_id,
+                thread_id=thread_id,
+                intake_context=session.get("intake_context"),
+                state=state,
+            ):
+                yield _sse_payload(payload)
+
+            assistant_reply = str(state.get("reply") or "").strip() or _next_question(readiness)
+            usage = state.get("usage") if isinstance(state.get("usage"), dict) else {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+            actions = state.get("actions") if isinstance(state.get("actions"), list) else []
+            mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
+
+            credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"])
+            charged, remaining = consume_credits(user, credits_charged)
+            if not charged:
+                yield _sse_payload({
+                    "type": "error",
+                    "error": "Insufficient credits",
+                    "required_credits": credits_charged,
+                    "credits_remaining": user.credits_remaining,
+                    "plan_key": to_public_plan(user.subscription_plan),
+                    "monthly_credit_limit": get_monthly_credit_limit(user.subscription_plan, current_app.config),
+                    "suggestion": "Purchase an overage pack or upgrade your plan.",
+                })
+                return
+
+            final_chat_history = list(chat_history)
+            final_chat_history.append({"role": "assistant", "content": assistant_reply, "timestamp": _iso_now()})
+            final_readiness = _compute_readiness(final_chat_history)
+
+            session["chat_history"] = final_chat_history
+            session["name"] = name
+            session["model_type"] = model_selection["model_type"]
+            session["timestamp"] = _iso_now()
+            session["status"] = "in_progress"
+            _record_usage(session, usage, credits_charged)
+            sessions[thread_id] = session
+            if not save_user_sessions(user_id, sessions):
+                yield _sse_payload({"type": "error", "error": "Failed to persist conversation state"})
+                return
+
+            done_payload = {
+                "type": "done",
+                "thread_id": thread_id,
+                "session_id": thread_id,
+                "reply": assistant_reply,
+                "message": assistant_reply,
+                "model_type": model_selection["model_type"],
+                "allowed_model_types": model_selection["allowed_model_types"],
+                "actions": actions,
+                "mutations": mutations,
+                "tool_results": mutations,
+                "usage": usage,
+                "context_budget": context_budget,
+                "credits": {
+                    "charged": credits_charged,
+                    "remaining": remaining,
+                },
+                "readiness": {
+                    "percent": final_readiness["overall"]["percent"],
+                    "categories": final_readiness["categories"],
+                    "items": final_readiness.get("items", []),
+                    "checklist_summary": final_readiness.get("checklist_summary", {}),
+                    "version": final_readiness.get("version"),
+                    "updated_at": _iso_now(),
+                },
+                "status": "gathering_info",
+                "strategy_objective": session.get("strategy_objective") or "balanced",
+                "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
+                "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
+                "organization_id": session.get("organization_id"),
+                "visibility": session.get("visibility") or "private",
+                "objective_options": list(STRATEGY_OBJECTIVE_OPTIONS),
+            }
+            yield _sse_payload(done_payload)
+
+        return Response(
+            event_stream(),
+            mimetype="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
+        )
+
     assistant_reply, usage, actions, mutations = _generate_assistant_reply(
         user_message,
         chat_history,
