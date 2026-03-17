@@ -11,6 +11,7 @@ import {
 } from '@fortawesome/free-solid-svg-icons';
 import { API_BASE } from '../../config/apiBase';
 import { useAuth } from '../../shared/auth/AuthContext';
+import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import { getPlanConnectors } from '../../shared/billing/planConnectors';
 import ConnectorMonitor from '../Monitoring/ConnectorMonitor';
 import './ConnectorsManage.css';
@@ -35,12 +36,8 @@ const PLAN_CONNECTOR_IDS = {
 const PLAN_ORDER = ['free', 'essential', 'team', 'enterprise'];
 const PLAN_RANK = { free: 0, essential: 1, team: 2, enterprise: 3 };
 
-function authHeaders(json = false) {
-  const token = localStorage.getItem('access_token') || localStorage.getItem('token');
-  return {
-    ...(json ? { 'Content-Type': 'application/json' } : {}),
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
+function authHeaders(json = false, method = 'GET') {
+  return buildAuthHeaders(json ? { 'Content-Type': 'application/json' } : {}, method);
 }
 
 function normalizePlanKey(planKey) {
@@ -239,9 +236,9 @@ export default function ConnectorsManage() {
   const isFreePlan = effectivePlanKey === 'free';
 
   const loadConnectors = useCallback(async () => {
-    const res = await fetch(`${API_BASE}/api/v1/connectors/status`, {
+    const res = await authFetch(`${API_BASE}/api/v1/connectors/status`, {
       credentials: 'include',
-      headers: authHeaders(),
+      headers: authHeaders(false, 'GET'),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data?.error || `Failed to load connectors (${res.status})`);
@@ -261,9 +258,9 @@ export default function ConnectorsManage() {
   }, [selectedConnectorId]);
 
   const loadThreads = useCallback(async () => {
-    const res = await fetch(`${API_BASE}/api/v1/ai-agent/threads`, {
+    const res = await authFetch(`${API_BASE}/api/v1/ai-agent/threads`, {
       credentials: 'include',
-      headers: authHeaders(),
+      headers: authHeaders(false, 'GET'),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data?.success) {
@@ -287,9 +284,9 @@ export default function ConnectorsManage() {
       setAuditRows([]);
       return;
     }
-    const res = await fetch(`${API_BASE}/api/v1/connectors/${encodeURIComponent(connectorId)}/audit?limit=20`, {
+    const res = await authFetch(`${API_BASE}/api/v1/connectors/${encodeURIComponent(connectorId)}/audit?limit=20`, {
       credentials: 'include',
-      headers: authHeaders(),
+      headers: authHeaders(false, 'GET'),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -369,10 +366,10 @@ export default function ConnectorsManage() {
     setMessage('');
     try {
       const payload = buildUpdatePayload(selectedConnector.id, selectedDraft);
-      const res = await fetch(`${API_BASE}/api/v1/connectors/${encodeURIComponent(selectedConnector.id)}`, {
+      const res = await authFetch(`${API_BASE}/api/v1/connectors/${encodeURIComponent(selectedConnector.id)}`, {
         method: 'PATCH',
         credentials: 'include',
-        headers: authHeaders(true),
+        headers: authHeaders(true, 'PATCH'),
         body: JSON.stringify(payload),
       });
       const data = await res.json().catch(() => ({}));
@@ -394,9 +391,9 @@ export default function ConnectorsManage() {
     setError('');
     setMessage('');
     try {
-      const res = await fetch(`${API_BASE}/api/v1/connectors/${encodeURIComponent(selectedConnector.id)}/health`, {
+      const res = await authFetch(`${API_BASE}/api/v1/connectors/${encodeURIComponent(selectedConnector.id)}/health`, {
         credentials: 'include',
-        headers: authHeaders(),
+        headers: authHeaders(false, 'GET'),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || `Test failed (${res.status})`);
@@ -437,10 +434,10 @@ export default function ConnectorsManage() {
         method = 'GET';
       }
 
-      const res = await fetch(endpoint, {
+      const res = await authFetch(endpoint, {
         method,
         credentials: 'include',
-        headers: authHeaders(Boolean(body)),
+        headers: authHeaders(Boolean(body), method),
         body: body ? JSON.stringify(body) : undefined,
       });
       const data = await res.json().catch(() => ({}));

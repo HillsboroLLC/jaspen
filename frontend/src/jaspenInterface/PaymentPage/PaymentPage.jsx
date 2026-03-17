@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { API_BASE } from '../../config/apiBase';
+import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import './PaymentPage.css';
 
 const PLAN_INFO = {
@@ -9,10 +10,6 @@ const PLAN_INFO = {
   enterprise: { label: 'Enterprise', price: 'Sales-led' },
 };
 
-function getToken() {
-  return localStorage.getItem('access_token') || localStorage.getItem('token');
-}
-
 export default function PaymentPage() {
   const planKey = new URLSearchParams(window.location.search).get('plan') || 'essential';
   const plan = PLAN_INFO[planKey] || PLAN_INFO.essential;
@@ -21,12 +18,6 @@ export default function PaymentPage() {
   const [error, setError] = useState(null);
 
   const handleCheckout = async () => {
-    const token = getToken();
-    if (!token) {
-      window.location.href = '/?auth=1';
-      return;
-    }
-
     setLoading(true);
     setError(null);
 
@@ -36,17 +27,18 @@ export default function PaymentPage() {
         return;
       }
 
-      const response = await fetch(`${API_BASE}/api/v1/billing/create-checkout-session`, {
+      const response = await authFetch(`${API_BASE}/api/v1/billing/create-checkout-session`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
+        headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
         body: JSON.stringify({ plan_key: planKey }),
       });
 
       const data = await response.json();
       if (!response.ok) {
+        if (response.status === 401) {
+          window.location.href = '/?auth=1';
+          return;
+        }
         throw new Error(data?.msg || 'Unable to start checkout.');
       }
 

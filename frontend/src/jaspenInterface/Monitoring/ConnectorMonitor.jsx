@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { API_BASE } from '../../config/apiBase';
+import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import './ConnectorMonitor.css';
 
 const PM_SYNC_ENDPOINTS = {
@@ -8,12 +9,8 @@ const PM_SYNC_ENDPOINTS = {
   smartsheet_sync: 'smartsheet/sync',
 };
 
-function authHeaders(json = false) {
-  const token = localStorage.getItem('access_token') || localStorage.getItem('token');
-  return {
-    ...(json ? { 'Content-Type': 'application/json' } : {}),
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
+function authHeaders(json = false, method = 'GET') {
+  return buildAuthHeaders(json ? { 'Content-Type': 'application/json' } : {}, method);
 }
 
 function hoursAgoLabel(value) {
@@ -48,9 +45,9 @@ export default function ConnectorMonitor({ selectedThreadId = '', onResynced = n
   const [busyConnectorId, setBusyConnectorId] = useState('');
 
   const loadHealth = useCallback(async () => {
-    const response = await fetch(`${API_BASE}/api/v1/monitoring/health`, {
+    const response = await authFetch(`${API_BASE}/api/v1/monitoring/health`, {
       credentials: 'include',
-      headers: authHeaders(),
+      headers: authHeaders(false, 'GET'),
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -99,9 +96,9 @@ export default function ConnectorMonitor({ selectedThreadId = '', onResynced = n
       params.set('thread_id', selectedThreadId);
     }
     const suffix = params.toString() ? `?${params.toString()}` : '';
-    const response = await fetch(`${API_BASE}/api/v1/monitoring/insights/${encodeURIComponent(connectorId)}${suffix}`, {
+    const response = await authFetch(`${API_BASE}/api/v1/monitoring/insights/${encodeURIComponent(connectorId)}${suffix}`, {
       credentials: 'include',
-      headers: authHeaders(),
+      headers: authHeaders(false, 'GET'),
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -131,12 +128,12 @@ export default function ConnectorMonitor({ selectedThreadId = '', onResynced = n
     }
     setBusyConnectorId(connector.id);
     try {
-      const response = await fetch(
+      const response = await authFetch(
         `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(selectedThreadId)}/${suffix}`,
         {
           method: 'POST',
           credentials: 'include',
-          headers: authHeaders(true),
+          headers: authHeaders(true, 'POST'),
         }
       );
       const payload = await response.json().catch(() => ({}));

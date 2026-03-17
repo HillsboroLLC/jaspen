@@ -9,17 +9,14 @@ import {
   faDownload,
 } from '@fortawesome/free-solid-svg-icons';
 import { API_BASE } from '../../config/apiBase';
+import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import './Projects.css';
 
 const STATUS_OPTIONS = ['All', 'Active', 'Completed', 'Archived'];
 const GROUP_OPTIONS = ['None', 'Category', 'Status'];
 
-function authHeaders() {
-  const token = localStorage.getItem('access_token') || localStorage.getItem('token');
-  return {
-    'Content-Type': 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
+function authHeaders(method = 'GET') {
+  return buildAuthHeaders({ 'Content-Type': 'application/json' }, method);
 }
 
 function parseDateValue(value) {
@@ -91,9 +88,9 @@ export default function Projects() {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(`${API_BASE}/api/v1/ai-agent/threads`, {
+      const res = await authFetch(`${API_BASE}/api/v1/ai-agent/threads`, {
         credentials: 'include',
-        headers: authHeaders(),
+        headers: authHeaders('GET'),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.success) {
@@ -214,10 +211,10 @@ export default function Projects() {
     setError('');
     try {
       const updates = Array.from(selectedIds).map((threadId) =>
-        fetch(`${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(threadId)}`, {
+        authFetch(`${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(threadId)}`, {
           method: 'PATCH',
           credentials: 'include',
-          headers: authHeaders(),
+          headers: authHeaders('PATCH'),
           body: JSON.stringify({ status: 'archived' }),
         })
       );
@@ -239,10 +236,10 @@ export default function Projects() {
     setBulkBusy(true);
     setError('');
     try {
-      const res = await fetch(`${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(threadId)}`, {
+      const res = await authFetch(`${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(threadId)}`, {
         method: 'PATCH',
         credentials: 'include',
-        headers: authHeaders(),
+        headers: authHeaders('PATCH'),
         body: JSON.stringify({ status: 'archived' }),
       });
       if (!res.ok) {

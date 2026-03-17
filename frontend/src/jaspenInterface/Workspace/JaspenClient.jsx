@@ -6,6 +6,7 @@
 // ============================================================================
 
 import { API_BASE } from '../../config/apiBase';
+import { buildAuthHeaders } from '../../shared/auth/http';
 
 export const endpoints = {
   // AI Agent endpoints (NEW)
@@ -81,24 +82,15 @@ function getSid() {
   }
 }
 
-function getToken() {
-  return (
-    localStorage.getItem('access_token') ||
-    localStorage.getItem('token') ||
-    null
-  );
-}
-
 async function _json(resp) {
   const text = await resp.text();
   try { return text ? JSON.parse(text) : {}; } catch { return { raw: text }; }
 }
 
 async function _fetch(url, opts = {}) {
-  const token = getToken();
+  const method = String(opts.method || 'GET').toUpperCase();
   const headers = {
-    'Content-Type': 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...buildAuthHeaders({ 'Content-Type': 'application/json' }, method),
     ...(opts.sidOverride ? { 'X-Session-ID': opts.sidOverride } : opts.withSid ? { 'X-Session-ID': getSid() } : {}),
     ...(opts.headers || {}),
   };
@@ -337,13 +329,12 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
     if (!threadId) throw new Error('Jaspen.fetchBundle: threadId required');
 
     const url = endpoints.threadBundle(threadId, msgLimit, scnLimit);
-    const token = getToken();
 
     const res = await fetch(url, {
       method: 'GET',
       credentials: 'include',
       headers: {
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...buildAuthHeaders({}, 'GET'),
         'Content-Type': 'application/json',
         'X-Session-ID': getSid(),
         'Cache-Control': 'no-store',
@@ -402,7 +393,6 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
    */
   async adoptScorecard(threadId, scorecardId) {
     const apiBase = API_BASE;
-    const token = getToken();
 
     const res = await fetch(
       `${apiBase}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/adopt`,
@@ -410,8 +400,7 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
         method: 'POST',
         credentials: 'include',
         headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
         },
         body: JSON.stringify({ analysis_id: scorecardId }),
       }
@@ -484,7 +473,6 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
 
   analyzeDataFile: async ({ file, thread_id, prompt } = {}) => {
     if (!file) throw new Error('file is required');
-    const token = getToken();
     const form = new FormData();
     form.append('file', file);
     if (thread_id) form.append('thread_id', thread_id);
@@ -494,7 +482,7 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
       method: 'POST',
       credentials: 'include',
       headers: {
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...buildAuthHeaders({}, 'POST'),
         'X-Session-ID': getSid(),
       },
       body: form,
@@ -512,14 +500,13 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
 
   uploadInsightsDataset: async (file) => {
     if (!file) throw new Error('file is required');
-    const token = getToken();
     const form = new FormData();
     form.append('file', file);
     const res = await fetch(endpoints.insightsUpload, {
       method: 'POST',
       credentials: 'include',
       headers: {
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...buildAuthHeaders({}, 'POST'),
         'X-Session-ID': getSid(),
       },
       body: form,

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import MarketingPageLayout from './MarketingPageLayout';
 import { API_BASE } from '../../config/apiBase';
 import { useAuth } from '../../shared/auth/AuthContext';
+import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 
 const FALLBACK_PLANS = [
   {
@@ -72,10 +73,6 @@ const PLAN_RANK = {
   team: 2,
   enterprise: 3,
 };
-
-function getToken() {
-  return localStorage.getItem('access_token') || localStorage.getItem('token');
-}
 
 export default function PricingPage() {
   const { user, loading } = useAuth();
@@ -155,8 +152,7 @@ export default function PricingPage() {
   };
 
   const beginCheckout = async (planKey) => {
-    const token = getToken();
-    if (!token) {
+    if (!user) {
       window.location.href = '/?auth=1';
       return;
     }
@@ -164,12 +160,9 @@ export default function PricingPage() {
     setPendingKey(planKey);
     setStatusMessage('');
     try {
-      const response = await fetch(`${API_BASE}/api/v1/billing/create-checkout-session`, {
+      const response = await authFetch(`${API_BASE}/api/v1/billing/create-checkout-session`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
+        headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
         body: JSON.stringify({ plan_key: planKey }),
       });
 
@@ -192,8 +185,7 @@ export default function PricingPage() {
   };
 
   const buyOveragePack = async (packKey) => {
-    const token = getToken();
-    if (!token) {
+    if (!user) {
       window.location.href = '/?auth=1';
       return;
     }
@@ -201,12 +193,9 @@ export default function PricingPage() {
     setPendingKey(packKey);
     setStatusMessage('');
     try {
-      const response = await fetch(`${API_BASE}/api/v1/billing/create-overage-checkout-session`, {
+      const response = await authFetch(`${API_BASE}/api/v1/billing/create-overage-checkout-session`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
+        headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
         body: JSON.stringify({ pack_key: packKey }),
       });
 
@@ -224,8 +213,7 @@ export default function PricingPage() {
   };
 
   const openPortal = async () => {
-    const token = getToken();
-    if (!token) {
+    if (!user) {
       window.location.href = '/?auth=1';
       return;
     }
@@ -233,12 +221,9 @@ export default function PricingPage() {
     setPendingKey('portal');
     setStatusMessage('');
     try {
-      const response = await fetch(`${API_BASE}/api/v1/billing/create-portal-session`, {
+      const response = await authFetch(`${API_BASE}/api/v1/billing/create-portal-session`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
+        headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
         body: JSON.stringify({ return_url: `${window.location.origin}/pages/pricing#plans` }),
       });
       const data = await response.json();

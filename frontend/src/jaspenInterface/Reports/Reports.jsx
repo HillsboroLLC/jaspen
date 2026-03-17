@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faFilePdf, faTrashCan, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons';
 import { API_BASE } from '../../config/apiBase';
+import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import './Reports.css';
 
 const REPORT_TYPES = [
@@ -10,12 +11,8 @@ const REPORT_TYPES = [
   { value: 'portfolio', label: 'Portfolio Overview' },
 ];
 
-function authHeaders() {
-  const token = localStorage.getItem('access_token') || localStorage.getItem('token');
-  return {
-    'Content-Type': 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
+function authHeaders(method = 'GET') {
+  return buildAuthHeaders({ 'Content-Type': 'application/json' }, method);
 }
 
 function parseScore(session) {
@@ -44,9 +41,9 @@ export default function Reports() {
   const [message, setMessage] = useState('');
 
   const loadThreads = useCallback(async () => {
-    const res = await fetch(`${API_BASE}/api/v1/ai-agent/threads`, {
+    const res = await authFetch(`${API_BASE}/api/v1/ai-agent/threads`, {
       credentials: 'include',
-      headers: authHeaders(),
+      headers: authHeaders('GET'),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data?.success) {
@@ -76,9 +73,9 @@ export default function Reports() {
   }, [selectedThreadId]);
 
   const loadReports = useCallback(async () => {
-    const res = await fetch(`${API_BASE}/api/v1/reports`, {
+    const res = await authFetch(`${API_BASE}/api/v1/reports`, {
       credentials: 'include',
-      headers: authHeaders(),
+      headers: authHeaders('GET'),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -114,10 +111,10 @@ export default function Reports() {
     setError('');
     setMessage('');
     try {
-      const res = await fetch(`${API_BASE}/api/v1/reports/generate`, {
+      const res = await authFetch(`${API_BASE}/api/v1/reports/generate`, {
         method: 'POST',
         credentials: 'include',
-        headers: authHeaders(),
+        headers: authHeaders('POST'),
         body: JSON.stringify({ thread_id: selectedThreadId, report_type: reportType }),
       });
       const data = await res.json().catch(() => ({}));
@@ -142,10 +139,10 @@ export default function Reports() {
     setError('');
     setMessage('');
     try {
-      const res = await fetch(`${API_BASE}/api/v1/reports/${encodeURIComponent(reportId)}`, {
+      const res = await authFetch(`${API_BASE}/api/v1/reports/${encodeURIComponent(reportId)}`, {
         method: 'DELETE',
         credentials: 'include',
-        headers: authHeaders(),
+        headers: authHeaders('DELETE'),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {

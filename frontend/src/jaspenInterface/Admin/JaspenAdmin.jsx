@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { API_BASE } from '../../config/apiBase';
+import { buildAuthHeaders } from '../../shared/auth/http';
 import './JaspenAdmin.css';
 
 
@@ -64,17 +65,8 @@ const ROLE_EXPERIENCE_OPTIONS = [
 ];
 
 
-function getToken() {
-  return localStorage.getItem('access_token') || localStorage.getItem('token');
-}
-
-
-function authHeaders(extra = {}) {
-  const token = getToken();
-  return {
-    ...extra,
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
+function authHeaders(extra = {}, method = 'GET') {
+  return buildAuthHeaders(extra, method);
 }
 
 
@@ -285,7 +277,7 @@ export default function JaspenAdmin() {
 
       const response = await fetch(`${API_BASE}/api/v1/admin/users/${encodeURIComponent(draft.id)}`, {
         method: 'PATCH',
-        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        headers: authHeaders({ 'Content-Type': 'application/json' }, 'PATCH'),
         credentials: 'include',
         body: JSON.stringify(payload),
       });
@@ -310,7 +302,7 @@ export default function JaspenAdmin() {
     try {
       const response = await fetch(`${API_BASE}/api/v1/admin/users/${encodeURIComponent(draft.id)}/force-plan`, {
         method: 'POST',
-        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        headers: authHeaders({ 'Content-Type': 'application/json' }, 'POST'),
         credentials: 'include',
         body: JSON.stringify({ plan_key: planKey, reset_credits: resetCredits }),
       });
@@ -358,7 +350,7 @@ export default function JaspenAdmin() {
     try {
       const response = await fetch(`${API_BASE}/api/v1/admin/users/${encodeURIComponent(draft.id)}/credits`, {
         method: 'POST',
-        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        headers: authHeaders({ 'Content-Type': 'application/json' }, 'POST'),
         credentials: 'include',
         body: JSON.stringify(payload),
       });
@@ -397,7 +389,7 @@ export default function JaspenAdmin() {
         `${API_BASE}/api/v1/admin/users/${encodeURIComponent(draft.id)}/connectors/${encodeURIComponent(connectorId)}`,
         {
           method: 'PATCH',
-          headers: authHeaders({ 'Content-Type': 'application/json' }),
+          headers: authHeaders({ 'Content-Type': 'application/json' }, 'PATCH'),
           credentials: 'include',
           body: JSON.stringify(connectorPayload),
         },
@@ -427,7 +419,7 @@ export default function JaspenAdmin() {
     try {
       const response = await fetch(`${API_BASE}/api/v1/admin/users/${encodeURIComponent(draft.id)}/recovery`, {
         method: 'POST',
-        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        headers: authHeaders({ 'Content-Type': 'application/json' }, 'POST'),
         credentials: 'include',
         body: JSON.stringify({ action, reason }),
       });

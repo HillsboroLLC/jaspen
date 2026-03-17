@@ -1,7 +1,7 @@
 // filepath: src/shared/auth/RequireAuth.jsx
 import { useEffect, useState } from "react";
 import { useLocation, Navigate } from "react-router-dom";
-import { API_BASE } from "../../config/apiBase";
+import { authFetch } from "./http";
 
 const SOFT_GATED_PREFIXES = ["/strategy"]; // render page; block server actions
 
@@ -13,14 +13,8 @@ export default function RequireAuth({ children }) {
   useEffect(() => {
     let alive = true;
 
-    // Why: Some calls may require Bearer even with cookies; include if present.
-    const accessToken =
-      localStorage.getItem("access_token") || localStorage.getItem("token");
-
-    fetch(`${API_BASE}/api/v1/auth/me`, {
+    authFetch('/api/v1/auth/me', {
       method: "GET",
-      credentials: "include",
-      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {}
     })
       .then(r => (r.ok ? "authed" : "anon"))
       .catch(() => "anon")

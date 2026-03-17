@@ -6,10 +6,13 @@
 
 import React, { useEffect, useRef, useState, useMemo, useReducer, useCallback } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { API_BASE } from '../../config/apiBase';
 import { useChatCommands, parseUIActions, ChatActionTypes } from "../../shared/hooks/useChatCommands"
 import { useToast, ToastContainer } from '../../shared/components/Toast';
 import { useAuth } from 'shared/auth/AuthContext';
+import { authFetch as cookieAuthFetch, buildAuthHeaders } from '../../shared/auth/http';
 import { getPlanConnectorSentence } from '../../shared/billing/planConnectors';
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
@@ -771,12 +774,7 @@ useEffect(() => {
   const authFetch = useCallback((url, options = {}) => {
     const apiBase = API_BASE;
     const fullUrl = url.startsWith('http') ? url : `${apiBase}${url}`;
-    const token = localStorage.getItem('access_token') || localStorage.getItem('token');
-    const headers = {
-      ...(options.headers || {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    };
-    return fetch(fullUrl, { credentials: 'include', ...options, headers });
+    return cookieAuthFetch(fullUrl, { credentials: 'include', ...options });
   }, []);
 
   const getUserStorageKeys = (u) => {
@@ -1086,10 +1084,6 @@ useEffect(() => {
   }, [user?.id, user?.email]);
   const activeThreadId = currentSessionId || sessionId || null;
 
-  const getAuthToken = useCallback(
-    () => localStorage.getItem('access_token') || localStorage.getItem('token'),
-    []
-  );
   const preferredFirstName = useMemo(() => {
     const source = (displayName || userName || '').trim();
     if (!source) return 'there';
@@ -1226,15 +1220,14 @@ useEffect(() => {
   };
 
   const loadBilling = useCallback(async () => {
-    const token = getAuthToken();
     setBillingLoading(true);
     try {
       const statusPath = adminWorkspacePreviewPlan
         ? `/api/v1/admin/preview/workspace?plan_key=${encodeURIComponent(adminWorkspacePreviewPlan)}`
         : '/api/v1/billing/status';
       const [statusRes, catalogRes] = await Promise.all([
-        fetch(`${API_BASE}${statusPath}`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        authFetch(`${API_BASE}${statusPath}`, {
+          headers: buildAuthHeaders({}, 'GET'),
           credentials: 'include'
         }),
         fetch(`${API_BASE}/api/v1/billing/catalog`, { credentials: 'include' })
@@ -1255,7 +1248,7 @@ useEffect(() => {
     } finally {
       setBillingLoading(false);
     }
-  }, [adminWorkspacePreviewPlan, getAuthToken, handleUnauthorized]);
+  }, [adminWorkspacePreviewPlan, authFetch, handleUnauthorized]);
 
   useEffect(() => {
     loadBilling();
@@ -1302,7 +1295,7 @@ useEffect(() => {
     } finally {
       setThreadUsageLoading(false);
     }
-  }, [activeThreadId, handleUnauthorized]);
+  }, [activeThreadId, authFetch, handleUnauthorized]);
 
   useEffect(() => {
     if (!sidebarState.settings) return;
@@ -1382,16 +1375,12 @@ useEffect(() => {
   }, [anySidebarOpen, dismissSidebars]);
 
   const startPlanChange = async (planKey) => {
-    const token = getAuthToken();
     setBillingActionLoading(planKey);
     setBillingMessage('');
     try {
-      const response = await fetch(`${API_BASE}/api/v1/billing/create-checkout-session`, {
+      const response = await authFetch(`${API_BASE}/api/v1/billing/create-checkout-session`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
+        headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
         credentials: 'include',
         body: JSON.stringify({ plan_key: planKey }),
       });
@@ -1415,16 +1404,12 @@ useEffect(() => {
   };
 
   const openBillingPortal = async () => {
-    const token = getAuthToken();
     setBillingActionLoading('portal');
     setBillingMessage('');
     try {
-      const response = await fetch(`${API_BASE}/api/v1/billing/create-portal-session`, {
+      const response = await authFetch(`${API_BASE}/api/v1/billing/create-portal-session`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
+        headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
         credentials: 'include',
         body: JSON.stringify({ return_url: `${window.location.origin}/account` }),
       });
@@ -2196,14 +2181,9 @@ const [aiScenarioBusy, setAiScenarioBusy] = useState(false);
   // Fetch sessions (cookie OR bearer)
   const fetchSessions = async () => {
     try {
-      const token = localStorage.getItem('access_token') || localStorage.getItem('token');
-
-      const headers = { };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-
-      const response = await fetch(`${API_BASE}/api/v1/ai-agent/threads`, {
+      const response = await authFetch(`${API_BASE}/api/v1/ai-agent/threads`, {
         method: 'GET',
-        headers,
+        headers: buildAuthHeaders({}, 'GET'),
         credentials: 'include'
       } );
 
@@ -2264,10 +2244,6 @@ const [aiScenarioBusy, setAiScenarioBusy] = useState(false);
 async function loadSessionById(id) {
   if (!id) return null;
 
-  const token = localStorage.getItem('access_token') || localStorage.getItem('token');
-  const headers = {};
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-
   const apiBase = API_BASE;
   const url = `${apiBase}/api/v1/ai-agent/threads/${encodeURIComponent(id )}`;
 
@@ -2275,7 +2251,7 @@ async function loadSessionById(id) {
     // Attempt 1: NEW AI Agent thread fetch (JWT + cookie)
     let resp = await fetch(url, {
       method: 'GET',
-      headers,
+      headers: buildAuthHeaders({}, 'GET'),
       credentials: 'include',
     });
 
@@ -2591,16 +2567,14 @@ async function fetchReadinessFor(sid) {
   try {
     const apiBase = API_BASE;
     const url = `${apiBase}/api/v1/ai-agent/readiness/audit?thread_id=${encodeURIComponent(sid)}`;
-    const token = localStorage.getItem('access_token') || localStorage.getItem('token');
     console.log('[fetchReadinessFor] fetching URL:', url);
 
     const res = await fetch(url, {
       method: 'GET',
       credentials: 'include',
       headers: {
-        'Content-Type': 'application/json',
+        ...buildAuthHeaders({ 'Content-Type': 'application/json' }, 'GET'),
         'X-Session-ID': sid,
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
     });
 
@@ -4771,14 +4745,9 @@ if (!baselineRef.current) baselineRef.current = normalizedFallback; // only set 
   // Delete a session
   const deleteAnalysisById = async (itemId) => {
     try {
-      const token = localStorage.getItem('access_token') || localStorage.getItem('token');
-
-      const headers = { };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-
-await fetch(`${API_BASE}/api/v1/ai-agent/threads/${itemId}`, {
+await authFetch(`${API_BASE}/api/v1/ai-agent/threads/${itemId}`, {
   method: 'DELETE',
-  headers,
+  headers: buildAuthHeaders({}, 'DELETE'),
   credentials: 'include'
 } );
     } catch (error) {
@@ -4830,16 +4799,12 @@ async function persistScenario(label, values) {
       throw new Error('Missing thread/analysis id');
     }
 
-    const token = localStorage.getItem('access_token') || localStorage.getItem('token');
-    const res = await fetch(
+    const res = await authFetch(
       `${apiBase}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/scenarios`,
       {
         method: 'POST',
         credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
+        headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
         body: JSON.stringify({
 based_on: analysisResult?.analysis_id || sessionId,
           deltas: values || {},
@@ -4948,13 +4913,9 @@ const handleSaveScenario = async (scenario) => {
     setHelpLoading(true);
 
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE}/api/v1/help/chat`, {
+      const response = await authFetch(`${API_BASE}/api/v1/help/chat`, {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
+        headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
         body: JSON.stringify({
           message: helpInput,
           context: 'Jaspen'
@@ -6454,18 +6415,9 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
                       {msg.role === 'user' ? (
                         msg.content
                       ) : (
-                        <div
-                          dangerouslySetInnerHTML={{
-                            __html: msg.content
-                              .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-                              .replace(/^## (.+)$/gm, '<h4>$1</h4>')
-                              .replace(/^### (.+)$/gm, '<h5>$1</h5>')
-                              .replace(/^- (.+)$/gm, '<li>$1</li>')
-                              .replace(/(<li>[\s\S]*?<\/li>(\n|$))+/g, '<ul>$&</ul>')
-                              .replace(/\n\n/g, '<br/><br/>')
-                              .replace(/\n/g, '<br/>')
-                          }}
-                        />
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {String(msg.content || '')}
+                        </ReactMarkdown>
                       )}
                     </div>
                   </div>

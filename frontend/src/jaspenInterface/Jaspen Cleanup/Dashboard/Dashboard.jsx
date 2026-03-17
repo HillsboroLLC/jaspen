@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../../shared/auth/AuthContext';
 import { API_BASE } from '../../../config/apiBase';
+import { authFetch, buildAuthHeaders } from '../../../shared/auth/http';
 import {
   ArcElement,
   BarElement,
@@ -33,10 +34,6 @@ ChartJS.register(
   Tooltip,
   Legend
 );
-
-function getToken() {
-  return localStorage.getItem('access_token') || localStorage.getItem('token') || '';
-}
 
 function formatRelative(isoValue) {
   if (!isoValue) return 'Unknown';
@@ -124,12 +121,10 @@ export default function Dashboard() {
     setError('');
 
     try {
-      const token = getToken();
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const response = await fetch(`${API_BASE}/api/v1/dashboard`, {
+      const response = await authFetch(`${API_BASE}/api/v1/dashboard`, {
         method: 'GET',
         credentials: 'include',
-        headers,
+        headers: buildAuthHeaders({}, 'GET'),
       });
       const payload = await response.json().catch(() => ({}));
 

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { API_BASE } from '../../config/apiBase';
+import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import Team from '../Team/Team';
 import './EnterpriseAdmin.css';
 
@@ -64,14 +65,16 @@ const COMPLIANCE_ROWS = [
 ];
 
 function adminFetch(path, options = {}) {
-  const token = localStorage.getItem('access_token') || localStorage.getItem('token');
-  return fetch(`${API_BASE}${path}`, {
+  const method = String(options.method || 'GET').toUpperCase();
+  return authFetch(`${API_BASE}${path}`, {
     credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(options.headers || {}),
-    },
+    headers: buildAuthHeaders(
+      {
+        'Content-Type': 'application/json',
+        ...(options.headers || {}),
+      },
+      method,
+    ),
     ...options,
   }).then(async (res) => {
     const payload = await res.json().catch(() => ({}));

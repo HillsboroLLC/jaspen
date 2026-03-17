@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { API_BASE } from '../../config/apiBase';
+import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import './Activity.css';
 
 const TYPE_OPTIONS = [
@@ -33,11 +34,8 @@ function toIsoEnd(dateInput) {
   return parsed.toISOString();
 }
 
-function authHeaders() {
-  const token = localStorage.getItem('access_token') || localStorage.getItem('token');
-  return {
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
+function authHeaders(method = 'GET') {
+  return buildAuthHeaders({}, method);
 }
 
 export default function Activity() {
@@ -64,9 +62,9 @@ export default function Activity() {
       if (fromIso) params.set('from', fromIso);
       if (toIso) params.set('to', toIso);
 
-      const res = await fetch(`${API_BASE}/api/v1/activity?${params.toString()}`, {
+      const res = await authFetch(`${API_BASE}/api/v1/activity?${params.toString()}`, {
         credentials: 'include',
-        headers: authHeaders(),
+        headers: authHeaders('GET'),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {

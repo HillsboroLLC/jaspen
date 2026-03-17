@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faArrowUpRightFromSquare, faDownload, faChevronDown, faChevronUp } from '@fortawesome/free-solid-svg-icons';
 import { API_BASE } from '../../config/apiBase';
+import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import './Scores.css';
 
 const CATEGORY_OPTIONS = ['All', 'Excellent', 'Good', 'Fair', 'At Risk'];
@@ -79,12 +80,9 @@ function toCsvCell(value) {
 }
 
 async function apiFetch(path) {
-  const token = localStorage.getItem('access_token') || localStorage.getItem('token');
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await authFetch(`${API_BASE}${path}`, {
     credentials: 'include',
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
+    headers: buildAuthHeaders({}, 'GET'),
   });
 
   if (!response.ok) {

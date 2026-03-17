@@ -2,6 +2,7 @@
 
 // Import apiBase in a way that works whether it uses named exports or default export.
 import * as apiBaseModule from '../config/apiBase';
+import { authFetch, buildAuthHeaders } from '../shared/auth/http';
 
 // Resolve base URL from whichever export exists.
 // Add keys here if your apiBase uses different names.
@@ -19,20 +20,8 @@ if (!PM_API_BASE) {
   );
 }
 
-// If your app uses auth tokens already, keep existing token retrieval logic.
-// This helper reads a token if present, but does NOT require it.
 function getAuthHeaders() {
-  try {
-    const token =
-      localStorage.getItem('token') ||
-      localStorage.getItem('access_token') ||
-      localStorage.getItem('jaspen_token') ||
-      null;
-
-    return token ? { Authorization: `Bearer ${token}` } : {};
-  } catch {
-    return {};
-  }
+  return buildAuthHeaders();
 }
 
 async function httpJson(path, { method = 'GET', body } = {}) {
@@ -42,7 +31,7 @@ async function httpJson(path, { method = 'GET', body } = {}) {
     ...getAuthHeaders(),
   };
 
-  const res = await fetch(url, {
+  const res = await authFetch(url, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { API_BASE } from '../../config/apiBase';
 import { useAuth } from '../../shared/auth/AuthContext';
+import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import './Team.css';
 
 const ROLE_OPTIONS = ['owner', 'admin', 'creator', 'collaborator', 'viewer'];
@@ -30,14 +31,16 @@ const PLAN_SEAT_MATRIX = {
 };
 
 async function teamFetch(path, options = {}) {
-  const token = localStorage.getItem('access_token') || localStorage.getItem('token');
-  const response = await fetch(`${API_BASE}${path}`, {
+  const method = String(options.method || 'GET').toUpperCase();
+  const response = await authFetch(`${API_BASE}${path}`, {
     credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(options.headers || {}),
-    },
+    headers: buildAuthHeaders(
+      {
+        'Content-Type': 'application/json',
+        ...(options.headers || {}),
+      },
+      method,
+    ),
     ...options,
   });
 

@@ -5,10 +5,12 @@ from flask import Flask, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
 import stripe
+import sentry_sdk
 from flask_jwt_extended import JWTManager
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from pythonjsonlogger import jsonlogger
+from sentry_sdk.integrations.flask import FlaskIntegration
 from sqlalchemy import text
 from flask_sqlalchemy import SQLAlchemy
 from flask_mail import Mail
@@ -78,6 +80,34 @@ def _setup_logging(app):
     logging.root.setLevel(logging.WARNING)
 
 
+def _setup_sentry(app):
+    dsn = str(os.getenv('SENTRY_DSN') or '').strip()
+    if not dsn:
+        return
+
+    traces_sample_rate_raw = os.getenv('SENTRY_TRACES_SAMPLE_RATE', '0')
+    try:
+        traces_sample_rate = float(traces_sample_rate_raw)
+    except (TypeError, ValueError):
+        traces_sample_rate = 0.0
+
+    sentry_sdk.init(
+        dsn=dsn,
+        integrations=[FlaskIntegration()],
+        environment=(
+            os.getenv('SENTRY_ENVIRONMENT')
+            or os.getenv('APP_ENV')
+            or os.getenv('ENV')
+            or os.getenv('FLASK_ENV')
+            or 'development'
+        ),
+        release=os.getenv('SENTRY_RELEASE') or None,
+        traces_sample_rate=traces_sample_rate,
+        send_default_pii=False,
+    )
+    app.logger.info('Sentry initialized')
+
+
 def create_app():
     global limiter
 
@@ -85,6 +115,7 @@ def create_app():
     frontend_base = frontend_base_raw or 'http://localhost:3000'
     app = Flask(__name__, instance_relative_config=False)
     _setup_logging(app)
+    _setup_sentry(app)
     app.config.from_mapping(
         SECRET_KEY                     = os.getenv('SECRET_KEY'),
         SQLALCHEMY_DATABASE_URI        = os.getenv('DATABASE_URL'),
