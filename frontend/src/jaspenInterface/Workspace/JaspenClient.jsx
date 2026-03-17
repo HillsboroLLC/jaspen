@@ -379,7 +379,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
     });
 
     if (!resp.ok) {
-      return parseErrorResponse(resp);
+      await parseErrorResponse(resp);
     }
 
     const reader = resp.body?.getReader();
@@ -455,7 +455,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
     });
 
     if (!resp.ok) {
-      return parseErrorResponse(resp);
+      await parseErrorResponse(resp);
     }
 
     const reader = resp.body?.getReader();
