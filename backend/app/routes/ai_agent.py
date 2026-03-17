@@ -9,7 +9,7 @@ import re
 import uuid
 
 from app import db, limiter
-from app.models import User
+from app.models import BatchIdeaUpload, User
 from app.billing_config import (
     bootstrap_legacy_credits,
     consume_credits,
@@ -27,7 +27,7 @@ from app.tool_registry import (
     get_tool_entitlements,
     is_tool_allowed,
 )
-from app.orgs import resolve_active_org_for_user
+from app.orgs import normalize_org_role, resolve_active_org_for_user
 
 from .sessions import load_user_sessions, save_user_sessions
 
@@ -1256,6 +1256,7 @@ def _generate_assistant_reply(
     system_prompt = (
         f"{system_prompt}"
         f"{_intake_context_prompt_suffix(intake_context)}"
+        f"{_batch_promotion_prompt_suffix(user_id, thread_id)}"
         f"{_scenario_modeling_prompt_suffix(user_id, thread_id)}"
         f"{_monitoring_prompt_suffix(user_id)}"
     )
@@ -1623,6 +1624,506 @@ def _dataset_from_upload(uploaded_file):
     if df is None or df.empty:
         raise ValueError("Dataset has no rows.")
     return df, filename
+
+
+BATCH_IDEA_ALLOWED_EXTENSIONS = {".csv", ".xlsx"}
+BATCH_IDEA_TITLE_HEADERS = {"name", "title", "idea", "ideaname", "ideatitle", "projecttitle", "projectname"}
+BATCH_PROJECT_CREATOR_ROLES = {"owner", "admin", "creator"}
+
+
+def _normalize_batch_header(value):
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").strip().lower())
+
+
+def _json_safe_value(value):
+    if value is None:
+        return None
+    if isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        if math.isnan(value) or math.isinf(value):
+            return None
+        return value
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, list):
+        return [_json_safe_value(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _json_safe_value(val) for key, val in value.items()}
+    try:
+        if value != value:
+            return None
+    except Exception:
+        pass
+    if hasattr(value, "isoformat"):
+        try:
+            return value.isoformat()
+        except Exception:
+            pass
+    return str(value)
+
+
+def _batch_title_column(columns):
+    normalized_map = {str(col): _normalize_batch_header(col) for col in (columns or [])}
+    for column, normalized in normalized_map.items():
+        if normalized in BATCH_IDEA_TITLE_HEADERS:
+            return column
+    for column, normalized in normalized_map.items():
+        if any(token in normalized for token in ("title", "idea", "name")):
+            return column
+    return None
+
+
+def _clean_idea_metadata(raw_metadata):
+    output = {}
+    for key, value in (raw_metadata.items() if isinstance(raw_metadata, dict) else []):
+        clean_key = str(key or "").strip()
+        if not clean_key:
+            continue
+        clean_value = _json_safe_value(value)
+        if clean_value in (None, ""):
+            continue
+        output[clean_key] = clean_value
+    return output
+
+
+def _coerce_score_int(value):
+    if value in (None, ""):
+        return None
+    try:
+        return int(round(float(value)))
+    except Exception:
+        return None
+
+
+def _batch_ideas_from_upload(uploaded_file):
+    df, filename = _dataset_from_upload(uploaded_file)
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in BATCH_IDEA_ALLOWED_EXTENSIONS:
+        raise ValueError("Unsupported file type. Upload CSV or Excel (.csv/.xlsx).")
+
+    columns = [str(col or "").strip() or f"column_{idx + 1}" for idx, col in enumerate(list(df.columns))]
+    title_column = _batch_title_column(columns)
+    if not title_column:
+        raise ValueError("Batch upload requires a name, title, or idea column.")
+
+    normalized_df = df.copy()
+    normalized_df.columns = columns
+    preview_json = normalized_df.where(normalized_df.notna(), None).to_json(orient="records", date_format="iso")
+    rows = json.loads(preview_json)
+
+    ideas = []
+    for idx, row in enumerate(rows, start=1):
+        metadata = _clean_idea_metadata(row)
+        title = str(metadata.get(title_column) or "").strip() or f"Idea {idx}"
+        ideas.append({
+            "idea_id": str(uuid.uuid4()),
+            "title": title[:255],
+            "metadata": metadata,
+            "clarifications": [],
+            "rank": None,
+            "preliminary_score": None,
+            "scoreable": False,
+            "clarifying_questions": [],
+            "rationale": "",
+            "thread_id": None,
+            "promoted_at": None,
+        })
+
+    return filename, ideas, columns
+
+
+def _dump_json_text(value):
+    return json.dumps(value, ensure_ascii=True, separators=(",", ":"), default=_json_safe_value)
+
+
+def _load_batch_ideas(batch):
+    if not isinstance(batch, BatchIdeaUpload):
+        return []
+    try:
+        ideas = json.loads(batch.ideas_json or "[]")
+    except Exception:
+        ideas = []
+    return ideas if isinstance(ideas, list) else []
+
+
+def _load_batch_ranking_result(batch):
+    if not isinstance(batch, BatchIdeaUpload) or not batch.ranking_result_json:
+        return {}
+    try:
+        payload = json.loads(batch.ranking_result_json)
+    except Exception:
+        payload = {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _save_batch_state(batch, *, ideas=None, ranking_result=None, status=None):
+    if ideas is not None:
+        batch.ideas_json = _dump_json_text(ideas)
+    if ranking_result is not None:
+        batch.ranking_result_json = _dump_json_text(ranking_result)
+    if status:
+        batch.status = str(status).strip().lower()
+    batch.updated_at = datetime.utcnow()
+    db.session.add(batch)
+
+
+def _find_batch_idea(ideas, idea_id):
+    target = str(idea_id or "").strip()
+    for idx, idea in enumerate(ideas or []):
+        if str((idea or {}).get("idea_id") or "").strip() == target:
+            return idx, idea
+    return None, None
+
+
+def _visible_batch_payload(batch):
+    ideas = _load_batch_ideas(batch)
+    columns_detected = []
+    for idea in ideas:
+        metadata = idea.get("metadata") if isinstance(idea.get("metadata"), dict) else {}
+        for key in metadata.keys():
+            key_text = str(key)
+            if key_text not in columns_detected:
+                columns_detected.append(key_text)
+
+    ranking_result = _load_batch_ranking_result(batch)
+    return {
+        "batch_id": batch.id,
+        "filename": batch.filename,
+        "ideas": ideas,
+        "columns_detected": columns_detected,
+        "total_count": len(ideas),
+        "status": batch.status,
+        "ranking_result": ranking_result,
+        "organization_id": batch.organization_id,
+        "created_at": batch.created_at.isoformat() if batch.created_at else None,
+        "updated_at": batch.updated_at.isoformat() if batch.updated_at else None,
+    }
+
+
+def _batch_access_context(user):
+    plan_key = to_public_plan(user.subscription_plan)
+    if plan_key not in {"team", "enterprise"}:
+        return None, None, plan_key, (
+            jsonify({
+                "error": "Batch idea upload is available on Team and Enterprise plans.",
+                "code": "batch_ideas_plan_required",
+                "plan_key": plan_key,
+            }),
+            403,
+        )
+
+    active_org, membership = resolve_active_org_for_user(user)
+    role = normalize_org_role((membership or {}).role if membership else None)
+    if membership and role not in BATCH_PROJECT_CREATOR_ROLES:
+        return active_org, membership, plan_key, (
+            jsonify({
+                "error": "Only creators and admins can upload and promote batch ideas in a shared workspace.",
+                "code": "batch_ideas_role_forbidden",
+                "role": role,
+            }),
+            403,
+        )
+    return active_org, membership, plan_key, None
+
+
+def _get_batch_or_404(batch_id, user_id):
+    batch = BatchIdeaUpload.query.filter_by(id=str(batch_id), user_id=str(user_id)).first()
+    if not batch:
+        return None, (jsonify({"error": "Batch upload not found"}), 404)
+    return batch, None
+
+
+def _extract_json_response_object(text):
+    try:
+        return json.loads(text)
+    except Exception:
+        match = re.search(r"\{.*\}", str(text or ""), re.DOTALL)
+        if not match:
+            raise ValueError("Could not parse JSON object from model response.")
+        return json.loads(match.group(0))
+
+
+def _anthropic_json_completion(system_prompt, user_prompt, *, model_name, max_tokens=2400, temperature=0.2):
+    api_key = _anthropic_api_key()
+    if not api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY not set in environment")
+
+    try:
+        import anthropic
+    except Exception as exc:
+        raise RuntimeError(f"anthropic SDK unavailable: {exc}")
+
+    client = anthropic.Anthropic(api_key=api_key)
+    response = client.messages.create(
+        model=model_name,
+        max_tokens=max(300, int(max_tokens or 2400)),
+        temperature=float(temperature if temperature is not None else 0.2),
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_prompt}],
+    )
+    return _extract_json_response_object(_anthropic_text(response.content)), {
+        "input_tokens": int(getattr(getattr(response, "usage", None), "input_tokens", 0) or 0),
+        "output_tokens": int(getattr(getattr(response, "usage", None), "output_tokens", 0) or 0),
+        "total_tokens": int(
+            (int(getattr(getattr(response, "usage", None), "input_tokens", 0) or 0))
+            + (int(getattr(getattr(response, "usage", None), "output_tokens", 0) or 0))
+        ),
+        "provider": "anthropic",
+        "model": model_name,
+    }
+
+
+def _batch_ranking_prompt_payload(ideas):
+    payload = []
+    for idea in ideas or []:
+        payload.append({
+            "idea_id": idea.get("idea_id"),
+            "title": idea.get("title"),
+            "metadata": idea.get("metadata") if isinstance(idea.get("metadata"), dict) else {},
+            "clarifications": idea.get("clarifications") if isinstance(idea.get("clarifications"), list) else [],
+        })
+    return payload
+
+
+def _rank_batch_ideas_with_ai(batch, ideas, model_selection):
+    system_prompt = (
+        "You are Jaspen's portfolio triage analyst. Return valid JSON only. "
+        "Rank uploaded ideas by strategic potential using the provided metadata. "
+        "For each idea decide whether it is scoreable now, assign a preliminary_score from 0-100 when possible, "
+        "list up to three clarifying_questions when information is missing, and explain rationale in one concise sentence."
+    )
+    user_prompt = (
+        "Analyze this uploaded idea batch and return JSON with a ranked_ideas array. "
+        "Each item must include: idea_id, title, rank, preliminary_score, scoreable, clarifying_questions, rationale. "
+        "Only set scoreable=true when there is enough information to create an initial scorecard without additional user input.\n\n"
+        f"Batch ID: {batch.id}\n"
+        f"Ideas:\n{json.dumps(_batch_ranking_prompt_payload(ideas), ensure_ascii=True, default=_json_safe_value)}"
+    )
+    ranking_payload, usage = _anthropic_json_completion(
+        system_prompt,
+        user_prompt,
+        model_name=_anthropic_model_for_selection(model_selection),
+        max_tokens=2600,
+        temperature=0.1,
+    )
+    ranked_rows = ranking_payload.get("ranked_ideas") if isinstance(ranking_payload, dict) else []
+    if not isinstance(ranked_rows, list):
+        raise ValueError("Batch ranking response did not include ranked_ideas.")
+
+    by_id = {str((idea or {}).get("idea_id") or ""): idea for idea in ideas}
+    updated = []
+    for row in ranked_rows:
+        if not isinstance(row, dict):
+            continue
+        idea_id = str(row.get("idea_id") or "").strip()
+        base = by_id.get(idea_id)
+        if not base:
+            continue
+        updated.append({
+            **base,
+            "rank": int(row.get("rank") or 0) or None,
+            "preliminary_score": _coerce_score_int(row.get("preliminary_score")),
+            "scoreable": bool(row.get("scoreable")),
+            "clarifying_questions": [
+                str(item).strip()
+                for item in (row.get("clarifying_questions") if isinstance(row.get("clarifying_questions"), list) else [])
+                if str(item).strip()
+            ][:3],
+            "rationale": str(row.get("rationale") or "").strip(),
+        })
+    remaining = [idea for idea in ideas if str(idea.get("idea_id") or "") not in {str(item.get("idea_id") or "") for item in updated}]
+    updated.extend(remaining)
+    updated.sort(key=lambda idea: (9999 if idea.get("rank") is None else int(idea.get("rank") or 9999), str(idea.get("title") or "")))
+    return {
+        "batch_id": batch.id,
+        "ranked_ideas": updated,
+    }, usage
+
+
+def _reevaluate_batch_idea_with_ai(batch, idea, model_selection):
+    system_prompt = (
+        "You are Jaspen's idea triage analyst. Return valid JSON only. "
+        "Assess whether this idea is now scoreable, assign a preliminary_score when possible, "
+        "and list any remaining clarifying_questions."
+    )
+    user_prompt = (
+        "Return JSON with: idea_id, title, preliminary_score, scoreable, clarifying_questions, rationale.\n\n"
+        f"Batch ID: {batch.id}\n"
+        f"Idea:\n{json.dumps(_batch_ranking_prompt_payload([idea])[0], ensure_ascii=True, default=_json_safe_value)}"
+    )
+    payload, usage = _anthropic_json_completion(
+        system_prompt,
+        user_prompt,
+        model_name=_anthropic_model_for_selection(model_selection),
+        max_tokens=1200,
+        temperature=0.1,
+    )
+    return payload, usage
+
+
+def _batch_idea_summary_text(idea):
+    metadata = idea.get("metadata") if isinstance(idea.get("metadata"), dict) else {}
+    lines = [f"Title: {str(idea.get('title') or 'Untitled Idea').strip()}"]
+    for key, value in metadata.items():
+        lines.append(f"{key}: {value}")
+    clarifications = idea.get("clarifications") if isinstance(idea.get("clarifications"), list) else []
+    for item in clarifications:
+        if not isinstance(item, dict):
+            continue
+        question = str(item.get("question") or "").strip()
+        answer = str(item.get("answer") or "").strip()
+        if question and answer:
+            lines.append(f"{question}: {answer}")
+    return "\n".join(lines)
+
+
+def _batch_promotion_prompt_suffix(user_id, thread_id):
+    if not user_id or not thread_id:
+        return ""
+    sessions = load_user_sessions(user_id) or {}
+    _key, session = _resolve_user_session(sessions, thread_id)
+    batch_ctx = session.get("batch_promotion") if isinstance(session, dict) and isinstance(session.get("batch_promotion"), dict) else {}
+    if not batch_ctx:
+        return ""
+    title = str(batch_ctx.get("title") or "Untitled Idea").strip()
+    metadata = batch_ctx.get("metadata") if isinstance(batch_ctx.get("metadata"), dict) else {}
+    metadata_pairs = ", ".join(f"{key}: {value}" for key, value in metadata.items())[:1200]
+    return (
+        "\n\nBatch promotion context:\n"
+        "This project was promoted from a batch idea upload.\n"
+        f'Original idea: "{title}"\n'
+        f"Provided metadata: {metadata_pairs or 'none'}\n"
+        "The user has already provided baseline information. Focus on deepening the analysis rather than re-asking for information already provided."
+    )
+
+
+def _promote_batch_idea_to_thread(user, batch, idea, model_selection):
+    from .strategy import _extract_baseline_inputs, _generate_jaspen_scorecard, get_llm_client
+
+    metadata = idea.get("metadata") if isinstance(idea.get("metadata"), dict) else {}
+    title = str(idea.get("title") or "Imported Idea").strip() or "Imported Idea"
+    objective = normalize_strategy_objective(metadata.get("objective") or metadata.get("strategy_objective") or "balanced")
+    objective_explicit = bool(metadata.get("objective") or metadata.get("strategy_objective"))
+    thread_id = str(idea.get("thread_id") or f"thread_{uuid.uuid4().hex[:12]}")
+    generated_at = datetime.utcnow().isoformat()
+    project_description = _batch_idea_summary_text(idea)
+    analysis_credit_cost = int(current_app.config.get("MARKET_IQ_ANALYSIS_CREDIT_COST", 25))
+    if user.credits_remaining is not None and user.credits_remaining < analysis_credit_cost:
+        return None, {
+            "error": "Insufficient credits",
+            "required_credits": analysis_credit_cost,
+            "credits_remaining": user.credits_remaining,
+            "plan_key": to_public_plan(user.subscription_plan),
+            "monthly_credit_limit": get_monthly_credit_limit(user.subscription_plan, current_app.config),
+            "suggestion": "Purchase an overage pack or upgrade your plan.",
+        }, 402
+
+    client = get_llm_client()
+    analysis_result = _generate_jaspen_scorecard(
+        client,
+        project_description,
+        llm_model=model_selection["llm_model"],
+    )
+    charged, remaining = consume_credits(user, analysis_credit_cost)
+    if not charged:
+        return None, {
+            "error": "Insufficient credits",
+            "required_credits": analysis_credit_cost,
+            "credits_remaining": user.credits_remaining,
+            "plan_key": to_public_plan(user.subscription_plan),
+            "monthly_credit_limit": get_monthly_credit_limit(user.subscription_plan, current_app.config),
+            "suggestion": "Purchase an overage pack or upgrade your plan.",
+        }, 402
+    analysis_id = str(uuid.uuid4())
+    prior_meta = analysis_result.get("meta") if isinstance(analysis_result.get("meta"), dict) else {}
+    analysis = {
+        **analysis_result,
+        "id": analysis_id,
+        "analysis_id": analysis_id,
+        "thread_id": thread_id,
+        "framework_id": None,
+        "project_name": title,
+        "project_description": project_description,
+        "timestamp": generated_at,
+        "user_id": user.id,
+        "meta": {
+            **prior_meta,
+            "thread_id": thread_id,
+            "framework_id": None,
+            "name": title,
+            "conversation_turns": 1,
+            "generated_at": generated_at,
+            "model_type": model_selection["model_type"],
+            "llm_model": model_selection["llm_model"],
+            "credits_charged": analysis_credit_cost,
+            "credits_remaining": remaining,
+            "source": "batch_idea_upload",
+            "batch_id": batch.id,
+            "idea_id": idea.get("idea_id"),
+        },
+    }
+
+    chat_history = [
+        {
+            "role": "user",
+            "content": f"Promoted from batch idea upload.\n{project_description}",
+            "timestamp": generated_at,
+        },
+        {
+            "role": "assistant",
+            "content": "Imported this batch idea and generated an initial Jaspen scorecard. Open the Score and Execution tabs to review the baseline plan.",
+            "timestamp": generated_at,
+        },
+    ]
+
+    session = _new_session(
+        user.id,
+        thread_id,
+        title,
+        model_selection["model_type"],
+        strategy_objective=objective,
+        objective_explicit=objective_explicit,
+        organization_id=batch.organization_id,
+        intake_context=metadata,
+    )
+    session["chat_history"] = chat_history
+    session["batch_promotion"] = {
+        "batch_id": batch.id,
+        "idea_id": idea.get("idea_id"),
+        "title": title,
+        "metadata": metadata,
+    }
+    session["result"] = analysis
+    session["analysis_history"] = [{
+        "analysis_id": analysis_id,
+        "id": analysis_id,
+        "created_at": generated_at,
+        "label": "Baseline",
+        "thread_id": thread_id,
+        "result": analysis,
+    }]
+    session["analyses"] = session["analysis_history"]
+    session["adopted_analysis_id"] = analysis_id
+    session["baseline_inputs"] = _extract_baseline_inputs(analysis)
+    session["timestamp"] = generated_at
+    session["completed_at"] = generated_at
+    session["status"] = "completed"
+    session["created"] = session.get("created") or generated_at
+
+    sessions = load_user_sessions(user.id) or {}
+    sessions[thread_id] = session
+    if not save_user_sessions(user.id, sessions):
+        return None, {"error": "Failed to persist promoted thread."}, 500
+
+    return {
+        "thread_id": thread_id,
+        "analysis_id": analysis_id,
+        "project_name": title,
+        "credits_charged": analysis_credit_cost,
+        "credits_remaining": remaining,
+        "analysis": analysis,
+    }, None, None
 
 
 def _linear_slope(values):
@@ -2576,3 +3077,399 @@ def analyze_data():
     except Exception as e:
         current_app.logger.error("[analyze_data] %s", e)
         return jsonify({"error": "Failed to analyze uploaded data."}), 500
+
+
+@ai_agent_bp.route("/batch-ideas/upload", methods=["POST"])
+@jwt_required()
+@limiter.limit("10 per hour")
+def upload_batch_ideas():
+    user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    active_org, _membership, _plan_key, error_response = _batch_access_context(user)
+    if error_response:
+        return error_response
+
+    uploaded = request.files.get("file")
+    if uploaded is None:
+        return jsonify({"error": "file is required (multipart/form-data)"}), 400
+    if not str(getattr(uploaded, "filename", "") or "").strip():
+        return jsonify({"error": "Uploaded file must have a name."}), 400
+
+    try:
+        filename, ideas, columns = _batch_ideas_from_upload(uploaded)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        current_app.logger.exception("Failed parsing batch idea upload")
+        return jsonify({"error": str(exc)}), 500
+
+    batch = BatchIdeaUpload(
+        id=str(uuid.uuid4()),
+        user_id=str(user.id),
+        organization_id=active_org.id if active_org else None,
+        filename=filename,
+        ideas_json=_dump_json_text(ideas),
+        ranking_result_json=None,
+        status="uploaded",
+    )
+    db.session.add(batch)
+    db.session.commit()
+
+    payload = _visible_batch_payload(batch)
+    payload["columns_detected"] = columns
+    return jsonify(payload), 200
+
+
+@ai_agent_bp.route("/batch-ideas/<batch_id>", methods=["GET"])
+@jwt_required()
+def get_batch_ideas(batch_id):
+    batch, error_response = _get_batch_or_404(batch_id, get_jwt_identity())
+    if error_response:
+        return error_response
+    return jsonify(_visible_batch_payload(batch)), 200
+
+
+@ai_agent_bp.route("/batch-ideas/<batch_id>/rank", methods=["POST"])
+@jwt_required()
+@limiter.limit("15 per hour")
+def rank_batch_ideas(batch_id):
+    user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    if bootstrap_legacy_credits(user, current_app.config):
+        db.session.commit()
+
+    _active_org, _membership, _plan_key, error_response = _batch_access_context(user)
+    if error_response:
+        return error_response
+
+    batch, error_response = _get_batch_or_404(batch_id, user.id)
+    if error_response:
+        return error_response
+
+    model_selection, model_error = _resolve_model_selection(
+        user,
+        requested_model_type=(request.get_json(silent=True) or {}).get("model_type"),
+        fallback_model_type="orbit",
+    )
+    if model_error:
+        return jsonify(model_error), 403
+
+    ideas = _load_batch_ideas(batch)
+    if not ideas:
+        return jsonify({"error": "Batch contains no ideas."}), 400
+
+    try:
+        ranking_payload, usage = _rank_batch_ideas_with_ai(batch, ideas, model_selection)
+    except Exception as exc:
+        current_app.logger.exception("Failed ranking batch ideas")
+        return jsonify({"error": f"Failed to rank ideas: {exc}"}), 500
+
+    credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"])
+    charged, remaining = consume_credits(user, credits_charged)
+    if not charged:
+        return jsonify({
+            "error": "Insufficient credits",
+            "required_credits": credits_charged,
+            "credits_remaining": user.credits_remaining,
+            "plan_key": to_public_plan(user.subscription_plan),
+            "monthly_credit_limit": get_monthly_credit_limit(user.subscription_plan, current_app.config),
+            "suggestion": "Purchase an overage pack or upgrade your plan.",
+        }), 402
+
+    ranked_ideas = ranking_payload.get("ranked_ideas") if isinstance(ranking_payload, dict) else []
+    ranking_record = {
+        **ranking_payload,
+        "usage": usage,
+        "credits": {"charged": credits_charged, "remaining": remaining},
+    }
+    _save_batch_state(
+        batch,
+        ideas=ranked_ideas,
+        ranking_result=ranking_record,
+        status="ranking",
+    )
+    db.session.commit()
+
+    return jsonify({
+        **ranking_record,
+        "batch_id": batch.id,
+        "status": batch.status,
+    }), 200
+
+
+@ai_agent_bp.route("/batch-ideas/<batch_id>/ideas/<idea_id>/clarify", methods=["POST"])
+@jwt_required()
+@limiter.limit("40 per hour")
+def clarify_batch_idea(batch_id, idea_id):
+    user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    if bootstrap_legacy_credits(user, current_app.config):
+        db.session.commit()
+
+    _active_org, _membership, _plan_key, error_response = _batch_access_context(user)
+    if error_response:
+        return error_response
+
+    batch, error_response = _get_batch_or_404(batch_id, user.id)
+    if error_response:
+        return error_response
+
+    ideas = _load_batch_ideas(batch)
+    idea_index, idea = _find_batch_idea(ideas, idea_id)
+    if idea is None:
+        return jsonify({"error": "Idea not found in batch"}), 404
+
+    payload = request.get_json(silent=True) or {}
+    answers = payload.get("answers")
+    clarifications = []
+    if isinstance(answers, dict):
+        for question, answer in answers.items():
+            question_text = str(question or "").strip()
+            answer_value = _json_safe_value(answer)
+            answer_text = "" if answer_value is None else str(answer_value).strip()
+            if question_text and answer_text:
+                clarifications.append({
+                    "question": question_text,
+                    "answer": answer_text,
+                    "answered_at": datetime.utcnow().isoformat(),
+                })
+    elif isinstance(answers, list):
+        for item in answers:
+            if not isinstance(item, dict):
+                continue
+            question_text = str(item.get("question") or "").strip()
+            answer_text = str(item.get("answer") or "").strip()
+            if question_text and answer_text:
+                clarifications.append({
+                    "question": question_text,
+                    "answer": answer_text,
+                    "answered_at": datetime.utcnow().isoformat(),
+                })
+
+    if not clarifications:
+        return jsonify({"error": "answers are required"}), 400
+
+    metadata = idea.get("metadata") if isinstance(idea.get("metadata"), dict) else {}
+    for item in clarifications:
+        metadata[item["question"]] = item["answer"]
+    existing_clarifications = idea.get("clarifications") if isinstance(idea.get("clarifications"), list) else []
+    updated_idea = {
+        **idea,
+        "metadata": metadata,
+        "clarifications": [*existing_clarifications, *clarifications],
+    }
+
+    model_selection, model_error = _resolve_model_selection(
+        user,
+        requested_model_type=payload.get("model_type"),
+        fallback_model_type="orbit",
+    )
+    if model_error:
+        return jsonify(model_error), 403
+
+    try:
+        reevaluated, usage = _reevaluate_batch_idea_with_ai(batch, updated_idea, model_selection)
+    except Exception as exc:
+        current_app.logger.exception("Failed reevaluating clarified batch idea")
+        return jsonify({"error": f"Failed to reevaluate idea: {exc}"}), 500
+
+    credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"])
+    charged, remaining = consume_credits(user, credits_charged)
+    if not charged:
+        return jsonify({
+            "error": "Insufficient credits",
+            "required_credits": credits_charged,
+            "credits_remaining": user.credits_remaining,
+            "plan_key": to_public_plan(user.subscription_plan),
+            "monthly_credit_limit": get_monthly_credit_limit(user.subscription_plan, current_app.config),
+            "suggestion": "Purchase an overage pack or upgrade your plan.",
+        }), 402
+
+    updated_idea.update({
+        "preliminary_score": _coerce_score_int(reevaluated.get("preliminary_score")),
+        "scoreable": bool(reevaluated.get("scoreable")),
+        "clarifying_questions": [
+            str(item).strip()
+            for item in (reevaluated.get("clarifying_questions") if isinstance(reevaluated.get("clarifying_questions"), list) else [])
+            if str(item).strip()
+        ][:3],
+        "rationale": str(reevaluated.get("rationale") or "").strip(),
+    })
+    ideas[idea_index] = updated_idea
+
+    ranking_record = _load_batch_ranking_result(batch)
+    ranking_record = {
+        **ranking_record,
+        "batch_id": batch.id,
+        "ranked_ideas": ideas,
+        "usage": usage,
+        "credits": {"charged": credits_charged, "remaining": remaining},
+    }
+    _save_batch_state(batch, ideas=ideas, ranking_result=ranking_record, status="clarifying")
+    db.session.commit()
+
+    return jsonify({
+        "batch_id": batch.id,
+        "idea": updated_idea,
+        "usage": usage,
+        "credits": {"charged": credits_charged, "remaining": remaining},
+        "status": batch.status,
+    }), 200
+
+
+@ai_agent_bp.route("/batch-ideas/<batch_id>/ideas/<idea_id>/promote", methods=["POST"])
+@jwt_required()
+@limiter.limit("20 per hour")
+def promote_batch_idea(batch_id, idea_id):
+    user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    if bootstrap_legacy_credits(user, current_app.config):
+        db.session.commit()
+
+    _active_org, _membership, _plan_key, error_response = _batch_access_context(user)
+    if error_response:
+        return error_response
+
+    batch, error_response = _get_batch_or_404(batch_id, user.id)
+    if error_response:
+        return error_response
+
+    ideas = _load_batch_ideas(batch)
+    idea_index, idea = _find_batch_idea(ideas, idea_id)
+    if idea is None:
+        return jsonify({"error": "Idea not found in batch"}), 404
+    if idea.get("thread_id"):
+        return jsonify({
+            "batch_id": batch.id,
+            "idea_id": idea_id,
+            "thread_id": idea.get("thread_id"),
+            "already_promoted": True,
+        }), 200
+    if not bool(idea.get("scoreable")):
+        return jsonify({"error": "Idea is not scoreable yet. Answer the clarifying questions first."}), 400
+
+    payload = request.get_json(silent=True) or {}
+    model_selection, model_error = _resolve_model_selection(
+        user,
+        requested_model_type=payload.get("model_type"),
+        fallback_model_type="orbit",
+    )
+    if model_error:
+        return jsonify(model_error), 403
+
+    try:
+        promoted, error_body, error_status = _promote_batch_idea_to_thread(user, batch, idea, model_selection)
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("Failed promoting batch idea to thread")
+        return jsonify({"error": f"Failed to promote idea: {exc}"}), 500
+    if error_body:
+        db.session.rollback()
+        return jsonify(error_body), error_status
+
+    idea["thread_id"] = promoted["thread_id"]
+    idea["promoted_at"] = datetime.utcnow().isoformat()
+    ideas[idea_index] = idea
+    ranking_record = _load_batch_ranking_result(batch)
+    ranking_record = {
+        **ranking_record,
+        "batch_id": batch.id,
+        "ranked_ideas": ideas,
+    }
+    status = "completed" if all(str((item or {}).get("thread_id") or "").strip() for item in ideas if bool((item or {}).get("scoreable"))) else "scoring"
+    _save_batch_state(batch, ideas=ideas, ranking_result=ranking_record, status=status)
+    db.session.commit()
+
+    return jsonify({
+        "batch_id": batch.id,
+        "idea_id": idea_id,
+        "thread_id": promoted["thread_id"],
+        "analysis_id": promoted["analysis_id"],
+        "project_name": promoted["project_name"],
+        "credits": {
+            "charged": promoted["credits_charged"],
+            "remaining": promoted["credits_remaining"],
+        },
+        "status": batch.status,
+    }), 200
+
+
+@ai_agent_bp.route("/batch-ideas/<batch_id>/promote-all", methods=["POST"])
+@jwt_required()
+@limiter.limit("8 per hour")
+def promote_all_batch_ideas(batch_id):
+    user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    if bootstrap_legacy_credits(user, current_app.config):
+        db.session.commit()
+
+    _active_org, _membership, _plan_key, error_response = _batch_access_context(user)
+    if error_response:
+        return error_response
+
+    batch, error_response = _get_batch_or_404(batch_id, user.id)
+    if error_response:
+        return error_response
+
+    payload = request.get_json(silent=True) or {}
+    model_selection, model_error = _resolve_model_selection(
+        user,
+        requested_model_type=payload.get("model_type"),
+        fallback_model_type="orbit",
+    )
+    if model_error:
+        return jsonify(model_error), 403
+
+    ideas = _load_batch_ideas(batch)
+    created = []
+    eligible_indexes = [
+        idx for idx, idea in enumerate(ideas)
+        if bool((idea or {}).get("scoreable")) and not str((idea or {}).get("thread_id") or "").strip()
+    ]
+    limited_indexes = eligible_indexes[:10]
+
+    for idx in limited_indexes:
+        idea = ideas[idx]
+        try:
+            promoted, error_body, error_status = _promote_batch_idea_to_thread(user, batch, idea, model_selection)
+        except Exception as exc:
+            db.session.rollback()
+            current_app.logger.exception("Failed bulk-promoting batch idea")
+            return jsonify({"error": f"Failed to promote idea '{idea.get('title') or idx + 1}': {exc}"}), 500
+        if error_body:
+            db.session.rollback()
+            return jsonify(error_body), error_status
+        idea["thread_id"] = promoted["thread_id"]
+        idea["promoted_at"] = datetime.utcnow().isoformat()
+        ideas[idx] = idea
+        created.append({
+            "idea_id": idea.get("idea_id"),
+            "title": idea.get("title"),
+            "thread_id": promoted["thread_id"],
+            "analysis_id": promoted["analysis_id"],
+        })
+
+    has_more = len(eligible_indexes) > len(limited_indexes)
+    ranking_record = _load_batch_ranking_result(batch)
+    ranking_record = {
+        **ranking_record,
+        "batch_id": batch.id,
+        "ranked_ideas": ideas,
+    }
+    status = "completed" if not has_more else "scoring"
+    _save_batch_state(batch, ideas=ideas, ranking_result=ranking_record, status=status)
+    db.session.commit()
+
+    return jsonify({
+        "batch_id": batch.id,
+        "promoted": created,
+        "has_more": has_more,
+        "remaining_scoreable": max(0, len(eligible_indexes) - len(limited_indexes)),
+        "status": batch.status,
+    }), 200

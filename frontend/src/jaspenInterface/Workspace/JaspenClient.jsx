@@ -45,6 +45,12 @@ export const endpoints = {
   aiScenario:       (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/ai-scenario`,
   aiWbs:            (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/ai-wbs`,
   threadWbs:        (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/wbs`,
+  batchIdeasUpload: `${API_BASE}/api/v1/ai-agent/batch-ideas/upload`,
+  batchIdeasById:   (batchId) => `${API_BASE}/api/v1/ai-agent/batch-ideas/${encodeURIComponent(batchId)}`,
+  batchIdeasRank:   (batchId) => `${API_BASE}/api/v1/ai-agent/batch-ideas/${encodeURIComponent(batchId)}/rank`,
+  batchIdeaClarify: (batchId, ideaId) => `${API_BASE}/api/v1/ai-agent/batch-ideas/${encodeURIComponent(batchId)}/ideas/${encodeURIComponent(ideaId)}/clarify`,
+  batchIdeaPromote: (batchId, ideaId) => `${API_BASE}/api/v1/ai-agent/batch-ideas/${encodeURIComponent(batchId)}/ideas/${encodeURIComponent(ideaId)}/promote`,
+  batchIdeasPromoteAll: (batchId) => `${API_BASE}/api/v1/ai-agent/batch-ideas/${encodeURIComponent(batchId)}/promote-all`,
   analyzeData:      `${API_BASE}/api/v1/ai-agent/analyze-data`,
   insightsUpload:   `${API_BASE}/api/v1/insights/upload`,
   insightsAnalyze:  `${API_BASE}/api/v1/insights/analyze`,
@@ -497,6 +503,44 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
     }
     return data;
   },
+
+  uploadBatchIdeas: async (file) => {
+    if (!file) throw new Error('file is required');
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch(endpoints.batchIdeasUpload, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        ...buildAuthHeaders({}, 'POST'),
+        'X-Session-ID': getSid(),
+      },
+      body: form,
+    });
+    const data = await _json(res);
+    if (!res.ok) {
+      const err = new Error(data?.error || data?.detail || `HTTP ${res.status}`);
+      err.status = res.status;
+      err.data = data;
+      throw err;
+    }
+    return data;
+  },
+
+  getBatchIdeas: async (batchId) =>
+    getJSON(endpoints.batchIdeasById(batchId), { withSid: true }),
+
+  rankBatchIdeas: async (batchId, payload = {}) =>
+    postJSON(endpoints.batchIdeasRank(batchId), payload, { withSid: true }),
+
+  clarifyIdea: async (batchId, ideaId, answers) =>
+    postJSON(endpoints.batchIdeaClarify(batchId, ideaId), { answers }, { withSid: true }),
+
+  promoteIdea: async (batchId, ideaId, payload = {}) =>
+    postJSON(endpoints.batchIdeaPromote(batchId, ideaId), payload, { withSid: true }),
+
+  promoteAllIdeas: async (batchId, payload = {}) =>
+    postJSON(endpoints.batchIdeasPromoteAll(batchId), payload, { withSid: true }),
 
   uploadInsightsDataset: async (file) => {
     if (!file) throw new Error('file is required');

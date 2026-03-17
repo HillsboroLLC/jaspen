@@ -35,6 +35,7 @@ import { Jaspen, storage } from './JaspenClient';
 import ScoreDashboard   from './ScoreDashboard';
 import ScenarioModeler  from './ScenarioModeler';
 import ComparisonView   from './ComparisonView';
+import BatchIdeaManager from './components/BatchIdeaManager';
 import ExecutionPanel from './components/ExecutionPanel';
 import SidebarIdentityFooter from './components/SidebarIdentityFooter';
 import ThreadEditModal from '../components/ThreadEditModal';
@@ -797,6 +798,7 @@ useEffect(() => {
   const [billingMessage, setBillingMessage] = useState('');
   const [billingActionLoading, setBillingActionLoading] = useState('');
   const [billingModalOpen, setBillingModalOpen] = useState(false);
+  const [batchIdeasOpen, setBatchIdeasOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notificationsMode, setNotificationsMode] = useState('bell');
   const [notificationFeed, setNotificationFeed] = useState(() => buildDefaultNotifications());
@@ -933,6 +935,17 @@ useEffect(() => {
   const showLockedActivity = !showRealActivity;
   const showRealConnectors = (isPlatformAdmin && !customerPreviewActive) || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.essential;
   const showLockedConnectors = !showRealConnectors;
+  const batchIdeasPlanUnlocked = (isPlatformAdmin && !customerPreviewActive) || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.team;
+  const batchIdeasRoleUnlocked = previewPlanCategory !== 'individual' && (
+    effectiveIsCreator || (isPlatformAdmin && !customerPreviewActive)
+  );
+  const canUseBatchIdeas = batchIdeasPlanUnlocked && batchIdeasRoleUnlocked;
+  const batchIdeasLocked = !canUseBatchIdeas;
+  const batchIdeasLockReason = !batchIdeasPlanUnlocked
+    ? 'plan'
+    : !batchIdeasRoleUnlocked
+    ? 'role'
+    : null;
   const connectorsManagePath = adminWorkspacePreviewPlan
     ? `/connectors-manage?admin_preview=workspace&plan_key=${encodeURIComponent(adminWorkspacePreviewPlan)}${adminPreviewRole ? `&role=${encodeURIComponent(adminPreviewRole)}` : ''}`
     : '/connectors-manage';
@@ -1696,6 +1709,23 @@ useEffect(() => {
               <span className="jas-ud-item-label">New Project</span>
             </button>
           )}
+          <button
+            className={`jas-ud-item ${batchIdeasLocked ? 'is-locked' : ''}`}
+            onClick={() => { onClose?.(); openBatchIdeasManager(); }}
+            title={
+              batchIdeasLockReason === 'plan'
+                ? 'Upgrade to Team to unlock batch idea upload'
+                : batchIdeasLockReason === 'role'
+                ? 'Only creators and admins can upload and promote batch ideas'
+                : 'Upload and rank a portfolio of ideas'
+            }
+          >
+            <FontAwesomeIcon icon={faLayerGroup} />
+            <span className="jas-ud-item-label">Batch Ideas</span>
+            {batchIdeasLocked && (
+              <span className="jas-ud-item-ext"><FontAwesomeIcon icon={faLock} /></span>
+            )}
+          </button>
           <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/projects'); }}>
             <FontAwesomeIcon icon={faLayerGroup} />
             <span className="jas-ud-item-label">Projects</span>
@@ -3246,6 +3276,16 @@ async function onBeginProject() {
         setBeginMsg('Something went wrong. Please try again.');
         setTimeout(() => setBeginBusy(false), 1200);
     }
+}
+
+function openBatchIdeasManager() {
+  setBatchIdeasOpen(true);
+}
+
+function handleOpenBatchIdeaThread(threadId) {
+  if (!threadId) return;
+  setBatchIdeasOpen(false);
+  navigate(`/new?sid=${encodeURIComponent(threadId)}`);
 }
 
 const openSaveStarterModal = () => {
@@ -6141,6 +6181,18 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
       {renderNotificationsModal()}
       {renderNameModal()}
       {renderBillingModal()}
+      <BatchIdeaManager
+        open={batchIdeasOpen}
+        onClose={() => setBatchIdeasOpen(false)}
+        onOpenBilling={() => setBillingModalOpen(true)}
+        onOpenThread={handleOpenBatchIdeaThread}
+        onRefreshSessions={fetchSessions}
+        canUseBatchIdeas={canUseBatchIdeas}
+        isLocked={batchIdeasLocked}
+        canPromoteBatchIdeas={canStartOrgProjects && canUseBatchIdeas}
+        showToast={showToast}
+        lockReason={batchIdeasLockReason}
+      />
       {saveStarterModalOpen && (
         <div className="jas-modal-overlay" role="dialog" aria-modal="true" aria-label="Save starter configuration">
           <div className="jas-modal-card jas-save-starter-modal">

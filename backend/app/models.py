@@ -1,5 +1,6 @@
 # backend/app/models.py
 
+import json
 import uuid
 from datetime import datetime, timezone
 from . import db
@@ -432,6 +433,75 @@ class UserDataset(db.Model):
             'data_preview': self.data_preview if isinstance(self.data_preview, list) else [],
             'status': self.status,
             'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class BatchIdeaUpload(db.Model):
+    __tablename__ = 'batch_idea_uploads'
+
+    id = db.Column(
+        db.String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4())
+    )
+    user_id = db.Column(
+        db.String(36),
+        db.ForeignKey('users.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    organization_id = db.Column(
+        db.String(36),
+        db.ForeignKey('organizations.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    filename = db.Column(db.String(255), nullable=False)
+    ideas_json = db.Column(db.Text, nullable=False)
+    status = db.Column(db.String(32), nullable=False, default='uploaded', index=True)
+    ranking_result_json = db.Column(db.Text, nullable=True)
+    created_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        index=True,
+    )
+    updated_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+    @staticmethod
+    def _load_json_blob(raw, fallback):
+        if not raw:
+            return fallback
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            return fallback
+        return parsed
+
+    def ideas(self):
+        parsed = self._load_json_blob(self.ideas_json, [])
+        return parsed if isinstance(parsed, list) else []
+
+    def ranking_result(self):
+        parsed = self._load_json_blob(self.ranking_result_json, {})
+        return parsed if isinstance(parsed, dict) else {}
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'organization_id': self.organization_id,
+            'filename': self.filename,
+            'ideas': self.ideas(),
+            'status': self.status,
+            'ranking_result': self.ranking_result(),
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
 
 
