@@ -371,6 +371,7 @@ export default function JaspenWorkspace() {
   const [objectiveExplicitlySet, setObjectiveExplicitlySet] = useState(false);
 
   const [busy, setBusy] = useState(false);
+  const [streamToolStatus, setStreamToolStatus] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [error, setError] = useState(null);
   const recognitionRef = useRef(null);
@@ -2171,28 +2172,12 @@ const [aiScenarioBusy, setAiScenarioBusy] = useState(false);
       return v;
     })();
 
-    const resp = await fetch(`${API_BASE}/api/v1/ai-agent/conversation/continue`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Session-ID': sid
-      },
-      credentials: 'include',
-      body: JSON.stringify({
-        message,
-        strategy_objective: strategyObjective,
-        ui_mode: 'interactive',
-        ui_context: {
-          screen: activeTab,
-          view,
-          session_id: sid,
-          selected_scorecard_id: selectedScorecardId || null,
-          baseline_scorecard_id: baselineScorecardId || null,
-        }
-      })
+    const json = await streamConversationReply({
+      threadId: sid,
+      userText: message,
+      modelType: selectedModelType,
+      objective: strategyObjective,
     });
-
-    const json = await resp.json();
     return {
       ...json,
       text: json.reply || json.message || '',
@@ -2916,6 +2901,16 @@ const renderStarterSelector = (className = '') => {
   );
 };
 
+const renderStreamToolStatus = () => {
+  if (!busy || !streamToolStatus) return null;
+  return (
+    <div className="jas-stream-status" aria-live="polite">
+      <FontAwesomeIcon icon={faSpinner} spin />
+      <span>{streamToolStatus}</span>
+    </div>
+  );
+};
+
 const resizeComposerTextarea = useCallback((el) => {
   if (!el) return;
   el.style.height = 'auto';
@@ -2948,6 +2943,98 @@ useEffect(() => {
       return [...prev, { role: 'ai', text: clean }];
     });
   };
+
+  const createStreamingAssistantPlaceholder = useCallback(() => {
+    const messageId = `stream-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setMessages((prev) => [...prev, { id: messageId, role: 'ai', text: '', streaming: true }]);
+    return messageId;
+  }, []);
+
+  const appendStreamingAssistantDelta = useCallback((messageId, delta) => {
+    if (!messageId || !delta) return;
+    setMessages((prev) => prev.map((message) => (
+      message.id === messageId
+        ? { ...message, text: `${message.text || ''}${delta}`, streaming: true }
+        : message
+    )));
+  }, []);
+
+  const finalizeStreamingAssistant = useCallback((messageId, finalText = '') => {
+    setMessages((prev) => prev.map((message) => {
+      if (message.id !== messageId) return message;
+      const resolvedText = String(finalText || message.text || '').trim();
+      return {
+        ...message,
+        text: resolvedText,
+        streaming: false,
+      };
+    }));
+  }, []);
+
+  const setStreamingAssistantError = useCallback((messageId, fallbackText) => {
+    setMessages((prev) => prev.map((message) => (
+      message.id === messageId
+        ? { ...message, text: fallbackText || 'Sorry — I hit an error. Please try again.', streaming: false }
+        : message
+    )));
+  }, []);
+
+  const toolStatusLabel = useCallback((toolName) => {
+    switch (String(toolName || '').trim()) {
+      case 'add_wbs_task':
+      case 'update_wbs_task':
+      case 'add_wbs_dependency':
+      case 'remove_wbs_task':
+        return 'Updating execution plan…';
+      case 'create_scenario':
+        return 'Modeling scenario…';
+      case 'get_readiness_snapshot':
+        return 'Checking readiness…';
+      case 'get_data_contract':
+        return 'Reviewing required inputs…';
+      default:
+        return 'Working…';
+    }
+  }, []);
+
+  const streamConversationReply = useCallback(async ({
+    threadId,
+    userText,
+    modelType,
+    objective,
+  }) => {
+    const placeholderId = createStreamingAssistantPlaceholder();
+    let finalPayload = null;
+    try {
+      finalPayload = await Jaspen.streamConversation({
+        session_id: threadId,
+        user_message: userText,
+        model_type: modelType,
+        strategy_objective: objective,
+        onDelta: (text) => appendStreamingAssistantDelta(placeholderId, text),
+        onToolUse: (event) => setStreamToolStatus(toolStatusLabel(event?.tool)),
+        onToolResult: () => setStreamToolStatus(''),
+        onDone: (payload) => {
+          finalPayload = payload;
+          setStreamToolStatus('');
+          finalizeStreamingAssistant(placeholderId, payload?.reply || payload?.message || '');
+        },
+      });
+      finalizeStreamingAssistant(placeholderId, finalPayload?.reply || finalPayload?.message || '');
+      setStreamToolStatus('');
+      return finalPayload;
+    } catch (streamErr) {
+      setStreamToolStatus('');
+      setStreamingAssistantError(placeholderId, 'Sorry — I hit an error. Please try again.');
+      throw streamErr;
+    }
+  }, [
+    appendStreamingAssistantDelta,
+    createStreamingAssistantPlaceholder,
+    finalizeStreamingAssistant,
+    setStreamingAssistantError,
+    toolStatusLabel,
+  ]);
 
   const handleModelTypeBlocked = useCallback((errorLike) => {
     const payload = errorLike?.data || {};
@@ -3082,20 +3169,13 @@ async function continueConversation(userText) {
   setError(null);
 
   try {
-    const conversation_history = [
-      ...toConversationHistory(messages),
-      { role: "user", content: userText },
-    ];
+    console.log('[continueConversation] calling Jaspen.streamConversation with session_id:', sessionId);
 
-    console.log('[continueConversation] calling Jaspen.convoContinue with session_id:', sessionId);
-
-    // Step 1: Call Jaspen.convoContinue (client wrapper)
-    const data = await Jaspen.convoContinue({
-      session_id: sessionId,
-      user_message: userText,
-      conversation_history,
-      model_type: selectedModelType,
-      strategy_objective: strategyObjective,
+    const data = await streamConversationReply({
+      threadId: sessionId,
+      userText,
+      modelType: selectedModelType,
+      objective: strategyObjective,
     });
 
     console.log('[continueConversation] convoContinue returned:', {
@@ -3106,11 +3186,6 @@ async function continueConversation(userText) {
 
     const serverReply = (typeof data?.reply === 'string' && data.reply.trim()) ||
                         (typeof data?.message === 'string' && data.message.trim());
-
-    // Step 2: Append assistant message ONLY if backend returned one
-    if (serverReply) {
-      appendAssistant(serverReply);
-    }
     if (data?.model_type) {
       setSelectedModelType(String(data.model_type).toLowerCase());
     }
@@ -4525,11 +4600,6 @@ const sendAIMessage = async () => {
     // 2) Call the endpoint that can return Interactive actions
     const resp = await chatWithReadiness(text, currentSessionId || sessionId);
 
-    // 3) Add assistant reply into the shared thread UI
-    if (resp?.text) {
-      setMessages(prev => [...prev, { role: 'ai', text: resp.text }]);
-    }
-
     await applyMutationRefreshes(resp, resp?.sessionId || currentSessionId || sessionId);
 
     // 4) Refresh readiness (authoritative) and persist the full updated thread
@@ -4574,7 +4644,6 @@ const uiActions = parseUIActions(actionEnvelope);
     }
   } catch (err) {
     console.error('[sendAIMessage] failed', err);
-    setMessages(prev => [...prev, { role: 'ai', text: 'Sorry — I hit an error. Please try again.' }]);
   } finally {
     setBusy(false);
   }
@@ -5287,6 +5356,7 @@ setView(id === 'chat' ? 'intake' : id);
             </div>
           ))}
         </div>
+        {renderStreamToolStatus()}
 
         {aiScenarioProposal && (
           <div className="jas-ai-scenario-panel">
@@ -5769,6 +5839,7 @@ setView(id === 'chat' ? 'intake' : id);
                       ))}
                       <div ref={endRef} />
                     </div>
+                    {renderStreamToolStatus()}
                   </div>
 
                   <div className="agent-chat-input-area">
@@ -6314,22 +6385,25 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
             <p>Describe your project or goal, and I&apos;ll help you build a complete strategy scorecard with clear priorities and execution steps.</p>
           </div>
         ) : (
-          <div className="jas-messages">
-            {error && (
-              <div className="agent-chat-error">
-                <FontAwesomeIcon icon={faExclamationTriangle} />
-                <span>{error}</span>
-              </div>
-            )}
+          <>
+            <div className="jas-messages">
+              {error && (
+                <div className="agent-chat-error">
+                  <FontAwesomeIcon icon={faExclamationTriangle} />
+                  <span>{error}</span>
+                </div>
+              )}
 
-            {messages.map((m, idx) => (
-              <div key={idx} className={`jas-message ${m.role === 'ai' ? 'ai' : 'user'}`}>
-                <div className="jas-message-bubble">{m.text}</div>
-              </div>
-            ))}
+              {messages.map((m, idx) => (
+                <div key={idx} className={`jas-message ${m.role === 'ai' ? 'ai' : 'user'}`}>
+                  <div className="jas-message-bubble">{m.text}</div>
+                </div>
+              ))}
 
-            <div ref={endRef} />
-          </div>
+              <div ref={endRef} />
+            </div>
+            {renderStreamToolStatus()}
+          </>
         )}
 
         {/* Input Area - Manus Style */}

@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify, current_app
+from flask import Blueprint, request, jsonify, current_app, Response, stream_with_context
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from datetime import datetime
 import io
@@ -1231,6 +1231,25 @@ def _anthropic_text(content_blocks):
     return "\n".join(out).strip()
 
 
+def _sse_payload(payload):
+    return f"data: {json.dumps(payload)}\n\n"
+
+
+def _anthropic_message_create(client, *, model_name, stream=False, **kwargs):
+    last_error = None
+    for candidate in _anthropic_model_candidates(model_name):
+        try:
+            if stream:
+                return client.messages.stream(model=candidate, **kwargs), candidate
+            return client.messages.create(model=candidate, **kwargs), candidate
+        except Exception as exc:
+            last_error = exc
+            continue
+    if last_error:
+        raise last_error
+    raise RuntimeError("No valid Anthropic model candidates configured")
+
+
 def _generate_assistant_reply(
     user_message,
     chat_history,
@@ -1313,8 +1332,9 @@ def _generate_assistant_reply(
     tool_confirmations = []
 
     try:
-        response = client.messages.create(
-            model=model_name,
+        response, resolved_model_name = _anthropic_message_create(
+            client,
+            model_name=model_name,
             max_tokens=max_tokens,
             temperature=temperature,
             system=system_prompt,
@@ -1377,8 +1397,9 @@ def _generate_assistant_reply(
 
             messages.append({"role": "assistant", "content": _anthropic_content_to_dicts(response.content)})
             messages.append({"role": "user", "content": tool_results})
-            response = client.messages.create(
-                model=model_name,
+            response, resolved_model_name = _anthropic_message_create(
+                client,
+                model_name=model_name,
                 max_tokens=max_tokens,
                 temperature=temperature,
                 system=system_prompt,
@@ -1395,7 +1416,7 @@ def _generate_assistant_reply(
                 reply = f"{reply}\n\nApplied changes:\n{confirmations_text}".strip()
         usage = {
             "provider": "anthropic",
-            "model": model_name,
+            "model": resolved_model_name,
             "input_tokens": total_input_tokens,
             "output_tokens": total_output_tokens,
             "total_tokens": total_input_tokens + total_output_tokens,
@@ -1404,6 +1425,224 @@ def _generate_assistant_reply(
     except Exception:
         current_app.logger.exception("ai_agent anthropic generation failed")
         return fallback_reply, {"provider": "heuristic", "model": model_name, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, [], []
+
+
+def _stream_assistant_reply_events(
+    user_message,
+    chat_history,
+    readiness,
+    model_selection,
+    *,
+    user=None,
+    user_id=None,
+    thread_id=None,
+    intake_context=None,
+    context_budget=None,
+    state=None,
+):
+    state = state if isinstance(state, dict) else {}
+    fallback_reply = _next_question(readiness)
+    state.update({
+        "reply": fallback_reply,
+        "usage": {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+        "actions": [],
+        "mutations": [],
+    })
+
+    api_key = _anthropic_api_key()
+    if not api_key:
+        yield {"type": "delta", "text": fallback_reply}
+        return
+
+    try:
+        import anthropic
+    except Exception:
+        yield {"type": "delta", "text": fallback_reply}
+        return
+
+    model_name = _anthropic_model_for_selection(model_selection)
+    max_tokens = int(
+        current_app.config.get("AI_AGENT_MAX_OUTPUT_TOKENS")
+        or os.getenv("AI_AGENT_MAX_OUTPUT_TOKENS")
+        or 260
+    )
+    temperature = float(
+        current_app.config.get("AI_AGENT_TEMPERATURE")
+        or os.getenv("AI_AGENT_TEMPERATURE")
+        or 0.2
+    )
+    system_prompt = (
+        "You are Jaspen's intake agent. Ask one concise next question that advances readiness when intake is incomplete. "
+        "When the user asks to modify scenarios or WBS tasks, call the relevant tools instead of only describing steps. "
+        "The workspace includes an Execution tab with three views: a List view grouped by phase, "
+        "a Board view showing a Kanban grouped by status (To Do / In Progress / Blocked / Done), "
+        "and a Timeline view displaying a Gantt-style bar chart. The user can see and interact with all three. "
+        "When the user asks to 'build an execution plan', 'create a project plan', or 'generate tasks', "
+        "call generate_ai_wbs via the scorecard flow rather than adding tasks one at a time; "
+        "after generation completes, tell the user to check the Execution tab for the full visual breakdown. "
+        "When you add, update, or remove individual tasks, the Execution tab updates in real-time. "
+        "Valid status values are: todo, in_progress, blocked, done. "
+        "Valid priority values are: critical, high, medium, low. "
+        "due_date must be an ISO date string (YYYY-MM-DD) or null. "
+        "After any mutation tool succeeds, confirm exactly what changed so the user knows what to look for in the Execution tab. "
+        "After a scorecard is generated, proactively suggest scenario modeling when it can improve outcomes. "
+        "For example: 'Your Resource Allocation score is 42 — would you like me to create a scenario "
+        "exploring what happens if you increase budget by 15%?' "
+        "Use the create_scenario tool when the user agrees and always explain the rationale for lever adjustments."
+    )
+    system_prompt = (
+        f"{system_prompt}"
+        f"{_intake_context_prompt_suffix(intake_context)}"
+        f"{_batch_promotion_prompt_suffix(user_id, thread_id)}"
+        f"{_scenario_modeling_prompt_suffix(user_id, thread_id)}"
+        f"{_monitoring_prompt_suffix(user_id)}"
+    )
+    max_turns = int((context_budget or {}).get("recent_turns") or 16)
+    max_turns = max(8, min(80, max_turns))
+    messages = _anthropic_messages_from_history(chat_history, max_turns=max_turns)
+    summary = _anthropic_history_summary(chat_history, keep_last_turns=max_turns)
+    if summary:
+        messages = [{"role": "user", "content": summary}, *messages]
+    if not messages:
+        messages = [{"role": "user", "content": user_message}]
+
+    client = anthropic.Anthropic(api_key=api_key)
+    plan_key = to_public_plan(user.subscription_plan) if user else "free"
+    can_mutate = bool(thread_id) and (
+        is_tool_allowed(plan_key, "scenario_create", "write")
+        or is_tool_allowed(plan_key, "wbs_write", "write")
+    )
+    tools = _anthropic_tool_definitions(enable_mutation_tools=can_mutate)
+    total_input_tokens = 0
+    total_output_tokens = 0
+    executed_actions = []
+    executed_mutations = []
+    tool_confirmations = []
+    streamed_reply_parts = []
+    resolved_model_name = model_name
+
+    try:
+        for _ in range(3):
+            manager, resolved_model_name = _anthropic_message_create(
+                client,
+                model_name=model_name,
+                stream=True,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                system=system_prompt,
+                tools=tools,
+                messages=messages,
+            )
+            with manager as stream:
+                for event in stream:
+                    if event.type == "content_block_delta" and getattr(event.delta, "type", None) == "text_delta":
+                        text = str(getattr(event.delta, "text", "") or "")
+                        if text:
+                            streamed_reply_parts.append(text)
+                            yield {"type": "delta", "text": text}
+                final_message = stream.get_final_message()
+
+            usage = getattr(final_message, "usage", None)
+            total_input_tokens += int(getattr(usage, "input_tokens", 0) or 0)
+            total_output_tokens += int(getattr(usage, "output_tokens", 0) or 0)
+
+            tool_blocks = [
+                block for block in (getattr(final_message, "content", None) or [])
+                if getattr(block, "type", None) == "tool_use" or (isinstance(block, dict) and block.get("type") == "tool_use")
+            ]
+            if not tool_blocks:
+                reply = _anthropic_text(getattr(final_message, "content", None)) or "".join(streamed_reply_parts).strip() or fallback_reply
+                if tool_confirmations:
+                    confirmations_text = "\n".join(f"- {item}" for item in tool_confirmations)
+                    if confirmations_text and confirmations_text not in reply:
+                        reply = f"{reply}\n\nApplied changes:\n{confirmations_text}".strip()
+                state.update({
+                    "reply": reply,
+                    "usage": {
+                        "provider": "anthropic",
+                        "model": resolved_model_name,
+                        "input_tokens": total_input_tokens,
+                        "output_tokens": total_output_tokens,
+                        "total_tokens": total_input_tokens + total_output_tokens,
+                    },
+                    "actions": executed_actions,
+                    "mutations": executed_mutations,
+                })
+                return
+
+            tool_results = []
+            for block in tool_blocks:
+                if isinstance(block, dict):
+                    tool_name = str(block.get("name") or "").strip()
+                    tool_use_id = block.get("id")
+                    tool_input = block.get("input") if isinstance(block.get("input"), dict) else {}
+                else:
+                    tool_name = str(getattr(block, "name", "") or "").strip()
+                    tool_use_id = getattr(block, "id", None)
+                    raw_input = getattr(block, "input", None)
+                    tool_input = raw_input if isinstance(raw_input, dict) else {}
+
+                yield {"type": "tool_use", "tool": tool_name, "input": tool_input}
+                if tool_name in {"get_readiness_snapshot", "get_data_contract"}:
+                    result_payload = _anthropic_tool_output(tool_name, readiness)
+                else:
+                    result_payload = _execute_mutation_tool(
+                        tool_name,
+                        tool_input,
+                        user=user,
+                        user_id=user_id,
+                        thread_id=thread_id,
+                    )
+                    if isinstance(result_payload, dict) and result_payload.get("ok"):
+                        confirmation = str(result_payload.get("confirmation") or "").strip()
+                        if confirmation:
+                            tool_confirmations.append(confirmation)
+                    if isinstance(result_payload, dict):
+                        executed_actions.append({
+                            "tool": tool_name,
+                            "input": tool_input,
+                            "result": result_payload,
+                        })
+                        executed_mutations.append({
+                            "tool": tool_name,
+                            "success": bool(result_payload.get("ok")),
+                            "result_summary": _mutation_result_summary(tool_name, result_payload),
+                            "error": result_payload.get("error"),
+                            "code": result_payload.get("code"),
+                        })
+                yield {"type": "tool_result", "tool": tool_name, "result": result_payload}
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": tool_use_id,
+                    "content": json.dumps(result_payload),
+                })
+
+            messages.append({"role": "assistant", "content": _anthropic_content_to_dicts(getattr(final_message, "content", None))})
+            messages.append({"role": "user", "content": tool_results})
+        reply = "".join(streamed_reply_parts).strip() or fallback_reply
+        state.update({
+            "reply": reply,
+            "usage": {
+                "provider": "anthropic",
+                "model": resolved_model_name,
+                "input_tokens": total_input_tokens,
+                "output_tokens": total_output_tokens,
+                "total_tokens": total_input_tokens + total_output_tokens,
+            },
+            "actions": executed_actions,
+            "mutations": executed_mutations,
+        })
+    except Exception:
+        current_app.logger.exception("ai_agent anthropic streaming failed")
+        fallback = "".join(streamed_reply_parts).strip() or fallback_reply
+        if not streamed_reply_parts:
+            yield {"type": "delta", "text": fallback}
+        state.update({
+            "reply": fallback,
+            "usage": {"provider": "heuristic", "model": model_name, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+            "actions": executed_actions,
+            "mutations": executed_mutations,
+        })
 
 
 def _record_usage(session, usage, credits_charged):
@@ -2607,6 +2846,104 @@ def conversation_continue():
     chat_history.append({"role": "user", "content": user_message, "timestamp": _iso_now()})
     readiness = _compute_readiness(chat_history)
     context_budget = get_context_budget(to_public_plan(user.subscription_plan))
+    stream_requested = str(request.args.get("stream") or "").strip().lower() in {"1", "true", "yes"}
+
+    if stream_requested:
+        @stream_with_context
+        def event_stream():
+            state = {}
+            for payload in _stream_assistant_reply_events(
+                user_message,
+                chat_history,
+                readiness,
+                model_selection,
+                context_budget=context_budget,
+                user=user,
+                user_id=user_id,
+                thread_id=thread_id,
+                intake_context=session.get("intake_context"),
+                state=state,
+            ):
+                yield _sse_payload(payload)
+
+            assistant_reply = str(state.get("reply") or "").strip() or _next_question(readiness)
+            usage = state.get("usage") if isinstance(state.get("usage"), dict) else {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+            actions = state.get("actions") if isinstance(state.get("actions"), list) else []
+            mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
+
+            credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"])
+            charged, remaining = consume_credits(user, credits_charged)
+            if not charged:
+                yield _sse_payload({
+                    "type": "error",
+                    "error": "Insufficient credits",
+                    "required_credits": credits_charged,
+                    "credits_remaining": user.credits_remaining,
+                    "plan_key": to_public_plan(user.subscription_plan),
+                    "monthly_credit_limit": get_monthly_credit_limit(user.subscription_plan, current_app.config),
+                    "suggestion": "Purchase an overage pack or upgrade your plan.",
+                })
+                return
+
+            final_chat_history = list(chat_history)
+            final_chat_history.append({"role": "assistant", "content": assistant_reply, "timestamp": _iso_now()})
+            final_readiness = _compute_readiness(final_chat_history)
+
+            session["chat_history"] = final_chat_history
+            session["model_type"] = model_selection["model_type"]
+            session["timestamp"] = _iso_now()
+            session["status"] = "ready_to_analyze" if final_readiness["overall"]["percent"] >= 85 else "in_progress"
+            _record_usage(session, usage, credits_charged)
+            sessions[thread_id] = session
+            if not save_user_sessions(user_id, sessions):
+                yield _sse_payload({"type": "error", "error": "Failed to persist conversation state"})
+                return
+
+            done_payload = {
+                "type": "done",
+                "thread_id": thread_id,
+                "session_id": thread_id,
+                "reply": assistant_reply,
+                "message": assistant_reply,
+                "model_type": model_selection["model_type"],
+                "allowed_model_types": model_selection["allowed_model_types"],
+                "actions": actions,
+                "mutations": mutations,
+                "tool_results": mutations,
+                "usage": usage,
+                "context_budget": context_budget,
+                "credits": {
+                    "charged": credits_charged,
+                    "remaining": remaining,
+                },
+                "readiness": {
+                    "percent": final_readiness["overall"]["percent"],
+                    "categories": final_readiness["categories"],
+                    "items": final_readiness.get("items", []),
+                    "checklist_summary": final_readiness.get("checklist_summary", {}),
+                    "version": final_readiness.get("version"),
+                    "updated_at": _iso_now(),
+                },
+                "status": "ready_to_analyze" if final_readiness["overall"]["percent"] >= 85 else "gathering_info",
+                "strategy_objective": session.get("strategy_objective") or "balanced",
+                "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
+                "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
+                "organization_id": session.get("organization_id"),
+                "visibility": session.get("visibility") or "private",
+                "objective_options": list(STRATEGY_OBJECTIVE_OPTIONS),
+            }
+            yield _sse_payload(done_payload)
+
+        return Response(
+            event_stream(),
+            mimetype="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
+        )
+
     assistant_reply, usage, actions, mutations = _generate_assistant_reply(
         user_message,
         chat_history,

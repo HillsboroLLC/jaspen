@@ -131,6 +131,39 @@ async function del(url, { withSid = false, sidOverride } = {}) {
   return _fetch(url, { method: 'DELETE', withSid, sidOverride });
 }
 
+async function parseErrorResponse(resp) {
+  const text = await resp.text().catch(() => '');
+  try {
+    const data = text ? JSON.parse(text) : {};
+    const message = data?.error || data?.detail || `HTTP ${resp.status}`;
+    const err = new Error(message);
+    err.status = resp.status;
+    err.data = data;
+    return Promise.reject(err);
+  } catch {
+    const err = new Error(text || `HTTP ${resp.status}`);
+    err.status = resp.status;
+    err.data = { raw: text };
+    return Promise.reject(err);
+  }
+}
+
+function parseSseChunk(chunk) {
+  const lines = String(chunk || '').split('\n');
+  const dataLines = [];
+  for (const line of lines) {
+    if (line.startsWith('data:')) {
+      dataLines.push(line.slice(5).trimStart());
+    }
+  }
+  if (!dataLines.length) return null;
+  try {
+    return JSON.parse(dataLines.join('\n'));
+  } catch {
+    return null;
+  }
+}
+
 function normalizeStart(data) {
   return {
     session_id: data.session_id || data.analysis_id,
@@ -306,6 +339,82 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
       model_type: data.model_type || null,
       strategy_objective: data.strategy_objective || null,
     };
+  },
+  async streamConversation({
+    session_id,
+    user_message,
+    model_type,
+    strategy_objective,
+    onDelta,
+    onToolUse,
+    onToolResult,
+    onDone,
+  }) {
+    const url = `${endpoints.convoNext}?stream=true`;
+    const resp = await fetch(url, {
+      method: 'POST',
+      credentials: 'include',
+      cache: 'no-store',
+      headers: {
+        ...buildAuthHeaders({
+          'Content-Type': 'application/json',
+          'Accept': 'text/event-stream',
+        }, 'POST'),
+        'X-Session-ID': getSid(),
+      },
+      body: JSON.stringify({
+        thread_id: session_id,
+        message: user_message,
+        model_type: model_type || undefined,
+        strategy_objective: strategy_objective || undefined,
+      }),
+    });
+
+    if (!resp.ok) {
+      return parseErrorResponse(resp);
+    }
+
+    const reader = resp.body?.getReader();
+    if (!reader) {
+      throw new Error('Streaming not supported by this browser.');
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let donePayload = null;
+
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+
+      let boundary = buffer.indexOf('\n\n');
+      while (boundary >= 0) {
+        const rawChunk = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        const payload = parseSseChunk(rawChunk);
+        if (payload) {
+          if (payload.type === 'delta' && payload.text) onDelta?.(payload.text);
+          else if (payload.type === 'tool_use') onToolUse?.(payload);
+          else if (payload.type === 'tool_result') onToolResult?.(payload);
+          else if (payload.type === 'done') {
+            donePayload = payload;
+            onDone?.(payload);
+          } else if (payload.type === 'error') {
+            const err = new Error(payload.error || 'Streaming request failed');
+            err.data = payload;
+            throw err;
+          }
+        }
+        boundary = buffer.indexOf('\n\n');
+      }
+
+      if (done) break;
+    }
+
+    if (!donePayload) {
+      throw new Error('Streaming response ended without a done event.');
+    }
+    return donePayload;
   },
 async analyzeFromConversation({ session_id, transcript, deterministic = true, seed, project_name, assumptions, model_type }) {
     const data = await postJSON(
