@@ -738,6 +738,29 @@ def _anthropic_model_for_selection(model_selection):
     ).strip()
 
 
+def _anthropic_model_candidates(preferred_model=None):
+    configured = (
+        preferred_model,
+        current_app.config.get("AI_AGENT_ANTHROPIC_MODEL"),
+        os.getenv("AI_AGENT_ANTHROPIC_MODEL"),
+    )
+    fallbacks = (
+        "claude-3-7-sonnet-latest",
+        "claude-3-7-sonnet-20250219",
+        "claude-3-5-sonnet-20241022",
+        "claude-3-5-haiku-latest",
+    )
+    seen = set()
+    output = []
+    for model_name in [*configured, *fallbacks]:
+        cleaned = str(model_name or "").strip()
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        output.append(cleaned)
+    return output
+
+
 def _model_credit_multiplier(model_type):
     model_type = normalize_model_type(model_type)
     defaults = {"pluto": 1.0, "orbit": 1.5, "titan": 2.25}
@@ -1855,23 +1878,32 @@ def _anthropic_json_completion(system_prompt, user_prompt, *, model_name, max_to
         raise RuntimeError(f"anthropic SDK unavailable: {exc}")
 
     client = anthropic.Anthropic(api_key=api_key)
-    response = client.messages.create(
-        model=model_name,
-        max_tokens=max(300, int(max_tokens or 2400)),
-        temperature=float(temperature if temperature is not None else 0.2),
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_prompt}],
-    )
-    return _extract_json_response_object(_anthropic_text(response.content)), {
-        "input_tokens": int(getattr(getattr(response, "usage", None), "input_tokens", 0) or 0),
-        "output_tokens": int(getattr(getattr(response, "usage", None), "output_tokens", 0) or 0),
-        "total_tokens": int(
-            (int(getattr(getattr(response, "usage", None), "input_tokens", 0) or 0))
-            + (int(getattr(getattr(response, "usage", None), "output_tokens", 0) or 0))
-        ),
-        "provider": "anthropic",
-        "model": model_name,
-    }
+    last_error = None
+    for candidate in _anthropic_model_candidates(model_name):
+        try:
+            response = client.messages.create(
+                model=candidate,
+                max_tokens=max(300, int(max_tokens or 2400)),
+                temperature=float(temperature if temperature is not None else 0.2),
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_prompt}],
+            )
+            return _extract_json_response_object(_anthropic_text(response.content)), {
+                "input_tokens": int(getattr(getattr(response, "usage", None), "input_tokens", 0) or 0),
+                "output_tokens": int(getattr(getattr(response, "usage", None), "output_tokens", 0) or 0),
+                "total_tokens": int(
+                    (int(getattr(getattr(response, "usage", None), "input_tokens", 0) or 0))
+                    + (int(getattr(getattr(response, "usage", None), "output_tokens", 0) or 0))
+                ),
+                "provider": "anthropic",
+                "model": candidate,
+            }
+        except Exception as exc:
+            last_error = exc
+            continue
+    if last_error:
+        raise last_error
+    raise RuntimeError("No valid Anthropic model candidates configured")
 
 
 def _batch_ranking_prompt_payload(ideas):
