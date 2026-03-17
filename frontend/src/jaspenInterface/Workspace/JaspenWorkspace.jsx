@@ -2062,6 +2062,11 @@ const [aiScenarioBusy, setAiScenarioBusy] = useState(false);
   // Toast notifications for chat actions
   const { toasts, showToast, dismissToast } = useToast();
   const objectiveLabel = OBJECTIVE_LABEL_BY_KEY[strategyObjective] || OBJECTIVE_LABEL_BY_KEY.balanced;
+  const objectiveLocked = Boolean(
+    sessionId ||
+    currentSessionId ||
+    (Array.isArray(messages) && messages.some((m) => String(m?.text || '').trim().length > 0))
+  );
   const selectedStarter = useMemo(
     () => savedStarterConfigs.find((starter) => starter?.id === selectedStarterId) || null,
     [savedStarterConfigs, selectedStarterId]
@@ -2859,39 +2864,44 @@ const renderModelTypeInlinePicker = (className = '') => (
   </div>
 );
 
-const renderObjectiveTags = (className = '') => (
-  <div className={`jas-objective-tags ${className}`.trim()}>
-    <span className="jas-objective-tags-label">
-      {objectiveExplicitlySet ? `Objective: ${objectiveLabel}` : 'Primary objective?'}
-    </span>
-    {OBJECTIVE_OPTIONS.map((option) => (
-      <button
-        key={option.key}
-        type="button"
-        className={`jas-objective-tag ${strategyObjective === option.key ? 'active' : ''}`}
-        onClick={() => applyStrategyObjective(option.key, { persist: true, markExplicit: true, silent: true })}
-      >
-        {option.label}
-      </button>
-    ))}
-  </div>
-);
+const renderObjectiveTags = (className = '') => {
+  if (objectiveLocked) return null;
+  return (
+    <div className={`jas-objective-tags ${className}`.trim()}>
+      <span className="jas-objective-tags-label">
+        {objectiveExplicitlySet ? `Objective: ${objectiveLabel}` : 'Primary objective?'}
+      </span>
+      {OBJECTIVE_OPTIONS.map((option) => (
+        <button
+          key={option.key}
+          type="button"
+          className={`jas-objective-tag ${strategyObjective === option.key ? 'active' : ''}`}
+          onClick={() => applyStrategyObjective(option.key, { persist: true, markExplicit: true, silent: true })}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+};
 
 const renderSelectedObjectivePill = (className = '') => {
-  if (!objectiveExplicitlySet) return null;
+  if (!objectiveExplicitlySet && !objectiveLocked) return null;
   return (
     <span className={`jas-objective-selection-pill ${className}`.trim()}>
       <span className="jas-objective-selection-pill-text">{objectiveLabel}</span>
-      <button
-        type="button"
-        className="jas-objective-selection-pill-clear"
-        onClick={() => applyStrategyObjective('balanced', { persist: true, explicit: false, silent: true })}
-        aria-label="Remove selected intention"
-        title="Remove intention"
-        disabled={busy}
-      >
-        <FontAwesomeIcon icon={faTimes} />
-      </button>
+      {!objectiveLocked ? (
+        <button
+          type="button"
+          className="jas-objective-selection-pill-clear"
+          onClick={() => applyStrategyObjective('balanced', { persist: true, explicit: false, silent: true })}
+          aria-label="Remove selected intention"
+          title="Remove intention"
+          disabled={busy}
+        >
+          <FontAwesomeIcon icon={faTimes} />
+        </button>
+      ) : null}
     </span>
   );
 };
