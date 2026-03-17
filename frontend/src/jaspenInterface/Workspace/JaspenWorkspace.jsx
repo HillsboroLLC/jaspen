@@ -136,12 +136,13 @@ function normalizeReadiness(value) {
       : null;
     const updated_at = value.updated_at || null;
     const version = value.version || null;
-    return { percent, categories, items, checklist_summary, updated_at, version };
+    const objective_profile = value.objective_profile || null;
+    return { percent, categories, items, checklist_summary, updated_at, version, objective_profile };
   }
   
   // Primitive value (int/float/string)
   const pct = Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
-  return { percent: pct, categories: [], items: [], checklist_summary: null, updated_at: null, version: null };
+  return { percent: pct, categories: [], items: [], checklist_summary: null, updated_at: null, version: null, objective_profile: null };
 }
 
 /**
@@ -2095,9 +2096,6 @@ const [aiScenarioBusy, setAiScenarioBusy] = useState(false);
 // Sidebar Assistant uses the main `messages` thread as the single source of truth.
 // (No separate aiMessages state.)
 
-  // Previous session snapshot
-  const [previousSessionState, setPreviousSessionState] = useState(null);
-
   // Fetch readiness spec on mount (ONCE) - single source, no duplicates
   useEffect(() => {
     const apiBase = API_BASE;
@@ -2716,6 +2714,7 @@ const readinessChecklistItems = useMemo(() => {
         complete,
         inProgress,
         contextModule: item?.context_module || null,
+        itemType: item?.type || 'core',
       };
     });
   }
@@ -2732,6 +2731,7 @@ const readinessChecklistItems = useMemo(() => {
       complete,
       inProgress,
       contextModule: null,
+      itemType: 'core',
     };
   });
 }, [readinessAudit]);
@@ -2752,16 +2752,16 @@ const readinessChecklistSummary = useMemo(() => {
   return { done, inProgress, missing, total: readinessChecklistItems.length };
 }, [readinessAudit, readinessChecklistItems]);
 
-const renderReadinessChecklist = () => (
-  <div className="jas-collected-section">
-    <h4>Progress Checklist</h4>
-    <p style={{ color: '#64748b', fontSize: '12px', margin: '0 0 10px' }}>
-      {readinessChecklistSummary.done}/{readinessChecklistSummary.total} captured
-      {readinessChecklistSummary.inProgress > 0 ? ` • ${readinessChecklistSummary.inProgress} in progress` : ''}
-    </p>
-    {readinessChecklistItems.length > 0 ? (
+const renderReadinessChecklistGroup = (title, items, helper = '') => {
+  if (!Array.isArray(items) || items.length === 0) return null;
+  return (
+    <div className="jas-collected-section">
+      <h4>{title}</h4>
+      {helper ? (
+        <p style={{ color: '#64748b', fontSize: '12px', margin: '0 0 10px' }}>{helper}</p>
+      ) : null}
       <div className="jas-checklist">
-        {readinessChecklistItems.map((item) => (
+        {items.map((item) => (
           <label className="jas-check-item" key={item.id}>
             <input type="checkbox" className="jas-check" checked={item.complete} readOnly />
             <div className="jas-check-main">
@@ -2774,13 +2774,47 @@ const renderReadinessChecklist = () => (
           </label>
         ))}
       </div>
-    ) : (
-      <p style={{ color: '#64748b', fontSize: '13px', lineHeight: 1.5, margin: '6px 0 0' }}>
-        Ask one more question to start checklist tracking.
-      </p>
-    )}
-  </div>
-);
+    </div>
+  );
+};
+
+const renderReadinessChecklist = () => {
+  const coreItems = readinessChecklistItems.filter((item) => item.itemType === 'core');
+  const objectiveItems = readinessChecklistItems.filter((item) => item.itemType === 'objective');
+  const contextItems = readinessChecklistItems.filter((item) => item.itemType === 'context');
+  const objectiveLabel = OBJECTIVE_LABEL_BY_KEY[
+    readinessAudit?.objective_profile || strategyObjective || 'balanced'
+  ] || 'Balanced';
+
+  return (
+    <>
+      <div className="jas-collected-section">
+        <h4>Progress Checklist</h4>
+        <p style={{ color: '#64748b', fontSize: '12px', margin: '0 0 10px' }}>
+          {readinessChecklistSummary.done}/{readinessChecklistSummary.total} captured
+          {readinessChecklistSummary.inProgress > 0 ? ` • ${readinessChecklistSummary.inProgress} in progress` : ''}
+        </p>
+      </div>
+      {readinessChecklistItems.length > 0 ? (
+        <>
+          {renderReadinessChecklistGroup('Core Framework', coreItems)}
+          {renderReadinessChecklistGroup(
+            `${objectiveLabel} Focus Areas`,
+            objectiveItems,
+            `These buckets adapt to your selected objective so the conversation fills the right gaps first.`
+          )}
+          {renderReadinessChecklistGroup('Context Signals', contextItems)}
+        </>
+      ) : (
+        <div className="jas-collected-section">
+          <p style={{ color: '#64748b', fontSize: '13px', lineHeight: 1.5, margin: '6px 0 0' }}>
+            Ask one more question to start checklist tracking.
+          </p>
+        </div>
+      )}
+    </>
+  );
+};
 
 const renderModelTypeInlinePicker = (className = '') => (
   <div className={`jas-model-picker-inline ${className}`.trim()} ref={modelMenuRef}>
@@ -3160,9 +3194,6 @@ useEffect(() => {
       console.log('[startConversation] calling fetchReadinessFor with sid:', sid);
       await fetchReadinessFor(sid);
       
-      const reply = (typeof data?.message === 'string' && data.message.trim()) ||
-                    (typeof data?.reply === 'string' && data.reply.trim());
-
       if (data?.model_type) {
         setSelectedModelType(String(data.model_type).toLowerCase());
       }
@@ -3174,16 +3205,6 @@ useEffect(() => {
 
       // REMOVED - AI Agent backend handles persistence automatically
       // await saveSessionToBackend({...});
-
-      setPreviousSessionState({
-        sessionId: sid,
-        messages: [{ role: "user", text: description }, { role: "ai", text: reply }],
-        readiness: data.readiness || 0,
-        model_type: data?.model_type || selectedModelType,
-        strategy_objective: normalizeStrategyObjective(data?.strategy_objective || strategyObjective),
-        collectedData: data.collected_data || {},
-      });
-
       await fetchSessions();
       return sid;
     } catch (e) {
@@ -3233,8 +3254,6 @@ async function continueConversation(userText) {
       thread_id_in_response: data?.thread_id,
     });
 
-    const serverReply = (typeof data?.reply === 'string' && data.reply.trim()) ||
-                        (typeof data?.message === 'string' && data.message.trim());
     if (data?.model_type) {
       setSelectedModelType(String(data.model_type).toLowerCase());
     }
@@ -3282,32 +3301,6 @@ async function continueConversation(userText) {
     // Note: AI Agent backend handles persistence automatically
     // No need to call saveSessionToBackend - readiness is already saved by backend
 
-      setPreviousSessionState({
-      sessionId,
-      messages: [
-        ...messages,
-        { role: "user", text: userText },
-        { role: "ai", text: serverReply },
-      ],
-      model_type: data?.model_type || selectedModelType,
-      strategy_objective: normalizeStrategyObjective(data?.strategy_objective || strategyObjective),
-      readiness: auditPayload ? {
-        percent: clampPercent(auditPayload.overall?.percent ?? 0),
-        categories: auditPayload.categories || [],
-        items: auditPayload.items || [],
-        checklist_summary: auditPayload.checklist_summary || null,
-        version: auditPayload.version || null,
-        updated_at: new Date().toISOString()
-      } : {
-        percent: 0,
-        categories: [],
-        items: [],
-        checklist_summary: null,
-        version: null,
-        updated_at: new Date().toISOString()
-      },
-      collectedData: updatedCollected,
-    });
     return sessionId;
   } catch (e) {
     if (e?.status === 403 && e?.data?.code === 'model_type_not_allowed') {
@@ -4734,18 +4727,6 @@ const handleGenerateAiWbsFromScorecard = useCallback(async ({ threadBundleId, sc
 
   // === Helpers ===
   const handleNewAnalysis = (forceNew = false) => {
-    if (!forceNew && previousSessionState && previousSessionState.sessionId === sessionId) {
-      setView('intake');
-      setMessages(previousSessionState.messages);
-      setCollectedData(previousSessionState.collectedData);
-      setStrategyObjective(normalizeStrategyObjective(previousSessionState.strategy_objective || 'balanced'));
-      setObjectiveExplicitlySet(Boolean(previousSessionState.strategy_objective));
-      setAnalysisResult(null);
-      setError(null);
-      dispatchSidebar({ type: 'OPEN_READINESS' });
-      return;
-    }
-
     clearLastSessionId();
     setView('intake');
     setSessionId(null);
@@ -4761,7 +4742,6 @@ const handleGenerateAiWbsFromScorecard = useCallback(async ({ threadBundleId, sc
     setStrategyObjective('balanced');
     setObjectiveExplicitlySet(false);
     dispatchSidebar({ type: 'CLOSE_READINESS' });
-    setPreviousSessionState(null);
   };
 
   // ======== FIXED: Select analysis (history restore) ========================
@@ -4824,13 +4804,6 @@ const handleGenerateAiWbsFromScorecard = useCallback(async ({ threadBundleId, sc
     dispatchSidebar({ type: 'OPEN_READINESS' });
     fetchReadinessFor(sid);
 
-
-	    setPreviousSessionState({
-	      sessionId: sid,
-	      messages: restoredMessages,
-        strategy_objective: mergedObjective,
-	      collectedData: merged.collected_data || {},
-	    });
     return;
   }
 

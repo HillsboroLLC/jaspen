@@ -431,6 +431,95 @@ ADAPTIVE_CONTEXT_PROFILES = [
     },
 ]
 
+OBJECTIVE_FOCUS_PROFILES = {
+    "balanced": [
+        {
+            "id": "balanced_financial_impact",
+            "label": "Financial impact and ROI path are explicit",
+            "keywords": ["roi", "revenue", "margin", "cost", "savings", "budget", "financial"],
+            "question": "What financial outcome matters most here, and how will you measure ROI or value creation?",
+        },
+        {
+            "id": "balanced_execution_feasibility",
+            "label": "Execution feasibility and ownership are grounded",
+            "keywords": ["owner", "team", "resource", "capacity", "timeline", "feasible"],
+            "question": "Who owns delivery, what capacity exists, and what makes this feasible now?",
+        },
+        {
+            "id": "balanced_market_position",
+            "label": "Customer or market impact is clear",
+            "keywords": ["customer", "buyer", "market", "segment", "adoption", "competitive"],
+            "question": "Which customer or market outcome improves if this succeeds?",
+        },
+        {
+            "id": "balanced_operational_efficiency",
+            "label": "Operational workflow changes are mapped",
+            "keywords": ["workflow", "process", "handoff", "bottleneck", "system"],
+            "question": "Which workflow or operating model changes are required to make this stick?",
+        },
+    ],
+    "cost": [
+        {
+            "id": "cost_baseline",
+            "label": "Cost baseline and target savings are defined",
+            "keywords": ["cost", "expense", "budget", "savings", "baseline", "target"],
+            "question": "What is the current cost baseline, and what savings target are you trying to achieve?",
+        },
+        {
+            "id": "cost_efficiency_levers",
+            "label": "Efficiency levers and waste sources are identified",
+            "keywords": ["waste", "redundant", "efficiency", "utilization", "overlap", "duplicate"],
+            "question": "Where is the waste or overlap today, and which levers will reduce it fastest?",
+        },
+        {
+            "id": "cost_guardrails",
+            "label": "ROI guardrails and risk limits are documented",
+            "keywords": ["roi", "payback", "risk", "guardrail", "tradeoff", "threshold"],
+            "question": "What ROI or payback threshold must this meet, and what risks cannot be introduced to get there?",
+        },
+    ],
+    "speed": [
+        {
+            "id": "speed_critical_path",
+            "label": "Critical path and launch sequence are explicit",
+            "keywords": ["critical path", "sequence", "milestone", "deadline", "launch", "timeline"],
+            "question": "What is the critical path to launch, and which milestones must happen in order?",
+        },
+        {
+            "id": "speed_dependency_risk",
+            "label": "Dependencies and blockers are called out early",
+            "keywords": ["dependency", "blocker", "approval", "handoff", "risk", "constraint"],
+            "question": "Which dependencies or approvals could slow this down, and how will you unblock them?",
+        },
+        {
+            "id": "speed_capacity",
+            "label": "Delivery capacity and staffing plan are realistic",
+            "keywords": ["capacity", "staffing", "bandwidth", "resource", "owner", "team"],
+            "question": "Do you have the staffing and decision bandwidth to move at the requested pace?",
+        },
+    ],
+    "growth": [
+        {
+            "id": "growth_segment",
+            "label": "Target segment and growth thesis are explicit",
+            "keywords": ["segment", "customer", "growth", "revenue", "market", "expansion"],
+            "question": "Which segment or revenue motion is this expected to grow first, and why that one?",
+        },
+        {
+            "id": "growth_funnel",
+            "label": "Acquisition or conversion funnel is defined",
+            "keywords": ["acquisition", "conversion", "pipeline", "funnel", "lead", "activation"],
+            "question": "What funnel stage do you expect to improve, and what current conversion baseline are you working from?",
+        },
+        {
+            "id": "growth_retention",
+            "label": "Retention or expansion signals are identified",
+            "keywords": ["retention", "adoption", "expansion", "upsell", "churn", "engagement"],
+            "question": "Which retention, adoption, or expansion signal will prove this is driving durable growth?",
+        },
+    ],
+}
+
 EVIDENCE_DATA_CONTRACT = {
     "required_fields": [
         "metric_name",
@@ -539,7 +628,30 @@ def _selected_context_profiles(user_text):
     return [profile for _, profile in ranked[:2]]
 
 
-def _build_readiness_items(spec, version, categories, user_text, user_turns):
+def _build_objective_focus_items(objective, user_text, user_turns):
+    items = []
+    for item in OBJECTIVE_FOCUS_PROFILES.get(objective, OBJECTIVE_FOCUS_PROFILES["balanced"]):
+        hits = sum(1 for term in item.get("keywords", []) if term in user_text)
+        if hits > 0:
+            percent = min(100, 45 + hits * 18 + min(user_turns * 5, 20))
+        else:
+            percent = min(35, user_turns * 8)
+        items.append({
+            "id": item.get("id"),
+            "key": item.get("id"),
+            "label": item.get("label"),
+            "type": "objective",
+            "context_module": objective,
+            "status": _status_from_percent(percent),
+            "percent": int(percent),
+            "confidence": round(max(0.2, min(0.99, percent / 100)), 2),
+            "next_question": item.get("question"),
+            "step": None,
+        })
+    return items
+
+
+def _build_readiness_items(spec, version, categories, user_text, user_turns, objective="balanced"):
     followups = FOLLOW_UP_QUESTIONS_BY_VERSION.get(version, {})
     items = []
 
@@ -558,6 +670,8 @@ def _build_readiness_items(spec, version, categories, user_text, user_turns):
             "next_question": followups.get(key),
             "step": category.get("step"),
         })
+
+    items.extend(_build_objective_focus_items(objective, user_text, user_turns))
 
     # Context-specific items (adaptive by request type)
     for profile in _selected_context_profiles(user_text):
@@ -637,10 +751,11 @@ def _message_text(msg):
     return str(msg.get("text") or msg.get("message") or "").strip()
 
 
-def _compute_readiness(chat_history):
+def _compute_readiness(chat_history, strategy_objective="balanced"):
     spec = _active_readiness_spec()
     version = spec.get("version", "readiness-v1")
     keyword_map = READINESS_KEYWORDS_BY_VERSION.get(version, {})
+    objective = normalize_strategy_objective(strategy_objective, default="balanced")
 
     user_msgs = [
         _message_text(m)
@@ -692,8 +807,9 @@ def _compute_readiness(chat_history):
         },
         "categories": categories,
         "version": version,
+        "objective_profile": objective,
     }
-    items, checklist_summary = _build_readiness_items(spec, version, categories, user_text, user_turns)
+    items, checklist_summary = _build_readiness_items(spec, version, categories, user_text, user_turns, objective=objective)
     readiness_payload["items"] = items
     readiness_payload["checklist_summary"] = checklist_summary
     readiness_payload["checklist_mode"] = "adaptive"
@@ -2617,7 +2733,7 @@ def conversation_start():
     if not user_message:
         return jsonify({"error": "message is required"}), 400
 
-    thread_id = str(data.get("thread_id") or request.headers.get("X-Session-ID") or f"thread_{uuid.uuid4().hex[:12]}")
+    thread_id = str(data.get("thread_id") or f"thread_{uuid.uuid4().hex[:12]}")
     name = str(data.get("name") or user_message[:60] or "Jaspen Intake").strip()
     model_selection, model_error = _resolve_model_selection(user, requested_model_type=data.get("model_type"))
     if model_error:
@@ -2682,7 +2798,7 @@ def conversation_start():
         chat_history = []
 
     chat_history.append({"role": "user", "content": user_message, "timestamp": _iso_now()})
-    readiness = _compute_readiness(chat_history)
+    readiness = _compute_readiness(chat_history, session.get("strategy_objective"))
     context_budget = get_context_budget(to_public_plan(user.subscription_plan))
     stream_requested = str(request.args.get("stream") or "").strip().lower() in {"1", "true", "yes"}
 
@@ -2725,7 +2841,7 @@ def conversation_start():
 
             final_chat_history = list(chat_history)
             final_chat_history.append({"role": "assistant", "content": assistant_reply, "timestamp": _iso_now()})
-            final_readiness = _compute_readiness(final_chat_history)
+            final_readiness = _compute_readiness(final_chat_history, session.get("strategy_objective"))
 
             session["chat_history"] = final_chat_history
             session["name"] = name
@@ -2943,7 +3059,7 @@ def conversation_continue():
         chat_history = []
 
     chat_history.append({"role": "user", "content": user_message, "timestamp": _iso_now()})
-    readiness = _compute_readiness(chat_history)
+    readiness = _compute_readiness(chat_history, session.get("strategy_objective"))
     context_budget = get_context_budget(to_public_plan(user.subscription_plan))
     stream_requested = str(request.args.get("stream") or "").strip().lower() in {"1", "true", "yes"}
 
@@ -2986,7 +3102,7 @@ def conversation_continue():
 
             final_chat_history = list(chat_history)
             final_chat_history.append({"role": "assistant", "content": assistant_reply, "timestamp": _iso_now()})
-            final_readiness = _compute_readiness(final_chat_history)
+            final_readiness = _compute_readiness(final_chat_history, session.get("strategy_objective"))
 
             session["chat_history"] = final_chat_history
             session["model_type"] = model_selection["model_type"]
@@ -3172,7 +3288,7 @@ def readiness_audit():
     user_id = get_jwt_identity()
     session = _find_session_by_thread(thread_id, user_id=user_id)
     chat_history = session.get("chat_history", []) if isinstance(session, dict) else []
-    readiness = _compute_readiness(chat_history)
+    readiness = _compute_readiness(chat_history, (session or {}).get("strategy_objective"))
     return jsonify(readiness), 200
 
 
@@ -3188,7 +3304,7 @@ def list_threads():
             continue
         thread_id = str(candidate.get("session_id") or key)
         chat_history = _session_chat_history(candidate)
-        readiness = candidate.get("readiness") if isinstance(candidate.get("readiness"), dict) else _compute_readiness(chat_history)
+        readiness = candidate.get("readiness") if isinstance(candidate.get("readiness"), dict) else _compute_readiness(chat_history, candidate.get("strategy_objective"))
 
         sessions_list.append({
             **candidate,
@@ -3261,7 +3377,7 @@ def get_thread(thread_id):
 
     resolved_thread_id = str(session.get("session_id") or session_key or thread_id)
     chat_history = _session_chat_history(session)
-    readiness = session.get("readiness") if isinstance(session.get("readiness"), dict) else _compute_readiness(chat_history)
+    readiness = session.get("readiness") if isinstance(session.get("readiness"), dict) else _compute_readiness(chat_history, session.get("strategy_objective"))
     analyses = _normalize_analysis_history(session, resolved_thread_id)
 
     thread_payload = {
@@ -3411,7 +3527,7 @@ def update_thread(thread_id):
     save_user_sessions(user_id, sessions)
 
     chat_history = _session_chat_history(session)
-    readiness = session.get("readiness") if isinstance(session.get("readiness"), dict) else _compute_readiness(chat_history)
+    readiness = session.get("readiness") if isinstance(session.get("readiness"), dict) else _compute_readiness(chat_history, session.get("strategy_objective"))
     session_payload = {
         **session,
         "session_id": resolved_thread_id,
