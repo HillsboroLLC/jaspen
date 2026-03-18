@@ -22,7 +22,7 @@ const START_OPTIONS = [
   { key: 'data_upload', label: 'Upload data for analysis', description: 'Attach files first and let Jaspen pull insights from them.' },
 ];
 
-export default function OnboardingWizard({ open, onComplete }) {
+export default function OnboardingWizard({ open, onComplete, busy = false, busyLabel = '' }) {
   const [stepIndex, setStepIndex] = useState(0);
   const [role, setRole] = useState('');
   const [evaluation, setEvaluation] = useState('');
@@ -85,6 +85,7 @@ export default function OnboardingWizard({ open, onComplete }) {
               type="button"
               className={`jas-onboarding-option ${step.value === option.key ? 'selected' : ''}`}
               onClick={() => step.onSelect(option.key)}
+              disabled={busy}
             >
               <span className="jas-onboarding-option-title">{option.label}</span>
               {option.description ? (
@@ -99,7 +100,7 @@ export default function OnboardingWizard({ open, onComplete }) {
             type="button"
             className="jas-onboarding-secondary"
             onClick={() => setStepIndex((prev) => Math.max(0, prev - 1))}
-            disabled={stepIndex === 0}
+            disabled={stepIndex === 0 || busy}
           >
             Back
           </button>
@@ -108,7 +109,7 @@ export default function OnboardingWizard({ open, onComplete }) {
               type="button"
               className="jas-onboarding-primary"
               onClick={() => setStepIndex((prev) => Math.min(steps.length - 1, prev + 1))}
-              disabled={!isStepComplete}
+              disabled={!isStepComplete || busy}
             >
               Continue
             </button>
@@ -123,12 +124,13 @@ export default function OnboardingWizard({ open, onComplete }) {
                   startMode,
                 })
               }
-              disabled={!isStepComplete}
+              disabled={!isStepComplete || busy}
             >
-              Start
+              {busy ? (busyLabel || 'Starting…') : 'Start'}
             </button>
           )}
         </div>
+        {busy && busyLabel ? <p className="jas-onboarding-status">{busyLabel}</p> : null}
       </div>
     </div>
   );

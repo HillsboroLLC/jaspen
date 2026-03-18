@@ -200,7 +200,8 @@ function readOnboardingCompletion(user) {
     if (raw === 'true') return true;
     const parsed = JSON.parse(raw);
     return Boolean(parsed?.[ownerKey]);
-  } catch {
+  } catch (error) {
+    console.warn('[onboarding] Failed to read onboarding completion state', error);
     return false;
   }
 }
@@ -214,7 +215,9 @@ function writeOnboardingCompletion(user, value = true) {
     const next = parsed && typeof parsed === 'object' ? { ...parsed } : {};
     next[ownerKey] = Boolean(value);
     localStorage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify(next));
-  } catch {}
+  } catch (error) {
+    console.warn('[onboarding] Failed to persist onboarding completion state', error);
+  }
 }
 
 function isContextSyncMessage(text) {
@@ -862,6 +865,7 @@ useEffect(() => {
   const [batchIdeasOpen, setBatchIdeasOpen] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [pendingOnboardingContext, setPendingOnboardingContext] = useState(null);
+  const [onboardingLaunchLabel, setOnboardingLaunchLabel] = useState('');
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notificationsMode, setNotificationsMode] = useState('bell');
   const [notificationFeed, setNotificationFeed] = useState(() => buildDefaultNotifications());
@@ -4905,15 +4909,28 @@ const handleExportWbsCsv = useCallback(async ({ threadBundleId, projectName } = 
       onboarding_complete: true,
     });
     writeOnboardingCompletion(user, true);
-    setOnboardingOpen(false);
+    const launchLabel = startMode === 'batch_ideas'
+      ? 'Opening Batch Ideas…'
+      : startMode === 'data_upload'
+        ? 'Preparing data upload…'
+        : 'Preparing conversation…';
+    setOnboardingLaunchLabel(launchLabel);
     if (startMode === 'batch_ideas') {
-      setBatchIdeasOpen(true);
+      window.setTimeout(() => {
+        setOnboardingOpen(false);
+        setBatchIdeasOpen(true);
+        setOnboardingLaunchLabel('');
+      }, 260);
       return;
     }
-    window.setTimeout(() => intakeInputRef.current?.focus(), 0);
-    if (startMode === 'data_upload') {
-      fileInputRef.current?.click();
-    }
+    window.setTimeout(() => {
+      setOnboardingOpen(false);
+      window.setTimeout(() => intakeInputRef.current?.focus(), 0);
+      if (startMode === 'data_upload') {
+        fileInputRef.current?.click();
+      }
+      setOnboardingLaunchLabel('');
+    }, 260);
   }, [user]);
 
   const handleNewAnalysis = (forceNew = false) => {
@@ -4932,6 +4949,7 @@ const handleExportWbsCsv = useCallback(async ({ threadBundleId, projectName } = 
     setStrategyObjective('balanced');
     setObjectiveExplicitlySet(false);
     setPendingOnboardingContext(null);
+    setOnboardingLaunchLabel('');
     dispatchSidebar({ type: 'CLOSE_READINESS' });
   };
 
@@ -6476,6 +6494,8 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
       <OnboardingWizard
         open={showOnboardingWizard}
         onComplete={handleOnboardingComplete}
+        busy={Boolean(onboardingLaunchLabel)}
+        busyLabel={onboardingLaunchLabel}
       />
       <BatchIdeaManager
         open={batchIdeasOpen}
