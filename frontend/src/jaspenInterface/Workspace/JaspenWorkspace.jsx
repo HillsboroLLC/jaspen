@@ -864,6 +864,7 @@ useEffect(() => {
   const [billingModalOpen, setBillingModalOpen] = useState(false);
   const [batchIdeasOpen, setBatchIdeasOpen] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [suppressOnboardingEntry, setSuppressOnboardingEntry] = useState(false);
   const [pendingOnboardingContext, setPendingOnboardingContext] = useState(null);
   const [onboardingLaunchLabel, setOnboardingLaunchLabel] = useState('');
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -1207,6 +1208,7 @@ useEffect(() => {
     setDisplayName(saved || '');
     setNameInput(initial);
     setNameError('');
+    setSuppressOnboardingEntry(false);
     if (!saved) setNameModalOpen(true);
     try {
       if (user?.email) localStorage.setItem('jaspen_last_email', user.email);
@@ -1221,8 +1223,12 @@ useEffect(() => {
       setOnboardingOpen(false);
       return;
     }
+    if (suppressOnboardingEntry) {
+      setOnboardingOpen(false);
+      return;
+    }
     setOnboardingOpen(!readOnboardingCompletion(user));
-  }, [user, sessionsLoading, sessionId, currentSessionId, messages]);
+  }, [user, sessionsLoading, sessionId, currentSessionId, messages, suppressOnboardingEntry]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setWelcomeNow(new Date()), 60000);
@@ -1543,6 +1549,8 @@ useEffect(() => {
               className="jas-name-cancel"
               onClick={() => {
                 setNameError('');
+                setSuppressOnboardingEntry(true);
+                setOnboardingOpen(false);
                 setNameModalOpen(false);
               }}
             >
@@ -1555,7 +1563,10 @@ useEffect(() => {
                 const trimmed = nameInput.trim();
                 if (!trimmed) return;
                 const ok = await persistDisplayName(trimmed);
-                if (ok) setNameModalOpen(false);
+                if (ok) {
+                  setSuppressOnboardingEntry(false);
+                  setNameModalOpen(false);
+                }
               }}
               disabled={!nameInput.trim() || nameSaving}
             >
@@ -4908,6 +4919,7 @@ const handleExportWbsCsv = useCallback(async ({ threadBundleId, projectName } = 
       start_preference_label: ONBOARDING_START_LABELS[startMode] || ONBOARDING_START_LABELS.conversation,
       onboarding_complete: true,
     });
+    setSuppressOnboardingEntry(false);
     writeOnboardingCompletion(user, true);
     const launchLabel = startMode === 'batch_ideas'
       ? 'Opening Batch Ideas…'
@@ -4948,6 +4960,7 @@ const handleExportWbsCsv = useCallback(async ({ threadBundleId, projectName } = 
     setCollectedData({});
     setStrategyObjective('balanced');
     setObjectiveExplicitlySet(false);
+    setSuppressOnboardingEntry(false);
     setPendingOnboardingContext(null);
     setOnboardingLaunchLabel('');
     dispatchSidebar({ type: 'CLOSE_READINESS' });
@@ -6493,6 +6506,12 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
       {renderBillingModal()}
       <Onboarding
         open={showOnboarding}
+        canGoBack={!displayName}
+        onBack={() => {
+          setOnboardingOpen(false);
+          setSuppressOnboardingEntry(false);
+          setNameModalOpen(true);
+        }}
         onComplete={handleOnboardingComplete}
         busy={Boolean(onboardingLaunchLabel)}
         busyLabel={onboardingLaunchLabel}

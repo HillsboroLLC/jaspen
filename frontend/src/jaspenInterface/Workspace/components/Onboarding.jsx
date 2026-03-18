@@ -22,7 +22,7 @@ const START_OPTIONS = [
   { key: 'data_upload', label: 'Upload data for analysis', description: 'Attach files first and let Jaspen pull insights from them.' },
 ];
 
-export default function Onboarding({ open, onComplete, busy = false, busyLabel = '' }) {
+export default function Onboarding({ open, onComplete, onBack, canGoBack = false, busy = false, busyLabel = '' }) {
   const [stepIndex, setStepIndex] = useState(0);
   const [role, setRole] = useState('');
   const [evaluation, setEvaluation] = useState('');
@@ -103,8 +103,14 @@ export default function Onboarding({ open, onComplete, busy = false, busyLabel =
           <button
             type="button"
             className="jas-onboarding-secondary"
-            onClick={() => setStepIndex((prev) => Math.max(0, prev - 1))}
-            disabled={stepIndex === 0 || busy}
+            onClick={() => {
+              if (stepIndex === 0) {
+                onBack?.();
+                return;
+              }
+              setStepIndex((prev) => Math.max(0, prev - 1));
+            }}
+            disabled={(stepIndex === 0 && !canGoBack) || busy}
           >
             Back
           </button>
