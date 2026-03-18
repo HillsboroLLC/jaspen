@@ -21,7 +21,7 @@ import {
   faPaperPlane, faSpinner, faTimes, faBars, faCheck, faExclamationTriangle,
   faChartLine, faTrash, faPlus, faMinus, faMicrophone,
   faBolt, faLayerGroup, faPlay, faListCheck, faArrowUpRightFromSquare, faGaugeHigh, faClockRotateLeft, faPaperclip, faArrowUp,
-  faDownload, faChevronDown, faUser, faBell, faLock
+  faDownload, faChevronDown, faUser, faBell, faLock, faSliders
 } from '@fortawesome/free-solid-svg-icons';
 import {
   MonitorCheck, MessageCircleQuestion,
@@ -191,29 +191,40 @@ function getOnboardingOwnerKey(user) {
   return '';
 }
 
-function readOnboardingCompletion(user) {
+function readOnboardingState(user) {
   const ownerKey = getOnboardingOwnerKey(user);
-  if (!ownerKey) return false;
+  if (!ownerKey) return null;
   try {
     const raw = localStorage.getItem(ONBOARDING_STORAGE_KEY);
-    if (!raw) return false;
-    if (raw === 'true') return true;
+    if (!raw) return null;
+    if (raw === 'true') return { completed: true };
     const parsed = JSON.parse(raw);
-    return Boolean(parsed?.[ownerKey]);
+    const entry = parsed?.[ownerKey];
+    if (typeof entry === 'boolean') return { completed: entry };
+    return entry && typeof entry === 'object' ? entry : null;
   } catch (error) {
     console.warn('[onboarding] Failed to read onboarding completion state', error);
-    return false;
+    return null;
   }
 }
 
-function writeOnboardingCompletion(user, value = true) {
+function readOnboardingCompletion(user) {
+  return Boolean(readOnboardingState(user)?.completed);
+}
+
+function writeOnboardingState(user, payload = {}) {
   const ownerKey = getOnboardingOwnerKey(user);
   if (!ownerKey) return;
   try {
     const raw = localStorage.getItem(ONBOARDING_STORAGE_KEY);
     const parsed = raw ? JSON.parse(raw) : {};
     const next = parsed && typeof parsed === 'object' ? { ...parsed } : {};
-    next[ownerKey] = Boolean(value);
+    next[ownerKey] = {
+      completed: Boolean(payload?.completed),
+      selection: payload?.selection && typeof payload.selection === 'object'
+        ? { ...payload.selection }
+        : null,
+    };
     localStorage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify(next));
   } catch (error) {
     console.warn('[onboarding] Failed to persist onboarding completion state', error);
@@ -852,6 +863,7 @@ useEffect(() => {
   const [displayName, setDisplayName] = useState('');
   const [nameInput, setNameInput] = useState('');
   const [nameModalOpen, setNameModalOpen] = useState(false);
+  const [nameModalMode, setNameModalMode] = useState('required');
   const [nameSaving, setNameSaving] = useState(false);
   const [nameError, setNameError] = useState('');
   const [billingStatus, setBillingStatus] = useState(null);
@@ -864,7 +876,8 @@ useEffect(() => {
   const [billingModalOpen, setBillingModalOpen] = useState(false);
   const [batchIdeasOpen, setBatchIdeasOpen] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
-  const [suppressOnboardingEntry, setSuppressOnboardingEntry] = useState(false);
+  const [onboardingMode, setOnboardingMode] = useState('entry');
+  const [onboardingInitialSelection, setOnboardingInitialSelection] = useState(null);
   const [pendingOnboardingContext, setPendingOnboardingContext] = useState(null);
   const [onboardingLaunchLabel, setOnboardingLaunchLabel] = useState('');
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -1208,8 +1221,12 @@ useEffect(() => {
     setDisplayName(saved || '');
     setNameInput(initial);
     setNameError('');
-    setSuppressOnboardingEntry(false);
-    if (!saved) setNameModalOpen(true);
+    setOnboardingMode('entry');
+    setOnboardingInitialSelection(readOnboardingState(user)?.selection || null);
+    if (!saved) {
+      setNameModalMode('required');
+      setNameModalOpen(true);
+    }
     try {
       if (user?.email) localStorage.setItem('jaspen_last_email', user.email);
     } catch {}
@@ -1223,12 +1240,8 @@ useEffect(() => {
       setOnboardingOpen(false);
       return;
     }
-    if (suppressOnboardingEntry) {
-      setOnboardingOpen(false);
-      return;
-    }
     setOnboardingOpen(!readOnboardingCompletion(user));
-  }, [user, sessionsLoading, sessionId, currentSessionId, messages, suppressOnboardingEntry]);
+  }, [user, sessionsLoading, sessionId, currentSessionId, messages]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setWelcomeNow(new Date()), 60000);
@@ -1544,18 +1557,21 @@ useEffect(() => {
           />
           {nameError && <p className="jas-name-error">{nameError}</p>}
           <div className="jas-name-actions">
-            <button
-              type="button"
-              className="jas-name-cancel"
-              onClick={() => {
-                setNameError('');
-                setSuppressOnboardingEntry(true);
-                setOnboardingOpen(false);
-                setNameModalOpen(false);
-              }}
-            >
-              Cancel
-            </button>
+          <button
+            type="button"
+            className="jas-name-cancel"
+            onClick={() => {
+              setNameError('');
+              setNameModalOpen(false);
+              if (nameModalMode === 'required' && !readOnboardingCompletion(user)) {
+                setOnboardingMode('entry');
+                setOnboardingInitialSelection(readOnboardingState(user)?.selection || null);
+                setOnboardingOpen(true);
+              }
+            }}
+          >
+            {nameModalMode === 'required' ? 'Set up later' : 'Cancel'}
+          </button>
             <button
               type="button"
               className="jas-name-save"
@@ -1564,7 +1580,6 @@ useEffect(() => {
                 if (!trimmed) return;
                 const ok = await persistDisplayName(trimmed);
                 if (ok) {
-                  setSuppressOnboardingEntry(false);
                   setNameModalOpen(false);
                 }
               }}
@@ -1737,7 +1752,16 @@ useEffect(() => {
   const openDisplayNameEditor = () => {
     setNameError('');
     setNameInput(displayName || user?.name || user?.email?.split?.('@')[0] || '');
+    setNameModalMode('edit');
     setNameModalOpen(true);
+  };
+
+  const openOnboardingEditor = () => {
+    setOnboardingMode('settings');
+    setOnboardingInitialSelection(readOnboardingState(user)?.selection || null);
+    setOnboardingLaunchLabel('');
+    setOnboardingOpen(true);
+    dispatchSidebar({ type: 'CLOSE_SETTINGS' });
   };
 
   const handleSupportRoleSwitch = (value) => {
@@ -1950,6 +1974,13 @@ useEffect(() => {
             <FontAwesomeIcon icon={faUser} />
             <span className="jas-ud-item-label">Edit display name</span>
             <span className="jas-ud-item-badge">{displayName || user?.name || 'Set name'}</span>
+          </button>
+          <button className="jas-ud-item" onClick={openOnboardingEditor}>
+            <FontAwesomeIcon icon={faSliders} />
+            <span className="jas-ud-item-label">Edit onboarding</span>
+            <span className="jas-ud-item-badge">
+              {(readOnboardingState(user)?.selection?.evaluation && ONBOARDING_EVALUATION_LABELS[readOnboardingState(user).selection.evaluation]) || 'Preferences'}
+            </span>
           </button>
           <button className="jas-ud-item" onClick={() => { setBillingModalOpen(true); }}>
             <FontAwesomeIcon icon={faBolt} />
@@ -4910,7 +4941,12 @@ const handleExportWbsCsv = useCallback(async ({ threadBundleId, projectName } = 
 
     setStrategyObjective(mappedObjective);
     setObjectiveExplicitlySet(nextExplicit);
-    setPendingOnboardingContext({
+    const nextSelection = {
+      role: roleKey || 'other',
+      evaluation: evaluationKey || 'new_initiative',
+      startMode: startMode || 'conversation',
+    };
+    const nextContext = {
       role: roleKey || 'other',
       role_label: ONBOARDING_ROLE_LABELS[roleKey] || ONBOARDING_ROLE_LABELS.other,
       evaluation_focus: evaluationKey || 'new_initiative',
@@ -4918,9 +4954,20 @@ const handleExportWbsCsv = useCallback(async ({ threadBundleId, projectName } = 
       start_preference: startMode || 'conversation',
       start_preference_label: ONBOARDING_START_LABELS[startMode] || ONBOARDING_START_LABELS.conversation,
       onboarding_complete: true,
-    });
-    setSuppressOnboardingEntry(false);
-    writeOnboardingCompletion(user, true);
+    };
+    setPendingOnboardingContext(nextContext);
+    setOnboardingInitialSelection(nextSelection);
+    writeOnboardingState(user, { completed: true, selection: nextSelection });
+    if (onboardingMode === 'settings') {
+      if (!sessionId && !currentSessionId && (!Array.isArray(messages) || messages.length === 0)) {
+        setStrategyObjective(mappedObjective);
+        setObjectiveExplicitlySet(nextExplicit);
+      }
+      setOnboardingOpen(false);
+      setOnboardingMode('entry');
+      showToast('Onboarding preferences updated', 'success');
+      return;
+    }
     const launchLabel = startMode === 'batch_ideas'
       ? 'Opening Batch Ideas…'
       : startMode === 'data_upload'
@@ -4943,7 +4990,7 @@ const handleExportWbsCsv = useCallback(async ({ threadBundleId, projectName } = 
       }
       setOnboardingLaunchLabel('');
     }, 260);
-  }, [user]);
+  }, [user, onboardingMode, sessionId, currentSessionId, messages, showToast]);
 
   const handleNewAnalysis = (forceNew = false) => {
     clearLastSessionId();
@@ -4960,7 +5007,8 @@ const handleExportWbsCsv = useCallback(async ({ threadBundleId, projectName } = 
     setCollectedData({});
     setStrategyObjective('balanced');
     setObjectiveExplicitlySet(false);
-    setSuppressOnboardingEntry(false);
+    setOnboardingMode('entry');
+    setOnboardingInitialSelection(readOnboardingState(user)?.selection || null);
     setPendingOnboardingContext(null);
     setOnboardingLaunchLabel('');
     dispatchSidebar({ type: 'CLOSE_READINESS' });
@@ -6509,10 +6557,12 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
         canGoBack={!displayName}
         onBack={() => {
           setOnboardingOpen(false);
-          setSuppressOnboardingEntry(false);
+          setNameModalMode('required');
           setNameModalOpen(true);
         }}
         onComplete={handleOnboardingComplete}
+        initialSelection={onboardingInitialSelection}
+        submitLabel={onboardingMode === 'settings' ? 'Save preferences' : 'Start'}
         busy={Boolean(onboardingLaunchLabel)}
         busyLabel={onboardingLaunchLabel}
       />

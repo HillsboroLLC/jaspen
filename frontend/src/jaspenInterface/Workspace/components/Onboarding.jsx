@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 
 import './Onboarding.css';
 
@@ -22,11 +22,28 @@ const START_OPTIONS = [
   { key: 'data_upload', label: 'Upload data for analysis', description: 'Attach files first and let Jaspen pull insights from them.' },
 ];
 
-export default function Onboarding({ open, onComplete, onBack, canGoBack = false, busy = false, busyLabel = '' }) {
+export default function Onboarding({
+  open,
+  onComplete,
+  onBack,
+  canGoBack = false,
+  busy = false,
+  busyLabel = '',
+  initialSelection = null,
+  submitLabel = 'Start',
+}) {
   const [stepIndex, setStepIndex] = useState(0);
   const [role, setRole] = useState('');
   const [evaluation, setEvaluation] = useState('');
   const [startMode, setStartMode] = useState('');
+
+  useEffect(() => {
+    if (!open) return;
+    setStepIndex(0);
+    setRole(String(initialSelection?.role || '').trim().toLowerCase());
+    setEvaluation(String(initialSelection?.evaluation || '').trim().toLowerCase());
+    setStartMode(String(initialSelection?.startMode || '').trim().toLowerCase());
+  }, [open, initialSelection]);
 
   const steps = useMemo(
     () => [
@@ -136,7 +153,7 @@ export default function Onboarding({ open, onComplete, onBack, canGoBack = false
               }
               disabled={!isStepComplete || busy}
             >
-              {busy ? (busyLabel || 'Starting…') : 'Start'}
+              {busy ? (busyLabel || 'Starting…') : submitLabel}
             </button>
           )}
         </div>
