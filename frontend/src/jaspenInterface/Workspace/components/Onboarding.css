@@ -1,4 +1,4 @@
-.jas-onboarding-backdrop {
+.jas-shell .jas-onboarding-backdrop {
   position: fixed;
   inset: 0;
   z-index: 1300;
@@ -9,7 +9,7 @@
   padding: 24px;
 }
 
-.jas-onboarding-card {
+.jas-shell .jas-onboarding-card {
   width: min(720px, 100%);
   background: var(--white);
   border-radius: 24px;
@@ -19,46 +19,48 @@
   overflow: hidden;
 }
 
-.jas-onboarding-progress {
+.jas-shell .jas-onboarding-progress {
   display: flex;
   gap: 10px;
   margin-bottom: 18px;
 }
 
-.jas-onboarding-progress-dot {
+.jas-shell .jas-onboarding-progress-dot {
   flex: 1;
   height: 6px;
   border-radius: 999px;
   background: var(--gray-300);
 }
 
-.jas-onboarding-progress-dot.active,
-.jas-onboarding-progress-dot.complete {
+.jas-shell .jas-onboarding-progress-dot.active,
+.jas-shell .jas-onboarding-progress-dot.complete {
   background: var(--magenta);
 }
 
-.jas-onboarding-header h3 {
+.jas-shell .jas-onboarding-header h3 {
   margin: 0;
   font-size: 1.7rem;
   color: var(--navy);
 }
 
-.jas-onboarding-header p {
+.jas-shell .jas-onboarding-header p {
   margin: 10px 0 0;
   color: var(--gray-700);
   font-size: 1rem;
   line-height: 1.55;
 }
 
-.jas-onboarding-options {
+.jas-shell .jas-onboarding-options {
   display: grid;
   gap: 12px;
   margin-top: 24px;
 }
 
-.jas-onboarding-option {
+.jas-shell .jas-onboarding-option {
   appearance: none;
   -webkit-appearance: none;
+  all: unset;
+  box-sizing: border-box;
   width: 100%;
   display: flex;
   flex-direction: column;
@@ -67,7 +69,8 @@
   border: 1px solid var(--gray-300);
   border-radius: 18px;
   background: var(--white);
-  padding: 16px 18px;
+  padding: 18px 20px;
+  min-height: 88px;
   text-align: left;
   cursor: pointer;
   font: inherit;
@@ -75,54 +78,76 @@
   transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
 
-.jas-onboarding-option:hover {
+.jas-shell .jas-onboarding-option:hover {
   border-color: var(--magenta);
   box-shadow: 0 12px 32px rgba(160, 3, 108, 0.08);
   transform: translateY(-1px);
 }
 
-.jas-onboarding-option.selected {
+.jas-shell .jas-onboarding-option.selected {
   border-color: var(--magenta);
   background: #fff8fd;
   box-shadow: 0 16px 34px rgba(160, 3, 108, 0.12);
 }
 
-.jas-onboarding-option:disabled {
+.jas-shell .jas-onboarding-option:disabled {
   cursor: default;
 }
 
-.jas-onboarding-option-title {
+.jas-shell .jas-onboarding-option-title-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.jas-shell .jas-onboarding-option-title {
   display: block;
-  font-size: 1rem;
+  font-size: 1.05rem;
   font-weight: 600;
   color: var(--navy);
 }
 
-.jas-onboarding-option-description {
+.jas-shell .jas-onboarding-option-badge {
+  flex-shrink: 0;
+  border-radius: 999px;
+  padding: 5px 10px;
+  background: rgba(160, 3, 108, 0.12);
+  color: var(--magenta);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.jas-shell .jas-onboarding-option-description {
   display: block;
-  margin-top: 6px;
+  margin-top: 2px;
   font-size: 0.92rem;
   line-height: 1.5;
   color: var(--gray-600);
 }
 
-.jas-onboarding-actions {
+.jas-shell .jas-onboarding-actions {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  margin-top: 24px;
+  margin-top: 28px;
 }
 
-.jas-onboarding-primary,
-.jas-onboarding-secondary {
+.jas-shell .jas-onboarding-primary,
+.jas-shell .jas-onboarding-secondary {
   appearance: none;
   -webkit-appearance: none;
+  all: unset;
+  box-sizing: border-box;
   min-width: 124px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  padding: 12px 18px;
+  padding: 14px 20px;
   font-size: 0.95rem;
   font-weight: 600;
   line-height: 1;
@@ -130,46 +155,46 @@
   cursor: pointer;
 }
 
-.jas-onboarding-primary {
+.jas-shell .jas-onboarding-primary {
   border: none;
   background: var(--navy);
   color: var(--white);
 }
 
-.jas-onboarding-primary:disabled,
-.jas-onboarding-secondary:disabled {
+.jas-shell .jas-onboarding-primary:disabled,
+.jas-shell .jas-onboarding-secondary:disabled {
   cursor: not-allowed;
   opacity: 0.45;
 }
 
-.jas-onboarding-secondary {
+.jas-shell .jas-onboarding-secondary {
   border: 1px solid var(--gray-300);
   background: var(--white);
   color: var(--navy);
 }
 
-.jas-onboarding-status {
+.jas-shell .jas-onboarding-status {
   margin-top: 12px;
   color: var(--gray-600);
   font-size: 0.92rem;
 }
 
 @media (max-width: 640px) {
-  .jas-onboarding-card {
+  .jas-shell .jas-onboarding-card {
     border-radius: 20px;
     padding: 22px 18px;
   }
 
-  .jas-onboarding-header h3 {
+  .jas-shell .jas-onboarding-header h3 {
     font-size: 1.35rem;
   }
 
-  .jas-onboarding-actions {
+  .jas-shell .jas-onboarding-actions {
     flex-direction: column;
   }
 
-  .jas-onboarding-primary,
-  .jas-onboarding-secondary {
+  .jas-shell .jas-onboarding-primary,
+  .jas-shell .jas-onboarding-secondary {
     width: 100%;
   }
 }

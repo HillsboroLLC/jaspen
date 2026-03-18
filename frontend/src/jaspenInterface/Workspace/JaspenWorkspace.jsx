@@ -37,7 +37,7 @@ import ScenarioModeler  from './ScenarioModeler';
 import ComparisonView   from './ComparisonView';
 import BatchIdeaManager from './components/BatchIdeaManager';
 import ExecutionPanel from './components/ExecutionPanel';
-import OnboardingWizard from './components/OnboardingWizard';
+import Onboarding from './components/Onboarding';
 import SidebarIdentityFooter from './components/SidebarIdentityFooter';
 import ThreadEditModal from '../components/ThreadEditModal';
 
@@ -6253,7 +6253,7 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
   const intakeHasReadinessTab = sessionId && messages.length > 0 && !sidebarState.readiness;
   const showIntakeTopbarUtilities = !sessionId && messages.length === 0;
   const showSharedProjectsLanding = !sessionId && messages.length === 0 && planCategory !== 'individual' && (effectiveIsCollaborator || effectiveIsViewer);
-  const showOnboardingWizard = onboardingOpen && !nameModalOpen && !showSharedProjectsLanding;
+  const showOnboarding = onboardingOpen && !nameModalOpen && !showSharedProjectsLanding;
   const intakeTabs = [];
   if (!sidebarState.settings) intakeTabs.push('settings');
   if (hasHistory && !sidebarState.history) intakeTabs.push('history');
@@ -6491,8 +6491,8 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
       {renderNotificationsModal()}
       {renderNameModal()}
       {renderBillingModal()}
-      <OnboardingWizard
-        open={showOnboardingWizard}
+      <Onboarding
+        open={showOnboarding}
         onComplete={handleOnboardingComplete}
         busy={Boolean(onboardingLaunchLabel)}
         busyLabel={onboardingLaunchLabel}

@@ -1,19 +1,19 @@
 import React, { useMemo, useState } from 'react';
 
-import './OnboardingWizard.css';
+import './Onboarding.css';
 
 const ROLE_OPTIONS = [
-  { key: 'executive', label: 'Executive' },
-  { key: 'pm', label: 'PM' },
-  { key: 'analyst', label: 'Analyst' },
-  { key: 'other', label: 'Other' },
+  { key: 'executive', label: 'Executive', description: 'I need quick tradeoff visibility, confidence, and decision-ready outputs.' },
+  { key: 'pm', label: 'PM', description: 'I need sequencing, dependencies, ownership, and delivery risk surfaced clearly.' },
+  { key: 'analyst', label: 'Analyst', description: 'I need structured evidence, assumptions, and a clean scoring rationale.' },
+  { key: 'other', label: 'Other', description: 'I want Jaspen to adapt as we learn more about how I work.' },
 ];
 
 const EVALUATION_OPTIONS = [
-  { key: 'new_initiative', label: 'New initiative' },
-  { key: 'cost_optimization', label: 'Cost optimization' },
-  { key: 'growth_strategy', label: 'Growth strategy' },
-  { key: 'operational_improvement', label: 'Operational improvement' },
+  { key: 'new_initiative', label: 'New initiative', description: 'Shape a fresh project or investment from first principles.' },
+  { key: 'cost_optimization', label: 'Cost optimization', description: 'Find waste, tighten spend, and protect margin.' },
+  { key: 'growth_strategy', label: 'Growth strategy', description: 'Prioritize expansion bets, upside, and leverage points.' },
+  { key: 'operational_improvement', label: 'Operational improvement', description: 'Improve throughput, execution quality, and handoffs.' },
 ];
 
 const START_OPTIONS = [
@@ -22,7 +22,7 @@ const START_OPTIONS = [
   { key: 'data_upload', label: 'Upload data for analysis', description: 'Attach files first and let Jaspen pull insights from them.' },
 ];
 
-export default function OnboardingWizard({ open, onComplete, busy = false, busyLabel = '' }) {
+export default function Onboarding({ open, onComplete, busy = false, busyLabel = '' }) {
   const [stepIndex, setStepIndex] = useState(0);
   const [role, setRole] = useState('');
   const [evaluation, setEvaluation] = useState('');
@@ -60,10 +60,11 @@ export default function OnboardingWizard({ open, onComplete, busy = false, busyL
   const step = steps[stepIndex];
   const isLastStep = stepIndex === steps.length - 1;
   const isStepComplete = Boolean(step.value);
+  const cardClassName = `jas-onboarding-card jas-onboarding-card-step-${stepIndex + 1}`;
 
   return (
     <div className="jas-onboarding-backdrop" role="presentation">
-      <div className="jas-onboarding-card" role="dialog" aria-modal="true" aria-label="Jaspen onboarding">
+      <div className={cardClassName} role="dialog" aria-modal="true" aria-label="Jaspen onboarding">
         <div className="jas-onboarding-progress" aria-hidden="true">
           {steps.map((item, idx) => (
             <span
@@ -87,7 +88,10 @@ export default function OnboardingWizard({ open, onComplete, busy = false, busyL
               onClick={() => step.onSelect(option.key)}
               disabled={busy}
             >
-              <span className="jas-onboarding-option-title">{option.label}</span>
+              <span className="jas-onboarding-option-title-row">
+                <span className="jas-onboarding-option-title">{option.label}</span>
+                {step.value === option.key ? <span className="jas-onboarding-option-badge">Selected</span> : null}
+              </span>
               {option.description ? (
                 <span className="jas-onboarding-option-description">{option.description}</span>
               ) : null}
