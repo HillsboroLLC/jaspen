@@ -26,7 +26,9 @@ export default function Onboarding({
   open,
   onComplete,
   onBack,
+  onSkip,
   canGoBack = false,
+  canSkip = false,
   busy = false,
   busyLabel = '',
   initialSelection = null,
@@ -78,6 +80,9 @@ export default function Onboarding({
   const isLastStep = stepIndex === steps.length - 1;
   const isStepComplete = Boolean(step.value);
   const cardClassName = `jas-onboarding-card jas-onboarding-card-step-${stepIndex + 1}`;
+  const secondaryLabel = stepIndex === 0
+    ? (canGoBack ? 'Back' : canSkip ? 'Set up later' : 'Back')
+    : 'Back';
 
   return (
     <div className="jas-onboarding-backdrop" role="presentation">
@@ -122,14 +127,22 @@ export default function Onboarding({
             className="jas-onboarding-secondary"
             onClick={() => {
               if (stepIndex === 0) {
+                if (canGoBack) {
+                  onBack?.();
+                  return;
+                }
+                if (canSkip) {
+                  onSkip?.();
+                  return;
+                }
                 onBack?.();
                 return;
               }
               setStepIndex((prev) => Math.max(0, prev - 1));
             }}
-            disabled={(stepIndex === 0 && !canGoBack) || busy}
+            disabled={(stepIndex === 0 && !canGoBack && !canSkip) || busy}
           >
-            Back
+            {secondaryLabel}
           </button>
           {!isLastStep ? (
             <button

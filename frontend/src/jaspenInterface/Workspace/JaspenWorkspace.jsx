@@ -197,10 +197,10 @@ function readOnboardingState(user) {
   try {
     const raw = localStorage.getItem(ONBOARDING_STORAGE_KEY);
     if (!raw) return null;
-    if (raw === 'true') return { completed: true };
+    if (raw === 'true') return { completed: true, deferred: false, selection: null };
     const parsed = JSON.parse(raw);
     const entry = parsed?.[ownerKey];
-    if (typeof entry === 'boolean') return { completed: entry };
+    if (typeof entry === 'boolean') return { completed: entry, deferred: false, selection: null };
     return entry && typeof entry === 'object' ? entry : null;
   } catch (error) {
     console.warn('[onboarding] Failed to read onboarding completion state', error);
@@ -221,6 +221,7 @@ function writeOnboardingState(user, payload = {}) {
     const next = parsed && typeof parsed === 'object' ? { ...parsed } : {};
     next[ownerKey] = {
       completed: Boolean(payload?.completed),
+      deferred: Boolean(payload?.deferred),
       selection: payload?.selection && typeof payload.selection === 'object'
         ? { ...payload.selection }
         : null,
@@ -1240,7 +1241,8 @@ useEffect(() => {
       setOnboardingOpen(false);
       return;
     }
-    setOnboardingOpen(!readOnboardingCompletion(user));
+    const onboardingState = readOnboardingState(user);
+    setOnboardingOpen(!onboardingState?.completed && !onboardingState?.deferred);
   }, [user, sessionsLoading, sessionId, currentSessionId, messages]);
 
   useEffect(() => {
@@ -1560,14 +1562,14 @@ useEffect(() => {
           <button
             type="button"
             className="jas-name-cancel"
-            onClick={() => {
-              setNameError('');
-              setNameModalOpen(false);
-              if (nameModalMode === 'required' && !readOnboardingCompletion(user)) {
-                setOnboardingMode('entry');
-                setOnboardingInitialSelection(readOnboardingState(user)?.selection || null);
-                setOnboardingOpen(true);
-              }
+              onClick={() => {
+                setNameError('');
+                setNameModalOpen(false);
+                if (nameModalMode === 'required' && !readOnboardingCompletion(user)) {
+                  setOnboardingMode('entry');
+                  setOnboardingInitialSelection(readOnboardingState(user)?.selection || null);
+                  setOnboardingOpen(true);
+                }
             }}
           >
             {nameModalMode === 'required' ? 'Set up later' : 'Cancel'}
@@ -4957,7 +4959,7 @@ const handleExportWbsCsv = useCallback(async ({ threadBundleId, projectName } = 
     };
     setPendingOnboardingContext(nextContext);
     setOnboardingInitialSelection(nextSelection);
-    writeOnboardingState(user, { completed: true, selection: nextSelection });
+    writeOnboardingState(user, { completed: true, deferred: false, selection: nextSelection });
     if (onboardingMode === 'settings') {
       if (!sessionId && !currentSessionId && (!Array.isArray(messages) || messages.length === 0)) {
         setStrategyObjective(mappedObjective);
@@ -6555,10 +6557,19 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
       <Onboarding
         open={showOnboarding}
         canGoBack={!displayName}
+        canSkip={onboardingMode === 'entry'}
         onBack={() => {
           setOnboardingOpen(false);
           setNameModalMode('required');
           setNameModalOpen(true);
+        }}
+        onSkip={() => {
+          writeOnboardingState(user, {
+            completed: false,
+            deferred: true,
+            selection: readOnboardingState(user)?.selection || onboardingInitialSelection || null,
+          });
+          setOnboardingOpen(false);
         }}
         onComplete={handleOnboardingComplete}
         initialSelection={onboardingInitialSelection}
