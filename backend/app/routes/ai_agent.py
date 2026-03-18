@@ -28,6 +28,7 @@ from app.tool_registry import (
     is_tool_allowed,
 )
 from app.orgs import normalize_org_role, resolve_active_org_for_user
+from app.scenarios_store import save_scenarios_data
 
 from .sessions import load_user_sessions, save_user_sessions
 
@@ -2920,7 +2921,7 @@ def _persist_thread_insight(user_id, thread_id, filename, insight_payload, summa
 
 @ai_agent_bp.route("/conversation/start", methods=["POST"])
 @jwt_required()
-@limiter.limit("20 per minute")
+@limiter.limit("10 per minute")
 def conversation_start():
     data = request.get_json() or {}
     user_id = get_jwt_identity()
@@ -3551,14 +3552,7 @@ def reset_threads():
     save_user_sessions(user_id, {})
 
     # Reset per-user scenario storage used by ScenarioModeler.
-    scenarios_path = os.path.join("scenarios_data", f"user_{user_id}_scenarios.json")
-    scenarios_cleared = False
-    try:
-        if os.path.exists(scenarios_path):
-            os.remove(scenarios_path)
-            scenarios_cleared = True
-    except Exception:
-        scenarios_cleared = False
+    scenarios_cleared = save_scenarios_data(user_id, {})
 
     return jsonify({
         "success": True,
@@ -3931,7 +3925,7 @@ def get_batch_ideas(batch_id):
 
 @ai_agent_bp.route("/batch-ideas/<batch_id>/rank", methods=["POST"])
 @jwt_required()
-@limiter.limit("15 per hour")
+@limiter.limit("3 per minute")
 def rank_batch_ideas(batch_id):
     user = User.query.get(get_jwt_identity())
     if not user:

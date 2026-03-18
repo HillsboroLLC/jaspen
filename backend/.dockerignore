@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+tests/
+instance/
+sessions_data/
+scenarios_data/
+build/
+dist/
+venv/
+.venv/

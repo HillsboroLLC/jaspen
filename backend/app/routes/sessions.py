@@ -2,8 +2,6 @@
 
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
-import json
-import os
 from datetime import datetime
 import logging
 
@@ -16,8 +14,6 @@ logger = logging.getLogger(__name__)
 
 sessions_bp = Blueprint('sessions', __name__)
 
-# Legacy file storage path used before DB persistence.
-SESSIONS_DIR = 'sessions_data'
 SESSION_VISIBILITY_PRIVATE = 'private'
 SESSION_VISIBILITY_TEAM = 'team'
 SESSION_VISIBILITY_SPECIFIC = 'specific'
@@ -30,16 +26,6 @@ SESSION_VISIBILITY_OPTIONS = {
 
 def _iso_now():
     return datetime.utcnow().isoformat()
-
-
-def _ensure_sessions_dir():
-    if not os.path.exists(SESSIONS_DIR):
-        os.makedirs(SESSIONS_DIR)
-
-
-def _legacy_sessions_file(user_id):
-    _ensure_sessions_dir()
-    return os.path.join(SESSIONS_DIR, f'user_{user_id}_sessions.json')
 
 
 def _parse_dt(value):
@@ -162,35 +148,8 @@ def _upsert_session_row(user_id, session_id, payload, existing=None):
     return row
 
 
-def _migrate_legacy_file_to_db(user_id):
-    sessions_file = _legacy_sessions_file(user_id)
-    if not os.path.exists(sessions_file):
-        return False
-
-    try:
-        with open(sessions_file, 'r') as f:
-            legacy = json.load(f) or {}
-    except Exception as e:
-        logger.error(f"Failed reading legacy session file for user {user_id}: {e}")
-        return False
-
-    if not isinstance(legacy, dict) or not legacy:
-        return False
-
-    if not save_user_sessions(user_id, legacy):
-        return False
-
-    try:
-        os.rename(sessions_file, f"{sessions_file}.migrated")
-    except Exception:
-        # Keep original file if rename fails; DB has source of truth now.
-        pass
-    logger.info(f"Migrated {len(legacy)} legacy sessions for user {user_id} to database")
-    return True
-
-
 def load_user_sessions(user_id):
-    """Load sessions for a user from DB, with one-time migration from legacy files."""
+    """Load sessions for a user from the database."""
     user_id = str(user_id)
 
     rows = (
@@ -199,14 +158,6 @@ def load_user_sessions(user_id):
         .order_by(UserSession.updated_at.desc(), UserSession.id.desc())
         .all()
     )
-
-    if not rows and _migrate_legacy_file_to_db(user_id):
-        rows = (
-            UserSession.query
-            .filter_by(user_id=user_id)
-            .order_by(UserSession.updated_at.desc(), UserSession.id.desc())
-            .all()
-        )
 
     sessions = {}
     for row in rows:
@@ -222,12 +173,6 @@ def _session_query_for_user(user_id):
         .filter_by(user_id=user_id)
         .order_by(UserSession.updated_at.desc(), UserSession.id.desc())
     )
-    if query.first() is None and _migrate_legacy_file_to_db(user_id):
-        query = (
-            UserSession.query
-            .filter_by(user_id=user_id)
-            .order_by(UserSession.updated_at.desc(), UserSession.id.desc())
-        )
     return query
 
 

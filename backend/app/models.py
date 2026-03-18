@@ -389,6 +389,7 @@ class UserSession(db.Model):
     visibility = db.Column(db.String(32), nullable=False, default='private', index=True)
     shared_with_user_ids = db.Column(db.JSON, nullable=True, default=list)
     payload = db.Column(db.JSON, nullable=False, default=dict)
+    scenarios_json = db.Column(db.JSON, nullable=True, default=dict)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 

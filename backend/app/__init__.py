@@ -24,6 +24,16 @@ mail = Mail()
 limiter = None
 
 
+def rate_limit_key():
+    from flask_jwt_extended import get_jwt_identity
+
+    try:
+        user_id = get_jwt_identity()
+        return f"user:{user_id}" if user_id else get_remote_address()
+    except Exception:
+        return get_remote_address()
+
+
 def _as_bool(value, default=False):
     if value is None:
         return default
@@ -226,7 +236,7 @@ def create_app():
     jwt.init_app(app)
 
     limiter = Limiter(
-        key_func=get_remote_address,
+        key_func=rate_limit_key,
         default_limits=["200 per minute"],
         storage_uri=os.getenv("RATELIMIT_STORAGE_URI", "memory://"),
     )

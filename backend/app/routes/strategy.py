@@ -10,6 +10,7 @@ import uuid
 from types import SimpleNamespace
 from app import db
 from app.models import User
+from app.scenarios_store import load_scenarios_data, save_scenarios_data
 from app.billing_config import (
     bootstrap_legacy_credits,
     consume_credits,
@@ -544,6 +545,7 @@ Provide specific, actionable insights with quantified financial impacts where po
 
 @strategy_bp.route('/analyze', methods=['POST'])
 @jwt_required()
+@limiter.limit("5 per minute")
 def analyze_project():
     try:
         data = request.get_json() or {}
@@ -1012,38 +1014,11 @@ def get_completed_scores():
         return jsonify({'error': 'Failed to load completed scores'}), 500
 
 
-# ============================================================
-# FILE-BASED SCENARIO STORAGE (mirrors sessions.py pattern)
-# ============================================================
-SCENARIOS_DIR = 'scenarios_data'
-
-def _ensure_scenarios_dir():
-    if not os.path.exists(SCENARIOS_DIR):
-        os.makedirs(SCENARIOS_DIR)
-
-def _scenarios_file(user_id):
-    _ensure_scenarios_dir()
-    return os.path.join(SCENARIOS_DIR, f'user_{user_id}_scenarios.json')
-
 def _load_scenarios(user_id):
-    path = _scenarios_file(user_id)
-    if os.path.exists(path):
-        try:
-            with open(path, 'r') as f:
-                return json.load(f)
-        except Exception as e:
-            current_app.logger.error("[scenarios] load error for %s: %s", user_id, e)
-    return {}
+    return load_scenarios_data(user_id) or {}
 
 def _save_scenarios(user_id, data):
-    path = _scenarios_file(user_id)
-    try:
-        with open(path, 'w') as f:
-            json.dump(data, f, indent=2)
-        return True
-    except Exception as e:
-        current_app.logger.error("[scenarios] save error for %s: %s", user_id, e)
-        return False
+    return save_scenarios_data(user_id, data)
 
 def _thread_entry():
     """Return a fresh empty thread data structure."""
