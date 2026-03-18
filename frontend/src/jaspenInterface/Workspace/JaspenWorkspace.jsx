@@ -37,6 +37,7 @@ import ScenarioModeler  from './ScenarioModeler';
 import ComparisonView   from './ComparisonView';
 import BatchIdeaManager from './components/BatchIdeaManager';
 import ExecutionPanel from './components/ExecutionPanel';
+import OnboardingWizard from './components/OnboardingWizard';
 import SidebarIdentityFooter from './components/SidebarIdentityFooter';
 import ThreadEditModal from '../components/ThreadEditModal';
 
@@ -76,6 +77,30 @@ const OBJECTIVE_ALIAS = {
   growth: 'growth',
   revenue: 'growth',
   expansion: 'growth',
+};
+const ONBOARDING_STORAGE_KEY = 'jaspen_onboarded';
+const ONBOARDING_ROLE_LABELS = {
+  executive: 'Executive',
+  pm: 'PM',
+  analyst: 'Analyst',
+  other: 'Other',
+};
+const ONBOARDING_EVALUATION_LABELS = {
+  new_initiative: 'New initiative',
+  cost_optimization: 'Cost optimization',
+  growth_strategy: 'Growth strategy',
+  operational_improvement: 'Operational improvement',
+};
+const ONBOARDING_START_LABELS = {
+  conversation: 'Start a conversation',
+  batch_ideas: 'Upload a list of ideas',
+  data_upload: 'Upload data for analysis',
+};
+const ONBOARDING_OBJECTIVE_BY_EVALUATION = {
+  new_initiative: 'balanced',
+  cost_optimization: 'cost',
+  growth_strategy: 'growth',
+  operational_improvement: 'speed',
 };
 const INITIAL_NOTIFICATION_UPDATES = [
   {
@@ -158,6 +183,38 @@ function normalizeStrategyObjective(value, fallback = 'balanced') {
   if (OBJECTIVE_ALIAS[text]) return OBJECTIVE_ALIAS[text];
   const compact = text.replace(/[_-]+/g, ' ');
   return OBJECTIVE_ALIAS[compact] || fallback;
+}
+
+function getOnboardingOwnerKey(user) {
+  if (user?.id) return `id:${user.id}`;
+  if (user?.email) return `email:${String(user.email).toLowerCase()}`;
+  return '';
+}
+
+function readOnboardingCompletion(user) {
+  const ownerKey = getOnboardingOwnerKey(user);
+  if (!ownerKey) return false;
+  try {
+    const raw = localStorage.getItem(ONBOARDING_STORAGE_KEY);
+    if (!raw) return false;
+    if (raw === 'true') return true;
+    const parsed = JSON.parse(raw);
+    return Boolean(parsed?.[ownerKey]);
+  } catch {
+    return false;
+  }
+}
+
+function writeOnboardingCompletion(user, value = true) {
+  const ownerKey = getOnboardingOwnerKey(user);
+  if (!ownerKey) return;
+  try {
+    const raw = localStorage.getItem(ONBOARDING_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    const next = parsed && typeof parsed === 'object' ? { ...parsed } : {};
+    next[ownerKey] = Boolean(value);
+    localStorage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify(next));
+  } catch {}
 }
 
 function isContextSyncMessage(text) {
@@ -803,6 +860,8 @@ useEffect(() => {
   const [billingActionLoading, setBillingActionLoading] = useState('');
   const [billingModalOpen, setBillingModalOpen] = useState(false);
   const [batchIdeasOpen, setBatchIdeasOpen] = useState(false);
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [pendingOnboardingContext, setPendingOnboardingContext] = useState(null);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notificationsMode, setNotificationsMode] = useState('bell');
   const [notificationFeed, setNotificationFeed] = useState(() => buildDefaultNotifications());
@@ -1149,6 +1208,17 @@ useEffect(() => {
       if (user?.email) localStorage.setItem('jaspen_last_email', user.email);
     } catch {}
   }, [user]);
+
+  useEffect(() => {
+    if (!user || sessionsLoading) return;
+    const hasActiveThread = Boolean(sessionId || currentSessionId);
+    const hasMessages = Array.isArray(messages) && messages.length > 0;
+    if (hasActiveThread || hasMessages) {
+      setOnboardingOpen(false);
+      return;
+    }
+    setOnboardingOpen(!readOnboardingCompletion(user));
+  }, [user, sessionsLoading, sessionId, currentSessionId, messages]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setWelcomeNow(new Date()), 60000);
@@ -3167,6 +3237,7 @@ useEffect(() => {
       const selectedObjectiveLabel = OBJECTIVE_LABEL_BY_KEY[strategyObjective] || OBJECTIVE_LABEL_BY_KEY.balanced;
       const intakeContext = {
         ...starterIntakeContext,
+        ...(pendingOnboardingContext && typeof pendingOnboardingContext === 'object' ? pendingOnboardingContext : {}),
         ...(options.intake_context && typeof options.intake_context === 'object' ? options.intake_context : {}),
         objective: selectedObjectiveLabel,
       };
@@ -3215,6 +3286,7 @@ useEffect(() => {
       setObjectiveExplicitlySet(Boolean(data?.objective_explicitly_set) || objectiveExplicitlySet);
       await applyMutationRefreshes(data, sid);
       setSelectedStarterId('');
+      setPendingOnboardingContext(null);
 
 
       // REMOVED - AI Agent backend handles persistence automatically
@@ -4812,6 +4884,38 @@ const handleExportWbsCsv = useCallback(async ({ threadBundleId, projectName } = 
 }, [currentSessionId, sessionId, showToast, triggerDownload]);
 
   // === Helpers ===
+  const handleOnboardingComplete = useCallback((selection = {}) => {
+    const roleKey = String(selection?.role || '').trim().toLowerCase();
+    const evaluationKey = String(selection?.evaluation || '').trim().toLowerCase();
+    const startMode = String(selection?.startMode || 'conversation').trim().toLowerCase();
+    const mappedObjective = normalizeStrategyObjective(
+      ONBOARDING_OBJECTIVE_BY_EVALUATION[evaluationKey] || 'balanced'
+    );
+    const nextExplicit = mappedObjective !== 'balanced';
+
+    setStrategyObjective(mappedObjective);
+    setObjectiveExplicitlySet(nextExplicit);
+    setPendingOnboardingContext({
+      role: roleKey || 'other',
+      role_label: ONBOARDING_ROLE_LABELS[roleKey] || ONBOARDING_ROLE_LABELS.other,
+      evaluation_focus: evaluationKey || 'new_initiative',
+      evaluation_focus_label: ONBOARDING_EVALUATION_LABELS[evaluationKey] || ONBOARDING_EVALUATION_LABELS.new_initiative,
+      start_preference: startMode || 'conversation',
+      start_preference_label: ONBOARDING_START_LABELS[startMode] || ONBOARDING_START_LABELS.conversation,
+      onboarding_complete: true,
+    });
+    writeOnboardingCompletion(user, true);
+    setOnboardingOpen(false);
+    if (startMode === 'batch_ideas') {
+      setBatchIdeasOpen(true);
+      return;
+    }
+    window.setTimeout(() => intakeInputRef.current?.focus(), 0);
+    if (startMode === 'data_upload') {
+      fileInputRef.current?.click();
+    }
+  }, [user]);
+
   const handleNewAnalysis = (forceNew = false) => {
     clearLastSessionId();
     setView('intake');
@@ -4827,6 +4931,7 @@ const handleExportWbsCsv = useCallback(async ({ threadBundleId, projectName } = 
     setCollectedData({});
     setStrategyObjective('balanced');
     setObjectiveExplicitlySet(false);
+    setPendingOnboardingContext(null);
     dispatchSidebar({ type: 'CLOSE_READINESS' });
   };
 
@@ -6130,6 +6235,7 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
   const intakeHasReadinessTab = sessionId && messages.length > 0 && !sidebarState.readiness;
   const showIntakeTopbarUtilities = !sessionId && messages.length === 0;
   const showSharedProjectsLanding = !sessionId && messages.length === 0 && planCategory !== 'individual' && (effectiveIsCollaborator || effectiveIsViewer);
+  const showOnboardingWizard = onboardingOpen && !nameModalOpen && !showSharedProjectsLanding;
   const intakeTabs = [];
   if (!sidebarState.settings) intakeTabs.push('settings');
   if (hasHistory && !sidebarState.history) intakeTabs.push('history');
@@ -6367,6 +6473,10 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
       {renderNotificationsModal()}
       {renderNameModal()}
       {renderBillingModal()}
+      <OnboardingWizard
+        open={showOnboardingWizard}
+        onComplete={handleOnboardingComplete}
+      />
       <BatchIdeaManager
         open={batchIdeasOpen}
         onClose={() => setBatchIdeasOpen(false)}
