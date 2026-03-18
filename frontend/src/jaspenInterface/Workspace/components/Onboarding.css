@@ -132,8 +132,15 @@
 .jas-shell .jas-onboarding-actions {
   display: flex;
   justify-content: space-between;
+  align-items: center;
   gap: 12px;
   margin-top: 28px;
+}
+
+.jas-shell .jas-onboarding-actions-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .jas-shell .jas-onboarding-primary,
@@ -173,6 +180,20 @@
   color: var(--navy);
 }
 
+.jas-shell .jas-onboarding-skip {
+  all: unset;
+  box-sizing: border-box;
+  color: var(--gray-600);
+  font-size: 0.92rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.jas-shell .jas-onboarding-skip:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .jas-shell .jas-onboarding-status {
   margin-top: 12px;
   color: var(--gray-600);
@@ -191,10 +212,21 @@
 
   .jas-shell .jas-onboarding-actions {
     flex-direction: column;
+    align-items: stretch;
+  }
+
+  .jas-shell .jas-onboarding-actions-left {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .jas-shell .jas-onboarding-primary,
   .jas-shell .jas-onboarding-secondary {
     width: 100%;
+  }
+
+  .jas-shell .jas-onboarding-skip {
+    text-align: center;
   }
 }

@@ -80,9 +80,8 @@ export default function Onboarding({
   const isLastStep = stepIndex === steps.length - 1;
   const isStepComplete = Boolean(step.value);
   const cardClassName = `jas-onboarding-card jas-onboarding-card-step-${stepIndex + 1}`;
-  const secondaryLabel = stepIndex === 0
-    ? (canGoBack ? 'Back' : canSkip ? 'Set up later' : 'Back')
-    : 'Back';
+  const showSkipAction = stepIndex === 0 && canSkip;
+  const showBackAction = stepIndex > 0 || canGoBack;
 
   return (
     <div className="jas-onboarding-backdrop" role="presentation">
@@ -122,28 +121,34 @@ export default function Onboarding({
         </div>
 
         <div className="jas-onboarding-actions">
-          <button
-            type="button"
-            className="jas-onboarding-secondary"
-            onClick={() => {
-              if (stepIndex === 0) {
-                if (canGoBack) {
-                  onBack?.();
-                  return;
-                }
-                if (canSkip) {
-                  onSkip?.();
-                  return;
-                }
-                onBack?.();
-                return;
-              }
-              setStepIndex((prev) => Math.max(0, prev - 1));
-            }}
-            disabled={(stepIndex === 0 && !canGoBack && !canSkip) || busy}
-          >
-            {secondaryLabel}
-          </button>
+          <div className="jas-onboarding-actions-left">
+            {showBackAction ? (
+              <button
+                type="button"
+                className="jas-onboarding-secondary"
+                onClick={() => {
+                  if (stepIndex === 0) {
+                    onBack?.();
+                    return;
+                  }
+                  setStepIndex((prev) => Math.max(0, prev - 1));
+                }}
+                disabled={busy}
+              >
+                Back
+              </button>
+            ) : null}
+            {showSkipAction ? (
+              <button
+                type="button"
+                className="jas-onboarding-skip"
+                onClick={() => onSkip?.()}
+                disabled={busy}
+              >
+                Set up later
+              </button>
+            ) : null}
+          </div>
           {!isLastStep ? (
             <button
               type="button"
