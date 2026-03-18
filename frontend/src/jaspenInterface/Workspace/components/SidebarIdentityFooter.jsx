@@ -25,6 +25,7 @@ export default function SidebarIdentityFooter({
   displayName,
   planLabel,
   onOpenDisplayNameEditor,
+  onOpenOnboardingEditor,
   onOpenBilling,
   onLogout,
   onClose,
@@ -196,6 +197,15 @@ export default function SidebarIdentityFooter({
             }}
           >
             Edit display name
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              closeMenus();
+              onOpenOnboardingEditor?.();
+            }}
+          >
+            Edit onboarding
           </button>
           <button
             type="button"

@@ -21,7 +21,7 @@ import {
   faPaperPlane, faSpinner, faTimes, faBars, faCheck, faExclamationTriangle,
   faChartLine, faTrash, faPlus, faMinus, faMicrophone,
   faBolt, faLayerGroup, faPlay, faListCheck, faArrowUpRightFromSquare, faGaugeHigh, faClockRotateLeft, faPaperclip, faArrowUp,
-  faDownload, faChevronDown, faUser, faBell, faLock, faSliders
+  faDownload, faChevronDown, faUser, faBell, faLock
 } from '@fortawesome/free-solid-svg-icons';
 import {
   MonitorCheck, MessageCircleQuestion,
@@ -1972,18 +1972,6 @@ useEffect(() => {
             <span className="jas-ud-item-label">Notifications</span>
             <span className="jas-ud-item-badge">{unreadNotificationCount}</span>
           </button>
-          <button className="jas-ud-item" onClick={openDisplayNameEditor}>
-            <FontAwesomeIcon icon={faUser} />
-            <span className="jas-ud-item-label">Edit display name</span>
-            <span className="jas-ud-item-badge">{displayName || user?.name || 'Set name'}</span>
-          </button>
-          <button className="jas-ud-item" onClick={openOnboardingEditor}>
-            <FontAwesomeIcon icon={faSliders} />
-            <span className="jas-ud-item-label">Edit onboarding</span>
-            <span className="jas-ud-item-badge">
-              {(readOnboardingState(user)?.selection?.evaluation && ONBOARDING_EVALUATION_LABELS[readOnboardingState(user).selection.evaluation]) || 'Preferences'}
-            </span>
-          </button>
           <button className="jas-ud-item" onClick={() => { setBillingModalOpen(true); }}>
             <FontAwesomeIcon icon={faBolt} />
             <span className="jas-ud-item-label">Credits</span>
@@ -2089,6 +2077,7 @@ useEffect(() => {
         displayName={displayName}
         planLabel={footerPlanLabel}
         onOpenDisplayNameEditor={openDisplayNameEditor}
+        onOpenOnboardingEditor={openOnboardingEditor}
         onOpenBilling={() => setBillingModalOpen(true)}
         onLogout={handleLogout}
         onClose={onClose}
@@ -5535,6 +5524,7 @@ setView(id === 'chat' ? 'intake' : id);
         displayName={displayName}
         planLabel={footerPlanLabel}
         onOpenDisplayNameEditor={openDisplayNameEditor}
+        onOpenOnboardingEditor={openOnboardingEditor}
         onOpenBilling={() => setBillingModalOpen(true)}
         onLogout={handleLogout}
         onClose={() => dispatchSidebar({ type: 'CLOSE_READINESS' })}
@@ -5804,6 +5794,7 @@ setView(id === 'chat' ? 'intake' : id);
       displayName={displayName}
       planLabel={footerPlanLabel}
       onOpenDisplayNameEditor={openDisplayNameEditor}
+      onOpenOnboardingEditor={openOnboardingEditor}
       onOpenBilling={() => setBillingModalOpen(true)}
       onLogout={handleLogout}
       onClose={() => setAiDrawerOpen(false)}
@@ -6431,6 +6422,7 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
           displayName={displayName}
           planLabel={footerPlanLabel}
           onOpenDisplayNameEditor={openDisplayNameEditor}
+          onOpenOnboardingEditor={openOnboardingEditor}
           onOpenBilling={() => setBillingModalOpen(true)}
           onLogout={handleLogout}
           onClose={() => dispatchSidebar({ type: 'CLOSE_READINESS' })}
