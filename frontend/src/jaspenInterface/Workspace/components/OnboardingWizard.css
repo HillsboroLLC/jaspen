@@ -15,6 +15,8 @@
   border-radius: 24px;
   box-shadow: 0 28px 80px rgba(15, 23, 42, 0.22);
   padding: 28px;
+  position: relative;
+  overflow: hidden;
 }
 
 .jas-onboarding-progress {
@@ -55,13 +57,21 @@
 }
 
 .jas-onboarding-option {
+  appearance: none;
+  -webkit-appearance: none;
   width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
   border: 1px solid var(--gray-300);
   border-radius: 18px;
   background: var(--white);
   padding: 16px 18px;
   text-align: left;
   cursor: pointer;
+  font: inherit;
+  line-height: 1.3;
   transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
 
@@ -105,11 +115,18 @@
 
 .jas-onboarding-primary,
 .jas-onboarding-secondary {
+  appearance: none;
+  -webkit-appearance: none;
   min-width: 124px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 999px;
   padding: 12px 18px;
   font-size: 0.95rem;
   font-weight: 600;
+  line-height: 1;
+  font-family: inherit;
   cursor: pointer;
 }
 
