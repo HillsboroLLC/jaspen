@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timedelta
 import uuid
 from types import SimpleNamespace
-from app import db
+from app import db, limiter
 from app.models import User
 from app.scenarios_store import load_scenarios_data, save_scenarios_data
 from app.billing_config import (
