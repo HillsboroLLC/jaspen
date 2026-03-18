@@ -737,6 +737,7 @@ def _new_session(
         "objective_explicitly_set": bool(objective_explicit),
         "intake_context": _sanitize_intake_context(intake_context, fallback_objective=normalized_objective),
         "starter_lever_defaults": _sanitize_lever_defaults(starter_lever_defaults),
+        "context_summaries": [],
     }
 
 
@@ -982,6 +983,200 @@ def _anthropic_history_summary(chat_history, keep_last_turns=16):
         parts.append("Earlier assistant guidance: " + " | ".join(assistant_points[-2:]))
     summary = "Thread summary for continuity. " + " ".join(parts)
     return summary[:1200]
+
+
+def _normalize_context_summaries(session):
+    summaries = []
+    raw = session.get("context_summaries") if isinstance(session, dict) else None
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        covers = item.get("covers_turns")
+        if not isinstance(covers, (list, tuple)) or len(covers) != 2:
+            continue
+        try:
+            start = int(covers[0])
+            end = int(covers[1])
+        except Exception:
+            continue
+        if start < 0 or end < start:
+            continue
+        summary_text = str(item.get("summary") or "").strip()
+        if not summary_text:
+            continue
+        summaries.append({
+            "covers_turns": [start, end],
+            "summary": summary_text,
+            "created_at": item.get("created_at") or _iso_now(),
+            "model": item.get("model"),
+        })
+    summaries.sort(key=lambda entry: (entry["covers_turns"][0], entry["covers_turns"][1]))
+    if isinstance(session, dict):
+        session["context_summaries"] = summaries
+    return summaries
+
+
+def _heuristic_segment_summary(messages):
+    if not isinstance(messages, list) or not messages:
+        return ""
+    user_points = []
+    assistant_points = []
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        content = re.sub(r"\s+", " ", str(msg.get("content") or "").strip())
+        if not content:
+            continue
+        compact = content[:220]
+        if msg.get("role") == "assistant":
+            assistant_points.append(compact)
+        else:
+            user_points.append(compact)
+
+    parts = []
+    if user_points:
+        parts.append("User established: " + " | ".join(user_points[-5:]))
+    if assistant_points:
+        parts.append("Assistant already covered: " + " | ".join(assistant_points[-3:]))
+    if not parts:
+        return ""
+    return ("Conversation summary for continuity. " + " ".join(parts))[:1400]
+
+
+def _summarize_conversation_segment(messages, model_name):
+    if not isinstance(messages, list) or not messages:
+        return "", {
+            "provider": "heuristic",
+            "model": None,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+        }
+
+    transcript_lines = []
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        role = "Assistant" if msg.get("role") == "assistant" else "User"
+        content = re.sub(r"\s+", " ", str(msg.get("content") or "").strip())
+        if not content:
+            continue
+        transcript_lines.append(f"{role}: {content}")
+
+    if not transcript_lines:
+        return "", {
+            "provider": "heuristic",
+            "model": None,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+        }
+
+    system_prompt = (
+        "Summarize the key facts, decisions, commitments, constraints, metrics, and open questions from this "
+        "conversation segment. Preserve only durable context the assistant must remember later. Return valid JSON "
+        "with one field: summary."
+    )
+    user_prompt = (
+        "Conversation segment to summarize:\n"
+        f"{chr(10).join(transcript_lines)}\n\n"
+        "Write a concise continuity summary in 6-10 bullet-style sentences max."
+    )
+
+    try:
+        payload, usage = _anthropic_json_completion(
+            system_prompt,
+            user_prompt,
+            model_name=model_name,
+            max_tokens=700,
+            temperature=0.1,
+        )
+        summary_text = str(payload.get("summary") or payload.get("context_summary") or "").strip()
+        if summary_text:
+            return summary_text[:1600], usage
+    except Exception:
+        current_app.logger.exception("ai_agent context summarization failed")
+
+    return _heuristic_segment_summary(messages), {
+        "provider": "heuristic",
+        "model": model_name,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+    }
+
+
+def _context_summary_prompt_suffix(summary_text):
+    text = str(summary_text or "").strip()
+    if not text:
+        return ""
+    return f" Earlier conversation summary for continuity: {text}"
+
+
+def _prepare_context_window(session, chat_history, context_budget, model_selection):
+    max_turns = int((context_budget or {}).get("recent_turns") or 16)
+    max_turns = max(8, min(80, max_turns))
+    normalized = _anthropic_messages_from_history(chat_history, max_turns=0)
+    if not normalized:
+        return [], "", {
+            "provider": "heuristic",
+            "model": None,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+        }
+
+    boundary = max(0, len(normalized) - max_turns)
+    recent_messages = normalized[boundary:] if boundary > 0 else normalized
+    summaries = _normalize_context_summaries(session if isinstance(session, dict) else {})
+    relevant = []
+    covered_end = -1
+
+    for item in summaries:
+        start, end = item["covers_turns"]
+        if start > covered_end + 1:
+            break
+        if end < boundary:
+            relevant.append(item)
+            covered_end = max(covered_end, end)
+
+    summary_usage = {
+        "provider": "heuristic",
+        "model": None,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+    }
+
+    if boundary > 0 and covered_end < boundary - 1:
+        missing_start = covered_end + 1
+        missing_end = boundary - 1
+        segment = normalized[missing_start:boundary]
+        summary_text, usage = _summarize_conversation_segment(
+            segment,
+            _anthropic_model_for_selection(model_selection),
+        )
+        if summary_text:
+            new_summary = {
+                "covers_turns": [missing_start, missing_end],
+                "summary": summary_text,
+                "created_at": _iso_now(),
+                "model": usage.get("model"),
+            }
+            summaries.append(new_summary)
+            summaries.sort(key=lambda entry: (entry["covers_turns"][0], entry["covers_turns"][1]))
+            if isinstance(session, dict):
+                session["context_summaries"] = summaries
+            relevant.append(new_summary)
+        summary_usage = usage
+
+    summary_text = "\n".join(
+        f"- Turns {item['covers_turns'][0] + 1}-{item['covers_turns'][1] + 1}: {item['summary']}"
+        for item in relevant
+        if item["covers_turns"][1] < boundary
+    ).strip()
+
+    return recent_messages, summary_text, summary_usage
 
 
 def _anthropic_tool_definitions(enable_mutation_tools=False):
@@ -1372,6 +1567,7 @@ def _generate_assistant_reply(
     readiness,
     model_selection,
     context_budget=None,
+    session=None,
     user=None,
     user_id=None,
     thread_id=None,
@@ -1418,19 +1614,20 @@ def _generate_assistant_reply(
         "exploring what happens if you increase budget by 15%?' "
         "Use the create_scenario tool when the user agrees and always explain the rationale for lever adjustments."
     )
+    messages, context_summary_text, summary_usage = _prepare_context_window(
+        session,
+        chat_history,
+        context_budget,
+        model_selection,
+    )
     system_prompt = (
         f"{system_prompt}"
+        f"{_context_summary_prompt_suffix(context_summary_text)}"
         f"{_intake_context_prompt_suffix(intake_context)}"
         f"{_batch_promotion_prompt_suffix(user_id, thread_id)}"
         f"{_scenario_modeling_prompt_suffix(user_id, thread_id)}"
         f"{_monitoring_prompt_suffix(user_id)}"
     )
-    max_turns = int((context_budget or {}).get("recent_turns") or 16)
-    max_turns = max(8, min(80, max_turns))
-    messages = _anthropic_messages_from_history(chat_history, max_turns=max_turns)
-    summary = _anthropic_history_summary(chat_history, keep_last_turns=max_turns)
-    if summary:
-        messages = [{"role": "user", "content": summary}, *messages]
     if not messages:
         messages = [{"role": "user", "content": user_message}]
 
@@ -1448,6 +1645,8 @@ def _generate_assistant_reply(
     tool_confirmations = []
 
     try:
+        total_input_tokens += int(summary_usage.get("input_tokens", 0) or 0)
+        total_output_tokens += int(summary_usage.get("output_tokens", 0) or 0)
         response, resolved_model_name = _anthropic_message_create(
             client,
             model_name=model_name,
@@ -1549,6 +1748,7 @@ def _stream_assistant_reply_events(
     readiness,
     model_selection,
     *,
+    session=None,
     user=None,
     user_id=None,
     thread_id=None,
@@ -1606,19 +1806,20 @@ def _stream_assistant_reply_events(
         "exploring what happens if you increase budget by 15%?' "
         "Use the create_scenario tool when the user agrees and always explain the rationale for lever adjustments."
     )
+    messages, context_summary_text, summary_usage = _prepare_context_window(
+        session,
+        chat_history,
+        context_budget,
+        model_selection,
+    )
     system_prompt = (
         f"{system_prompt}"
+        f"{_context_summary_prompt_suffix(context_summary_text)}"
         f"{_intake_context_prompt_suffix(intake_context)}"
         f"{_batch_promotion_prompt_suffix(user_id, thread_id)}"
         f"{_scenario_modeling_prompt_suffix(user_id, thread_id)}"
         f"{_monitoring_prompt_suffix(user_id)}"
     )
-    max_turns = int((context_budget or {}).get("recent_turns") or 16)
-    max_turns = max(8, min(80, max_turns))
-    messages = _anthropic_messages_from_history(chat_history, max_turns=max_turns)
-    summary = _anthropic_history_summary(chat_history, keep_last_turns=max_turns)
-    if summary:
-        messages = [{"role": "user", "content": summary}, *messages]
     if not messages:
         messages = [{"role": "user", "content": user_message}]
 
@@ -1638,6 +1839,8 @@ def _stream_assistant_reply_events(
     resolved_model_name = model_name
 
     try:
+        total_input_tokens += int(summary_usage.get("input_tokens", 0) or 0)
+        total_output_tokens += int(summary_usage.get("output_tokens", 0) or 0)
         for _ in range(3):
             manager, resolved_model_name = _anthropic_message_create(
                 client,
@@ -2812,6 +3015,7 @@ def conversation_start():
                 readiness,
                 model_selection,
                 context_budget=context_budget,
+                session=session,
                 user=user,
                 user_id=user_id,
                 thread_id=thread_id,
@@ -2905,6 +3109,7 @@ def conversation_start():
         readiness,
         model_selection,
         context_budget=context_budget,
+        session=session,
         user=user,
         user_id=user_id,
         thread_id=thread_id,
@@ -3073,6 +3278,7 @@ def conversation_continue():
                 readiness,
                 model_selection,
                 context_budget=context_budget,
+                session=session,
                 user=user,
                 user_id=user_id,
                 thread_id=thread_id,
@@ -3165,6 +3371,7 @@ def conversation_continue():
         readiness,
         model_selection,
         context_budget=context_budget,
+        session=session,
         user=user,
         user_id=user_id,
         thread_id=thread_id,
