@@ -45,6 +45,11 @@ export const endpoints = {
   aiScenario:       (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/ai-scenario`,
   aiWbs:            (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/ai-wbs`,
   threadWbs:        (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/wbs`,
+  exportScorecardPdf: (threadId, scorecardId = '') =>
+    `${API_BASE}/api/v1/export/threads/${encodeURIComponent(threadId)}/scorecard/pdf${scorecardId ? `?scorecard_id=${encodeURIComponent(scorecardId)}` : ''}`,
+  exportScorecardPptx: (threadId, scorecardId = '') =>
+    `${API_BASE}/api/v1/export/threads/${encodeURIComponent(threadId)}/scorecard/pptx${scorecardId ? `?scorecard_id=${encodeURIComponent(scorecardId)}` : ''}`,
+  exportWbsCsv:      (threadId) => `${API_BASE}/api/v1/export/threads/${encodeURIComponent(threadId)}/wbs/csv`,
   batchIdeasUpload: `${API_BASE}/api/v1/ai-agent/batch-ideas/upload`,
   batchIdeasById:   (batchId) => `${API_BASE}/api/v1/ai-agent/batch-ideas/${encodeURIComponent(batchId)}`,
   batchIdeasRank:   (batchId) => `${API_BASE}/api/v1/ai-agent/batch-ideas/${encodeURIComponent(batchId)}/rank`,
@@ -146,6 +151,27 @@ async function parseErrorResponse(resp) {
     err.data = { raw: text };
     return Promise.reject(err);
   }
+}
+
+async function downloadBinary(url) {
+  const resp = await fetch(url, {
+    method: 'GET',
+    credentials: 'include',
+    cache: 'no-store',
+    headers: buildAuthHeaders({}, 'GET'),
+  });
+
+  if (!resp.ok) {
+    await parseErrorResponse(resp);
+  }
+
+  const blob = await resp.blob();
+  const disposition = resp.headers.get('content-disposition') || '';
+  const match =
+    disposition.match(/filename\*=UTF-8''([^;]+)/i) ||
+    disposition.match(/filename="?([^"]+)"?/i);
+  const filename = match?.[1] ? decodeURIComponent(match[1]) : null;
+  return { blob, filename, contentType: resp.headers.get('content-type') || '' };
 }
 
 function parseSseChunk(chunk) {
@@ -669,6 +695,21 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
 
   upsertThreadWbs: async (threadId, project_wbs) =>
     putJSON(endpoints.threadWbs(threadId), { project_wbs }, { withSid: true }),
+
+  downloadScorecardPdf: async (threadId, { scorecardId } = {}) => {
+    if (!threadId) throw new Error('threadId is required');
+    return downloadBinary(endpoints.exportScorecardPdf(threadId, scorecardId || ''));
+  },
+
+  downloadScorecardPptx: async (threadId, { scorecardId } = {}) => {
+    if (!threadId) throw new Error('threadId is required');
+    return downloadBinary(endpoints.exportScorecardPptx(threadId, scorecardId || ''));
+  },
+
+  downloadWbsCsv: async (threadId) => {
+    if (!threadId) throw new Error('threadId is required');
+    return downloadBinary(endpoints.exportWbsCsv(threadId));
+  },
 
   analyzeDataFile: async ({ file, thread_id, prompt } = {}) => {
     if (!file) throw new Error('file is required');

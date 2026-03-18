@@ -3,9 +3,9 @@
 // Purpose: Render dynamic scorecard with AI Agent Enterprise Design System
 // Colors: Navy (#161f3b), Magenta (#a0036c), Ice (#eff9fc)
 // ============================================================================
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faPlay, faSpinner } from '@fortawesome/free-solid-svg-icons';
+import { faChevronDown, faDownload, faPlay, faSpinner } from '@fortawesome/free-solid-svg-icons';
 import './ScoreDashboard.css';
 
 export default function ScoreDashboard({
@@ -22,7 +22,16 @@ export default function ScoreDashboard({
   onBeginProject = null,
   onGenerateAiWbs = null,
   generatingAiWbs = false,
+  canExportScorecardPdf = false,
+  canExportScorecardPptx = false,
+  canExportWbsCsv = false,
+  exportBusyType = null,
+  onExportScorecardPdf = null,
+  onExportScorecardPptx = null,
+  onExportWbsCsv = null,
 }) {
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const exportMenuRef = useRef(null);
   // If snapshots are provided, render the selected snapshot as the source of truth.
   const selectedSnapshot = useMemo(() => {
     if (!Array.isArray(scorecardSnapshots) || !selectedScorecardId) return null;
@@ -115,6 +124,64 @@ export default function ScoreDashboard({
   const scoreLabel = getScoreLabel(score);
   const scoreRatingClass = getScoreRatingClass(score);
   const smartExplanations = buildSmartExplanations();
+  const exportOptions = useMemo(() => {
+    const options = [];
+    if (canExportScorecardPdf && onExportScorecardPdf) {
+      options.push({
+        key: 'pdf',
+        label: 'Export PDF',
+        onClick: () => onExportScorecardPdf({
+          threadBundleId,
+          scorecardId: selectedScorecardId,
+          projectName: result.project_name || 'Untitled Idea',
+        }),
+      });
+    }
+    if (canExportScorecardPptx && onExportScorecardPptx) {
+      options.push({
+        key: 'pptx',
+        label: 'Export PowerPoint',
+        onClick: () => onExportScorecardPptx({
+          threadBundleId,
+          scorecardId: selectedScorecardId,
+          projectName: result.project_name || 'Untitled Idea',
+        }),
+      });
+    }
+    if (canExportWbsCsv && onExportWbsCsv) {
+      options.push({
+        key: 'csv',
+        label: 'Export WBS CSV',
+        onClick: () => onExportWbsCsv({
+          threadBundleId,
+          projectName: result.project_name || 'Untitled Idea',
+        }),
+      });
+    }
+    return options;
+  }, [
+    canExportScorecardPdf,
+    canExportScorecardPptx,
+    canExportWbsCsv,
+    onExportScorecardPdf,
+    onExportScorecardPptx,
+    onExportWbsCsv,
+    threadBundleId,
+    selectedScorecardId,
+    result.project_name,
+  ]);
+  const hasExportMenu = Boolean(threadBundleId && exportOptions.length);
+
+  useEffect(() => {
+    if (!exportMenuOpen) return undefined;
+    const handlePointerDown = (event) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(event.target)) {
+        setExportMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [exportMenuOpen]);
 
   // Financial impact rows for the grid
   const financialGridItems = useMemo(() => {
@@ -174,6 +241,44 @@ export default function ScoreDashboard({
 
   return (
     <div className="score-dashboard-container">
+        <div className="score-toolbar">
+          <div className="score-toolbar-copy">
+            <span className="score-toolbar-kicker">{selectedSnapshot ? 'Selected scorecard' : 'Current scorecard'}</span>
+            <span className="score-toolbar-title">{result.project_name || 'Strategic snapshot'}</span>
+          </div>
+          {hasExportMenu && (
+            <div className="sc-export-wrap" ref={exportMenuRef}>
+              <button
+                type="button"
+                className="sc-btn sc-btn-secondary sc-btn-sm"
+                onClick={() => setExportMenuOpen((open) => !open)}
+                disabled={Boolean(exportBusyType)}
+              >
+                <FontAwesomeIcon icon={Boolean(exportBusyType) ? faSpinner : faDownload} spin={Boolean(exportBusyType)} />
+                {Boolean(exportBusyType) ? 'Exporting…' : 'Export'}
+                {!exportBusyType && <FontAwesomeIcon icon={faChevronDown} />}
+              </button>
+              {exportMenuOpen && (
+                <div className="sc-export-menu">
+                  {exportOptions.map((option) => (
+                    <button
+                      key={option.key}
+                      type="button"
+                      className="sc-export-option"
+                      disabled={Boolean(exportBusyType)}
+                      onClick={() => {
+                        setExportMenuOpen(false);
+                        option.onClick();
+                      }}
+                    >
+                      {exportBusyType === option.key ? 'Exporting…' : option.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
         {/* Score + Financial Impact Row */}
         <div className="score-header-row">
           {/* Score Main Card */}

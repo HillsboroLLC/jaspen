@@ -416,10 +416,11 @@ const selectedVariant = useMemo(() => {
 
   const [analysisHistory, setAnalysisHistory] = useState([]);
   const [clearingHistory, setClearingHistory] = useState(false);
-  const [savedScenarios, setSavedScenarios] = useState([]);
+const [savedScenarios, setSavedScenarios] = useState([]);
   const [scenarioMutationVersion, setScenarioMutationVersion] = useState(0);
   const [wbsMutationVersion, setWbsMutationVersion] = useState(0);
   const [threadWbs, setThreadWbs] = useState(null);
+  const [exportBusyType, setExportBusyType] = useState(null);
   const [savedStarterConfigs, setSavedStarterConfigs] = useState([]);
   const [startersLoading, setStartersLoading] = useState(false);
   const [selectedStarterId, setSelectedStarterId] = useState('');
@@ -938,6 +939,9 @@ useEffect(() => {
   const showLockedActivity = !showRealActivity;
   const showRealConnectors = (isPlatformAdmin && !customerPreviewActive) || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.essential;
   const showLockedConnectors = !showRealConnectors;
+  const canExportScorecardPdf = (isPlatformAdmin && !customerPreviewActive) || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.essential;
+  const canExportScorecardPptx = (isPlatformAdmin && !customerPreviewActive) || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.team;
+  const canExportWbsCsv = (isPlatformAdmin && !customerPreviewActive) || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.team;
   const batchIdeasPlanUnlocked = (isPlatformAdmin && !customerPreviewActive) || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.team;
   const batchIdeasRoleUnlocked = previewPlanCategory !== 'individual' && (
     effectiveIsCreator || (isPlatformAdmin && !customerPreviewActive)
@@ -4735,6 +4739,78 @@ const handleGenerateAiWbsFromScorecard = useCallback(async ({ threadBundleId, sc
   }
 }, [aiWbsBusy, baselineScorecardId, currentSessionId, selectedModelType, sessionId, showToast]);
 
+const triggerDownload = useCallback((blob, filename) => {
+  if (!(blob instanceof Blob)) return;
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = objectUrl;
+  link.download = filename || 'jaspen-export';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
+}, []);
+
+const handleExportScorecardPdf = useCallback(async ({ threadBundleId, scorecardId, projectName } = {}) => {
+  const tid = threadBundleId || currentSessionId || sessionId;
+  if (!tid) {
+    showToast('No active thread to export.', 'error');
+    return;
+  }
+  setExportBusyType('pdf');
+  try {
+    const { blob, filename } = await Jaspen.downloadScorecardPdf(tid, { scorecardId });
+    triggerDownload(blob, filename || `${String(projectName || 'jaspen-scorecard').toLowerCase().replace(/[^a-z0-9._-]+/g, '-')}-scorecard.pdf`);
+    showToast('Exported scorecard PDF', 'success');
+  } catch (err) {
+    console.error('[handleExportScorecardPdf] failed', err);
+    if (err?.status === 403) setBillingModalOpen(true);
+    showToast(err?.message || 'Failed to export scorecard PDF', 'error');
+  } finally {
+    setExportBusyType(null);
+  }
+}, [currentSessionId, sessionId, showToast, triggerDownload]);
+
+const handleExportScorecardPptx = useCallback(async ({ threadBundleId, scorecardId, projectName } = {}) => {
+  const tid = threadBundleId || currentSessionId || sessionId;
+  if (!tid) {
+    showToast('No active thread to export.', 'error');
+    return;
+  }
+  setExportBusyType('pptx');
+  try {
+    const { blob, filename } = await Jaspen.downloadScorecardPptx(tid, { scorecardId });
+    triggerDownload(blob, filename || `${String(projectName || 'jaspen-scorecard').toLowerCase().replace(/[^a-z0-9._-]+/g, '-')}-scorecard.pptx`);
+    showToast('Exported scorecard PowerPoint', 'success');
+  } catch (err) {
+    console.error('[handleExportScorecardPptx] failed', err);
+    if (err?.status === 403) setBillingModalOpen(true);
+    showToast(err?.message || 'Failed to export scorecard PowerPoint', 'error');
+  } finally {
+    setExportBusyType(null);
+  }
+}, [currentSessionId, sessionId, showToast, triggerDownload]);
+
+const handleExportWbsCsv = useCallback(async ({ threadBundleId, projectName } = {}) => {
+  const tid = threadBundleId || currentSessionId || sessionId;
+  if (!tid) {
+    showToast('No active thread to export.', 'error');
+    return;
+  }
+  setExportBusyType('csv');
+  try {
+    const { blob, filename } = await Jaspen.downloadWbsCsv(tid);
+    triggerDownload(blob, filename || `${String(projectName || 'jaspen-execution').toLowerCase().replace(/[^a-z0-9._-]+/g, '-')}-wbs.csv`);
+    showToast('Exported execution plan CSV', 'success');
+  } catch (err) {
+    console.error('[handleExportWbsCsv] failed', err);
+    if (err?.status === 403) setBillingModalOpen(true);
+    showToast(err?.message || 'Failed to export execution plan CSV', 'error');
+  } finally {
+    setExportBusyType(null);
+  }
+}, [currentSessionId, sessionId, showToast, triggerDownload]);
+
   // === Helpers ===
   const handleNewAnalysis = (forceNew = false) => {
     clearLastSessionId();
@@ -5758,6 +5834,13 @@ setView(id === 'chat' ? 'intake' : id);
       onOpenThreadEdit={() => setThreadEditOpen(true)}
       onGenerateAiWbs={handleGenerateAiWbsFromScorecard}
       generatingAiWbs={aiWbsBusy}
+      canExportScorecardPdf={canExportScorecardPdf}
+      canExportScorecardPptx={canExportScorecardPptx}
+      canExportWbsCsv={canExportWbsCsv}
+      exportBusyType={exportBusyType}
+      onExportScorecardPdf={handleExportScorecardPdf}
+      onExportScorecardPptx={handleExportScorecardPptx}
+      onExportWbsCsv={handleExportWbsCsv}
 
       onBackToMain={handleNewAnalysis}
       onOpenChat={() => { setActiveTab('chat'); setView('intake'); }}

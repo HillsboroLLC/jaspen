@@ -270,6 +270,7 @@ def create_app():
     from .routes.ai_agent  import ai_agent_bp
     from .routes.insights import insights_bp
     from .routes.activity import activity_bp
+    from .routes.export import export_bp
     from .routes.reports import reports_bp
     from .routes.starters import starters_bp
     from .routes.team import team_bp
@@ -286,6 +287,7 @@ def create_app():
     app.register_blueprint(ai_agent_bp,  url_prefix='/api/v1/ai-agent')
     app.register_blueprint(insights_bp,  url_prefix='/api/v1/insights')
     app.register_blueprint(activity_bp,  url_prefix='/api/v1/activity')
+    app.register_blueprint(export_bp,    url_prefix='/api/v1/export')
     app.register_blueprint(reports_bp,   url_prefix='/api/v1/reports')
     app.register_blueprint(starters_bp,  url_prefix='/api/v1/starters')
     app.register_blueprint(team_bp, url_prefix='/api/v1/team')
