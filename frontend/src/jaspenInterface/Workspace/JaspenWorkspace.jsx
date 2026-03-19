@@ -192,6 +192,8 @@ function getOnboardingOwnerKey(user) {
   return '';
 }
 
+const NAME_PROMPT_STORAGE_KEY = 'jaspen_name_prompt_state_v1';
+
 function readOnboardingState(user) {
   const ownerKey = getOnboardingOwnerKey(user);
   if (!ownerKey) return null;
@@ -230,6 +232,34 @@ function writeOnboardingState(user, payload = {}) {
     localStorage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify(next));
   } catch (error) {
     console.warn('[onboarding] Failed to persist onboarding completion state', error);
+  }
+}
+
+function readNamePromptDeferred(user) {
+  const ownerKey = getOnboardingOwnerKey(user);
+  if (!ownerKey) return false;
+  try {
+    const raw = localStorage.getItem(NAME_PROMPT_STORAGE_KEY);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
+    return Boolean(parsed?.[ownerKey]?.deferred);
+  } catch (error) {
+    console.warn('[onboarding] Failed to read name prompt state', error);
+    return false;
+  }
+}
+
+function writeNamePromptDeferred(user, deferred) {
+  const ownerKey = getOnboardingOwnerKey(user);
+  if (!ownerKey) return;
+  try {
+    const raw = localStorage.getItem(NAME_PROMPT_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    const next = parsed && typeof parsed === 'object' ? { ...parsed } : {};
+    next[ownerKey] = { deferred: Boolean(deferred) };
+    localStorage.setItem(NAME_PROMPT_STORAGE_KEY, JSON.stringify(next));
+  } catch (error) {
+    console.warn('[onboarding] Failed to persist name prompt state', error);
   }
 }
 
@@ -1324,7 +1354,7 @@ useEffect(() => {
     setNameError('');
     setOnboardingMode('entry');
     setOnboardingInitialSelection(readOnboardingState(user)?.selection || null);
-    if (!saved) {
+    if (!saved && !readNamePromptDeferred(user)) {
       setNameModalMode('required');
       setNameModalOpen(true);
     }
@@ -1429,6 +1459,7 @@ useEffect(() => {
       const keys = getUserStorageKeys(user);
       keys.forEach((k) => localStorage.setItem(k, trimmed));
     } catch {}
+    writeNamePromptDeferred(user, false);
     setDisplayName(trimmed);
     setNameSaving(false);
     return true;
@@ -1649,7 +1680,7 @@ useEffect(() => {
       <div className="jas-name-modal-backdrop" role="presentation">
         <div className="jas-name-modal" role="dialog" aria-modal="true" aria-label="Choose your name">
           <h3>What should I call you?</h3>
-          <p>We can use this across Jaspen. You can change it anytime in Settings.</p>
+          <p>We&apos;ll use this across Jaspen. If you&apos;d rather do it later, you can update it anytime from Account settings.</p>
           <input
             className="jas-name-input"
             value={nameInput}
@@ -1665,10 +1696,15 @@ useEffect(() => {
               onClick={() => {
                 setNameError('');
                 setNameModalOpen(false);
-                if (nameModalMode === 'required' && !readOnboardingCompletion(user)) {
-                  setOnboardingMode('entry');
-                  setOnboardingInitialSelection(readOnboardingState(user)?.selection || null);
-                  setOnboardingOpen(true);
+                if (nameModalMode === 'required') {
+                  writeNamePromptDeferred(user, true);
+                  writeOnboardingState(user, {
+                    completed: false,
+                    deferred: true,
+                    selection: readOnboardingState(user)?.selection || onboardingInitialSelection || null,
+                  });
+                  setOnboardingOpen(false);
+                  showToast('You can finish setup anytime from Account settings.', 'info');
                 }
             }}
           >
@@ -6668,16 +6704,14 @@ setView(id === 'chat' ? 'intake' : id);
           setNameModalOpen(true);
         }}
         onSkip={() => {
-          if (onboardingMode === 'settings') {
-            setOnboardingOpen(false);
-            return;
-          }
+          const previousSelection = readOnboardingState(user)?.selection || onboardingInitialSelection || null;
           writeOnboardingState(user, {
             completed: false,
             deferred: true,
-            selection: readOnboardingState(user)?.selection || onboardingInitialSelection || null,
+            selection: previousSelection,
           });
           setOnboardingOpen(false);
+          showToast('You can tailor Jaspen anytime from Account settings.', 'info');
         }}
         onComplete={handleOnboardingComplete}
         initialSelection={onboardingInitialSelection}

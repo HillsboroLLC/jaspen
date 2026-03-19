@@ -52,6 +52,7 @@ export default function Onboarding({
       {
         title: "What's your role?",
         subtitle: 'This helps Jaspen shape the conversation for your point of view.',
+        helper: 'If you want to tailor this later instead, you can always update it from Account settings.',
         options: ROLE_OPTIONS,
         value: role,
         onSelect: setRole,
@@ -59,6 +60,7 @@ export default function Onboarding({
       {
         title: 'What are you evaluating?',
         subtitle: 'We will use this to bias the readiness buckets and first questions.',
+        helper: 'Not sure yet? You can skip for now and come back from Account settings later.',
         options: EVALUATION_OPTIONS,
         value: evaluation,
         onSelect: setEvaluation,
@@ -66,6 +68,7 @@ export default function Onboarding({
       {
         title: 'How would you like to start?',
         subtitle: 'Choose the entry point that matches how you want to work today.',
+        helper: 'You can keep exploring now and revisit these preferences anytime from Account settings.',
         options: START_OPTIONS,
         value: startMode,
         onSelect: setStartMode,
@@ -98,6 +101,7 @@ export default function Onboarding({
         <div className="jas-onboarding-header">
           <h3>{step.title}</h3>
           <p>{step.subtitle}</p>
+          {step.helper ? <p className="jas-onboarding-helper">{step.helper}</p> : null}
         </div>
 
         <div className="jas-onboarding-options">
