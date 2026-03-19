@@ -125,6 +125,36 @@ function shouldRetryRequest(method, opts = {}, error) {
   return true;
 }
 
+async function fetchWithRetry(url, fetchOptions, { method = 'GET', retryable = false } = {}) {
+  let lastError = null;
+  for (let attempt = 0; attempt <= RETRY_BACKOFF_MS.length; attempt += 1) {
+    try {
+      const resp = await fetch(url, fetchOptions);
+      if (!resp.ok) {
+        let parsedError = null;
+        try {
+          await parseErrorResponse(resp);
+        } catch (error) {
+          parsedError = error;
+        }
+        if (!shouldRetryRequest(method, { retryable }, parsedError) || attempt >= RETRY_BACKOFF_MS.length) {
+          throw parsedError;
+        }
+        lastError = parsedError;
+      } else {
+        return resp;
+      }
+    } catch (error) {
+      lastError = error;
+      if (!shouldRetryRequest(method, { retryable }, error) || attempt >= RETRY_BACKOFF_MS.length) {
+        throw error;
+      }
+    }
+    await sleep(RETRY_BACKOFF_MS[attempt]);
+  }
+  throw lastError || new Error('Request failed');
+}
+
 async function _fetch(url, opts = {}) {
   const method = String(opts.method || 'GET').toUpperCase();
   const headers = {
@@ -186,36 +216,51 @@ async function parseErrorResponse(resp) {
 }
 
 async function downloadBinary(url) {
-  let lastError = null;
-  for (let attempt = 0; attempt <= RETRY_BACKOFF_MS.length; attempt += 1) {
-    try {
-      const resp = await fetch(url, {
-        method: 'GET',
-        credentials: 'include',
-        cache: 'no-store',
-        headers: buildAuthHeaders({}, 'GET'),
-      });
+  const resp = await fetchWithRetry(url, {
+    method: 'GET',
+    credentials: 'include',
+    cache: 'no-store',
+    headers: buildAuthHeaders({}, 'GET'),
+  }, { method: 'GET' });
 
-      if (!resp.ok) {
-        await parseErrorResponse(resp);
-      }
+  const blob = await resp.blob();
+  const disposition = resp.headers.get('content-disposition') || '';
+  const match =
+    disposition.match(/filename\*=UTF-8''([^;]+)/i) ||
+    disposition.match(/filename="?([^"]+)"?/i);
+  const filename = match?.[1] ? decodeURIComponent(match[1]) : null;
+  return { blob, filename, contentType: resp.headers.get('content-type') || '' };
+}
 
-      const blob = await resp.blob();
-      const disposition = resp.headers.get('content-disposition') || '';
-      const match =
-        disposition.match(/filename\*=UTF-8''([^;]+)/i) ||
-        disposition.match(/filename="?([^"]+)"?/i);
-      const filename = match?.[1] ? decodeURIComponent(match[1]) : null;
-      return { blob, filename, contentType: resp.headers.get('content-type') || '' };
-    } catch (error) {
-      lastError = error;
-      if (!shouldRetryRequest('GET', {}, error) || attempt >= RETRY_BACKOFF_MS.length) {
-        throw error;
-      }
-      await sleep(RETRY_BACKOFF_MS[attempt]);
-    }
-  }
-  throw lastError || new Error('Download failed');
+async function postForm(url, form, { withSid = false, sidOverride, retryable = false } = {}) {
+  const headers = {
+    ...buildAuthHeaders({}, 'POST'),
+    ...(sidOverride ? { 'X-Session-ID': sidOverride } : withSid ? { 'X-Session-ID': getSid() } : {}),
+  };
+  const resp = await fetchWithRetry(url, {
+    method: 'POST',
+    credentials: 'include',
+    cache: 'no-store',
+    headers,
+    body: form,
+  }, { method: 'POST', retryable });
+  return _json(resp);
+}
+
+async function openRetriedStream(url, { body, sid } = {}) {
+  return fetchWithRetry(url, {
+    method: 'POST',
+    credentials: 'include',
+    cache: 'no-store',
+    headers: {
+      ...buildAuthHeaders({
+        'Content-Type': 'application/json',
+        'Accept': 'text/event-stream',
+      }, 'POST'),
+      'X-Session-ID': sid || getSid(),
+    },
+    body,
+  }, { method: 'POST', retryable: true });
 }
 
 function parseSseChunk(chunk) {
@@ -425,17 +470,8 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
   }) {
     const url = `${endpoints.convoStart}?stream=true`;
     const pid = project_id || 'default-jas-project';
-    const resp = await fetch(url, {
-      method: 'POST',
-      credentials: 'include',
-      cache: 'no-store',
-      headers: {
-        ...buildAuthHeaders({
-          'Content-Type': 'application/json',
-          'Accept': 'text/event-stream',
-        }, 'POST'),
-        'X-Session-ID': getSid(),
-      },
+    const resp = await openRetriedStream(url, {
+      sid: getSid(),
       body: JSON.stringify({
         message: description,
         project_id: pid,
@@ -447,10 +483,6 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
         starter_id: starter_id || undefined,
       }),
     });
-
-    if (!resp.ok) {
-      await parseErrorResponse(resp);
-    }
 
     const reader = resp.body?.getReader();
     if (!reader) {
@@ -505,17 +537,8 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
     onDone,
   }) {
     const url = `${endpoints.convoNext}?stream=true`;
-    const resp = await fetch(url, {
-      method: 'POST',
-      credentials: 'include',
-      cache: 'no-store',
-      headers: {
-        ...buildAuthHeaders({
-          'Content-Type': 'application/json',
-          'Accept': 'text/event-stream',
-        }, 'POST'),
-        'X-Session-ID': getSid(),
-      },
+    const resp = await openRetriedStream(url, {
+      sid: getSid(),
       body: JSON.stringify({
         thread_id: session_id,
         message: user_message,
@@ -523,10 +546,6 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
         strategy_objective: strategy_objective || undefined,
       }),
     });
-
-    if (!resp.ok) {
-      await parseErrorResponse(resp);
-    }
 
     const reader = resp.body?.getReader();
     if (!reader) {
@@ -661,26 +680,14 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
    * Adopt a scenario scorecard as the current scorecard
    */
   async adoptScorecard(threadId, scorecardId) {
-    const apiBase = API_BASE;
-
-    const res = await fetch(
-      `${apiBase}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/adopt`,
+    return _fetch(
+      `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/adopt`,
       {
         method: 'POST',
-        credentials: 'include',
-        headers: {
-          ...buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
-        },
+        retryable: true,
         body: JSON.stringify({ analysis_id: scorecardId }),
       }
     );
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err?.error || `HTTP ${res.status}`);
-    }
-
-    return await res.json();
   },
 
   // Analyses / Scorecards
@@ -704,13 +711,22 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
     putJSON(endpoints.updateScenario(scenario_id, thread_id), { deltas, label }, { withSid: true }),
 
   applyScenario: async (scenario_id, thread_id) =>
-    postJSON(endpoints.applyScenario(scenario_id, thread_id), {}, { withSid: true }),
+    _fetch(endpoints.applyScenario(scenario_id, thread_id), {
+      method: 'POST',
+      body: JSON.stringify({}),
+      withSid: true,
+      retryable: true,
+    }),
 
   adoptScenario: async (scenario_id, thread_id) =>
-    postJSON(
+    _fetch(
       endpoints.adoptScenario(scenario_id, thread_id),
-      thread_id ? { thread_id } : {},
-      { withSid: true }
+      {
+        method: 'POST',
+        body: JSON.stringify(thread_id ? { thread_id } : {}),
+        withSid: true,
+        retryable: true,
+      }
     ),
 
   generateAiScenario: async (threadId, promptOrPayload = '') => {
@@ -761,48 +777,14 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
     form.append('file', file);
     if (thread_id) form.append('thread_id', thread_id);
     if (prompt) form.append('prompt', prompt);
-
-    const res = await fetch(endpoints.analyzeData, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        ...buildAuthHeaders({}, 'POST'),
-        'X-Session-ID': getSid(),
-      },
-      body: form,
-    });
-    const data = await _json(res);
-    if (!res.ok) {
-      const msg = data?.error || data?.detail || `HTTP ${res.status}`;
-      const err = new Error(msg);
-      err.status = res.status;
-      err.data = data;
-      throw err;
-    }
-    return data;
+    return postForm(endpoints.analyzeData, form, { withSid: true, retryable: true });
   },
 
   uploadBatchIdeas: async (file) => {
     if (!file) throw new Error('file is required');
     const form = new FormData();
     form.append('file', file);
-    const res = await fetch(endpoints.batchIdeasUpload, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        ...buildAuthHeaders({}, 'POST'),
-        'X-Session-ID': getSid(),
-      },
-      body: form,
-    });
-    const data = await _json(res);
-    if (!res.ok) {
-      const err = new Error(data?.error || data?.detail || `HTTP ${res.status}`);
-      err.status = res.status;
-      err.data = data;
-      throw err;
-    }
-    return data;
+    return postForm(endpoints.batchIdeasUpload, form, { withSid: true, retryable: true });
   },
 
   getBatchIdeas: async (batchId) =>
@@ -824,23 +806,7 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
     if (!file) throw new Error('file is required');
     const form = new FormData();
     form.append('file', file);
-    const res = await fetch(endpoints.insightsUpload, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        ...buildAuthHeaders({}, 'POST'),
-        'X-Session-ID': getSid(),
-      },
-      body: form,
-    });
-    const data = await _json(res);
-    if (!res.ok) {
-      const err = new Error(data?.error || data?.detail || `HTTP ${res.status}`);
-      err.status = res.status;
-      err.data = data;
-      throw err;
-    }
-    return data;
+    return postForm(endpoints.insightsUpload, form, { withSid: true, retryable: true });
   },
 
   listInsightsDatasets: async () =>
