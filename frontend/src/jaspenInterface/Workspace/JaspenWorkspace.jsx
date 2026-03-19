@@ -1696,13 +1696,14 @@ useEffect(() => {
                 setNameError('');
                 setNameModalOpen(false);
                 if (nameModalMode === 'required') {
+                  const onboardingState = readOnboardingState(user);
                   writeNamePromptDeferred(user, true);
-                  writeOnboardingState(user, {
-                    completed: false,
-                    deferred: true,
-                    selection: readOnboardingState(user)?.selection || onboardingInitialSelection || null,
-                  });
-                  setOnboardingOpen(false);
+                  if (!onboardingState?.completed && !onboardingState?.deferred) {
+                    setOnboardingMode('entry');
+                    setOnboardingInitialSelection(onboardingState?.selection || onboardingInitialSelection || null);
+                    setOnboardingOpen(true);
+                    return;
+                  }
                   showToast('You can finish setup anytime from Account settings.', 'info');
                 }
             }}
