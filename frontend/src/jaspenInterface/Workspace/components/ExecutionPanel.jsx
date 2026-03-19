@@ -13,6 +13,7 @@ import {
   faTrash,
 } from '@fortawesome/free-solid-svg-icons';
 import { Jaspen } from '../JaspenClient';
+import { ExecutionPanelSkeleton } from '../../../shared/components/SkeletonLoader';
 import './ExecutionPanel.css';
 
 const STATUS_ORDER = ['todo', 'in_progress', 'blocked', 'done'];
@@ -139,6 +140,7 @@ export default function ExecutionPanel({
   isLocked,
   onOpenChat,
   onOpenBilling,
+  loading = false,
 }) {
   const [view, setView] = useState('list');
   const [expandedPhases, setExpandedPhases] = useState({});
@@ -641,6 +643,10 @@ export default function ExecutionPanel({
         </div>
       </div>
     );
+  }
+
+  if (loading) {
+    return <ExecutionPanelSkeleton />;
   }
 
   if (!tasks.length) {

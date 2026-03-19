@@ -10,6 +10,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { API_BASE } from '../../config/apiBase';
 import { useChatCommands, parseUIActions, ChatActionTypes } from "../../shared/hooks/useChatCommands"
+import ErrorBoundary from '../../shared/components/ErrorBoundary';
 import { useToast, ToastContainer } from '../../shared/components/Toast';
 import { useAuth } from 'shared/auth/AuthContext';
 import { authFetch as cookieAuthFetch, buildAuthHeaders } from '../../shared/auth/http';
@@ -408,6 +409,7 @@ export default function JaspenWorkspace() {
     isOrgCollaborator,
     isOrgCreator,
   } = useAuth();
+  const { toasts, showToast, dismissToast } = useToast();
 
   // Imperative control for scenario modeling (used by interactive chat actions)
   const scenarioModelerRef = useRef(null);
@@ -492,6 +494,8 @@ const [savedScenarios, setSavedScenarios] = useState([]);
   const [scenarioMutationVersion, setScenarioMutationVersion] = useState(0);
   const [wbsMutationVersion, setWbsMutationVersion] = useState(0);
   const [threadWbs, setThreadWbs] = useState(null);
+  const [bundleLoading, setBundleLoading] = useState(false);
+  const [wbsLoading, setWbsLoading] = useState(false);
   const [exportBusyType, setExportBusyType] = useState(null);
   const [savedStarterConfigs, setSavedStarterConfigs] = useState([]);
   const [startersLoading, setStartersLoading] = useState(false);
@@ -595,6 +599,7 @@ const baselineRef = useRef(null);
   // Pull messages, latest analysis id, and saved scenarios from backend
 const refreshBundle = async (tid) => {
   if (!tid) return;
+  setBundleLoading(true);
   try {
     const bundle = await Jaspen.getThreadBundle(tid, { msg_limit: 50, scn_limit: 50 });
 
@@ -725,11 +730,15 @@ const refreshBundle = async (tid) => {
     }
   } catch (e) {
     console.debug('[refreshBundle] skipped', e);
+    showToast(e?.message || 'Unable to refresh thread bundle.', 'error');
+  } finally {
+    setBundleLoading(false);
   }
 };
 
 const refreshThreadWbs = useCallback(async (tid) => {
   if (!tid) return null;
+  setWbsLoading(true);
   try {
     const response = await Jaspen.getThreadWbs(tid);
     const nextWbs = (response?.project_wbs && typeof response.project_wbs === 'object')
@@ -739,9 +748,12 @@ const refreshThreadWbs = useCallback(async (tid) => {
     return nextWbs;
   } catch (e) {
     console.debug('[refreshThreadWbs] skipped', e);
+    showToast(e?.message || 'Unable to refresh execution plan.', 'error');
     return null;
+  } finally {
+    setWbsLoading(false);
   }
-}, []);
+}, [showToast]);
 
 const normalizeMutationResults = (payload) => {
   if (!payload || typeof payload !== 'object') return [];
@@ -2170,8 +2182,6 @@ const [aiDrawerOpen, setAiDrawerOpen] = useState(true);
 const [aiInput, setAiInput] = useState('');
 const [aiScenarioProposal, setAiScenarioProposal] = useState(null);
 const [aiScenarioBusy, setAiScenarioBusy] = useState(false);
-  // Toast notifications for chat actions
-  const { toasts, showToast, dismissToast } = useToast();
   const objectiveLabel = OBJECTIVE_LABEL_BY_KEY[strategyObjective] || OBJECTIVE_LABEL_BY_KEY.balanced;
   const objectiveLocked = Boolean(
     sessionId ||
@@ -5995,82 +6005,91 @@ setView(id === 'chat' ? 'intake' : id);
           <div className="jas-workspace-body">
 {activeTab === 'summary' && (
   <div className={!sidebarState.settings || !aiDrawerOpen ? 'score-with-rail' : ''}>
-    <ScoreDashboard
-      analysisResult={activeScorecard}
+    <ErrorBoundary title="Scorecard unavailable" onRetry={() => sessionId && refreshBundle(sessionId)}>
+      <ScoreDashboard
+        analysisResult={activeScorecard}
+        loading={bundleLoading && !activeScorecard}
 
-      scoreVariants={scoreVariants}
-      selectedVariantId={selectedVariantId}
-      onSelectVariant={setSelectedVariantId}
+        scoreVariants={scoreVariants}
+        selectedVariantId={selectedVariantId}
+        onSelectVariant={setSelectedVariantId}
 
-      scorecardSnapshots={scorecardSnapshots}
-      selectedScorecardId={selectedScorecardId}
-      onSelectScorecard={setSelectedScorecardId}
-      baselineScorecardId={baselineScorecardId}
-      threadBundleId={sessionId}
-      scoreCommentary={scoreCommentary}
-      onOpenThreadEdit={() => setThreadEditOpen(true)}
-      onGenerateAiWbs={handleGenerateAiWbsFromScorecard}
-      generatingAiWbs={aiWbsBusy}
-      canExportScorecardPdf={canExportScorecardPdf}
-      canExportScorecardPptx={canExportScorecardPptx}
-      canExportWbsCsv={canExportWbsCsv}
-      exportBusyType={exportBusyType}
-      onExportScorecardPdf={handleExportScorecardPdf}
-      onExportScorecardPptx={handleExportScorecardPptx}
-      onExportWbsCsv={handleExportWbsCsv}
+        scorecardSnapshots={scorecardSnapshots}
+        selectedScorecardId={selectedScorecardId}
+        onSelectScorecard={setSelectedScorecardId}
+        baselineScorecardId={baselineScorecardId}
+        threadBundleId={sessionId}
+        scoreCommentary={scoreCommentary}
+        onOpenThreadEdit={() => setThreadEditOpen(true)}
+        onGenerateAiWbs={handleGenerateAiWbsFromScorecard}
+        generatingAiWbs={aiWbsBusy}
+        canExportScorecardPdf={canExportScorecardPdf}
+        canExportScorecardPptx={canExportScorecardPptx}
+        canExportWbsCsv={canExportWbsCsv}
+        exportBusyType={exportBusyType}
+        onExportScorecardPdf={handleExportScorecardPdf}
+        onExportScorecardPptx={handleExportScorecardPptx}
+        onExportWbsCsv={handleExportWbsCsv}
 
-      onBackToMain={handleNewAnalysis}
-      onOpenChat={() => { setActiveTab('chat'); setView('intake'); }}
-      onOpenScenario={() => { setActiveTab('scenario'); setView('scenario'); }}
-      onConvertToProject={() => {
-        storage.saveProject({
-          id: `proj_${Date.now()}`,
-          source_analysis_id: sessionId,
-          createdAt: Date.now(),
-          title: deriveIdeaTitle({ result: analysisResult, messages, fallback: 'Untitled Idea' }),
-          payload: analysisResult,
-        });
-        window.location.href = `https://www.jaspen.ai/ops/project-planning?from=jas&analysis=${encodeURIComponent(sessionId)}`;
-      }}
-    />
+        onBackToMain={handleNewAnalysis}
+        onOpenChat={() => { setActiveTab('chat'); setView('intake'); }}
+        onOpenScenario={() => { setActiveTab('scenario'); setView('scenario'); }}
+        onConvertToProject={() => {
+          storage.saveProject({
+            id: `proj_${Date.now()}`,
+            source_analysis_id: sessionId,
+            createdAt: Date.now(),
+            title: deriveIdeaTitle({ result: analysisResult, messages, fallback: 'Untitled Idea' }),
+            payload: analysisResult,
+          });
+          window.location.href = `https://www.jaspen.ai/ops/project-planning?from=jas&analysis=${encodeURIComponent(sessionId)}`;
+        }}
+      />
+    </ErrorBoundary>
   </div>
 )}
 
             {activeTab === 'execution' && (
-              <ExecutionPanel
-                threadId={sessionId || currentSessionId || analysisResult?.analysis_id || ''}
-                wbs={threadWbs}
-                authFetch={authFetch}
-                onRefresh={async () => {
-                  const tid = sessionId || currentSessionId || analysisResult?.analysis_id;
-                  if (tid) await refreshThreadWbs(tid);
-                }}
-                onUpdateTask={async (taskId, updates) => {
-                  await chatCommandHandlers[ChatActionTypes.WBS_UPDATE_TASK]({
-                    id: taskId,
-                    ...updates,
-                  });
-                }}
-                onAddTask={async (taskData) => {
-                  await chatCommandHandlers[ChatActionTypes.WBS_ADD_TASK](taskData);
-                }}
-                onRemoveTask={async (taskId) => {
-                  await chatCommandHandlers[ChatActionTypes.WBS_REMOVE_TASK]({ id: taskId });
-                }}
-                onAddDependency={async (taskId, dependsOnId) => {
-                  await chatCommandHandlers[ChatActionTypes.WBS_ADD_DEPENDENCY]({
-                    task_id: taskId,
-                    depends_on: dependsOnId,
-                  });
-                }}
-                canEditFields={canEditExecutionFields}
-                canEditStructure={canEditExecutionStructure}
-                canEditDependencies={canEditExecutionDependencies}
-                isViewer={executionReadOnly}
-                isLocked={executionTabLocked}
-                onOpenChat={() => { setActiveTab('chat'); setView('intake'); }}
-                onOpenBilling={() => setBillingModalOpen(true)}
-              />
+              <ErrorBoundary title="Execution panel unavailable" onRetry={() => {
+                const tid = sessionId || currentSessionId || analysisResult?.analysis_id;
+                if (tid) refreshThreadWbs(tid);
+              }}>
+                <ExecutionPanel
+                  threadId={sessionId || currentSessionId || analysisResult?.analysis_id || ''}
+                  wbs={threadWbs}
+                  loading={wbsLoading && !threadWbs}
+                  authFetch={authFetch}
+                  onRefresh={async () => {
+                    const tid = sessionId || currentSessionId || analysisResult?.analysis_id;
+                    if (tid) await refreshThreadWbs(tid);
+                  }}
+                  onUpdateTask={async (taskId, updates) => {
+                    await chatCommandHandlers[ChatActionTypes.WBS_UPDATE_TASK]({
+                      id: taskId,
+                      ...updates,
+                    });
+                  }}
+                  onAddTask={async (taskData) => {
+                    await chatCommandHandlers[ChatActionTypes.WBS_ADD_TASK](taskData);
+                  }}
+                  onRemoveTask={async (taskId) => {
+                    await chatCommandHandlers[ChatActionTypes.WBS_REMOVE_TASK]({ id: taskId });
+                  }}
+                  onAddDependency={async (taskId, dependsOnId) => {
+                    await chatCommandHandlers[ChatActionTypes.WBS_ADD_DEPENDENCY]({
+                      task_id: taskId,
+                      depends_on: dependsOnId,
+                    });
+                  }}
+                  canEditFields={canEditExecutionFields}
+                  canEditStructure={canEditExecutionStructure}
+                  canEditDependencies={canEditExecutionDependencies}
+                  isViewer={executionReadOnly}
+                  isLocked={executionTabLocked}
+                  onOpenChat={() => { setActiveTab('chat'); setView('intake'); }}
+                  onOpenBilling={() => setBillingModalOpen(true)}
+                />
+              </ErrorBoundary>
             )}
 
             {activeTab === 'chat' && (
@@ -6246,43 +6265,46 @@ setView(id === 'chat' ? 'intake' : id);
 
             {activeTab === 'scenario' && (
               <>
-                {view === 'comparison' && savedScenarios.length > 0 ? (
-                  <ComparisonView
-                    baseAnalysis={analysisResult}
-                    scenarios={savedScenarios}
-                    onBackToScenario={() => { setView('scenario'); }}
-                    onBackToSummary={() => { setActiveTab('summary'); setView('summary'); }}
-                    onAdopt={handleScenarioUpdate}
-                  />
-                ) : (
-<ScenarioModeler
-  ref={scenarioModelerRef}
-  analysisId={sessionId}
-  baseAnalysis={bundleBaselineScorecard || baselineRef.current || analysisResult}
-  scenarioLevers={scenarioLevers}
-  refreshVersion={scenarioMutationVersion}
-  savedScenarios={savedScenarios}
-  onAdoptScenario={handleScenarioAdopt}
-  onAdoptScorecard={handleAdoptScorecard}
-  onBackToSummary={() => { setActiveTab('summary'); setView('summary'); }}
-  onOpenChat={() => { setActiveTab('chat'); setView('intake'); }}
-  onAdopt={handleScenarioUpdate}
-  onSaveScenario={handleSaveScenario}
-  onCompare={handleCompareScenarios}
-onResultA={(res) => { setResultA(res); setSelectedVariantId('scenarioA'); }}
-onResultB={(res) => { setResultB(res); setSelectedVariantId('scenarioB'); }}
-onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
-  onConvertToProject={() => {
-    storage.saveProject({
-      id: `proj_${Date.now()}`,
-      source_analysis_id: sessionId,
-      createdAt: Date.now(),
-      title: deriveIdeaTitle({ result: analysisResult, messages, fallback: 'Untitled Idea' }),
-      payload: analysisResult,
-    });
-    window.location.href = `https://www.jaspen.ai/ops/project-planning?from=jas&analysis=${encodeURIComponent(sessionId)}`;
-  }}
-/>
+	                {view === 'comparison' && savedScenarios.length > 0 ? (
+	                  <ComparisonView
+	                    baseAnalysis={analysisResult}
+	                    scenarios={savedScenarios}
+	                    onBackToScenario={() => { setView('scenario'); }}
+	                    onBackToSummary={() => { setActiveTab('summary'); setView('summary'); }}
+	                    onAdopt={handleScenarioUpdate}
+	                  />
+	                ) : (
+	                  <ErrorBoundary title="Scenario modeler unavailable" onRetry={() => sessionId && refreshBundle(sessionId)}>
+	                    <ScenarioModeler
+                      ref={scenarioModelerRef}
+                      analysisId={sessionId}
+                      loading={bundleLoading && !(bundleBaselineScorecard || baselineRef.current || analysisResult)}
+                      baseAnalysis={bundleBaselineScorecard || baselineRef.current || analysisResult}
+                      scenarioLevers={scenarioLevers}
+                      refreshVersion={scenarioMutationVersion}
+                      savedScenarios={savedScenarios}
+                      onAdoptScenario={handleScenarioAdopt}
+                      onAdoptScorecard={handleAdoptScorecard}
+                      onBackToSummary={() => { setActiveTab('summary'); setView('summary'); }}
+                      onOpenChat={() => { setActiveTab('chat'); setView('intake'); }}
+                      onAdopt={handleScenarioUpdate}
+                      onSaveScenario={handleSaveScenario}
+                      onCompare={handleCompareScenarios}
+                      onResultA={(res) => { setResultA(res); setSelectedVariantId('scenarioA'); }}
+                      onResultB={(res) => { setResultB(res); setSelectedVariantId('scenarioB'); }}
+                      onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
+                      onConvertToProject={() => {
+                        storage.saveProject({
+                          id: `proj_${Date.now()}`,
+                          source_analysis_id: sessionId,
+                          createdAt: Date.now(),
+                          title: deriveIdeaTitle({ result: analysisResult, messages, fallback: 'Untitled Idea' }),
+                          payload: analysisResult,
+                        });
+                        window.location.href = `https://www.jaspen.ai/ops/project-planning?from=jas&analysis=${encodeURIComponent(sessionId)}`;
+                      }}
+                    />
+                  </ErrorBoundary>
                 )}
               </>
             )}

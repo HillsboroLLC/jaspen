@@ -1,0 +1,79 @@
+.jas-skeleton {
+  position: relative;
+  overflow: hidden;
+  background: #e5e7eb;
+  border-radius: 14px;
+}
+
+.jas-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.72) 50%, transparent 100%);
+  animation: jas-skeleton-shimmer 1.35s ease-in-out infinite;
+}
+
+@keyframes jas-skeleton-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.jas-skeleton-stack {
+  display: grid;
+  gap: 16px;
+}
+
+.jas-skeleton-score-dashboard,
+.jas-skeleton-scenario,
+.jas-skeleton-execution {
+  display: grid;
+  gap: 18px;
+}
+
+.jas-skeleton-score-toolbar,
+.jas-skeleton-panel-header,
+.jas-skeleton-scenario-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+}
+
+.jas-skeleton-score-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: 18px;
+}
+
+.jas-skeleton-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.jas-skeleton-rail-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.jas-skeleton-table {
+  display: grid;
+  gap: 12px;
+}
+
+.jas-skeleton-table-row {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr 0.8fr 0.8fr;
+  gap: 12px;
+}
+
+@media (max-width: 900px) {
+  .jas-skeleton-score-grid,
+  .jas-skeleton-card-grid,
+  .jas-skeleton-rail-grid {
+    grid-template-columns: 1fr;
+  }
+}

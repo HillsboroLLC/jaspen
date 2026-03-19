@@ -3,6 +3,7 @@ import json
 from datetime import datetime, timezone
 
 from flask import has_request_context, request
+from sqlalchemy import or_
 
 from app import db
 from app.models import AdminAuditEvent
@@ -35,6 +36,21 @@ def _parse_timestamp(value):
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def _request_remote_addr():
+    if not has_request_context():
+        return None
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return str(forwarded).split(",")[0].strip() or None
+    return request.remote_addr
+
+
+def _request_user_agent():
+    if not has_request_context():
+        return None
+    return str(request.headers.get("User-Agent") or "").strip() or None
 
 
 def _backfill_legacy_events():
@@ -111,13 +127,54 @@ def append_admin_audit_event(
     return event
 
 
-def list_admin_audit_events(*, user_id=None, limit=50):
+def append_user_audit_event(
+    *,
+    actor_user=None,
+    actor_user_id=None,
+    actor_email=None,
+    action="",
+    target_user_id=None,
+    target_email=None,
+    details=None,
+):
+    resolved_actor_user_id = actor_user_id
+    resolved_actor_email = actor_email
+    if actor_user is not None:
+        resolved_actor_user_id = getattr(actor_user, "id", resolved_actor_user_id)
+        resolved_actor_email = getattr(actor_user, "email", resolved_actor_email)
+    return append_admin_audit_event(
+        actor_user_id=resolved_actor_user_id,
+        actor_email=resolved_actor_email,
+        action=action,
+        target_user_id=target_user_id,
+        target_email=target_email,
+        details=details,
+        remote_addr=_request_remote_addr(),
+        user_agent=_request_user_agent(),
+    )
+
+
+def list_admin_audit_events(*, user_id=None, action=None, date_from=None, date_to=None, limit=50):
     _backfill_legacy_events()
     target_user_id = str(user_id or "").strip() or None
+    target_action = str(action or "").strip().lower() or None
     max_items = _normalize_limit(limit)
+    since = _parse_timestamp(date_from) if str(date_from or "").strip() else None
+    until = _parse_timestamp(date_to) if str(date_to or "").strip() else None
 
     query = AdminAuditEvent.query.order_by(AdminAuditEvent.timestamp.desc())
     if target_user_id:
-        query = query.filter_by(target_user_id=target_user_id)
+        query = query.filter(
+            or_(
+                AdminAuditEvent.target_user_id == target_user_id,
+                AdminAuditEvent.actor_user_id == target_user_id,
+            )
+        )
+    if target_action:
+        query = query.filter(AdminAuditEvent.action == target_action)
+    if since:
+        query = query.filter(AdminAuditEvent.timestamp >= since)
+    if until:
+        query = query.filter(AdminAuditEvent.timestamp <= until)
 
     return [event.to_dict() for event in query.limit(max_items).all()]

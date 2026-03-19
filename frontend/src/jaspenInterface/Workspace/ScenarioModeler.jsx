@@ -8,6 +8,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faSpinner, faPlay, faCheck } from '@fortawesome/free-solid-svg-icons';
 import { Jaspen } from './JaspenClient';
 import Button from './workspaceUi/components/Button';
+import { ScenarioModelerSkeleton } from '../../shared/components/SkeletonLoader';
 
 // ============================================================================
 // HELPER: Extract editable levers from baseAnalysis
@@ -448,6 +449,7 @@ const ScenarioModeler = forwardRef(function ScenarioModeler({
   onResultA = () => {},
   onResultB = () => {},
   onCompare,
+  loading = false,
 }, ref) {
   // Determine threadId robustly (keep backward compatibility)
   const threadId =
@@ -860,6 +862,10 @@ if (label === 'Scenario B') onResultB?.(snapshot);
     });
     setScenarioA(nextValues);
     setAiSuggestOpen(false);
+  }
+
+  if (loading) {
+    return <ScenarioModelerSkeleton />;
   }
 
   return (

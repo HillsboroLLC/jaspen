@@ -198,11 +198,22 @@ def _build_cipher_candidates():
     if Fernet is None:
         return []
 
+    legacy_secrets = []
+    legacy_raw = os.getenv("CONNECTOR_ENCRYPTION_OLD_KEYS")
+    if legacy_raw:
+        try:
+            parsed = json.loads(legacy_raw)
+            if isinstance(parsed, list):
+                legacy_secrets.extend([str(item or "").strip() for item in parsed if str(item or "").strip()])
+        except Exception:
+            legacy_secrets.extend([part.strip() for part in legacy_raw.split(",") if part.strip()])
+
     candidate_secrets = [
         os.getenv("CONNECTOR_ENCRYPTION_KEY"),
         os.getenv("CONNECTOR_CREDENTIALS_SECRET"),
         os.getenv("JWT_SECRET_KEY"),
         os.getenv("SECRET_KEY"),
+        *legacy_secrets,
     ]
     seen_keys = set()
     ciphers = []
@@ -219,6 +230,21 @@ def _build_cipher_candidates():
         except Exception:
             continue
     return ciphers
+
+
+def _current_key_version():
+    return str(os.getenv("CONNECTOR_ENCRYPTION_KEY_VERSION") or "v1").strip() or "v1"
+
+
+def _split_encrypted_payload(value):
+    text = str(value or "")
+    if not text.startswith(_SECRET_PREFIX):
+        return None, None
+    body = text[len(_SECRET_PREFIX):]
+    if "::" in body:
+        version, token = body.split("::", 1)
+        return (str(version or "").strip() or None), token
+    return None, body
 
 
 def _build_cipher():
@@ -238,7 +264,7 @@ def encrypt_token(value):
         # runtime behavior while still allowing secure-at-rest in configured envs.
         return text
     token = cipher.encrypt(text.encode("utf-8")).decode("utf-8")
-    return f"{_SECRET_PREFIX}{token}"
+    return f"{_SECRET_PREFIX}{_current_key_version()}::{token}"
 
 
 def decrypt_token(value):
@@ -250,7 +276,7 @@ def decrypt_token(value):
     ciphers = _build_cipher_candidates()
     if not ciphers:
         return ""
-    token = text[len(_SECRET_PREFIX):]
+    _version, token = _split_encrypted_payload(text)
     for cipher in ciphers:
         try:
             return cipher.decrypt(token.encode("utf-8")).decode("utf-8")

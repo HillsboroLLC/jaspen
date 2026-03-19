@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 import uuid
 from types import SimpleNamespace
 from app import db, limiter
+from app.admin_audit import append_user_audit_event
 from app.models import User
 from app.scenarios_store import load_scenarios_data, save_scenarios_data
 from app.billing_config import (
@@ -33,6 +34,18 @@ from app.orgs import resolve_active_org_for_user
 from .sessions import load_user_sessions, save_user_sessions
 
 strategy_bp = Blueprint('strategy', __name__)
+
+
+def _audit_strategy_event(action, *, user=None, user_id=None, details=None):
+    append_user_audit_event(
+        actor_user=user,
+        actor_user_id=getattr(user, 'id', None) if user is not None else user_id,
+        actor_email=getattr(user, 'email', None) if user is not None else None,
+        action=action,
+        target_user_id=getattr(user, 'id', None) if user is not None else user_id,
+        target_email=getattr(user, 'email', None) if user is not None else None,
+        details=details if isinstance(details, dict) else {},
+    )
 
 STRATEGY_OBJECTIVE_OPTIONS = ('balanced', 'cost', 'speed', 'growth')
 STRATEGY_OBJECTIVE_ALIASES = {
@@ -758,6 +771,17 @@ def analyze_project():
         all_data[resolved_thread_id] = td
         persisted_bundle = _save_scenarios(current_user_id, all_data)
         analysis['meta']['thread_bundle_persisted'] = bool(persisted_session and persisted_bundle)
+        _audit_strategy_event(
+            'scorecard.generated',
+            user=user,
+            details={
+                'thread_id': resolved_thread_id,
+                'analysis_id': analysis_id,
+                'project_name': project_name,
+                'credits_charged': analysis_credit_cost,
+                'model_type': model_selection['model_type'],
+            },
+        )
 
         return jsonify({
             'analysis': analysis,
@@ -2454,6 +2478,16 @@ def generate_ai_wbs(thread_id):
             thread_data['project_wbs'] = normalized_wbs
             all_data[thread_id] = thread_data
             _save_scenarios(user_id, all_data)
+            _audit_strategy_event(
+                'wbs.generated',
+                user_id=user_id,
+                details={
+                    'thread_id': thread_id,
+                    'task_count': len(normalized_wbs.get('tasks', [])),
+                    'dependency_count': _wbs_dependency_count(normalized_wbs),
+                    'source_scenario_id': scenario_id,
+                },
+            )
 
         return jsonify({
             'success': True,
@@ -2570,6 +2604,16 @@ def create_scenario(thread_id):
             except Exception:
                 payload = {'error': str(limit_error)}
             return jsonify(payload), 403
+
+        _audit_strategy_event(
+            'scenario.created',
+            user_id=user_id,
+            details={
+                'thread_id': thread_id,
+                'scenario_id': created.get('scenario_id'),
+                'label': created.get('label'),
+            },
+        )
 
         return jsonify({
             'scenario_id': created.get('scenario_id'),
@@ -2770,6 +2814,14 @@ def adopt_scenario(scenario_id):
                 return jsonify({'error': 'Scenario not found in any thread'}), 404
 
         _save_scenarios(user_id, all_data)
+        _audit_strategy_event(
+            'scenario.adopted',
+            user_id=user_id,
+            details={
+                'thread_id': thread_id,
+                'scenario_id': scenario_id,
+            },
+        )
         return jsonify({'success': True, 'adopted_scenario_id': scenario_id}), 200
 
     except Exception as e:
@@ -2869,9 +2921,21 @@ def upsert_thread_wbs(thread_id):
                     'errors': [{'error': str(sync_error)}],
                 }
 
+        prior_tasks = existing_wbs.get('tasks') if isinstance(existing_wbs, dict) and isinstance(existing_wbs.get('tasks'), list) else []
+        next_tasks = normalized_wbs.get('tasks') if isinstance(normalized_wbs.get('tasks'), list) else []
         td['project_wbs'] = normalized_wbs
         all_data[thread_id] = td
         _save_scenarios(user_id, all_data)
+        _audit_strategy_event(
+            'wbs.updated',
+            user_id=user_id,
+            details={
+                'thread_id': thread_id,
+                'task_count_before': len(prior_tasks),
+                'task_count_after': len(next_tasks),
+                'dependency_count': _wbs_dependency_count(normalized_wbs),
+            },
+        )
 
         return jsonify({
             'success': True,

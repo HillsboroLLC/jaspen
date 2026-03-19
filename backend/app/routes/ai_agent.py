@@ -9,6 +9,7 @@ import re
 import uuid
 
 from app import db, limiter
+from app.admin_audit import append_user_audit_event
 from app.models import BatchIdeaUpload, User
 from app.billing_config import (
     bootstrap_legacy_credits,
@@ -33,6 +34,18 @@ from app.scenarios_store import save_scenarios_data
 from .sessions import load_user_sessions, save_user_sessions
 
 ai_agent_bp = Blueprint('ai_agent', __name__)
+
+
+def _audit_ai_agent_event(action, *, user=None, target_user_id=None, target_email=None, details=None):
+    append_user_audit_event(
+        actor_user=user,
+        actor_user_id=getattr(user, "id", None) if user is not None else target_user_id,
+        actor_email=getattr(user, "email", None) if user is not None else target_email,
+        action=action,
+        target_user_id=target_user_id or getattr(user, "id", None),
+        target_email=target_email or getattr(user, "email", None),
+        details=details if isinstance(details, dict) else {},
+    )
 
 STRATEGY_OBJECTIVE_OPTIONS = ("balanced", "cost", "speed", "growth")
 STRATEGY_OBJECTIVE_ALIASES = {
@@ -1381,6 +1394,17 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id):
         except PermissionError as limit_error:
             return _tool_error(str(limit_error), code="scenario_limit_reached")
 
+        _audit_ai_agent_event(
+            "scenario.created",
+            target_user_id=user_id,
+            details={
+                "thread_id": thread_id,
+                "scenario_id": scenario.get("scenario_id"),
+                "label": scenario.get("label"),
+                "source": "ai_tool",
+            },
+        )
+
         return _tool_success({
             "tool": tool_name,
             "confirmation": (
@@ -1498,6 +1522,25 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id):
         all_data[thread_id] = td
         if not _save_scenarios(user_id, all_data):
             return _tool_error("Failed to persist WBS changes.", code="persist_failed")
+
+        if tool_name == "add_wbs_task":
+            audit_action = "wbs.task_created"
+        elif tool_name == "remove_wbs_task":
+            audit_action = "wbs.task_deleted"
+        else:
+            audit_action = "wbs.task_updated"
+        _audit_ai_agent_event(
+            audit_action,
+            target_user_id=user_id,
+            details={
+                "thread_id": thread_id,
+                "tool": tool_name,
+                "task_count": len(normalized.get("tasks", [])),
+                "task_id": tool_input.get("task_id") or tool_input.get("id"),
+                "title": tool_input.get("title"),
+                "field": tool_input.get("field"),
+            },
+        )
 
         return _tool_success({
             "tool": tool_name,
@@ -2956,7 +2999,9 @@ def conversation_start():
     starter_lever_defaults = _sanitize_lever_defaults(data.get("lever_defaults"))
 
     sessions = load_user_sessions(user_id)
-    session = sessions.get(thread_id) or _new_session(
+    existing_session = sessions.get(thread_id)
+    session_created = not isinstance(existing_session, dict)
+    session = existing_session or _new_session(
         user_id,
         thread_id,
         name,
@@ -3059,6 +3104,19 @@ def conversation_start():
                 yield _sse_payload({"type": "error", "error": "Failed to persist conversation state"})
                 return
 
+            if session_created:
+                _audit_ai_agent_event(
+                    "session.created",
+                    user=user,
+                    details={
+                        "thread_id": thread_id,
+                        "name": name,
+                        "model_type": model_selection["model_type"],
+                        "stream": True,
+                        "source": "conversation_start",
+                    },
+                )
+
             done_payload = {
                 "type": "done",
                 "thread_id": thread_id,
@@ -3141,6 +3199,19 @@ def conversation_start():
     if not save_user_sessions(user_id, sessions):
         return jsonify({"error": "Failed to persist conversation state"}), 500
 
+    if session_created:
+        _audit_ai_agent_event(
+            "session.created",
+            user=user,
+            details={
+                "thread_id": thread_id,
+                "name": name,
+                "model_type": model_selection["model_type"],
+                "stream": False,
+                "source": "conversation_start",
+            },
+        )
+
     return jsonify({
         "thread_id": thread_id,
         "session_id": thread_id,
@@ -3220,6 +3291,7 @@ def conversation_continue():
             objective_supplied = True
     starter_lever_defaults = _sanitize_lever_defaults(data.get("lever_defaults"))
 
+    session_created = not isinstance(session, dict)
     session = session or _new_session(
         user_id,
         thread_id,
@@ -3321,6 +3393,19 @@ def conversation_continue():
                 yield _sse_payload({"type": "error", "error": "Failed to persist conversation state"})
                 return
 
+            if session_created:
+                _audit_ai_agent_event(
+                    "session.created",
+                    user=user,
+                    details={
+                        "thread_id": thread_id,
+                        "name": session.get("name") or "Jaspen Intake",
+                        "model_type": model_selection["model_type"],
+                        "stream": True,
+                        "source": "conversation_continue",
+                    },
+                )
+
             done_payload = {
                 "type": "done",
                 "thread_id": thread_id,
@@ -3401,6 +3486,19 @@ def conversation_continue():
     sessions[thread_id] = session
     if not save_user_sessions(user_id, sessions):
         return jsonify({"error": "Failed to persist conversation state"}), 500
+
+    if session_created:
+        _audit_ai_agent_event(
+            "session.created",
+            user=user,
+            details={
+                "thread_id": thread_id,
+                "name": session.get("name") or "Jaspen Intake",
+                "model_type": model_selection["model_type"],
+                "stream": False,
+                "source": "conversation_continue",
+            },
+        )
 
     return jsonify({
         "thread_id": thread_id,
@@ -3545,6 +3643,7 @@ def list_threads():
 @jwt_required()
 def reset_threads():
     user_id = str(get_jwt_identity())
+    user = User.query.get(user_id)
     sessions = load_user_sessions(user_id) or {}
     cleared_threads = len(sessions) if isinstance(sessions, dict) else 0
 
@@ -3553,6 +3652,18 @@ def reset_threads():
 
     # Reset per-user scenario storage used by ScenarioModeler.
     scenarios_cleared = save_scenarios_data(user_id, {})
+
+    if user:
+        _audit_ai_agent_event(
+            "session.archived",
+            user=user,
+            details={
+                "thread_id": "*",
+                "scope": "all",
+                "cleared_threads": cleared_threads,
+                "cleared_scenarios": bool(scenarios_cleared),
+            },
+        )
 
     return jsonify({
         "success": True,
@@ -3667,6 +3778,7 @@ def update_thread(thread_id):
         return jsonify({"error": "Thread not found"}), 404
 
     resolved_thread_id = str(session.get("session_id") or session_key or thread_id)
+    previous_status = str(session.get("status") or "").strip().lower() or None
     if name:
         session["name"] = name
     if objective_supplied:
@@ -3726,6 +3838,21 @@ def update_thread(thread_id):
     session["timestamp"] = _iso_now()
     sessions[session_key or resolved_thread_id] = session
     save_user_sessions(user_id, sessions)
+
+    user = User.query.get(user_id)
+    next_status = str(session.get("status") or "").strip().lower() or None
+    if user and status_supplied and next_status != previous_status:
+        action = "session.completed" if next_status == "completed" else "session.archived" if next_status == "archived" else "session.updated"
+        _audit_ai_agent_event(
+            action,
+            user=user,
+            details={
+                "thread_id": resolved_thread_id,
+                "previous_status": previous_status,
+                "status": next_status,
+                "name": session.get("name") or "Jaspen Intake",
+            },
+        )
 
     chat_history = _session_chat_history(session)
     readiness = session.get("readiness") if isinstance(session.get("readiness"), dict) else _compute_readiness(chat_history, session.get("strategy_objective"))
@@ -3911,6 +4038,17 @@ def upload_batch_ideas():
 
     payload = _visible_batch_payload(batch)
     payload["columns_detected"] = columns
+    _audit_ai_agent_event(
+        "batch.uploaded",
+        user=user,
+        details={
+            "batch_id": batch.id,
+            "organization_id": batch.organization_id,
+            "filename": filename,
+            "total_count": len(ideas),
+            "columns_detected": columns,
+        },
+    )
     return jsonify(payload), 200
 
 
@@ -3984,6 +4122,17 @@ def rank_batch_ideas(batch_id):
         status="ranking",
     )
     db.session.commit()
+    _audit_ai_agent_event(
+        "batch.ranked",
+        user=user,
+        details={
+            "batch_id": batch.id,
+            "status": batch.status,
+            "idea_count": len(ranked_ideas),
+            "credits_charged": credits_charged,
+            "model_type": model_selection["model_type"],
+        },
+    )
 
     return jsonify({
         **ranking_record,
@@ -4103,6 +4252,17 @@ def clarify_batch_idea(batch_id, idea_id):
     }
     _save_batch_state(batch, ideas=ideas, ranking_result=ranking_record, status="clarifying")
     db.session.commit()
+    _audit_ai_agent_event(
+        "batch.clarified",
+        user=user,
+        details={
+            "batch_id": batch.id,
+            "idea_id": idea_id,
+            "question_count": len(clarifications),
+            "scoreable": bool(updated_idea.get("scoreable")),
+            "credits_charged": credits_charged,
+        },
+    )
 
     return jsonify({
         "batch_id": batch.id,
@@ -4176,6 +4336,18 @@ def promote_batch_idea(batch_id, idea_id):
     status = "completed" if all(str((item or {}).get("thread_id") or "").strip() for item in ideas if bool((item or {}).get("scoreable"))) else "scoring"
     _save_batch_state(batch, ideas=ideas, ranking_result=ranking_record, status=status)
     db.session.commit()
+    _audit_ai_agent_event(
+        "batch.promoted",
+        user=user,
+        details={
+            "batch_id": batch.id,
+            "idea_id": idea_id,
+            "thread_id": promoted["thread_id"],
+            "analysis_id": promoted["analysis_id"],
+            "project_name": promoted["project_name"],
+            "credits_charged": promoted["credits_charged"],
+        },
+    )
 
     return jsonify({
         "batch_id": batch.id,
@@ -4257,6 +4429,16 @@ def promote_all_batch_ideas(batch_id):
     status = "completed" if not has_more else "scoring"
     _save_batch_state(batch, ideas=ideas, ranking_result=ranking_record, status=status)
     db.session.commit()
+    _audit_ai_agent_event(
+        "batch.promoted_bulk",
+        user=user,
+        details={
+            "batch_id": batch.id,
+            "promoted_count": len(created),
+            "has_more": has_more,
+            "remaining_scoreable": max(0, len(eligible_indexes) - len(limited_indexes)),
+        },
+    )
 
     return jsonify({
         "batch_id": batch.id,

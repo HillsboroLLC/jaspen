@@ -8,6 +8,9 @@
 import { API_BASE } from '../../config/apiBase';
 import { buildAuthHeaders } from '../../shared/auth/http';
 
+const RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
+const RETRY_BACKOFF_MS = [1000, 2000, 4000];
+
 export const endpoints = {
   // AI Agent endpoints (NEW)
   convoStart:     `${API_BASE}/api/v1/ai-agent/conversation/start`,
@@ -98,6 +101,30 @@ async function _json(resp) {
   try { return text ? JSON.parse(text) : {}; } catch { return { raw: text }; }
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function buildHttpError(status, data) {
+  const msg = data?.error || data?.detail || `HTTP ${status}`;
+  const err = new Error(msg);
+  err.status = status;
+  err.data = data;
+  return err;
+}
+
+function shouldRetryRequest(method, opts = {}, error) {
+  const normalized = String(method || 'GET').toUpperCase();
+  const retryableRequest = normalized === 'GET' || Boolean(opts.retryable);
+  if (!retryableRequest) return false;
+  if (!error) return false;
+  if (error.name === 'AbortError') return false;
+  if (typeof error.status === 'number') {
+    return RETRYABLE_STATUS_CODES.has(error.status);
+  }
+  return true;
+}
+
 async function _fetch(url, opts = {}) {
   const method = String(opts.method || 'GET').toUpperCase();
   const headers = {
@@ -105,16 +132,24 @@ async function _fetch(url, opts = {}) {
     ...(opts.sidOverride ? { 'X-Session-ID': opts.sidOverride } : opts.withSid ? { 'X-Session-ID': getSid() } : {}),
     ...(opts.headers || {}),
   };
-  const resp = await fetch(url, { credentials: 'include', cache: 'no-store', ...opts, headers });
-  const data = await _json(resp);
-  if (!resp.ok) {
-    const msg = data?.error || data?.detail || `HTTP ${resp.status}`;
-    const err = new Error(msg);
-    err.status = resp.status;
-    err.data = data;
-    throw err;
+  let lastError = null;
+  for (let attempt = 0; attempt <= RETRY_BACKOFF_MS.length; attempt += 1) {
+    try {
+      const resp = await fetch(url, { credentials: 'include', cache: 'no-store', ...opts, headers });
+      const data = await _json(resp);
+      if (!resp.ok) {
+        throw buildHttpError(resp.status, data);
+      }
+      return data;
+    } catch (error) {
+      lastError = error;
+      if (!shouldRetryRequest(method, opts, error) || attempt >= RETRY_BACKOFF_MS.length) {
+        throw error;
+      }
+      await sleep(RETRY_BACKOFF_MS[attempt]);
+    }
   }
-  return data;
+  throw lastError || new Error('Request failed');
 }
 
 async function postJSON(url, body, { withSid = false, sidOverride } = {}) {
@@ -140,38 +175,47 @@ async function parseErrorResponse(resp) {
   const text = await resp.text().catch(() => '');
   try {
     const data = text ? JSON.parse(text) : {};
-    const message = data?.error || data?.detail || `HTTP ${resp.status}`;
-    const err = new Error(message);
-    err.status = resp.status;
-    err.data = data;
-    return Promise.reject(err);
-  } catch {
+    throw buildHttpError(resp.status, data);
+  } catch (parseError) {
+    if (parseError?.status) throw parseError;
     const err = new Error(text || `HTTP ${resp.status}`);
     err.status = resp.status;
     err.data = { raw: text };
-    return Promise.reject(err);
+    throw err;
   }
 }
 
 async function downloadBinary(url) {
-  const resp = await fetch(url, {
-    method: 'GET',
-    credentials: 'include',
-    cache: 'no-store',
-    headers: buildAuthHeaders({}, 'GET'),
-  });
+  let lastError = null;
+  for (let attempt = 0; attempt <= RETRY_BACKOFF_MS.length; attempt += 1) {
+    try {
+      const resp = await fetch(url, {
+        method: 'GET',
+        credentials: 'include',
+        cache: 'no-store',
+        headers: buildAuthHeaders({}, 'GET'),
+      });
 
-  if (!resp.ok) {
-    await parseErrorResponse(resp);
+      if (!resp.ok) {
+        await parseErrorResponse(resp);
+      }
+
+      const blob = await resp.blob();
+      const disposition = resp.headers.get('content-disposition') || '';
+      const match =
+        disposition.match(/filename\*=UTF-8''([^;]+)/i) ||
+        disposition.match(/filename="?([^"]+)"?/i);
+      const filename = match?.[1] ? decodeURIComponent(match[1]) : null;
+      return { blob, filename, contentType: resp.headers.get('content-type') || '' };
+    } catch (error) {
+      lastError = error;
+      if (!shouldRetryRequest('GET', {}, error) || attempt >= RETRY_BACKOFF_MS.length) {
+        throw error;
+      }
+      await sleep(RETRY_BACKOFF_MS[attempt]);
+    }
   }
-
-  const blob = await resp.blob();
-  const disposition = resp.headers.get('content-disposition') || '';
-  const match =
-    disposition.match(/filename\*=UTF-8''([^;]+)/i) ||
-    disposition.match(/filename="?([^"]+)"?/i);
-  const filename = match?.[1] ? decodeURIComponent(match[1]) : null;
-  return { blob, filename, contentType: resp.headers.get('content-type') || '' };
+  throw lastError || new Error('Download failed');
 }
 
 function parseSseChunk(chunk) {

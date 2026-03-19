@@ -6,6 +6,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faChevronDown, faDownload, faPlay, faSpinner } from '@fortawesome/free-solid-svg-icons';
+import { ScoreDashboardSkeleton } from '../../shared/components/SkeletonLoader';
 import './ScoreDashboard.css';
 
 export default function ScoreDashboard({
@@ -29,6 +30,7 @@ export default function ScoreDashboard({
   onExportScorecardPdf = null,
   onExportScorecardPptx = null,
   onExportWbsCsv = null,
+  loading = false,
 }) {
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const exportMenuRef = useRef(null);
@@ -236,6 +238,10 @@ export default function ScoreDashboard({
   const hasScores = categoryScoreRows.length > 0;
   const hasFinancialImpact = financialGridItems.length > 0;
   const hasAiInsights = aiInsights.length > 0;
+
+  if (loading) {
+    return <div className="score-dashboard-container"><ScoreDashboardSkeleton /></div>;
+  }
 
   if (!selectedSnapshot && !analysisResult) return <div className="score-dashboard-container"><div className="empty-state"><p>No analysis result available</p></div></div>;
 

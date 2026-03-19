@@ -6,6 +6,7 @@ from flask import Blueprint, current_app, jsonify, redirect, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
 from app import limiter
+from app.admin_audit import append_user_audit_event
 from app.billing_config import to_public_plan
 from app.connectors.smartsheet import smartsheet_connect, smartsheet_list_sheets
 from app.connectors.workfront import workfront_connect, workfront_sync_status
@@ -48,6 +49,18 @@ from app.workfront_sync import apply_workfront_webhook_to_wbs, sync_wbs_to_workf
 
 
 connectors_bp = Blueprint("connectors", __name__)
+
+
+def _audit_connector_event(action, *, user=None, user_id=None, details=None):
+    append_user_audit_event(
+        actor_user=user,
+        actor_user_id=getattr(user, "id", None) if user is not None else user_id,
+        actor_email=getattr(user, "email", None) if user is not None else None,
+        action=action,
+        target_user_id=getattr(user, "id", None) if user is not None else user_id,
+        target_email=getattr(user, "email", None) if user is not None else None,
+        details=details if isinstance(details, dict) else {},
+    )
 
 
 def _normalize_sync_mode(value):
@@ -511,6 +524,16 @@ def _sync_thread_with_connector(user, thread_id, connector_id, sync_callable):
         metadata={
             "created": result.get("created_issues") or result.get("created_tasks") or result.get("created_rows") or 0,
             "updated": result.get("updated_tasks") or 0,
+        },
+    )
+    _audit_connector_event(
+        "connector.sync_triggered",
+        user=user,
+        details={
+            "thread_id": thread_id,
+            "connector_id": connector_id,
+            "status": status,
+            "attempt_count": result.get("attempt_count"),
         },
     )
 
@@ -1242,6 +1265,16 @@ def upsert_thread_sync(thread_id):
             "mirror_external_to_wbs": mirror_external_to_wbs,
             "mirror_wbs_to_external": mirror_wbs_to_external,
             "auto_reconcile": _to_bool(payload.get("auto_reconcile"), default=True),
+        },
+    )
+    _audit_connector_event(
+        "connector.sync_profile_updated",
+        user=user,
+        details={
+            "thread_id": thread_id,
+            "connector_ids": connector_ids,
+            "sync_mode": sync_mode,
+            "conflict_policy": conflict_policy,
         },
     )
 

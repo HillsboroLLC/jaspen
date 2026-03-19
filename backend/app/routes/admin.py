@@ -564,6 +564,7 @@ def run_user_recovery(user_id):
 
 
 @admin_bp.route("/audit", methods=["GET"])
+@admin_bp.route("/audit-log", methods=["GET"])
 @jwt_required()
 def get_audit_events():
     _, err = _require_admin()
@@ -571,6 +572,15 @@ def get_audit_events():
         return err
 
     target_user_id = str(request.args.get("user_id") or "").strip() or None
+    action = str(request.args.get("action") or "").strip().lower() or None
+    date_from = str(request.args.get("date_from") or "").strip() or None
+    date_to = str(request.args.get("date_to") or "").strip() or None
     limit = _to_int(request.args.get("limit"), default=50)
-    events = list_admin_audit_events(user_id=target_user_id, limit=limit or 50)
+    events = list_admin_audit_events(
+        user_id=target_user_id,
+        action=action,
+        date_from=date_from,
+        date_to=date_to,
+        limit=limit or 50,
+    )
     return jsonify({"events": events, "count": len(events)}), 200

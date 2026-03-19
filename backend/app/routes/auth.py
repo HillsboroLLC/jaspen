@@ -22,6 +22,7 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 import stripe
 
 from app import db, limiter
+from app.admin_audit import append_user_audit_event
 from app.admin_policy import is_global_admin_email
 from app.models import User
 from app.billing_config import (
@@ -40,6 +41,16 @@ GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 GOOGLE_USERINFO_URL = 'https://openidconnect.googleapis.com/v1/userinfo'
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_DURATION_MINUTES = 15
+
+
+def _audit_auth_event(action, *, actor=None, target_user=None, target_email=None, details=None):
+    append_user_audit_event(
+        actor_user=actor or target_user,
+        action=action,
+        target_user_id=getattr(target_user, "id", None),
+        target_email=(getattr(target_user, "email", None) or target_email),
+        details=details if isinstance(details, dict) else {},
+    )
 
 
 def _validate_password(password):
@@ -263,12 +274,22 @@ def login():
 
     user = User.query.filter_by(email=email).first()
     if not user:
+        _audit_auth_event(
+            'auth.login.failed',
+            target_email=email,
+            details={'reason': 'user_not_found'},
+        )
         return jsonify(message='Invalid credentials'), 401
 
     now = _utc_now()
     locked_until = _normalize_locked_until(user.locked_until)
     if locked_until and locked_until > now:
         remaining = int((locked_until - now).total_seconds() / 60) + 1
+        _audit_auth_event(
+            'auth.login.failed',
+            target_user=user,
+            details={'reason': 'account_locked', 'minutes_remaining': remaining},
+        )
         return jsonify(message=f'Account locked. Try again in {remaining} minute(s).'), 429
 
     if not check_password_hash(user.password_hash, password):
@@ -277,6 +298,15 @@ def login():
             user.locked_until = (now + timedelta(minutes=LOCKOUT_DURATION_MINUTES)).replace(tzinfo=None)
             user.failed_login_attempts = 0
         db.session.commit()
+        _audit_auth_event(
+            'auth.login.failed',
+            target_user=user,
+            details={
+                'reason': 'invalid_password',
+                'failed_login_attempts': user.failed_login_attempts or 0,
+                'locked_until': user.locked_until.isoformat() if user.locked_until else None,
+            },
+        )
         return jsonify(message='Invalid credentials'), 401
 
     changed = False
@@ -294,6 +324,7 @@ def login():
         db.session.commit()
 
     if user.mfa_enabled:
+        _audit_auth_event('auth.login.succeeded', actor=user, target_user=user, details={'mfa_required': True})
         pending_token = create_access_token(
             identity=str(user.id),
             expires_delta=timedelta(minutes=5),
@@ -310,6 +341,7 @@ def login():
         user=_user_payload(user),
     )
     resp.status_code = 200
+    _audit_auth_event('auth.login.succeeded', actor=user, target_user=user, details={'mfa_required': False})
     return _attach_auth_cookie(resp, token)
 
 
@@ -413,6 +445,7 @@ def mfa_challenge():
     if totp.verify(code, valid_window=1):
         access_token = create_access_token(identity=str(user.id))
         resp = jsonify({"token": access_token, "user": _user_payload(user)})
+        _audit_auth_event('auth.login.succeeded', actor=user, target_user=user, details={'mfa_method': 'totp'})
         return _attach_auth_cookie(resp, access_token), 200
 
     if user.mfa_backup_codes:
@@ -425,8 +458,10 @@ def mfa_challenge():
                 db.session.commit()
                 access_token = create_access_token(identity=str(user.id))
                 resp = jsonify({"token": access_token, "user": _user_payload(user)})
+                _audit_auth_event('auth.login.succeeded', actor=user, target_user=user, details={'mfa_method': 'backup_code'})
                 return _attach_auth_cookie(resp, access_token), 200
 
+    _audit_auth_event('auth.login.failed', target_user=user, details={'reason': 'invalid_mfa_code'})
     return jsonify(message='Invalid MFA code.'), 401
 
 
@@ -584,6 +619,15 @@ def update_current_user():
 @auth_bp.route('/logout', methods=['POST'])
 def logout():
     """Clear auth cookies for logout."""
+    user = None
+    try:
+        user_id = get_jwt_identity()
+        if user_id:
+            user = User.query.get(user_id)
+    except Exception:
+        user = None
+    if user:
+        _audit_auth_event('auth.logout', actor=user, target_user=user)
     resp = jsonify(message='Logged out')
     unset_jwt_cookies(resp)
     return resp, 200
