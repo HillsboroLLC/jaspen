@@ -1807,6 +1807,36 @@
   text-align: left;
 }
 
+.jas-message-actions {
+  margin-top: 8px;
+}
+
+.jas-message-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  background: var(--white);
+  color: var(--gray-700);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.jas-message-copy-btn:hover {
+  border-color: var(--navy);
+  color: var(--navy);
+}
+
+.jas-message-copy-btn.is-copied {
+  border-color: rgba(16, 185, 129, 0.35);
+  color: #047857;
+  background: rgba(16, 185, 129, 0.08);
+}
+
 .jas-message-bubble > *:first-child,
 .jas-message-content > *:first-child,
 .message-content > *:first-child {
@@ -2801,6 +2831,10 @@
   color: var(--navy);
 }
 
+.jas-ai-message.assistant .jas-message-actions {
+  text-align: left;
+}
+
 .jas-ai-input-area {
   padding: 16px 20px;
   background: var(--white);
@@ -3686,6 +3720,10 @@
   color: var(--navy);
   border: 1px solid var(--border);
   border-bottom-left-radius: 2px;
+}
+
+.jas-chat-tab .agent-chat-message.ai .jas-message-actions {
+  text-align: left;
 }
 
 .jas-chat-tab .agent-chat-input-area {

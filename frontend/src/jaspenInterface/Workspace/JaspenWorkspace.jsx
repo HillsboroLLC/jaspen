@@ -22,7 +22,7 @@ import {
   faPaperPlane, faSpinner, faTimes, faBars, faCheck, faExclamationTriangle,
   faChartLine, faTrash, faPlus, faMinus, faMicrophone,
   faBolt, faLayerGroup, faPlay, faListCheck, faArrowUpRightFromSquare, faGaugeHigh, faClockRotateLeft, faPaperclip, faArrowUp,
-  faDownload, faChevronDown, faUser, faBell, faLock
+  faDownload, faChevronDown, faUser, faBell, faLock, faCopy
 } from '@fortawesome/free-solid-svg-icons';
 import {
   MonitorCheck, MessageCircleQuestion,
@@ -421,11 +421,18 @@ export default function JaspenWorkspace() {
     userDismissedReadiness: false
   });
   const didAutoOpenSettingsRef = useRef(false);
+  const copyResetTimeoutRef = useRef(null);
 
   useEffect(() => {
     if (didAutoOpenSettingsRef.current) return;
     didAutoOpenSettingsRef.current = true;
     dispatchSidebar({ type: 'OPEN_SETTINGS' });
+  }, []);
+
+  useEffect(() => () => {
+    if (copyResetTimeoutRef.current) {
+      window.clearTimeout(copyResetTimeoutRef.current);
+    }
   }, []);
 
   const [sessionId, setSessionId] = useState(null);
@@ -448,6 +455,7 @@ export default function JaspenWorkspace() {
   const [busy, setBusy] = useState(false);
   const [isStreamingReply, setIsStreamingReply] = useState(false);
   const [streamToolStatus, setStreamToolStatus] = useState('');
+  const [copiedMessageKey, setCopiedMessageKey] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
   const [error, setError] = useState(null);
   const recognitionRef = useRef(null);
@@ -832,6 +840,58 @@ const renderConversationMessage = (message) => {
     >
       {text}
     </ReactMarkdown>
+  );
+};
+
+const copyTextToClipboard = async (text) => {
+  const normalized = String(text || '');
+  if (!normalized) return;
+  if (navigator?.clipboard?.writeText) {
+    await navigator.clipboard.writeText(normalized);
+    return;
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = normalized;
+  textarea.setAttribute('readonly', 'readonly');
+  textarea.style.position = 'absolute';
+  textarea.style.left = '-9999px';
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand('copy');
+  document.body.removeChild(textarea);
+};
+
+const handleCopyMessage = async (messageKey, text) => {
+  try {
+    await copyTextToClipboard(text);
+    setCopiedMessageKey(messageKey);
+    if (copyResetTimeoutRef.current) {
+      window.clearTimeout(copyResetTimeoutRef.current);
+    }
+    copyResetTimeoutRef.current = window.setTimeout(() => {
+      setCopiedMessageKey((current) => (current === messageKey ? null : current));
+    }, 1600);
+  } catch (copyError) {
+    showToast('Failed to copy message.', 'error');
+  }
+};
+
+const renderMessageActions = (message, messageKey) => {
+  if (message?.role === 'user') return null;
+  const isCopied = copiedMessageKey === messageKey;
+  return (
+    <div className="jas-message-actions">
+      <button
+        type="button"
+        className={`jas-message-copy-btn ${isCopied ? 'is-copied' : ''}`}
+        onClick={() => handleCopyMessage(messageKey, message?.text || '')}
+        aria-label={isCopied ? 'Copied message' : 'Copy message'}
+        title={isCopied ? 'Copied' : 'Copy'}
+      >
+        <FontAwesomeIcon icon={isCopied ? faCheck : faCopy} />
+        <span>{isCopied ? 'Copied' : 'Copy'}</span>
+      </button>
+    </div>
   );
 };
 
@@ -5668,16 +5728,17 @@ setView(id === 'chat' ? 'intake' : id);
 
     {(!isScenarioTab || scenarioDrawerView === 'assistant') ? (
       <>
-        <div className="jas-ai-messages">
+	        <div className="jas-ai-messages">
 	          {messages.map((m, idx) => (
 	            <div
 	              key={idx}
 	              className={`jas-ai-message ${m.role === 'user' ? 'user' : 'assistant'}`}
 	            >
 	              <div className="jas-message-content">{renderConversationMessage(m)}</div>
+	              {renderMessageActions(m, `drawer:${idx}`)}
 	            </div>
 	          ))}
-        </div>
+	        </div>
         {renderStreamToolStatus()}
 
         {aiScenarioProposal && (
@@ -6135,9 +6196,10 @@ setView(id === 'chat' ? 'intake' : id);
 	                      {messages.map((m, idx) => (
 	                        <div key={idx} className={`agent-chat-message ${m.role === 'ai' ? 'ai' : 'user'}`}>
 	                          <div className="message-content">{renderConversationMessage(m)}</div>
+	                          {renderMessageActions(m, `tab:${idx}`)}
 
-                          {Array.isArray(m.attachments) && m.attachments.length > 0 && (
-                            <div className="message-attachments">
+	                          {Array.isArray(m.attachments) && m.attachments.length > 0 && (
+	                            <div className="message-attachments">
                               {m.attachments.map((a, i) => (
                                 <div key={i} className="message-attachment">
                                   {a.preview && a.type?.startsWith?.('image/')
@@ -6768,6 +6830,7 @@ setView(id === 'chat' ? 'intake' : id);
 	              {messages.map((m, idx) => (
 	                <div key={idx} className={`jas-message ${m.role === 'ai' ? 'ai' : 'user'}`}>
 	                  <div className="jas-message-bubble">{renderConversationMessage(m)}</div>
+	                  {renderMessageActions(m, `main:${idx}`)}
 	                </div>
 	              ))}
 
