@@ -80,7 +80,7 @@ export default function Onboarding({
   const isLastStep = stepIndex === steps.length - 1;
   const isStepComplete = Boolean(step.value);
   const cardClassName = `jas-onboarding-card jas-onboarding-card-step-${stepIndex + 1}`;
-  const showSkipAction = stepIndex === 0 && canSkip;
+  const showSkipAction = canSkip;
   const showBackAction = stepIndex > 0 || canGoBack;
 
   return (
