@@ -919,7 +919,6 @@ const renderMessageActions = (message, messageKey) => {
         title={isCopied ? 'Copied' : 'Copy'}
       >
         <FontAwesomeIcon icon={isCopied ? faCheck : faCopy} />
-        <span>{isCopied ? 'Copied' : 'Copy'}</span>
       </button>
     </div>
   );
