@@ -6549,13 +6549,17 @@ onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
       <Onboarding
         open={showOnboarding}
         canGoBack={!displayName}
-        canSkip={onboardingMode === 'entry'}
+        canSkip
         onBack={() => {
           setOnboardingOpen(false);
           setNameModalMode('required');
           setNameModalOpen(true);
         }}
         onSkip={() => {
+          if (onboardingMode === 'settings') {
+            setOnboardingOpen(false);
+            return;
+          }
           writeOnboardingState(user, {
             completed: false,
             deferred: true,
