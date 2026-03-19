@@ -1729,6 +1729,59 @@
   line-height: 1.65;
 }
 
+.jas-setup-prompt {
+  margin: 0 auto;
+  max-width: 620px;
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 16px 36px rgba(22, 31, 59, 0.08);
+  text-align: left;
+}
+
+.jas-setup-prompt-copy h3 {
+  margin: 0 0 6px;
+  font-size: 1rem;
+  color: var(--navy);
+}
+
+.jas-setup-prompt-copy p {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.6;
+  color: var(--gray-600);
+}
+
+.jas-setup-prompt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.jas-setup-prompt-primary,
+.jas-setup-prompt-secondary {
+  appearance: none;
+  border-radius: 999px;
+  padding: 10px 14px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.jas-setup-prompt-primary {
+  border: none;
+  background: var(--navy);
+  color: var(--white);
+}
+
+.jas-setup-prompt-secondary {
+  border: 1px solid var(--gray-300);
+  background: var(--white);
+  color: var(--gray-700);
+}
+
 /* === Prompt Suggestions === */
 .jas-prompt-suggestions {
   display: flex;

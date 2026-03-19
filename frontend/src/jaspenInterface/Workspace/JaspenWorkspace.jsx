@@ -1353,10 +1353,6 @@ useEffect(() => {
     setNameError('');
     setOnboardingMode('entry');
     setOnboardingInitialSelection(readOnboardingState(user)?.selection || null);
-    if (!saved && !readNamePromptDeferred(user)) {
-      setNameModalMode('required');
-      setNameModalOpen(true);
-    }
     try {
       if (user?.email) localStorage.setItem('jaspen_last_email', user.email);
     } catch {}
@@ -1368,10 +1364,7 @@ useEffect(() => {
     const hasMessages = Array.isArray(messages) && messages.length > 0;
     if (hasActiveThread || hasMessages) {
       setOnboardingOpen(false);
-      return;
     }
-    const onboardingState = readOnboardingState(user);
-    setOnboardingOpen(!onboardingState?.completed && !onboardingState?.deferred);
   }, [user, sessionsLoading, sessionId, currentSessionId, messages]);
 
   useEffect(() => {
@@ -1697,14 +1690,13 @@ useEffect(() => {
                 setNameModalOpen(false);
                 if (nameModalMode === 'required') {
                   const onboardingState = readOnboardingState(user);
-                  writeNamePromptDeferred(user, true);
                   if (!onboardingState?.completed && !onboardingState?.deferred) {
                     setOnboardingMode('entry');
                     setOnboardingInitialSelection(onboardingState?.selection || onboardingInitialSelection || null);
                     setOnboardingOpen(true);
                     return;
                   }
-                  showToast('You can finish setup anytime from Account settings.', 'info');
+                  deferSetupPrompt();
                 }
             }}
           >
@@ -1719,6 +1711,15 @@ useEffect(() => {
                 const ok = await persistDisplayName(trimmed);
                 if (ok) {
                   setNameModalOpen(false);
+                  if (nameModalMode === 'required') {
+                    const onboardingState = readOnboardingState(user);
+                    if (!onboardingState?.completed && !onboardingState?.deferred) {
+                      setOnboardingMode('entry');
+                      setOnboardingInitialSelection(onboardingState?.selection || onboardingInitialSelection || null);
+                      setOnboardingLaunchLabel('');
+                      setOnboardingOpen(true);
+                    }
+                  }
                 }
               }}
               disabled={!nameInput.trim() || nameSaving}
@@ -1892,6 +1893,40 @@ useEffect(() => {
     setNameInput(displayName || user?.name || user?.email?.split?.('@')[0] || '');
     setNameModalMode('edit');
     setNameModalOpen(true);
+  };
+
+  const deferSetupPrompt = () => {
+    const previousSelection = readOnboardingState(user)?.selection || onboardingInitialSelection || null;
+    writeNamePromptDeferred(user, true);
+    writeOnboardingState(user, {
+      completed: false,
+      deferred: true,
+      selection: previousSelection,
+    });
+    setNameModalOpen(false);
+    setOnboardingOpen(false);
+    showToast('You can tailor Jaspen anytime from Account settings.', 'info');
+  };
+
+  const openSetupPromptFlow = () => {
+    const previousSelection = readOnboardingState(user)?.selection || onboardingInitialSelection || null;
+    writeNamePromptDeferred(user, false);
+    writeOnboardingState(user, {
+      completed: false,
+      deferred: false,
+      selection: previousSelection,
+    });
+    if (!displayName) {
+      setNameError('');
+      setNameInput(displayName || user?.name || user?.email?.split?.('@')[0] || '');
+      setNameModalMode('required');
+      setNameModalOpen(true);
+      return;
+    }
+    setOnboardingMode('entry');
+    setOnboardingInitialSelection(previousSelection);
+    setOnboardingLaunchLabel('');
+    setOnboardingOpen(true);
   };
 
   const openOnboardingEditor = () => {
@@ -6455,6 +6490,20 @@ setView(id === 'chat' ? 'intake' : id);
   const intakeHasReadinessTab = sessionId && messages.length > 0 && !sidebarState.readiness;
   const showIntakeTopbarUtilities = !sessionId && messages.length === 0;
   const showSharedProjectsLanding = !sessionId && messages.length === 0 && planCategory !== 'individual' && (effectiveIsCollaborator || effectiveIsViewer);
+  const onboardingState = readOnboardingState(user);
+  const shouldShowSetupPrompt = Boolean(
+    user &&
+    !showSharedProjectsLanding &&
+    !nameModalOpen &&
+    !onboardingOpen &&
+    messages.length === 0 &&
+    !sessionId &&
+    !currentSessionId &&
+    (
+      (!displayName && !readNamePromptDeferred(user)) ||
+      (!onboardingState?.completed && !onboardingState?.deferred)
+    )
+  );
   const showOnboarding = onboardingOpen && !nameModalOpen && !showSharedProjectsLanding;
   const intakeTabs = [];
   if (!sidebarState.settings) intakeTabs.push('settings');
@@ -6850,6 +6899,30 @@ setView(id === 'chat' ? 'intake' : id);
               <span>{welcomeHeading}</span>
             </h2>
             <p>Describe your project or goal, and I&apos;ll help you build a complete strategy scorecard with clear priorities and execution steps.</p>
+            {shouldShowSetupPrompt ? (
+              <div className="jas-setup-prompt" role="note" aria-label="Optional setup prompt">
+                <div className="jas-setup-prompt-copy">
+                  <h3>Tailor Jaspen to how you work</h3>
+                  <p>Choose a display name, role, and starting preference to personalize the experience. Optional. You can always come back from Account settings.</p>
+                </div>
+                <div className="jas-setup-prompt-actions">
+                  <button
+                    type="button"
+                    className="jas-setup-prompt-secondary"
+                    onClick={deferSetupPrompt}
+                  >
+                    Maybe later
+                  </button>
+                  <button
+                    type="button"
+                    className="jas-setup-prompt-primary"
+                    onClick={openSetupPromptFlow}
+                  >
+                    Set up now
+                  </button>
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : (
           <>
