@@ -807,6 +807,34 @@ const normalizeMutationResults = (payload) => {
   return out;
 };
 
+const renderConversationMessage = (message) => {
+  const text = String(message?.text || '');
+  if (message?.role === 'user') return text;
+
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        p: ({ children }) => <p className="jas-md-paragraph">{children}</p>,
+        pre: ({ children }) => <pre className="jas-md-pre">{children}</pre>,
+        code: ({ inline, className, children, ...props }) => (
+          inline ? (
+            <code className={`jas-md-inline-code ${className || ''}`.trim()} {...props}>{children}</code>
+          ) : (
+            <code className={`jas-md-code ${className || ''}`.trim()} {...props}>{children}</code>
+          )
+        ),
+        ul: ({ children }) => <ul className="jas-md-list">{children}</ul>,
+        ol: ({ children }) => <ol className="jas-md-list jas-md-list-ordered">{children}</ol>,
+        table: ({ children }) => <div className="jas-md-table-wrap"><table className="jas-md-table">{children}</table></div>,
+        a: ({ children, ...props }) => <a {...props} target="_blank" rel="noreferrer">{children}</a>,
+      }}
+    >
+      {text}
+    </ReactMarkdown>
+  );
+};
+
 const applyMutationRefreshes = async (payload, fallbackThreadId = null) => {
   const mutations = normalizeMutationResults(payload);
   if (!mutations.length) return;
@@ -5641,14 +5669,14 @@ setView(id === 'chat' ? 'intake' : id);
     {(!isScenarioTab || scenarioDrawerView === 'assistant') ? (
       <>
         <div className="jas-ai-messages">
-          {messages.map((m, idx) => (
-            <div
-              key={idx}
-              className={`jas-ai-message ${m.role === 'user' ? 'user' : 'assistant'}`}
-            >
-              <div className="jas-message-content">{m.text || ''}</div>
-            </div>
-          ))}
+	          {messages.map((m, idx) => (
+	            <div
+	              key={idx}
+	              className={`jas-ai-message ${m.role === 'user' ? 'user' : 'assistant'}`}
+	            >
+	              <div className="jas-message-content">{renderConversationMessage(m)}</div>
+	            </div>
+	          ))}
         </div>
         {renderStreamToolStatus()}
 
@@ -6104,9 +6132,9 @@ setView(id === 'chat' ? 'intake' : id);
                     )}
 
                     <div className="agent-chat-conversation">
-                      {messages.map((m, idx) => (
-                        <div key={idx} className={`agent-chat-message ${m.role === 'ai' ? 'ai' : 'user'}`}>
-                          <div className="message-content">{m.text}</div>
+	                      {messages.map((m, idx) => (
+	                        <div key={idx} className={`agent-chat-message ${m.role === 'ai' ? 'ai' : 'user'}`}>
+	                          <div className="message-content">{renderConversationMessage(m)}</div>
 
                           {Array.isArray(m.attachments) && m.attachments.length > 0 && (
                             <div className="message-attachments">
@@ -6737,11 +6765,11 @@ setView(id === 'chat' ? 'intake' : id);
                 </div>
               )}
 
-              {messages.map((m, idx) => (
-                <div key={idx} className={`jas-message ${m.role === 'ai' ? 'ai' : 'user'}`}>
-                  <div className="jas-message-bubble">{m.text}</div>
-                </div>
-              ))}
+	              {messages.map((m, idx) => (
+	                <div key={idx} className={`jas-message ${m.role === 'ai' ? 'ai' : 'user'}`}>
+	                  <div className="jas-message-bubble">{renderConversationMessage(m)}</div>
+	                </div>
+	              ))}
 
               <div ref={endRef} />
             </div>
