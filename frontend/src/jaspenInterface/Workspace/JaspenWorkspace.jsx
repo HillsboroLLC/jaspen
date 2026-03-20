@@ -301,6 +301,8 @@ function toUiMessages(history = []) {
       historyIndex,
       feedbackValue: String(msg?.feedback?.value || '').trim().toLowerCase() || null,
       hasMutations: Array.isArray(msg?.mutations) && msg.mutations.length > 0,
+      canUndo: Boolean(msg?.undo?.available),
+      undoApplied: Boolean(msg?.undo?.applied),
       regenerated: Boolean(msg?.regenerated),
       alternativesCount: Array.isArray(msg?.alternatives) ? msg.alternatives.length : 0,
       attachments: Array.isArray(msg?.attachments)
@@ -565,6 +567,7 @@ export default function JaspenWorkspace() {
   const [busy, setBusy] = useState(false);
   const [isStreamingReply, setIsStreamingReply] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
+  const [undoingMutation, setUndoingMutation] = useState(false);
   const [streamToolStatus, setStreamToolStatus] = useState('');
   const [copiedMessageKey, setCopiedMessageKey] = useState(null);
   const [feedbackBusyKey, setFeedbackBusyKey] = useState(null);
@@ -1043,6 +1046,15 @@ const renderMessageActions = (message, messageKey, idx, total) => {
     && !message?.streaming
     && !message?.hasMutations
     && !(message?.text || '').includes('Applied changes:');
+  const canUndoMutation = Boolean(activeThreadId)
+    && isLatestAssistant
+    && !isStreamingReply
+    && !busy
+    && !regenerating
+    && !undoingMutation
+    && !message?.streaming
+    && Boolean(message?.hasMutations)
+    && Boolean(message?.canUndo);
   return (
     <div className="jas-message-actions">
       <button
@@ -1112,6 +1124,18 @@ const renderMessageActions = (message, messageKey, idx, total) => {
           disabled={regenerating}
         >
           <FontAwesomeIcon icon={faRotate} />
+        </button>
+      )}
+      {canUndoMutation && (
+        <button
+          type="button"
+          className="jas-message-undo-btn"
+          onClick={undoLastMutationTurn}
+          aria-label="Undo changes"
+          title="Undo changes"
+          disabled={undoingMutation}
+        >
+          <FontAwesomeIcon icon={faClockRotateLeft} />
         </button>
       )}
     </div>
@@ -3491,6 +3515,8 @@ useEffect(() => {
         historyIndex: Number.isInteger(metadata?.historyIndex) ? metadata.historyIndex : message.historyIndex,
         feedbackValue: metadata?.feedbackValue || message.feedbackValue || null,
         hasMutations: Boolean(metadata?.hasMutations) || Boolean(message.hasMutations),
+        canUndo: typeof metadata?.canUndo === 'boolean' ? metadata.canUndo : Boolean(message.canUndo),
+        undoApplied: typeof metadata?.undoApplied === 'boolean' ? metadata.undoApplied : Boolean(message.undoApplied),
         regenerated: Boolean(metadata?.regenerated) || Boolean(message.regenerated),
         alternativesCount: Number.isInteger(metadata?.alternativesCount) ? metadata.alternativesCount : (message.alternativesCount || 0),
       };
@@ -3549,12 +3575,14 @@ useEffect(() => {
           finalizeStreamingAssistant(placeholderId, payload?.reply || payload?.message || '', {
             historyIndex: Number.isInteger(payload?.assistant_message_index) ? payload.assistant_message_index : null,
             hasMutations: Array.isArray(payload?.mutations) && payload.mutations.length > 0,
+            canUndo: Boolean(payload?.undo_available),
           });
         },
       });
       finalizeStreamingAssistant(placeholderId, finalPayload?.reply || finalPayload?.message || '', {
         historyIndex: Number.isInteger(finalPayload?.assistant_message_index) ? finalPayload.assistant_message_index : null,
         hasMutations: Array.isArray(finalPayload?.mutations) && finalPayload.mutations.length > 0,
+        canUndo: Boolean(finalPayload?.undo_available),
       });
       setStreamToolStatus('');
       return finalPayload;
@@ -3603,12 +3631,14 @@ useEffect(() => {
           finalizeStreamingAssistant(placeholderId, payload?.reply || payload?.message || '', {
             historyIndex: Number.isInteger(payload?.assistant_message_index) ? payload.assistant_message_index : null,
             hasMutations: Array.isArray(payload?.mutations) && payload.mutations.length > 0,
+            canUndo: Boolean(payload?.undo_available),
           });
         },
       });
       finalizeStreamingAssistant(placeholderId, finalPayload?.reply || finalPayload?.message || '', {
         historyIndex: Number.isInteger(finalPayload?.assistant_message_index) ? finalPayload.assistant_message_index : null,
         hasMutations: Array.isArray(finalPayload?.mutations) && finalPayload.mutations.length > 0,
+        canUndo: Boolean(finalPayload?.undo_available),
       });
       setStreamToolStatus('');
       return finalPayload;
@@ -3904,6 +3934,52 @@ async function regenerateLastResponse() {
     showToast(e?.message || 'Failed to regenerate. Original response restored.', 'error');
   } finally {
     setRegenerating(false);
+  }
+}
+
+async function undoLastMutationTurn() {
+  if (!activeThreadId || undoingMutation || busy || isStreamingReply || regenerating) return;
+
+  const lastIdx = messages.length - 1;
+  const lastAi = messages[lastIdx];
+  if (!lastAi || lastAi.role !== 'ai' || !lastAi.hasMutations || !lastAi.canUndo) return;
+
+  setUndoingMutation(true);
+  setError(null);
+
+  try {
+    const data = await Jaspen.undoMutations(activeThreadId);
+    setMessages((prev) => prev.map((entry, idx) => (
+      idx === prev.length - 1 && entry?.role === 'ai'
+        ? {
+            ...entry,
+            canUndo: false,
+            undoApplied: true,
+          }
+        : entry
+    )));
+
+    await refreshBundle(activeThreadId);
+    await refreshThreadWbs(activeThreadId);
+    await fetchSessions();
+
+    const auditPayload = await fetchReadinessFor(activeThreadId);
+    if (auditPayload) {
+      const pct = clampPercent(auditPayload.overall?.percent ?? 0);
+      setReadinessAudit({
+        overall: { ...auditPayload.overall, percent: pct },
+        categories: Array.isArray(auditPayload?.categories) ? auditPayload.categories : [],
+        items: Array.isArray(auditPayload?.items) ? auditPayload.items : [],
+        checklist_summary: auditPayload?.checklist_summary || null,
+        version: auditPayload?.version || null,
+      });
+    }
+
+    showToast(data?.message || 'Reverted the latest AI-applied changes.', 'success');
+  } catch (undoError) {
+    showToast(undoError?.message || 'Failed to undo the latest changes.', 'error');
+  } finally {
+    setUndoingMutation(false);
   }
 }
 // === Begin Project (confirm + backend create + spinner + navigate) ===

@@ -1992,6 +1992,31 @@
   cursor: not-allowed;
 }
 
+.jas-message-undo-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--white);
+  color: var(--gray-700);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.jas-message-undo-btn:hover:not(:disabled) {
+  border-color: var(--navy);
+  color: var(--navy);
+}
+
+.jas-message-undo-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 .jas-message-bubble > *:first-child,
 .jas-message-content > *:first-child,
 .message-content > *:first-child {

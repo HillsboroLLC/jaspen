@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify, current_app, Response, stream_wit
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from datetime import datetime
 import base64
+import copy
 import io
 import json
 import math
@@ -36,6 +37,7 @@ from app.scenarios_store import save_scenarios_data
 from .sessions import load_user_sessions, save_user_sessions
 
 ai_agent_bp = Blueprint('ai_agent', __name__)
+PENDING_MUTATION_UNDO_KEY = "pending_mutation_undo"
 
 
 def _audit_ai_agent_event(action, *, user=None, target_user_id=None, target_email=None, details=None):
@@ -1092,8 +1094,64 @@ def _current_user_turn_count(chat_history):
     ])
 
 
+def _clone_json_payload(value):
+    try:
+        return copy.deepcopy(value)
+    except Exception:
+        return json.loads(json.dumps(value))
+
+
 def _is_mutation_tool(tool_name):
     return str(tool_name or "").strip() in _MUTATION_TOOLS
+
+
+def _capture_thread_mutation_snapshot(user_id, thread_id):
+    if not user_id or not thread_id:
+        return None
+    from .strategy import _load_scenarios
+
+    all_data = _load_scenarios(user_id)
+    existing = all_data.get(str(thread_id))
+    return {
+        "thread_id": str(thread_id),
+        "thread_data": _clone_json_payload(existing) if isinstance(existing, dict) else None,
+        "captured_at": _iso_now(),
+    }
+
+
+def _restore_thread_mutation_snapshot(user_id, undo_state):
+    if not user_id or not isinstance(undo_state, dict):
+        return False
+    thread_id = str(undo_state.get("thread_id") or "").strip()
+    if not thread_id:
+        return False
+
+    from .strategy import _load_scenarios, _save_scenarios
+
+    all_data = _load_scenarios(user_id)
+    snapshot_thread = undo_state.get("thread_data")
+    if isinstance(snapshot_thread, dict):
+        all_data[thread_id] = _clone_json_payload(snapshot_thread)
+    else:
+        all_data.pop(thread_id, None)
+    return _save_scenarios(user_id, all_data)
+
+
+def _maybe_capture_turn_undo_snapshot(current_snapshot, *, tool_name, user_id, thread_id):
+    if current_snapshot is not None:
+        return current_snapshot
+    if not _is_mutation_tool(tool_name):
+        return current_snapshot
+    return _capture_thread_mutation_snapshot(user_id, thread_id)
+
+
+def _has_successful_mutations(mutations):
+    return any(
+        isinstance(item, dict)
+        and item.get("tool")
+        and bool(item.get("success"))
+        for item in (mutations if isinstance(mutations, list) else [])
+    )
 
 
 def _guard_mutation_tool(tool_name, *, user_turn_count, mutations_this_turn):
@@ -2206,12 +2264,12 @@ def _generate_assistant_reply_anthropic(
     fallback_reply = _next_question(readiness)
     api_key = _anthropic_api_key()
     if not api_key:
-        return fallback_reply, {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, [], []
+        return fallback_reply, {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, [], [], None
 
     try:
         import anthropic
     except Exception:
-        return fallback_reply, {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, [], []
+        return fallback_reply, {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, [], [], None
 
     model_name = _anthropic_model_for_selection(model_selection)
     max_tokens = int(
@@ -2257,6 +2315,7 @@ def _generate_assistant_reply_anthropic(
     total_output_tokens = 0
     executed_actions = []
     executed_mutations = []
+    undo_snapshot = None
     tool_confirmations = []
     user_turn_count = _current_user_turn_count(chat_history)
     mutations_this_turn = 0
@@ -2305,6 +2364,12 @@ def _generate_assistant_reply_anthropic(
                     if mutation_guard:
                         result_payload = mutation_guard
                     else:
+                        undo_snapshot = _maybe_capture_turn_undo_snapshot(
+                            undo_snapshot,
+                            tool_name=tool_name,
+                            user_id=user_id,
+                            thread_id=thread_id,
+                        )
                         if _is_mutation_tool(tool_name):
                             mutations_this_turn += 1
                         result_payload = _execute_mutation_tool(
@@ -2366,10 +2431,10 @@ def _generate_assistant_reply_anthropic(
             "output_tokens": total_output_tokens,
             "total_tokens": total_input_tokens + total_output_tokens,
         }
-        return reply, usage, executed_actions, executed_mutations
+        return reply, usage, executed_actions, executed_mutations, undo_snapshot
     except Exception:
         current_app.logger.exception("ai_agent anthropic generation failed")
-        return fallback_reply, {"provider": "heuristic", "model": model_name, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, [], []
+        return fallback_reply, {"provider": "heuristic", "model": model_name, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, [], [], None
 
 
 def _stream_assistant_reply_events_anthropic(
@@ -2395,6 +2460,7 @@ def _stream_assistant_reply_events_anthropic(
         "usage": {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
         "actions": [],
         "mutations": [],
+        "undo_snapshot": None,
     })
 
     api_key = _anthropic_api_key()
@@ -2452,6 +2518,7 @@ def _stream_assistant_reply_events_anthropic(
     total_output_tokens = 0
     executed_actions = []
     executed_mutations = []
+    undo_snapshot = None
     tool_confirmations = []
     streamed_reply_parts = []
     resolved_model_name = model_name
@@ -2515,6 +2582,7 @@ def _stream_assistant_reply_events_anthropic(
                     },
                     "actions": executed_actions,
                     "mutations": executed_mutations,
+                    "undo_snapshot": undo_snapshot,
                 })
                 return
 
@@ -2542,6 +2610,12 @@ def _stream_assistant_reply_events_anthropic(
                     if mutation_guard:
                         result_payload = mutation_guard
                     else:
+                        undo_snapshot = _maybe_capture_turn_undo_snapshot(
+                            undo_snapshot,
+                            tool_name=tool_name,
+                            user_id=user_id,
+                            thread_id=thread_id,
+                        )
                         if _is_mutation_tool(tool_name):
                             mutations_this_turn += 1
                         result_payload = _execute_mutation_tool(
@@ -2592,6 +2666,7 @@ def _stream_assistant_reply_events_anthropic(
             },
             "actions": executed_actions,
             "mutations": executed_mutations,
+            "undo_snapshot": undo_snapshot,
         })
     except Exception:
         current_app.logger.exception("ai_agent anthropic streaming failed")
@@ -2603,6 +2678,7 @@ def _stream_assistant_reply_events_anthropic(
             "usage": {"provider": "heuristic", "model": model_name, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
             "actions": executed_actions,
             "mutations": executed_mutations,
+            "undo_snapshot": undo_snapshot,
         })
 
 
@@ -2667,6 +2743,7 @@ def _generate_assistant_reply_gemini(
     }
     executed_actions = []
     executed_mutations = []
+    undo_snapshot = None
     tool_confirmations = []
     user_turn_count = _current_user_turn_count(chat_history)
     mutations_this_turn = 0
@@ -2705,7 +2782,7 @@ def _generate_assistant_reply_gemini(
                 reply = _safe_instructions_reply()
             total_usage["provider"] = "gemini"
             total_usage["model"] = model_name
-            return reply, total_usage, executed_actions, executed_mutations
+            return reply, total_usage, executed_actions, executed_mutations, undo_snapshot
 
         openai_messages.append({
             "role": "assistant",
@@ -2717,6 +2794,12 @@ def _generate_assistant_reply_gemini(
             function = tool_call.get("function") if isinstance(tool_call, dict) else {}
             tool_name = str((function or {}).get("name") or "").strip()
             tool_input = _parse_openai_tool_call_arguments((function or {}).get("arguments"))
+            undo_snapshot = _maybe_capture_turn_undo_snapshot(
+                undo_snapshot,
+                tool_name=tool_name,
+                user_id=user_id,
+                thread_id=thread_id,
+            )
             result_payload, mutations_this_turn = _execute_local_tool(
                 tool_name,
                 tool_input,
@@ -2750,7 +2833,7 @@ def _generate_assistant_reply_gemini(
                 "content": json.dumps(result_payload),
             })
 
-    return fallback_reply, total_usage, executed_actions, executed_mutations
+    return fallback_reply, total_usage, executed_actions, executed_mutations, undo_snapshot
 
 
 def _stream_assistant_reply_events_gemini(
@@ -2778,6 +2861,7 @@ def _stream_assistant_reply_events_gemini(
         "usage": {"provider": "gemini", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
         "actions": [],
         "mutations": [],
+        "undo_snapshot": None,
     })
 
     messages, context_summary_text, summary_usage = _prepare_context_window(
@@ -2824,6 +2908,7 @@ def _stream_assistant_reply_events_gemini(
     }
     executed_actions = []
     executed_mutations = []
+    undo_snapshot = None
     tool_confirmations = []
     user_turn_count = _current_user_turn_count(chat_history)
     mutations_this_turn = 0
@@ -2901,6 +2986,7 @@ def _stream_assistant_reply_events_gemini(
                 "usage": total_usage,
                 "actions": executed_actions,
                 "mutations": executed_mutations,
+                "undo_snapshot": undo_snapshot,
             })
             return
 
@@ -2914,6 +3000,12 @@ def _stream_assistant_reply_events_gemini(
             tool_name = str((function or {}).get("name") or "").strip()
             tool_input = _parse_openai_tool_call_arguments((function or {}).get("arguments"))
             yield {"type": "tool_use", "tool": tool_name, "input": tool_input}
+            undo_snapshot = _maybe_capture_turn_undo_snapshot(
+                undo_snapshot,
+                tool_name=tool_name,
+                user_id=user_id,
+                thread_id=thread_id,
+            )
             result_payload, mutations_this_turn = _execute_local_tool(
                 tool_name,
                 tool_input,
@@ -2953,6 +3045,7 @@ def _stream_assistant_reply_events_gemini(
         "usage": total_usage,
         "actions": executed_actions,
         "mutations": executed_mutations,
+        "undo_snapshot": undo_snapshot,
     })
 
 
@@ -3255,7 +3348,7 @@ def _normalize_message_feedback(value):
     }
 
 
-def _assistant_chat_entry(content, *, mutations=None, regenerated=False, alternatives=None):
+def _assistant_chat_entry(content, *, mutations=None, regenerated=False, alternatives=None, undo=None):
     entry = {
         "role": "assistant",
         "content": str(content or "").strip(),
@@ -3276,6 +3369,15 @@ def _assistant_chat_entry(content, *, mutations=None, regenerated=False, alterna
         entry["regenerated"] = True
     if isinstance(alternatives, list) and alternatives:
         entry["alternatives"] = [item for item in alternatives if isinstance(item, dict)]
+    if isinstance(undo, dict):
+        undo_meta = {}
+        if undo.get("available"):
+            undo_meta["available"] = True
+        if undo.get("applied"):
+            undo_meta["applied"] = True
+            undo_meta["applied_at"] = str(undo.get("applied_at") or _iso_now())
+        if undo_meta:
+            entry["undo"] = undo_meta
     return entry
 
 
@@ -4238,6 +4340,7 @@ def conversation_start():
     if not isinstance(chat_history, list):
         chat_history = []
 
+    session.pop(PENDING_MUTATION_UNDO_KEY, None)
     chat_history.append(_user_chat_entry(user_message, attachments=attachments))
     readiness = _compute_readiness(chat_history, session.get("strategy_objective"))
     context_budget = get_context_budget(to_public_plan(user.subscription_plan))
@@ -4267,6 +4370,7 @@ def conversation_start():
             usage = state.get("usage") if isinstance(state.get("usage"), dict) else {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
             actions = state.get("actions") if isinstance(state.get("actions"), list) else []
             mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
+            undo_snapshot = state.get("undo_snapshot") if isinstance(state.get("undo_snapshot"), dict) else None
 
             credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"])
             charged, remaining = consume_credits(user, credits_charged)
@@ -4282,12 +4386,24 @@ def conversation_start():
                 })
                 return
 
+            undo_available = _has_successful_mutations(mutations) and isinstance(undo_snapshot, dict)
             final_chat_history = list(chat_history)
-            final_chat_history.append(_assistant_chat_entry(assistant_reply, mutations=mutations))
+            final_chat_history.append(_assistant_chat_entry(
+                assistant_reply,
+                mutations=mutations,
+                undo={"available": True} if undo_available else None,
+            ))
             assistant_message_index = len(final_chat_history) - 1
             final_readiness = _compute_readiness(final_chat_history, session.get("strategy_objective"))
 
             session["chat_history"] = final_chat_history
+            if undo_available:
+                session[PENDING_MUTATION_UNDO_KEY] = {
+                    "message_index": assistant_message_index,
+                    "snapshot": undo_snapshot,
+                }
+            else:
+                session.pop(PENDING_MUTATION_UNDO_KEY, None)
             session["name"] = name
             session["model_type"] = model_selection["model_type"]
             session["timestamp"] = _iso_now()
@@ -4323,6 +4439,7 @@ def conversation_start():
                 "actions": actions,
                 "mutations": mutations,
                 "tool_results": mutations,
+                "undo_available": undo_available,
                 "usage": usage,
                 "context_budget": context_budget,
                 "credits": {
@@ -4357,7 +4474,7 @@ def conversation_start():
             },
         )
 
-    assistant_reply, usage, actions, mutations = _generate_assistant_reply(
+    assistant_reply, usage, actions, mutations, undo_snapshot = _generate_assistant_reply(
         user_message,
         chat_history,
         readiness,
@@ -4383,10 +4500,22 @@ def conversation_start():
             "suggestion": "Purchase an overage pack or upgrade your plan.",
         }), 402
 
-    chat_history.append(_assistant_chat_entry(assistant_reply, mutations=mutations))
+    undo_available = _has_successful_mutations(mutations) and isinstance(undo_snapshot, dict)
+    chat_history.append(_assistant_chat_entry(
+        assistant_reply,
+        mutations=mutations,
+        undo={"available": True} if undo_available else None,
+    ))
     assistant_message_index = len(chat_history) - 1
 
     session["chat_history"] = chat_history
+    if undo_available:
+        session[PENDING_MUTATION_UNDO_KEY] = {
+            "message_index": assistant_message_index,
+            "snapshot": undo_snapshot,
+        }
+    else:
+        session.pop(PENDING_MUTATION_UNDO_KEY, None)
     session["name"] = name
     session["model_type"] = model_selection["model_type"]
     session["timestamp"] = _iso_now()
@@ -4420,6 +4549,7 @@ def conversation_start():
         "actions": actions if isinstance(actions, list) else [],
         "mutations": mutations if isinstance(mutations, list) else [],
         "tool_results": mutations if isinstance(mutations, list) else [],
+        "undo_available": undo_available,
         "usage": usage,
         "context_budget": context_budget,
         "credits": {
@@ -4550,6 +4680,7 @@ def conversation_continue():
     if not isinstance(chat_history, list):
         chat_history = []
 
+    session.pop(PENDING_MUTATION_UNDO_KEY, None)
     chat_history.append(_user_chat_entry(user_message, attachments=attachments))
     readiness = _compute_readiness(chat_history, session.get("strategy_objective"))
     context_budget = get_context_budget(to_public_plan(user.subscription_plan))
@@ -4579,6 +4710,7 @@ def conversation_continue():
             usage = state.get("usage") if isinstance(state.get("usage"), dict) else {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
             actions = state.get("actions") if isinstance(state.get("actions"), list) else []
             mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
+            undo_snapshot = state.get("undo_snapshot") if isinstance(state.get("undo_snapshot"), dict) else None
 
             credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"])
             charged, remaining = consume_credits(user, credits_charged)
@@ -4594,12 +4726,24 @@ def conversation_continue():
                 })
                 return
 
+            undo_available = _has_successful_mutations(mutations) and isinstance(undo_snapshot, dict)
             final_chat_history = list(chat_history)
-            final_chat_history.append(_assistant_chat_entry(assistant_reply, mutations=mutations))
+            final_chat_history.append(_assistant_chat_entry(
+                assistant_reply,
+                mutations=mutations,
+                undo={"available": True} if undo_available else None,
+            ))
             assistant_message_index = len(final_chat_history) - 1
             final_readiness = _compute_readiness(final_chat_history, session.get("strategy_objective"))
 
             session["chat_history"] = final_chat_history
+            if undo_available:
+                session[PENDING_MUTATION_UNDO_KEY] = {
+                    "message_index": assistant_message_index,
+                    "snapshot": undo_snapshot,
+                }
+            else:
+                session.pop(PENDING_MUTATION_UNDO_KEY, None)
             session["model_type"] = model_selection["model_type"]
             session["timestamp"] = _iso_now()
             session["status"] = "ready_to_analyze" if final_readiness["overall"]["percent"] >= 85 else "in_progress"
@@ -4634,6 +4778,7 @@ def conversation_continue():
                 "actions": actions,
                 "mutations": mutations,
                 "tool_results": mutations,
+                "undo_available": undo_available,
                 "usage": usage,
                 "context_budget": context_budget,
                 "credits": {
@@ -4668,7 +4813,7 @@ def conversation_continue():
             },
         )
 
-    assistant_reply, usage, actions, mutations = _generate_assistant_reply(
+    assistant_reply, usage, actions, mutations, undo_snapshot = _generate_assistant_reply(
         user_message,
         chat_history,
         readiness,
@@ -4694,10 +4839,22 @@ def conversation_continue():
             "suggestion": "Purchase an overage pack or upgrade your plan.",
         }), 402
 
-    chat_history.append(_assistant_chat_entry(assistant_reply, mutations=mutations))
+    undo_available = _has_successful_mutations(mutations) and isinstance(undo_snapshot, dict)
+    chat_history.append(_assistant_chat_entry(
+        assistant_reply,
+        mutations=mutations,
+        undo={"available": True} if undo_available else None,
+    ))
     assistant_message_index = len(chat_history) - 1
 
     session["chat_history"] = chat_history
+    if undo_available:
+        session[PENDING_MUTATION_UNDO_KEY] = {
+            "message_index": assistant_message_index,
+            "snapshot": undo_snapshot,
+        }
+    else:
+        session.pop(PENDING_MUTATION_UNDO_KEY, None)
     session["model_type"] = model_selection["model_type"]
     session["timestamp"] = _iso_now()
     session["status"] = "ready_to_analyze" if readiness["overall"]["percent"] >= 85 else "in_progress"
@@ -4730,6 +4887,7 @@ def conversation_continue():
         "actions": actions if isinstance(actions, list) else [],
         "mutations": mutations if isinstance(mutations, list) else [],
         "tool_results": mutations if isinstance(mutations, list) else [],
+        "undo_available": undo_available,
         "usage": usage,
         "context_budget": context_budget,
         "credits": {
@@ -4953,6 +5111,7 @@ def get_thread(thread_id):
         "chat_history": chat_history,
         "readiness": readiness,
     }
+    session_payload.pop(PENDING_MUTATION_UNDO_KEY, None)
 
     return jsonify({
         "success": True,
@@ -5091,6 +5250,7 @@ def update_thread(thread_id):
         "chat_history": chat_history,
         "readiness": readiness,
     }
+    session_payload.pop(PENDING_MUTATION_UNDO_KEY, None)
 
     return jsonify({
         "success": True,
@@ -5167,6 +5327,101 @@ def set_thread_message_feedback(thread_id, message_index):
         "thread_id": str(session.get("session_id") or session_key or thread_id),
         "message_index": int(message_index),
         "feedback": feedback,
+    }), 200
+
+
+@ai_agent_bp.route("/conversation/undo-mutations", methods=["POST"])
+@jwt_required()
+@limiter.limit("10 per minute")
+def conversation_undo_mutations():
+    data = request.get_json() or {}
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    thread_id = str(data.get("thread_id") or data.get("session_id") or "").strip()
+    if not thread_id:
+        return jsonify({"error": "thread_id is required"}), 400
+
+    sessions = load_user_sessions(user_id) or {}
+    session_key, session = _resolve_user_session(sessions, thread_id)
+    if not isinstance(session, dict):
+        return jsonify({"error": "Thread not found"}), 404
+
+    chat_history = _session_chat_history(session)
+    if not chat_history:
+        return jsonify({"error": "Nothing to undo"}), 400
+
+    assistant_message_index = len(chat_history) - 1
+    last_msg = chat_history[assistant_message_index]
+    if str(last_msg.get("role") or "").strip().lower() not in {"assistant", "ai", "bot"}:
+        return jsonify({"error": "Only the latest assistant mutation turn can be undone"}), 409
+
+    undo_meta = last_msg.get("undo") if isinstance(last_msg.get("undo"), dict) else {}
+    last_mutations = last_msg.get("mutations") if isinstance(last_msg.get("mutations"), list) else []
+    pending_undo = session.get(PENDING_MUTATION_UNDO_KEY) if isinstance(session.get(PENDING_MUTATION_UNDO_KEY), dict) else None
+
+    if not undo_meta.get("available") or not last_mutations or not pending_undo:
+        return jsonify({
+            "error": "No undo is available for the latest response.",
+            "code": "undo_not_available",
+        }), 409
+
+    pending_index = pending_undo.get("message_index")
+    snapshot = pending_undo.get("snapshot") if isinstance(pending_undo.get("snapshot"), dict) else None
+    if pending_index != assistant_message_index or not snapshot:
+        return jsonify({
+            "error": "Undo is no longer available for this response.",
+            "code": "undo_not_available",
+        }), 409
+
+    if not _restore_thread_mutation_snapshot(user_id, snapshot):
+        return jsonify({"error": "Failed to restore the previous project state"}), 500
+
+    updated_chat_history = list(chat_history)
+    updated_last_msg = dict(last_msg)
+    updated_last_msg["undo"] = {
+        "available": False,
+        "applied": True,
+        "applied_at": _iso_now(),
+    }
+    updated_chat_history[assistant_message_index] = updated_last_msg
+
+    session["chat_history"] = updated_chat_history
+    session["timestamp"] = _iso_now()
+    session.pop(PENDING_MUTATION_UNDO_KEY, None)
+    sessions[session_key or thread_id] = session
+    if not save_user_sessions(user_id, sessions):
+        return jsonify({"error": "Failed to persist undo state"}), 500
+
+    _audit_ai_agent_event(
+        "message.mutations_undone",
+        user=user,
+        details={
+            "thread_id": str(session.get("session_id") or session_key or thread_id),
+            "message_index": assistant_message_index,
+            "mutation_count": len(last_mutations),
+        },
+    )
+
+    readiness = _compute_readiness(updated_chat_history, session.get("strategy_objective"))
+
+    return jsonify({
+        "success": True,
+        "thread_id": str(session.get("session_id") or session_key or thread_id),
+        "session_id": str(session.get("session_id") or session_key or thread_id),
+        "assistant_message_index": assistant_message_index,
+        "undo_applied": True,
+        "message": "Reverted the latest AI-applied changes.",
+        "readiness": {
+            "percent": readiness["overall"]["percent"],
+            "categories": readiness["categories"],
+            "items": readiness.get("items", []),
+            "checklist_summary": readiness.get("checklist_summary", {}),
+            "version": readiness.get("version"),
+            "updated_at": _iso_now(),
+        },
     }), 200
 
 
@@ -5344,7 +5599,7 @@ def conversation_regenerate():
             },
         )
 
-    assistant_reply, usage, _actions, _mutations = _generate_assistant_reply(
+    assistant_reply, usage, _actions, _mutations, _undo_snapshot = _generate_assistant_reply(
         user_message,
         regen_history,
         readiness,

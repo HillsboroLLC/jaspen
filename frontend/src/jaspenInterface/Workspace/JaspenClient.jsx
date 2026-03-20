@@ -24,6 +24,7 @@ export const endpoints = {
   updateThread:   (threadId) => `${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(threadId)}`,
   messageFeedback: (threadId, messageIndex) => `${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(threadId)}/messages/${encodeURIComponent(messageIndex)}/feedback`,
   regenerate: `${API_BASE}/api/v1/ai-agent/conversation/regenerate`,
+  undoMutations: `${API_BASE}/api/v1/ai-agent/conversation/undo-mutations`,
   
   // Analyses
   listAnalyses:   (threadId) => `${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(threadId)}/analyses`,
@@ -767,6 +768,13 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
     return postJSON(
       endpoints.messageFeedback(threadId, messageIndex),
       { value },
+      { withSid: true }
+    );
+  },
+  async undoMutations(threadId) {
+    return postJSON(
+      endpoints.undoMutations,
+      { thread_id: threadId },
       { withSid: true }
     );
   },
