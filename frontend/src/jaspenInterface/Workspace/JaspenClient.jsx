@@ -285,16 +285,35 @@ async function postForm(url, form, { withSid = false, sidOverride, retryable = f
   return _json(resp);
 }
 
-async function openRetriedStream(url, { body, sid } = {}) {
+function buildConversationForm(fields = {}, files = []) {
+  const form = new FormData();
+  Object.entries(fields || {}).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === '') return;
+    if (typeof value === 'object') {
+      form.append(key, JSON.stringify(value));
+      return;
+    }
+    form.append(key, String(value));
+  });
+  (Array.isArray(files) ? files : []).forEach((file) => {
+    if (file instanceof File) form.append('files', file);
+  });
+  return form;
+}
+
+async function openRetriedStream(url, { body, sid, isForm = false } = {}) {
+  const baseHeaders = isForm
+    ? buildAuthHeaders({ Accept: 'text/event-stream' }, 'POST')
+    : buildAuthHeaders({
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+    }, 'POST');
   return fetchWithRetry(url, {
     method: 'POST',
     credentials: 'include',
     cache: 'no-store',
     headers: {
-      ...buildAuthHeaders({
-        'Content-Type': 'application/json',
-        'Accept': 'text/event-stream',
-      }, 'POST'),
+      ...baseHeaders,
       'X-Session-ID': sid || getSid(),
     },
     body,
@@ -417,7 +436,7 @@ export const Jaspen = {
   },
 
   // ---------- Conversational intake (Claude via /api/v1/chat) ----------
-async convoStart({ description, project_id, model_type, strategy_objective, intake_context, lever_defaults, starter_id }) {
+async convoStart({ description, project_id, model_type, strategy_objective, intake_context, lever_defaults, starter_id, attachments }) {
     console.log('[JaspenClient.convoStart] ENTRY', {
       description: description?.substring(0, 50),
       project_id,
@@ -426,20 +445,36 @@ async convoStart({ description, project_id, model_type, strategy_objective, inta
     // Default project_id for testing - replace with real project selection later
     const pid = project_id || 'default-jas-project';
 
-    const data = await postJSON(
-      endpoints.convoStart,
-      {
-        message: description,
-        project_id: pid,
-        name: description.substring(0, 60) || 'New Idea',
-        model_type: model_type || undefined,
-        strategy_objective: strategy_objective || undefined,
-        intake_context: intake_context && typeof intake_context === 'object' ? intake_context : undefined,
-        lever_defaults: lever_defaults && typeof lever_defaults === 'object' ? lever_defaults : undefined,
-        starter_id: starter_id || undefined,
-      },
-      { withSid: true }
-    );
+    const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
+    const data = hasAttachments
+      ? await postForm(
+        endpoints.convoStart,
+        buildConversationForm({
+          message: description,
+          project_id: pid,
+          name: description.substring(0, 60) || 'New Idea',
+          model_type: model_type || undefined,
+          strategy_objective: strategy_objective || undefined,
+          intake_context: intake_context && typeof intake_context === 'object' ? intake_context : undefined,
+          lever_defaults: lever_defaults && typeof lever_defaults === 'object' ? lever_defaults : undefined,
+          starter_id: starter_id || undefined,
+        }, attachments),
+        { withSid: true, retryable: true }
+      )
+      : await postJSON(
+        endpoints.convoStart,
+        {
+          message: description,
+          project_id: pid,
+          name: description.substring(0, 60) || 'New Idea',
+          model_type: model_type || undefined,
+          strategy_objective: strategy_objective || undefined,
+          intake_context: intake_context && typeof intake_context === 'object' ? intake_context : undefined,
+          lever_defaults: lever_defaults && typeof lever_defaults === 'object' ? lever_defaults : undefined,
+          starter_id: starter_id || undefined,
+        },
+        { withSid: true }
+      );
 
     console.log('[JaspenClient.convoStart] RESPONSE', {
       thread_id: data.thread_id,
@@ -460,23 +495,35 @@ async convoStart({ description, project_id, model_type, strategy_objective, inta
       status: data.status || 'gathering_info',
     };
   },
-async convoContinue({ session_id, user_message, conversation_history, model_type, strategy_objective }) {
+async convoContinue({ session_id, user_message, conversation_history, model_type, strategy_objective, attachments }) {
     console.log('[JaspenClient.convoContinue] ENTRY', {
       session_id,
       user_message: user_message?.substring(0, 50),
       hasHistory: Boolean(conversation_history?.length),
     });
 
-    const data = await postJSON(
-      endpoints.convoNext,
-      {
-        thread_id: session_id,
-        message: user_message,
-        model_type: model_type || undefined,
-        strategy_objective: strategy_objective || undefined,
-      },
-      { withSid: true }
-    );
+    const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
+    const data = hasAttachments
+      ? await postForm(
+        endpoints.convoNext,
+        buildConversationForm({
+          thread_id: session_id,
+          message: user_message,
+          model_type: model_type || undefined,
+          strategy_objective: strategy_objective || undefined,
+        }, attachments),
+        { withSid: true, retryable: true }
+      )
+      : await postJSON(
+        endpoints.convoNext,
+        {
+          thread_id: session_id,
+          message: user_message,
+          model_type: model_type || undefined,
+          strategy_objective: strategy_objective || undefined,
+        },
+        { withSid: true }
+      );
 
     console.log('[JaspenClient.convoContinue] RESPONSE', {
       thread_id_sent: session_id,
@@ -503,6 +550,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
     intake_context,
     lever_defaults,
     starter_id,
+    attachments,
     onDelta,
     onToolUse,
     onToolResult,
@@ -510,9 +558,9 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
   }) {
     const url = `${endpoints.convoStart}?stream=true`;
     const pid = project_id || 'default-jas-project';
-    const resp = await openRetriedStream(url, {
-      sid: getSid(),
-      body: JSON.stringify({
+    const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
+    const body = hasAttachments
+      ? buildConversationForm({
         message: description,
         project_id: pid,
         name: description.substring(0, 60) || 'New Idea',
@@ -521,7 +569,21 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
         intake_context: intake_context && typeof intake_context === 'object' ? intake_context : undefined,
         lever_defaults: lever_defaults && typeof lever_defaults === 'object' ? lever_defaults : undefined,
         starter_id: starter_id || undefined,
-      }),
+      }, attachments)
+      : JSON.stringify({
+        message: description,
+        project_id: pid,
+        name: description.substring(0, 60) || 'New Idea',
+        model_type: model_type || undefined,
+        strategy_objective: strategy_objective || undefined,
+        intake_context: intake_context && typeof intake_context === 'object' ? intake_context : undefined,
+        lever_defaults: lever_defaults && typeof lever_defaults === 'object' ? lever_defaults : undefined,
+        starter_id: starter_id || undefined,
+      });
+    const resp = await openRetriedStream(url, {
+      sid: getSid(),
+      body,
+      isForm: hasAttachments,
     });
 
     const reader = resp.body?.getReader();
@@ -571,20 +633,31 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
     user_message,
     model_type,
     strategy_objective,
+    attachments,
     onDelta,
     onToolUse,
     onToolResult,
     onDone,
   }) {
     const url = `${endpoints.convoNext}?stream=true`;
-    const resp = await openRetriedStream(url, {
-      sid: getSid(),
-      body: JSON.stringify({
+    const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
+    const body = hasAttachments
+      ? buildConversationForm({
         thread_id: session_id,
         message: user_message,
         model_type: model_type || undefined,
         strategy_objective: strategy_objective || undefined,
-      }),
+      }, attachments)
+      : JSON.stringify({
+        thread_id: session_id,
+        message: user_message,
+        model_type: model_type || undefined,
+        strategy_objective: strategy_objective || undefined,
+      });
+    const resp = await openRetriedStream(url, {
+      sid: getSid(),
+      body,
+      isForm: hasAttachments,
     });
 
     const reader = resp.body?.getReader();

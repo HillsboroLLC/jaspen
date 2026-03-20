@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify, current_app, Response, stream_with_context
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from datetime import datetime
+import base64
 import io
 import json
 import math
@@ -100,6 +101,8 @@ INTAKE_OBJECTIVE_GUIDANCE = {
 
 MAX_USER_MESSAGE_LENGTH = 12_000
 MAX_MUTATIONS_PER_TURN = 3
+MAX_CONVERSATION_ATTACHMENTS = 5
+MAX_CONVERSATION_ATTACHMENT_BYTES = 10 * 1024 * 1024
 USER_MESSAGE_OPEN_TAG = "<user_message>"
 USER_MESSAGE_CLOSE_TAG = "</user_message>"
 _MUTATION_TOOLS = {"create_scenario", "update_wbs_task", "add_wbs_task", "remove_wbs_task"}
@@ -172,6 +175,13 @@ _SYSTEM_PROMPT_PREFIX = (
     "- Only call mutation tools (create_scenario, update_wbs_task, add_wbs_task, remove_wbs_task) when the user has clearly and directly requested the action in plain conversational language.\n"
     "</system_instructions>\n"
 )
+_IMAGE_EXTENSION_MEDIA_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+}
 
 
 def normalize_strategy_objective(value, default="balanced"):
@@ -835,11 +845,19 @@ def _message_text(msg):
     if not isinstance(msg, dict):
         return ""
     content = msg.get("content")
+    attachments = msg.get("attachments") if isinstance(msg.get("attachments"), list) else []
     if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, dict):
-        return str(content.get("text") or content.get("message") or "").strip()
-    return str(msg.get("text") or msg.get("message") or "").strip()
+        text = content.strip()
+    elif isinstance(content, dict):
+        text = str(content.get("text") or content.get("message") or "").strip()
+    else:
+        text = str(msg.get("text") or msg.get("message") or "").strip()
+    if not attachments:
+        return text
+    attachment_summary = _attachment_reference_text(attachments)
+    if text and attachment_summary:
+        return f"{text}\n\n{attachment_summary}"
+    return text or attachment_summary
 
 
 def _wrap_user_message_content(text):
@@ -855,6 +873,194 @@ def _unwrap_user_message_content(text):
         inner = clean[len(USER_MESSAGE_OPEN_TAG): -len(USER_MESSAGE_CLOSE_TAG)]
         return inner.strip()
     return clean
+
+
+def _attachment_reference_text(attachments):
+    parts = []
+    for attachment in attachments if isinstance(attachments, list) else []:
+        if not isinstance(attachment, dict):
+            continue
+        name = str(attachment.get("name") or attachment.get("filename") or "").strip()
+        media_type = str(attachment.get("type") or attachment.get("media_type") or "").strip()
+        kind = str(attachment.get("kind") or "").strip().lower()
+        label = kind or media_type or "file"
+        if name:
+            parts.append(f"{name} ({label})")
+    if not parts:
+        return ""
+    return "Attached files: " + ", ".join(parts[:5])
+
+
+def _safe_attachment_name(name):
+    cleaned = re.sub(r"[^a-zA-Z0-9._ -]", "_", str(name or "").strip())[:180].strip()
+    return cleaned or "attachment"
+
+
+def _normalize_attachment_media_type(uploaded_file):
+    raw_name = _safe_attachment_name(getattr(uploaded_file, "filename", "") or "attachment")
+    lower_name = raw_name.lower()
+    raw_type = str(
+        getattr(uploaded_file, "mimetype", None)
+        or getattr(uploaded_file, "content_type", None)
+        or ""
+    ).strip().lower()
+    if raw_type.startswith("image/"):
+        return raw_type
+    if raw_type == "application/pdf":
+        return raw_type
+    for ext, media_type in _IMAGE_EXTENSION_MEDIA_TYPES.items():
+        if lower_name.endswith(ext):
+            return media_type
+    if lower_name.endswith(".pdf"):
+        return "application/pdf"
+    return ""
+
+
+def _attachment_kind_for_media_type(media_type):
+    media_type = str(media_type or "").strip().lower()
+    if media_type == "application/pdf":
+        return "pdf"
+    if media_type.startswith("image/"):
+        return "image"
+    return ""
+
+
+def _serialize_chat_attachment(attachment):
+    if not isinstance(attachment, dict):
+        return None
+    media_type = str(attachment.get("type") or "").strip()
+    kind = str(attachment.get("kind") or _attachment_kind_for_media_type(media_type)).strip().lower()
+    if not kind:
+        return None
+    return {
+        "name": _safe_attachment_name(attachment.get("name")),
+        "size": int(attachment.get("size") or 0),
+        "type": media_type,
+        "kind": kind,
+    }
+
+
+def _conversation_attachment_blocks(attachments):
+    blocks = []
+    for attachment in attachments if isinstance(attachments, list) else []:
+        if not isinstance(attachment, dict):
+            continue
+        encoded = str(attachment.get("data") or "").strip()
+        media_type = str(attachment.get("type") or "").strip()
+        kind = str(attachment.get("kind") or "").strip().lower()
+        if not encoded or not media_type or not kind:
+            continue
+        if kind == "image":
+            blocks.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": media_type,
+                    "data": encoded,
+                },
+            })
+        elif kind == "pdf":
+            blocks.append({
+                "type": "document",
+                "source": {
+                    "type": "base64",
+                    "media_type": media_type,
+                    "data": encoded,
+                },
+            })
+    return blocks
+
+
+def _anthropic_user_message_content(text, attachments=None):
+    wrapped = _wrap_user_message_content(text)
+    blocks = [{"type": "text", "text": wrapped or _wrap_user_message_content("Please review the attached files.")}]
+    attachment_blocks = _conversation_attachment_blocks(attachments)
+    if attachment_blocks:
+        blocks.extend(attachment_blocks)
+        return blocks
+    return wrapped
+
+
+def _parse_json_field(value, default=None):
+    if isinstance(value, (dict, list)):
+        return value
+    text = str(value or "").strip()
+    if not text:
+        return default
+    try:
+        parsed = json.loads(text)
+        return parsed
+    except Exception:
+        return default
+
+
+def _extract_conversation_attachments():
+    uploads = [item for item in request.files.getlist("files") if getattr(item, "filename", None)]
+    if not uploads:
+        return []
+    if len(uploads) > MAX_CONVERSATION_ATTACHMENTS:
+        raise ValueError(f"You can attach up to {MAX_CONVERSATION_ATTACHMENTS} files per message.")
+
+    attachments = []
+    for uploaded in uploads:
+        filename = _safe_attachment_name(getattr(uploaded, "filename", "") or "attachment")
+        media_type = _normalize_attachment_media_type(uploaded)
+        kind = _attachment_kind_for_media_type(media_type)
+        if not kind:
+            raise ValueError("Chat attachments currently support images and PDFs only.")
+
+        uploaded.stream.seek(0, 2)
+        file_size = int(uploaded.stream.tell() or 0)
+        uploaded.stream.seek(0)
+        if file_size <= 0:
+            raise ValueError(f"{filename} is empty.")
+        if file_size > MAX_CONVERSATION_ATTACHMENT_BYTES:
+            max_mb = MAX_CONVERSATION_ATTACHMENT_BYTES // (1024 * 1024)
+            raise ValueError(f"{filename} exceeds the {max_mb} MB per-file limit for chat attachments.")
+
+        content = uploaded.read()
+        uploaded.stream.seek(0)
+        if not content:
+            raise ValueError(f"{filename} is empty.")
+
+        attachments.append({
+            "name": filename,
+            "size": len(content),
+            "type": media_type,
+            "kind": kind,
+            "data": base64.b64encode(content).decode("ascii"),
+        })
+    return attachments
+
+
+def _conversation_request_payload():
+    if request.mimetype and request.mimetype.startswith("multipart/form-data"):
+        data = request.form.to_dict(flat=True)
+        if "intake_context" in data:
+            data["intake_context"] = _parse_json_field(data.get("intake_context"), default={})
+        if "lever_defaults" in data:
+            data["lever_defaults"] = _parse_json_field(data.get("lever_defaults"), default={})
+        attachments = _extract_conversation_attachments()
+        return data, attachments
+    return request.get_json() or {}, []
+
+
+def _user_chat_entry(content, *, attachments=None):
+    entry = {
+        "role": "user",
+        "content": str(content or "").strip(),
+        "timestamp": _iso_now(),
+    }
+    serialized_attachments = [
+        item for item in (
+            _serialize_chat_attachment(attachment)
+            for attachment in (attachments if isinstance(attachments, list) else [])
+        )
+        if item
+    ]
+    if serialized_attachments:
+        entry["attachments"] = serialized_attachments
+    return entry
 
 
 def _detect_injection_signals(text):
@@ -1155,12 +1361,13 @@ def _openai_messages_from_history(messages):
             continue
         role = str(item.get("role") or "").strip().lower()
         content = item.get("content")
+        text_content = _message_text(item)
         if role not in {"assistant", "user", "tool"}:
             continue
         if isinstance(content, str):
             payload = {
                 "role": role,
-                "content": content if role != "user" else _wrap_user_message_content(_unwrap_user_message_content(content)),
+                "content": text_content if role != "user" else _wrap_user_message_content(_unwrap_user_message_content(text_content)),
             }
             if role == "assistant" and isinstance(item.get("tool_calls"), list):
                 payload["tool_calls"] = item.get("tool_calls")
@@ -1993,6 +2200,7 @@ def _generate_assistant_reply_anthropic(
     user_id=None,
     thread_id=None,
     intake_context=None,
+    attachments=None,
     disable_mutations=False,
 ):
     fallback_reply = _next_question(readiness)
@@ -2028,8 +2236,11 @@ def _generate_assistant_reply_anthropic(
         user_id=user_id,
         thread_id=thread_id,
     )
-    if not messages:
-        messages = [{"role": "user", "content": _wrap_user_message_content(user_message)}]
+    user_content = _anthropic_user_message_content(user_message, attachments=attachments)
+    if messages and str(messages[-1].get("role") or "").strip().lower() == "user":
+        messages[-1] = {**messages[-1], "content": user_content}
+    elif not messages:
+        messages = [{"role": "user", "content": user_content}]
 
     client = anthropic.Anthropic(api_key=api_key)
     plan_key = to_public_plan(user.subscription_plan) if user else "free"
@@ -2174,6 +2385,7 @@ def _stream_assistant_reply_events_anthropic(
     intake_context=None,
     context_budget=None,
     state=None,
+    attachments=None,
     disable_mutations=False,
 ):
     state = state if isinstance(state, dict) else {}
@@ -2219,8 +2431,11 @@ def _stream_assistant_reply_events_anthropic(
         user_id=user_id,
         thread_id=thread_id,
     )
-    if not messages:
-        messages = [{"role": "user", "content": _wrap_user_message_content(user_message)}]
+    user_content = _anthropic_user_message_content(user_message, attachments=attachments)
+    if messages and str(messages[-1].get("role") or "").strip().lower() == "user":
+        messages[-1] = {**messages[-1], "content": user_content}
+    elif not messages:
+        messages = [{"role": "user", "content": user_content}]
 
     client = anthropic.Anthropic(api_key=api_key)
     plan_key = to_public_plan(user.subscription_plan) if user else "free"
@@ -2752,8 +2967,24 @@ def _generate_assistant_reply(
     user_id=None,
     thread_id=None,
     intake_context=None,
+    attachments=None,
     disable_mutations=False,
 ):
+    if attachments:
+        return _generate_assistant_reply_anthropic(
+            user_message,
+            chat_history,
+            readiness,
+            model_selection,
+            context_budget=context_budget,
+            session=session,
+            user=user,
+            user_id=user_id,
+            thread_id=thread_id,
+            intake_context=intake_context,
+            attachments=attachments,
+            disable_mutations=disable_mutations,
+        )
     objective = normalize_strategy_objective(
         ((intake_context or {}).get("objective") if isinstance(intake_context, dict) else None) or "balanced"
     )
@@ -2774,6 +3005,7 @@ def _generate_assistant_reply(
                     user_id=user_id,
                     thread_id=thread_id,
                     intake_context=intake_context,
+                    attachments=attachments,
                     disable_mutations=disable_mutations,
                 )
             except Exception as exc:
@@ -2791,6 +3023,7 @@ def _generate_assistant_reply(
             user_id=user_id,
             thread_id=thread_id,
             intake_context=intake_context,
+            attachments=attachments,
             disable_mutations=disable_mutations,
         )
 
@@ -2807,6 +3040,7 @@ def _generate_assistant_reply(
         user_id=user_id,
         thread_id=thread_id,
         intake_context=intake_context,
+        attachments=attachments,
         disable_mutations=disable_mutations,
     )
 
@@ -2824,8 +3058,27 @@ def _stream_assistant_reply_events(
     intake_context=None,
     context_budget=None,
     state=None,
+    attachments=None,
     disable_mutations=False,
 ):
+    if attachments:
+        for payload in _stream_assistant_reply_events_anthropic(
+            user_message,
+            chat_history,
+            readiness,
+            model_selection,
+            session=session,
+            user=user,
+            user_id=user_id,
+            thread_id=thread_id,
+            intake_context=intake_context,
+            context_budget=context_budget,
+            state=state,
+            attachments=attachments,
+            disable_mutations=disable_mutations,
+        ):
+            yield payload
+        return
     objective = normalize_strategy_objective(
         ((intake_context or {}).get("objective") if isinstance(intake_context, dict) else None) or "balanced"
     )
@@ -2847,6 +3100,7 @@ def _stream_assistant_reply_events(
                     intake_context=intake_context,
                     context_budget=context_budget,
                     state=state,
+                    attachments=attachments,
                     disable_mutations=disable_mutations,
                 ):
                     yielded_any = True
@@ -2869,6 +3123,7 @@ def _stream_assistant_reply_events(
             intake_context=intake_context,
             context_budget=context_budget,
             state=state,
+            attachments=attachments,
             disable_mutations=disable_mutations,
         ):
             yield payload
@@ -2886,6 +3141,7 @@ def _stream_assistant_reply_events(
         intake_context=intake_context,
         context_budget=context_budget,
         state=state,
+        attachments=attachments,
         disable_mutations=disable_mutations,
     ):
         yield payload
@@ -3886,7 +4142,10 @@ def _persist_thread_insight(user_id, thread_id, filename, insight_payload, summa
 @jwt_required()
 @limiter.limit("10 per minute")
 def conversation_start():
-    data = request.get_json() or {}
+    try:
+        data, attachments = _conversation_request_payload()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     user_id = get_jwt_identity()
     user = User.query.get(user_id)
     if not user:
@@ -3897,6 +4156,8 @@ def conversation_start():
     active_org_id = active_org.id if active_org else user.active_organization_id
 
     user_message = str(data.get("message") or data.get("description") or "").strip()
+    if not user_message and attachments:
+        user_message = "Please review the attached files and help me interpret them."
     if not user_message:
         return jsonify({"error": "message is required"}), 400
     if len(user_message) > MAX_USER_MESSAGE_LENGTH:
@@ -3977,7 +4238,7 @@ def conversation_start():
     if not isinstance(chat_history, list):
         chat_history = []
 
-    chat_history.append({"role": "user", "content": user_message, "timestamp": _iso_now()})
+    chat_history.append(_user_chat_entry(user_message, attachments=attachments))
     readiness = _compute_readiness(chat_history, session.get("strategy_objective"))
     context_budget = get_context_budget(to_public_plan(user.subscription_plan))
     stream_requested = str(request.args.get("stream") or "").strip().lower() in {"1", "true", "yes"}
@@ -3997,6 +4258,7 @@ def conversation_start():
                 user_id=user_id,
                 thread_id=thread_id,
                 intake_context=session.get("intake_context"),
+                attachments=attachments,
                 state=state,
             ):
                 yield _sse_payload(payload)
@@ -4106,6 +4368,7 @@ def conversation_start():
         user_id=user_id,
         thread_id=thread_id,
         intake_context=session.get("intake_context"),
+        attachments=attachments,
     )
 
     credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"])
@@ -4185,7 +4448,10 @@ def conversation_start():
 @jwt_required()
 @limiter.limit("30 per minute")
 def conversation_continue():
-    data = request.get_json() or {}
+    try:
+        data, attachments = _conversation_request_payload()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     user_id = get_jwt_identity()
     user = User.query.get(user_id)
     if not user:
@@ -4197,6 +4463,8 @@ def conversation_continue():
 
     thread_id = str(data.get("thread_id") or data.get("session_id") or request.headers.get("X-Session-ID") or "").strip()
     user_message = str(data.get("message") or data.get("user_message") or "").strip()
+    if not user_message and attachments:
+        user_message = "Please review the attached files and help me interpret them."
 
     if not thread_id:
         return jsonify({"error": "thread_id or session_id is required"}), 400
@@ -4282,7 +4550,7 @@ def conversation_continue():
     if not isinstance(chat_history, list):
         chat_history = []
 
-    chat_history.append({"role": "user", "content": user_message, "timestamp": _iso_now()})
+    chat_history.append(_user_chat_entry(user_message, attachments=attachments))
     readiness = _compute_readiness(chat_history, session.get("strategy_objective"))
     context_budget = get_context_budget(to_public_plan(user.subscription_plan))
     stream_requested = str(request.args.get("stream") or "").strip().lower() in {"1", "true", "yes"}
@@ -4302,6 +4570,7 @@ def conversation_continue():
                 user_id=user_id,
                 thread_id=thread_id,
                 intake_context=session.get("intake_context"),
+                attachments=attachments,
                 state=state,
             ):
                 yield _sse_payload(payload)
@@ -4410,6 +4679,7 @@ def conversation_continue():
         user_id=user_id,
         thread_id=thread_id,
         intake_context=session.get("intake_context"),
+        attachments=attachments,
     )
 
     credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"])

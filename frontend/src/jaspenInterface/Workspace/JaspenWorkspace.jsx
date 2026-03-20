@@ -267,6 +267,32 @@ function isContextSyncMessage(text) {
   return String(text || '').trim().toLowerCase() === '[context-sync]';
 }
 
+function isPdfLikeFile(fileLike) {
+  const type = String(fileLike?.type || '').toLowerCase();
+  const name = String(fileLike?.name || '').toLowerCase();
+  return type === 'application/pdf' || name.endsWith('.pdf');
+}
+
+function isImageLikeFile(fileLike) {
+  const type = String(fileLike?.type || '').toLowerCase();
+  const name = String(fileLike?.name || '').toLowerCase();
+  return type.startsWith('image/') || /\.(png|jpe?g|gif|webp)$/i.test(name);
+}
+
+function isChatAttachmentFile(fileLike) {
+  return isImageLikeFile(fileLike) || isPdfLikeFile(fileLike);
+}
+
+function buildMessageAttachmentMeta(fileLike) {
+  return {
+    name: fileLike?.name || 'attachment',
+    size: Number(fileLike?.size || 0),
+    type: fileLike?.type || (isPdfLikeFile(fileLike) ? 'application/pdf' : 'application/octet-stream'),
+    preview: fileLike?.preview || null,
+    uploading: Boolean(fileLike?.uploading),
+  };
+}
+
 function toUiMessages(history = []) {
   return (Array.isArray(history) ? history : [])
     .map((msg, historyIndex) => ({
@@ -277,6 +303,11 @@ function toUiMessages(history = []) {
       hasMutations: Array.isArray(msg?.mutations) && msg.mutations.length > 0,
       regenerated: Boolean(msg?.regenerated),
       alternativesCount: Array.isArray(msg?.alternatives) ? msg.alternatives.length : 0,
+      attachments: Array.isArray(msg?.attachments)
+        ? msg.attachments
+          .map((attachment) => buildMessageAttachmentMeta(attachment))
+          .filter((attachment) => attachment.name)
+        : [],
     }))
     .filter((m) => m.text.length > 0 && !isContextSyncMessage(m.text));
 }
@@ -928,6 +959,39 @@ const renderConversationMessage = (message) => {
     >
       {text}
     </ReactMarkdown>
+  );
+};
+
+const renderMessageAttachments = (message) => {
+  if (!Array.isArray(message?.attachments) || message.attachments.length === 0) return null;
+  return (
+    <div className="message-attachments">
+      {message.attachments.map((attachment, index) => {
+        const isImage = attachment?.preview && String(attachment?.type || '').startsWith('image/');
+        return (
+          <div key={`${attachment?.name || 'attachment'}-${index}`} className="message-attachment">
+            {isImage ? (
+              <img
+                className="attachment-thumb"
+                src={attachment.preview}
+                alt={attachment.name}
+                onLoad={() => {
+                  try { if (attachment.preview?.startsWith?.('blob:')) URL.revokeObjectURL(attachment.preview); } catch {}
+                }}
+              />
+            ) : (
+              <span className="attachment-link" title={attachment?.name}>{attachment?.name}</span>
+            )}
+            <span className="attachment-meta">
+              {Math.max(1, Math.round((attachment?.size || 0) / 1024))} KB
+            </span>
+          </div>
+        );
+      })}
+      <div className="attachments-caption">
+        Attached {message.attachments.length} {message.attachments.length === 1 ? 'file' : 'files'}
+      </div>
+    </div>
   );
 };
 
@@ -3462,6 +3526,7 @@ useEffect(() => {
     userText,
     modelType,
     objective,
+    attachments,
   }) => {
     setIsStreamingReply(true);
     const placeholderId = createStreamingAssistantPlaceholder();
@@ -3472,6 +3537,7 @@ useEffect(() => {
         user_message: userText,
         model_type: modelType,
         strategy_objective: objective,
+        attachments,
         onDelta: (text) => appendStreamingAssistantDelta(placeholderId, text),
         onToolUse: (event) => setStreamToolStatus(toolStatusLabel(event?.tool)),
         onToolResult: () => setStreamToolStatus(''),
@@ -3512,6 +3578,7 @@ useEffect(() => {
     intakeContext,
     leverDefaults,
     starterId,
+    attachments,
   }) => {
     setIsStreamingReply(true);
     const placeholderId = createStreamingAssistantPlaceholder();
@@ -3524,6 +3591,7 @@ useEffect(() => {
         intake_context: intakeContext,
         lever_defaults: leverDefaults,
         starter_id: starterId,
+        attachments,
         onDelta: (text) => appendStreamingAssistantDelta(placeholderId, text),
         onToolUse: (event) => setStreamToolStatus(toolStatusLabel(event?.tool)),
         onToolResult: () => setStreamToolStatus(''),
@@ -3606,6 +3674,7 @@ useEffect(() => {
         intakeContext,
         leverDefaults,
         starterId: selectedStarter?.id || undefined,
+        attachments: Array.isArray(options.attachments) ? options.attachments : [],
       });
 
       // Let the placeholder stream render instead of showing a blocking overlay.
@@ -3662,7 +3731,7 @@ useEffect(() => {
 
   // === Conversation Continue ===
   // Flow: Call Jaspen.convoContinue → append message → await audit → persist using returned payload
-async function continueConversation(userText) {
+async function continueConversation(userText, options = {}) {
   console.log('[continueConversation] ENTRY', {
     sessionId,
     currentSessionId,
@@ -3685,6 +3754,7 @@ async function continueConversation(userText) {
       userText,
       modelType: selectedModelType,
       objective: strategyObjective,
+      attachments: Array.isArray(options.attachments) ? options.attachments : [],
     });
 
     console.log('[continueConversation] convoContinue returned:', {
@@ -4214,20 +4284,24 @@ console.log('[Finish&Analyze] data.analysis_result.meta.extracted_levers?', data
       return;
     }
 
-    const filesToAnalyze = [...(pendingFiles || [])];
-    const attachments = filesToAnalyze.map(f => ({
-      name: f.name,
-      size: f.size,
-      type: f.type,
-      preview: f.preview || null,
+    const selectedFiles = [...(pendingFiles || [])];
+    const chatFiles = selectedFiles.filter((item) => isChatAttachmentFile(item));
+    const analysisFiles = selectedFiles.filter((item) => !isChatAttachmentFile(item));
+    const attachments = selectedFiles.map((item) => ({
+      ...buildMessageAttachmentMeta(item),
       uploading: true,
     }));
+    const messageText = text || (
+      chatFiles.length > 0
+        ? 'Please review the attached files and help me interpret them.'
+        : `Uploaded ${attachments.length} file${attachments.length === 1 ? '' : 's'}`
+    );
 
     setMessages(prev => [
       ...prev,
       {
         role: 'user',
-        text: text || '(attachments)',
+        text: messageText,
         attachments,
       },
     ]);
@@ -4235,16 +4309,20 @@ console.log('[Finish&Analyze] data.analysis_result.meta.extracted_levers?', data
     setInput('');
     setPendingFiles([]);
 
-    const placeholder = text || `Uploaded ${attachments.length} file(s)`;
+    const placeholder = messageText;
     let resolvedThreadId = sessionId || currentSessionId || null;
     if (!sessionId) {
-      resolvedThreadId = await startConversation(placeholder);
+      resolvedThreadId = await startConversation(placeholder, {
+        attachments: chatFiles.map((item) => item.file).filter(Boolean),
+      });
     } else {
-      resolvedThreadId = await continueConversation(placeholder);
+      resolvedThreadId = await continueConversation(placeholder, {
+        attachments: chatFiles.map((item) => item.file).filter(Boolean),
+      });
     }
 
-    if (filesToAnalyze.length > 0) {
-      await analyzeUploadedFiles(filesToAnalyze, resolvedThreadId, text);
+    if (analysisFiles.length > 0) {
+      await analyzeUploadedFiles(analysisFiles, resolvedThreadId, text);
     }
   }
 
@@ -6033,6 +6111,7 @@ setView(id === 'chat' ? 'intake' : id);
 	              className={`jas-ai-message ${m.role === 'user' ? 'user' : 'assistant'}`}
 	            >
 	              <div className="jas-message-content">{renderConversationMessage(m)}</div>
+	              {renderMessageAttachments(m)}
 	              {renderMessageActions(m, `drawer:${idx}`, idx, messages.length)}
 	            </div>
 	          ))}
@@ -6494,48 +6573,10 @@ setView(id === 'chat' ? 'intake' : id);
 	                      {messages.map((m, idx) => (
 	                        <div key={idx} className={`agent-chat-message ${m.role === 'ai' ? 'ai' : 'user'}`}>
 	                          <div className="message-content">{renderConversationMessage(m)}</div>
+	                          {renderMessageAttachments(m)}
 	                          {renderMessageActions(m, `tab:${idx}`, idx, messages.length)}
-
-	                          {Array.isArray(m.attachments) && m.attachments.length > 0 && (
-	                            <div className="message-attachments">
-                              {m.attachments.map((a, i) => (
-                                <div key={i} className="message-attachment">
-                                  {a.preview && a.type?.startsWith?.('image/')
-                                    ? (
-                                      <img
-                                        className="attachment-thumb"
-                                        src={a.preview}
-                                        alt={a.name}
-                                        onLoad={() => {
-                                          try { if (a.preview) URL.revokeObjectURL(a.preview); } catch {}
-                                        }}
-                                      />
-                                    )
-                                    : (
-                                      <a
-                                        className="attachment-link"
-                                        href={a.preview || '#'}
-                                        onClick={(e) => { if (!a.preview) e.preventDefault(); }}
-                                        download={a.name}
-                                        title={a.name}
-                                      >
-                                        {a.name}
-                                      </a>
-                                    )
-                                  }
-                                  <span className="attachment-meta">
-                                    {Math.round((a.size || 0) / 1024)} KB
-                                  </span>
-                                </div>
-                              ))}
-
-                              <div className="attachments-caption">
-                                Attached {m.attachments.length} {m.attachments.length === 1 ? 'file' : 'files'}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      ))}
+	                        </div>
+	                      ))}
                       <div ref={endRef} />
                     </div>
                     {renderStreamToolStatus()}
@@ -7183,6 +7224,7 @@ setView(id === 'chat' ? 'intake' : id);
 	              {messages.map((m, idx) => (
 	                <div key={idx} className={`jas-message ${m.role === 'ai' ? 'ai' : 'user'}`}>
 	                  <div className="jas-message-bubble">{renderConversationMessage(m)}</div>
+	                  {renderMessageAttachments(m)}
 	                  {renderMessageActions(m, `main:${idx}`, idx, messages.length)}
 	                </div>
 	              ))}
