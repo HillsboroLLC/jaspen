@@ -192,12 +192,35 @@ def create_app():
         'pack_5000':       os.getenv('PRICE_ID_OVERAGE_5000'),
         'pack_20000':      os.getenv('PRICE_ID_OVERAGE_20000'),
     }
-    app.config['MODEL_TYPE_BACKING_IDS'] = {
-        'pluto': os.getenv('MODEL_PLUTO_ID') or os.getenv('ANTHROPIC_MODEL_PLUTO') or 'claude-3-5-haiku-latest',
-        'orbit': os.getenv('MODEL_ORBIT_ID') or os.getenv('ANTHROPIC_MODEL_ORBIT') or 'claude-3-7-sonnet-latest',
-        'titan': os.getenv('MODEL_TITAN_ID') or os.getenv('ANTHROPIC_MODEL_TITAN') or 'claude-3-7-sonnet-latest',
+    app.config['LLM_PROVIDER_MODELS'] = {
+        'claude_haiku': (
+            os.getenv('MODEL_CLAUDE_HAIKU')
+            or os.getenv('ANTHROPIC_MODEL_PLUTO')
+            or os.getenv('MODEL_PLUTO_ID')
+            or 'claude-3-5-haiku-latest'
+        ),
+        'claude_sonnet': (
+            os.getenv('MODEL_CLAUDE_SONNET')
+            or os.getenv('ANTHROPIC_MODEL_ORBIT')
+            or os.getenv('MODEL_ORBIT_ID')
+            or 'claude-sonnet-4-20250514'
+        ),
+        'claude_opus': (
+            os.getenv('MODEL_CLAUDE_OPUS')
+            or os.getenv('ANTHROPIC_MODEL_TITAN')
+            or os.getenv('MODEL_TITAN_ID')
+            or 'claude-opus-4-20250514'
+        ),
+        'gemini_flash': os.getenv('GEMINI_MODEL_FLASH') or 'gemini-2.5-flash',
+        'gemini_pro': os.getenv('GEMINI_MODEL_PRO') or 'gemini-2.5-pro',
     }
-    app.config['AI_AGENT_ANTHROPIC_MODEL'] = os.getenv('AI_AGENT_ANTHROPIC_MODEL') or 'claude-3-7-sonnet-latest'
+    app.config['MODEL_TYPE_BACKING_IDS'] = {
+        'pluto': os.getenv('MODEL_PLUTO_ID') or os.getenv('ANTHROPIC_MODEL_PLUTO') or app.config['LLM_PROVIDER_MODELS']['claude_haiku'],
+        'orbit': os.getenv('MODEL_ORBIT_ID') or os.getenv('ANTHROPIC_MODEL_ORBIT') or app.config['LLM_PROVIDER_MODELS']['claude_sonnet'],
+        'titan': os.getenv('MODEL_TITAN_ID') or os.getenv('ANTHROPIC_MODEL_TITAN') or app.config['LLM_PROVIDER_MODELS']['claude_opus'],
+    }
+    app.config['GEMINI_API_KEY'] = os.getenv('GEMINI_API_KEY', '')
+    app.config['AI_AGENT_ANTHROPIC_MODEL'] = os.getenv('AI_AGENT_ANTHROPIC_MODEL') or app.config['LLM_PROVIDER_MODELS']['claude_sonnet']
     app.config['AI_AGENT_MAX_OUTPUT_TOKENS'] = int(os.getenv('AI_AGENT_MAX_OUTPUT_TOKENS', '1500'))
     app.config['AI_AGENT_TEMPERATURE'] = float(os.getenv('AI_AGENT_TEMPERATURE', '0.2'))
     app.config['AI_AGENT_CREDITS_PER_1K_TOKENS'] = float(os.getenv('AI_AGENT_CREDITS_PER_1K_TOKENS', '1.0'))

@@ -102,14 +102,14 @@ DEFAULT_MODEL_CATALOG = {
         'version': '1.0',
         'description': 'Balanced depth and speed for broader cross-functional synthesis.',
         'min_plan': 'team',
-        'default_llm_model': 'claude-3-7-sonnet-latest',
+        'default_llm_model': 'claude-sonnet-4-20250514',
     },
     'titan': {
         'label': 'Titan',
         'version': '1.0',
         'description': 'Highest-depth reasoning for complex multi-team initiatives.',
         'min_plan': 'enterprise',
-        'default_llm_model': 'claude-3-7-sonnet-latest',
+        'default_llm_model': 'claude-opus-4-20250514',
     },
 }
 

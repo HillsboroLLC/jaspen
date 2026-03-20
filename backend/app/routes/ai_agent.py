@@ -7,6 +7,7 @@ import math
 import os
 import re
 import uuid
+import requests
 
 from app import db, limiter
 from app.admin_audit import append_user_audit_event
@@ -122,6 +123,27 @@ _SYSTEM_PROMPT_LEAK_FRAGMENTS = [
     "_context_summary_prompt_suffix",
     "_intake_context_prompt_suffix",
 ]
+_GEMINI_OPENAI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+_ROUTING_MATRIX = {
+    "pluto": {
+        "balanced": [("anthropic", "claude_haiku"), ("gemini", "gemini_flash")],
+        "cost": [("gemini", "gemini_flash"), ("anthropic", "claude_haiku")],
+        "speed": [("gemini", "gemini_flash"), ("anthropic", "claude_haiku")],
+        "growth": [("anthropic", "claude_haiku"), ("gemini", "gemini_flash")],
+    },
+    "orbit": {
+        "balanced": [("anthropic", "claude_sonnet"), ("gemini", "gemini_pro"), ("gemini", "gemini_flash")],
+        "cost": [("gemini", "gemini_flash"), ("anthropic", "claude_sonnet"), ("gemini", "gemini_pro")],
+        "speed": [("anthropic", "claude_sonnet"), ("gemini", "gemini_flash"), ("gemini", "gemini_pro")],
+        "growth": [("anthropic", "claude_sonnet"), ("gemini", "gemini_pro"), ("gemini", "gemini_flash")],
+    },
+    "titan": {
+        "balanced": [("anthropic", "claude_opus"), ("anthropic", "claude_sonnet"), ("gemini", "gemini_pro")],
+        "cost": [("gemini", "gemini_pro"), ("anthropic", "claude_sonnet"), ("anthropic", "claude_opus")],
+        "speed": [("anthropic", "claude_sonnet"), ("gemini", "gemini_pro"), ("anthropic", "claude_opus")],
+        "growth": [("anthropic", "claude_opus"), ("anthropic", "claude_sonnet"), ("gemini", "gemini_pro")],
+    },
+}
 _SYSTEM_PROMPT_PREFIX = (
     "<system_instructions>\n"
     "You are Jaspen's intake agent. Ask one concise next question that advances readiness when intake is incomplete. "
@@ -1055,6 +1077,205 @@ def _anthropic_model_candidates(preferred_model=None):
     return output
 
 
+def _gemini_api_key():
+    return (
+        current_app.config.get("GEMINI_API_KEY")
+        or os.getenv("GEMINI_API_KEY")
+    )
+
+
+def _provider_model_id(key):
+    models = current_app.config.get("LLM_PROVIDER_MODELS")
+    if not isinstance(models, dict):
+        return ""
+    return str(models.get(key) or "").strip()
+
+
+def _resolve_generation_routes(model_selection, strategy_objective="balanced"):
+    model_type = normalize_model_type((model_selection or {}).get("model_type")) or "pluto"
+    objective = normalize_strategy_objective(strategy_objective, default="balanced")
+    plan = _ROUTING_MATRIX.get(model_type, _ROUTING_MATRIX["pluto"])
+    route_defs = plan.get(objective) or plan.get("balanced") or []
+    routes = []
+    for provider, model_key in route_defs:
+        model_id = _provider_model_id(model_key)
+        if not model_id:
+            continue
+        if provider == "anthropic":
+            if not _anthropic_api_key():
+                continue
+        elif provider == "gemini":
+            if not _gemini_api_key():
+                continue
+        routes.append({
+            "provider": provider,
+            "model_key": model_key,
+            "model": model_id,
+        })
+
+    if routes:
+        return routes
+
+    fallback_model = str((model_selection or {}).get("llm_model") or "").strip()
+    if fallback_model:
+        provider = "gemini" if fallback_model.startswith("gemini") else "anthropic"
+        return [{"provider": provider, "model_key": "", "model": fallback_model}]
+
+    return [{
+        "provider": "anthropic",
+        "model_key": "claude_sonnet",
+        "model": _provider_model_id("claude_sonnet") or "claude-sonnet-4-20250514",
+    }]
+
+
+def _openai_tools_from_anthropic(enable_mutation_tools=False):
+    tools = []
+    for item in _anthropic_tool_definitions(enable_mutation_tools=enable_mutation_tools):
+        if not isinstance(item, dict):
+            continue
+        tools.append({
+            "type": "function",
+            "function": {
+                "name": item.get("name"),
+                "description": item.get("description"),
+                "parameters": item.get("input_schema") or {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": False,
+                },
+            },
+        })
+    return tools
+
+
+def _openai_messages_from_history(messages):
+    output = []
+    for item in messages or []:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip().lower()
+        content = item.get("content")
+        if role not in {"assistant", "user", "tool"}:
+            continue
+        if isinstance(content, str):
+            payload = {
+                "role": role,
+                "content": content if role != "user" else _wrap_user_message_content(_unwrap_user_message_content(content)),
+            }
+            if role == "assistant" and isinstance(item.get("tool_calls"), list):
+                payload["tool_calls"] = item.get("tool_calls")
+            if role == "tool" and item.get("tool_call_id"):
+                payload["tool_call_id"] = item.get("tool_call_id")
+            output.append(payload)
+            continue
+        if role == "assistant" and isinstance(content, list):
+            assistant_text = _anthropic_text(content)
+            if assistant_text:
+                output.append({"role": "assistant", "content": assistant_text})
+    return output
+
+
+def _gemini_openai_request(*, model_name, system_prompt, messages, tools, max_tokens, temperature, stream=False):
+    payload = {
+        "model": model_name,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            *(_openai_messages_from_history(messages)),
+        ],
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    if tools:
+        payload["tools"] = tools
+        payload["tool_choice"] = "auto"
+    if stream:
+        payload["stream"] = True
+        payload["stream_options"] = {"include_usage": True}
+
+    response = requests.post(
+        _GEMINI_OPENAI_BASE_URL,
+        headers={
+            "Authorization": f"Bearer {_gemini_api_key()}",
+            "Content-Type": "application/json",
+        },
+        json=payload,
+        timeout=(20, 240),
+        stream=stream,
+    )
+    response.raise_for_status()
+    return response
+
+
+def _parse_openai_tool_call_arguments(raw_arguments):
+    text = str(raw_arguments or "").strip()
+    if not text:
+        return {}
+    try:
+        data = json.loads(text)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _openai_usage_to_internal(usage, *, provider, model):
+    usage = usage if isinstance(usage, dict) else {}
+    input_tokens = int(
+        usage.get("prompt_tokens")
+        or usage.get("input_tokens")
+        or 0
+    )
+    output_tokens = int(
+        usage.get("completion_tokens")
+        or usage.get("output_tokens")
+        or 0
+    )
+    total_tokens = int(usage.get("total_tokens") or (input_tokens + output_tokens))
+    return {
+        "provider": provider,
+        "model": model,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
+    }
+
+
+def _merge_usage_totals(base_usage, extra_usage):
+    base = base_usage if isinstance(base_usage, dict) else {}
+    extra = extra_usage if isinstance(extra_usage, dict) else {}
+    return {
+        "provider": extra.get("provider") or base.get("provider"),
+        "model": extra.get("model") or base.get("model"),
+        "input_tokens": int(base.get("input_tokens") or 0) + int(extra.get("input_tokens") or 0),
+        "output_tokens": int(base.get("output_tokens") or 0) + int(extra.get("output_tokens") or 0),
+        "total_tokens": int(base.get("total_tokens") or 0) + int(extra.get("total_tokens") or 0),
+    }
+
+
+def _execute_local_tool(tool_name, tool_input, *, readiness, user, user_id, thread_id, user_turn_count, mutations_this_turn):
+    if tool_name in {"get_readiness_snapshot", "get_data_contract"}:
+        return _anthropic_tool_output(tool_name, readiness), mutations_this_turn
+
+    mutation_guard = _guard_mutation_tool(
+        tool_name,
+        user_turn_count=user_turn_count,
+        mutations_this_turn=mutations_this_turn,
+    )
+    if mutation_guard:
+        return mutation_guard, mutations_this_turn
+
+    next_count = mutations_this_turn
+    if _is_mutation_tool(tool_name):
+        next_count += 1
+
+    return _execute_mutation_tool(
+        tool_name,
+        tool_input,
+        user=user,
+        user_id=user_id,
+        thread_id=thread_id,
+    ), next_count
+
+
 def _model_credit_multiplier(model_type):
     model_type = normalize_model_type(model_type)
     defaults = {"pluto": 1.0, "orbit": 1.5, "titan": 2.25}
@@ -1761,7 +1982,7 @@ def _anthropic_message_create(client, *, model_name, stream=False, **kwargs):
     raise RuntimeError("No valid Anthropic model candidates configured")
 
 
-def _generate_assistant_reply(
+def _generate_assistant_reply_anthropic(
     user_message,
     chat_history,
     readiness,
@@ -1940,7 +2161,7 @@ def _generate_assistant_reply(
         return fallback_reply, {"provider": "heuristic", "model": model_name, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, [], []
 
 
-def _stream_assistant_reply_events(
+def _stream_assistant_reply_events_anthropic(
     user_message,
     chat_history,
     readiness,
@@ -2168,6 +2389,506 @@ def _stream_assistant_reply_events(
             "actions": executed_actions,
             "mutations": executed_mutations,
         })
+
+
+def _generate_assistant_reply_gemini(
+    user_message,
+    chat_history,
+    readiness,
+    model_selection,
+    context_budget=None,
+    session=None,
+    user=None,
+    user_id=None,
+    thread_id=None,
+    intake_context=None,
+    disable_mutations=False,
+):
+    if not _gemini_api_key():
+        raise RuntimeError("GEMINI_API_KEY not configured")
+
+    fallback_reply = _next_question(readiness)
+    messages, context_summary_text, summary_usage = _prepare_context_window(
+        session,
+        chat_history,
+        context_budget,
+        model_selection,
+    )
+    system_prompt = _build_agent_system_prompt(
+        context_summary_text=context_summary_text,
+        intake_context=intake_context,
+        user_id=user_id,
+        thread_id=thread_id,
+    )
+    if not messages:
+        messages = [{"role": "user", "content": _wrap_user_message_content(user_message)}]
+
+    max_tokens = int(
+        current_app.config.get("AI_AGENT_MAX_OUTPUT_TOKENS")
+        or os.getenv("AI_AGENT_MAX_OUTPUT_TOKENS")
+        or 260
+    )
+    temperature = float(
+        current_app.config.get("AI_AGENT_TEMPERATURE")
+        or os.getenv("AI_AGENT_TEMPERATURE")
+        or 0.2
+    )
+    plan_key = to_public_plan(user.subscription_plan) if user else "free"
+    can_mutate = (
+        not disable_mutations
+        and bool(thread_id)
+        and (
+            is_tool_allowed(plan_key, "scenario_create", "write")
+            or is_tool_allowed(plan_key, "wbs_write", "write")
+        )
+    )
+    tools = _openai_tools_from_anthropic(enable_mutation_tools=can_mutate)
+    total_usage = {
+        "provider": "gemini",
+        "model": model_selection.get("llm_model"),
+        "input_tokens": int(summary_usage.get("input_tokens", 0) or 0),
+        "output_tokens": int(summary_usage.get("output_tokens", 0) or 0),
+        "total_tokens": int(summary_usage.get("total_tokens", 0) or 0),
+    }
+    executed_actions = []
+    executed_mutations = []
+    tool_confirmations = []
+    user_turn_count = _current_user_turn_count(chat_history)
+    mutations_this_turn = 0
+    model_name = str((model_selection or {}).get("llm_model") or "").strip()
+
+    openai_messages = list(messages)
+    for _ in range(3):
+        response = _gemini_openai_request(
+            model_name=model_name,
+            system_prompt=system_prompt,
+            messages=openai_messages,
+            tools=tools,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            stream=False,
+        )
+        payload = response.json()
+        total_usage = _merge_usage_totals(
+            total_usage,
+            _openai_usage_to_internal(payload.get("usage"), provider="gemini", model=model_name),
+        )
+        choice = ((payload.get("choices") or [{}])[0]) if isinstance(payload, dict) else {}
+        message = choice.get("message") if isinstance(choice, dict) else {}
+        message = message if isinstance(message, dict) else {}
+        tool_calls = message.get("tool_calls") if isinstance(message.get("tool_calls"), list) else []
+        assistant_text = str(message.get("content") or "").strip()
+
+        if not tool_calls:
+            reply = assistant_text or fallback_reply
+            if tool_confirmations:
+                confirmations_text = "\n".join(f"- {item}" for item in tool_confirmations)
+                if confirmations_text and confirmations_text not in reply:
+                    reply = f"{reply}\n\nApplied changes:\n{confirmations_text}".strip()
+            if _check_response_for_leak(reply):
+                current_app.logger.warning("System prompt leak detected | user=%s thread=%s", user_id, thread_id)
+                reply = _safe_instructions_reply()
+            total_usage["provider"] = "gemini"
+            total_usage["model"] = model_name
+            return reply, total_usage, executed_actions, executed_mutations
+
+        openai_messages.append({
+            "role": "assistant",
+            "content": message.get("content"),
+            "tool_calls": tool_calls,
+        })
+
+        for tool_call in tool_calls:
+            function = tool_call.get("function") if isinstance(tool_call, dict) else {}
+            tool_name = str((function or {}).get("name") or "").strip()
+            tool_input = _parse_openai_tool_call_arguments((function or {}).get("arguments"))
+            result_payload, mutations_this_turn = _execute_local_tool(
+                tool_name,
+                tool_input,
+                readiness=readiness,
+                user=user,
+                user_id=user_id,
+                thread_id=thread_id,
+                user_turn_count=user_turn_count,
+                mutations_this_turn=mutations_this_turn,
+            )
+            if isinstance(result_payload, dict) and result_payload.get("ok"):
+                confirmation = str(result_payload.get("confirmation") or "").strip()
+                if confirmation:
+                    tool_confirmations.append(confirmation)
+            if isinstance(result_payload, dict):
+                executed_actions.append({
+                    "tool": tool_name,
+                    "input": tool_input,
+                    "result": result_payload,
+                })
+                executed_mutations.append({
+                    "tool": tool_name,
+                    "success": bool(result_payload.get("ok")),
+                    "result_summary": _mutation_result_summary(tool_name, result_payload),
+                    "error": result_payload.get("error"),
+                    "code": result_payload.get("code"),
+                })
+            openai_messages.append({
+                "role": "tool",
+                "tool_call_id": tool_call.get("id"),
+                "content": json.dumps(result_payload),
+            })
+
+    return fallback_reply, total_usage, executed_actions, executed_mutations
+
+
+def _stream_assistant_reply_events_gemini(
+    user_message,
+    chat_history,
+    readiness,
+    model_selection,
+    *,
+    session=None,
+    user=None,
+    user_id=None,
+    thread_id=None,
+    intake_context=None,
+    context_budget=None,
+    state=None,
+    disable_mutations=False,
+):
+    if not _gemini_api_key():
+        raise RuntimeError("GEMINI_API_KEY not configured")
+
+    state = state if isinstance(state, dict) else {}
+    fallback_reply = _next_question(readiness)
+    state.update({
+        "reply": fallback_reply,
+        "usage": {"provider": "gemini", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+        "actions": [],
+        "mutations": [],
+    })
+
+    messages, context_summary_text, summary_usage = _prepare_context_window(
+        session,
+        chat_history,
+        context_budget,
+        model_selection,
+    )
+    system_prompt = _build_agent_system_prompt(
+        context_summary_text=context_summary_text,
+        intake_context=intake_context,
+        user_id=user_id,
+        thread_id=thread_id,
+    )
+    if not messages:
+        messages = [{"role": "user", "content": _wrap_user_message_content(user_message)}]
+
+    max_tokens = int(
+        current_app.config.get("AI_AGENT_MAX_OUTPUT_TOKENS")
+        or os.getenv("AI_AGENT_MAX_OUTPUT_TOKENS")
+        or 260
+    )
+    temperature = float(
+        current_app.config.get("AI_AGENT_TEMPERATURE")
+        or os.getenv("AI_AGENT_TEMPERATURE")
+        or 0.2
+    )
+    plan_key = to_public_plan(user.subscription_plan) if user else "free"
+    can_mutate = (
+        not disable_mutations
+        and bool(thread_id)
+        and (
+            is_tool_allowed(plan_key, "scenario_create", "write")
+            or is_tool_allowed(plan_key, "wbs_write", "write")
+        )
+    )
+    tools = _openai_tools_from_anthropic(enable_mutation_tools=can_mutate)
+    total_usage = {
+        "provider": "gemini",
+        "model": model_selection.get("llm_model"),
+        "input_tokens": int(summary_usage.get("input_tokens", 0) or 0),
+        "output_tokens": int(summary_usage.get("output_tokens", 0) or 0),
+        "total_tokens": int(summary_usage.get("total_tokens", 0) or 0),
+    }
+    executed_actions = []
+    executed_mutations = []
+    tool_confirmations = []
+    user_turn_count = _current_user_turn_count(chat_history)
+    mutations_this_turn = 0
+    model_name = str((model_selection or {}).get("llm_model") or "").strip()
+    openai_messages = list(messages)
+
+    for _ in range(3):
+        streamed_parts = []
+        tool_calls_by_index = {}
+        usage_payload = {}
+        response = _gemini_openai_request(
+            model_name=model_name,
+            system_prompt=system_prompt,
+            messages=openai_messages,
+            tools=tools,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            stream=True,
+        )
+        for raw_line in response.iter_lines(decode_unicode=True):
+            line = str(raw_line or "").strip()
+            if not line.startswith("data:"):
+                continue
+            data_text = line[5:].strip()
+            if not data_text or data_text == "[DONE]":
+                continue
+            payload = json.loads(data_text)
+            if isinstance(payload.get("usage"), dict):
+                usage_payload = payload.get("usage") or {}
+            choices = payload.get("choices") if isinstance(payload, dict) else None
+            if not isinstance(choices, list) or not choices:
+                continue
+            delta = (choices[0] or {}).get("delta") if isinstance(choices[0], dict) else {}
+            if not isinstance(delta, dict):
+                continue
+            text = str(delta.get("content") or "")
+            if text:
+                candidate_reply = "".join(streamed_parts) + text
+                if _check_response_for_leak(candidate_reply):
+                    current_app.logger.warning("System prompt leak detected | user=%s thread=%s", user_id, thread_id)
+                    continue
+                streamed_parts.append(text)
+                yield {"type": "delta", "text": text}
+            for tool_delta in delta.get("tool_calls") if isinstance(delta.get("tool_calls"), list) else []:
+                idx = int(tool_delta.get("index", len(tool_calls_by_index)))
+                existing = tool_calls_by_index.setdefault(idx, {
+                    "id": tool_delta.get("id"),
+                    "type": "function",
+                    "function": {"name": "", "arguments": ""},
+                })
+                if tool_delta.get("id"):
+                    existing["id"] = tool_delta.get("id")
+                function = tool_delta.get("function") if isinstance(tool_delta.get("function"), dict) else {}
+                if function.get("name"):
+                    existing["function"]["name"] = str(function.get("name"))
+                if function.get("arguments"):
+                    existing["function"]["arguments"] += str(function.get("arguments"))
+
+        total_usage = _merge_usage_totals(
+            total_usage,
+            _openai_usage_to_internal(usage_payload, provider="gemini", model=model_name),
+        )
+        tool_calls = [tool_calls_by_index[idx] for idx in sorted(tool_calls_by_index.keys())]
+        if not tool_calls:
+            reply = "".join(streamed_parts).strip() or fallback_reply
+            if tool_confirmations:
+                confirmations_text = "\n".join(f"- {item}" for item in tool_confirmations)
+                if confirmations_text and confirmations_text not in reply:
+                    reply = f"{reply}\n\nApplied changes:\n{confirmations_text}".strip()
+            if _check_response_for_leak(reply):
+                current_app.logger.warning("System prompt leak detected | user=%s thread=%s", user_id, thread_id)
+                reply = _safe_instructions_reply()
+            state.update({
+                "reply": reply,
+                "usage": total_usage,
+                "actions": executed_actions,
+                "mutations": executed_mutations,
+            })
+            return
+
+        openai_messages.append({
+            "role": "assistant",
+            "content": "".join(streamed_parts) or None,
+            "tool_calls": tool_calls,
+        })
+        for tool_call in tool_calls:
+            function = tool_call.get("function") if isinstance(tool_call, dict) else {}
+            tool_name = str((function or {}).get("name") or "").strip()
+            tool_input = _parse_openai_tool_call_arguments((function or {}).get("arguments"))
+            yield {"type": "tool_use", "tool": tool_name, "input": tool_input}
+            result_payload, mutations_this_turn = _execute_local_tool(
+                tool_name,
+                tool_input,
+                readiness=readiness,
+                user=user,
+                user_id=user_id,
+                thread_id=thread_id,
+                user_turn_count=user_turn_count,
+                mutations_this_turn=mutations_this_turn,
+            )
+            if isinstance(result_payload, dict) and result_payload.get("ok"):
+                confirmation = str(result_payload.get("confirmation") or "").strip()
+                if confirmation:
+                    tool_confirmations.append(confirmation)
+            if isinstance(result_payload, dict):
+                executed_actions.append({
+                    "tool": tool_name,
+                    "input": tool_input,
+                    "result": result_payload,
+                })
+                executed_mutations.append({
+                    "tool": tool_name,
+                    "success": bool(result_payload.get("ok")),
+                    "result_summary": _mutation_result_summary(tool_name, result_payload),
+                    "error": result_payload.get("error"),
+                    "code": result_payload.get("code"),
+                })
+            yield {"type": "tool_result", "tool": tool_name, "result": result_payload}
+            openai_messages.append({
+                "role": "tool",
+                "tool_call_id": tool_call.get("id"),
+                "content": json.dumps(result_payload),
+            })
+
+    state.update({
+        "reply": fallback_reply,
+        "usage": total_usage,
+        "actions": executed_actions,
+        "mutations": executed_mutations,
+    })
+
+
+def _generate_assistant_reply(
+    user_message,
+    chat_history,
+    readiness,
+    model_selection,
+    context_budget=None,
+    session=None,
+    user=None,
+    user_id=None,
+    thread_id=None,
+    intake_context=None,
+    disable_mutations=False,
+):
+    objective = normalize_strategy_objective(
+        ((intake_context or {}).get("objective") if isinstance(intake_context, dict) else None) or "balanced"
+    )
+    routes = _resolve_generation_routes(model_selection, objective)
+    last_error = None
+    for route in routes:
+        routed_selection = {**(model_selection or {}), "llm_model": route["model"]}
+        if route["provider"] == "gemini":
+            try:
+                return _generate_assistant_reply_gemini(
+                    user_message,
+                    chat_history,
+                    readiness,
+                    routed_selection,
+                    context_budget=context_budget,
+                    session=session,
+                    user=user,
+                    user_id=user_id,
+                    thread_id=thread_id,
+                    intake_context=intake_context,
+                    disable_mutations=disable_mutations,
+                )
+            except Exception as exc:
+                last_error = exc
+                current_app.logger.exception("ai_agent gemini generation failed")
+                continue
+        return _generate_assistant_reply_anthropic(
+            user_message,
+            chat_history,
+            readiness,
+            routed_selection,
+            context_budget=context_budget,
+            session=session,
+            user=user,
+            user_id=user_id,
+            thread_id=thread_id,
+            intake_context=intake_context,
+            disable_mutations=disable_mutations,
+        )
+
+    if last_error:
+        current_app.logger.warning("ai_agent provider fallback exhausted: %s", last_error)
+    return _generate_assistant_reply_anthropic(
+        user_message,
+        chat_history,
+        readiness,
+        model_selection,
+        context_budget=context_budget,
+        session=session,
+        user=user,
+        user_id=user_id,
+        thread_id=thread_id,
+        intake_context=intake_context,
+        disable_mutations=disable_mutations,
+    )
+
+
+def _stream_assistant_reply_events(
+    user_message,
+    chat_history,
+    readiness,
+    model_selection,
+    *,
+    session=None,
+    user=None,
+    user_id=None,
+    thread_id=None,
+    intake_context=None,
+    context_budget=None,
+    state=None,
+    disable_mutations=False,
+):
+    objective = normalize_strategy_objective(
+        ((intake_context or {}).get("objective") if isinstance(intake_context, dict) else None) or "balanced"
+    )
+    routes = _resolve_generation_routes(model_selection, objective)
+    for route in routes:
+        routed_selection = {**(model_selection or {}), "llm_model": route["model"]}
+        if route["provider"] == "gemini":
+            yielded_any = False
+            try:
+                for payload in _stream_assistant_reply_events_gemini(
+                    user_message,
+                    chat_history,
+                    readiness,
+                    routed_selection,
+                    session=session,
+                    user=user,
+                    user_id=user_id,
+                    thread_id=thread_id,
+                    intake_context=intake_context,
+                    context_budget=context_budget,
+                    state=state,
+                    disable_mutations=disable_mutations,
+                ):
+                    yielded_any = True
+                    yield payload
+                return
+            except Exception:
+                if yielded_any:
+                    return
+                current_app.logger.exception("ai_agent gemini streaming failed")
+                continue
+        for payload in _stream_assistant_reply_events_anthropic(
+            user_message,
+            chat_history,
+            readiness,
+            routed_selection,
+            session=session,
+            user=user,
+            user_id=user_id,
+            thread_id=thread_id,
+            intake_context=intake_context,
+            context_budget=context_budget,
+            state=state,
+            disable_mutations=disable_mutations,
+        ):
+            yield payload
+        return
+
+    for payload in _stream_assistant_reply_events_anthropic(
+        user_message,
+        chat_history,
+        readiness,
+        model_selection,
+        session=session,
+        user=user,
+        user_id=user_id,
+        thread_id=thread_id,
+        intake_context=intake_context,
+        context_budget=context_budget,
+        state=state,
+        disable_mutations=disable_mutations,
+    ):
+        yield payload
 
 
 def _record_usage(session, usage, credits_charged):
