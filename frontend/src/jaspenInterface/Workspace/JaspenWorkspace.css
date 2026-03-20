@@ -265,6 +265,31 @@
 /* ============================================================================
    HISTORY DRAWER CONTENT
    ============================================================================ */
+.jas-history-search {
+  margin-bottom: 12px;
+}
+
+.jas-history-search-input {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--white);
+  color: var(--navy);
+  font-size: 0.8125rem;
+  padding: 10px 12px;
+  outline: none;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+.jas-history-search-input::placeholder {
+  color: var(--gray-500);
+}
+
+.jas-history-search-input:focus {
+  border-color: var(--magenta);
+  box-shadow: 0 0 0 3px rgba(177, 20, 117, 0.08);
+}
+
 .jas-history-item {
   display: flex;
   align-items: flex-start;
@@ -302,6 +327,17 @@
   margin-top: 2px;
   display: flex;
   gap: 8px;
+}
+
+.jas-history-item .hi-snippet {
+  margin-top: 6px;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--gray-700);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .jas-history-item .hi-score {

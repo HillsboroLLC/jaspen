@@ -301,6 +301,50 @@ function deriveIdeaTitle({ result = null, messages = [], fallback = 'Untitled Id
   return fallback;
 }
 
+function normalizeSearchableText(value) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function buildHistorySearchRecord(item, query = '') {
+  const normalizedQuery = normalizeSearchableText(query).toLowerCase();
+  const rawHistory = Array.isArray(item?.result?.chat_history) ? item.result.chat_history : [];
+  const messages = rawHistory
+    .map((msg) => normalizeSearchableText(msg?.content || msg?.text || ''))
+    .filter(Boolean);
+  const title = deriveIdeaTitle({
+    result: item?.result,
+    messages: rawHistory.map((msg) => ({
+      role: msg?.role === 'user' ? 'user' : 'ai',
+      text: normalizeSearchableText(msg?.content || msg?.text || ''),
+    })),
+    fallback: `Analysis ${item?.id?.slice(-8) || ''}`.trim(),
+  });
+
+  if (!normalizedQuery) {
+    return { item, title, matchSnippet: '' };
+  }
+
+  const titleLower = title.toLowerCase();
+  if (titleLower.includes(normalizedQuery)) {
+    return { item, title, matchSnippet: title };
+  }
+
+  const matchedMessage = messages.find((message) => message.toLowerCase().includes(normalizedQuery));
+  if (!matchedMessage) return null;
+
+  const lowerMessage = matchedMessage.toLowerCase();
+  const matchIndex = lowerMessage.indexOf(normalizedQuery);
+  const start = Math.max(0, matchIndex - 48);
+  const end = Math.min(matchedMessage.length, matchIndex + normalizedQuery.length + 72);
+  const prefix = start > 0 ? '...' : '';
+  const suffix = end < matchedMessage.length ? '...' : '';
+  const snippet = `${prefix}${matchedMessage.slice(start, end)}${suffix}`;
+
+  return { item, title, matchSnippet: snippet };
+}
+
 // ============================================================================
 // Sidebar State Reducer
 // ============================================================================
@@ -534,6 +578,7 @@ const selectedVariant = useMemo(() => {
 }, [scoreVariants, selectedVariantId, analysisResult]);
 
   const [analysisHistory, setAnalysisHistory] = useState([]);
+  const [historySearch, setHistorySearch] = useState('');
   const [clearingHistory, setClearingHistory] = useState(false);
 const [savedScenarios, setSavedScenarios] = useState([]);
   const [scenarioMutationVersion, setScenarioMutationVersion] = useState(0);
@@ -563,6 +608,12 @@ const [aiWbsBusy, setAiWbsBusy] = useState(false);
   const [bundleCurrentScorecard, setBundleCurrentScorecard] = useState(null);
   const [bundleBaselineScorecard, setBundleBaselineScorecard] = useState(null);
   const hasHistory = analysisHistory.length > 0;
+  const filteredAnalysisHistory = useMemo(() => {
+    const query = normalizeSearchableText(historySearch);
+    return analysisHistory
+      .map((item) => buildHistorySearchRecord(item, query))
+      .filter(Boolean);
+  }, [analysisHistory, historySearch]);
 
   // PROMPT ALIGNMENT: Scorecard snapshots (baseline + adopted scenarios)
   const [scorecardSnapshots, setScorecardSnapshots] = useState([]);
@@ -6820,29 +6871,48 @@ setView(id === 'chat' ? 'intake' : id);
             </button>
           </div>
           <div className="jas-sidebar-content">
-            {analysisHistory.map((item, index) => (
-              <div key={index} className="jas-history-item" onClick={() => handleSelectAnalysis(item.result)}>
-                <div className="hi-text">
-                  <div className="hi-title">
-                    {item.result?.project_name || `Analysis ${item.id?.slice(-8) || index + 1}`}
-                  </div>
-                  <div className="hi-meta">
-                    <span>{new Date(item.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
-                    {item.result?.jaspen_score && (<span className="hi-score">Score: {item.result.jaspen_score}</span>)}
-                  </div>
-                </div>
-                <button
-                  className="hi-delete"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDeleteAnalysis(item.id);
-                  }}
-                  title="Delete"
-                >
-                  <FontAwesomeIcon icon={faTrash} />
-                </button>
+            <div className="jas-history-search">
+              <input
+                type="search"
+                className="jas-history-search-input"
+                placeholder="Search history"
+                value={historySearch}
+                onChange={(e) => setHistorySearch(e.target.value)}
+                aria-label="Search analysis history"
+              />
+            </div>
+            {filteredAnalysisHistory.length === 0 && historySearch.trim() ? (
+              <div className="jas-no-history">
+                No matching sessions for "{historySearch.trim()}".
               </div>
-            ))}
+            ) : (
+              filteredAnalysisHistory.map(({ item, title, matchSnippet }, index) => (
+                <div key={item.id || index} className="jas-history-item" onClick={() => handleSelectAnalysis(item.result)}>
+                  <div className="hi-text">
+                    <div className="hi-title">
+                      {title || `Analysis ${item.id?.slice(-8) || index + 1}`}
+                    </div>
+                    <div className="hi-meta">
+                      <span>{new Date(item.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+                      {item.result?.jaspen_score && (<span className="hi-score">Score: {item.result.jaspen_score}</span>)}
+                    </div>
+                    {matchSnippet ? (
+                      <div className="hi-snippet">{matchSnippet}</div>
+                    ) : null}
+                  </div>
+                  <button
+                    className="hi-delete"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteAnalysis(item.id);
+                    }}
+                    title="Delete"
+                  >
+                    <FontAwesomeIcon icon={faTrash} />
+                  </button>
+                </div>
+              ))
+            )}
           </div>
         </div>
       )}
