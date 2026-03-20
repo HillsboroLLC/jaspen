@@ -107,11 +107,32 @@ function sleep(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+function formatRetryAfter(seconds) {
+  const parsed = Number(seconds);
+  if (!Number.isFinite(parsed) || parsed <= 0) return '';
+  const rounded = Math.max(1, Math.ceil(parsed));
+  if (rounded < 60) return `${rounded} second${rounded === 1 ? '' : 's'}`;
+  const minutes = Math.floor(rounded / 60);
+  const remainder = rounded % 60;
+  if (!remainder) return `${minutes} minute${minutes === 1 ? '' : 's'}`;
+  return `${minutes} minute${minutes === 1 ? '' : 's'} ${remainder} second${remainder === 1 ? '' : 's'}`;
+}
+
 function buildHttpError(status, data) {
-  const msg = data?.error || data?.detail || `HTTP ${status}`;
+  let msg = data?.message || data?.error || data?.detail || `HTTP ${status}`;
+  if (status === 429) {
+    const retryHuman = data?.retry_after_human || formatRetryAfter(data?.retry_after_seconds);
+    if (retryHuman && !String(msg).includes(retryHuman)) {
+      msg = `${msg} Try again in about ${retryHuman}.`;
+    }
+  }
   const err = new Error(msg);
   err.status = status;
   err.data = data;
+  if (status === 429) {
+    err.retryAfterSeconds = Number(data?.retry_after_seconds || 0) || null;
+    err.retryAfterHuman = data?.retry_after_human || formatRetryAfter(err.retryAfterSeconds);
+  }
   return err;
 }
 
@@ -207,12 +228,27 @@ async function parseErrorResponse(resp) {
   const text = await resp.text().catch(() => '');
   try {
     const data = text ? JSON.parse(text) : {};
+    if (resp.status === 429) {
+      const retryAfterHeader = resp.headers.get('Retry-After');
+      const retryAfterSeconds = Number(data?.retry_after_seconds || retryAfterHeader || 0) || null;
+      if (retryAfterSeconds && !data?.retry_after_seconds) data.retry_after_seconds = retryAfterSeconds;
+      if (!data?.retry_after_human && retryAfterSeconds) data.retry_after_human = formatRetryAfter(retryAfterSeconds);
+    }
     throw buildHttpError(resp.status, data);
   } catch (parseError) {
     if (parseError?.status) throw parseError;
     const err = new Error(text || `HTTP ${resp.status}`);
     err.status = resp.status;
     err.data = { raw: text };
+    if (resp.status === 429) {
+      const retryAfterHeader = resp.headers.get('Retry-After');
+      const retryAfterSeconds = Number(retryAfterHeader || 0) || null;
+      err.retryAfterSeconds = retryAfterSeconds;
+      err.retryAfterHuman = formatRetryAfter(retryAfterSeconds);
+      if (err.retryAfterHuman) {
+        err.message = `You've hit a temporary request limit. Please try again in about ${err.retryAfterHuman}. If you need higher throughput, you can upgrade your plan or add credits from Account.`;
+      }
+    }
     throw err;
   }
 }

@@ -77,6 +77,19 @@ def _should_enable_flask_cors(frontend_base_url):
     return app_env in ('development', 'dev', 'local')
 
 
+def _format_retry_after(seconds):
+    try:
+        seconds = max(1, int(seconds or 0))
+    except Exception:
+        return "a short while"
+    if seconds < 60:
+        return f"{seconds} second{'s' if seconds != 1 else ''}"
+    minutes, rem = divmod(seconds, 60)
+    if rem == 0:
+        return f"{minutes} minute{'s' if minutes != 1 else ''}"
+    return f"{minutes} minute{'s' if minutes != 1 else ''} {rem} second{'s' if rem != 1 else ''}"
+
+
 def _setup_logging(app):
     handler = logging.StreamHandler()
     formatter = jsonlogger.JsonFormatter(
@@ -379,7 +392,30 @@ def create_app():
 
     @app.errorhandler(429)
     def handle_429(e):
-        return jsonify({"error": "Too many requests", "message": "Rate limit exceeded. Please try again shortly."}), 429
+        retry_after = None
+        limit_value = getattr(getattr(e, "limit", None), "limit", None)
+        if limit_value is not None and hasattr(limit_value, "get_expiry"):
+            try:
+                retry_after = int(limit_value.get_expiry())
+            except Exception:
+                retry_after = None
+        retry_after = retry_after or 60
+        retry_after_human = _format_retry_after(retry_after)
+        payload = {
+            "error": "Too many requests",
+            "code": "rate_limit_exceeded",
+            "message": (
+                f"You've hit a temporary request limit. Please try again in about {retry_after_human}. "
+                "If you need higher throughput, you can upgrade your plan or add credits from Account."
+            ),
+            "retry_after_seconds": retry_after,
+            "retry_after_human": retry_after_human,
+            "upgrade_hint": "Upgrade your plan or add credits from Account for more capacity.",
+        }
+        response = jsonify(payload)
+        response.status_code = 429
+        response.headers["Retry-After"] = str(retry_after)
+        return response
 
     @app.errorhandler(500)
     def handle_500(e):
