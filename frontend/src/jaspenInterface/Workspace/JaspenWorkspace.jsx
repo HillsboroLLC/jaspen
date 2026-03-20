@@ -22,7 +22,7 @@ import {
   faPaperPlane, faSpinner, faTimes, faBars, faCheck, faExclamationTriangle,
   faChartLine, faTrash, faPlus, faMinus, faMicrophone,
   faBolt, faLayerGroup, faPlay, faListCheck, faArrowUpRightFromSquare, faGaugeHigh, faClockRotateLeft, faPaperclip, faArrowUp,
-  faDownload, faChevronDown, faUser, faBell, faLock, faCopy
+  faDownload, faChevronDown, faUser, faBell, faLock, faCopy, faThumbsUp, faThumbsDown
 } from '@fortawesome/free-solid-svg-icons';
 import {
   MonitorCheck, MessageCircleQuestion,
@@ -269,9 +269,11 @@ function isContextSyncMessage(text) {
 
 function toUiMessages(history = []) {
   return (Array.isArray(history) ? history : [])
-    .map((msg) => ({
+    .map((msg, historyIndex) => ({
       role: msg?.role === 'user' ? 'user' : 'ai',
       text: (msg?.content || msg?.text || '').trim(),
+      historyIndex,
+      feedbackValue: String(msg?.feedback?.value || '').trim().toLowerCase() || null,
     }))
     .filter((m) => m.text.length > 0 && !isContextSyncMessage(m.text));
 }
@@ -486,6 +488,7 @@ export default function JaspenWorkspace() {
   const [isStreamingReply, setIsStreamingReply] = useState(false);
   const [streamToolStatus, setStreamToolStatus] = useState('');
   const [copiedMessageKey, setCopiedMessageKey] = useState(null);
+  const [feedbackBusyKey, setFeedbackBusyKey] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
   const [error, setError] = useState(null);
   const recognitionRef = useRef(null);
@@ -909,6 +912,9 @@ const handleCopyMessage = async (messageKey, text) => {
 const renderMessageActions = (message, messageKey) => {
   if (message?.role === 'user') return null;
   const isCopied = copiedMessageKey === messageKey;
+  const canFeedback = Number.isInteger(message?.historyIndex) && Boolean(activeThreadId);
+  const feedbackKey = `${messageKey}:feedback`;
+  const isFeedbackBusy = feedbackBusyKey === feedbackKey;
   return (
     <div className="jas-message-actions">
       <button
@@ -919,6 +925,54 @@ const renderMessageActions = (message, messageKey) => {
         title={isCopied ? 'Copied' : 'Copy'}
       >
         <FontAwesomeIcon icon={isCopied ? faCheck : faCopy} />
+      </button>
+      <button
+        type="button"
+        className={`jas-message-feedback-btn ${message?.feedbackValue === 'up' ? 'is-active' : ''}`}
+        onClick={async () => {
+          if (!canFeedback || isFeedbackBusy) return;
+          setFeedbackBusyKey(feedbackKey);
+          try {
+            await Jaspen.messageFeedback(activeThreadId, message.historyIndex, 'up');
+            setMessages((prev) => prev.map((entry) => (
+              entry?.historyIndex === message.historyIndex ? { ...entry, feedbackValue: 'up' } : entry
+            )));
+            showToast('Feedback saved.', 'success');
+          } catch (feedbackError) {
+            showToast('Failed to save feedback.', 'error');
+          } finally {
+            setFeedbackBusyKey((current) => (current === feedbackKey ? null : current));
+          }
+        }}
+        aria-label="Thumbs up"
+        title="Thumbs up"
+        disabled={!canFeedback || isFeedbackBusy}
+      >
+        <FontAwesomeIcon icon={faThumbsUp} />
+      </button>
+      <button
+        type="button"
+        className={`jas-message-feedback-btn ${message?.feedbackValue === 'down' ? 'is-active is-negative' : ''}`}
+        onClick={async () => {
+          if (!canFeedback || isFeedbackBusy) return;
+          setFeedbackBusyKey(feedbackKey);
+          try {
+            await Jaspen.messageFeedback(activeThreadId, message.historyIndex, 'down');
+            setMessages((prev) => prev.map((entry) => (
+              entry?.historyIndex === message.historyIndex ? { ...entry, feedbackValue: 'down' } : entry
+            )));
+            showToast('Feedback saved.', 'success');
+          } catch (feedbackError) {
+            showToast('Failed to save feedback.', 'error');
+          } finally {
+            setFeedbackBusyKey((current) => (current === feedbackKey ? null : current));
+          }
+        }}
+        aria-label="Thumbs down"
+        title="Thumbs down"
+        disabled={!canFeedback || isFeedbackBusy}
+      >
+        <FontAwesomeIcon icon={faThumbsDown} />
       </button>
     </div>
   );
@@ -3284,7 +3338,7 @@ useEffect(() => {
     )));
   }, []);
 
-  const finalizeStreamingAssistant = useCallback((messageId, finalText = '') => {
+  const finalizeStreamingAssistant = useCallback((messageId, finalText = '', metadata = {}) => {
     setMessages((prev) => prev.map((message) => {
       if (message.id !== messageId) return message;
       const resolvedText = String(finalText || message.text || '').trim();
@@ -3292,6 +3346,8 @@ useEffect(() => {
         ...message,
         text: resolvedText,
         streaming: false,
+        historyIndex: Number.isInteger(metadata?.historyIndex) ? metadata.historyIndex : message.historyIndex,
+        feedbackValue: metadata?.feedbackValue || message.feedbackValue || null,
       };
     }));
   }, []);
@@ -3343,10 +3399,14 @@ useEffect(() => {
         onDone: (payload) => {
           finalPayload = payload;
           setStreamToolStatus('');
-          finalizeStreamingAssistant(placeholderId, payload?.reply || payload?.message || '');
+          finalizeStreamingAssistant(placeholderId, payload?.reply || payload?.message || '', {
+            historyIndex: Number.isInteger(payload?.assistant_message_index) ? payload.assistant_message_index : null,
+          });
         },
       });
-      finalizeStreamingAssistant(placeholderId, finalPayload?.reply || finalPayload?.message || '');
+      finalizeStreamingAssistant(placeholderId, finalPayload?.reply || finalPayload?.message || '', {
+        historyIndex: Number.isInteger(finalPayload?.assistant_message_index) ? finalPayload.assistant_message_index : null,
+      });
       setStreamToolStatus('');
       return finalPayload;
     } catch (streamErr) {
@@ -3389,10 +3449,14 @@ useEffect(() => {
         onDone: (payload) => {
           finalPayload = payload;
           setStreamToolStatus('');
-          finalizeStreamingAssistant(placeholderId, payload?.reply || payload?.message || '');
+          finalizeStreamingAssistant(placeholderId, payload?.reply || payload?.message || '', {
+            historyIndex: Number.isInteger(payload?.assistant_message_index) ? payload.assistant_message_index : null,
+          });
         },
       });
-      finalizeStreamingAssistant(placeholderId, finalPayload?.reply || finalPayload?.message || '');
+      finalizeStreamingAssistant(placeholderId, finalPayload?.reply || finalPayload?.message || '', {
+        historyIndex: Number.isInteger(finalPayload?.assistant_message_index) ? finalPayload.assistant_message_index : null,
+      });
       setStreamToolStatus('');
       return finalPayload;
     } catch (streamErr) {

@@ -1862,6 +1862,9 @@
 
 .jas-message-actions {
   margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .jas-message-copy-btn {
@@ -1889,6 +1892,43 @@
   border-color: rgba(16, 185, 129, 0.35);
   color: #047857;
   background: rgba(16, 185, 129, 0.08);
+}
+
+.jas-message-feedback-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--white);
+  color: var(--gray-700);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.jas-message-feedback-btn:hover:not(:disabled) {
+  border-color: var(--navy);
+  color: var(--navy);
+}
+
+.jas-message-feedback-btn.is-active {
+  border-color: rgba(16, 185, 129, 0.35);
+  color: #047857;
+  background: rgba(16, 185, 129, 0.08);
+}
+
+.jas-message-feedback-btn.is-active.is-negative {
+  border-color: rgba(220, 38, 38, 0.28);
+  color: #b91c1c;
+  background: rgba(220, 38, 38, 0.08);
+}
+
+.jas-message-feedback-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .jas-message-bubble > *:first-child,

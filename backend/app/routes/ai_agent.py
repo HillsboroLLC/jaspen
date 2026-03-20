@@ -2103,6 +2103,19 @@ def _session_chat_history(session):
     return []
 
 
+def _normalize_message_feedback(value):
+    if not isinstance(value, dict):
+        return None
+    reaction = str(value.get("value") or "").strip().lower()
+    if reaction not in {"up", "down"}:
+        return None
+    updated_at = str(value.get("updated_at") or "").strip() or _iso_now()
+    return {
+        "value": reaction,
+        "updated_at": updated_at,
+    }
+
+
 def _extract_baseline_inputs(baseline):
     if not isinstance(baseline, dict):
         return {}
@@ -3091,6 +3104,7 @@ def conversation_start():
 
             final_chat_history = list(chat_history)
             final_chat_history.append({"role": "assistant", "content": assistant_reply, "timestamp": _iso_now()})
+            assistant_message_index = len(final_chat_history) - 1
             final_readiness = _compute_readiness(final_chat_history, session.get("strategy_objective"))
 
             session["chat_history"] = final_chat_history
@@ -3123,6 +3137,7 @@ def conversation_start():
                 "session_id": thread_id,
                 "reply": assistant_reply,
                 "message": assistant_reply,
+                "assistant_message_index": assistant_message_index,
                 "model_type": model_selection["model_type"],
                 "allowed_model_types": model_selection["allowed_model_types"],
                 "actions": actions,
@@ -3188,6 +3203,7 @@ def conversation_start():
         }), 402
 
     chat_history.append({"role": "assistant", "content": assistant_reply, "timestamp": _iso_now()})
+    assistant_message_index = len(chat_history) - 1
 
     session["chat_history"] = chat_history
     session["name"] = name
@@ -3217,6 +3233,7 @@ def conversation_start():
         "session_id": thread_id,
         "reply": assistant_reply,
         "message": assistant_reply,
+        "assistant_message_index": assistant_message_index,
         "model_type": model_selection["model_type"],
         "allowed_model_types": model_selection["allowed_model_types"],
         "actions": actions if isinstance(actions, list) else [],
@@ -3381,6 +3398,7 @@ def conversation_continue():
 
             final_chat_history = list(chat_history)
             final_chat_history.append({"role": "assistant", "content": assistant_reply, "timestamp": _iso_now()})
+            assistant_message_index = len(final_chat_history) - 1
             final_readiness = _compute_readiness(final_chat_history, session.get("strategy_objective"))
 
             session["chat_history"] = final_chat_history
@@ -3412,6 +3430,7 @@ def conversation_continue():
                 "session_id": thread_id,
                 "reply": assistant_reply,
                 "message": assistant_reply,
+                "assistant_message_index": assistant_message_index,
                 "model_type": model_selection["model_type"],
                 "allowed_model_types": model_selection["allowed_model_types"],
                 "actions": actions,
@@ -3477,6 +3496,7 @@ def conversation_continue():
         }), 402
 
     chat_history.append({"role": "assistant", "content": assistant_reply, "timestamp": _iso_now()})
+    assistant_message_index = len(chat_history) - 1
 
     session["chat_history"] = chat_history
     session["model_type"] = model_selection["model_type"]
@@ -3505,6 +3525,7 @@ def conversation_continue():
         "session_id": thread_id,
         "reply": assistant_reply,
         "message": assistant_reply,
+        "assistant_message_index": assistant_message_index,
         "model_type": model_selection["model_type"],
         "allowed_model_types": model_selection["allowed_model_types"],
         "actions": actions if isinstance(actions, list) else [],
@@ -3890,6 +3911,63 @@ def update_thread(thread_id):
             "updated_at": session.get("timestamp"),
         },
         "session": session_payload,
+    }), 200
+
+
+@ai_agent_bp.route("/threads/<thread_id>/messages/<int:message_index>/feedback", methods=["POST"])
+@jwt_required()
+@limiter.limit("60 per hour")
+def set_thread_message_feedback(thread_id, message_index):
+    data = request.get_json() or {}
+    reaction = str(data.get("value") or "").strip().lower()
+    if reaction not in {"up", "down"}:
+        return jsonify({"error": "value must be 'up' or 'down'"}), 400
+
+    user_id = get_jwt_identity()
+    sessions = load_user_sessions(user_id) or {}
+    session_key, session = _resolve_user_session(sessions, thread_id)
+    if not isinstance(session, dict):
+        return jsonify({"error": "Thread not found"}), 404
+
+    chat_history = _session_chat_history(session)
+    if message_index < 0 or message_index >= len(chat_history):
+        return jsonify({"error": "Message not found"}), 404
+
+    target = chat_history[message_index]
+    if not isinstance(target, dict) or str(target.get("role") or "").strip().lower() != "assistant":
+        return jsonify({"error": "Feedback can only be recorded for assistant messages"}), 400
+
+    feedback = {
+        "value": reaction,
+        "updated_at": _iso_now(),
+    }
+    updated_chat_history = list(chat_history)
+    updated_target = dict(target)
+    updated_target["feedback"] = feedback
+    updated_chat_history[message_index] = updated_target
+    session["chat_history"] = updated_chat_history
+    session["timestamp"] = _iso_now()
+    sessions[session_key or thread_id] = session
+    if not save_user_sessions(user_id, sessions):
+        return jsonify({"error": "Failed to persist message feedback"}), 500
+
+    user = User.query.get(user_id)
+    if user:
+        _audit_ai_agent_event(
+            "message.feedback_recorded",
+            user=user,
+            details={
+                "thread_id": str(session.get("session_id") or session_key or thread_id),
+                "message_index": int(message_index),
+                "value": reaction,
+            },
+        )
+
+    return jsonify({
+        "success": True,
+        "thread_id": str(session.get("session_id") or session_key or thread_id),
+        "message_index": int(message_index),
+        "feedback": feedback,
     }), 200
 
 

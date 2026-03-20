@@ -22,6 +22,7 @@ export const endpoints = {
   // Threads
   getThread:      (threadId) => `${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(threadId)}`,
   updateThread:   (threadId) => `${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(threadId)}`,
+  messageFeedback: (threadId, messageIndex) => `${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(threadId)}/messages/${encodeURIComponent(messageIndex)}/feedback`,
   
   // Analyses
   listAnalyses:   (threadId) => `${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(threadId)}/analyses`,
@@ -414,6 +415,7 @@ async convoStart({ description, project_id, model_type, strategy_objective, inta
       session_id: data.thread_id || data.session_id,
       thread_id: data.thread_id || null,
       message: data.message || data.reply,
+      assistant_message_index: data.assistant_message_index,
       readiness: data.readiness || { percent: 0, categories: [] },
       model_type: data.model_type || null,
       strategy_objective: data.strategy_objective || null,
@@ -450,6 +452,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
     return {
       ...data,
       message: data.message || data.reply,
+      assistant_message_index: data.assistant_message_index,
       readiness: data.readiness || { percent: 0, categories: [] },
       model_type: data.model_type || null,
       strategy_objective: data.strategy_objective || null,
@@ -588,6 +591,13 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
       throw new Error('Streaming response ended without a done event.');
     }
     return donePayload;
+  },
+  async messageFeedback(threadId, messageIndex, value) {
+    return postJSON(
+      endpoints.messageFeedback(threadId, messageIndex),
+      { value },
+      { withSid: true }
+    );
   },
 async analyzeFromConversation({ session_id, transcript, deterministic = true, seed, project_name, assumptions, model_type }) {
     const data = await postJSON(
