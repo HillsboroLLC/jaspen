@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { API_BASE } from '../../config/apiBase';
 import { buildAuthHeaders } from '../../shared/auth/http';
+import Feedback from './Feedback';
 import './JaspenAdmin.css';
 
 
@@ -117,6 +118,11 @@ export default function JaspenAdmin() {
   const [connectorDrafts, setConnectorDrafts] = useState({});
   const [sessions, setSessions] = useState([]);
   const [auditEvents, setAuditEvents] = useState([]);
+  const [feedbackItems, setFeedbackItems] = useState([]);
+  const [feedbackSummary, setFeedbackSummary] = useState(null);
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
+  const [feedbackQuery, setFeedbackQuery] = useState('');
+  const [feedbackValueFilter, setFeedbackValueFilter] = useState('');
 
   const [creditOp, setCreditOp] = useState({
     mode: 'adjust',
@@ -215,6 +221,29 @@ export default function JaspenAdmin() {
     }
   };
 
+  const loadFeedback = async ({ userId = selectedId, q = feedbackQuery, value = feedbackValueFilter } = {}) => {
+    setFeedbackLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.set('limit', '100');
+      if (userId) params.set('user_id', userId);
+      if (q) params.set('q', q);
+      if (value) params.set('value', value);
+      const response = await fetch(`${API_BASE}/api/v1/admin/message-feedback?${params.toString()}`, {
+        headers: authHeaders(),
+        credentials: 'include',
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || 'Unable to load feedback.');
+      setFeedbackItems(Array.isArray(data?.items) ? data.items : []);
+      setFeedbackSummary(data?.summary || null);
+    } catch (error) {
+      setMessage(error.message || 'Unable to load feedback.');
+    } finally {
+      setFeedbackLoading(false);
+    }
+  };
+
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -237,6 +266,7 @@ export default function JaspenAdmin() {
         setIsAdmin(canAdmin);
         if (canAdmin) {
           await loadUsers('');
+          await loadFeedback({ userId: '', q: '', value: '' });
         }
       } catch (error) {
         if (mounted) setMessage(error.message || 'Unable to load admin console.');
@@ -259,6 +289,14 @@ export default function JaspenAdmin() {
     setRecoveryReason('');
     loadUserOps(user.id);
   };
+
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      loadFeedback();
+    }, 250);
+    return () => window.clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [feedbackQuery, feedbackValueFilter, selectedId]);
 
   const handleSave = async () => {
     if (!draft?.id) return;
@@ -505,6 +543,18 @@ export default function JaspenAdmin() {
             ))}
           </div>
         </section>
+
+        <Feedback
+          items={feedbackItems}
+          summary={feedbackSummary}
+          isLoading={feedbackLoading}
+          query={feedbackQuery}
+          onQueryChange={setFeedbackQuery}
+          onRefresh={() => loadFeedback()}
+          valueFilter={feedbackValueFilter}
+          onValueFilterChange={setFeedbackValueFilter}
+          scopedUserLabel={selectedUser?.email || ''}
+        />
 
         <div className="jas-admin-layout">
           <div className="jas-admin-users">

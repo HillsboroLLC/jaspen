@@ -86,6 +86,116 @@ def _serialize_session(row):
     }
 
 
+def _session_chat_history(payload):
+    if not isinstance(payload, dict):
+        return []
+    chat_history = payload.get("chat_history")
+    if isinstance(chat_history, list):
+        return chat_history
+    result_blob = payload.get("result")
+    if isinstance(result_blob, dict) and isinstance(result_blob.get("chat_history"), list):
+        return result_blob.get("chat_history")
+    return []
+
+
+def _normalize_feedback_payload(value):
+    if not isinstance(value, dict):
+        return None
+    feedback_value = str(value.get("value") or "").strip().lower()
+    if feedback_value not in {"up", "down"}:
+        return None
+    updated_at = str(value.get("updated_at") or "").strip() or None
+    return {
+        "value": feedback_value,
+        "updated_at": updated_at,
+    }
+
+
+def _message_excerpt(content, max_len=220):
+    text = " ".join(str(content or "").split())
+    if len(text) <= max_len:
+        return text
+    return f"{text[: max_len - 1].rstrip()}…"
+
+
+def _collect_message_feedback(user_id=None, value=None, query=None, limit=100):
+    rows = UserSession.query
+    if user_id:
+        rows = rows.filter(UserSession.user_id == user_id)
+    scan_limit = max(limit * 12, 250)
+    scan_limit = min(scan_limit, 1500)
+    rows = (
+        rows
+        .order_by(UserSession.updated_at.desc(), UserSession.id.desc())
+        .limit(scan_limit)
+        .all()
+    )
+
+    user_ids = sorted({row.user_id for row in rows if row.user_id})
+    users = {
+        user.id: user
+        for user in User.query.filter(User.id.in_(user_ids)).all()
+    } if user_ids else {}
+
+    lowered_query = str(query or "").strip().lower()
+    items = []
+    for row in rows:
+        payload = row.payload if isinstance(row.payload, dict) else {}
+        user = users.get(row.user_id)
+        for idx, message in enumerate(_session_chat_history(payload)):
+            if not isinstance(message, dict):
+                continue
+            if str(message.get("role") or "").strip().lower() != "assistant":
+                continue
+            feedback = _normalize_feedback_payload(message.get("feedback"))
+            if not feedback:
+                continue
+            if value and feedback["value"] != value:
+                continue
+            excerpt = _message_excerpt(message.get("content"))
+            searchable = " ".join(filter(None, [
+                getattr(user, "email", "") or "",
+                getattr(user, "name", "") or "",
+                str(row.name or ""),
+                str(row.session_id or ""),
+                excerpt,
+            ])).lower()
+            if lowered_query and lowered_query not in searchable:
+                continue
+            items.append({
+                "session_row_id": row.id,
+                "thread_id": row.session_id,
+                "session_name": row.name,
+                "user_id": row.user_id,
+                "user_email": getattr(user, "email", None),
+                "user_name": getattr(user, "name", None),
+                "feedback_value": feedback["value"],
+                "feedback_updated_at": feedback.get("updated_at"),
+                "message_index": idx,
+                "message_excerpt": excerpt,
+                "document_type": row.document_type,
+                "status": row.status,
+                "strategy_objective": payload.get("strategy_objective") if isinstance(payload.get("strategy_objective"), str) else None,
+                "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+            })
+
+    items.sort(key=lambda item: (item.get("feedback_updated_at") or "", item.get("updated_at") or ""), reverse=True)
+    items = items[:limit]
+    up_count = sum(1 for item in items if item.get("feedback_value") == "up")
+    down_count = sum(1 for item in items if item.get("feedback_value") == "down")
+    total = len(items)
+    return {
+        "items": items,
+        "summary": {
+            "total_feedback": total,
+            "up_count": up_count,
+            "down_count": down_count,
+            "positive_rate": round((up_count / total) * 100, 1) if total else 0.0,
+            "unique_users": len({item.get("user_id") for item in items if item.get("user_id")}),
+        },
+    }
+
+
 def _current_user():
     user = User.query.get(get_jwt_identity())
     if not user:
@@ -584,3 +694,32 @@ def get_audit_events():
         limit=limit or 50,
     )
     return jsonify({"events": events, "count": len(events)}), 200
+
+
+@admin_bp.route("/message-feedback", methods=["GET"])
+@jwt_required()
+def get_message_feedback():
+    _, err = _require_admin()
+    if err:
+        return err
+
+    user_id = str(request.args.get("user_id") or "").strip() or None
+    value = str(request.args.get("value") or "").strip().lower() or None
+    if value and value not in {"up", "down"}:
+        return jsonify({"error": "value must be one of up or down"}), 400
+    query = str(request.args.get("q") or "").strip() or None
+    limit = _to_int(request.args.get("limit"), default=100)
+    limit = max(1, min(250, limit or 100))
+
+    result = _collect_message_feedback(user_id=user_id, value=value, query=query, limit=limit)
+    return jsonify({
+        "items": result["items"],
+        "summary": result["summary"],
+        "count": len(result["items"]),
+        "filters": {
+            "user_id": user_id,
+            "value": value,
+            "q": query,
+            "limit": limit,
+        },
+    }), 200
