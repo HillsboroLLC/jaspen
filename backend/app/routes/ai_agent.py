@@ -1772,6 +1772,7 @@ def _generate_assistant_reply(
     user_id=None,
     thread_id=None,
     intake_context=None,
+    disable_mutations=False,
 ):
     fallback_reply = _next_question(readiness)
     api_key = _anthropic_api_key()
@@ -1811,9 +1812,13 @@ def _generate_assistant_reply(
 
     client = anthropic.Anthropic(api_key=api_key)
     plan_key = to_public_plan(user.subscription_plan) if user else "free"
-    can_mutate = bool(thread_id) and (
+    can_mutate = (
+        not disable_mutations
+        and bool(thread_id)
+        and (
         is_tool_allowed(plan_key, "scenario_create", "write")
         or is_tool_allowed(plan_key, "wbs_write", "write")
+        )
     )
     tools = _anthropic_tool_definitions(enable_mutation_tools=can_mutate)
     total_input_tokens = 0
@@ -1948,6 +1953,7 @@ def _stream_assistant_reply_events(
     intake_context=None,
     context_budget=None,
     state=None,
+    disable_mutations=False,
 ):
     state = state if isinstance(state, dict) else {}
     fallback_reply = _next_question(readiness)
@@ -1997,9 +2003,13 @@ def _stream_assistant_reply_events(
 
     client = anthropic.Anthropic(api_key=api_key)
     plan_key = to_public_plan(user.subscription_plan) if user else "free"
-    can_mutate = bool(thread_id) and (
+    can_mutate = (
+        not disable_mutations
+        and bool(thread_id)
+        and (
         is_tool_allowed(plan_key, "scenario_create", "write")
         or is_tool_allowed(plan_key, "wbs_write", "write")
+        )
     )
     tools = _anthropic_tool_definitions(enable_mutation_tools=can_mutate)
     total_input_tokens = 0
@@ -2266,6 +2276,30 @@ def _normalize_message_feedback(value):
         "value": reaction,
         "updated_at": updated_at,
     }
+
+
+def _assistant_chat_entry(content, *, mutations=None, regenerated=False, alternatives=None):
+    entry = {
+        "role": "assistant",
+        "content": str(content or "").strip(),
+        "timestamp": _iso_now(),
+    }
+    if isinstance(mutations, list) and mutations:
+        entry["mutations"] = [
+            {
+                "tool": item.get("tool"),
+                "success": bool(item.get("success")),
+            }
+            for item in mutations
+            if isinstance(item, dict) and item.get("tool")
+        ]
+        if not entry["mutations"]:
+            entry.pop("mutations", None)
+    if regenerated:
+        entry["regenerated"] = True
+    if isinstance(alternatives, list) and alternatives:
+        entry["alternatives"] = [item for item in alternatives if isinstance(item, dict)]
+    return entry
 
 
 def _extract_baseline_inputs(baseline):
@@ -3266,7 +3300,7 @@ def conversation_start():
                 return
 
             final_chat_history = list(chat_history)
-            final_chat_history.append({"role": "assistant", "content": assistant_reply, "timestamp": _iso_now()})
+            final_chat_history.append(_assistant_chat_entry(assistant_reply, mutations=mutations))
             assistant_message_index = len(final_chat_history) - 1
             final_readiness = _compute_readiness(final_chat_history, session.get("strategy_objective"))
 
@@ -3365,7 +3399,7 @@ def conversation_start():
             "suggestion": "Purchase an overage pack or upgrade your plan.",
         }), 402
 
-    chat_history.append({"role": "assistant", "content": assistant_reply, "timestamp": _iso_now()})
+    chat_history.append(_assistant_chat_entry(assistant_reply, mutations=mutations))
     assistant_message_index = len(chat_history) - 1
 
     session["chat_history"] = chat_history
@@ -3571,7 +3605,7 @@ def conversation_continue():
                 return
 
             final_chat_history = list(chat_history)
-            final_chat_history.append({"role": "assistant", "content": assistant_reply, "timestamp": _iso_now()})
+            final_chat_history.append(_assistant_chat_entry(assistant_reply, mutations=mutations))
             assistant_message_index = len(final_chat_history) - 1
             final_readiness = _compute_readiness(final_chat_history, session.get("strategy_objective"))
 
@@ -3669,7 +3703,7 @@ def conversation_continue():
             "suggestion": "Purchase an overage pack or upgrade your plan.",
         }), 402
 
-    chat_history.append({"role": "assistant", "content": assistant_reply, "timestamp": _iso_now()})
+    chat_history.append(_assistant_chat_entry(assistant_reply, mutations=mutations))
     assistant_message_index = len(chat_history) - 1
 
     session["chat_history"] = chat_history
@@ -4142,6 +4176,262 @@ def set_thread_message_feedback(thread_id, message_index):
         "thread_id": str(session.get("session_id") or session_key or thread_id),
         "message_index": int(message_index),
         "feedback": feedback,
+    }), 200
+
+
+@ai_agent_bp.route("/conversation/regenerate", methods=["POST"])
+@jwt_required()
+@limiter.limit("10 per minute")
+def conversation_regenerate():
+    data = request.get_json() or {}
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    if bootstrap_legacy_credits(user, current_app.config):
+        db.session.commit()
+
+    thread_id = str(data.get("thread_id") or data.get("session_id") or "").strip()
+    if not thread_id:
+        return jsonify({"error": "thread_id is required"}), 400
+
+    sessions = load_user_sessions(user_id) or {}
+    session_key, session = _resolve_user_session(sessions, thread_id)
+    if not isinstance(session, dict):
+        return jsonify({"error": "Thread not found"}), 404
+
+    chat_history = _session_chat_history(session)
+    if len(chat_history) < 2:
+        return jsonify({"error": "Nothing to regenerate"}), 400
+
+    last_msg = chat_history[-1]
+    if str(last_msg.get("role") or "").lower() not in ("assistant", "ai", "bot"):
+        return jsonify({"error": "Last message is not an assistant response"}), 400
+
+    last_mutations = last_msg.get("mutations") if isinstance(last_msg.get("mutations"), list) else []
+    has_mutation_marker = "Applied changes:" in str(last_msg.get("content") or "")
+    if last_mutations or has_mutation_marker:
+        return jsonify({
+            "error": "Cannot regenerate a response that applied changes. Send a new message instead.",
+            "code": "mutation_turn_not_regenerable",
+        }), 409
+
+    preceding = chat_history[-2]
+    if str(preceding.get("role") or "").lower() != "user":
+        return jsonify({"error": "Expected a user message before the assistant response"}), 400
+    user_message = str(preceding.get("content") or preceding.get("text") or "").strip()
+    if not user_message:
+        return jsonify({"error": "Empty preceding user message"}), 400
+
+    fallback_model_type = session.get("model_type")
+    model_selection, model_error = _resolve_model_selection(
+        user,
+        requested_model_type=data.get("model_type"),
+        fallback_model_type=fallback_model_type,
+    )
+    if model_error:
+        return jsonify(model_error), 403
+
+    regen_history = list(chat_history[:-1])
+    readiness = _compute_readiness(regen_history, session.get("strategy_objective"))
+    context_budget = get_context_budget(to_public_plan(user.subscription_plan))
+    old_response = {
+        "content": str(last_msg.get("content") or ""),
+        "timestamp": last_msg.get("timestamp"),
+        "feedback": last_msg.get("feedback"),
+        "replaced_by": "regenerate",
+        "replaced_at": _iso_now(),
+    }
+    stream_requested = str(request.args.get("stream") or "").strip().lower() in {"1", "true", "yes"}
+
+    if stream_requested:
+        @stream_with_context
+        def event_stream():
+            state = {}
+            for payload in _stream_assistant_reply_events(
+                user_message,
+                regen_history,
+                readiness,
+                model_selection,
+                context_budget=context_budget,
+                session=session,
+                user=user,
+                user_id=user_id,
+                thread_id=thread_id,
+                intake_context=session.get("intake_context"),
+                state=state,
+                disable_mutations=True,
+            ):
+                yield _sse_payload(payload)
+
+            assistant_reply = str(state.get("reply") or "").strip() or _next_question(readiness)
+            usage = state.get("usage") if isinstance(state.get("usage"), dict) else {
+                "provider": "heuristic",
+                "model": None,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+            }
+
+            credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"])
+            charged, remaining = consume_credits(user, credits_charged)
+            if not charged:
+                yield _sse_payload({
+                    "type": "error",
+                    "error": "Insufficient credits",
+                    "required_credits": credits_charged,
+                    "credits_remaining": user.credits_remaining,
+                })
+                return
+
+            alternatives = [old_response, *((last_msg.get("alternatives") or []) if isinstance(last_msg.get("alternatives"), list) else [])]
+            new_msg = _assistant_chat_entry(
+                assistant_reply,
+                regenerated=True,
+                alternatives=alternatives,
+            )
+            chat_history[-1] = new_msg
+            assistant_message_index = len(chat_history) - 1
+            final_readiness = _compute_readiness(chat_history, session.get("strategy_objective"))
+
+            session["chat_history"] = chat_history
+            session["timestamp"] = _iso_now()
+            _record_usage(session, usage, credits_charged)
+            sessions[session_key or thread_id] = session
+            if not save_user_sessions(user_id, sessions):
+                yield _sse_payload({"type": "error", "error": "Failed to persist regenerated response"})
+                return
+
+            _audit_ai_agent_event(
+                "message.regenerated",
+                user=user,
+                details={
+                    "thread_id": str(session.get("session_id") or session_key or thread_id),
+                    "message_index": assistant_message_index,
+                    "alternatives_count": len(new_msg.get("alternatives") or []),
+                },
+            )
+
+            yield _sse_payload({
+                "type": "done",
+                "thread_id": thread_id,
+                "session_id": thread_id,
+                "reply": assistant_reply,
+                "message": assistant_reply,
+                "assistant_message_index": assistant_message_index,
+                "regenerated": True,
+                "alternatives_count": len(new_msg.get("alternatives") or []),
+                "model_type": model_selection["model_type"],
+                "allowed_model_types": model_selection["allowed_model_types"],
+                "mutations": [],
+                "tool_results": [],
+                "usage": usage,
+                "context_budget": context_budget,
+                "credits": {"charged": credits_charged, "remaining": remaining},
+                "readiness": {
+                    "percent": final_readiness["overall"]["percent"],
+                    "categories": final_readiness["categories"],
+                    "items": final_readiness.get("items", []),
+                    "checklist_summary": final_readiness.get("checklist_summary", {}),
+                    "version": final_readiness.get("version"),
+                    "updated_at": _iso_now(),
+                },
+                "strategy_objective": session.get("strategy_objective") or "balanced",
+                "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
+                "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
+                "organization_id": session.get("organization_id"),
+                "visibility": session.get("visibility") or "private",
+            })
+
+        return Response(
+            event_stream(),
+            mimetype="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
+        )
+
+    assistant_reply, usage, _actions, _mutations = _generate_assistant_reply(
+        user_message,
+        regen_history,
+        readiness,
+        model_selection,
+        context_budget=context_budget,
+        session=session,
+        user=user,
+        user_id=user_id,
+        thread_id=thread_id,
+        intake_context=session.get("intake_context"),
+        disable_mutations=True,
+    )
+
+    credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"])
+    charged, remaining = consume_credits(user, credits_charged)
+    if not charged:
+        return jsonify({
+            "error": "Insufficient credits",
+            "required_credits": credits_charged,
+            "credits_remaining": user.credits_remaining,
+        }), 402
+
+    alternatives = [old_response, *((last_msg.get("alternatives") or []) if isinstance(last_msg.get("alternatives"), list) else [])]
+    new_msg = _assistant_chat_entry(
+        assistant_reply,
+        regenerated=True,
+        alternatives=alternatives,
+    )
+    chat_history[-1] = new_msg
+    assistant_message_index = len(chat_history) - 1
+
+    session["chat_history"] = chat_history
+    session["timestamp"] = _iso_now()
+    _record_usage(session, usage, credits_charged)
+    sessions[session_key or thread_id] = session
+    if not save_user_sessions(user_id, sessions):
+        return jsonify({"error": "Failed to persist regenerated response"}), 500
+
+    _audit_ai_agent_event(
+        "message.regenerated",
+        user=user,
+        details={
+            "thread_id": str(session.get("session_id") or session_key or thread_id),
+            "message_index": assistant_message_index,
+            "alternatives_count": len(new_msg.get("alternatives") or []),
+        },
+    )
+
+    final_readiness = _compute_readiness(chat_history, session.get("strategy_objective"))
+
+    return jsonify({
+        "thread_id": thread_id,
+        "session_id": thread_id,
+        "reply": assistant_reply,
+        "message": assistant_reply,
+        "assistant_message_index": assistant_message_index,
+        "regenerated": True,
+        "alternatives_count": len(new_msg.get("alternatives") or []),
+        "model_type": model_selection["model_type"],
+        "allowed_model_types": model_selection["allowed_model_types"],
+        "mutations": [],
+        "tool_results": [],
+        "usage": usage,
+        "context_budget": context_budget,
+        "credits": {"charged": credits_charged, "remaining": remaining},
+        "readiness": {
+            "percent": final_readiness["overall"]["percent"],
+            "categories": final_readiness["categories"],
+            "items": final_readiness.get("items", []),
+            "checklist_summary": final_readiness.get("checklist_summary", {}),
+            "version": final_readiness.get("version"),
+            "updated_at": _iso_now(),
+        },
+        "strategy_objective": session.get("strategy_objective") or "balanced",
+        "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
+        "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
+        "organization_id": session.get("organization_id"),
+        "visibility": session.get("visibility") or "private",
     }), 200
 
 

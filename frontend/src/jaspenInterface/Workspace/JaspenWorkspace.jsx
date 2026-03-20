@@ -22,7 +22,7 @@ import {
   faPaperPlane, faSpinner, faTimes, faBars, faCheck, faExclamationTriangle,
   faChartLine, faTrash, faPlus, faMinus, faMicrophone,
   faBolt, faLayerGroup, faPlay, faListCheck, faArrowUpRightFromSquare, faGaugeHigh, faClockRotateLeft, faPaperclip, faArrowUp,
-  faDownload, faChevronDown, faUser, faBell, faLock, faCopy, faThumbsUp, faThumbsDown
+  faDownload, faChevronDown, faUser, faBell, faLock, faCopy, faThumbsUp, faThumbsDown, faRotate
 } from '@fortawesome/free-solid-svg-icons';
 import {
   MonitorCheck, MessageCircleQuestion,
@@ -274,6 +274,9 @@ function toUiMessages(history = []) {
       text: (msg?.content || msg?.text || '').trim(),
       historyIndex,
       feedbackValue: String(msg?.feedback?.value || '').trim().toLowerCase() || null,
+      hasMutations: Array.isArray(msg?.mutations) && msg.mutations.length > 0,
+      regenerated: Boolean(msg?.regenerated),
+      alternativesCount: Array.isArray(msg?.alternatives) ? msg.alternatives.length : 0,
     }))
     .filter((m) => m.text.length > 0 && !isContextSyncMessage(m.text));
 }
@@ -486,6 +489,7 @@ export default function JaspenWorkspace() {
 
   const [busy, setBusy] = useState(false);
   const [isStreamingReply, setIsStreamingReply] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
   const [streamToolStatus, setStreamToolStatus] = useState('');
   const [copiedMessageKey, setCopiedMessageKey] = useState(null);
   const [feedbackBusyKey, setFeedbackBusyKey] = useState(null);
@@ -909,12 +913,21 @@ const handleCopyMessage = async (messageKey, text) => {
   }
 };
 
-const renderMessageActions = (message, messageKey) => {
+const renderMessageActions = (message, messageKey, idx, total) => {
   if (message?.role === 'user') return null;
   const isCopied = copiedMessageKey === messageKey;
   const canFeedback = Number.isInteger(message?.historyIndex) && Boolean(activeThreadId);
+  const isLatestAssistant = idx === total - 1;
   const feedbackKey = `${messageKey}:feedback`;
   const isFeedbackBusy = feedbackBusyKey === feedbackKey;
+  const canRegenerate = Boolean(activeThreadId)
+    && isLatestAssistant
+    && !isStreamingReply
+    && !busy
+    && !regenerating
+    && !message?.streaming
+    && !message?.hasMutations
+    && !(message?.text || '').includes('Applied changes:');
   return (
     <div className="jas-message-actions">
       <button
@@ -974,6 +987,18 @@ const renderMessageActions = (message, messageKey) => {
       >
         <FontAwesomeIcon icon={faThumbsDown} />
       </button>
+      {canRegenerate && (
+        <button
+          type="button"
+          className="jas-message-regen-btn"
+          onClick={regenerateLastResponse}
+          aria-label="Regenerate response"
+          title="Regenerate"
+          disabled={regenerating}
+        >
+          <FontAwesomeIcon icon={faRotate} />
+        </button>
+      )}
     </div>
   );
 };
@@ -3348,6 +3373,9 @@ useEffect(() => {
         streaming: false,
         historyIndex: Number.isInteger(metadata?.historyIndex) ? metadata.historyIndex : message.historyIndex,
         feedbackValue: metadata?.feedbackValue || message.feedbackValue || null,
+        hasMutations: Boolean(metadata?.hasMutations) || Boolean(message.hasMutations),
+        regenerated: Boolean(metadata?.regenerated) || Boolean(message.regenerated),
+        alternativesCount: Number.isInteger(metadata?.alternativesCount) ? metadata.alternativesCount : (message.alternativesCount || 0),
       };
     }));
   }, []);
@@ -3401,11 +3429,13 @@ useEffect(() => {
           setStreamToolStatus('');
           finalizeStreamingAssistant(placeholderId, payload?.reply || payload?.message || '', {
             historyIndex: Number.isInteger(payload?.assistant_message_index) ? payload.assistant_message_index : null,
+            hasMutations: Array.isArray(payload?.mutations) && payload.mutations.length > 0,
           });
         },
       });
       finalizeStreamingAssistant(placeholderId, finalPayload?.reply || finalPayload?.message || '', {
         historyIndex: Number.isInteger(finalPayload?.assistant_message_index) ? finalPayload.assistant_message_index : null,
+        hasMutations: Array.isArray(finalPayload?.mutations) && finalPayload.mutations.length > 0,
       });
       setStreamToolStatus('');
       return finalPayload;
@@ -3451,11 +3481,13 @@ useEffect(() => {
           setStreamToolStatus('');
           finalizeStreamingAssistant(placeholderId, payload?.reply || payload?.message || '', {
             historyIndex: Number.isInteger(payload?.assistant_message_index) ? payload.assistant_message_index : null,
+            hasMutations: Array.isArray(payload?.mutations) && payload.mutations.length > 0,
           });
         },
       });
       finalizeStreamingAssistant(placeholderId, finalPayload?.reply || finalPayload?.message || '', {
         historyIndex: Number.isInteger(finalPayload?.assistant_message_index) ? finalPayload.assistant_message_index : null,
+        hasMutations: Array.isArray(finalPayload?.mutations) && finalPayload.mutations.length > 0,
       });
       setStreamToolStatus('');
       return finalPayload;
@@ -3669,6 +3701,86 @@ async function continueConversation(userText) {
     return null;
   } finally {
     setBusy(false);
+  }
+}
+
+async function regenerateLastResponse() {
+  if (!activeThreadId || regenerating || busy || isStreamingReply) return;
+
+  const lastIdx = messages.length - 1;
+  const lastAi = messages[lastIdx];
+  if (!lastAi || lastAi.role !== 'ai') return;
+
+  setRegenerating(true);
+  setError(null);
+
+  const originalMessage = { ...lastAi };
+  const messageId = `regen-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  setMessages((prev) => {
+    const updated = [...prev];
+    updated[updated.length - 1] = {
+      id: messageId,
+      role: 'ai',
+      text: '',
+      streaming: true,
+    };
+    return updated;
+  });
+
+  try {
+    const data = await Jaspen.streamRegenerate({
+      session_id: activeThreadId,
+      model_type: selectedModelType,
+      onDelta: (text) => appendStreamingAssistantDelta(messageId, text),
+      onToolUse: (event) => setStreamToolStatus(toolStatusLabel(event?.tool)),
+      onToolResult: () => setStreamToolStatus(''),
+      onDone: (payload) => {
+        setStreamToolStatus('');
+        finalizeStreamingAssistant(messageId, payload?.reply || payload?.message || '', {
+          historyIndex: Number.isInteger(payload?.assistant_message_index) ? payload.assistant_message_index : null,
+          regenerated: Boolean(payload?.regenerated),
+          alternativesCount: Number.isInteger(payload?.alternatives_count) ? payload.alternatives_count : 0,
+        });
+      },
+    });
+
+    finalizeStreamingAssistant(messageId, data?.reply || data?.message || '', {
+      historyIndex: Number.isInteger(data?.assistant_message_index) ? data.assistant_message_index : null,
+      regenerated: Boolean(data?.regenerated),
+      alternativesCount: Number.isInteger(data?.alternatives_count) ? data.alternatives_count : 0,
+    });
+    setStreamToolStatus('');
+
+    if (data?.model_type) {
+      setSelectedModelType(String(data.model_type).toLowerCase());
+    }
+    await applyMutationRefreshes(data, activeThreadId);
+
+    const auditPayload = await fetchReadinessFor(activeThreadId);
+    if (auditPayload) {
+      const pct = clampPercent(auditPayload.overall?.percent ?? 0);
+      setReadinessAudit({
+        overall: { ...auditPayload.overall, percent: pct },
+        categories: Array.isArray(auditPayload?.categories) ? auditPayload.categories : [],
+        items: Array.isArray(auditPayload?.items) ? auditPayload.items : [],
+        checklist_summary: auditPayload?.checklist_summary || null,
+        version: auditPayload?.version || null,
+      });
+    }
+  } catch (e) {
+    setMessages((prev) => {
+      const updated = [...prev];
+      const target = updated[updated.length - 1];
+      if (target?.id === messageId) {
+        updated[updated.length - 1] = originalMessage;
+      }
+      return updated;
+    });
+    setStreamToolStatus('');
+    showToast(e?.message || 'Failed to regenerate. Original response restored.', 'error');
+  } finally {
+    setRegenerating(false);
   }
 }
 // === Begin Project (confirm + backend create + spinner + navigate) ===
@@ -5870,7 +5982,7 @@ setView(id === 'chat' ? 'intake' : id);
 	              className={`jas-ai-message ${m.role === 'user' ? 'user' : 'assistant'}`}
 	            >
 	              <div className="jas-message-content">{renderConversationMessage(m)}</div>
-	              {renderMessageActions(m, `drawer:${idx}`)}
+	              {renderMessageActions(m, `drawer:${idx}`, idx, messages.length)}
 	            </div>
 	          ))}
 	        </div>
@@ -6331,7 +6443,7 @@ setView(id === 'chat' ? 'intake' : id);
 	                      {messages.map((m, idx) => (
 	                        <div key={idx} className={`agent-chat-message ${m.role === 'ai' ? 'ai' : 'user'}`}>
 	                          <div className="message-content">{renderConversationMessage(m)}</div>
-	                          {renderMessageActions(m, `tab:${idx}`)}
+	                          {renderMessageActions(m, `tab:${idx}`, idx, messages.length)}
 
 	                          {Array.isArray(m.attachments) && m.attachments.length > 0 && (
 	                            <div className="message-attachments">
@@ -7001,7 +7113,7 @@ setView(id === 'chat' ? 'intake' : id);
 	              {messages.map((m, idx) => (
 	                <div key={idx} className={`jas-message ${m.role === 'ai' ? 'ai' : 'user'}`}>
 	                  <div className="jas-message-bubble">{renderConversationMessage(m)}</div>
-	                  {renderMessageActions(m, `main:${idx}`)}
+	                  {renderMessageActions(m, `main:${idx}`, idx, messages.length)}
 	                </div>
 	              ))}
 
