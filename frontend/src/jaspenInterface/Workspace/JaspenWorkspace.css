@@ -57,10 +57,42 @@
   margin: 0;
 }
 
+.jas-skip-link {
+  position: absolute;
+  top: 14px;
+  left: 16px;
+  z-index: 1600;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--navy);
+  color: var(--white);
+  text-decoration: none;
+  transform: translateY(-140%);
+  transition: transform var(--transition);
+}
+
+.jas-skip-link:focus {
+  transform: translateY(0);
+}
+
+.jas-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* ============================================================================
    DRAWER TABS (Left Edge - Vertical Text)
    ============================================================================ */
 .jas-drawer-tab {
+  appearance: none;
+  -webkit-appearance: none;
   position: fixed;
   left: 0;
   top: var(--side-tab-top);
@@ -296,20 +328,33 @@
   gap: 10px;
   padding: 10px 0;
   border-bottom: 1px solid var(--border);
-  cursor: pointer;
-  transition: background var(--transition);
 }
 .jas-history-item:last-child {
   border-bottom: none;
 }
-.jas-history-item:hover {
+
+.jas-history-item-select {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  padding: 0;
+  margin: 0;
+}
+
+.jas-history-item:hover,
+.jas-history-item:focus-within {
   background: rgba(0, 0, 0, 0.02);
   margin: 0 -20px;
   padding: 10px 20px;
 }
 
 .jas-history-item .hi-text {
-  flex: 1;
   min-width: 0;
 }
 
@@ -2846,6 +2891,8 @@
    DRAWER TAB (Left Edge - Vertical)
    ============================================================================ */
 .jas-sidebar-tab {
+  appearance: none;
+  -webkit-appearance: none;
   position: fixed;
   left: 0;
   top: var(--side-tab-top);
@@ -2867,6 +2914,7 @@
   gap: 8px;
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   transition: background var(--transition);
+  font-family: inherit;
 }
 
 .jas-sidebar-tab:hover {

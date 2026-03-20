@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import './Onboarding.css';
 
@@ -38,6 +38,7 @@ export default function Onboarding({
   const [role, setRole] = useState('');
   const [evaluation, setEvaluation] = useState('');
   const [startMode, setStartMode] = useState('');
+  const optionRefs = useRef([]);
 
   useEffect(() => {
     if (!open) return;
@@ -77,18 +78,36 @@ export default function Onboarding({
     [role, evaluation, startMode]
   );
 
-  if (!open) return null;
-
   const step = steps[stepIndex];
   const isLastStep = stepIndex === steps.length - 1;
   const isStepComplete = Boolean(step.value);
   const cardClassName = `jas-onboarding-card jas-onboarding-card-step-${stepIndex + 1}`;
   const showSkipAction = canSkip;
   const showBackAction = stepIndex > 0 || canGoBack;
+  const titleId = `jas-onboarding-title-${stepIndex + 1}`;
+  const descriptionId = `jas-onboarding-description-${stepIndex + 1}`;
+
+  useEffect(() => {
+    if (!open) return;
+    const selectedIndex = step.options.findIndex((option) => option.key === step.value);
+    const activeNode = optionRefs.current[selectedIndex] || optionRefs.current.find(Boolean);
+    if (!activeNode) return;
+    window.requestAnimationFrame(() => {
+      activeNode.focus();
+    });
+  }, [open, step]);
+
+  if (!open) return null;
 
   return (
     <div className="jas-onboarding-backdrop" role="presentation">
-      <div className={cardClassName} role="dialog" aria-modal="true" aria-label="Jaspen onboarding">
+      <div
+        className={cardClassName}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+      >
         <div className="jas-onboarding-progress" aria-hidden="true">
           {steps.map((item, idx) => (
             <span
@@ -99,18 +118,22 @@ export default function Onboarding({
         </div>
 
         <div className="jas-onboarding-header">
-          <h3>{step.title}</h3>
-          <p>{step.subtitle}</p>
+          <h3 id={titleId}>{step.title}</h3>
+          <p id={descriptionId}>{step.subtitle}</p>
           {step.helper ? <p className="jas-onboarding-helper">{step.helper}</p> : null}
         </div>
 
         <div className="jas-onboarding-options">
-          {step.options.map((option) => (
+          {step.options.map((option, idx) => (
             <button
               key={option.key}
               type="button"
+              ref={(node) => {
+                optionRefs.current[idx] = node;
+              }}
               className={`jas-onboarding-option ${step.value === option.key ? 'selected' : ''}`}
               onClick={() => step.onSelect(option.key)}
+              aria-pressed={step.value === option.key}
               disabled={busy}
             >
               <span className="jas-onboarding-option-title-row">

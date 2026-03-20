@@ -1888,11 +1888,19 @@ useEffect(() => {
 
   const renderNameModal = () => {
     if (!nameModalOpen) return null;
+    const titleId = 'jas-name-modal-title';
+    const descriptionId = 'jas-name-modal-description';
     return (
       <div className="jas-name-modal-backdrop" role="presentation">
-        <div className="jas-name-modal" role="dialog" aria-modal="true" aria-label="Choose your name">
-          <h3>What should I call you?</h3>
-          <p>We&apos;ll use this across Jaspen. If you&apos;d rather do it later, you can update it anytime from Account settings.</p>
+        <div
+          className="jas-name-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={titleId}
+          aria-describedby={descriptionId}
+        >
+          <h3 id={titleId}>What should I call you?</h3>
+          <p id={descriptionId}>We&apos;ll use this across Jaspen. If you&apos;d rather do it later, you can update it anytime from Account settings.</p>
           <input
             className="jas-name-input"
             value={nameInput}
@@ -3986,6 +3994,15 @@ async function undoLastMutationTurn() {
 const [beginBusy, setBeginBusy] = useState(false);
 const [beginMsg, setBeginMsg] = useState("Generating your project plan…");
 
+const liveStatusMessage = useMemo(() => {
+  if (beginBusy) return 'Project setup is in progress.';
+  if (!busy) return '';
+  if (isStreamingReply) {
+    return streamToolStatus || 'Jaspen is responding.';
+  }
+  return sessionId ? 'Jaspen is thinking.' : 'Jaspen is starting the conversation.';
+}, [beginBusy, busy, isStreamingReply, streamToolStatus, sessionId]);
+
 async function onBeginProject() {
     if (!canStartOrgProjects) {
       showToast('Only creators and admins can start new projects in a shared workspace.', 'info');
@@ -6072,15 +6089,21 @@ setView(id === 'chat' ? 'intake' : id);
 
     return (
       <div className={`jas jas-shell ${shellOpen ? 'drawer-open' : ''}`}>
-        <main className="jas-main">
+        <a href="#jas-main-content" className="jas-skip-link">Skip to main content</a>
+        <main className="jas-main" aria-label="Jaspen workspace">
+          <div className="jas-sr-only" aria-live="polite" aria-atomic="true">{liveStatusMessage}</div>
           <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
 {activeTab === 'chat' && (
   <>
     {/* LEFT SIDEBAR - Readiness (only on Refine & Rescore tab) */}
-    <div className={`jas-left-sidebar jas-readiness-sidebar ${sidebarState.readiness ? 'sidebar-open' : ''}`}>
+    <aside
+      id="jas-workspace-readiness-panel"
+      className={`jas-left-sidebar jas-readiness-sidebar ${sidebarState.readiness ? 'sidebar-open' : ''}`}
+      aria-labelledby="jas-workspace-readiness-title"
+    >
       <div className="jas-sidebar-header">
-        <h3>Analysis Readiness</h3>
+        <h3 id="jas-workspace-readiness-title">Analysis Readiness</h3>
         <button className="jas-sidebar-close" onClick={() => dispatchSidebar({ type: 'CLOSE_READINESS' })}>
           <FontAwesomeIcon icon={faTimes} />
         </button>
@@ -6120,25 +6143,33 @@ setView(id === 'chat' ? 'intake' : id);
         onLogout={handleLogout}
         onClose={() => dispatchSidebar({ type: 'CLOSE_READINESS' })}
       />
-    </div>
+    </aside>
 
     {sessionId && messages.length > 0 && !sidebarState.readiness && (
-      <div
+      <button
+        type="button"
         className="jas-sidebar-tab jas-tab-readiness"
         style={{ top: `${sideTabSecond}px` }}
         onClick={() => dispatchSidebar({ type: 'OPEN_READINESS' })}
+        aria-label="Open analysis readiness"
+        aria-expanded={sidebarState.readiness}
+        aria-controls="jas-workspace-readiness-panel"
       >
         <FontAwesomeIcon icon={faChartLine} />
         <span className="jas-tab-label">Readiness</span>
-      </div>
+      </button>
     )}
   </>
 )}
 
       {/* LEFT SIDEBAR - User Settings */}
-      <div className={`jas-left-sidebar jas-settings-sidebar ${sidebarState.settings ? 'sidebar-open' : ''}`}>
+      <aside
+        id="jas-workspace-settings-panel"
+        className={`jas-left-sidebar jas-settings-sidebar ${sidebarState.settings ? 'sidebar-open' : ''}`}
+        aria-labelledby="jas-workspace-settings-title"
+      >
         <div className="jas-sidebar-header">
-          <h3>User Settings</h3>
+          <h3 id="jas-workspace-settings-title">User Settings</h3>
           <button className="jas-sidebar-close" onClick={() => dispatchSidebar({ type: 'CLOSE_SETTINGS' })}>
             <FontAwesomeIcon icon={faTimes} />
           </button>
@@ -6146,20 +6177,22 @@ setView(id === 'chat' ? 'intake' : id);
         <div className="jas-sidebar-content">
           {renderUserMenuContent(() => dispatchSidebar({ type: 'CLOSE_SETTINGS' }))}
         </div>
-      </div>
+      </aside>
 
       {!sidebarState.settings && (
-        <div
+        <button
+          type="button"
           className="jas-sidebar-tab jas-tab-settings"
           onClick={() => dispatchSidebar({ type: 'TOGGLE_SETTINGS' })}
-          role="button"
           aria-label="User settings"
           title="User settings"
+          aria-expanded={sidebarState.settings}
+          aria-controls="jas-workspace-settings-panel"
           style={{ top: `${sideTabBase}px` }}
         >
           <FontAwesomeIcon icon={faBars} />
           <span className="jas-tab-label">Menu</span>
-        </div>
+        </button>
       )}
 
       {busy && !isStreamingReply && (
@@ -6176,21 +6209,27 @@ setView(id === 'chat' ? 'intake' : id);
 
 {/* Assistant Vertical Tab (Score + Scenarios only) */}
 {activeTab !== 'chat' && !aiDrawerOpen && (
-  <div
+  <button
+    type="button"
     className="jas-sidebar-tab jas-tab-assistant"
     style={{ top: `${sideTabSecond}px` }}
     onClick={toggleAIDrawer}
-    role="button"
     aria-label="Jaspen"
     title="Jaspen"
+    aria-expanded={aiDrawerOpen}
+    aria-controls="jas-ai-drawer-panel"
   >
     <span className="jas-tab-label">Jaspen</span>
-  </div>
+  </button>
 )}
 
 {/* Assistant Drawer (Score + Scenarios only) */}
 {activeTab !== 'chat' && (
-  <div className={`jas-ai-drawer ${aiDrawerOpen ? 'jas-drawer-open' : ''}`}>
+  <div
+    id="jas-ai-drawer-panel"
+    className={`jas-ai-drawer ${aiDrawerOpen ? 'jas-drawer-open' : ''}`}
+    aria-label="Jaspen assistant drawer"
+  >
     <div className="jas-ai-header">
       <div className="jas-ai-title">
         <span>{isScenarioTab && scenarioDrawerView === 'scorecard' ? 'Score Summary' : 'Jaspen'}</span>
@@ -6413,7 +6452,10 @@ setView(id === 'chat' ? 'intake' : id);
         }}
       />
 
-        <div className={`jas-workspace ${aiDrawerOpen ? 'jas-ai-open' : ''} ${isReadinessOpen ? 'jas-readiness-open' : ''} ${isSettingsOpen ? 'jas-settings-open' : ''}`}>
+      <div
+        id="jas-main-content"
+        className={`jas-workspace ${aiDrawerOpen ? 'jas-ai-open' : ''} ${isReadinessOpen ? 'jas-readiness-open' : ''} ${isSettingsOpen ? 'jas-settings-open' : ''}`}
+      >
           <div className="jas-workspace-header">
             {adminWorkspacePreviewActive && (
               <div className="jas-admin-preview-banner">
@@ -6904,7 +6946,9 @@ setView(id === 'chat' ? 'intake' : id);
   };
   return (
     <div className={`jas jas-shell ${intakeShellOpen ? 'drawer-open' : ''}`}>
-      <main className="jas-main">
+      <a href="#jas-main-content" className="jas-skip-link">Skip to main content</a>
+      <main className="jas-main" aria-label="Jaspen intake workspace">
+        <div className="jas-sr-only" aria-live="polite" aria-atomic="true">{liveStatusMessage}</div>
         <div className="agent-chat-interface">
       {busy && !isStreamingReply && (
         <div className="thinking-overlay">
@@ -6917,42 +6961,58 @@ setView(id === 'chat' ? 'intake' : id);
 
       {/* Drawer Tabs on Left Edge */}
       {!sidebarState.settings && (
-        <div
+        <button
+          type="button"
           className="jas-drawer-tab jas-drawer-tab-settings"
           style={{ top: intakeTabTop('settings') }}
           onClick={() => dispatchSidebar({ type: 'TOGGLE_SETTINGS' })}
+          aria-label="Open user settings"
+          aria-expanded={sidebarState.settings}
+          aria-controls="jas-intake-settings-panel"
         >
           <FontAwesomeIcon icon={faBars} />
           MENU
-        </div>
+        </button>
       )}
       {hasHistory && !sidebarState.history && (
-        <div
+        <button
+          type="button"
           className="jas-drawer-tab jas-drawer-tab-history"
           style={{ top: intakeTabTop('history') }}
           onClick={() => dispatchSidebar({ type: 'TOGGLE_HISTORY' })}
+          aria-label="Open analysis history"
+          aria-expanded={sidebarState.history}
+          aria-controls="jas-intake-history-panel"
         >
           <FontAwesomeIcon icon={faClockRotateLeft} />
           HISTORY
-        </div>
+        </button>
       )}
       {intakeHasReadinessTab && (
-        <div
+        <button
+          type="button"
           className={`jas-drawer-tab jas-drawer-tab-readiness ${sessionId && messages.length > 0 ? 'active' : ''}`}
           style={{ top: intakeTabTop('readiness') }}
           onClick={() => dispatchSidebar({ type: 'OPEN_READINESS' })}
+          aria-label="Open analysis readiness"
+          aria-expanded={sidebarState.readiness}
+          aria-controls="jas-intake-readiness-panel"
         >
           <FontAwesomeIcon icon={faGaugeHigh} />
           READINESS
-        </div>
+        </button>
       )}
 
       {/* Drawer Overlay - non-blocking, just visual dimming */}
 
       {/* LEFT SIDEBAR - Readiness */}
-      <div className={`jas-left-sidebar jas-readiness-sidebar ${sidebarState.readiness ? 'sidebar-open' : ''}`}>
+      <aside
+        id="jas-intake-readiness-panel"
+        className={`jas-left-sidebar jas-readiness-sidebar ${sidebarState.readiness ? 'sidebar-open' : ''}`}
+        aria-labelledby="jas-intake-readiness-title"
+      >
         <div className="jas-sidebar-header">
-          <h3>Analysis Readiness</h3>
+          <h3 id="jas-intake-readiness-title">Analysis Readiness</h3>
           <button className="jas-sidebar-close" onClick={() => dispatchSidebar({ type: 'CLOSE_READINESS' })}>
             <FontAwesomeIcon icon={faTimes} />
           </button>
@@ -7013,11 +7073,15 @@ setView(id === 'chat' ? 'intake' : id);
           onLogout={handleLogout}
           onClose={() => dispatchSidebar({ type: 'CLOSE_READINESS' })}
         />
-      </div>
+      </aside>
 
       {/* LEFT SIDEBAR - History */}
       {hasHistory && (
-        <div className={`jas-left-sidebar jas-history-sidebar ${sidebarState.history ? 'sidebar-open' : ''}`}>
+        <aside
+          id="jas-intake-history-panel"
+          className={`jas-left-sidebar jas-history-sidebar ${sidebarState.history ? 'sidebar-open' : ''}`}
+          aria-labelledby="jas-intake-history-title"
+        >
           <div className="jas-sidebar-header jas-sidebar-header-history">
             <button
               className="jas-sidebar-clear jas-sidebar-clear-left"
@@ -7027,7 +7091,7 @@ setView(id === 'chat' ? 'intake' : id);
             >
               {clearingHistory ? 'Clearing…' : 'Clear'}
             </button>
-            <h3>Analysis History</h3>
+            <h3 id="jas-intake-history-title">Analysis History</h3>
             <button className="jas-sidebar-close" onClick={() => dispatchSidebar({ type: 'CLOSE_HISTORY' })}>
               <FontAwesomeIcon icon={faTimes} />
             </button>
@@ -7049,26 +7113,34 @@ setView(id === 'chat' ? 'intake' : id);
               </div>
             ) : (
               filteredAnalysisHistory.map(({ item, title, matchSnippet }, index) => (
-                <div key={item.id || index} className="jas-history-item" onClick={() => handleSelectAnalysis(item.result)}>
-                  <div className="hi-text">
-                    <div className="hi-title">
-                      {title || `Analysis ${item.id?.slice(-8) || index + 1}`}
+                <div key={item.id || index} className="jas-history-item">
+                  <button
+                    type="button"
+                    className="jas-history-item-select"
+                    onClick={() => handleSelectAnalysis(item.result)}
+                    aria-label={`Open ${title || `Analysis ${item.id?.slice(-8) || index + 1}`}`}
+                  >
+                    <div className="hi-text">
+                      <div className="hi-title">
+                        {title || `Analysis ${item.id?.slice(-8) || index + 1}`}
+                      </div>
+                      <div className="hi-meta">
+                        <span>{new Date(item.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+                        {item.result?.jaspen_score && (<span className="hi-score">Score: {item.result.jaspen_score}</span>)}
+                      </div>
+                      {matchSnippet ? (
+                        <div className="hi-snippet">{matchSnippet}</div>
+                      ) : null}
                     </div>
-                    <div className="hi-meta">
-                      <span>{new Date(item.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
-                      {item.result?.jaspen_score && (<span className="hi-score">Score: {item.result.jaspen_score}</span>)}
-                    </div>
-                    {matchSnippet ? (
-                      <div className="hi-snippet">{matchSnippet}</div>
-                    ) : null}
-                  </div>
+                  </button>
                   <button
                     className="hi-delete"
-                    onClick={(e) => {
-                      e.stopPropagation();
+                    type="button"
+                    onClick={() => {
                       handleDeleteAnalysis(item.id);
                     }}
                     title="Delete"
+                    aria-label={`Delete ${title || `analysis ${item.id?.slice(-8) || index + 1}`}`}
                   >
                     <FontAwesomeIcon icon={faTrash} />
                   </button>
@@ -7076,13 +7148,17 @@ setView(id === 'chat' ? 'intake' : id);
               ))
             )}
           </div>
-        </div>
+        </aside>
       )}
 
       {/* LEFT SIDEBAR - User Settings */}
-      <div className={`jas-left-sidebar jas-settings-sidebar ${sidebarState.settings ? 'sidebar-open' : ''}`}>
+      <aside
+        id="jas-intake-settings-panel"
+        className={`jas-left-sidebar jas-settings-sidebar ${sidebarState.settings ? 'sidebar-open' : ''}`}
+        aria-labelledby="jas-intake-settings-title"
+      >
         <div className="jas-sidebar-header">
-          <h3>User Settings</h3>
+          <h3 id="jas-intake-settings-title">User Settings</h3>
           <button className="jas-sidebar-close" onClick={() => dispatchSidebar({ type: 'CLOSE_SETTINGS' })}>
             <FontAwesomeIcon icon={faTimes} />
           </button>
@@ -7090,7 +7166,7 @@ setView(id === 'chat' ? 'intake' : id);
         <div className="jas-sidebar-content">
           {renderUserMenuContent(() => dispatchSidebar({ type: 'CLOSE_SETTINGS' }))}
         </div>
-      </div>
+      </aside>
 
       {/* Header - Manus Style Top Bar */}
       <div className="jas-chat-topbar">
@@ -7250,7 +7326,7 @@ setView(id === 'chat' ? 'intake' : id);
       )}
 
       {/* Content */}
-      <div className="jas-chat-content">
+      <div id="jas-main-content" className="jas-chat-content">
         {showSharedProjectsLanding ? (
           <div className="jas-shared-projects-landing">
             <h2>Shared Projects</h2>

@@ -90,6 +90,11 @@
   transform: translateY(-1px);
 }
 
+.jas-shell .jas-onboarding-option:focus-visible {
+  border-color: var(--magenta);
+  box-shadow: 0 0 0 3px rgba(160, 3, 108, 0.12);
+}
+
 .jas-shell .jas-onboarding-option.selected {
   border-color: var(--magenta);
   background: #fff8fd;
@@ -198,6 +203,13 @@
 .jas-shell .jas-onboarding-skip:disabled {
   cursor: not-allowed;
   opacity: 0.45;
+}
+
+.jas-shell .jas-onboarding-primary:focus-visible,
+.jas-shell .jas-onboarding-secondary:focus-visible,
+.jas-shell .jas-onboarding-skip:focus-visible {
+  outline: 2px solid var(--magenta);
+  outline-offset: 3px;
 }
 
 .jas-shell .jas-onboarding-status {
