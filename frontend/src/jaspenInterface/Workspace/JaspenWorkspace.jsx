@@ -1343,6 +1343,8 @@ useEffect(() => {
   const canExportScorecardPdf = (isPlatformAdmin && !customerPreviewActive) || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.essential;
   const canExportScorecardPptx = (isPlatformAdmin && !customerPreviewActive) || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.team;
   const canExportWbsCsv = (isPlatformAdmin && !customerPreviewActive) || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.team;
+  const canExportConversationPdf = (isPlatformAdmin && !customerPreviewActive) || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.essential;
+  const canExportConversationMarkdown = true;
   const batchIdeasPlanUnlocked = (isPlatformAdmin && !customerPreviewActive) || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.team;
   const batchIdeasRoleUnlocked = previewPlanCategory !== 'individual' && (
     effectiveIsCreator || (isPlatformAdmin && !customerPreviewActive)
@@ -5394,6 +5396,45 @@ const handleExportWbsCsv = useCallback(async ({ threadBundleId, projectName } = 
   }
 }, [currentSessionId, sessionId, showToast, triggerDownload]);
 
+const handleExportConversationMarkdown = useCallback(async ({ threadBundleId, projectName } = {}) => {
+  const tid = threadBundleId || currentSessionId || sessionId;
+  if (!tid) {
+    showToast('No active thread to export.', 'error');
+    return;
+  }
+  setExportBusyType('conversation-md');
+  try {
+    const { blob, filename } = await Jaspen.downloadConversationMarkdown(tid);
+    triggerDownload(blob, filename || `${String(projectName || 'jaspen-conversation').toLowerCase().replace(/[^a-z0-9._-]+/g, '-')}-conversation.md`);
+    showToast('Exported conversation transcript', 'success');
+  } catch (err) {
+    console.error('[handleExportConversationMarkdown] failed', err);
+    showToast(err?.message || 'Failed to export conversation transcript', 'error');
+  } finally {
+    setExportBusyType(null);
+  }
+}, [currentSessionId, sessionId, showToast, triggerDownload]);
+
+const handleExportConversationPdf = useCallback(async ({ threadBundleId, projectName } = {}) => {
+  const tid = threadBundleId || currentSessionId || sessionId;
+  if (!tid) {
+    showToast('No active thread to export.', 'error');
+    return;
+  }
+  setExportBusyType('conversation-pdf');
+  try {
+    const { blob, filename } = await Jaspen.downloadConversationPdf(tid);
+    triggerDownload(blob, filename || `${String(projectName || 'jaspen-conversation').toLowerCase().replace(/[^a-z0-9._-]+/g, '-')}-conversation.pdf`);
+    showToast('Exported conversation transcript PDF', 'success');
+  } catch (err) {
+    console.error('[handleExportConversationPdf] failed', err);
+    if (err?.status === 403) setBillingModalOpen(true);
+    showToast(err?.message || 'Failed to export conversation transcript PDF', 'error');
+  } finally {
+    setExportBusyType(null);
+  }
+}, [currentSessionId, sessionId, showToast, triggerDownload]);
+
   // === Helpers ===
   const handleOnboardingComplete = useCallback((selection = {}) => {
     const roleKey = String(selection?.role || '').trim().toLowerCase();
@@ -6492,10 +6533,14 @@ setView(id === 'chat' ? 'intake' : id);
         canExportScorecardPdf={canExportScorecardPdf}
         canExportScorecardPptx={canExportScorecardPptx}
         canExportWbsCsv={canExportWbsCsv}
+        canExportConversationPdf={canExportConversationPdf}
+        canExportConversationMarkdown={canExportConversationMarkdown}
         exportBusyType={exportBusyType}
         onExportScorecardPdf={handleExportScorecardPdf}
         onExportScorecardPptx={handleExportScorecardPptx}
         onExportWbsCsv={handleExportWbsCsv}
+        onExportConversationPdf={handleExportConversationPdf}
+        onExportConversationMarkdown={handleExportConversationMarkdown}
 
         onBackToMain={handleNewAnalysis}
         onOpenChat={() => { setActiveTab('chat'); setView('intake'); }}

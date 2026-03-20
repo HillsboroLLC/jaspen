@@ -55,6 +55,8 @@ export const endpoints = {
   exportScorecardPptx: (threadId, scorecardId = '') =>
     `${API_BASE}/api/v1/export/threads/${encodeURIComponent(threadId)}/scorecard/pptx${scorecardId ? `?scorecard_id=${encodeURIComponent(scorecardId)}` : ''}`,
   exportWbsCsv:      (threadId) => `${API_BASE}/api/v1/export/threads/${encodeURIComponent(threadId)}/wbs/csv`,
+  exportConversationMarkdown: (threadId) => `${API_BASE}/api/v1/export/threads/${encodeURIComponent(threadId)}/conversation/markdown`,
+  exportConversationPdf: (threadId) => `${API_BASE}/api/v1/export/threads/${encodeURIComponent(threadId)}/conversation/pdf`,
   batchIdeasUpload: `${API_BASE}/api/v1/ai-agent/batch-ideas/upload`,
   batchIdeasById:   (batchId) => `${API_BASE}/api/v1/ai-agent/batch-ideas/${encodeURIComponent(batchId)}`,
   batchIdeasRank:   (batchId) => `${API_BASE}/api/v1/ai-agent/batch-ideas/${encodeURIComponent(batchId)}/rank`,
@@ -948,6 +950,16 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
   downloadWbsCsv: async (threadId) => {
     if (!threadId) throw new Error('threadId is required');
     return downloadBinary(endpoints.exportWbsCsv(threadId));
+  },
+
+  downloadConversationMarkdown: async (threadId) => {
+    if (!threadId) throw new Error('threadId is required');
+    return downloadBinary(endpoints.exportConversationMarkdown(threadId));
+  },
+
+  downloadConversationPdf: async (threadId) => {
+    if (!threadId) throw new Error('threadId is required');
+    return downloadBinary(endpoints.exportConversationPdf(threadId));
   },
 
   analyzeDataFile: async ({ file, thread_id, prompt } = {}) => {

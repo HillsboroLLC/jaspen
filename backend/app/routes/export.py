@@ -20,6 +20,7 @@ export_bp = Blueprint("export", __name__)
 PPTX_MIMETYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 CSV_MIMETYPE = "text/csv; charset=utf-8"
 PDF_MIMETYPE = "application/pdf"
+MARKDOWN_MIMETYPE = "text/markdown; charset=utf-8"
 
 
 def _iso_now():
@@ -237,6 +238,67 @@ def _scorecard_markdown(scorecard, *, org=None):
 def _safe_filename_base(value):
     slug = re.sub(r"[^a-z0-9._-]+", "-", str(value or "").strip().lower()).strip("-")
     return slug[:96] or "jaspen-export"
+
+
+def _display_chat_role(role):
+    normalized = str(role or "").strip().lower()
+    if normalized in {"assistant", "ai", "bot"}:
+        return "Jaspen"
+    return "You"
+
+
+def _transcript_markdown(session, *, org=None):
+    if not isinstance(session, dict):
+        return ""
+    thread_name = _safe_text(session.get("name") or "Conversation Transcript", 255)
+    workspace_name = org.name if org else "Personal Workspace"
+    generated_at = session.get("timestamp") or session.get("created") or _iso_now()
+    chat_history = session.get("chat_history") if isinstance(session.get("chat_history"), list) else []
+
+    lines = [
+        f"# {thread_name}",
+        "",
+        f"- **Generated**: {generated_at}",
+        f"- **Workspace**: {workspace_name}",
+        f"- **Thread ID**: {str(session.get('session_id') or '').strip() or 'N/A'}",
+        "",
+        "## Conversation",
+    ]
+
+    if not chat_history:
+        lines.append("")
+        lines.append("_No conversation messages available._")
+        return "\n".join(lines)
+
+    for message in chat_history:
+        if not isinstance(message, dict):
+            continue
+        content = _safe_text(message.get("content") or message.get("text") or "", 20000)
+        attachments = message.get("attachments") if isinstance(message.get("attachments"), list) else []
+        if not str(content).strip() and not attachments:
+            continue
+        role_label = _display_chat_role(message.get("role"))
+        timestamp = str(message.get("timestamp") or "").strip()
+        lines.extend(["", f"### {role_label}"])
+        if timestamp:
+            lines.append(f"_Timestamp: {timestamp}_")
+            lines.append("")
+        if str(content).strip():
+            lines.append(str(content).strip())
+        if attachments:
+            lines.append("")
+            lines.append("Attached files:")
+            for attachment in attachments:
+                if not isinstance(attachment, dict):
+                    continue
+                name = _safe_text(attachment.get("name") or "attachment", 255)
+                attachment_type = _safe_text(attachment.get("type") or attachment.get("kind") or "file", 120)
+                size = int(attachment.get("size") or 0)
+                size_kb = max(1, round(size / 1024)) if size > 0 else None
+                suffix = f" ({attachment_type}{f', {size_kb} KB' if size_kb else ''})"
+                lines.append(f"- {name}{suffix}")
+
+    return "\n".join(lines).strip()
 
 
 def _send_bytes(payload, *, filename, mimetype):
@@ -517,3 +579,46 @@ def export_wbs_csv(thread_id):
     project_name = session.get("name") or thread_id
     filename = f"{_safe_filename_base(project_name)}-wbs.csv"
     return _send_bytes(payload, filename=filename, mimetype=CSV_MIMETYPE)
+
+
+@export_bp.route("/threads/<thread_id>/conversation/markdown", methods=["GET"])
+@jwt_required()
+def export_conversation_markdown(thread_id):
+    user = User.query.filter_by(id=str(get_jwt_identity())).first()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    sessions = load_user_sessions(user.id) or {}
+    session = _resolve_thread_session(sessions, thread_id)
+    if not isinstance(session, dict):
+        return jsonify({"error": "Thread not found"}), 404
+
+    _plan_key, org, _membership = _resolve_export_context(user, session)
+    markdown = _transcript_markdown(session, org=org)
+    project_name = session.get("name") or thread_id
+    filename = f"{_safe_filename_base(project_name)}-conversation.md"
+    return _send_bytes(markdown.encode("utf-8"), filename=filename, mimetype=MARKDOWN_MIMETYPE)
+
+
+@export_bp.route("/threads/<thread_id>/conversation/pdf", methods=["GET"])
+@jwt_required()
+def export_conversation_pdf(thread_id):
+    user = User.query.filter_by(id=str(get_jwt_identity())).first()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    sessions = load_user_sessions(user.id) or {}
+    session = _resolve_thread_session(sessions, thread_id)
+    if not isinstance(session, dict):
+        return jsonify({"error": "Thread not found"}), 404
+
+    plan_key, org, _membership = _resolve_export_context(user, session)
+    access_error = _require_export_plan(plan_key, "pdf")
+    if access_error:
+        return access_error
+
+    markdown = _transcript_markdown(session, org=org)
+    project_name = session.get("name") or thread_id
+    payload = _markdown_to_pdf_bytes(project_name, markdown)
+    filename = f"{_safe_filename_base(project_name)}-conversation.pdf"
+    return _send_bytes(payload, filename=filename, mimetype=PDF_MIMETYPE)

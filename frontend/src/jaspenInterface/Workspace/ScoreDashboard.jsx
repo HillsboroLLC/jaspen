@@ -26,10 +26,14 @@ export default function ScoreDashboard({
   canExportScorecardPdf = false,
   canExportScorecardPptx = false,
   canExportWbsCsv = false,
+  canExportConversationPdf = false,
+  canExportConversationMarkdown = false,
   exportBusyType = null,
   onExportScorecardPdf = null,
   onExportScorecardPptx = null,
   onExportWbsCsv = null,
+  onExportConversationPdf = null,
+  onExportConversationMarkdown = null,
   loading = false,
 }) {
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
@@ -160,14 +164,38 @@ export default function ScoreDashboard({
         }),
       });
     }
+    if (canExportConversationMarkdown && onExportConversationMarkdown) {
+      options.push({
+        key: 'conversation-md',
+        label: 'Export Transcript (.md)',
+        onClick: () => onExportConversationMarkdown({
+          threadBundleId,
+          projectName: result.project_name || 'Untitled Idea',
+        }),
+      });
+    }
+    if (canExportConversationPdf && onExportConversationPdf) {
+      options.push({
+        key: 'conversation-pdf',
+        label: 'Export Transcript PDF',
+        onClick: () => onExportConversationPdf({
+          threadBundleId,
+          projectName: result.project_name || 'Untitled Idea',
+        }),
+      });
+    }
     return options;
   }, [
     canExportScorecardPdf,
     canExportScorecardPptx,
     canExportWbsCsv,
+    canExportConversationPdf,
+    canExportConversationMarkdown,
     onExportScorecardPdf,
     onExportScorecardPptx,
     onExportWbsCsv,
+    onExportConversationPdf,
+    onExportConversationMarkdown,
     threadBundleId,
     selectedScorecardId,
     result.project_name,
