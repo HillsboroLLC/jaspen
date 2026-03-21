@@ -196,6 +196,118 @@ def _collect_message_feedback(user_id=None, value=None, query=None, limit=100):
     }
 
 
+def _collect_provider_health(user_id=None, provider=None, limit=50):
+    rows = UserSession.query
+    if user_id:
+        rows = rows.filter(UserSession.user_id == user_id)
+    scan_limit = max(limit * 12, 250)
+    scan_limit = min(scan_limit, 2000)
+    rows = (
+        rows
+        .order_by(UserSession.updated_at.desc(), UserSession.id.desc())
+        .limit(scan_limit)
+        .all()
+    )
+
+    user_ids = sorted({row.user_id for row in rows if row.user_id})
+    users = {
+        user.id: user
+        for user in User.query.filter(User.id.in_(user_ids)).all()
+    } if user_ids else {}
+
+    provider_filter = str(provider or "").strip().lower() or None
+    recent_failovers = []
+    provider_summary = {}
+    total_events = 0
+    failover_events = 0
+
+    for row in rows:
+        payload = row.payload if isinstance(row.payload, dict) else {}
+        usage_events = payload.get("usage_events") if isinstance(payload.get("usage_events"), list) else []
+        if not usage_events:
+            continue
+        user = users.get(row.user_id)
+        for event in usage_events:
+            if not isinstance(event, dict):
+                continue
+            final_provider = str(event.get("provider") or "unknown").strip().lower() or "unknown"
+            if provider_filter and final_provider != provider_filter:
+                continue
+
+            total_events += 1
+            failover = event.get("failover") if isinstance(event.get("failover"), dict) else {}
+            attempted = failover.get("attempted_providers") if isinstance(failover.get("attempted_providers"), list) else []
+            failover_count = _to_int(failover.get("failover_count"), default=0) or 0
+            if attempted or failover_count > 0:
+                failover_events += 1
+
+            summary = provider_summary.setdefault(final_provider, {
+                "provider": final_provider,
+                "events": 0,
+                "failover_events": 0,
+                "avg_failover_count": 0.0,
+                "models": {},
+            })
+            summary["events"] += 1
+            if attempted or failover_count > 0:
+                summary["failover_events"] += 1
+                summary["avg_failover_count"] += failover_count
+
+            final_model = str(event.get("model") or failover.get("final_model") or "unknown").strip() or "unknown"
+            model_summary = summary["models"].setdefault(final_model, {
+                "model": final_model,
+                "events": 0,
+                "failover_events": 0,
+            })
+            model_summary["events"] += 1
+            if attempted or failover_count > 0:
+                model_summary["failover_events"] += 1
+
+            if attempted or failover_count > 0:
+                recent_failovers.append({
+                    "timestamp": event.get("timestamp"),
+                    "thread_id": row.session_id,
+                    "session_name": row.name,
+                    "user_id": row.user_id,
+                    "user_email": getattr(user, "email", None),
+                    "user_name": getattr(user, "name", None),
+                    "final_provider": final_provider,
+                    "final_model": final_model,
+                    "failover_count": failover_count,
+                    "attempted_providers": attempted,
+                })
+
+    provider_items = []
+    for item in provider_summary.values():
+        failover_count_total = item["avg_failover_count"]
+        failover_event_count = item["failover_events"]
+        item["avg_failover_count"] = round(
+            (failover_count_total / failover_event_count),
+            2,
+        ) if failover_event_count else 0.0
+        item["failover_rate"] = round((failover_event_count / item["events"]) * 100, 1) if item["events"] else 0.0
+        item["models"] = sorted(
+            item["models"].values(),
+            key=lambda model_item: (model_item.get("failover_events") or 0, model_item.get("events") or 0),
+            reverse=True,
+        )
+        provider_items.append(item)
+
+    provider_items.sort(key=lambda item: (item.get("failover_events") or 0, item.get("events") or 0), reverse=True)
+    recent_failovers.sort(key=lambda item: item.get("timestamp") or "", reverse=True)
+
+    return {
+        "summary": {
+            "total_events": total_events,
+            "failover_events": failover_events,
+            "failover_rate": round((failover_events / total_events) * 100, 1) if total_events else 0.0,
+            "unique_users": len({item.get("user_id") for item in recent_failovers if item.get("user_id")}),
+        },
+        "providers": provider_items,
+        "recent_failovers": recent_failovers[:limit],
+    }
+
+
 def _current_user():
     user = User.query.get(get_jwt_identity())
     if not user:
@@ -720,6 +832,34 @@ def get_message_feedback():
             "user_id": user_id,
             "value": value,
             "q": query,
+            "limit": limit,
+        },
+    }), 200
+
+
+@admin_bp.route("/provider-health", methods=["GET"])
+@jwt_required()
+def get_provider_health():
+    _, err = _require_admin()
+    if err:
+        return err
+
+    user_id = str(request.args.get("user_id") or "").strip() or None
+    provider = str(request.args.get("provider") or "").strip().lower() or None
+    if provider and provider not in {"anthropic", "gemini", "heuristic", "unknown"}:
+        return jsonify({"error": "provider must be one of anthropic, gemini, heuristic, unknown"}), 400
+    limit = _to_int(request.args.get("limit"), default=50)
+    limit = max(1, min(250, limit or 50))
+
+    result = _collect_provider_health(user_id=user_id, provider=provider, limit=limit)
+    return jsonify({
+        "summary": result["summary"],
+        "providers": result["providers"],
+        "recent_failovers": result["recent_failovers"],
+        "count": len(result["recent_failovers"]),
+        "filters": {
+            "user_id": user_id,
+            "provider": provider,
             "limit": limit,
         },
     }), 200
