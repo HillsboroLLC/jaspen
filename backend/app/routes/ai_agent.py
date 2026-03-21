@@ -1605,6 +1605,22 @@ def _merge_usage_totals(base_usage, extra_usage):
     }
 
 
+def _attach_failover_usage(usage, *, attempted_providers=None, final_provider=None, final_model=None):
+    payload = dict(usage) if isinstance(usage, dict) else {}
+    attempts = [
+        _clone_json_payload(item)
+        for item in (attempted_providers if isinstance(attempted_providers, list) else [])
+        if isinstance(item, dict)
+    ]
+    payload["failover"] = {
+        "attempted_providers": attempts,
+        "final_provider": final_provider or payload.get("provider"),
+        "final_model": final_model or payload.get("model"),
+        "failover_count": len(attempts),
+    }
+    return payload
+
+
 def _execute_local_tool(tool_name, tool_input, *, readiness, user, user_id, thread_id, user_turn_count, mutations_this_turn):
     if tool_name in {"get_readiness_snapshot", "get_data_contract"}:
         return _anthropic_tool_output(tool_name, readiness), mutations_this_turn
@@ -3333,6 +3349,7 @@ def _record_usage(session, usage, credits_charged):
     if not isinstance(session, dict):
         return
     usage = usage if isinstance(usage, dict) else {}
+    failover = usage.get("failover") if isinstance(usage.get("failover"), dict) else None
 
     input_tokens = int(usage.get("input_tokens") or 0)
     output_tokens = int(usage.get("output_tokens") or 0)
@@ -3371,6 +3388,7 @@ def _record_usage(session, usage, credits_charged):
         "output_tokens": output_tokens,
         "total_tokens": total_tokens,
         "credits_charged": int(credits_charged or 0),
+        "failover": _clone_json_payload(failover) if failover else None,
     })
     session["usage_events"] = events[-150:]
 
