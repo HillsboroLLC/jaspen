@@ -1542,6 +1542,40 @@ def _openai_messages_from_history(messages):
     return output
 
 
+def _anthropic_request_timeout_seconds():
+    value = (
+        current_app.config.get("AI_AGENT_ANTHROPIC_TIMEOUT_SECONDS")
+        or os.getenv("AI_AGENT_ANTHROPIC_TIMEOUT_SECONDS")
+        or 60
+    )
+    try:
+        return max(5.0, float(value))
+    except Exception:
+        return 60.0
+
+
+def _gemini_request_timeouts():
+    connect_value = (
+        current_app.config.get("AI_AGENT_GEMINI_CONNECT_TIMEOUT_SECONDS")
+        or os.getenv("AI_AGENT_GEMINI_CONNECT_TIMEOUT_SECONDS")
+        or 20
+    )
+    read_value = (
+        current_app.config.get("AI_AGENT_GEMINI_READ_TIMEOUT_SECONDS")
+        or os.getenv("AI_AGENT_GEMINI_READ_TIMEOUT_SECONDS")
+        or 60
+    )
+    try:
+        connect_timeout = max(5.0, float(connect_value))
+    except Exception:
+        connect_timeout = 20.0
+    try:
+        read_timeout = max(5.0, float(read_value))
+    except Exception:
+        read_timeout = 60.0
+    return (connect_timeout, read_timeout)
+
+
 def _gemini_openai_request(*, model_name, system_prompt, messages, tools, max_tokens, temperature, stream=False):
     payload = {
         "model": model_name,
@@ -1566,7 +1600,7 @@ def _gemini_openai_request(*, model_name, system_prompt, messages, tools, max_to
             "Content-Type": "application/json",
         },
         json=payload,
-        timeout=(20, 240),
+        timeout=_gemini_request_timeouts(),
         stream=stream,
     )
     response.raise_for_status()
@@ -2419,7 +2453,7 @@ def _generate_assistant_reply_anthropic(
     elif not messages:
         messages = [{"role": "user", "content": user_content}]
 
-    client = anthropic.Anthropic(api_key=api_key)
+    client = anthropic.Anthropic(api_key=api_key, timeout=_anthropic_request_timeout_seconds())
     plan_key = to_public_plan(user.subscription_plan) if user else "free"
     can_mutate = (
         not disable_mutations
@@ -2647,7 +2681,7 @@ def _stream_assistant_reply_events_anthropic(
     elif not messages:
         messages = [{"role": "user", "content": user_content}]
 
-    client = anthropic.Anthropic(api_key=api_key)
+    client = anthropic.Anthropic(api_key=api_key, timeout=_anthropic_request_timeout_seconds())
     plan_key = to_public_plan(user.subscription_plan) if user else "free"
     can_mutate = (
         not disable_mutations
@@ -4117,7 +4151,7 @@ def _anthropic_json_completion(system_prompt, user_prompt, *, model_name, max_to
     except Exception as exc:
         raise RuntimeError(f"anthropic SDK unavailable: {exc}")
 
-    client = anthropic.Anthropic(api_key=api_key)
+    client = anthropic.Anthropic(api_key=api_key, timeout=_anthropic_request_timeout_seconds())
     last_error = None
     for candidate in _anthropic_model_candidates(model_name):
         try:
@@ -4522,7 +4556,7 @@ def _llm_data_insight_text(summary, user_prompt):
     try:
         import anthropic
 
-        client = anthropic.Anthropic(api_key=api_key)
+        client = anthropic.Anthropic(api_key=api_key, timeout=_anthropic_request_timeout_seconds())
         prompt = f"""
 You are a strategy data analyst. Summarize dataset trends, risk indicators, and opportunity recommendations.
 
