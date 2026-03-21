@@ -8,6 +8,7 @@ import json
 import math
 import os
 import re
+import time
 import uuid
 import requests
 
@@ -2365,6 +2366,7 @@ def _generate_assistant_reply_anthropic(
     intake_context=None,
     attachments=None,
     disable_mutations=False,
+    allow_failover=False,
 ):
     fallback_reply = _next_question(readiness)
     api_key = _anthropic_api_key()
@@ -2539,6 +2541,8 @@ def _generate_assistant_reply_anthropic(
         return reply, usage, executed_actions, executed_mutations, undo_snapshot
     except Exception:
         current_app.logger.exception("ai_agent anthropic generation failed")
+        if allow_failover:
+            raise
         return fallback_reply, {"provider": "heuristic", "model": model_name, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, [], [], None
 
 
@@ -2557,6 +2561,7 @@ def _stream_assistant_reply_events_anthropic(
     state=None,
     attachments=None,
     disable_mutations=False,
+    allow_failover=False,
 ):
     state = state if isinstance(state, dict) else {}
     fallback_reply = _next_question(readiness)
@@ -2775,6 +2780,8 @@ def _stream_assistant_reply_events_anthropic(
         })
     except Exception:
         current_app.logger.exception("ai_agent anthropic streaming failed")
+        if allow_failover:
+            raise
         fallback = "".join(streamed_reply_parts).strip() or fallback_reply
         if not streamed_reply_parts:
             yield {"type": "delta", "text": fallback}
@@ -2798,6 +2805,7 @@ def _generate_assistant_reply_gemini(
     user_id=None,
     thread_id=None,
     intake_context=None,
+    attachments=None,
     disable_mutations=False,
 ):
     if not _gemini_api_key():
@@ -2954,6 +2962,7 @@ def _stream_assistant_reply_events_gemini(
     intake_context=None,
     context_budget=None,
     state=None,
+    attachments=None,
     disable_mutations=False,
 ):
     if not _gemini_api_key():
@@ -3188,11 +3197,13 @@ def _generate_assistant_reply(
     )
     routes = _resolve_generation_routes(model_selection, objective)
     last_error = None
+    failover_log = []
     for route in routes:
         routed_selection = {**(model_selection or {}), "llm_model": route["model"]}
-        if route["provider"] == "gemini":
-            try:
-                return _generate_assistant_reply_gemini(
+        started_at = time.monotonic()
+        try:
+            if route["provider"] == "gemini":
+                result = _generate_assistant_reply_gemini(
                     user_message,
                     chat_history,
                     readiness,
@@ -3206,28 +3217,70 @@ def _generate_assistant_reply(
                     attachments=attachments,
                     disable_mutations=disable_mutations,
                 )
-            except Exception as exc:
-                last_error = exc
-                current_app.logger.exception("ai_agent gemini generation failed")
-                continue
-        return _generate_assistant_reply_anthropic(
-            user_message,
-            chat_history,
-            readiness,
-            routed_selection,
-            context_budget=context_budget,
-            session=session,
-            user=user,
-            user_id=user_id,
-            thread_id=thread_id,
-            intake_context=intake_context,
-            attachments=attachments,
-            disable_mutations=disable_mutations,
-        )
+            else:
+                result = _generate_assistant_reply_anthropic(
+                    user_message,
+                    chat_history,
+                    readiness,
+                    routed_selection,
+                    context_budget=context_budget,
+                    session=session,
+                    user=user,
+                    user_id=user_id,
+                    thread_id=thread_id,
+                    intake_context=intake_context,
+                    attachments=attachments,
+                    disable_mutations=disable_mutations,
+                    allow_failover=True,
+                )
+
+            reply, usage, actions, mutations, undo_snapshot = result
+            usage = _attach_failover_usage(
+                usage,
+                attempted_providers=failover_log,
+                final_provider=route["provider"],
+                final_model=route["model"],
+            )
+            if failover_log:
+                current_app.logger.info(
+                    "ai_agent failover succeeded | user=%s provider=%s model=%s after=%d attempts",
+                    user_id,
+                    route["provider"],
+                    route["model"],
+                    len(failover_log),
+                )
+            return reply, usage, actions, mutations, undo_snapshot
+        except Exception as exc:
+            last_error = exc
+            elapsed_ms = int((time.monotonic() - started_at) * 1000)
+            classification = _classify_provider_error(exc)
+            failover_log.append({
+                "provider": route["provider"],
+                "model": route["model"],
+                "outcome": classification["reason"],
+                "status_code": classification.get("status_code"),
+                "duration_ms": elapsed_ms,
+            })
+            if not classification["retryable"]:
+                current_app.logger.warning(
+                    "ai_agent non-retryable provider error | provider=%s model=%s reason=%s",
+                    route["provider"],
+                    route["model"],
+                    classification["reason"],
+                )
+                raise
+            current_app.logger.warning(
+                "ai_agent provider failed (retryable) | provider=%s model=%s reason=%s elapsed=%dms; trying next route",
+                route["provider"],
+                route["model"],
+                classification["reason"],
+                elapsed_ms,
+            )
+            continue
 
     if last_error:
-        current_app.logger.warning("ai_agent provider fallback exhausted: %s", last_error)
-    return _generate_assistant_reply_anthropic(
+        current_app.logger.error("ai_agent all provider routes exhausted | attempts=%s", json.dumps(failover_log))
+    reply, usage, actions, mutations, undo_snapshot = _generate_assistant_reply_anthropic(
         user_message,
         chat_history,
         readiness,
@@ -3241,6 +3294,13 @@ def _generate_assistant_reply(
         attachments=attachments,
         disable_mutations=disable_mutations,
     )
+    usage = _attach_failover_usage(
+        usage,
+        attempted_providers=failover_log,
+        final_provider=usage.get("provider") if isinstance(usage, dict) else None,
+        final_model=usage.get("model") if isinstance(usage, dict) else None,
+    )
+    return reply, usage, actions, mutations, undo_snapshot
 
 
 def _stream_assistant_reply_events(
@@ -3281,12 +3341,14 @@ def _stream_assistant_reply_events(
         ((intake_context or {}).get("objective") if isinstance(intake_context, dict) else None) or "balanced"
     )
     routes = _resolve_generation_routes(model_selection, objective)
+    failover_log = []
     for route in routes:
         routed_selection = {**(model_selection or {}), "llm_model": route["model"]}
-        if route["provider"] == "gemini":
-            yielded_any = False
-            try:
-                for payload in _stream_assistant_reply_events_gemini(
+        yielded_any = False
+        started_at = time.monotonic()
+        try:
+            if route["provider"] == "gemini":
+                generator = _stream_assistant_reply_events_gemini(
                     user_message,
                     chat_history,
                     readiness,
@@ -3300,32 +3362,79 @@ def _stream_assistant_reply_events(
                     state=state,
                     attachments=attachments,
                     disable_mutations=disable_mutations,
-                ):
-                    yielded_any = True
-                    yield payload
-                return
-            except Exception:
+                )
+            else:
+                generator = _stream_assistant_reply_events_anthropic(
+                    user_message,
+                    chat_history,
+                    readiness,
+                    routed_selection,
+                    session=session,
+                    user=user,
+                    user_id=user_id,
+                    thread_id=thread_id,
+                    intake_context=intake_context,
+                    context_budget=context_budget,
+                    state=state,
+                    attachments=attachments,
+                    disable_mutations=disable_mutations,
+                    allow_failover=True,
+                )
+            for payload in generator:
+                yielded_any = True
+                yield payload
+            if isinstance(state, dict) and isinstance(state.get("usage"), dict):
+                state["usage"] = _attach_failover_usage(
+                    state.get("usage"),
+                    attempted_providers=failover_log,
+                    final_provider=route["provider"],
+                    final_model=route["model"],
+                )
+            if failover_log:
+                current_app.logger.info(
+                    "ai_agent stream failover succeeded | user=%s provider=%s model=%s after=%d attempts",
+                    user_id,
+                    route["provider"],
+                    route["model"],
+                    len(failover_log),
+                )
+            return
+        except Exception as exc:
                 if yielded_any:
+                    current_app.logger.error(
+                        "ai_agent stream failed after partial content | provider=%s model=%s",
+                        route["provider"],
+                        route["model"],
+                    )
                     return
-                current_app.logger.exception("ai_agent gemini streaming failed")
+                elapsed_ms = int((time.monotonic() - started_at) * 1000)
+                classification = _classify_provider_error(exc)
+                failover_log.append({
+                    "provider": route["provider"],
+                    "model": route["model"],
+                    "outcome": classification["reason"],
+                    "status_code": classification.get("status_code"),
+                    "duration_ms": elapsed_ms,
+                })
+                if not classification["retryable"]:
+                    current_app.logger.warning(
+                        "ai_agent non-retryable stream provider error | provider=%s model=%s reason=%s",
+                        route["provider"],
+                        route["model"],
+                        classification["reason"],
+                    )
+                    raise
+                current_app.logger.warning(
+                    "ai_agent stream provider failed (retryable) | provider=%s model=%s reason=%s elapsed=%dms; trying next route",
+                    route["provider"],
+                    route["model"],
+                    classification["reason"],
+                    elapsed_ms,
+                )
                 continue
-        for payload in _stream_assistant_reply_events_anthropic(
-            user_message,
-            chat_history,
-            readiness,
-            routed_selection,
-            session=session,
-            user=user,
-            user_id=user_id,
-            thread_id=thread_id,
-            intake_context=intake_context,
-            context_budget=context_budget,
-            state=state,
-            attachments=attachments,
-            disable_mutations=disable_mutations,
-        ):
-            yield payload
-        return
+
+    if failover_log:
+        current_app.logger.error("ai_agent all stream provider routes exhausted | attempts=%s", json.dumps(failover_log))
 
     for payload in _stream_assistant_reply_events_anthropic(
         user_message,
@@ -3343,6 +3452,13 @@ def _stream_assistant_reply_events(
         disable_mutations=disable_mutations,
     ):
         yield payload
+    if isinstance(state, dict) and isinstance(state.get("usage"), dict):
+        state["usage"] = _attach_failover_usage(
+            state.get("usage"),
+            attempted_providers=failover_log,
+            final_provider=state["usage"].get("provider"),
+            final_model=state["usage"].get("model"),
+        )
 
 
 def _record_usage(session, usage, credits_charged):
