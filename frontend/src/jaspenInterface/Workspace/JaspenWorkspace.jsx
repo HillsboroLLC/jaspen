@@ -574,6 +574,7 @@ export default function JaspenWorkspace() {
   const [isRecording, setIsRecording] = useState(false);
   const [error, setError] = useState(null);
   const recognitionRef = useRef(null);
+  const historySearchInputRef = useRef(null);
 
   const [analysisResult, setAnalysisResult] = useState(null);
   // Scenario results kept at the Workspace level (so Score tab can switch)
@@ -1816,6 +1817,29 @@ useEffect(() => {
 
   const anySidebarOpen = sidebarState.history || sidebarState.readiness || sidebarState.settings;
 
+  const focusVisibleComposer = useCallback(() => {
+    const candidates = [chatTabInputRef.current, intakeInputRef.current];
+    const target = candidates.find((node) => node && !node.disabled && node.offsetParent !== null);
+    if (!target) return false;
+    target.focus();
+    const nextLength = target.value?.length || 0;
+    target.setSelectionRange?.(nextLength, nextLength);
+    return true;
+  }, []);
+
+  const openHistorySearch = useCallback(() => {
+    if (!hasHistory) return false;
+    if (view !== 'intake') {
+      setView('intake');
+    }
+    dispatchSidebar({ type: 'OPEN_HISTORY' });
+    window.setTimeout(() => {
+      historySearchInputRef.current?.focus();
+      historySearchInputRef.current?.select?.();
+    }, 0);
+    return true;
+  }, [hasHistory, view]);
+
   useEffect(() => {
     if (!anySidebarOpen) return;
 
@@ -2569,6 +2593,56 @@ const [aiDrawerOpen, setAiDrawerOpen] = useState(true);
 const [aiInput, setAiInput] = useState('');
 const [aiScenarioProposal, setAiScenarioProposal] = useState(null);
 const [aiScenarioBusy, setAiScenarioBusy] = useState(false);
+  const closeShortcutSurface = useCallback(() => {
+    if (modelMenuOpen) {
+      setModelMenuOpen(false);
+      return true;
+    }
+    if (threadEditOpen) {
+      setThreadEditOpen(false);
+      return true;
+    }
+    if (saveStarterModalOpen) {
+      setSaveStarterModalOpen(false);
+      return true;
+    }
+    if (helpOpen) {
+      setHelpOpen(false);
+      return true;
+    }
+    if (notificationsOpen) {
+      setNotificationsOpen(false);
+      return true;
+    }
+    if (billingModalOpen) {
+      setBillingModalOpen(false);
+      return true;
+    }
+    if (batchIdeasOpen) {
+      setBatchIdeasOpen(false);
+      return true;
+    }
+    if (aiDrawerOpen) {
+      setAiDrawerOpen(false);
+      return true;
+    }
+    if (anySidebarOpen) {
+      dismissSidebars();
+      return true;
+    }
+    return false;
+  }, [
+    aiDrawerOpen,
+    anySidebarOpen,
+    batchIdeasOpen,
+    billingModalOpen,
+    dismissSidebars,
+    helpOpen,
+    modelMenuOpen,
+    notificationsOpen,
+    saveStarterModalOpen,
+    threadEditOpen,
+  ]);
   const objectiveLabel = OBJECTIVE_LABEL_BY_KEY[strategyObjective] || OBJECTIVE_LABEL_BY_KEY.balanced;
   const objectiveLocked = Boolean(
     sessionId ||
@@ -5591,7 +5665,7 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
     }, 260);
   }, [user, onboardingMode, sessionId, currentSessionId, messages, showToast]);
 
-  const handleNewAnalysis = (forceNew = false) => {
+  const handleNewAnalysis = useCallback((forceNew = false) => {
     clearLastSessionId();
     setView('intake');
     setSessionId(null);
@@ -5611,7 +5685,60 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
     setPendingOnboardingContext(null);
     setOnboardingLaunchLabel('');
     dispatchSidebar({ type: 'CLOSE_READINESS' });
-  };
+  }, [user]);
+
+  useEffect(() => {
+    const isEditableTarget = (target) => {
+      if (!(target instanceof HTMLElement)) return false;
+      const tagName = target.tagName.toLowerCase();
+      return (
+        target.isContentEditable ||
+        tagName === 'input' ||
+        tagName === 'textarea' ||
+        tagName === 'select'
+      );
+    };
+
+    const onKeyDown = (event) => {
+      const editableTarget = isEditableTarget(event.target);
+
+      if (event.key === 'Escape') {
+        if (closeShortcutSurface()) {
+          event.preventDefault();
+        }
+        return;
+      }
+
+      if (editableTarget) return;
+
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        if (openHistorySearch()) {
+          event.preventDefault();
+        }
+        return;
+      }
+
+      if (event.altKey && event.shiftKey && event.key.toLowerCase() === 'n') {
+        event.preventDefault();
+        handleNewAnalysis(true);
+        return;
+      }
+
+      if (
+        event.key === '/' &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey
+      ) {
+        if (focusVisibleComposer()) {
+          event.preventDefault();
+        }
+      }
+    };
+
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [closeShortcutSurface, focusVisibleComposer, handleNewAnalysis, openHistorySearch]);
 
   // ======== FIXED: Select analysis (history restore) ========================
   const handleSelectAnalysis = async (result) => {
@@ -7099,6 +7226,7 @@ setView(id === 'chat' ? 'intake' : id);
           <div className="jas-sidebar-content">
             <div className="jas-history-search">
               <input
+                ref={historySearchInputRef}
                 type="search"
                 className="jas-history-search-input"
                 placeholder="Search history"
