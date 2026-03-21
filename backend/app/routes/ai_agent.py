@@ -1089,6 +1089,18 @@ def _safe_instructions_reply():
     return "I'm not able to share details about my internal instructions. How can I help with your project?"
 
 
+def _finalize_agent_reply(reply, fallback_reply, tool_confirmations, *, user_id, thread_id):
+    final_reply = str(reply or "").strip() or fallback_reply
+    if tool_confirmations:
+        confirmations_text = "\n".join(f"- {item}" for item in tool_confirmations)
+        if confirmations_text and confirmations_text not in final_reply:
+            final_reply = f"{final_reply}\n\nApplied changes:\n{confirmations_text}".strip()
+    if _check_response_for_leak(final_reply):
+        current_app.logger.warning("System prompt leak detected | user=%s thread=%s", user_id, thread_id)
+        return _safe_instructions_reply()
+    return final_reply
+
+
 def _exception_status_code(exc):
     status_code = getattr(exc, "status_code", None)
     if isinstance(status_code, int):
@@ -2426,6 +2438,8 @@ def _generate_assistant_reply_anthropic(
     tool_confirmations = []
     user_turn_count = _current_user_turn_count(chat_history)
     mutations_this_turn = 0
+    response = None
+    resolved_model_name = model_name
 
     try:
         total_input_tokens += int(summary_usage.get("input_tokens", 0) or 0)
@@ -2523,14 +2537,13 @@ def _generate_assistant_reply_anthropic(
             total_input_tokens += int(getattr(getattr(response, "usage", None), "input_tokens", 0) or 0)
             total_output_tokens += int(getattr(getattr(response, "usage", None), "output_tokens", 0) or 0)
 
-        reply = _anthropic_text(response.content) or fallback_reply
-        if tool_confirmations:
-            confirmations_text = "\n".join(f"- {item}" for item in tool_confirmations)
-            if confirmations_text and confirmations_text not in reply:
-                reply = f"{reply}\n\nApplied changes:\n{confirmations_text}".strip()
-        if _check_response_for_leak(reply):
-            current_app.logger.warning("System prompt leak detected | user=%s thread=%s", user_id, thread_id)
-            reply = _safe_instructions_reply()
+        reply = _finalize_agent_reply(
+            _anthropic_text(response.content),
+            fallback_reply,
+            tool_confirmations,
+            user_id=user_id,
+            thread_id=thread_id,
+        )
         usage = {
             "provider": "anthropic",
             "model": resolved_model_name,
@@ -2541,6 +2554,27 @@ def _generate_assistant_reply_anthropic(
         return reply, usage, executed_actions, executed_mutations, undo_snapshot
     except Exception:
         current_app.logger.exception("ai_agent anthropic generation failed")
+        if _has_successful_mutations(executed_mutations):
+            current_app.logger.warning(
+                "ai_agent anthropic generation stopped after successful mutations; skipping failover | user=%s thread=%s",
+                user_id,
+                thread_id,
+            )
+            reply = _finalize_agent_reply(
+                _anthropic_text(getattr(response, "content", None)),
+                fallback_reply,
+                tool_confirmations,
+                user_id=user_id,
+                thread_id=thread_id,
+            )
+            usage = {
+                "provider": "anthropic",
+                "model": resolved_model_name,
+                "input_tokens": total_input_tokens,
+                "output_tokens": total_output_tokens,
+                "total_tokens": total_input_tokens + total_output_tokens,
+            }
+            return reply, usage, executed_actions, executed_mutations, undo_snapshot
         if allow_failover:
             raise
         return fallback_reply, {"provider": "heuristic", "model": model_name, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, [], [], None
@@ -2635,6 +2669,7 @@ def _stream_assistant_reply_events_anthropic(
     user_turn_count = _current_user_turn_count(chat_history)
     mutations_this_turn = 0
     leak_detected = False
+    final_message = None
 
     try:
         total_input_tokens += int(summary_usage.get("input_tokens", 0) or 0)
@@ -2673,14 +2708,13 @@ def _stream_assistant_reply_events_anthropic(
                 if getattr(block, "type", None) == "tool_use" or (isinstance(block, dict) and block.get("type") == "tool_use")
             ]
             if not tool_blocks:
-                reply = _anthropic_text(getattr(final_message, "content", None)) or "".join(streamed_reply_parts).strip() or fallback_reply
-                if leak_detected or _check_response_for_leak(reply):
-                    current_app.logger.warning("System prompt leak detected | user=%s thread=%s", user_id, thread_id)
-                    reply = _safe_instructions_reply()
-                if tool_confirmations:
-                    confirmations_text = "\n".join(f"- {item}" for item in tool_confirmations)
-                    if confirmations_text and confirmations_text not in reply:
-                        reply = f"{reply}\n\nApplied changes:\n{confirmations_text}".strip()
+                reply = _finalize_agent_reply(
+                    _anthropic_text(getattr(final_message, "content", None)) if not leak_detected else "",
+                    "".join(streamed_reply_parts).strip() or fallback_reply,
+                    tool_confirmations,
+                    user_id=user_id,
+                    thread_id=thread_id,
+                )
                 state.update({
                     "reply": reply,
                     "usage": {
@@ -2761,10 +2795,13 @@ def _stream_assistant_reply_events_anthropic(
 
             messages.append({"role": "assistant", "content": _anthropic_content_to_dicts(getattr(final_message, "content", None))})
             messages.append({"role": "user", "content": tool_results})
-        reply = "".join(streamed_reply_parts).strip() or fallback_reply
-        if leak_detected or _check_response_for_leak(reply):
-            current_app.logger.warning("System prompt leak detected | user=%s thread=%s", user_id, thread_id)
-            reply = _safe_instructions_reply()
+        reply = _finalize_agent_reply(
+            "" if leak_detected else "".join(streamed_reply_parts).strip(),
+            fallback_reply,
+            tool_confirmations,
+            user_id=user_id,
+            thread_id=thread_id,
+        )
         state.update({
             "reply": reply,
             "usage": {
@@ -2780,9 +2817,44 @@ def _stream_assistant_reply_events_anthropic(
         })
     except Exception:
         current_app.logger.exception("ai_agent anthropic streaming failed")
+        if _has_successful_mutations(executed_mutations):
+            current_app.logger.warning(
+                "ai_agent anthropic stream stopped after successful mutations; skipping failover | user=%s thread=%s",
+                user_id,
+                thread_id,
+            )
+            reply = _finalize_agent_reply(
+                "" if leak_detected else "".join(streamed_reply_parts).strip(),
+                fallback_reply,
+                tool_confirmations,
+                user_id=user_id,
+                thread_id=thread_id,
+            )
+            if not streamed_reply_parts:
+                yield {"type": "delta", "text": reply}
+            state.update({
+                "reply": reply,
+                "usage": {
+                    "provider": "anthropic",
+                    "model": resolved_model_name,
+                    "input_tokens": total_input_tokens,
+                    "output_tokens": total_output_tokens,
+                    "total_tokens": total_input_tokens + total_output_tokens,
+                },
+                "actions": executed_actions,
+                "mutations": executed_mutations,
+                "undo_snapshot": undo_snapshot,
+            })
+            return
         if allow_failover:
             raise
-        fallback = "".join(streamed_reply_parts).strip() or fallback_reply
+        fallback = _finalize_agent_reply(
+            "" if leak_detected else "".join(streamed_reply_parts).strip(),
+            fallback_reply,
+            tool_confirmations,
+            user_id=user_id,
+            thread_id=thread_id,
+        )
         if not streamed_reply_parts:
             yield {"type": "delta", "text": fallback}
         state.update({
@@ -2807,6 +2879,7 @@ def _generate_assistant_reply_gemini(
     intake_context=None,
     attachments=None,
     disable_mutations=False,
+    allow_failover=False,
 ):
     if not _gemini_api_key():
         raise RuntimeError("GEMINI_API_KEY not configured")
@@ -2863,88 +2936,109 @@ def _generate_assistant_reply_gemini(
     model_name = str((model_selection or {}).get("llm_model") or "").strip()
 
     openai_messages = list(messages)
-    for _ in range(3):
-        response = _gemini_openai_request(
-            model_name=model_name,
-            system_prompt=system_prompt,
-            messages=openai_messages,
-            tools=tools,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            stream=False,
-        )
-        payload = response.json()
-        total_usage = _merge_usage_totals(
-            total_usage,
-            _openai_usage_to_internal(payload.get("usage"), provider="gemini", model=model_name),
-        )
-        choice = ((payload.get("choices") or [{}])[0]) if isinstance(payload, dict) else {}
-        message = choice.get("message") if isinstance(choice, dict) else {}
-        message = message if isinstance(message, dict) else {}
-        tool_calls = message.get("tool_calls") if isinstance(message.get("tool_calls"), list) else []
-        assistant_text = str(message.get("content") or "").strip()
+    assistant_text = ""
+    try:
+        for _ in range(3):
+            response = _gemini_openai_request(
+                model_name=model_name,
+                system_prompt=system_prompt,
+                messages=openai_messages,
+                tools=tools,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                stream=False,
+            )
+            payload = response.json()
+            total_usage = _merge_usage_totals(
+                total_usage,
+                _openai_usage_to_internal(payload.get("usage"), provider="gemini", model=model_name),
+            )
+            choice = ((payload.get("choices") or [{}])[0]) if isinstance(payload, dict) else {}
+            message = choice.get("message") if isinstance(choice, dict) else {}
+            message = message if isinstance(message, dict) else {}
+            tool_calls = message.get("tool_calls") if isinstance(message.get("tool_calls"), list) else []
+            assistant_text = str(message.get("content") or "").strip()
 
-        if not tool_calls:
-            reply = assistant_text or fallback_reply
-            if tool_confirmations:
-                confirmations_text = "\n".join(f"- {item}" for item in tool_confirmations)
-                if confirmations_text and confirmations_text not in reply:
-                    reply = f"{reply}\n\nApplied changes:\n{confirmations_text}".strip()
-            if _check_response_for_leak(reply):
-                current_app.logger.warning("System prompt leak detected | user=%s thread=%s", user_id, thread_id)
-                reply = _safe_instructions_reply()
+            if not tool_calls:
+                reply = _finalize_agent_reply(
+                    assistant_text,
+                    fallback_reply,
+                    tool_confirmations,
+                    user_id=user_id,
+                    thread_id=thread_id,
+                )
+                total_usage["provider"] = "gemini"
+                total_usage["model"] = model_name
+                return reply, total_usage, executed_actions, executed_mutations, undo_snapshot
+
+            openai_messages.append({
+                "role": "assistant",
+                "content": message.get("content"),
+                "tool_calls": tool_calls,
+            })
+
+            for tool_call in tool_calls:
+                function = tool_call.get("function") if isinstance(tool_call, dict) else {}
+                tool_name = str((function or {}).get("name") or "").strip()
+                tool_input = _parse_openai_tool_call_arguments((function or {}).get("arguments"))
+                undo_snapshot = _maybe_capture_turn_undo_snapshot(
+                    undo_snapshot,
+                    tool_name=tool_name,
+                    user_id=user_id,
+                    thread_id=thread_id,
+                )
+                result_payload, mutations_this_turn = _execute_local_tool(
+                    tool_name,
+                    tool_input,
+                    readiness=readiness,
+                    user=user,
+                    user_id=user_id,
+                    thread_id=thread_id,
+                    user_turn_count=user_turn_count,
+                    mutations_this_turn=mutations_this_turn,
+                )
+                if isinstance(result_payload, dict) and result_payload.get("ok"):
+                    confirmation = str(result_payload.get("confirmation") or "").strip()
+                    if confirmation:
+                        tool_confirmations.append(confirmation)
+                if isinstance(result_payload, dict):
+                    executed_actions.append({
+                        "tool": tool_name,
+                        "input": tool_input,
+                        "result": result_payload,
+                    })
+                    executed_mutations.append({
+                        "tool": tool_name,
+                        "success": bool(result_payload.get("ok")),
+                        "result_summary": _mutation_result_summary(tool_name, result_payload),
+                        "error": result_payload.get("error"),
+                        "code": result_payload.get("code"),
+                    })
+                openai_messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.get("id"),
+                    "content": json.dumps(result_payload),
+                })
+    except Exception:
+        current_app.logger.exception("ai_agent gemini generation failed")
+        if _has_successful_mutations(executed_mutations):
+            current_app.logger.warning(
+                "ai_agent gemini generation stopped after successful mutations; skipping failover | user=%s thread=%s",
+                user_id,
+                thread_id,
+            )
             total_usage["provider"] = "gemini"
             total_usage["model"] = model_name
+            reply = _finalize_agent_reply(
+                assistant_text,
+                fallback_reply,
+                tool_confirmations,
+                user_id=user_id,
+                thread_id=thread_id,
+            )
             return reply, total_usage, executed_actions, executed_mutations, undo_snapshot
-
-        openai_messages.append({
-            "role": "assistant",
-            "content": message.get("content"),
-            "tool_calls": tool_calls,
-        })
-
-        for tool_call in tool_calls:
-            function = tool_call.get("function") if isinstance(tool_call, dict) else {}
-            tool_name = str((function or {}).get("name") or "").strip()
-            tool_input = _parse_openai_tool_call_arguments((function or {}).get("arguments"))
-            undo_snapshot = _maybe_capture_turn_undo_snapshot(
-                undo_snapshot,
-                tool_name=tool_name,
-                user_id=user_id,
-                thread_id=thread_id,
-            )
-            result_payload, mutations_this_turn = _execute_local_tool(
-                tool_name,
-                tool_input,
-                readiness=readiness,
-                user=user,
-                user_id=user_id,
-                thread_id=thread_id,
-                user_turn_count=user_turn_count,
-                mutations_this_turn=mutations_this_turn,
-            )
-            if isinstance(result_payload, dict) and result_payload.get("ok"):
-                confirmation = str(result_payload.get("confirmation") or "").strip()
-                if confirmation:
-                    tool_confirmations.append(confirmation)
-            if isinstance(result_payload, dict):
-                executed_actions.append({
-                    "tool": tool_name,
-                    "input": tool_input,
-                    "result": result_payload,
-                })
-                executed_mutations.append({
-                    "tool": tool_name,
-                    "success": bool(result_payload.get("ok")),
-                    "result_summary": _mutation_result_summary(tool_name, result_payload),
-                    "error": result_payload.get("error"),
-                    "code": result_payload.get("code"),
-                })
-            openai_messages.append({
-                "role": "tool",
-                "tool_call_id": tool_call.get("id"),
-                "content": json.dumps(result_payload),
-            })
+        if allow_failover:
+            raise
 
     return fallback_reply, total_usage, executed_actions, executed_mutations, undo_snapshot
 
@@ -2964,6 +3058,7 @@ def _stream_assistant_reply_events_gemini(
     state=None,
     attachments=None,
     disable_mutations=False,
+    allow_failover=False,
 ):
     if not _gemini_api_key():
         raise RuntimeError("GEMINI_API_KEY not configured")
@@ -3028,73 +3123,148 @@ def _stream_assistant_reply_events_gemini(
     mutations_this_turn = 0
     model_name = str((model_selection or {}).get("llm_model") or "").strip()
     openai_messages = list(messages)
-
-    for _ in range(3):
-        streamed_parts = []
-        tool_calls_by_index = {}
-        usage_payload = {}
-        response = _gemini_openai_request(
-            model_name=model_name,
-            system_prompt=system_prompt,
-            messages=openai_messages,
-            tools=tools,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            stream=True,
-        )
-        for raw_line in response.iter_lines(decode_unicode=True):
-            line = str(raw_line or "").strip()
-            if not line.startswith("data:"):
-                continue
-            data_text = line[5:].strip()
-            if not data_text or data_text == "[DONE]":
-                continue
-            payload = json.loads(data_text)
-            if isinstance(payload.get("usage"), dict):
-                usage_payload = payload.get("usage") or {}
-            choices = payload.get("choices") if isinstance(payload, dict) else None
-            if not isinstance(choices, list) or not choices:
-                continue
-            delta = (choices[0] or {}).get("delta") if isinstance(choices[0], dict) else {}
-            if not isinstance(delta, dict):
-                continue
-            text = str(delta.get("content") or "")
-            if text:
-                candidate_reply = "".join(streamed_parts) + text
-                if _check_response_for_leak(candidate_reply):
-                    current_app.logger.warning("System prompt leak detected | user=%s thread=%s", user_id, thread_id)
+    streamed_parts = []
+    try:
+        for _ in range(3):
+            streamed_parts = []
+            tool_calls_by_index = {}
+            usage_payload = {}
+            response = _gemini_openai_request(
+                model_name=model_name,
+                system_prompt=system_prompt,
+                messages=openai_messages,
+                tools=tools,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                stream=True,
+            )
+            for raw_line in response.iter_lines(decode_unicode=True):
+                line = str(raw_line or "").strip()
+                if not line.startswith("data:"):
                     continue
-                streamed_parts.append(text)
-                yield {"type": "delta", "text": text}
-            for tool_delta in delta.get("tool_calls") if isinstance(delta.get("tool_calls"), list) else []:
-                idx = int(tool_delta.get("index", len(tool_calls_by_index)))
-                existing = tool_calls_by_index.setdefault(idx, {
-                    "id": tool_delta.get("id"),
-                    "type": "function",
-                    "function": {"name": "", "arguments": ""},
-                })
-                if tool_delta.get("id"):
-                    existing["id"] = tool_delta.get("id")
-                function = tool_delta.get("function") if isinstance(tool_delta.get("function"), dict) else {}
-                if function.get("name"):
-                    existing["function"]["name"] = str(function.get("name"))
-                if function.get("arguments"):
-                    existing["function"]["arguments"] += str(function.get("arguments"))
+                data_text = line[5:].strip()
+                if not data_text or data_text == "[DONE]":
+                    continue
+                payload = json.loads(data_text)
+                if isinstance(payload.get("usage"), dict):
+                    usage_payload = payload.get("usage") or {}
+                choices = payload.get("choices") if isinstance(payload, dict) else None
+                if not isinstance(choices, list) or not choices:
+                    continue
+                delta = (choices[0] or {}).get("delta") if isinstance(choices[0], dict) else {}
+                if not isinstance(delta, dict):
+                    continue
+                text = str(delta.get("content") or "")
+                if text:
+                    candidate_reply = "".join(streamed_parts) + text
+                    if _check_response_for_leak(candidate_reply):
+                        current_app.logger.warning("System prompt leak detected | user=%s thread=%s", user_id, thread_id)
+                        continue
+                    streamed_parts.append(text)
+                    yield {"type": "delta", "text": text}
+                for tool_delta in delta.get("tool_calls") if isinstance(delta.get("tool_calls"), list) else []:
+                    idx = int(tool_delta.get("index", len(tool_calls_by_index)))
+                    existing = tool_calls_by_index.setdefault(idx, {
+                        "id": tool_delta.get("id"),
+                        "type": "function",
+                        "function": {"name": "", "arguments": ""},
+                    })
+                    if tool_delta.get("id"):
+                        existing["id"] = tool_delta.get("id")
+                    function = tool_delta.get("function") if isinstance(tool_delta.get("function"), dict) else {}
+                    if function.get("name"):
+                        existing["function"]["name"] = str(function.get("name"))
+                    if function.get("arguments"):
+                        existing["function"]["arguments"] += str(function.get("arguments"))
 
-        total_usage = _merge_usage_totals(
-            total_usage,
-            _openai_usage_to_internal(usage_payload, provider="gemini", model=model_name),
-        )
-        tool_calls = [tool_calls_by_index[idx] for idx in sorted(tool_calls_by_index.keys())]
-        if not tool_calls:
-            reply = "".join(streamed_parts).strip() or fallback_reply
-            if tool_confirmations:
-                confirmations_text = "\n".join(f"- {item}" for item in tool_confirmations)
-                if confirmations_text and confirmations_text not in reply:
-                    reply = f"{reply}\n\nApplied changes:\n{confirmations_text}".strip()
-            if _check_response_for_leak(reply):
-                current_app.logger.warning("System prompt leak detected | user=%s thread=%s", user_id, thread_id)
-                reply = _safe_instructions_reply()
+            total_usage = _merge_usage_totals(
+                total_usage,
+                _openai_usage_to_internal(usage_payload, provider="gemini", model=model_name),
+            )
+            tool_calls = [tool_calls_by_index[idx] for idx in sorted(tool_calls_by_index.keys())]
+            if not tool_calls:
+                reply = _finalize_agent_reply(
+                    "".join(streamed_parts).strip(),
+                    fallback_reply,
+                    tool_confirmations,
+                    user_id=user_id,
+                    thread_id=thread_id,
+                )
+                state.update({
+                    "reply": reply,
+                    "usage": total_usage,
+                    "actions": executed_actions,
+                    "mutations": executed_mutations,
+                    "undo_snapshot": undo_snapshot,
+                })
+                return
+
+            openai_messages.append({
+                "role": "assistant",
+                "content": "".join(streamed_parts) or None,
+                "tool_calls": tool_calls,
+            })
+            for tool_call in tool_calls:
+                function = tool_call.get("function") if isinstance(tool_call, dict) else {}
+                tool_name = str((function or {}).get("name") or "").strip()
+                tool_input = _parse_openai_tool_call_arguments((function or {}).get("arguments"))
+                yield {"type": "tool_use", "tool": tool_name, "input": tool_input}
+                undo_snapshot = _maybe_capture_turn_undo_snapshot(
+                    undo_snapshot,
+                    tool_name=tool_name,
+                    user_id=user_id,
+                    thread_id=thread_id,
+                )
+                result_payload, mutations_this_turn = _execute_local_tool(
+                    tool_name,
+                    tool_input,
+                    readiness=readiness,
+                    user=user,
+                    user_id=user_id,
+                    thread_id=thread_id,
+                    user_turn_count=user_turn_count,
+                    mutations_this_turn=mutations_this_turn,
+                )
+                if isinstance(result_payload, dict) and result_payload.get("ok"):
+                    confirmation = str(result_payload.get("confirmation") or "").strip()
+                    if confirmation:
+                        tool_confirmations.append(confirmation)
+                if isinstance(result_payload, dict):
+                    executed_actions.append({
+                        "tool": tool_name,
+                        "input": tool_input,
+                        "result": result_payload,
+                    })
+                    executed_mutations.append({
+                        "tool": tool_name,
+                        "success": bool(result_payload.get("ok")),
+                        "result_summary": _mutation_result_summary(tool_name, result_payload),
+                        "error": result_payload.get("error"),
+                        "code": result_payload.get("code"),
+                    })
+                yield {"type": "tool_result", "tool": tool_name, "result": result_payload}
+                openai_messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.get("id"),
+                    "content": json.dumps(result_payload),
+                })
+    except Exception:
+        current_app.logger.exception("ai_agent gemini streaming failed")
+        if _has_successful_mutations(executed_mutations):
+            current_app.logger.warning(
+                "ai_agent gemini stream stopped after successful mutations; skipping failover | user=%s thread=%s",
+                user_id,
+                thread_id,
+            )
+            reply = _finalize_agent_reply(
+                "".join(streamed_parts).strip(),
+                fallback_reply,
+                tool_confirmations,
+                user_id=user_id,
+                thread_id=thread_id,
+            )
+            if not streamed_parts:
+                yield {"type": "delta", "text": reply}
             state.update({
                 "reply": reply,
                 "usage": total_usage,
@@ -3103,59 +3273,17 @@ def _stream_assistant_reply_events_gemini(
                 "undo_snapshot": undo_snapshot,
             })
             return
-
-        openai_messages.append({
-            "role": "assistant",
-            "content": "".join(streamed_parts) or None,
-            "tool_calls": tool_calls,
-        })
-        for tool_call in tool_calls:
-            function = tool_call.get("function") if isinstance(tool_call, dict) else {}
-            tool_name = str((function or {}).get("name") or "").strip()
-            tool_input = _parse_openai_tool_call_arguments((function or {}).get("arguments"))
-            yield {"type": "tool_use", "tool": tool_name, "input": tool_input}
-            undo_snapshot = _maybe_capture_turn_undo_snapshot(
-                undo_snapshot,
-                tool_name=tool_name,
-                user_id=user_id,
-                thread_id=thread_id,
-            )
-            result_payload, mutations_this_turn = _execute_local_tool(
-                tool_name,
-                tool_input,
-                readiness=readiness,
-                user=user,
-                user_id=user_id,
-                thread_id=thread_id,
-                user_turn_count=user_turn_count,
-                mutations_this_turn=mutations_this_turn,
-            )
-            if isinstance(result_payload, dict) and result_payload.get("ok"):
-                confirmation = str(result_payload.get("confirmation") or "").strip()
-                if confirmation:
-                    tool_confirmations.append(confirmation)
-            if isinstance(result_payload, dict):
-                executed_actions.append({
-                    "tool": tool_name,
-                    "input": tool_input,
-                    "result": result_payload,
-                })
-                executed_mutations.append({
-                    "tool": tool_name,
-                    "success": bool(result_payload.get("ok")),
-                    "result_summary": _mutation_result_summary(tool_name, result_payload),
-                    "error": result_payload.get("error"),
-                    "code": result_payload.get("code"),
-                })
-            yield {"type": "tool_result", "tool": tool_name, "result": result_payload}
-            openai_messages.append({
-                "role": "tool",
-                "tool_call_id": tool_call.get("id"),
-                "content": json.dumps(result_payload),
-            })
+        if allow_failover:
+            raise
 
     state.update({
-        "reply": fallback_reply,
+        "reply": _finalize_agent_reply(
+            "".join(streamed_parts).strip(),
+            fallback_reply,
+            tool_confirmations,
+            user_id=user_id,
+            thread_id=thread_id,
+        ),
         "usage": total_usage,
         "actions": executed_actions,
         "mutations": executed_mutations,
@@ -3216,6 +3344,7 @@ def _generate_assistant_reply(
                     intake_context=intake_context,
                     attachments=attachments,
                     disable_mutations=disable_mutations,
+                    allow_failover=True,
                 )
             else:
                 result = _generate_assistant_reply_anthropic(
@@ -3362,6 +3491,7 @@ def _stream_assistant_reply_events(
                     state=state,
                     attachments=attachments,
                     disable_mutations=disable_mutations,
+                    allow_failover=True,
                 )
             else:
                 generator = _stream_assistant_reply_events_anthropic(
