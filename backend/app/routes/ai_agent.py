@@ -120,6 +120,7 @@ _INJECTION_PATTERNS = [
     re.compile(r"override\s+(safety|instructions|rules|guidelines)", re.I),
     re.compile(r"\[INST\]|\[/INST\]|<<\s*SYS\s*>>", re.I),
 ]
+_RETRYABLE_HTTP_STATUS_CODES = {408, 429, 500, 502, 503, 504, 529}
 _SYSTEM_PROMPT_LEAK_FRAGMENTS = [
     "system_instructions",
     "important rules",
@@ -1085,6 +1086,94 @@ def _check_response_for_leak(response_text, fragments=None):
 
 def _safe_instructions_reply():
     return "I'm not able to share details about my internal instructions. How can I help with your project?"
+
+
+def _exception_status_code(exc):
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int):
+        return status_code
+
+    response = getattr(exc, "response", None)
+    status_code = getattr(response, "status_code", None)
+    if isinstance(status_code, int):
+        return status_code
+
+    return None
+
+
+def _provider_error_looks_like_refusal(exc):
+    text = " ".join(
+        str(part or "").strip()
+        for part in (
+            getattr(exc, "message", None),
+            getattr(exc, "body", None),
+            getattr(exc, "response", None),
+            exc,
+        )
+    ).lower()
+    if not text:
+        return False
+
+    refusal_markers = (
+        "finish_reason",
+        "safety",
+        "content policy",
+        "content_policy",
+        "refus",
+        "blocked",
+        "harm",
+    )
+    return any(marker in text for marker in refusal_markers)
+
+
+def _classify_provider_error(exc):
+    """
+    Classify provider exceptions for failover decisions.
+
+    Returns:
+        dict: {"retryable": bool, "reason": str, "status_code": int|None}
+    """
+    status_code = _exception_status_code(exc)
+    module_name = str(getattr(exc.__class__, "__module__", "") or "").lower()
+    class_name = str(getattr(exc.__class__, "__name__", "") or "").lower()
+    text = str(exc or "").strip().lower()
+
+    if isinstance(exc, requests.exceptions.Timeout) or "timeoutexception" in class_name:
+        return {"retryable": True, "reason": "timeout", "status_code": status_code}
+
+    if isinstance(exc, requests.exceptions.ConnectionError) or "connecterror" in class_name:
+        return {"retryable": True, "reason": "connection_error", "status_code": status_code}
+
+    if isinstance(exc, requests.exceptions.HTTPError) and status_code in _RETRYABLE_HTTP_STATUS_CODES:
+        reason = "overloaded" if status_code == 529 else ("rate_limited" if status_code == 429 else "server_error")
+        return {"retryable": True, "reason": reason, "status_code": status_code}
+
+    if status_code in _RETRYABLE_HTTP_STATUS_CODES:
+        reason = "overloaded" if status_code == 529 else ("rate_limited" if status_code == 429 else f"api_status_{status_code}")
+        return {"retryable": True, "reason": reason, "status_code": status_code}
+
+    if status_code in {401, 403} or "authenticationerror" in class_name:
+        return {"retryable": False, "reason": "auth_error", "status_code": status_code}
+
+    if status_code == 400 or "badrequesterror" in class_name:
+        if _provider_error_looks_like_refusal(exc):
+            return {"retryable": False, "reason": "content_refused", "status_code": status_code}
+        return {"retryable": False, "reason": "bad_request", "status_code": status_code}
+
+    if isinstance(exc, RuntimeError) and "api_key" in text and "not configured" in text:
+        return {"retryable": False, "reason": "config_missing", "status_code": status_code}
+
+    if _provider_error_looks_like_refusal(exc):
+        return {"retryable": False, "reason": "content_refused", "status_code": status_code}
+
+    if "anthropic" in module_name and "apistatuserror" in class_name:
+        return {
+            "retryable": status_code in _RETRYABLE_HTTP_STATUS_CODES,
+            "reason": f"api_status_{status_code}" if status_code else "api_status_error",
+            "status_code": status_code,
+        }
+
+    return {"retryable": True, "reason": "invalid_response", "status_code": status_code}
 
 
 def _current_user_turn_count(chat_history):
