@@ -306,6 +306,22 @@ def create_app():
                 resp.headers.pop(key, None)
             return resp
 
+    # —— Security response headers —— #
+    @app.after_request
+    def _set_security_headers(resp):
+        resp.headers['X-Content-Type-Options'] = 'nosniff'
+        resp.headers['X-Frame-Options'] = 'DENY'
+        resp.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+        resp.headers['X-XSS-Protection'] = '0'
+        resp.headers['Permissions-Policy'] = (
+            'camera=(), microphone=(), geolocation=(), interest-cohort=()'
+        )
+        if app.config.get('JWT_COOKIE_SECURE'):
+            resp.headers['Strict-Transport-Security'] = (
+                'max-age=31536000; includeSubDomains'
+            )
+        return resp
+
     # —— Register blueprints —— #
     from .routes.auth      import auth_bp
     from .routes.admin     import admin_bp
