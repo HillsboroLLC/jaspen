@@ -1,5 +1,6 @@
 import os
 import time
+from urllib.parse import urlparse
 from flask import Blueprint, request, jsonify, current_app, abort
 from flask_jwt_extended import jwt_required, get_jwt_identity
 import stripe
@@ -35,6 +36,48 @@ def _set_stripe_key():
 def _frontend_url(path='/pages/pricing'):
     base = (current_app.config.get('FRONTEND_BASE_URL') or 'http://localhost:3000').rstrip('/')
     return f"{base}{path}"
+
+
+def _normalized_origin(url):
+    parsed = urlparse(str(url or "").strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+
+
+def _allowed_frontend_origins():
+    origins = set()
+    frontend_base = current_app.config.get('FRONTEND_BASE_URL') or 'http://localhost:3000'
+    frontend_origin = _normalized_origin(frontend_base)
+    if frontend_origin:
+        origins.add(frontend_origin)
+
+    raw = (
+        current_app.config.get('BILLING_REDIRECT_ALLOWED_ORIGINS')
+        or os.getenv('BILLING_REDIRECT_ALLOWED_ORIGINS')
+        or ''
+    )
+    for item in str(raw).split(','):
+        origin = _normalized_origin(item)
+        if origin:
+            origins.add(origin)
+    return origins
+
+
+def _validated_frontend_redirect(url, *, fallback_path):
+    candidate = str(url or '').strip()
+    if not candidate:
+        return _frontend_url(fallback_path)
+
+    parsed = urlparse(candidate)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("Redirect URL must be an absolute http(s) URL.")
+
+    origin = _normalized_origin(candidate)
+    if origin not in _allowed_frontend_origins():
+        raise ValueError("Redirect URL must use an approved frontend origin.")
+
+    return candidate
 
 
 def _ensure_customer_for_user(user):
@@ -192,8 +235,17 @@ def create_checkout_session():
 
     customer_id = _ensure_customer_for_user(user)
 
-    success_url = data.get('success_url') or _frontend_url('/pricing?session_id={CHECKOUT_SESSION_ID}&status=success')
-    cancel_url = data.get('cancel_url') or _frontend_url('/pricing?status=cancel')
+    try:
+        success_url = _validated_frontend_redirect(
+            data.get('success_url'),
+            fallback_path='/pricing?session_id={CHECKOUT_SESSION_ID}&status=success',
+        )
+        cancel_url = _validated_frontend_redirect(
+            data.get('cancel_url'),
+            fallback_path='/pricing?status=cancel',
+        )
+    except ValueError as exc:
+        return jsonify({'msg': str(exc)}), 400
 
     session = stripe.checkout.Session.create(
         payment_method_types=['card'],
@@ -236,8 +288,17 @@ def create_overage_checkout_session():
 
     customer_id = _ensure_customer_for_user(user)
 
-    success_url = data.get('success_url') or _frontend_url('/pricing?status=success')
-    cancel_url = data.get('cancel_url') or _frontend_url('/pricing?status=cancel')
+    try:
+        success_url = _validated_frontend_redirect(
+            data.get('success_url'),
+            fallback_path='/pricing?status=success',
+        )
+        cancel_url = _validated_frontend_redirect(
+            data.get('cancel_url'),
+            fallback_path='/pricing?status=cancel',
+        )
+    except ValueError as exc:
+        return jsonify({'msg': str(exc)}), 400
 
     session = stripe.checkout.Session.create(
         payment_method_types=['card'],
@@ -270,7 +331,13 @@ def create_portal_session():
         return jsonify({'msg': 'No Stripe customer found for this account'}), 400
 
     data = request.get_json(silent=True) or {}
-    return_url = data.get('return_url') or _frontend_url('/account')
+    try:
+        return_url = _validated_frontend_redirect(
+            data.get('return_url'),
+            fallback_path='/account',
+        )
+    except ValueError as exc:
+        return jsonify({'msg': str(exc)}), 400
 
     session = stripe.billing_portal.Session.create(
         customer=user.stripe_customer_id,
