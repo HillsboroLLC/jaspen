@@ -274,6 +274,24 @@ def create_app():
         raise RuntimeError("JWT_SECRET_KEY not set in environment")
     jwt.init_app(app)
 
+    @jwt.token_in_blocklist_loader
+    def _jwt_token_version_mismatch(jwt_header, jwt_payload):
+        from .models import User
+
+        user_id = str(jwt_payload.get('sub') or '').strip()
+        if not user_id:
+            return True
+        user = db.session.get(User, user_id)
+        if not user:
+            return True
+        token_version = int(jwt_payload.get('token_version') or 0)
+        current_version = int(getattr(user, 'auth_token_version', 0) or 0)
+        return token_version != current_version
+
+    @jwt.revoked_token_loader
+    def _revoked_token_response(jwt_header, jwt_payload):
+        return jsonify({"error": "Unauthorized", "message": "Your session is no longer valid. Please sign in again."}), 401
+
     limiter = Limiter(
         key_func=rate_limit_key,
         default_limits=["200 per minute"],

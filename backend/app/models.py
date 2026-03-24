@@ -85,6 +85,11 @@ class User(db.Model):
         db.JSON,
         nullable=True,
     )
+    auth_token_version = db.Column(
+        db.Integer,
+        nullable=False,
+        default=0,
+    )
     email_verified = db.Column(
         db.Boolean,
         nullable=False,
@@ -151,6 +156,7 @@ class User(db.Model):
             'unlimited_analysis': self.unlimited_analysis,
             'max_concurrent_sessions': self.max_concurrent_sessions,
             'credits_remaining': self.credits_remaining,
+            'auth_token_version': self.auth_token_version,
             'email_verified': bool(self.email_verified),
             'email_verified_at': self.email_verified_at.isoformat() if self.email_verified_at else None,
             'email_verification_sent_at': self.email_verification_sent_at.isoformat() if self.email_verification_sent_at else None,

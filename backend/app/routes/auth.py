@@ -92,6 +92,17 @@ def _attach_auth_cookie(resp, token):
     return resp
 
 
+def _create_user_access_token(user, *, expires_delta=None, additional_claims=None):
+    claims = {'token_version': int(getattr(user, 'auth_token_version', 0) or 0)}
+    if isinstance(additional_claims, dict):
+        claims.update(additional_claims)
+    return create_access_token(
+        identity=str(user.id),
+        expires_delta=expires_delta,
+        additional_claims=claims,
+    )
+
+
 def _frontend_base_url():
     return (current_app.config.get('FRONTEND_BASE_URL') or 'http://localhost:3000').rstrip('/')
 
@@ -331,7 +342,7 @@ def signup():
             email_verified=False,
         ), 202
 
-    access_token = create_access_token(identity=str(user.id))
+    access_token = _create_user_access_token(user)
 
     # Free plan can complete sign-up with no payment flow.
     if requested_plan == 'free':
@@ -454,8 +465,8 @@ def login():
 
     if user.mfa_enabled:
         _audit_auth_event('auth.login.succeeded', actor=user, target_user=user, details={'mfa_required': True})
-        pending_token = create_access_token(
-            identity=str(user.id),
+        pending_token = _create_user_access_token(
+            user,
             expires_delta=timedelta(minutes=5),
             additional_claims={"mfa_pending": True},
         )
@@ -464,7 +475,7 @@ def login():
             "pending_token": pending_token,
         }), 200
 
-    token = create_access_token(identity=str(user.id))
+    token = _create_user_access_token(user)
     resp = jsonify(
         token=token,
         user=_user_payload(user),
@@ -491,6 +502,46 @@ def get_current_user():
         db.session.commit()
 
     return jsonify(**_user_payload(user)), 200
+
+
+@auth_bp.route('/password/change', methods=['POST'])
+@jwt_required()
+@limiter.limit("5 per minute")
+def change_password():
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify(message='User not found'), 404
+
+    data = request.get_json(silent=True) or {}
+    current_password = str(data.get('current_password') or '')
+    new_password = str(data.get('new_password') or '')
+
+    if not current_password or not new_password:
+        return jsonify(message='Current password and new password are required.'), 400
+    if not check_password_hash(user.password_hash, current_password):
+        return jsonify(message='Current password is incorrect.'), 401
+    if check_password_hash(user.password_hash, new_password):
+        return jsonify(message='Choose a different password.'), 400
+
+    pw_valid, pw_error = _validate_password(new_password)
+    if not pw_valid:
+        return jsonify(message=pw_error), 400
+
+    user.password_hash = generate_password_hash(new_password)
+    user.failed_login_attempts = 0
+    user.locked_until = None
+    user.auth_token_version = int(user.auth_token_version or 0) + 1
+    db.session.commit()
+
+    token = _create_user_access_token(user)
+    resp = jsonify(
+        message='Password updated successfully.',
+        token=token,
+        user=_user_payload(user),
+    )
+    _audit_auth_event('auth.password.changed', actor=user, target_user=user)
+    return _attach_auth_cookie(resp, token), 200
 
 
 @auth_bp.route('/mfa/setup', methods=['POST'])
@@ -572,7 +623,7 @@ def mfa_challenge():
 
     totp = pyotp.TOTP(user.mfa_secret or '')
     if totp.verify(code, valid_window=1):
-        access_token = create_access_token(identity=str(user.id))
+        access_token = _create_user_access_token(user)
         resp = jsonify({"token": access_token, "user": _user_payload(user)})
         _audit_auth_event('auth.login.succeeded', actor=user, target_user=user, details={'mfa_method': 'totp'})
         return _attach_auth_cookie(resp, access_token), 200
@@ -585,7 +636,7 @@ def mfa_challenge():
                 remaining_codes.pop(idx)
                 user.mfa_backup_codes = remaining_codes
                 db.session.commit()
-                access_token = create_access_token(identity=str(user.id))
+                access_token = _create_user_access_token(user)
                 resp = jsonify({"token": access_token, "user": _user_payload(user)})
                 _audit_auth_event('auth.login.succeeded', actor=user, target_user=user, details={'mfa_method': 'backup_code'})
                 return _attach_auth_cookie(resp, access_token), 200
@@ -798,7 +849,7 @@ def google_callback():
         if changed:
             db.session.commit()
 
-    token = create_access_token(identity=str(user.id))
+    token = _create_user_access_token(user)
     resp = redirect(_frontend_callback_url(next_path), code=302)
     return _attach_auth_cookie(resp, token)
 

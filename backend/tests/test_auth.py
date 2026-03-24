@@ -163,3 +163,33 @@ def test_login_requires_verified_email_when_flag_enabled(client, app, db):
 
     assert resp.status_code == 403
     assert resp.get_json()["verification_required"] is True
+
+
+def test_password_change_invalidates_old_sessions(app, auth_headers, test_user):
+    changing_client = app.test_client(use_cookies=False)
+    change_resp = changing_client.post(
+        "/api/v1/auth/password/change",
+        json={
+            "current_password": "ValidPass1",
+            "new_password": "BetterPass2",
+        },
+        headers=auth_headers,
+    )
+
+    assert change_resp.status_code == 200
+    new_token = change_resp.get_json()["token"]
+    assert new_token
+
+    stale_client = app.test_client(use_cookies=False)
+    stale_resp = stale_client.get(
+        "/api/v1/auth/me",
+        headers=auth_headers,
+    )
+    assert stale_resp.status_code == 401
+
+    fresh_client = app.test_client(use_cookies=False)
+    fresh_resp = fresh_client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {new_token}"},
+    )
+    assert fresh_resp.status_code == 200
