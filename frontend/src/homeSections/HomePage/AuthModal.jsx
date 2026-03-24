@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../../shared/auth/AuthContext';
 import { API_BASE } from '../../config/apiBase';
+import { readAuthQueryNotice } from './authStatus';
 
 export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChange }) {
   const { login, signup } = useAuth();
@@ -8,12 +9,14 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
   const [password, setPassword] = useState('');
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState('');
+  const [errorDetail, setErrorDetail] = useState('');
 
   const isEmailMode = mode === 'email';
 
   const resetState = () => {
     setStatus('idle');
     setError('');
+    setErrorDetail('');
     setPassword('');
   };
 
@@ -41,6 +44,11 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
     return '';
   }, [status]);
 
+  const authNotice = useMemo(() => {
+    if (typeof window === 'undefined') return null;
+    return readAuthQueryNotice(window.location.search || '');
+  }, []);
+
   if (!isOpen) return null;
 
   const handleBackdropClick = (event) => {
@@ -51,6 +59,7 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
 
   const handleGoogle = async () => {
     setError('');
+    setErrorDetail('');
     const params = new URLSearchParams({ next: '/new' });
     try {
       const current = new URLSearchParams(window.location.search || '');
@@ -68,10 +77,12 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
     const normalizedEmail = String(email || '').trim().toLowerCase();
     if (!normalizedEmail) {
       setError('Please enter a valid email address.');
+      setErrorDetail('');
       return;
     }
     if (!password || String(password).length < 8) {
       setError('Password must be at least 8 characters.');
+      setErrorDetail('');
       return;
     }
 
@@ -98,9 +109,11 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
         || signupAttempt?.error
         || 'Unable to sign in with email right now.'
       );
+      setErrorDetail(loginAttempt?.detail || signupAttempt?.detail || '');
       setStatus('idle');
     } catch (authError) {
       setError(authError?.message || 'Unable to sign in with email right now.');
+      setErrorDetail(authError?.detail || '');
       setStatus('idle');
     }
   };
@@ -122,7 +135,12 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
           </p>
         </div>
 
-        {error && <div className="auth-modal-alert">{error}</div>}
+        {(error || authNotice) && (
+          <div className={`auth-modal-alert is-${error ? 'error' : authNotice?.tone || 'info'}`}>
+            <strong>{error || authNotice?.message}</strong>
+            {(errorDetail || authNotice?.detail) && <p>{errorDetail || authNotice?.detail}</p>}
+          </div>
+        )}
         {statusMessage && <div className="auth-modal-success">{statusMessage}</div>}
 
         {isEmailMode ? (

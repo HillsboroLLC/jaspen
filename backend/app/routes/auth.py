@@ -23,6 +23,12 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 import stripe
 
 from app import db, limiter, mail
+from app.access_controls import (
+    APPROVAL_APPROVED,
+    APPROVAL_PENDING,
+    APPROVAL_REJECTED,
+    get_access_controls,
+)
 from app.admin_audit import append_user_audit_event
 from app.admin_policy import is_global_admin
 from app.models import User
@@ -181,7 +187,65 @@ def _resolve_referring_user(referral_code):
 
 
 def _verification_required_enabled():
-    return bool(current_app.config.get('REQUIRE_EMAIL_VERIFICATION'))
+    return bool(get_access_controls(current_app.config).get('require_email_verification'))
+
+
+def _access_controls():
+    return get_access_controls(current_app.config)
+
+
+def _approval_pending_payload():
+    return {
+        'message': "You're on the list. We're reviewing access now.",
+        'detail': "Jaspen is opening access carefully so each early user gets the right level of support. We’ll let you in as soon as your spot is confirmed.",
+        'approval_required': True,
+        'approval_status': APPROVAL_PENDING,
+    }
+
+
+def _approval_rejected_payload():
+    return {
+        'message': 'We couldn’t confirm access yet.',
+        'approval_required': True,
+        'approval_status': APPROVAL_REJECTED,
+    }
+
+
+def _signup_closed_payload():
+    return {
+        'message': 'Jaspen is opening access carefully right now. Use an invite code or request access to join the early list.',
+        'signup_closed': True,
+    }
+
+
+def _invite_required_payload():
+    return {
+        'message': 'An invite code is required right now to get into Jaspen.',
+        'invite_required': True,
+    }
+
+
+def _invite_invalid_payload():
+    return {
+        'message': 'That invite code could not be confirmed. Check the code and try again.',
+        'invite_required': True,
+        'invite_invalid': True,
+    }
+
+
+def _effective_signup_gate(referral_code):
+    controls = _access_controls()
+    normalized_referral = _normalize_referral_code(referral_code)
+    referring_user = _resolve_referring_user(normalized_referral)
+    has_valid_invite = referring_user is not None
+
+    if controls.get('require_invite_code') and normalized_referral and not has_valid_invite:
+        return controls, None, _invite_invalid_payload(), 403
+    if controls.get('require_invite_code') and not has_valid_invite:
+        return controls, None, _invite_required_payload(), 403
+    if not controls.get('open_signup') and not has_valid_invite:
+        return controls, None, _signup_closed_payload(), 403
+    return controls, referring_user, None, None
 
 
 def _mark_user_email_verified(user):
@@ -266,6 +330,8 @@ def _user_payload(user):
         'credits_remaining': user.credits_remaining,
         'email_verified': bool(user.email_verified),
         'email_verified_at': user.email_verified_at.isoformat() if user.email_verified_at else None,
+        'access_approval_status': str(user.access_approval_status or APPROVAL_APPROVED),
+        'access_approved_at': user.access_approved_at.isoformat() if user.access_approved_at else None,
         'mfa_enabled': bool(user.mfa_enabled),
         'referral_code': user.referral_code,
         'referrals_earned': user.referrals_earned,
@@ -307,7 +373,9 @@ def signup():
             plan_key=requested_plan,
         ), 400
 
-    referring_user = _resolve_referring_user(referral_code)
+    controls, referring_user, gate_payload, gate_status = _effective_signup_gate(referral_code)
+    if gate_payload:
+        return jsonify(gate_payload), gate_status
 
     user = User(
         name=name,
@@ -319,6 +387,12 @@ def signup():
     apply_plan_to_user(user, requested_plan, current_app.config, reset_credits=True)
     user.email_verified = False
     user.email_verified_at = None
+    if controls.get('require_admin_approval'):
+        user.access_approval_status = APPROVAL_PENDING
+        user.access_approved_at = None
+    else:
+        user.access_approval_status = APPROVAL_APPROVED
+        user.access_approved_at = datetime.utcnow()
     if referring_user and str(referring_user.email or '').strip().lower() != email:
         user.referred_by_user_id = referring_user.id
         user.signup_referral_code_used = referring_user.referral_code
@@ -328,6 +402,9 @@ def signup():
     db.session.commit()
     if _ensure_user_org(user):
         db.session.commit()
+
+    if controls.get('require_admin_approval') and user.access_approval_status == APPROVAL_PENDING:
+        return jsonify(_approval_pending_payload()), 202
 
     if _verification_required_enabled():
         try:
@@ -414,6 +491,12 @@ def login():
             details={'reason': 'user_not_found'},
         )
         return jsonify(message='Invalid credentials'), 401
+
+    approval_status = str(user.access_approval_status or APPROVAL_APPROVED).strip().lower()
+    if approval_status == APPROVAL_REJECTED:
+        return jsonify(_approval_rejected_payload()), 403
+    if _access_controls().get('require_admin_approval') and approval_status == APPROVAL_PENDING:
+        return jsonify(_approval_pending_payload()), 403
 
     now = _utc_now()
     locked_until = _normalize_locked_until(user.locked_until)
@@ -818,7 +901,14 @@ def google_callback():
     changed = False
 
     if not user:
-        referring_user = _resolve_referring_user(referral_code)
+        controls, referring_user, gate_payload, _ = _effective_signup_gate(referral_code)
+        if gate_payload:
+            error_code = 'invite_required'
+            if gate_payload.get('signup_closed'):
+                error_code = 'signup_closed'
+            elif gate_payload.get('invite_invalid'):
+                error_code = 'invite_invalid'
+            return redirect(_frontend_login_error_url(error_code), code=302)
         user = User(
             name=display_name,
             email=email,
@@ -828,6 +918,12 @@ def google_callback():
             email_verified=True,
             email_verified_at=datetime.utcnow(),
         )
+        if controls.get('require_admin_approval'):
+            user.access_approval_status = APPROVAL_PENDING
+            user.access_approved_at = None
+        else:
+            user.access_approval_status = APPROVAL_APPROVED
+            user.access_approved_at = datetime.utcnow()
         if referring_user and str(referring_user.email or '').strip().lower() != email:
             user.referred_by_user_id = referring_user.id
             user.signup_referral_code_used = referring_user.referral_code
@@ -848,6 +944,12 @@ def google_callback():
             changed = True
         if changed:
             db.session.commit()
+
+    approval_status = str(user.access_approval_status or APPROVAL_APPROVED).strip().lower()
+    if approval_status == APPROVAL_REJECTED:
+        return redirect(_frontend_login_error_url('access_rejected'), code=302)
+    if _access_controls().get('require_admin_approval') and approval_status == APPROVAL_PENDING:
+        return redirect(_frontend_login_error_url('access_pending'), code=302)
 
     token = _create_user_access_token(user)
     resp = redirect(_frontend_callback_url(next_path), code=302)

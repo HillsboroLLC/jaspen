@@ -64,6 +64,28 @@ const ROLE_EXPERIENCE_OPTIONS = [
     path: '/enterprise-admin?admin_preview=enterprise&role=admin',
   },
 ];
+const ACCESS_CONTROL_FIELDS = [
+  {
+    key: 'open_signup',
+    label: 'Open signup',
+    description: 'Anyone can create a Jaspen account unless another gate is turned on.',
+  },
+  {
+    key: 'require_invite_code',
+    label: 'Require invite code',
+    description: 'New signups need a valid invite or referral code before they can get in.',
+  },
+  {
+    key: 'require_admin_approval',
+    label: 'Require admin approval',
+    description: 'New signups land on the list first, and you decide when they can enter.',
+  },
+  {
+    key: 'require_email_verification',
+    label: 'Require email verification',
+    description: 'New signups must verify their inbox before Jaspen treats the account as active.',
+  },
+];
 
 
 function authHeaders(extra = {}, method = 'GET') {
@@ -123,6 +145,10 @@ export default function JaspenAdmin() {
   const [feedbackLoading, setFeedbackLoading] = useState(false);
   const [feedbackQuery, setFeedbackQuery] = useState('');
   const [feedbackValueFilter, setFeedbackValueFilter] = useState('');
+  const [accessControls, setAccessControls] = useState(null);
+  const [accessReview, setAccessReview] = useState(null);
+  const [accessLoading, setAccessLoading] = useState(false);
+  const [accessPending, setAccessPending] = useState(false);
 
   const [creditOp, setCreditOp] = useState({
     mode: 'adjust',
@@ -140,6 +166,9 @@ export default function JaspenAdmin() {
     () => (users || []).find((u) => u.id === selectedId) || null,
     [users, selectedId],
   );
+
+  const pendingAccessCount = Number(accessReview?.pending_count || 0);
+  const rejectedAccessCount = Number(accessReview?.rejected_count || 0);
 
   const applySavedUser = (saved) => {
     if (!saved?.id) return;
@@ -244,6 +273,24 @@ export default function JaspenAdmin() {
     }
   };
 
+  const loadAccessControls = async () => {
+    setAccessLoading(true);
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/admin/access-controls`, {
+        headers: authHeaders(),
+        credentials: 'include',
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || 'Unable to load Access Controls.');
+      setAccessControls(data?.controls || null);
+      setAccessReview(data?.review || null);
+    } catch (error) {
+      setMessage(error.message || 'Unable to load Access Controls.');
+    } finally {
+      setAccessLoading(false);
+    }
+  };
+
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -267,6 +314,7 @@ export default function JaspenAdmin() {
         if (canAdmin) {
           await loadUsers('');
           await loadFeedback({ userId: '', q: '', value: '' });
+          await loadAccessControls();
         }
       } catch (error) {
         if (mounted) setMessage(error.message || 'Unable to load admin console.');
@@ -473,6 +521,53 @@ export default function JaspenAdmin() {
     }
   };
 
+  const saveAccessControls = async () => {
+    if (!accessControls) return;
+    setAccessPending(true);
+    setMessage('');
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/admin/access-controls`, {
+        method: 'PATCH',
+        headers: authHeaders({ 'Content-Type': 'application/json' }, 'PATCH'),
+        credentials: 'include',
+        body: JSON.stringify(accessControls),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || 'Unable to save Access Controls.');
+      setAccessControls(data?.controls || accessControls);
+      setAccessReview(data?.review || accessReview);
+      setMessage('Saved Access Controls.');
+    } catch (error) {
+      setMessage(error.message || 'Unable to save Access Controls.');
+    } finally {
+      setAccessPending(false);
+    }
+  };
+
+  const reviewUserAccess = async (userId, status) => {
+    if (!userId || !status) return;
+    setAccessPending(true);
+    setMessage('');
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/admin/users/${encodeURIComponent(userId)}`, {
+        method: 'PATCH',
+        headers: authHeaders({ 'Content-Type': 'application/json' }, 'PATCH'),
+        credentials: 'include',
+        body: JSON.stringify({ access_approval_status: status }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || 'Unable to update access review status.');
+      applySavedUser(data?.user);
+      await loadUsers(query);
+      await loadAccessControls();
+      setMessage(`Updated access review for ${data?.user?.email || 'user'}.`);
+    } catch (error) {
+      setMessage(error.message || 'Unable to update access review status.');
+    } finally {
+      setAccessPending(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="jas-admin-page">
@@ -523,6 +618,109 @@ export default function JaspenAdmin() {
         {message && <p className="jas-admin-message">{message}</p>}
 
         <section className="jas-admin-subsection">
+          <div className="jas-admin-section-head">
+            <div>
+              <h3>Access Controls</h3>
+              <p className="jas-admin-empty">
+                Shift between open, invite-led, and reviewed access without redeploying Jaspen.
+              </p>
+            </div>
+            <div className="jas-admin-actions">
+              <button type="button" className="jas-admin-secondary" onClick={loadAccessControls} disabled={accessLoading || accessPending}>
+                {accessLoading ? 'Refreshing...' : 'Refresh'}
+              </button>
+              <button type="button" className="jas-admin-primary" onClick={saveAccessControls} disabled={accessLoading || accessPending || !accessControls}>
+                {accessPending ? 'Saving...' : 'Save Access Controls'}
+              </button>
+            </div>
+          </div>
+
+          <div className="jas-admin-access-grid">
+            {ACCESS_CONTROL_FIELDS.map((field) => (
+              <label key={field.key} className="jas-admin-access-card">
+                <div className="jas-admin-access-copy">
+                  <strong>{field.label}</strong>
+                  <span>{field.description}</span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={Boolean(accessControls?.[field.key])}
+                  onChange={(e) => setAccessControls((prev) => ({ ...(prev || {}), [field.key]: e.target.checked }))}
+                  disabled={!accessControls || accessLoading || accessPending}
+                />
+              </label>
+            ))}
+          </div>
+
+          <div className="jas-admin-review-grid">
+            <div className="jas-admin-review-summary">
+              <strong>{pendingAccessCount}</strong>
+              <span>Waiting for review</span>
+            </div>
+            <div className="jas-admin-review-summary">
+              <strong>{rejectedAccessCount}</strong>
+              <span>Not confirmed</span>
+            </div>
+          </div>
+
+          <div className="jas-admin-access-review">
+            {(accessReview?.items || []).length === 0 && (
+              <p className="jas-admin-empty">No access requests need attention right now.</p>
+            )}
+            {(accessReview?.items || []).map((item) => (
+              <div key={item.id} className="jas-admin-review-row">
+                <button
+                  type="button"
+                  className="jas-admin-review-meta"
+                  onClick={() => handleSelectUser(item)}
+                >
+                  <strong>{item.email}</strong>
+                  <span>{item.name || 'No name yet'}</span>
+                  <span>
+                    {item.signup_referral_code_used ? `Referred via ${item.signup_referral_code_used}` : 'No invite code used'}
+                  </span>
+                </button>
+                <span className={`jas-admin-status-badge is-${item.access_approval_status || 'pending'}`}>
+                  {item.access_approval_status || 'pending'}
+                </span>
+                <div className="jas-admin-actions">
+                  {item.access_approval_status !== 'approved' && (
+                    <button
+                      type="button"
+                      className="jas-admin-primary"
+                      onClick={() => reviewUserAccess(item.id, 'approved')}
+                      disabled={accessPending}
+                    >
+                      Approve
+                    </button>
+                  )}
+                  {item.access_approval_status !== 'pending' && (
+                    <button
+                      type="button"
+                      className="jas-admin-secondary"
+                      onClick={() => reviewUserAccess(item.id, 'pending')}
+                      disabled={accessPending}
+                    >
+                      Move to list
+                    </button>
+                  )}
+                  {item.access_approval_status !== 'rejected' && (
+                    <button
+                      type="button"
+                      className="jas-admin-secondary"
+                      onClick={() => reviewUserAccess(item.id, 'rejected')}
+                      disabled={accessPending}
+                    >
+                      Reject
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="jas-admin-subsection">
           <h3>Role Experience Preview</h3>
           <p className="jas-admin-empty">
             Preview the customer-facing interface using your active organization data and the selected role restrictions.
@@ -570,6 +768,7 @@ export default function JaspenAdmin() {
                   <strong>{user.email}</strong>
                   <span>{user.name}</span>
                   <span>{user.subscription_plan}</span>
+                  <span>{user.access_approval_status || 'approved'}</span>
                 </button>
               );
             })}

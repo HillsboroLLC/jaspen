@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../../shared/auth/AuthContext';
 import { API_BASE } from '../../config/apiBase';
+import { readAuthQueryNotice } from './authStatus';
 
 const TARGET_SCORE = 87;
 const ANIMATION_DURATION_MS = 1200;
@@ -13,6 +14,7 @@ export default function StrategyAccessCard() {
   const [password, setPassword] = useState('');
   const [authStatus, setAuthStatus] = useState('idle');
   const [authError, setAuthError] = useState('');
+  const [authErrorDetail, setAuthErrorDetail] = useState('');
 
   useEffect(() => {
     const prefersReducedMotion =
@@ -51,17 +53,39 @@ export default function StrategyAccessCard() {
   const helperText = useMemo(() => {
     if (authError) return authError;
     if (authStatus === 'sent') return 'Authenticated. Redirecting...';
+    if (typeof window !== 'undefined') {
+      const authNotice = readAuthQueryNotice(window.location.search || '');
+      if (authNotice?.message) return authNotice.message;
+    }
     return 'By continuing, you agree to receive product updates.';
   }, [authError, authStatus]);
+
+  const helperDetail = useMemo(() => {
+    if (authErrorDetail) return authErrorDetail;
+    if (typeof window !== 'undefined') {
+      return readAuthQueryNotice(window.location.search || '')?.detail || '';
+    }
+    return '';
+  }, [authErrorDetail]);
+
+  const queryNoticeTone = useMemo(() => {
+    if (typeof window === 'undefined') return '';
+    return readAuthQueryNotice(window.location.search || '')?.tone || '';
+  }, []);
 
   const helperClassName = authError
     ? 'strategy-card-disclaimer is-error'
     : authStatus === 'sent'
       ? 'strategy-card-disclaimer is-success'
+      : queryNoticeTone === 'error'
+        ? 'strategy-card-disclaimer is-error'
+        : queryNoticeTone === 'success'
+          ? 'strategy-card-disclaimer is-success'
       : 'strategy-card-disclaimer';
 
   const handleGoogleClick = () => {
     setAuthError('');
+    setAuthErrorDetail('');
     const params = new URLSearchParams({ next: '/new' });
     try {
       const current = new URLSearchParams(window.location.search || '');
@@ -79,10 +103,12 @@ export default function StrategyAccessCard() {
     const normalizedEmail = String(email || '').trim().toLowerCase();
     if (!normalizedEmail) {
       setAuthError('Please enter a valid email address.');
+      setAuthErrorDetail('');
       return;
     }
     if (!password || String(password).length < 8) {
       setAuthError('Password must be at least 8 characters.');
+      setAuthErrorDetail('');
       return;
     }
 
@@ -109,9 +135,11 @@ export default function StrategyAccessCard() {
         || signupAttempt?.error
         || 'Unable to sign in with email right now.'
       );
+      setAuthErrorDetail(loginAttempt?.detail || signupAttempt?.detail || '');
       setAuthStatus('idle');
     } catch (error) {
       setAuthError(error?.message || 'Unable to sign in with email right now.');
+      setAuthErrorDetail(error?.detail || '');
       setAuthStatus('idle');
     }
   };
@@ -170,7 +198,10 @@ export default function StrategyAccessCard() {
         </form>
       </div>
 
-      <div className={helperClassName}>{helperText}</div>
+      <div className={helperClassName}>
+        <strong>{helperText}</strong>
+        {helperDetail && <span>{helperDetail}</span>}
+      </div>
     </div>
   );
 }

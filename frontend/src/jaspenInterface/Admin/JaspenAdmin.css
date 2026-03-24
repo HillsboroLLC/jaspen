@@ -166,6 +166,116 @@
   color: #162246;
 }
 
+.jas-admin-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.jas-admin-access-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.jas-admin-access-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid #e1e9f7;
+  border-radius: 14px;
+  background: #fbfdff;
+}
+
+.jas-admin-access-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.jas-admin-access-copy strong {
+  color: #17244a;
+}
+
+.jas-admin-access-copy span {
+  color: #5c719e;
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.jas-admin-access-card input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+}
+
+.jas-admin-review-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.jas-admin-review-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1px solid #e1e9f7;
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.jas-admin-review-summary strong {
+  font-size: 1.4rem;
+  color: #17244a;
+}
+
+.jas-admin-review-summary span {
+  color: #5c719e;
+}
+
+.jas-admin-access-review {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.jas-admin-review-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.8fr) auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  border: 1px solid #e1e9f7;
+  border-radius: 14px;
+  background: #fbfdff;
+}
+
+.jas-admin-review-meta {
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  cursor: pointer;
+}
+
+.jas-admin-review-meta strong {
+  color: #17244a;
+}
+
+.jas-admin-review-meta span {
+  color: #5c719e;
+  font-size: 0.86rem;
+}
+
 .jas-admin-inline-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -291,6 +401,21 @@
 }
 
 .jas-admin-status-badge.is-disconnected {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.jas-admin-status-badge.is-approved {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.jas-admin-status-badge.is-pending {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.jas-admin-status-badge.is-rejected {
   background: #fee2e2;
   color: #991b1b;
 }
@@ -537,6 +662,11 @@
     grid-template-columns: 1fr;
   }
 
+  .jas-admin-access-grid,
+  .jas-admin-review-grid {
+    grid-template-columns: 1fr;
+  }
+
   .jas-admin-wide {
     grid-column: span 1;
   }
@@ -551,6 +681,11 @@
   }
 
   .jas-admin-info-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .jas-admin-section-head,
+  .jas-admin-review-row {
     grid-template-columns: 1fr;
   }
 

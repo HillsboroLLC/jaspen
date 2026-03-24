@@ -1,7 +1,19 @@
+from datetime import datetime
+
 from flask import Blueprint, current_app, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 from sqlalchemy import or_
 
+from app.access_controls import (
+    APPROVAL_APPROVED,
+    APPROVAL_PENDING,
+    APPROVAL_REJECTED,
+    APPROVAL_STATUSES,
+    access_review_summary,
+    get_access_controls,
+    normalize_access_controls,
+    save_access_controls,
+)
 from app import db, limiter
 from app.admin_audit import append_admin_audit_event, list_admin_audit_events
 from app.admin_policy import is_global_admin
@@ -71,6 +83,9 @@ def _serialize_user_for_admin(user):
         "referrals_earned": user.referrals_earned,
         "referred_by_user_id": user.referred_by_user_id,
         "signup_referral_code_used": user.signup_referral_code_used,
+        "access_approval_status": str(user.access_approval_status or APPROVAL_APPROVED),
+        "access_approved_at": user.access_approved_at.isoformat() if user.access_approved_at else None,
+        "access_reviewed_by_user_id": user.access_reviewed_by_user_id,
         "created_at": user.created_at.isoformat() if user.created_at else None,
         "updated_at": user.updated_at.isoformat() if user.updated_at else None,
     }
@@ -387,6 +402,48 @@ def capabilities():
     }), 200
 
 
+@admin_bp.route("/access-controls", methods=["GET"])
+@jwt_required()
+def get_access_controls_view():
+    _, err = _require_admin()
+    if err:
+        return err
+
+    return jsonify({
+        "controls": get_access_controls(current_app.config),
+        "review": access_review_summary(limit=_to_int(request.args.get("limit"), default=25)),
+    }), 200
+
+
+@admin_bp.route("/access-controls", methods=["PATCH"])
+@jwt_required()
+@limiter.limit("20 per minute")
+def patch_access_controls():
+    admin_user, err = _require_admin()
+    if err:
+        return err
+
+    data = request.get_json(silent=True) or {}
+    before = get_access_controls(current_app.config)
+    normalized = normalize_access_controls(data, app_config=current_app.config)
+    save_access_controls(normalized, app_config=current_app.config)
+    db.session.commit()
+
+    _audit(
+        admin_user,
+        "access_controls.patch",
+        details={
+            "before": before,
+            "after": normalized,
+        },
+    )
+    return jsonify({
+        "success": True,
+        "controls": normalized,
+        "review": access_review_summary(limit=25),
+    }), 200
+
+
 @admin_bp.route("/preview/workspace", methods=["GET"])
 @jwt_required()
 def workspace_preview():
@@ -527,6 +584,17 @@ def patch_user(user_id):
             if sessions < 1:
                 return jsonify({"error": "max_concurrent_sessions must be at least 1 when set"}), 400
             user.max_concurrent_sessions = sessions
+
+    if "access_approval_status" in data:
+        access_status = str(data.get("access_approval_status") or "").strip().lower()
+        if access_status not in APPROVAL_STATUSES:
+            return jsonify({"error": f"access_approval_status must be one of {sorted(APPROVAL_STATUSES)}"}), 400
+        user.access_approval_status = access_status
+        user.access_reviewed_by_user_id = admin_user.id
+        if access_status == APPROVAL_APPROVED:
+            user.access_approved_at = datetime.utcnow()
+        else:
+            user.access_approved_at = None
 
     db.session.commit()
     after = _serialize_user_for_admin(user)

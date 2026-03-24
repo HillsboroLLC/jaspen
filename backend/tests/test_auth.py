@@ -111,6 +111,141 @@ def test_signup_records_referral_attribution(client, db, test_user):
     assert referrer.referrals_earned == 1
 
 
+def test_signup_blocks_when_open_signup_disabled_without_invite(client, app):
+    original = app.config.get("OPEN_SIGNUP")
+    app.config["OPEN_SIGNUP"] = False
+    try:
+        resp = client.post(
+            "/api/v1/auth/signup",
+            json={
+                "name": "Blocked User",
+                "email": "blocked@example.com",
+                "password": "StrongPass1",
+                "plan_key": "free",
+            },
+            environ_overrides={"REMOTE_ADDR": "10.0.0.110"},
+        )
+    finally:
+        app.config["OPEN_SIGNUP"] = original
+
+    assert resp.status_code == 403
+    assert resp.get_json()["signup_closed"] is True
+
+
+def test_signup_allows_valid_invite_when_open_signup_disabled(client, app, db, test_user):
+    original = app.config.get("OPEN_SIGNUP")
+    app.config["OPEN_SIGNUP"] = False
+    try:
+        resp = client.post(
+            "/api/v1/auth/signup",
+            json={
+                "name": "Invited User",
+                "email": "invited@example.com",
+                "password": "StrongPass1",
+                "plan_key": "free",
+                "referral_code": test_user.referral_code,
+            },
+            environ_overrides={"REMOTE_ADDR": "10.0.0.111"},
+        )
+    finally:
+        app.config["OPEN_SIGNUP"] = original
+
+    assert resp.status_code == 201
+    created = User.query.filter_by(email="invited@example.com").first()
+    assert created is not None
+    assert created.access_approval_status == "approved"
+
+
+def test_signup_returns_pending_when_admin_approval_required(client, app, db):
+    original = app.config.get("REQUIRE_ADMIN_APPROVAL")
+    app.config["REQUIRE_ADMIN_APPROVAL"] = True
+    try:
+        resp = client.post(
+            "/api/v1/auth/signup",
+            json={
+                "name": "Pending User",
+                "email": "pending@example.com",
+                "password": "StrongPass1",
+                "plan_key": "free",
+            },
+            environ_overrides={"REMOTE_ADDR": "10.0.0.112"},
+        )
+    finally:
+        app.config["REQUIRE_ADMIN_APPROVAL"] = original
+
+    assert resp.status_code == 202
+    data = resp.get_json()
+    assert data["approval_required"] is True
+    assert data["approval_status"] == "pending"
+    created = User.query.filter_by(email="pending@example.com").first()
+    assert created is not None
+    assert created.access_approval_status == "pending"
+
+
+def test_login_blocks_pending_user_when_admin_approval_required(client, app, db):
+    with app.app_context():
+        pending_user = User(
+            email="pending-login@example.com",
+            name="Pending Login",
+            password_hash=generate_password_hash("ValidPass1", method="pbkdf2:sha256"),
+            subscription_plan="free",
+            credits_remaining=300,
+            seat_limit=1,
+            max_seats=1,
+            access_approval_status="pending",
+        )
+        db.session.add(pending_user)
+        db.session.commit()
+    original = app.config.get("REQUIRE_ADMIN_APPROVAL")
+    app.config["REQUIRE_ADMIN_APPROVAL"] = True
+    try:
+        resp = client.post(
+            "/api/v1/auth/login",
+            json={
+                "email": "pending-login@example.com",
+                "password": "ValidPass1",
+            },
+            environ_overrides={"REMOTE_ADDR": "10.0.0.113"},
+        )
+    finally:
+        app.config["REQUIRE_ADMIN_APPROVAL"] = original
+
+    assert resp.status_code == 403
+    data = resp.get_json()
+    assert data["approval_required"] is True
+    assert data["approval_status"] == "pending"
+
+
+def test_login_blocks_rejected_user(client, app, db):
+    with app.app_context():
+        rejected_user = User(
+            email="rejected@example.com",
+            name="Rejected User",
+            password_hash=generate_password_hash("ValidPass1", method="pbkdf2:sha256"),
+            subscription_plan="free",
+            credits_remaining=300,
+            seat_limit=1,
+            max_seats=1,
+            access_approval_status="rejected",
+        )
+        db.session.add(rejected_user)
+        db.session.commit()
+
+    resp = client.post(
+        "/api/v1/auth/login",
+        json={
+            "email": "rejected@example.com",
+            "password": "ValidPass1",
+        },
+        environ_overrides={"REMOTE_ADDR": "10.0.0.114"},
+    )
+
+    assert resp.status_code == 403
+    data = resp.get_json()
+    assert data["approval_required"] is True
+    assert data["approval_status"] == "rejected"
+
+
 def test_verify_email_marks_user_verified(client, app, test_user, db):
     with app.app_context():
         serializer = URLSafeTimedSerializer(

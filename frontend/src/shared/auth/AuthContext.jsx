@@ -339,6 +339,15 @@ export function AuthProvider({ children }) {
 
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
+        if (data?.approval_required || data?.verification_required) {
+          return {
+            success: false,
+            pending: Boolean(data?.approval_required),
+            verificationRequired: Boolean(data?.verification_required),
+            error: data?.message || 'Sign-in is not available yet.',
+            detail: data?.detail || '',
+          };
+        }
         // Cookie is the source of truth; do not persist auth tokens in localStorage.
         localStorage.removeItem('access_token');
         localStorage.removeItem('token');
@@ -409,6 +418,15 @@ export function AuthProvider({ children }) {
 
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
+        if (res.status === 202 || data?.approval_required || data?.verification_required) {
+          return {
+            success: false,
+            pending: Boolean(data?.approval_required),
+            verificationRequired: Boolean(data?.verification_required),
+            error: data?.message || 'Your signup is in progress.',
+            detail: data?.detail || '',
+          };
+        }
         // Cookie is the source of truth; do not persist auth tokens in localStorage.
         localStorage.removeItem('access_token');
         localStorage.removeItem('token');

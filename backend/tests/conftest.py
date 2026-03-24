@@ -9,6 +9,7 @@ from app import connector_store
 from app import create_app, db as _db
 from app.models import (
     AdminAuditEvent,
+    AppSetting,
     ConnectorSyncLog,
     Organization,
     OrganizationInvitation,
@@ -83,6 +84,7 @@ def db(app):
     with app.app_context():
         for model in (
             AdminAuditEvent,
+            AppSetting,
             ConnectorSyncLog,
             OrganizationInvitation,
             OrganizationMember,

@@ -103,6 +103,21 @@ class User(db.Model):
         db.DateTime,
         nullable=True,
     )
+    access_approval_status = db.Column(
+        db.String(32),
+        nullable=False,
+        default='approved',
+    )
+    access_approved_at = db.Column(
+        db.DateTime,
+        nullable=True,
+    )
+    access_reviewed_by_user_id = db.Column(
+        db.String(36),
+        db.ForeignKey('users.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
 
     # Referrals & feedback
     referral_code = db.Column(
@@ -160,6 +175,9 @@ class User(db.Model):
             'email_verified': bool(self.email_verified),
             'email_verified_at': self.email_verified_at.isoformat() if self.email_verified_at else None,
             'email_verification_sent_at': self.email_verification_sent_at.isoformat() if self.email_verification_sent_at else None,
+            'access_approval_status': self.access_approval_status,
+            'access_approved_at': self.access_approved_at.isoformat() if self.access_approved_at else None,
+            'access_reviewed_by_user_id': self.access_reviewed_by_user_id,
             'referral_code': self.referral_code,
             'referrals_earned': self.referrals_earned,
             'feedback_earned': self.feedback_earned,
@@ -270,6 +288,26 @@ class Organization(db.Model):
             'seat_policy_overrides': self.seat_policy_overrides if isinstance(self.seat_policy_overrides, dict) else {},
             'settings': self.settings if isinstance(self.settings, dict) else {},
             'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class AppSetting(db.Model):
+    __tablename__ = 'app_settings'
+
+    key = db.Column(db.String(100), primary_key=True)
+    value = db.Column(db.JSON, nullable=False, default=dict)
+    updated_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+    def to_dict(self):
+        return {
+            'key': self.key,
+            'value': self.value if isinstance(self.value, dict) else {},
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
 
