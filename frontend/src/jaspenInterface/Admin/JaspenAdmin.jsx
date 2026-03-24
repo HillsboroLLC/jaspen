@@ -1019,15 +1019,15 @@ export default function JaspenAdmin() {
                                 checked={Boolean(cd.auto_sync)}
                                 onChange={(e) => handleConnectorDraftChange(connectorId, 'auto_sync', e.target.checked)}
                               />
-                              Auto sync
+                              <span>Auto sync</span>
                             </label>
                             <button
                               type="button"
-                              className="jas-admin-secondary"
+                              className="jas-admin-secondary jas-admin-connector-save"
                               disabled={connectorPendingId === connectorId}
                               onClick={() => saveConnector(connectorId)}
                             >
-                              {connectorPendingId === connectorId ? 'Saving...' : 'Save Auto Sync'}
+                              {connectorPendingId === connectorId ? 'Saving…' : 'Save'}
                             </button>
                           </div>
                         );
