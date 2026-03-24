@@ -123,6 +123,12 @@ const INITIAL_NOTIFICATION_UPDATES = [
     stamp: 'Today',
   },
 ];
+const SETUP_REMINDER_NOTIFICATION = {
+  id: 'notif-setup-reminder',
+  title: 'Tailor Jaspen later',
+  body: 'You can come back anytime from Account settings to update your display name, role, and starting preference.',
+  stamp: 'Now',
+};
 
 const buildDefaultNotifications = () =>
   INITIAL_NOTIFICATION_UPDATES.map((item) => ({ ...item }));
@@ -1657,6 +1663,27 @@ useEffect(() => {
     setBellNotificationIds([]);
   }, []);
 
+  const upsertNotification = useCallback((item, { markUnread = true } = {}) => {
+    if (!item?.id) return;
+    setNotificationFeed((prev) => {
+      const base = Array.isArray(prev) ? prev : [];
+      const next = base.filter((entry) => entry?.id !== item.id);
+      return [item, ...next];
+    });
+    if (markUnread) {
+      setBellNotificationIds((prev) => {
+        const next = Array.isArray(prev) ? prev.filter((id) => id !== item.id) : [];
+        return [item.id, ...next];
+      });
+    }
+  }, []);
+
+  const dismissNotification = useCallback((id) => {
+    if (!id) return;
+    setNotificationFeed((prev) => (Array.isArray(prev) ? prev.filter((item) => item?.id !== id) : prev));
+    setBellNotificationIds((prev) => (Array.isArray(prev) ? prev.filter((itemId) => itemId !== id) : prev));
+  }, []);
+
   const persistDisplayName = async (value) => {
     const trimmed = String(value || '').trim();
     if (!trimmed) return false;
@@ -2157,11 +2184,13 @@ useEffect(() => {
     });
     setNameModalOpen(false);
     setOnboardingOpen(false);
-    showToast('You can tailor Jaspen anytime from Account settings.', 'info');
+    upsertNotification(SETUP_REMINDER_NOTIFICATION);
+    showToast('Saved for later. You can find this reminder in Notifications and Account settings.', 'info');
   };
 
   const openSetupPromptFlow = () => {
     const previousSelection = readOnboardingState(user)?.selection || onboardingInitialSelection || null;
+    dismissNotification(SETUP_REMINDER_NOTIFICATION.id);
     writeNamePromptDeferred(user, false);
     writeOnboardingState(user, {
       completed: false,
@@ -5631,6 +5660,7 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
     setPendingOnboardingContext(nextContext);
     setOnboardingInitialSelection(nextSelection);
     writeOnboardingState(user, { completed: true, deferred: false, selection: nextSelection });
+    dismissNotification(SETUP_REMINDER_NOTIFICATION.id);
     if (onboardingMode === 'settings') {
       if (!sessionId && !currentSessionId && (!Array.isArray(messages) || messages.length === 0)) {
         setStrategyObjective(mappedObjective);
@@ -5663,7 +5693,7 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
       }
       setOnboardingLaunchLabel('');
     }, 260);
-  }, [user, onboardingMode, sessionId, currentSessionId, messages, showToast]);
+  }, [user, onboardingMode, sessionId, currentSessionId, messages, showToast, dismissNotification]);
 
   const handleNewAnalysis = useCallback((forceNew = false) => {
     clearLastSessionId();
@@ -7372,7 +7402,8 @@ setView(id === 'chat' ? 'intake' : id);
             selection: previousSelection,
           });
           setOnboardingOpen(false);
-          showToast('You can tailor Jaspen anytime from Account settings.', 'info');
+          upsertNotification(SETUP_REMINDER_NOTIFICATION);
+          showToast('Saved for later. You can find this reminder in Notifications and Account settings.', 'info');
         }}
         onComplete={handleOnboardingComplete}
         initialSelection={onboardingInitialSelection}
@@ -7510,31 +7541,36 @@ setView(id === 'chat' ? 'intake' : id);
               />
               <span>{welcomeHeading}</span>
             </h2>
-            <p>Describe your project or goal, and I&apos;ll help you build a complete strategy scorecard with clear priorities and execution steps.</p>
             {shouldShowSetupPrompt ? (
               <div className="jas-setup-prompt" role="note" aria-label="Optional setup prompt">
                 <div className="jas-setup-prompt-copy">
-                  <h3>Tailor Jaspen to how you work</h3>
-                  <p>Choose a display name, role, and starting preference to personalize the experience. Optional. You can always come back from Account settings.</p>
-                </div>
-                <div className="jas-setup-prompt-actions">
-                  <button
-                    type="button"
-                    className="jas-setup-prompt-secondary"
-                    onClick={deferSetupPrompt}
-                  >
-                    Maybe later
-                  </button>
-                  <button
-                    type="button"
-                    className="jas-setup-prompt-primary"
-                    onClick={openSetupPromptFlow}
-                  >
-                    Set up now
-                  </button>
+                  <span className="jas-setup-prompt-eyebrow">Optional setup</span>
+                  <div className="jas-setup-prompt-copy-main">
+                    <div>
+                      <h3>Tailor Jaspen to how you work</h3>
+                      <p>Choose a display name, role, and starting preference now, or come back anytime from Account settings.</p>
+                    </div>
+                    <div className="jas-setup-prompt-actions">
+                      <button
+                        type="button"
+                        className="jas-setup-prompt-secondary"
+                        onClick={deferSetupPrompt}
+                      >
+                        Maybe later
+                      </button>
+                      <button
+                        type="button"
+                        className="jas-setup-prompt-primary"
+                        onClick={openSetupPromptFlow}
+                      >
+                        Set up now
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             ) : null}
+            <p>Describe your project or goal, and I&apos;ll help you build a complete strategy scorecard with clear priorities and execution steps.</p>
           </div>
         ) : (
           <>
