@@ -45,6 +45,12 @@ export function readAuthQueryNotice(search) {
         tone: 'error',
         message: 'Your sign-in session expired before Google returned. Please try again.',
       };
+    case 'account_deactivated':
+      return {
+        tone: 'error',
+        message: 'This account is currently unavailable.',
+        detail: 'If this looks wrong, contact Jaspen support and we can review the account history and restore access when appropriate.',
+      };
     default:
       return null;
   }

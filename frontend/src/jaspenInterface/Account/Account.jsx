@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { API_BASE } from '../../config/apiBase';
 import { getPlanConnectorSentence } from '../../shared/billing/planConnectors';
+import { useAuth } from '../../shared/auth/AuthContext';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
@@ -318,6 +319,7 @@ function connectorToggleMeaning(connector) {
 }
 
 export default function Account() {
+  const { user } = useAuth();
   const navigate = useNavigate();
   const [status, setStatus] = useState(null);
   const [catalog, setCatalog] = useState({ plans: {}, overage_packs: {}, model_types: FALLBACK_MODEL_TYPES });
@@ -346,6 +348,10 @@ export default function Account() {
     draft: null,
     pending: false,
   });
+  const inviteCode = String(user?.referral_code || '').trim();
+  const inviteLink = inviteCode && typeof window !== 'undefined'
+    ? `${window.location.origin}/?ref=${encodeURIComponent(inviteCode)}`
+    : '';
 
   useEffect(() => {
     let mounted = true;
@@ -474,6 +480,19 @@ export default function Account() {
     });
     const data = await res.json();
     if (res.ok) setStatus(data);
+  };
+
+  const copyInviteLink = async () => {
+    if (!inviteLink) {
+      setMessage('Invite link is not ready yet for this account.');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(inviteLink);
+      setMessage('Copied your invite link.');
+    } catch (error) {
+      setMessage('Unable to copy your invite link right now.');
+    }
   };
 
   const refreshConnectors = async () => {
@@ -1478,6 +1497,13 @@ export default function Account() {
             <article className="account-overview-card">
               <h3>Monthly limit</h3>
               <p>{monthlyLimitLabel}</p>
+            </article>
+            <article className="account-overview-card">
+              <h3>Invite others</h3>
+              <p>{inviteCode || 'Generating your code...'}</p>
+              <button type="button" className="account-secondary-btn" onClick={copyInviteLink} disabled={!inviteLink}>
+                Copy invite link
+              </button>
             </article>
           </div>
         </section>

@@ -105,6 +105,8 @@ function toDraft(user) {
     max_seats: user.max_seats == null ? '' : String(user.max_seats),
     unlimited_analysis: Boolean(user.unlimited_analysis),
     max_concurrent_sessions: user.max_concurrent_sessions == null ? '' : String(user.max_concurrent_sessions),
+    deactivated_at: user.deactivated_at || null,
+    recovery_expires_at: user.recovery_expires_at || null,
   };
 }
 
@@ -521,6 +523,65 @@ export default function JaspenAdmin() {
     }
   };
 
+  const deactivateUser = async () => {
+    if (!draft?.id) return;
+    const reason = String(recoveryReason || '').trim();
+    if (!reason) {
+      setMessage('A reason is required before deactivating a user.');
+      return;
+    }
+    if (!window.confirm(`Deactivate ${draft.email}? Their sessions will be invalidated, but their data will stay recoverable for 30 days.`)) {
+      return;
+    }
+
+    setPending(true);
+    setMessage('');
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/admin/users/${encodeURIComponent(draft.id)}/deactivate`, {
+        method: 'POST',
+        headers: authHeaders({ 'Content-Type': 'application/json' }, 'POST'),
+        credentials: 'include',
+        body: JSON.stringify({ reason, recovery_days: 30 }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || 'Unable to deactivate user.');
+      applySavedUser(data?.user);
+      await loadUsers(query);
+      setMessage(`Deactivated ${data?.user?.email || 'user'}.`);
+    } catch (error) {
+      setMessage(error.message || 'Unable to deactivate user.');
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const restoreUser = async () => {
+    if (!draft?.id) return;
+    if (!window.confirm(`Restore ${draft.email}? This will reopen account access.`)) {
+      return;
+    }
+
+    setPending(true);
+    setMessage('');
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/admin/users/${encodeURIComponent(draft.id)}/restore`, {
+        method: 'POST',
+        headers: authHeaders({ 'Content-Type': 'application/json' }, 'POST'),
+        credentials: 'include',
+        body: JSON.stringify({ reason: String(recoveryReason || '').trim() || undefined }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || 'Unable to restore user.');
+      applySavedUser(data?.user);
+      await loadUsers(query);
+      setMessage(`Restored ${data?.user?.email || 'user'}.`);
+    } catch (error) {
+      setMessage(error.message || 'Unable to restore user.');
+    } finally {
+      setPending(false);
+    }
+  };
+
   const saveAccessControls = async () => {
     if (!accessControls) return;
     setAccessPending(true);
@@ -768,7 +829,7 @@ export default function JaspenAdmin() {
                   <strong>{user.email}</strong>
                   <span>{user.name}</span>
                   <span>{user.subscription_plan}</span>
-                  <span>{user.access_approval_status || 'approved'}</span>
+                  <span>{user.deactivated_at ? 'deactivated' : (user.access_approval_status || 'approved')}</span>
                 </button>
               );
             })}
@@ -988,6 +1049,11 @@ export default function JaspenAdmin() {
                       />
                     </label>
                   </div>
+                  {draft.deactivated_at && (
+                    <p className="jas-admin-empty">
+                      Deactivated until recovery window closes: {draft.recovery_expires_at ? new Date(draft.recovery_expires_at).toLocaleString() : 'n/a'}
+                    </p>
+                  )}
                   <div className="jas-admin-actions">
                     <button type="button" className="jas-admin-secondary" disabled={pending} onClick={() => runRecoveryAction('clear_sessions', 'Clear sessions')}>
                       Clear Sessions
@@ -1001,6 +1067,16 @@ export default function JaspenAdmin() {
                     <button type="button" className="jas-admin-secondary" disabled={pending} onClick={() => runRecoveryAction('clear_billing_links', 'Clear billing links')}>
                       Clear Billing Links
                     </button>
+                    {!draft.deactivated_at && (
+                      <button type="button" className="jas-admin-secondary jas-admin-danger" disabled={pending} onClick={deactivateUser}>
+                        Deactivate User
+                      </button>
+                    )}
+                    {draft.deactivated_at && (
+                      <button type="button" className="jas-admin-primary" disabled={pending} onClick={restoreUser}>
+                        Restore User
+                      </button>
+                    )}
                   </div>
                 </section>
 

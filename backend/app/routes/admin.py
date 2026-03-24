@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from flask import Blueprint, current_app, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
@@ -86,6 +86,10 @@ def _serialize_user_for_admin(user):
         "access_approval_status": str(user.access_approval_status or APPROVAL_APPROVED),
         "access_approved_at": user.access_approved_at.isoformat() if user.access_approved_at else None,
         "access_reviewed_by_user_id": user.access_reviewed_by_user_id,
+        "deactivated_at": user.deactivated_at.isoformat() if user.deactivated_at else None,
+        "deactivated_by_user_id": user.deactivated_by_user_id,
+        "deactivation_reason": user.deactivation_reason,
+        "recovery_expires_at": user.recovery_expires_at.isoformat() if user.recovery_expires_at else None,
         "created_at": user.created_at.isoformat() if user.created_at else None,
         "updated_at": user.updated_at.isoformat() if user.updated_at else None,
     }
@@ -605,6 +609,85 @@ def patch_user(user_id):
 
     _audit(admin_user, "user.patch", target_user=user, details={"changed_fields": changed_fields})
     return jsonify({"success": True, "user": after}), 200
+
+
+@admin_bp.route("/users/<user_id>/deactivate", methods=["POST"])
+@jwt_required()
+@limiter.limit("10 per minute")
+def deactivate_user(user_id):
+    admin_user, err = _require_admin()
+    if err:
+        return err
+
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    if user.id == admin_user.id:
+        return jsonify({"error": "You cannot deactivate your own admin account."}), 400
+    if is_global_admin(user, app_config=current_app.config):
+        return jsonify({"error": "Global admin accounts cannot be deactivated here."}), 400
+
+    payload = request.get_json(silent=True) or {}
+    reason = str(payload.get("reason") or "").strip()
+    if not reason:
+        return jsonify({"error": "reason is required"}), 400
+    recovery_days = _to_int(payload.get("recovery_days"), default=30)
+    recovery_days = max(1, min(90, recovery_days or 30))
+
+    now = datetime.utcnow()
+    user.deactivated_at = now
+    user.deactivated_by_user_id = admin_user.id
+    user.deactivation_reason = reason
+    user.recovery_expires_at = now + timedelta(days=recovery_days)
+    user.auth_token_version = int(user.auth_token_version or 0) + 1
+    db.session.commit()
+
+    _audit(
+        admin_user,
+        "user.deactivated",
+        target_user=user,
+        details={
+            "reason": reason,
+            "recovery_days": recovery_days,
+            "recovery_expires_at": user.recovery_expires_at.isoformat() if user.recovery_expires_at else None,
+        },
+    )
+    return jsonify({"success": True, "user": _serialize_user_for_admin(user)}), 200
+
+
+@admin_bp.route("/users/<user_id>/restore", methods=["POST"])
+@jwt_required()
+@limiter.limit("10 per minute")
+def restore_user(user_id):
+    admin_user, err = _require_admin()
+    if err:
+        return err
+
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    if user.deactivated_at is None:
+        return jsonify({"error": "User is not deactivated."}), 400
+    if user.recovery_expires_at and user.recovery_expires_at < datetime.utcnow():
+        return jsonify({"error": "Recovery window has expired for this user."}), 400
+
+    payload = request.get_json(silent=True) or {}
+    reason = str(payload.get("reason") or "").strip() or None
+
+    user.deactivated_at = None
+    user.deactivated_by_user_id = None
+    user.deactivation_reason = None
+    user.recovery_expires_at = None
+    user.auth_token_version = int(user.auth_token_version or 0) + 1
+    db.session.commit()
+
+    _audit(
+        admin_user,
+        "user.restored",
+        target_user=user,
+        details={"reason": reason},
+    )
+    return jsonify({"success": True, "user": _serialize_user_for_admin(user)}), 200
 
 
 @admin_bp.route("/users/<user_id>/force-plan", methods=["POST"])

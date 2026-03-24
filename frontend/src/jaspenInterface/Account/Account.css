@@ -279,7 +279,7 @@
 
 .account-overview-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 12px;
 }
 
@@ -302,6 +302,11 @@
   font-size: 1.15rem;
   font-weight: 700;
   color: var(--account-ink);
+}
+
+.account-overview-card .account-secondary-btn {
+  margin-top: 14px;
+  width: fit-content;
 }
 
 .account-section-card {

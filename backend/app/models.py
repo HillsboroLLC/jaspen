@@ -118,6 +118,24 @@ class User(db.Model):
         nullable=True,
         index=True,
     )
+    deactivated_at = db.Column(
+        db.DateTime,
+        nullable=True,
+    )
+    deactivated_by_user_id = db.Column(
+        db.String(36),
+        db.ForeignKey('users.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    deactivation_reason = db.Column(
+        db.String(500),
+        nullable=True,
+    )
+    recovery_expires_at = db.Column(
+        db.DateTime,
+        nullable=True,
+    )
 
     # Referrals & feedback
     referral_code = db.Column(
@@ -178,6 +196,10 @@ class User(db.Model):
             'access_approval_status': self.access_approval_status,
             'access_approved_at': self.access_approved_at.isoformat() if self.access_approved_at else None,
             'access_reviewed_by_user_id': self.access_reviewed_by_user_id,
+            'deactivated_at': self.deactivated_at.isoformat() if self.deactivated_at else None,
+            'deactivated_by_user_id': self.deactivated_by_user_id,
+            'deactivation_reason': self.deactivation_reason,
+            'recovery_expires_at': self.recovery_expires_at.isoformat() if self.recovery_expires_at else None,
             'referral_code': self.referral_code,
             'referrals_earned': self.referrals_earned,
             'feedback_earned': self.feedback_earned,

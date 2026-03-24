@@ -71,6 +71,7 @@
   background: #fbfcff;
   max-height: 66vh;
   overflow: auto;
+  min-width: 0;
 }
 
 .jas-admin-user {
@@ -108,6 +109,7 @@
   border-radius: 12px;
   background: #ffffff;
   padding: 14px;
+  min-width: 0;
 }
 
 .jas-admin-grid {
@@ -129,6 +131,7 @@
 
 .jas-admin-grid input,
 .jas-admin-grid select {
+  width: 100%;
   border: 1px solid #c9d6ec;
   border-radius: 9px;
   height: 36px;
@@ -295,6 +298,7 @@
 
 .jas-admin-inline-grid input,
 .jas-admin-inline-grid select {
+  width: 100%;
   border: 1px solid #c9d6ec;
   border-radius: 9px;
   height: 36px;
@@ -482,6 +486,15 @@
 .jas-admin-secondary {
   background: #ffffff;
   color: #161f3b;
+}
+
+.jas-admin-danger {
+  border-color: #991b1b;
+  color: #991b1b;
+}
+
+.jas-admin-danger:hover {
+  background: #fef2f2;
 }
 
 .jas-admin-message {

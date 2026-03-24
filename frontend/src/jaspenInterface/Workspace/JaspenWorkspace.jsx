@@ -1038,6 +1038,19 @@ const handleCopyMessage = async (messageKey, text) => {
   }
 };
 
+const handleCopyInviteLink = async () => {
+  if (!inviteLink) {
+    showToast('Invite link is not ready yet.', 'info');
+    return;
+  }
+  try {
+    await copyTextToClipboard(inviteLink);
+    showToast('Copied your invite link.', 'success');
+  } catch (copyError) {
+    showToast('Failed to copy invite link.', 'error');
+  }
+};
+
 const renderMessageActions = (message, messageKey, idx, total) => {
   if (message?.role === 'user') return null;
   const isCopied = copiedMessageKey === messageKey;
@@ -1248,6 +1261,10 @@ useEffect(() => {
     try { return localStorage.getItem('jaspen_last_email'); } catch { return null; }
   })();
   const userName = displayName || user?.name || user?.email?.split('@')[0] || savedEmail?.split?.('@')[0] || 'User';
+  const inviteCode = String(user?.referral_code || '').trim();
+  const inviteLink = inviteCode && typeof window !== 'undefined'
+    ? `${window.location.origin}/?ref=${encodeURIComponent(inviteCode)}`
+    : '';
   const adminWorkspacePreviewPlan = useMemo(() => {
     if (!Boolean(user?.is_admin)) return '';
     const params = new URLSearchParams(location.search);
@@ -2413,6 +2430,23 @@ useEffect(() => {
 
         <div className="jas-ud-section">
           <div className="jas-ud-section-label">User Tools</div>
+          <div className="jas-ud-role-switcher jas-ud-invite-card">
+            <span className="jas-ud-role-switcher-label">Invite others</span>
+            <p className="jas-ud-role-switcher-note">
+              Share your invite link from here or find it again in Account settings.
+            </p>
+            <div className="jas-ud-invite-row">
+              <code>{inviteCode || 'Generating…'}</code>
+              <button
+                type="button"
+                className="jas-ud-invite-btn"
+                onClick={handleCopyInviteLink}
+                disabled={!inviteLink}
+              >
+                Copy link
+              </button>
+            </div>
+          </div>
           <button
             className="jas-ud-item"
             onClick={() => {

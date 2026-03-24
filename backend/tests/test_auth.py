@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from itsdangerous import URLSafeTimedSerializer
 from werkzeug.security import generate_password_hash
 
@@ -244,6 +246,34 @@ def test_login_blocks_rejected_user(client, app, db):
     data = resp.get_json()
     assert data["approval_required"] is True
     assert data["approval_status"] == "rejected"
+
+
+def test_login_blocks_deactivated_user(client, app, db):
+    with app.app_context():
+        deactivated_user = User(
+            email="deactivated@example.com",
+            name="Deactivated User",
+            password_hash=generate_password_hash("ValidPass1", method="pbkdf2:sha256"),
+            subscription_plan="free",
+            credits_remaining=300,
+            seat_limit=1,
+            max_seats=1,
+            deactivated_at=datetime.utcnow(),
+        )
+        db.session.add(deactivated_user)
+        db.session.commit()
+
+    resp = client.post(
+        "/api/v1/auth/login",
+        json={
+            "email": "deactivated@example.com",
+            "password": "ValidPass1",
+        },
+        environ_overrides={"REMOTE_ADDR": "10.0.0.115"},
+    )
+
+    assert resp.status_code == 403
+    assert resp.get_json()["account_deactivated"] is True
 
 
 def test_verify_email_marks_user_verified(client, app, test_user, db):

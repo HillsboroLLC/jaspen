@@ -211,6 +211,14 @@ def _approval_rejected_payload():
     }
 
 
+def _deactivated_account_payload():
+    return {
+        'message': 'This account is currently unavailable.',
+        'detail': 'If this looks wrong, contact Jaspen support and we can review the account history and restore access when appropriate.',
+        'account_deactivated': True,
+    }
+
+
 def _signup_closed_payload():
     return {
         'message': 'Jaspen is opening access carefully right now. Use an invite code or request access to join the early list.',
@@ -491,6 +499,8 @@ def login():
             details={'reason': 'user_not_found'},
         )
         return jsonify(message='Invalid credentials'), 401
+    if user.deactivated_at is not None:
+        return jsonify(_deactivated_account_payload()), 403
 
     approval_status = str(user.access_approval_status or APPROVAL_APPROVED).strip().lower()
     if approval_status == APPROVAL_REJECTED:
@@ -575,6 +585,8 @@ def get_current_user():
     user = User.query.get(user_id)
     if not user:
         return jsonify(error='User not found'), 404
+    if user.deactivated_at is not None:
+        return jsonify(_deactivated_account_payload()), 403
 
     changed = bootstrap_legacy_credits(user, current_app.config)
     if _enforce_admin_account_profile(user):
@@ -935,6 +947,8 @@ def google_callback():
         if _ensure_user_org(user):
             db.session.commit()
     else:
+        if user.deactivated_at is not None:
+            return redirect(_frontend_login_error_url('account_deactivated'), code=302)
         changed = bootstrap_legacy_credits(user, current_app.config)
         if _mark_user_email_verified(user):
             changed = True
