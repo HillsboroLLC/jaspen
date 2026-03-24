@@ -21,7 +21,7 @@ def upgrade():
     op.add_column("users", sa.Column("email_verification_sent_at", sa.DateTime(), nullable=True))
     op.add_column("users", sa.Column("referred_by_user_id", sa.String(length=36), nullable=True))
     op.add_column("users", sa.Column("signup_referral_code_used", sa.String(length=36), nullable=True))
-    op.execute("UPDATE users SET email_verified = 1, email_verified_at = COALESCE(created_at, CURRENT_TIMESTAMP)")
+    op.execute("UPDATE users SET email_verified = TRUE, email_verified_at = COALESCE(created_at, CURRENT_TIMESTAMP)")
     op.create_index(op.f("ix_users_referred_by_user_id"), "users", ["referred_by_user_id"], unique=False)
     op.create_foreign_key(
         "fk_users_referred_by_user_id_users",
