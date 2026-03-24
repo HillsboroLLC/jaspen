@@ -85,6 +85,19 @@ class User(db.Model):
         db.JSON,
         nullable=True,
     )
+    email_verified = db.Column(
+        db.Boolean,
+        nullable=False,
+        default=False,
+    )
+    email_verified_at = db.Column(
+        db.DateTime,
+        nullable=True,
+    )
+    email_verification_sent_at = db.Column(
+        db.DateTime,
+        nullable=True,
+    )
 
     # Referrals & feedback
     referral_code = db.Column(
@@ -102,6 +115,16 @@ class User(db.Model):
         db.Integer,
         nullable=False,
         default=0
+    )
+    referred_by_user_id = db.Column(
+        db.String(36),
+        db.ForeignKey('users.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    signup_referral_code_used = db.Column(
+        db.String(36),
+        nullable=True,
     )
 
     # Timestamps
@@ -128,9 +151,14 @@ class User(db.Model):
             'unlimited_analysis': self.unlimited_analysis,
             'max_concurrent_sessions': self.max_concurrent_sessions,
             'credits_remaining': self.credits_remaining,
+            'email_verified': bool(self.email_verified),
+            'email_verified_at': self.email_verified_at.isoformat() if self.email_verified_at else None,
+            'email_verification_sent_at': self.email_verification_sent_at.isoformat() if self.email_verification_sent_at else None,
             'referral_code': self.referral_code,
             'referrals_earned': self.referrals_earned,
             'feedback_earned': self.feedback_earned,
+            'referred_by_user_id': self.referred_by_user_id,
+            'signup_referral_code_used': self.signup_referral_code_used,
             'stripe_customer_id': self.stripe_customer_id,
             'stripe_subscription_id': self.stripe_subscription_id,
             'active_organization_id': self.active_organization_id,

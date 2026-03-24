@@ -149,6 +149,23 @@ const clearLegacySessionCaches = () => {
   }
 };
 
+const getSignupReferralCode = () => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const params = new URLSearchParams(window.location.search || '');
+    return (
+      params.get('referral_code')
+      || params.get('invite_code')
+      || params.get('ref')
+      || params.get('invite')
+      || null
+    );
+  } catch (error) {
+    console.debug('Failed reading referral code from URL:', error);
+    return null;
+  }
+};
+
 const hasLegacySessionKeys = () => {
   for (let i = 0; i < localStorage.length; i += 1) {
     const key = localStorage.key(i);
@@ -370,13 +387,24 @@ export function AuthProvider({ children }) {
     window.location.href = '/?auth=1';
   };
 
-  const signup = async (email, password, name) => {
+  const signup = async (email, password, name, options = {}) => {
     try {
       setLoading(true);
+      const referralCode = String(
+        options?.referralCode
+        || options?.inviteCode
+        || getSignupReferralCode()
+        || ''
+      ).trim();
       const res = await authFetch('/api/v1/auth/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, name })
+        body: JSON.stringify({
+          email,
+          password,
+          name,
+          ...(referralCode ? { referral_code: referralCode } : {}),
+        })
       });
 
       const data = await res.json().catch(() => ({}));

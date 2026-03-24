@@ -9,6 +9,7 @@ import pyotp
 import qrcode
 import requests
 from flask import Blueprint, request, jsonify, current_app, redirect
+from flask_mail import Message
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import (
     create_access_token,
@@ -21,7 +22,7 @@ from flask_jwt_extended import (
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 import stripe
 
-from app import db, limiter
+from app import db, limiter, mail
 from app.admin_audit import append_user_audit_event
 from app.admin_policy import is_global_admin
 from app.models import User
@@ -117,11 +118,105 @@ def _google_state_serializer():
     return URLSafeTimedSerializer(secret_key=secret, salt='google-oauth-state')
 
 
+def _email_verification_serializer():
+    secret = current_app.config.get('SECRET_KEY') or current_app.config.get('JWT_SECRET_KEY')
+    if not secret:
+        raise RuntimeError('Missing SECRET_KEY/JWT_SECRET_KEY for email verification signing')
+    return URLSafeTimedSerializer(secret_key=secret, salt='email-verification')
+
+
 def _google_callback_url():
     configured = str(current_app.config.get('GOOGLE_REDIRECT_URI') or '').strip()
     if configured:
         return configured
     return f"{request.url_root.rstrip('/')}/api/v1/auth/google/callback"
+
+
+def _verification_result_url(status):
+    params = {'auth': '1'}
+    if status == 'verified':
+        params['verified'] = '1'
+    else:
+        params['error'] = status
+    return f"{_frontend_base_url()}/?{urlencode(params)}"
+
+
+def _email_verification_ttl_seconds():
+    return int(current_app.config.get('EMAIL_VERIFICATION_TOKEN_TTL_SECONDS') or 86400)
+
+
+def _build_email_verification_token(user):
+    return _email_verification_serializer().dumps({
+        'user_id': str(user.id),
+        'email': str(user.email or '').strip().lower(),
+    })
+
+
+def _email_verification_link(token):
+    query = urlencode({'token': token})
+    return f"{request.url_root.rstrip('/')}/api/v1/auth/verify-email?{query}"
+
+
+def _normalize_referral_code(value):
+    normalized = str(value or '').strip()
+    return normalized or None
+
+
+def _resolve_referring_user(referral_code):
+    normalized = _normalize_referral_code(referral_code)
+    if not normalized:
+        return None
+    return User.query.filter_by(referral_code=normalized).first()
+
+
+def _verification_required_enabled():
+    return bool(current_app.config.get('REQUIRE_EMAIL_VERIFICATION'))
+
+
+def _mark_user_email_verified(user):
+    if not user:
+        return False
+    changed = False
+    if not bool(user.email_verified):
+        user.email_verified = True
+        changed = True
+    if user.email_verified_at is None:
+        user.email_verified_at = datetime.utcnow()
+        changed = True
+    return changed
+
+
+def _send_email_verification_email(user):
+    token = _build_email_verification_token(user)
+    verification_link = _email_verification_link(token)
+    msg = Message(
+        subject='Verify your email for Jaspen',
+        recipients=[user.email],
+    )
+    msg.body = (
+        "You're almost in.\n\n"
+        "Verify your email to finish setting up your Jaspen account:\n"
+        f"{verification_link}\n\n"
+        f"This link expires in {_email_verification_ttl_seconds() // 3600} hours.\n"
+        "If you did not request this, you can ignore this email."
+    )
+    mail.send(msg)
+    user.email_verification_sent_at = datetime.utcnow()
+
+
+def _load_user_from_verification_token(token):
+    decoded = _email_verification_serializer().loads(
+        token,
+        max_age=_email_verification_ttl_seconds(),
+    )
+    user_id = str(decoded.get('user_id') or '').strip()
+    email = str(decoded.get('email') or '').strip().lower()
+    if not user_id or not email:
+        raise BadSignature('Invalid verification payload')
+    user = User.query.get(user_id)
+    if not user or str(user.email or '').strip().lower() != email:
+        raise BadSignature('Invalid verification target')
+    return user
 
 
 def _enforce_admin_account_profile(user):
@@ -158,7 +253,11 @@ def _user_payload(user):
         'is_admin': is_global_admin(user, app_config=current_app.config),
         'subscription_plan': to_public_plan(user.subscription_plan),
         'credits_remaining': user.credits_remaining,
+        'email_verified': bool(user.email_verified),
+        'email_verified_at': user.email_verified_at.isoformat() if user.email_verified_at else None,
         'mfa_enabled': bool(user.mfa_enabled),
+        'referral_code': user.referral_code,
+        'referrals_earned': user.referrals_earned,
         'active_organization_id': user.active_organization_id,
         **organization_access_payload_for_user(user),
     }
@@ -172,6 +271,9 @@ def signup():
     email = data.get('email', '').strip().lower()
     password = data.get('password', '')
     requested_plan = normalize_plan_key(data.get('plan_key', 'free'))
+    referral_code = _normalize_referral_code(
+        data.get('referral_code') or data.get('invite_code')
+    )
 
     if not name or not email or not password:
         return jsonify(message='Name, email and password are all required'), 400
@@ -194,6 +296,8 @@ def signup():
             plan_key=requested_plan,
         ), 400
 
+    referring_user = _resolve_referring_user(referral_code)
+
     user = User(
         name=name,
         email=email,
@@ -202,11 +306,30 @@ def signup():
         max_seats=1,
     )
     apply_plan_to_user(user, requested_plan, current_app.config, reset_credits=True)
+    user.email_verified = False
+    user.email_verified_at = None
+    if referring_user and str(referring_user.email or '').strip().lower() != email:
+        user.referred_by_user_id = referring_user.id
+        user.signup_referral_code_used = referring_user.referral_code
+        referring_user.referrals_earned = int(referring_user.referrals_earned or 0) + 1
     _enforce_admin_account_profile(user)
     db.session.add(user)
     db.session.commit()
     if _ensure_user_org(user):
         db.session.commit()
+
+    if _verification_required_enabled():
+        try:
+            _send_email_verification_email(user)
+            db.session.commit()
+        except Exception:
+            current_app.logger.exception('Failed to send signup verification email for %s', user.email)
+            return jsonify(message='We created your account but could not send the verification email yet. Please try again shortly.'), 500
+        return jsonify(
+            message='Check your inbox to verify your email before getting started.',
+            verification_required=True,
+            email_verified=False,
+        ), 202
 
     access_token = create_access_token(identity=str(user.id))
 
@@ -308,6 +431,12 @@ def login():
             },
         )
         return jsonify(message='Invalid credentials'), 401
+
+    if _verification_required_enabled() and not bool(user.email_verified):
+        return jsonify(
+            message='Please verify your email before signing in.',
+            verification_required=True,
+        ), 403
 
     changed = False
     if user.failed_login_attempts or user.locked_until is not None:
@@ -465,6 +594,68 @@ def mfa_challenge():
     return jsonify(message='Invalid MFA code.'), 401
 
 
+@auth_bp.route('/verify-email', methods=['GET', 'POST'])
+@limiter.limit("10 per minute")
+def verify_email():
+    token = ''
+    if request.method == 'POST':
+        data = request.get_json(silent=True) or {}
+        token = str(data.get('token') or '').strip()
+    else:
+        token = str(request.args.get('token') or '').strip()
+
+    if not token:
+        if request.method == 'GET':
+            return redirect(_verification_result_url('email_verification_missing_token'), code=302)
+        return jsonify(message='Verification token is required.'), 400
+
+    try:
+        user = _load_user_from_verification_token(token)
+    except SignatureExpired:
+        if request.method == 'GET':
+            return redirect(_verification_result_url('email_verification_expired'), code=302)
+        return jsonify(message='That verification link has expired.'), 400
+    except BadSignature:
+        if request.method == 'GET':
+            return redirect(_verification_result_url('email_verification_invalid'), code=302)
+        return jsonify(message='That verification link is invalid.'), 400
+
+    _mark_user_email_verified(user)
+    db.session.commit()
+
+    if request.method == 'GET':
+        return redirect(_verification_result_url('verified'), code=302)
+    return jsonify(
+        message='Email verified successfully.',
+        verified=True,
+        user=_user_payload(user),
+    ), 200
+
+
+@auth_bp.route('/resend-verification', methods=['POST'])
+@limiter.limit("3 per minute")
+def resend_verification():
+    data = request.get_json(silent=True) or {}
+    email = str(data.get('email') or '').strip().lower()
+    if not email:
+        return jsonify(message='Email is required.'), 400
+
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        return jsonify(message='If that account exists, we’ll send a verification email shortly.'), 200
+    if bool(user.email_verified):
+        return jsonify(message='This email is already verified.', verified=True), 200
+
+    try:
+        _send_email_verification_email(user)
+        db.session.commit()
+    except Exception:
+        current_app.logger.exception('Failed to resend verification email for %s', email)
+        return jsonify(message='We could not send the verification email right now. Please try again shortly.'), 500
+
+    return jsonify(message='Verification email sent.'), 200
+
+
 @auth_bp.route('/google/start', methods=['GET'])
 @limiter.limit("10 per minute")
 def google_start():
@@ -475,7 +666,16 @@ def google_start():
         return redirect(_frontend_login_error_url('google_not_configured'), code=302)
 
     next_path = _safe_next_path(request.args.get('next') or '/new')
-    state = _google_state_serializer().dumps({'next': next_path})
+    referral_code = _normalize_referral_code(
+        request.args.get('referral_code')
+        or request.args.get('invite_code')
+        or request.args.get('ref')
+        or request.args.get('invite')
+    )
+    state_payload = {'next': next_path}
+    if referral_code:
+        state_payload['referral_code'] = referral_code
+    state = _google_state_serializer().dumps(state_payload)
     auth_query = urlencode({
         'client_id': client_id,
         'redirect_uri': _google_callback_url(),
@@ -506,6 +706,7 @@ def google_callback():
         return redirect(_frontend_login_error_url('google_invalid_state'), code=302)
 
     next_path = _safe_next_path((state_data or {}).get('next') or '/new')
+    referral_code = _normalize_referral_code((state_data or {}).get('referral_code'))
 
     client_id = str(current_app.config.get('GOOGLE_CLIENT_ID') or '').strip()
     client_secret = str(current_app.config.get('GOOGLE_CLIENT_SECRET') or '').strip()
@@ -566,13 +767,20 @@ def google_callback():
     changed = False
 
     if not user:
+        referring_user = _resolve_referring_user(referral_code)
         user = User(
             name=display_name,
             email=email,
             password_hash=generate_password_hash(secrets.token_urlsafe(32)),
             seat_limit=1,
             max_seats=1,
+            email_verified=True,
+            email_verified_at=datetime.utcnow(),
         )
+        if referring_user and str(referring_user.email or '').strip().lower() != email:
+            user.referred_by_user_id = referring_user.id
+            user.signup_referral_code_used = referring_user.referral_code
+            referring_user.referrals_earned = int(referring_user.referrals_earned or 0) + 1
         apply_plan_to_user(user, 'free', current_app.config, reset_credits=True)
         _enforce_admin_account_profile(user)
         db.session.add(user)
@@ -581,6 +789,8 @@ def google_callback():
             db.session.commit()
     else:
         changed = bootstrap_legacy_credits(user, current_app.config)
+        if _mark_user_email_verified(user):
+            changed = True
         if _enforce_admin_account_profile(user):
             changed = True
         if _ensure_user_org(user):

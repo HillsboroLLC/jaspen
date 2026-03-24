@@ -51,7 +51,15 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
 
   const handleGoogle = async () => {
     setError('');
-    window.location.href = `${API_BASE}/api/v1/auth/google/start?next=${encodeURIComponent('/new')}`;
+    const params = new URLSearchParams({ next: '/new' });
+    try {
+      const current = new URLSearchParams(window.location.search || '');
+      const referralCode = current.get('referral_code') || current.get('invite_code') || current.get('ref') || current.get('invite');
+      if (referralCode) params.set('referral_code', referralCode);
+    } catch (error) {
+      console.debug('Unable to preserve referral code for Google auth:', error);
+    }
+    window.location.href = `${API_BASE}/api/v1/auth/google/start?${params.toString()}`;
   };
 
   const handleEmailSubmit = async (event) => {
