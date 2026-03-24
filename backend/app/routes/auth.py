@@ -23,7 +23,7 @@ import stripe
 
 from app import db, limiter
 from app.admin_audit import append_user_audit_event
-from app.admin_policy import is_global_admin_email
+from app.admin_policy import is_global_admin
 from app.models import User
 from app.billing_config import (
     apply_plan_to_user,
@@ -129,7 +129,7 @@ def _enforce_admin_account_profile(user):
     Ensure internal global-admin accounts always have full internal access.
     This is global Jaspen admin only (allowlist), not future org-admin logic.
     """
-    if not user or not is_global_admin_email(user.email, current_app.config):
+    if not user or not is_global_admin(user, app_config=current_app.config):
         return False
 
     changed = False
@@ -155,7 +155,7 @@ def _user_payload(user):
         'id': user.id,
         'email': user.email,
         'name': user.name,
-        'is_admin': is_global_admin_email(user.email, current_app.config),
+        'is_admin': is_global_admin(user, app_config=current_app.config),
         'subscription_plan': to_public_plan(user.subscription_plan),
         'credits_remaining': user.credits_remaining,
         'mfa_enabled': bool(user.mfa_enabled),

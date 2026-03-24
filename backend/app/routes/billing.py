@@ -6,7 +6,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 import stripe
 
 from app import db
-from app.admin_policy import is_global_admin_email
+from app.admin_policy import is_global_admin
 from app.models import User
 from app.billing_config import (
     apply_plan_to_user,
@@ -123,7 +123,7 @@ def get_billing_status():
     if bootstrap_legacy_credits(user, current_app.config):
         db.session.commit()
 
-    admin_override = is_global_admin_email(user.email, current_app.config)
+    admin_override = is_global_admin(user, app_config=current_app.config)
     if admin_override:
         changed = False
         # Global Jaspen admins should always have enterprise internal access.

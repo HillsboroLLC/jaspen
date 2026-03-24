@@ -239,6 +239,7 @@ def create_app():
     app.config['AI_AGENT_CREDITS_PER_1K_TOKENS'] = float(os.getenv('AI_AGENT_CREDITS_PER_1K_TOKENS', '1.0'))
     app.config['AI_AGENT_MIN_CREDIT_CHARGE'] = int(os.getenv('AI_AGENT_MIN_CREDIT_CHARGE', '1'))
     app.config['AI_AGENT_CREDIT_MULTIPLIERS'] = os.getenv('AI_AGENT_CREDIT_MULTIPLIERS_JSON', '')
+    app.config['ADMIN_USER_IDS'] = os.getenv('ADMIN_USER_IDS', '')
     app.config['ADMIN_EMAILS'] = os.getenv('ADMIN_EMAILS', '')
     app.config['ADMIN_BLOCKED_EMAILS'] = os.getenv('ADMIN_BLOCKED_EMAILS', '')
     app.config['JIRA_BASE_URL'] = os.getenv('JIRA_BASE_URL', '')

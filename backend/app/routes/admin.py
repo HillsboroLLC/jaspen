@@ -4,7 +4,7 @@ from sqlalchemy import or_
 
 from app import db, limiter
 from app.admin_audit import append_admin_audit_event, list_admin_audit_events
-from app.admin_policy import is_global_admin_email
+from app.admin_policy import is_global_admin
 from app.billing_config import (
     apply_plan_to_user,
     get_allowed_model_types,
@@ -319,7 +319,7 @@ def _require_admin():
     user, err = _current_user()
     if err:
         return None, err
-    if not is_global_admin_email(user.email, current_app.config):
+    if not is_global_admin(user, app_config=current_app.config):
         return None, (jsonify({"error": "Admin access required"}), 403)
     return user, None
 
@@ -374,7 +374,7 @@ def capabilities():
     if err:
         return err
     return jsonify({
-        "is_admin": is_global_admin_email(user.email, current_app.config),
+        "is_admin": is_global_admin(user, app_config=current_app.config),
         "email": user.email,
         "admin_scope": "global",
         "org_admin_enabled": False,

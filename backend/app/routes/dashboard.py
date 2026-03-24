@@ -4,7 +4,7 @@ from flask import Blueprint, current_app, jsonify
 from flask_jwt_extended import get_jwt_identity, jwt_required
 from sqlalchemy import desc
 
-from app.admin_policy import is_global_admin_email
+from app.admin_policy import is_global_admin
 from app.models import OrganizationMember, User, UserSession
 from app.orgs import can_manage_org, normalize_org_role, resolve_active_org_for_user
 
@@ -250,7 +250,7 @@ def get_dashboard_data():
         return jsonify({"error": "No active organization"}), 404
 
     plan_key = str(org.plan_key or "").strip().lower()
-    global_admin = is_global_admin_email(user.email, current_app.config)
+    global_admin = is_global_admin(user, app_config=current_app.config)
     if plan_key not in ALLOWED_PLANS and not global_admin:
         return jsonify({"error": "Dashboard is available on Team and Enterprise plans."}), 403
 
