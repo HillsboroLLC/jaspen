@@ -4472,18 +4472,14 @@ console.log('[Finish&Analyze] data.analysis_result.meta.extracted_levers?', data
       setBaselineScorecardId(baselineSnapshot.id);
       baselineRef.current = result; // Store baseline reference
 
-      await refreshBundle(currentSessionId || sessionId);
-
-// REMOVED - AI Agent backend handles persistence automatically
-// await saveSessionToBackend({...});
-
-
-      await fetchSessions();
       setView('summary');
       setActiveTab('summary');
-      setTimeout(() => {
-        setView('summary');
-        setActiveTab('summary');
+
+      // Let the score dashboard render immediately after a successful analysis.
+      // Bundle/history refreshes should enrich the summary, not block navigation to it.
+      window.setTimeout(() => {
+        void refreshBundle(currentSessionId || sessionId);
+        void fetchSessions();
       }, 0);
     } catch (e) {
       if (e?.status === 403 && e?.data?.code === 'model_type_not_allowed') {
