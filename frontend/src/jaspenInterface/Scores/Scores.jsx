@@ -1,13 +1,19 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faArrowUpRightFromSquare, faDownload, faChevronDown, faChevronUp } from '@fortawesome/free-solid-svg-icons';
+import { faArrowUpRightFromSquare, faDownload, faChevronDown, faChevronUp, faTimes } from '@fortawesome/free-solid-svg-icons';
 import { API_BASE } from '../../config/apiBase';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import './Scores.css';
 
 const CATEGORY_OPTIONS = ['All', 'Excellent', 'Good', 'Fair', 'At Risk'];
 const PAGE_LIMIT = 50;
+const PORTFOLIO_STARTER_PROMPTS = [
+  'Which scored project should I do next?',
+  'Rank my top 3 next-best projects and explain why.',
+  'Which project is strongest for growth right now?',
+  'What should I pause, and what should I do first instead?',
+];
 
 function getScoreBadgeClass(category) {
   if (category === 'Excellent') return 'scores-badge excellent';
@@ -141,6 +147,12 @@ export default function Scores() {
 
   const [expandedRows, setExpandedRows] = useState({});
   const [exportingCsv, setExportingCsv] = useState(false);
+  const [portfolioDrawerOpen, setPortfolioDrawerOpen] = useState(false);
+  const [portfolioMessages, setPortfolioMessages] = useState([]);
+  const [portfolioInput, setPortfolioInput] = useState('');
+  const [portfolioBusy, setPortfolioBusy] = useState(false);
+  const [portfolioError, setPortfolioError] = useState('');
+  const [portfolioMeta, setPortfolioMeta] = useState(null);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -299,8 +311,164 @@ export default function Scores() {
     }
   }
 
+  async function submitPortfolioPrompt(rawPrompt) {
+    const prompt = String(rawPrompt || '').trim();
+    if (!prompt || portfolioBusy) return;
+
+    const priorMessages = portfolioMessages
+      .filter((entry) => entry && (entry.role === 'user' || entry.role === 'assistant'))
+      .map((entry) => ({ role: entry.role, content: entry.content }));
+
+    setPortfolioDrawerOpen(true);
+    setPortfolioBusy(true);
+    setPortfolioError('');
+    setPortfolioInput('');
+    setPortfolioMessages((prev) => [...prev, { role: 'user', content: prompt }]);
+
+    try {
+      const response = await authFetch(`${API_BASE}/api/v1/strategy/scores/portfolio-agent`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: buildAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          message: prompt,
+          messages: priorMessages,
+          category,
+          search,
+          sort_by: sortBy,
+          sort_dir: sortDir,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.error || `Request failed (${response.status})`);
+      }
+      setPortfolioMeta(data?.context || null);
+      setPortfolioMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: String(data?.reply || '').trim() || 'I could not produce a recommendation from the current score set.',
+        },
+      ]);
+    } catch (err) {
+      const message = err?.message || 'Portfolio agent failed.';
+      setPortfolioError(message);
+      setPortfolioMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: 'I hit an issue while reviewing your scored portfolio. Please try again.' },
+      ]);
+    } finally {
+      setPortfolioBusy(false);
+    }
+  }
+
+  const portfolioScopeLabel = useMemo(() => {
+    const totalMatching = Number(portfolioMeta?.total_matching);
+    const count = Number.isFinite(totalMatching) && totalMatching >= 0 ? totalMatching : total;
+    const parts = [`${count || 0} scored project${count === 1 ? '' : 's'}`];
+    if (category !== 'All') parts.push(category);
+    if (search) parts.push(`matching "${search}"`);
+    return parts.join(' • ');
+  }, [portfolioMeta, total, category, search]);
+
   return (
-    <div className="scores-container">
+    <div className={`scores-container ${portfolioDrawerOpen ? 'drawer-open' : ''}`}>
+      {!portfolioDrawerOpen && (
+        <button
+          type="button"
+          className="scores-agent-tab"
+          onClick={() => setPortfolioDrawerOpen(true)}
+          aria-label="Open portfolio agent"
+          aria-expanded={portfolioDrawerOpen}
+          aria-controls="scores-portfolio-agent-drawer"
+        >
+          PORTFOLIO
+        </button>
+      )}
+
+      <aside
+        id="scores-portfolio-agent-drawer"
+        className={`scores-agent-drawer ${portfolioDrawerOpen ? 'open' : ''}`}
+        aria-label="Portfolio agent drawer"
+      >
+        <div className="scores-agent-header">
+          <div>
+            <div className="scores-agent-title">Portfolio Agent</div>
+            <div className="scores-agent-subtitle">{portfolioScopeLabel}</div>
+          </div>
+          <button
+            type="button"
+            className="scores-agent-close"
+            onClick={() => setPortfolioDrawerOpen(false)}
+            aria-label="Close portfolio agent"
+          >
+            <FontAwesomeIcon icon={faTimes} />
+          </button>
+        </div>
+
+        <div className="scores-agent-body">
+          {portfolioMessages.length === 0 ? (
+            <div className="scores-agent-empty">
+              <p>
+                Ask Jaspen to look across your scored portfolio and recommend what to do next.
+                It will weigh score alongside readiness, execution path, and upside instead of blindly picking the top score.
+              </p>
+              <div className="scores-agent-starters">
+                {PORTFOLIO_STARTER_PROMPTS.map((prompt) => (
+                  <button
+                    key={prompt}
+                    type="button"
+                    className="scores-agent-starter"
+                    onClick={() => submitPortfolioPrompt(prompt)}
+                    disabled={portfolioBusy || loading || total === 0}
+                  >
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="scores-agent-messages">
+              {portfolioMessages.map((entry, index) => (
+                <div key={`${entry.role}-${index}`} className={`scores-agent-message ${entry.role}`}>
+                  <div className="scores-agent-message-content">{entry.content}</div>
+                </div>
+              ))}
+            </div>
+          )}
+          {portfolioError && <div className="scores-agent-error">{portfolioError}</div>}
+        </div>
+
+        <div className="scores-agent-input-area">
+          <div className="scores-agent-input-hint">Using your current Scores filters as context.</div>
+          <div className="scores-agent-input-row">
+            <textarea
+              className="scores-agent-input"
+              rows={3}
+              placeholder="Ask which project you should do next and why."
+              value={portfolioInput}
+              onChange={(event) => setPortfolioInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault();
+                  submitPortfolioPrompt(portfolioInput);
+                }
+              }}
+              disabled={portfolioBusy || loading || total === 0}
+            />
+            <button
+              type="button"
+              className="scores-primary-btn scores-agent-send"
+              onClick={() => submitPortfolioPrompt(portfolioInput)}
+              disabled={portfolioBusy || loading || total === 0 || !portfolioInput.trim()}
+            >
+              {portfolioBusy ? 'Thinking…' : 'Send'}
+            </button>
+          </div>
+        </div>
+      </aside>
+
       <div className="scores-card">
         <div className="scores-toolbar">
           <div>
@@ -308,6 +476,9 @@ export default function Scores() {
             <p>All completed analyses and adopted scenarios</p>
           </div>
           <div className="scores-toolbar-actions">
+            <button type="button" className="scores-secondary-btn" onClick={() => setPortfolioDrawerOpen(true)}>
+              Portfolio Agent
+            </button>
             <button type="button" className="scores-secondary-btn" onClick={() => navigate('/new')}>
               Back to Jaspen
             </button>

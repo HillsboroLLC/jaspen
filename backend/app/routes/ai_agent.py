@@ -1494,6 +1494,120 @@ def _resolve_generation_routes(model_selection, strategy_objective="balanced"):
     }]
 
 
+def _generate_routed_chat_reply(
+    messages,
+    model_selection,
+    *,
+    system_prompt,
+    strategy_objective="balanced",
+    max_tokens=700,
+    temperature=0.2,
+):
+    sanitized_messages = []
+    for item in messages or []:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip().lower()
+        if role not in {"user", "assistant"}:
+            continue
+        content = str(item.get("content") or "").strip()
+        if not content:
+            continue
+        sanitized_messages.append({"role": role, "content": content})
+
+    if not sanitized_messages:
+        raise ValueError("At least one chat message is required.")
+
+    objective = normalize_strategy_objective(strategy_objective, default="balanced")
+    routes = _resolve_generation_routes(model_selection, objective)
+    last_error = None
+    failover_log = []
+
+    for route in routes:
+        started_at = time.monotonic()
+        try:
+            if route["provider"] == "gemini":
+                response = _gemini_openai_request(
+                    model_name=route["model"],
+                    system_prompt=system_prompt,
+                    messages=sanitized_messages,
+                    tools=[],
+                    max_tokens=max(200, int(max_tokens or 700)),
+                    temperature=float(temperature if temperature is not None else 0.2),
+                    stream=False,
+                )
+                payload = response.json()
+                choice = ((payload.get("choices") or [{}])[0]) if isinstance(payload, dict) else {}
+                message = choice.get("message") if isinstance(choice, dict) else {}
+                message = message if isinstance(message, dict) else {}
+                reply = str(message.get("content") or "").strip()
+                if not reply:
+                    raise ValueError("invalid_response")
+                usage = _openai_usage_to_internal(payload.get("usage"), provider="gemini", model=route["model"])
+            else:
+                api_key = _anthropic_api_key()
+                if not api_key:
+                    raise RuntimeError("ANTHROPIC_API_KEY not configured")
+                import anthropic
+
+                client = anthropic.Anthropic(api_key=api_key, timeout=_anthropic_request_timeout_seconds())
+                response, actual_model = _anthropic_message_create(
+                    client,
+                    model_name=route["model"],
+                    max_tokens=max(200, int(max_tokens or 700)),
+                    temperature=float(temperature if temperature is not None else 0.2),
+                    system=system_prompt,
+                    messages=sanitized_messages,
+                )
+                reply = _anthropic_text(response.content)
+                if not reply:
+                    raise ValueError("invalid_response")
+                usage = {
+                    "input_tokens": int(getattr(getattr(response, "usage", None), "input_tokens", 0) or 0),
+                    "output_tokens": int(getattr(getattr(response, "usage", None), "output_tokens", 0) or 0),
+                    "total_tokens": int(
+                        (int(getattr(getattr(response, "usage", None), "input_tokens", 0) or 0))
+                        + (int(getattr(getattr(response, "usage", None), "output_tokens", 0) or 0))
+                    ),
+                    "provider": "anthropic",
+                    "model": actual_model,
+                }
+
+            usage = _attach_failover_usage(
+                usage,
+                attempted_providers=failover_log,
+                final_provider=route["provider"],
+                final_model=usage.get("model") if isinstance(usage, dict) else route["model"],
+            )
+            return reply, usage
+        except Exception as exc:
+            last_error = exc
+            elapsed_ms = int((time.monotonic() - started_at) * 1000)
+            classification = _classify_provider_error(exc)
+            failover_log.append({
+                "provider": route["provider"],
+                "model": route["model"],
+                "outcome": classification["reason"],
+                "status_code": classification.get("status_code"),
+                "duration_ms": elapsed_ms,
+            })
+            if not classification["retryable"]:
+                raise
+            current_app.logger.warning(
+                "portfolio agent provider failed (retryable) | provider=%s model=%s reason=%s elapsed=%dms; trying next route",
+                route["provider"],
+                route["model"],
+                classification["reason"],
+                elapsed_ms,
+            )
+            continue
+
+    if last_error:
+        current_app.logger.error("portfolio agent all provider routes exhausted | attempts=%s", json.dumps(failover_log))
+        raise last_error
+    raise RuntimeError("No provider routes available")
+
+
 def _openai_tools_from_anthropic(enable_mutation_tools=False):
     tools = []
     for item in _anthropic_tool_definitions(enable_mutation_tools=enable_mutation_tools):

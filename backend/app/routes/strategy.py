@@ -141,6 +141,162 @@ def _scores_extract_numeric_score(result):
     return None
 
 
+def _collect_completed_scores(
+    user_id,
+    *,
+    sort_by='date',
+    sort_dir='desc',
+    category_filter=None,
+    search='',
+):
+    sessions = load_user_sessions(user_id) or {}
+    scenarios_by_thread = _load_scenarios(user_id) or {}
+
+    scores = []
+    for key, session in (sessions.items() if isinstance(sessions, dict) else []):
+        if not isinstance(session, dict):
+            continue
+
+        thread_id = str(session.get('session_id') or key or '').strip()
+        if not thread_id:
+            continue
+
+        session_status = str(session.get('status') or '').strip().lower()
+        session_completed = session_status == 'completed'
+
+        thread_data = scenarios_by_thread.get(thread_id) if isinstance(scenarios_by_thread, dict) else None
+        thread_data = thread_data if isinstance(thread_data, dict) else {}
+        scenarios = thread_data.get('scenarios')
+        scenarios = scenarios if isinstance(scenarios, dict) else {}
+        adopted_scenario_id = thread_data.get('adopted_scenario_id')
+        adopted_raw = scenarios.get(adopted_scenario_id) if adopted_scenario_id else None
+        adopted_raw = adopted_raw if isinstance(adopted_raw, dict) else None
+
+        adopted_scenario = None
+        if adopted_raw:
+            adopted_scenario = {
+                'scenario_id': str(adopted_raw.get('scenario_id') or adopted_scenario_id),
+                'label': adopted_raw.get('label') or 'Adopted scenario',
+                'deltas': adopted_raw.get('deltas') if isinstance(adopted_raw.get('deltas'), dict) else {},
+                'result': adopted_raw.get('result') if isinstance(adopted_raw.get('result'), dict) else None,
+                'created_at': _scores_parse_iso(adopted_raw.get('created_at')),
+                'updated_at': _scores_parse_iso(adopted_raw.get('updated_at')),
+                'adopted': True,
+            }
+
+        analyses = _scores_analysis_entries(session, thread_id)
+        for analysis in analyses:
+            result = analysis.get('result') if isinstance(analysis, dict) else None
+            if not isinstance(result, dict):
+                continue
+
+            jaspen_score = _scores_extract_numeric_score(result)
+            if jaspen_score is None and not session_completed:
+                continue
+
+            project_name = str(
+                result.get('project_name')
+                or result.get('name')
+                or result.get('title')
+                or session.get('name')
+                or f'Thread {thread_id}'
+            ).strip()
+
+            score_category = _scores_category_from_values(
+                jaspen_score,
+                explicit_category=result.get('score_category'),
+            )
+            component_scores = result.get('component_scores')
+            if not isinstance(component_scores, dict):
+                component_scores = result.get('scores') if isinstance(result.get('scores'), dict) else {}
+            financial_impact = result.get('financial_impact')
+            if not isinstance(financial_impact, dict):
+                financial_impact = {}
+
+            created_at = _scores_parse_iso(
+                analysis.get('created_at')
+                or result.get('timestamp')
+                or session.get('created')
+                or session.get('timestamp')
+            )
+            updated_at = _scores_parse_iso(
+                analysis.get('updated_at')
+                or session.get('timestamp')
+                or result.get('timestamp')
+                or created_at
+            )
+
+            row = {
+                'thread_id': thread_id,
+                'project_name': project_name,
+                'jaspen_score': jaspen_score,
+                'score_category': score_category,
+                'component_scores': component_scores,
+                'adopted_scenario': adopted_scenario,
+                'financial_impact': financial_impact,
+                'created_at': created_at,
+                'updated_at': updated_at,
+            }
+
+            if category_filter and row['score_category'] != category_filter:
+                continue
+            if search and search not in row['project_name'].lower():
+                continue
+            scores.append(row)
+
+    reverse = sort_dir == 'desc'
+    if sort_by == 'score':
+        scores.sort(
+            key=lambda row: (
+                row.get('jaspen_score') is None,
+                row.get('jaspen_score') if row.get('jaspen_score') is not None else -1,
+            ),
+            reverse=reverse,
+        )
+    elif sort_by == 'category':
+        scores.sort(key=lambda row: str(row.get('score_category') or '').lower(), reverse=reverse)
+    elif sort_by == 'name':
+        scores.sort(key=lambda row: str(row.get('project_name') or '').lower(), reverse=reverse)
+    else:
+        scores.sort(
+            key=lambda row: _scores_timestamp(row.get('updated_at') or row.get('created_at')),
+            reverse=reverse,
+        )
+
+    return scores
+
+
+def _portfolio_agent_score_rows(scores, max_rows=30):
+    prioritized = sorted(
+        [row for row in (scores or []) if isinstance(row, dict)],
+        key=lambda row: (
+            row.get('jaspen_score') is None,
+            -(row.get('jaspen_score') or -1),
+            -_scores_timestamp(row.get('updated_at') or row.get('created_at')),
+        ),
+    )
+    trimmed = prioritized[:max_rows]
+    payload = []
+    for row in trimmed:
+        component_scores = row.get('component_scores') if isinstance(row.get('component_scores'), dict) else {}
+        financial_impact = row.get('financial_impact') if isinstance(row.get('financial_impact'), dict) else {}
+        payload.append({
+            'thread_id': row.get('thread_id'),
+            'project_name': row.get('project_name'),
+            'jaspen_score': row.get('jaspen_score'),
+            'score_category': row.get('score_category'),
+            'updated_at': row.get('updated_at') or row.get('created_at'),
+            'adopted_scenario': (
+                row.get('adopted_scenario', {}).get('label')
+                if isinstance(row.get('adopted_scenario'), dict)
+                else None
+            ),
+            'component_scores': component_scores,
+            'financial_impact': financial_impact,
+        })
+    return payload
+
+
 def _scores_category_from_values(score, explicit_category=None):
     if isinstance(explicit_category, str):
         cleaned = explicit_category.strip()
@@ -911,120 +1067,13 @@ def get_completed_scores():
         limit = _scores_parse_int(request.args.get('limit'), default=50, min_value=1, max_value=500)
         offset = _scores_parse_int(request.args.get('offset'), default=0, min_value=0)
 
-        sessions = load_user_sessions(current_user_id) or {}
-        scenarios_by_thread = _load_scenarios(current_user_id) or {}
-
-        scores = []
-        for key, session in (sessions.items() if isinstance(sessions, dict) else []):
-            if not isinstance(session, dict):
-                continue
-
-            thread_id = str(session.get('session_id') or key or '').strip()
-            if not thread_id:
-                continue
-
-            session_status = str(session.get('status') or '').strip().lower()
-            session_completed = session_status == 'completed'
-
-            thread_data = scenarios_by_thread.get(thread_id) if isinstance(scenarios_by_thread, dict) else None
-            thread_data = thread_data if isinstance(thread_data, dict) else {}
-            scenarios = thread_data.get('scenarios')
-            scenarios = scenarios if isinstance(scenarios, dict) else {}
-            adopted_scenario_id = thread_data.get('adopted_scenario_id')
-            adopted_raw = scenarios.get(adopted_scenario_id) if adopted_scenario_id else None
-            adopted_raw = adopted_raw if isinstance(adopted_raw, dict) else None
-
-            adopted_scenario = None
-            if adopted_raw:
-                adopted_scenario = {
-                    'scenario_id': str(adopted_raw.get('scenario_id') or adopted_scenario_id),
-                    'label': adopted_raw.get('label') or 'Adopted scenario',
-                    'deltas': adopted_raw.get('deltas') if isinstance(adopted_raw.get('deltas'), dict) else {},
-                    'result': adopted_raw.get('result') if isinstance(adopted_raw.get('result'), dict) else None,
-                    'created_at': _scores_parse_iso(adopted_raw.get('created_at')),
-                    'updated_at': _scores_parse_iso(adopted_raw.get('updated_at')),
-                    'adopted': True,
-                }
-
-            analyses = _scores_analysis_entries(session, thread_id)
-            for analysis in analyses:
-                result = analysis.get('result') if isinstance(analysis, dict) else None
-                if not isinstance(result, dict):
-                    continue
-
-                jaspen_score = _scores_extract_numeric_score(result)
-                if jaspen_score is None and not session_completed:
-                    continue
-
-                project_name = str(
-                    result.get('project_name')
-                    or result.get('name')
-                    or result.get('title')
-                    or session.get('name')
-                    or f'Thread {thread_id}'
-                ).strip()
-
-                score_category = _scores_category_from_values(
-                    jaspen_score,
-                    explicit_category=result.get('score_category'),
-                )
-                component_scores = result.get('component_scores')
-                if not isinstance(component_scores, dict):
-                    component_scores = result.get('scores') if isinstance(result.get('scores'), dict) else {}
-                financial_impact = result.get('financial_impact')
-                if not isinstance(financial_impact, dict):
-                    financial_impact = {}
-
-                created_at = _scores_parse_iso(
-                    analysis.get('created_at')
-                    or result.get('timestamp')
-                    or session.get('created')
-                    or session.get('timestamp')
-                )
-                updated_at = _scores_parse_iso(
-                    analysis.get('updated_at')
-                    or session.get('timestamp')
-                    or result.get('timestamp')
-                    or created_at
-                )
-
-                row = {
-                    'thread_id': thread_id,
-                    'project_name': project_name,
-                    'jaspen_score': jaspen_score,
-                    'score_category': score_category,
-                    'component_scores': component_scores,
-                    'adopted_scenario': adopted_scenario,
-                    'financial_impact': financial_impact,
-                    'created_at': created_at,
-                    'updated_at': updated_at,
-                }
-
-                if category_filter and row['score_category'] != category_filter:
-                    continue
-                if search and search not in row['project_name'].lower():
-                    continue
-                scores.append(row)
-
-        reverse = sort_dir == 'desc'
-        if sort_by == 'score':
-            scores.sort(
-                key=lambda row: (
-                    row.get('jaspen_score') is None,
-                    row.get('jaspen_score') if row.get('jaspen_score') is not None else -1,
-                ),
-                reverse=reverse,
-            )
-        elif sort_by == 'category':
-            scores.sort(key=lambda row: str(row.get('score_category') or '').lower(), reverse=reverse)
-        elif sort_by == 'name':
-            scores.sort(key=lambda row: str(row.get('project_name') or '').lower(), reverse=reverse)
-        else:
-            scores.sort(
-                key=lambda row: _scores_timestamp(row.get('updated_at') or row.get('created_at')),
-                reverse=reverse,
-            )
-
+        scores = _collect_completed_scores(
+            current_user_id,
+            sort_by=sort_by,
+            sort_dir=sort_dir,
+            category_filter=category_filter,
+            search=search,
+        )
         total = len(scores)
         paged = scores[offset:offset + limit]
         return jsonify({
@@ -1036,6 +1085,157 @@ def get_completed_scores():
     except Exception as e:
         current_app.logger.error("[get_completed_scores] %s", e)
         return jsonify({'error': 'Failed to load completed scores'}), 500
+
+
+@strategy_bp.route('/scores/portfolio-agent', methods=['POST'])
+@jwt_required()
+@limiter.limit("10 per minute")
+def portfolio_scores_agent():
+    try:
+        data = request.get_json() or {}
+        current_user_id = get_jwt_identity()
+        user = User.query.get(current_user_id)
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        if bootstrap_legacy_credits(user, current_app.config):
+            db.session.commit()
+
+        message = str(data.get('message') or '').strip()
+        if not message:
+            return jsonify({'error': 'Message is required'}), 400
+
+        requested_model_type = data.get('model_type')
+        model_selection, model_error = _resolve_user_model_selection(user, requested_model_type=requested_model_type)
+        if model_error:
+            return jsonify(model_error), 403
+
+        sort_by = str(data.get('sort_by', 'date') or 'date').strip().lower()
+        if sort_by not in _SCORES_SORT_BY_OPTIONS:
+            sort_by = 'date'
+
+        sort_dir = str(data.get('sort_dir', 'desc') or 'desc').strip().lower()
+        if sort_dir not in _SCORES_SORT_DIR_OPTIONS:
+            sort_dir = 'desc'
+
+        category_filter = data.get('category')
+        if isinstance(category_filter, str):
+            category_filter = category_filter.strip()
+            if category_filter.lower() in ('', 'all'):
+                category_filter = None
+            elif category_filter not in _SCORES_CATEGORY_OPTIONS:
+                return jsonify({'error': 'category must be one of Excellent, Good, Fair, At Risk'}), 400
+        else:
+            category_filter = None
+
+        search = str(data.get('search', '') or '').strip().lower()
+        strategy_objective = _normalize_strategy_objective(data.get('strategy_objective'), default='balanced')
+
+        scores = _collect_completed_scores(
+            current_user_id,
+            sort_by=sort_by,
+            sort_dir=sort_dir,
+            category_filter=category_filter,
+            search=search,
+        )
+        if not scores:
+            return jsonify({
+                'reply': (
+                    "I don't have any scored projects in this view yet. "
+                    "Broaden the filters or complete a few analyses first, then I can help you prioritize what to do next."
+                ),
+                'usage': {'provider': 'heuristic', 'model': None, 'input_tokens': 0, 'output_tokens': 0, 'total_tokens': 0},
+                'credits': {'charged': 0, 'remaining': int(user.credits_remaining or 0)},
+                'context': {'total_matching': 0, 'analyzed_count': 0, 'category': category_filter or 'All', 'search': search},
+                'model_type': model_selection['model_type'],
+                'strategy_objective': strategy_objective,
+            }), 200
+
+        history = data.get('messages') if isinstance(data.get('messages'), list) else []
+        sanitized_history = []
+        for item in history[-8:]:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get('role') or '').strip().lower()
+            if role not in {'user', 'assistant'}:
+                continue
+            content = str(item.get('content') or '').strip()
+            if not content:
+                continue
+            sanitized_history.append({'role': role, 'content': content[:4000]})
+
+        summarized_rows = _portfolio_agent_score_rows(scores, max_rows=30)
+        system_prompt = (
+            "You are Jaspen's portfolio agent for strategic prioritization. "
+            "Your job is to recommend what the user should do next across their scored project portfolio. "
+            "Do not simply pick the highest score. Prefer one of the stronger-scoring projects when it also has better readiness, "
+            "clearer upside, fewer unresolved gaps, stronger timing, or a more compelling execution path. "
+            "If the absolute top score is not the best next move, say that directly and explain why. "
+            "Use only the portfolio data provided. Be decisive, practical, and specific. "
+            "Keep the answer concise, usually 2-4 short paragraphs or a compact bullet list."
+        )
+        context_prompt = (
+            f"Portfolio scope: {len(scores)} matching scored projects.\n"
+            f"Current filters: category={category_filter or 'All'}, search={search or 'none'}, sort={sort_by} {sort_dir}.\n"
+            "Scored projects:\n"
+            f"{json.dumps(summarized_rows, ensure_ascii=True)}\n\n"
+            "When recommending the next project, weigh Jaspen score alongside component strengths/weaknesses, "
+            "financial impact clues, recency, and whether an adopted scenario suggests the path is more executable."
+        )
+        routed_messages = [
+            *sanitized_history,
+            {'role': 'user', 'content': f"{context_prompt}\n\nUser request: {message}"},
+        ]
+
+        from .ai_agent import _estimate_usage_credit_charge, _generate_routed_chat_reply
+
+        reply, usage = _generate_routed_chat_reply(
+            routed_messages,
+            model_selection,
+            system_prompt=system_prompt,
+            strategy_objective=strategy_objective,
+            max_tokens=900,
+            temperature=0.2,
+        )
+        credits_charged = _estimate_usage_credit_charge((usage or {}).get('total_tokens'), model_selection['model_type'])
+        charged, remaining = consume_credits(user, credits_charged)
+        if not charged:
+            db.session.rollback()
+            return jsonify({
+                'error': 'Insufficient credits.',
+                'code': 'insufficient_credits',
+                'required_credits': credits_charged,
+                'remaining_credits': int(user.credits_remaining or 0),
+            }), 402
+
+        _audit_strategy_event(
+            'scores.portfolio_agent_used',
+            user=user,
+            details={
+                'matching_scores': len(scores),
+                'analyzed_count': len(summarized_rows),
+                'model_type': model_selection['model_type'],
+                'provider': usage.get('provider') if isinstance(usage, dict) else None,
+                'model': usage.get('model') if isinstance(usage, dict) else None,
+                'credits_charged': credits_charged,
+            },
+        )
+        db.session.commit()
+        return jsonify({
+            'reply': reply,
+            'usage': usage,
+            'credits': {'charged': credits_charged, 'remaining': remaining},
+            'context': {
+                'total_matching': len(scores),
+                'analyzed_count': len(summarized_rows),
+                'category': category_filter or 'All',
+                'search': search,
+            },
+            'model_type': model_selection['model_type'],
+            'strategy_objective': strategy_objective,
+        }), 200
+    except Exception as e:
+        current_app.logger.error("[portfolio_scores_agent] %s", e)
+        return jsonify({'error': 'Portfolio agent failed. Please try again.'}), 500
 
 
 def _load_scenarios(user_id):
