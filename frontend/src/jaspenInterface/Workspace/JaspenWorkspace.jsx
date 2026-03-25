@@ -5782,13 +5782,6 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
     window.location.assign('/new?mode=refine');
   }, [sessionId, currentSessionId, analysisResult]);
 
-  const returnToMainJaspenHref = useMemo(() => {
-    const tid = sessionId || currentSessionId || analysisResult?.analysis_id;
-    if (!tid) return '/new?mode=refine';
-    const encoded = encodeURIComponent(String(tid));
-    return `/new?session_id=${encoded}&sid=${encoded}&mode=refine`;
-  }, [sessionId, currentSessionId, analysisResult]);
-
   useEffect(() => {
     if (!analysisResult) return;
     if (activeTab !== 'chat') return;
@@ -6653,14 +6646,28 @@ onClick={async () => {
                 </h2>
               </div>
 
-              <a
-                href={returnToMainJaspenHref}
+              <button
+                type="button"
                 className="jas-return-main-btn"
-                title="Back to Jaspen"
-                aria-label="Back to Jaspen"
+                onClick={returnToMainJaspen}
+                title="Refine this baseline in Jaspen"
+                aria-label="Refine this baseline in Jaspen"
               >
-                Back to Jaspen
-              </a>
+                <span className="jas-return-main-brand">
+                  <img
+                    src="/android-chrome-192x192.png"
+                    alt=""
+                    aria-hidden="true"
+                    className="jas-return-main-logo"
+                  />
+                  <span className="jas-return-main-label">Jaspen</span>
+                </span>
+                <span className="jas-return-main-plus" aria-hidden="true">
+                  <FontAwesomeIcon icon={faPlus} />
+                </span>
+              </button>
+
+              <div className="jas-workspace-header-spacer" aria-hidden="true" />
             </div>
 
             <nav className="jas-top-tabs" role="tablist" aria-label="Jaspen views">
