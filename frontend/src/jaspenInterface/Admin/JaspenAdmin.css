@@ -320,7 +320,7 @@
 
 .jas-admin-connector-row {
   display: grid;
-  grid-template-columns: minmax(170px, 1.3fr) repeat(4, minmax(100px, 1fr)) minmax(112px, 132px) minmax(72px, 88px);
+  grid-template-columns: minmax(170px, 1.35fr) repeat(4, minmax(92px, 0.9fr)) minmax(132px, 148px);
   gap: 10px;
   align-items: center;
   border: 1px solid #e1e9f7;
@@ -426,18 +426,18 @@
 
 .jas-admin-check-inline {
   display: inline-flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
+  justify-content: flex-end;
+  gap: 8px;
   align-self: center;
   padding-bottom: 0;
-  text-align: center;
+  text-align: right;
   color: #3d5180;
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-transform: none;
 }
 
 .jas-admin-check-inline input[type="checkbox"] {
@@ -449,20 +449,36 @@
   line-height: 1.2;
 }
 
-.jas-admin-connector-save {
+.jas-admin-connector-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
   min-width: 0;
-  width: 100%;
-  height: 32px;
-  border-radius: 10px;
-  padding: 0 10px;
-  font-size: 0.78rem;
-  border-color: #c9d6ec;
+}
+
+.jas-admin-connector-save {
+  border: 0;
+  background: transparent;
+  min-width: 0;
+  height: auto;
+  padding: 0;
+  font-size: 0.82rem;
+  font-weight: 700;
   color: #223154;
+  line-height: 1;
 }
 
 .jas-admin-connector-save:hover:not(:disabled) {
-  background: #f8fbff;
-  border-color: #9fb4dd;
+  background: transparent;
+  color: #0f172a;
+  text-decoration: underline;
+}
+
+.jas-admin-connector-save:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  text-decoration: none;
 }
 
 .jas-admin-info-grid {
@@ -716,8 +732,13 @@
     align-items: stretch;
   }
 
+  .jas-admin-connector-actions {
+    justify-content: space-between;
+  }
+
   .jas-admin-check-inline {
-    padding-bottom: 0;
+    justify-content: flex-start;
+    text-align: left;
   }
 
   .jas-admin-info-grid {

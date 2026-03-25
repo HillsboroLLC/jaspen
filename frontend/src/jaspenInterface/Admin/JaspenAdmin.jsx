@@ -1013,22 +1013,24 @@ export default function JaspenAdmin() {
                               <span className="jas-admin-connector-label">Failures</span>
                               <strong>{Number(connector.consecutive_failures || 0)}</strong>
                             </div>
-                            <label className="jas-admin-check-inline">
-                              <input
-                                type="checkbox"
-                                checked={Boolean(cd.auto_sync)}
-                                onChange={(e) => handleConnectorDraftChange(connectorId, 'auto_sync', e.target.checked)}
-                              />
-                              <span>Auto sync</span>
-                            </label>
-                            <button
-                              type="button"
-                              className="jas-admin-secondary jas-admin-connector-save"
-                              disabled={connectorPendingId === connectorId}
-                              onClick={() => saveConnector(connectorId)}
-                            >
-                              {connectorPendingId === connectorId ? 'Saving…' : 'Save'}
-                            </button>
+                            <div className="jas-admin-connector-actions">
+                              <label className="jas-admin-check-inline">
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(cd.auto_sync)}
+                                  onChange={(e) => handleConnectorDraftChange(connectorId, 'auto_sync', e.target.checked)}
+                                />
+                                <span>Auto sync</span>
+                              </label>
+                              <button
+                                type="button"
+                                className="jas-admin-connector-save"
+                                disabled={connectorPendingId === connectorId}
+                                onClick={() => saveConnector(connectorId)}
+                              >
+                                {connectorPendingId === connectorId ? 'Saving…' : 'Save'}
+                              </button>
+                            </div>
                           </div>
                         );
                       })}
