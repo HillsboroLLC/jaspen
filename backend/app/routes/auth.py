@@ -476,6 +476,7 @@ def signup():
 
 
 @auth_bp.route('/register', methods=['POST'])
+@limiter.limit("5 per minute")
 def register_alias():
     """Legacy alias used by some frontend clients."""
     return signup()
@@ -641,6 +642,7 @@ def change_password():
 
 @auth_bp.route('/mfa/setup', methods=['POST'])
 @jwt_required()
+@limiter.limit("3 per minute")
 def mfa_setup():
     user_id = get_jwt_identity()
     user = User.query.get(user_id)
@@ -670,6 +672,7 @@ def mfa_setup():
 
 @auth_bp.route('/mfa/verify', methods=['POST'])
 @jwt_required()
+@limiter.limit("10 per minute")
 def mfa_verify():
     user_id = get_jwt_identity()
     user = User.query.get(user_id)
@@ -699,6 +702,7 @@ def mfa_verify():
 
 
 @auth_bp.route('/mfa/challenge', methods=['POST'])
+@limiter.limit("10 per minute")
 def mfa_challenge():
     data = request.get_json(silent=True) or {}
     pending_token = str(data.get('pending_token') or '').strip()
@@ -834,6 +838,7 @@ def google_start():
 
 
 @auth_bp.route('/google/callback', methods=['GET'])
+@limiter.limit("20 per minute")
 def google_callback():
     if request.args.get('error'):
         return redirect(_frontend_login_error_url('google_access_denied'), code=302)
