@@ -5770,8 +5770,13 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
   const returnToMainJaspen = useCallback(() => {
     const tid = sessionId || currentSessionId || analysisResult?.analysis_id;
     if (tid) {
-      const encoded = encodeURIComponent(String(tid));
-      window.location.assign(`/new?session_id=${encoded}&sid=${encoded}&mode=refine`);
+      setAnalysisResult(null);
+      setScorecardSnapshots([]);
+      setSelectedScorecardId(null);
+      setBaselineScorecardId(null);
+      setView('intake');
+      setActiveTab('summary');
+      dispatchSidebar({ type: 'CLOSE_ALL' });
       return;
     }
     window.location.assign('/new?mode=refine');
