@@ -379,29 +379,29 @@ export default function Scores() {
           type="button"
           className="scores-agent-tab"
           onClick={() => setPortfolioDrawerOpen(true)}
-          aria-label="Open portfolio agent"
+          aria-label="Open Jaspen drawer"
           aria-expanded={portfolioDrawerOpen}
           aria-controls="scores-portfolio-agent-drawer"
         >
-          PORTFOLIO
+          JASPEN
         </button>
       )}
 
       <aside
         id="scores-portfolio-agent-drawer"
         className={`scores-agent-drawer ${portfolioDrawerOpen ? 'open' : ''}`}
-        aria-label="Portfolio agent drawer"
+        aria-label="Jaspen drawer"
       >
         <div className="scores-agent-header">
           <div>
-            <div className="scores-agent-title">Portfolio Agent</div>
+            <div className="scores-agent-title">Jaspen</div>
             <div className="scores-agent-subtitle">{portfolioScopeLabel}</div>
           </div>
           <button
             type="button"
             className="scores-agent-close"
             onClick={() => setPortfolioDrawerOpen(false)}
-            aria-label="Close portfolio agent"
+            aria-label="Close Jaspen drawer"
           >
             <FontAwesomeIcon icon={faTimes} />
           </button>
@@ -477,7 +477,7 @@ export default function Scores() {
           </div>
           <div className="scores-toolbar-actions">
             <button type="button" className="scores-secondary-btn" onClick={() => setPortfolioDrawerOpen(true)}>
-              Portfolio Agent
+              Jaspen
             </button>
             <button type="button" className="scores-secondary-btn" onClick={() => navigate('/new')}>
               Back to Jaspen
