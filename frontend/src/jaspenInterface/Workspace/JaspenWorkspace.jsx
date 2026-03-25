@@ -5767,7 +5767,7 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
     dispatchSidebar({ type: 'CLOSE_READINESS' });
   }, [user]);
 
-  const returnToMainJaspen = useCallback(() => {
+  const refineCurrentBaseline = useCallback(() => {
     const tid = sessionId || currentSessionId || analysisResult?.analysis_id;
     if (tid) {
       setAnalysisResult(null);
@@ -6649,9 +6649,9 @@ onClick={async () => {
               <button
                 type="button"
                 className="jas-return-main-btn"
-                onClick={returnToMainJaspen}
-                title="Refine this baseline in Jaspen"
-                aria-label="Refine this baseline in Jaspen"
+                onClick={() => window.location.assign('/new')}
+                title="Start a new Jaspen session"
+                aria-label="Start a new Jaspen session"
               >
                 <span className="jas-return-main-brand">
                   <img
@@ -6667,7 +6667,15 @@ onClick={async () => {
                 </span>
               </button>
 
-              <div className="jas-workspace-header-spacer" aria-hidden="true" />
+              <button
+                type="button"
+                className="jas-refine-baseline-link"
+                onClick={refineCurrentBaseline}
+                title="Add context and rescore this baseline"
+                aria-label="Refine baseline"
+              >
+                Refine Baseline
+              </button>
             </div>
 
             <nav className="jas-top-tabs" role="tablist" aria-label="Jaspen views">
@@ -6861,7 +6869,7 @@ onClick={async () => {
         onExportConversationMarkdown={handleExportConversationMarkdown}
 
         onBackToMain={handleNewAnalysis}
-        onOpenChat={returnToMainJaspen}
+        onOpenChat={refineCurrentBaseline}
         onOpenScenario={() => { setActiveTab('scenario'); setView('scenario'); }}
       />
     </ErrorBoundary>
@@ -6891,7 +6899,7 @@ onClick={async () => {
                       onAdoptScenario={handleScenarioAdopt}
                       onAdoptScorecard={handleAdoptScorecard}
                       onBackToSummary={() => { setActiveTab('summary'); setView('summary'); }}
-                      onOpenChat={returnToMainJaspen}
+                      onOpenChat={refineCurrentBaseline}
                       onAdopt={handleScenarioUpdate}
                       onSaveScenario={handleSaveScenario}
                       onCompare={handleCompareScenarios}

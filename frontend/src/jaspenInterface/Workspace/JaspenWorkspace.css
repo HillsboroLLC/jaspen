@@ -2894,6 +2894,31 @@
   min-height: 1px;
 }
 
+.jas-refine-baseline-link {
+  justify-self: end;
+  border: none;
+  background: transparent;
+  color: var(--navy);
+  padding: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  font-family: var(--font);
+  cursor: pointer;
+  text-decoration: none;
+  transition: color var(--transition), opacity var(--transition);
+  white-space: nowrap;
+}
+
+.jas-refine-baseline-link:hover {
+  color: var(--magenta);
+}
+
+.jas-refine-baseline-link:focus-visible {
+  outline: 2px solid rgba(160, 3, 108, 0.28);
+  outline-offset: 4px;
+  border-radius: 6px;
+}
+
 .jas-top-tabs {
   display: flex;
   align-items: center;
@@ -3853,8 +3878,8 @@
     justify-self: start;
   }
 
-  .jas-workspace-header-spacer {
-    display: none;
+  .jas-refine-baseline-link {
+    justify-self: start;
   }
 
   .jas-top-tabs {
