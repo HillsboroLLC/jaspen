@@ -619,7 +619,7 @@
 
 .strategy-card-meta {
   display: flex;
-  justify-content: flex-end;
+  justify-content: center;
 }
 
 .strategy-meta-link {
