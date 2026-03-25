@@ -1003,6 +1003,7 @@ export default function JaspenAdmin() {
                       {connectors.map((connector) => {
                         const connectorId = String(connector.id || '');
                         const cd = connectorDrafts[connectorId] || {};
+                        const connectorDirty = Boolean(cd.auto_sync) !== Boolean(connector.auto_sync);
                         const connectionStatus = String(connector.connection_status || 'disconnected');
                         const healthStatus = String(connector.health_status || 'unknown');
                         const lastSyncAt = connector.last_sync_at
@@ -1041,14 +1042,16 @@ export default function JaspenAdmin() {
                                 />
                                 <span>Auto sync</span>
                               </label>
-                              <button
-                                type="button"
-                                className="jas-admin-connector-save"
-                                disabled={connectorPendingId === connectorId}
-                                onClick={() => saveConnector(connectorId)}
-                              >
-                                {connectorPendingId === connectorId ? 'Saving…' : 'Save'}
-                              </button>
+                              {(connectorDirty || connectorPendingId === connectorId) && (
+                                <button
+                                  type="button"
+                                  className="jas-admin-connector-save"
+                                  disabled={connectorPendingId === connectorId}
+                                  onClick={() => saveConnector(connectorId)}
+                                >
+                                  {connectorPendingId === connectorId ? 'Saving…' : 'Save'}
+                                </button>
+                              )}
                             </div>
                           </div>
                         );
