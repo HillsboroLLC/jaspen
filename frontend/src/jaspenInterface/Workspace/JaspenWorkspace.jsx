@@ -3199,13 +3199,17 @@ if (rawHistory.length > 0) {
 
       if ((session.status === 'completed' || session.score != null) && fullScorecard) {
         const normalized = normalizeAnalysis(fullScorecard);
-        setAnalysisResult(normalized);
         baselineRef.current = normalized;
         if (restoreRefineMode) {
+          setAnalysisResult(null);
+          setScorecardSnapshots([]);
+          setSelectedScorecardId(null);
+          setBaselineScorecardId(null);
           setView('intake');
           setActiveTab('summary');
           dispatchSidebar({ type: 'CLOSE_ALL' });
         } else {
+          setAnalysisResult(normalized);
           setView('summary');
           setActiveTab('summary');
         }
@@ -5767,10 +5771,10 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
     const tid = sessionId || currentSessionId || analysisResult?.analysis_id;
     if (tid) {
       const encoded = encodeURIComponent(String(tid));
-      window.location.assign(`/new?session_id=${encoded}&sid=${encoded}`);
+      window.location.assign(`/new?session_id=${encoded}&sid=${encoded}&mode=refine`);
       return;
     }
-    window.location.assign('/new');
+    window.location.assign('/new?mode=refine');
   }, [sessionId, currentSessionId, analysisResult]);
 
   const returnToMainJaspenHref = useMemo(() => {
