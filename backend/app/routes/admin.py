@@ -487,6 +487,7 @@ def list_users():
         return err
 
     query = str(request.args.get("q") or "").strip()
+    status = str(request.args.get("status") or "").strip().lower()
     limit = _to_int(request.args.get("limit"), default=50)
     limit = max(1, min(200, limit or 50))
 
@@ -494,11 +495,23 @@ def list_users():
     if query:
         like = f"%{query}%"
         q = q.filter(or_(User.email.ilike(like), User.name.ilike(like)))
+    if status:
+        if status == "active":
+            q = q.filter(User.deactivated_at.is_(None), User.access_approval_status == APPROVAL_APPROVED)
+        elif status == "pending":
+            q = q.filter(User.deactivated_at.is_(None), User.access_approval_status == APPROVAL_PENDING)
+        elif status == "rejected":
+            q = q.filter(User.deactivated_at.is_(None), User.access_approval_status == APPROVAL_REJECTED)
+        elif status == "deactivated":
+            q = q.filter(User.deactivated_at.is_not(None))
+        else:
+            return jsonify({"error": "status must be one of active, pending, rejected, deactivated"}), 400
 
     users = q.order_by(User.updated_at.desc()).limit(limit).all()
     return jsonify({
         "users": [_serialize_user_for_admin(user) for user in users],
         "count": len(users),
+        "status": status or "",
     }), 200
 
 

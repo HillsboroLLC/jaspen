@@ -86,6 +86,13 @@ const ACCESS_CONTROL_FIELDS = [
     description: 'New signups must verify their inbox before Jaspen treats the account as active.',
   },
 ];
+const USER_STATUS_FILTERS = [
+  { value: '', label: 'All users' },
+  { value: 'active', label: 'Active' },
+  { value: 'pending', label: 'Pending approval' },
+  { value: 'rejected', label: 'Rejected' },
+  { value: 'deactivated', label: 'Deactivated' },
+];
 
 
 function authHeaders(extra = {}, method = 'GET') {
@@ -130,6 +137,7 @@ export default function JaspenAdmin() {
   const [isLoading, setIsLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
   const [query, setQuery] = useState('');
+  const [userStatusFilter, setUserStatusFilter] = useState('');
   const [users, setUsers] = useState([]);
   const [selectedId, setSelectedId] = useState('');
   const [draft, setDraft] = useState(null);
@@ -179,9 +187,9 @@ export default function JaspenAdmin() {
     setSelectedId(saved.id);
   };
 
-  const loadUsers = async (nextQuery = query) => {
+  const loadUsers = async (nextQuery = query, nextStatus = userStatusFilter) => {
     const response = await fetch(
-      `${API_BASE}/api/v1/admin/users?limit=200&q=${encodeURIComponent(nextQuery || '')}`,
+      `${API_BASE}/api/v1/admin/users?limit=200&q=${encodeURIComponent(nextQuery || '')}&status=${encodeURIComponent(nextStatus || '')}`,
       {
         headers: authHeaders(),
         credentials: 'include',
@@ -671,7 +679,18 @@ export default function JaspenAdmin() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-          <button type="button" className="jas-admin-secondary" onClick={() => loadUsers(query)} disabled={pending}>
+          <select
+            value={userStatusFilter}
+            onChange={(e) => setUserStatusFilter(e.target.value)}
+            aria-label="Filter users by status"
+          >
+            {USER_STATUS_FILTERS.map((option) => (
+              <option key={option.value || 'all'} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <button type="button" className="jas-admin-secondary" onClick={() => loadUsers(query, userStatusFilter)} disabled={pending}>
             Search
           </button>
         </div>

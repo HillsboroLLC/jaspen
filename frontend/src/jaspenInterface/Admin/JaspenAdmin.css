@@ -59,6 +59,17 @@
   font-size: 0.95rem;
 }
 
+.jas-admin-search select {
+  min-width: 180px;
+  height: 38px;
+  border: 1px solid #c9d6ec;
+  border-radius: 10px;
+  padding: 0 12px;
+  font-size: 0.95rem;
+  color: #162246;
+  background: #fff;
+}
+
 .jas-admin-layout {
   display: grid;
   grid-template-columns: 320px 1fr;
