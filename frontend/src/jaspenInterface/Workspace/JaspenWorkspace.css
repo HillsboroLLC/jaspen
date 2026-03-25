@@ -2867,21 +2867,23 @@
 }
 
 .jas-return-main-plus {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   width: 30px;
   height: 30px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  color: var(--navy);
-  background: var(--white);
+  color: var(--gray-600);
+  cursor: pointer;
+  font-size: 0.75rem;
   transition: all var(--transition);
 }
 
 .jas-return-main-btn:hover .jas-return-main-plus {
-  border-color: rgba(18, 33, 68, 0.18);
-  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.12);
+  border-color: var(--navy);
+  color: var(--navy);
 }
 
 .jas-return-main-btn:focus-visible {

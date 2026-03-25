@@ -3318,7 +3318,7 @@ async function fetchReadinessFor(sid) {
   // Restore original chat + show score summary when returning to Discuss (intake)
   useEffect(() => {
     if (view !== 'intake') return;
-    if (!sessionId || !analysisResult) return;
+    if (!sessionId) return;
 
     const entry =
       analysisHistory.find(s => s.id === sessionId) ||
@@ -3331,7 +3331,15 @@ async function fetchReadinessFor(sid) {
     }
 
     // Readiness is ONLY fetched from backend via fetchReadinessFor - no sync from saved data
-  }, [view, sessionId, analysisResult, analysisHistory, messages?.length]);
+  }, [view, sessionId, analysisHistory, messages?.length]);
+
+  useEffect(() => {
+    if (view !== 'intake') return;
+    const tid = sessionId || currentSessionId;
+    if (!tid) return;
+    if (readinessAudit?.overall?.percent != null) return;
+    void fetchReadinessFor(tid);
+  }, [view, sessionId, currentSessionId, readinessAudit]);
 
   // --- Upload (UI only) ---
   const fileInputRef = useRef(null);
@@ -5770,6 +5778,8 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
   const refineCurrentBaseline = useCallback(() => {
     const tid = sessionId || currentSessionId || analysisResult?.analysis_id;
     if (tid) {
+      setSessionId(tid);
+      setCurrentSessionId(tid);
       setAnalysisResult(null);
       setScorecardSnapshots([]);
       setSelectedScorecardId(null);
@@ -5777,6 +5787,8 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
       setView('intake');
       setActiveTab('summary');
       dispatchSidebar({ type: 'CLOSE_ALL' });
+      dispatchSidebar({ type: 'OPEN_READINESS' });
+      void fetchReadinessFor(tid);
       return;
     }
     window.location.assign('/new?mode=refine');
