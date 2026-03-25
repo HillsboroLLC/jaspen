@@ -6694,7 +6694,7 @@ setView(id === 'chat' ? 'intake' : id);
               <TabButton id="summary"  label="Score" />
               <TabButton id="scenario" label="Scenarios" />
               <TabButton id="execution" label="Execution" />
-              <TabButton id="chat"     label="Refine & Rescore" />
+              <TabButton id="chat"     label="Jaspen" />
 
               {/* Only show dropdowns and Begin Project on Score tab */}
               {activeTab === 'summary' && (
