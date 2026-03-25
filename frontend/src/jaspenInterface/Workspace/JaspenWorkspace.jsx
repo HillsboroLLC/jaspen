@@ -510,7 +510,7 @@ function resolveSupportRoleSwitchValue(location) {
 }
 
 export default function JaspenWorkspace() {
-  // View states: intake | summary | scenario | comparison | execution | chat
+  // View states: intake | summary | scenario | comparison | execution
   const [view, setView] = useState('intake');
   const [activeTab, setActiveTab] = useState('summary');
 
@@ -5751,6 +5751,23 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
     dispatchSidebar({ type: 'CLOSE_READINESS' });
   }, [user]);
 
+  const returnToMainJaspen = useCallback(() => {
+    const tid = sessionId || currentSessionId || analysisResult?.analysis_id;
+    if (tid) {
+      const encoded = encodeURIComponent(String(tid));
+      window.location.assign(`/new?session_id=${encoded}&sid=${encoded}`);
+      return;
+    }
+    window.location.assign('/new');
+  }, [sessionId, currentSessionId, analysisResult]);
+
+  useEffect(() => {
+    if (!analysisResult) return;
+    if (activeTab !== 'chat') return;
+    setActiveTab('summary');
+    setView('summary');
+  }, [analysisResult, activeTab]);
+
   useEffect(() => {
     const isEditableTarget = (target) => {
       if (!(target instanceof HTMLElement)) return false;
@@ -6176,7 +6193,7 @@ const handleSaveScenario = async (scenario) => {
   const scoreCommentary = useMemo(() => buildScoreCommentary(messages), [messages]);
 
   const renderWorkspaceShell = () => {
-    const isReadinessOpen = activeTab === 'chat' && sidebarState.readiness;
+    const isReadinessOpen = false;
     const isSettingsOpen = sidebarState.settings;
     const isScenarioTab = activeTab === 'scenario';
     const shellOpen = sidebarState.history || sidebarState.readiness || sidebarState.settings;
@@ -6284,74 +6301,6 @@ setView(id === 'chat' ? 'intake' : id);
         <main className="jas-main" aria-label="Jaspen workspace">
           <div className="jas-sr-only" aria-live="polite" aria-atomic="true">{liveStatusMessage}</div>
           <ToastContainer toasts={toasts} onDismiss={dismissToast} />
-
-{activeTab === 'chat' && (
-  <>
-    {/* LEFT SIDEBAR - Readiness (only on Refine & Rescore tab) */}
-    <aside
-      id="jas-workspace-readiness-panel"
-      className={`jas-left-sidebar jas-readiness-sidebar ${sidebarState.readiness ? 'sidebar-open' : ''}`}
-      aria-labelledby="jas-workspace-readiness-title"
-    >
-      <div className="jas-sidebar-header">
-        <h3 id="jas-workspace-readiness-title">Analysis Readiness</h3>
-        <button className="jas-sidebar-close" onClick={() => dispatchSidebar({ type: 'CLOSE_READINESS' })}>
-          <FontAwesomeIcon icon={faTimes} />
-        </button>
-      </div>
-      <div className="jas-sidebar-content">
-        <div className="jas-readiness-display">
-          <div className="jas-readiness-circle">
-            <svg className="jas-progress-ring" width="120" height="120">
-              <circle className="jas-progress-ring-bg" stroke="#e2e8f0" strokeWidth="8" fill="transparent" r="52" cx="60" cy="60" />
-              <circle
-                className="jas-progress-ring-fill"
-                stroke="#10b981"
-                strokeWidth="8"
-                fill="transparent"
-                r="52"
-                cx="60" cy="60"
-                strokeDasharray={`${(uiReadiness / 100) * READINESS_CIRC} ${READINESS_CIRC}`}
-                strokeDashoffset="0"
-                transform="rotate(-90 60 60)"
-              />
-            </svg>
-            <div className="jas-readiness-percent">{Math.round(uiReadiness)}%</div>
-          </div>
-          <div className="jas-readiness-status">
-            {uiReadiness < 60 ? 'Gathering information...' : uiReadiness < 90 ? 'Almost ready!' : 'Ready to analyze!'}
-          </div>
-        </div>
-
-        {renderReadinessChecklist()}
-      </div>
-      <SidebarIdentityFooter
-        displayName={displayName}
-        planLabel={footerPlanLabel}
-        onOpenDisplayNameEditor={openDisplayNameEditor}
-        onOpenOnboardingEditor={openOnboardingEditor}
-        onOpenBilling={() => setBillingModalOpen(true)}
-        onLogout={handleLogout}
-        onClose={() => dispatchSidebar({ type: 'CLOSE_READINESS' })}
-      />
-    </aside>
-
-    {sessionId && messages.length > 0 && !sidebarState.readiness && (
-      <button
-        type="button"
-        className="jas-sidebar-tab jas-tab-readiness"
-        style={{ top: `${sideTabSecond}px` }}
-        onClick={() => dispatchSidebar({ type: 'OPEN_READINESS' })}
-        aria-label="Open analysis readiness"
-        aria-expanded={sidebarState.readiness}
-        aria-controls="jas-workspace-readiness-panel"
-      >
-        <FontAwesomeIcon icon={faChartLine} />
-        <span className="jas-tab-label">Readiness</span>
-      </button>
-    )}
-  </>
-)}
 
       {/* LEFT SIDEBAR - User Settings */}
       <aside
@@ -6669,9 +6618,9 @@ setView(id === 'chat' ? 'intake' : id);
               <button
                 type="button"
                 className="jas-return-main-btn"
-                onClick={() => window.location.assign('/new')}
-                title="Back to main chat"
-                aria-label="Back to main chat"
+                onClick={returnToMainJaspen}
+                title="Back to Jaspen"
+                aria-label="Back to Jaspen"
               >
                 <span className="jas-return-main-brand">
                   <img
@@ -6694,7 +6643,6 @@ setView(id === 'chat' ? 'intake' : id);
               <TabButton id="summary"  label="Score" />
               <TabButton id="scenario" label="Scenarios" />
               <TabButton id="execution" label="Execution" />
-              <TabButton id="chat"     label="Jaspen" />
 
               {/* Only show dropdowns and Begin Project on Score tab */}
               {activeTab === 'summary' && (
@@ -6852,7 +6800,7 @@ setView(id === 'chat' ? 'intake' : id);
         onExportConversationMarkdown={handleExportConversationMarkdown}
 
         onBackToMain={handleNewAnalysis}
-        onOpenChat={() => { setActiveTab('chat'); setView('intake'); }}
+        onOpenChat={returnToMainJaspen}
         onOpenScenario={() => { setActiveTab('scenario'); setView('scenario'); }}
         onConvertToProject={() => {
           storage.saveProject({
@@ -6906,144 +6854,10 @@ setView(id === 'chat' ? 'intake' : id);
                   canEditDependencies={canEditExecutionDependencies}
                   isViewer={executionReadOnly}
                   isLocked={executionTabLocked}
-                  onOpenChat={() => { setActiveTab('chat'); setView('intake'); }}
+                  onOpenChat={returnToMainJaspen}
                   onOpenBilling={() => setBillingModalOpen(true)}
                 />
               </ErrorBoundary>
-            )}
-
-            {activeTab === 'chat' && (
-              <div className="jas-chat-tab">
-                <div className="agent-chat-content">
-                  <div className="agent-chat-messages">
-                    {error && (
-                      <div className="agent-chat-error">
-                        <FontAwesomeIcon icon={faExclamationTriangle} />
-                        <span>{error}</span>
-                      </div>
-                    )}
-
-                    <div className="agent-chat-conversation">
-	                      {messages.map((m, idx) => (
-	                        <div key={idx} className={`agent-chat-message ${m.role === 'ai' ? 'ai' : 'user'}`}>
-	                          <div className="message-content">{renderConversationMessage(m)}</div>
-	                          {renderMessageAttachments(m)}
-	                          {renderMessageActions(m, `tab:${idx}`, idx, messages.length)}
-	                        </div>
-	                      ))}
-                      <div ref={endRef} />
-                    </div>
-                    {renderStreamToolStatus()}
-                  </div>
-
-                  <div className="agent-chat-input-area">
-                    <input
-                      ref={fileInputRef}
-                      id="jas-file-input"
-                      type="file"
-                      multiple
-                      accept="image/*,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.txt,.md"
-                      onChange={onFilesSelected}
-                      style={{ display: 'none' }}
-                    />
-
-                    {pendingFiles?.length > 0 && (
-                      <div className="jas-file-chips">
-                        {pendingFiles.map((f, i) => (
-                          <span key={i} className="jas-file-chip">
-                            {f.name}
-                            <button
-                              type="button"
-                              className="jas-file-chip-remove"
-                              title="Remove"
-                              onClick={() =>
-                                setPendingFiles(prev => prev.filter((_, idx) => idx !== i))
-                              }
-                            >
-                              ×
-                            </button>
-                          </span>
-                        ))}
-                      </div>
-                    )}
-
-                    <div className="agent-chat-input-container">
-                      <textarea
-                        ref={chatTabInputRef}
-                        value={input}
-                        onChange={handleComposerInputChange}
-                        onKeyDown={onKey}
-                        placeholder="Refine the conversation to improve your scorecard..."
-                        className="agent-chat-input"
-                        rows={2}
-                        disabled={busy || effectiveIsViewer}
-                      />
-
-                      <div className="agent-chat-input-toolbar">
-                        <div className="agent-chat-input-left-controls">
-                          <button
-                            type="button"
-                            className="agent-chat-plus"
-                            aria-label="Attach files"
-                            title="Attach files"
-                            disabled={busy || effectiveIsViewer}
-                            onClick={() => fileInputRef.current?.click()}
-                          >
-                            <FontAwesomeIcon icon={faPlus} />
-                          </button>
-                          {renderModelTypeInlinePicker()}
-                          {renderSelectedObjectivePill()}
-                        </div>
-
-                        <div className="agent-chat-input-right-controls">
-                          <button
-                            type="button"
-                            className={`agent-chat-mic ${isRecording ? 'is-recording' : ''}`}
-                            aria-label={isRecording ? 'Stop recording' : 'Start recording'}
-                            aria-pressed={isRecording}
-                            title={isRecording ? 'Stop recording' : 'Start recording'}
-                            disabled={busy || effectiveIsViewer}
-                            onClick={() => setIsRecording(prev => !prev)}
-                          >
-                            <FontAwesomeIcon icon={faMicrophone} />
-                          </button>
-
-                          <button
-                            className="agent-chat-send"
-                            onClick={onSubmit}
-                            disabled={busy || effectiveIsViewer || (!input.trim() && pendingFiles.length === 0)}
-                            title="Send"
-                          >
-                            {busy ? <FontAwesomeIcon icon={faSpinner} spin /> : <FontAwesomeIcon icon={faPaperPlane} />}
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-
-                    {renderObjectiveTags('agent-chat-objective-tags')}
-
-                    {sessionId && hasConversationMessages && (
-                      <div className="agent-chat-footer">
-                        <div className="progress-indicator">
-                          <div className="progress-bar-container">
-                            <div className="progress-bar-fill" style={{ width: `${uiReadiness}%` }}></div>
-                          </div>
-                          <span className="progress-text">{Math.round(uiReadiness)}% ready</span>
-                        </div>
-                        <button
-                          className="finish-analyze-btn"
-                          onClick={onFinishAnalyze}
-                          disabled={!canAnalyze || busy || effectiveIsViewer}
-                          title={effectiveIsViewer ? 'Viewers cannot rescore shared projects' : (canAnalyze ? "Regenerate your Jaspen score" : "Keep chatting to gather more information")}
-                        >
-                          <FontAwesomeIcon icon={faCheck} />
-                          <span>Finish & Analyze</span>
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
             )}
 
             {activeTab === 'scenario' && (
@@ -7069,7 +6883,7 @@ setView(id === 'chat' ? 'intake' : id);
                       onAdoptScenario={handleScenarioAdopt}
                       onAdoptScorecard={handleAdoptScorecard}
                       onBackToSummary={() => { setActiveTab('summary'); setView('summary'); }}
-                      onOpenChat={() => { setActiveTab('chat'); setView('intake'); }}
+                      onOpenChat={returnToMainJaspen}
                       onAdopt={handleScenarioUpdate}
                       onSaveScenario={handleSaveScenario}
                       onCompare={handleCompareScenarios}
