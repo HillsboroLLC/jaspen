@@ -275,6 +275,19 @@
   flex-wrap: wrap;
   gap: 28px;
   margin-bottom: 28px;
+  align-items: flex-start;
+}
+
+.score-dashboard-container .score-primary-column {
+  flex: 0 0 420px;
+  min-width: 320px;
+  display: grid;
+  gap: 20px;
+}
+
+.score-dashboard-container .score-secondary-column {
+  flex: 1 1 360px;
+  min-width: 320px;
 }
 
 /* --- Score Main Card --- */
@@ -286,7 +299,8 @@
   display: flex;
   align-items: center;
   gap: 24px;
-  flex: 0 0 auto;
+  width: fit-content;
+  min-width: 320px;
 }
 
 /* --- Score Circle --- */
@@ -350,15 +364,14 @@
 
 /* --- Financial Impact Card --- */
 .score-dashboard-container .financial-card {
-  flex: 1 1 320px;
   background: var(--white);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: 24px;
+  min-height: 100%;
 }
 
 .score-dashboard-container .summary-card {
-  flex: 1 1 320px;
   background: var(--white);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -380,6 +393,13 @@
 }
 
 .score-dashboard-container .summary-list p {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.score-dashboard-container .section-fallback-message {
   margin: 0;
   font-size: 0.85rem;
   line-height: 1.6;
@@ -756,6 +776,15 @@
   color: var(--navy);
 }
 
+.score-dashboard-container .data-value.muted {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.score-dashboard-container .muted-section {
+  opacity: 0.94;
+}
+
 /* --- Begin Project Card --- */
 .score-dashboard-container .begin-project-card {
   background: var(--white);
@@ -823,9 +852,11 @@
     flex-direction: column;
   }
 
+  .score-dashboard-container .score-primary-column,
+  .score-dashboard-container .score-secondary-column,
   .score-dashboard-container .score-main-card {
-    flex-direction: column;
-    text-align: center;
+    width: 100%;
+    min-width: 0;
   }
 
   .score-dashboard-container .fi-grid {

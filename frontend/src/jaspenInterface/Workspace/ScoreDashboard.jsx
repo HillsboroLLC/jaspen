@@ -82,6 +82,20 @@ export default function ScoreDashboard({
       : (dfRaw && typeof dfRaw === 'object' ? dfRaw : null);
 
   const hasDecisionData = !!(decisionFramework && Object.keys(decisionFramework).length);
+  const hasBeforeAfterData = Boolean(before.revenue || after.revenue || before.ebitda || after.ebitda);
+
+  const cleanNarrativeText = (value) => {
+    const text = String(value || '')
+      .replace(/\*\*/g, '')
+      .replace(/^- /gm, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!text) return '';
+    if (text.includes('?')) return '';
+    if (/^before i generate/i.test(text)) return '';
+    if (/^what is your specific goal/i.test(text)) return '';
+    return text;
+  };
 
   const buildSmartExplanations = () => {
     const byCategory = {
@@ -247,12 +261,12 @@ export default function ScoreDashboard({
 
   const narrativeHighlights = useMemo(() => {
     const items = [];
-    const commentaryOverall = String(scoreCommentary?.overall || '').trim();
+    const commentaryOverall = cleanNarrativeText(scoreCommentary?.overall || '');
     if (commentaryOverall) items.push(commentaryOverall);
     keyInsights.forEach((entry) => {
       const text = typeof entry === 'string'
-        ? entry.trim()
-        : String(entry?.summary || entry?.title || entry?.description || '').trim();
+        ? cleanNarrativeText(entry)
+        : cleanNarrativeText(entry?.summary || entry?.title || entry?.description || '');
       if (text) items.push(text);
     });
     return Array.from(new Set(items)).slice(0, 3);
@@ -283,6 +297,267 @@ export default function ScoreDashboard({
   const hasFinancialImpact = financialGridItems.length > 0;
   const hasAiInsights = aiInsights.length > 0;
   const hasNarrativeHighlights = narrativeHighlights.length > 0;
+  const missingSectionLabels = [
+    !hasScores ? 'Category Scores' : null,
+    risks.length === 0 ? 'Top Risks' : null,
+    recommendations.length === 0 ? 'Recommendations' : null,
+    !hasAiInsights ? 'AI Insights' : null,
+    !hasDecisionData ? 'Strategic Decision Framework' : null,
+    !hasInvestmentData ? 'Investment Analysis' : null,
+    !hasNpvData ? 'NPV & IRR Analysis' : null,
+    !hasValuationData ? 'Valuation' : null,
+    !hasBeforeAfterData ? 'Before vs After Financial Analysis' : null,
+  ].filter(Boolean);
+
+  const lowerSections = [
+    {
+      key: 'scores',
+      title: 'Category Scores',
+      populated: hasScores,
+      priority: 1,
+      render: () => (
+        <div className="scores-section">
+          <div className="ss-header">Category Scores</div>
+          {categoryScoreRows.map((row) => (
+            <div key={row.key} className="score-row">
+              <span className="sr-name">{row.name}</span>
+              <div className="sr-bar">
+                <div className="progress-bar">
+                  <div
+                    className={`fill ${row.color}`}
+                    style={{ width: `${row.value}%` }}
+                  />
+                </div>
+              </div>
+              <span className="sr-value">{row.value}</span>
+              <span className="sr-desc">{row.description}</span>
+            </div>
+          ))}
+        </div>
+      ),
+    },
+    {
+      key: 'risks',
+      populated: risks.length > 0,
+      priority: 2,
+      render: () => (
+        <div className="risks-section">
+          <div className="rs-header">Top Risks</div>
+          {risks.map((risk, idx) => (
+            <div key={idx} className="risk-item">
+              <span className="ri-num">{idx + 1}</span>
+              <span className="ri-text">
+                {typeof risk === 'string' ? risk : (risk.title || risk.risk || risk.description || `Risk ${idx + 1}`)}
+              </span>
+            </div>
+          ))}
+        </div>
+      ),
+    },
+    {
+      key: 'recommendations',
+      populated: recommendations.length > 0,
+      priority: 3,
+      render: () => (
+        <div className="recommendations-section">
+          <div className="rec-header">Recommendations</div>
+          {recommendations.map((rec, idx) => (
+            <div key={idx} className="rec-item">
+              <span className="rec-num">{idx + 1}</span>
+              <span className="rec-text">
+                {typeof rec === 'string' ? rec : (rec.title || rec.recommendation || rec.description || `Recommendation ${idx + 1}`)}
+              </span>
+            </div>
+          ))}
+        </div>
+      ),
+    },
+    {
+      key: 'insights',
+      populated: hasAiInsights,
+      priority: 4,
+      render: () => (
+        <div className="insights-section">
+          <div className="ins-header">AI Insights</div>
+          {aiInsights.slice(0, 5).map((entry, idx) => {
+            const summary =
+              String(entry?.summary || entry?.insight?.insight_text || '').trim() ||
+              'Insight generated from uploaded data.';
+            const fileName = String(entry?.file_name || entry?.insight?.file_name || '').trim();
+            return (
+              <div key={`${fileName || 'ins'}_${idx}`} className="ins-item">
+                <div className="ins-meta">{fileName || `Insight ${idx + 1}`}</div>
+                <div className="ins-text">{summary}</div>
+              </div>
+            );
+          })}
+        </div>
+      ),
+    },
+    {
+      key: 'decision',
+      populated: hasDecisionData,
+      priority: 5,
+      render: () => (
+        <div className="decision-section">
+          <div className="ds-header">Strategic Decision Framework</div>
+          {[
+            ['acceptable_payback', 'Acceptable Payback'],
+            ['irr_above_hurdle', 'IRR Above Hurdle'],
+            ['npv_positive', 'NPV Positive'],
+            ['strategic_alignment', 'Strategic Alignment'],
+            ['robust_sensitivity', 'Robust Sensitivity'],
+          ].map(([key, label]) => {
+            const yes = !!decisionFramework?.[key];
+            return (
+              <div key={key} className="decision-row">
+                <span className="dr-criteria">{label}</span>
+                <span className="dr-status">
+                  <span className={`badge ${yes ? 'badge-success' : 'badge-danger'}`}>
+                    {yes ? 'YES' : 'NO'}
+                  </span>
+                </span>
+                <span className="dr-desc">{yes ? 'Criteria met' : 'Criteria not met'}</span>
+              </div>
+            );
+          })}
+          {decisionFramework?.overall_recommendation && (
+            <div className="decision-row">
+              <span className="dr-criteria">Overall Recommendation</span>
+              <span className="dr-status">
+                <span className={`badge ${
+                  decisionFramework.overall_recommendation === 'Go' ||
+                  decisionFramework.overall_recommendation === 'YES'
+                    ? 'badge-success'
+                    : 'badge-danger'
+                }`}>
+                  {decisionFramework.overall_recommendation === 'Go' ||
+                   decisionFramework.overall_recommendation === 'YES' ? 'YES' : 'NO'}
+                </span>
+              </span>
+              <span className="dr-desc">{decisionFramework.overall_recommendation}</span>
+            </div>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: 'investment',
+      populated: hasInvestmentData,
+      priority: 6,
+      render: () => (
+        <div className="data-section">
+          <div className="section-header">Investment Analysis</div>
+          {investmentAnalysis.initial_investment && (
+            <div className="data-row">
+              <span className="data-label">Initial Investment</span>
+              <span className="data-value">{formatCurrency(investmentAnalysis.initial_investment)}</span>
+            </div>
+          )}
+          {investmentAnalysis.payback_period && (
+            <div className="data-row">
+              <span className="data-label">Payback Period</span>
+              <span className="data-value">{investmentAnalysis.payback_period.toFixed(1)} years</span>
+            </div>
+          )}
+          {investmentAnalysis.roi && (
+            <div className="data-row">
+              <span className="data-label">Return on Investment (ROI)</span>
+              <span className="data-value">{formatPercent(investmentAnalysis.roi)}</span>
+            </div>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: 'npv',
+      populated: hasNpvData,
+      priority: 7,
+      render: () => (
+        <div className="data-section">
+          <div className="section-header">NPV & IRR Analysis</div>
+          {npvIrrAnalysis.npv && (
+            <div className="data-row">
+              <span className="data-label">Net Present Value (NPV)</span>
+              <span className="data-value">{formatCurrency(npvIrrAnalysis.npv)}</span>
+            </div>
+          )}
+          {npvIrrAnalysis.irr && (
+            <div className="data-row">
+              <span className="data-label">Internal Rate of Return (IRR)</span>
+              <span className="data-value">{formatPercent(npvIrrAnalysis.irr * 100)}</span>
+            </div>
+          )}
+          {npvIrrAnalysis.discount_rate && (
+            <div className="data-row">
+              <span className="data-label">Discount Rate</span>
+              <span className="data-value">{formatPercent(npvIrrAnalysis.discount_rate * 100)}</span>
+            </div>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: 'valuation',
+      populated: hasValuationData,
+      priority: 8,
+      render: () => (
+        <div className="data-section">
+          <div className="section-header">Valuation</div>
+          {valuation.enterprise_value && (
+            <div className="data-row">
+              <span className="data-label">Enterprise Value</span>
+              <span className="data-value">{formatCurrency(valuation.enterprise_value)}</span>
+            </div>
+          )}
+          {valuation.multiple && (
+            <div className="data-row">
+              <span className="data-label">EBITDA Multiple</span>
+              <span className="data-value">{valuation.multiple}x</span>
+            </div>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: 'before-after',
+      populated: hasBeforeAfterData,
+      priority: 9,
+      render: () => (
+        <div className="data-section">
+          <div className="section-header">Before vs After Financial Analysis</div>
+          {(before.revenue || after.revenue) && (
+            <>
+              <div className="data-row">
+                <span className="data-label">Revenue (Before)</span>
+                <span className="data-value">{formatCurrency(before.revenue)}</span>
+              </div>
+              <div className="data-row">
+                <span className="data-label">Revenue (After)</span>
+                <span className="data-value">{formatCurrency(after.revenue)}</span>
+              </div>
+            </>
+          )}
+          {(before.ebitda || after.ebitda) && (
+            <>
+              <div className="data-row">
+                <span className="data-label">EBITDA (Before)</span>
+                <span className="data-value">{formatCurrency(before.ebitda)}</span>
+              </div>
+              <div className="data-row">
+                <span className="data-label">EBITDA (After)</span>
+                <span className="data-value">{formatCurrency(after.ebitda)}</span>
+              </div>
+            </>
+          )}
+        </div>
+      ),
+    },
+  ]
+    .sort((a, b) => {
+      if (a.populated !== b.populated) return a.populated ? -1 : 1;
+      return a.priority - b.priority;
+    });
 
   if (loading) {
     return <div className="score-dashboard-container"><ScoreDashboardSkeleton /></div>;
@@ -330,258 +605,67 @@ export default function ScoreDashboard({
             </div>
           )}
         </div>
-        {/* Score + Financial Impact Row */}
         <div className="score-header-row">
-          {/* Score Main Card */}
-          <div className="score-main-card">
-            <div className="score-circle">
-              <span className="score-value">{score}</span>
-              <span className="score-label">Score</span>
+          <div className="score-primary-column">
+            <div className="score-main-card">
+              <div className="score-circle">
+                <span className="score-value">{score}</span>
+                <span className="score-label">Score</span>
+              </div>
+              <div className="score-text">
+                <h3>Strategy Score</h3>
+                <span className={`score-rating ${scoreRatingClass}`}>{scoreLabel}</span>
+              </div>
             </div>
-            <div className="score-text">
-              <h3>Strategy Score</h3>
-              <span className={`score-rating ${scoreRatingClass}`}>{scoreLabel}</span>
-            </div>
-          </div>
 
-          {hasNarrativeHighlights && (
             <div className="summary-card">
               <h4>What drove this score</h4>
-              <div className="summary-list">
-                {narrativeHighlights.map((item, idx) => (
-                  <p key={`summary_${idx}`}>{item}</p>
-                ))}
-              </div>
+              {hasNarrativeHighlights ? (
+                <div className="summary-list">
+                  {narrativeHighlights.map((item, idx) => (
+                    <p key={`summary_${idx}`}>{item}</p>
+                  ))}
+                </div>
+              ) : (
+                <p className="section-fallback-message">Not enough information.</p>
+              )}
             </div>
-          )}
+          </div>
 
-          {hasFinancialImpact && (
+          <div className="score-secondary-column">
             <div className="financial-card">
               <h4>Financial Impact</h4>
-              <div className="fi-grid">
-                {financialGridItems.map((item, idx) => (
-                  <div key={idx} className="fi-item">
-                    <div className="fi-label">{item.label}</div>
-                    <div className="fi-value">{item.value}</div>
-                  </div>
-                ))}
-              </div>
+              {hasFinancialImpact ? (
+                <div className="fi-grid">
+                  {financialGridItems.map((item, idx) => (
+                    <div key={idx} className="fi-item">
+                      <div className="fi-label">{item.label}</div>
+                      <div className="fi-value">{item.value}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="section-fallback-message">
+                  Not enough information.
+                </p>
+              )}
             </div>
-          )}
+          </div>
         </div>
 
-        {/* Category Scores */}
-        {hasScores && (
-          <div className="scores-section">
-            <div className="ss-header">Category Scores</div>
-            {categoryScoreRows.map((row) => (
-              <div key={row.key} className="score-row">
-                <span className="sr-name">{row.name}</span>
-                <div className="sr-bar">
-                  <div className="progress-bar">
-                    <div
-                      className={`fill ${row.color}`}
-                      style={{ width: `${row.value}%` }}
-                    />
-                  </div>
-                </div>
-                <span className="sr-value">{row.value}</span>
-                <span className="sr-desc">{row.description}</span>
+        {lowerSections.filter((section) => section.populated).map((section) => (
+          <React.Fragment key={section.key}>{section.render()}</React.Fragment>
+        ))}
+
+        {missingSectionLabels.length > 0 && (
+          <div className="data-section muted-section">
+            <div className="section-header">Additional analysis areas</div>
+            {missingSectionLabels.map((label) => (
+              <div className="data-row" key={label}>
+                <span className="data-label">{label}</span>
+                <span className="data-value muted">Not enough information.</span>
               </div>
             ))}
-          </div>
-        )}
-
-        {/* Top Risks */}
-        {risks.length > 0 && (
-          <div className="risks-section">
-            <div className="rs-header">Top Risks</div>
-            {risks.map((risk, idx) => (
-              <div key={idx} className="risk-item">
-                <span className="ri-num">{idx + 1}</span>
-                <span className="ri-text">
-                  {typeof risk === 'string' ? risk : (risk.title || risk.risk || risk.description || `Risk ${idx + 1}`)}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Recommendations */}
-        {recommendations.length > 0 && (
-          <div className="recommendations-section">
-            <div className="rec-header">Recommendations</div>
-            {recommendations.map((rec, idx) => (
-              <div key={idx} className="rec-item">
-                <span className="rec-num">{idx + 1}</span>
-                <span className="rec-text">
-                  {typeof rec === 'string' ? rec : (rec.title || rec.recommendation || rec.description || `Recommendation ${idx + 1}`)}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* AI Insights Widget */}
-        {hasAiInsights && (
-          <div className="insights-section">
-            <div className="ins-header">AI Insights</div>
-            {aiInsights.slice(0, 5).map((entry, idx) => {
-              const summary =
-                String(entry?.summary || entry?.insight?.insight_text || '').trim() ||
-                'Insight generated from uploaded data.';
-              const fileName = String(entry?.file_name || entry?.insight?.file_name || '').trim();
-              return (
-                <div key={`${fileName || 'ins'}_${idx}`} className="ins-item">
-                  <div className="ins-meta">{fileName || `Insight ${idx + 1}`}</div>
-                  <div className="ins-text">{summary}</div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {/* Strategic Decision Framework */}
-        {hasDecisionData && (
-          <div className="decision-section">
-            <div className="ds-header">Strategic Decision Framework</div>
-            {[
-              ['acceptable_payback', 'Acceptable Payback'],
-              ['irr_above_hurdle', 'IRR Above Hurdle'],
-              ['npv_positive', 'NPV Positive'],
-              ['strategic_alignment', 'Strategic Alignment'],
-              ['robust_sensitivity', 'Robust Sensitivity'],
-            ].map(([key, label]) => {
-              const yes = !!decisionFramework?.[key];
-              return (
-                <div key={key} className="decision-row">
-                  <span className="dr-criteria">{label}</span>
-                  <span className="dr-status">
-                    <span className={`badge ${yes ? 'badge-success' : 'badge-danger'}`}>
-                      {yes ? 'YES' : 'NO'}
-                    </span>
-                  </span>
-                  <span className="dr-desc">{yes ? 'Criteria met' : 'Criteria not met'}</span>
-                </div>
-              );
-            })}
-            {decisionFramework?.overall_recommendation && (
-              <div className="decision-row">
-                <span className="dr-criteria">Overall Recommendation</span>
-                <span className="dr-status">
-                  <span className={`badge ${
-                    decisionFramework.overall_recommendation === 'Go' ||
-                    decisionFramework.overall_recommendation === 'YES'
-                      ? 'badge-success'
-                      : 'badge-danger'
-                  }`}>
-                    {decisionFramework.overall_recommendation === 'Go' ||
-                     decisionFramework.overall_recommendation === 'YES' ? 'YES' : 'NO'}
-                  </span>
-                </span>
-                <span className="dr-desc">{decisionFramework.overall_recommendation}</span>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Investment Analysis */}
-        {hasInvestmentData && (
-          <div className="data-section">
-            <div className="section-header">Investment Analysis</div>
-            {investmentAnalysis.initial_investment && (
-              <div className="data-row">
-                <span className="data-label">Initial Investment</span>
-                <span className="data-value">{formatCurrency(investmentAnalysis.initial_investment)}</span>
-              </div>
-            )}
-            {investmentAnalysis.payback_period && (
-              <div className="data-row">
-                <span className="data-label">Payback Period</span>
-                <span className="data-value">{investmentAnalysis.payback_period.toFixed(1)} years</span>
-              </div>
-            )}
-            {investmentAnalysis.roi && (
-              <div className="data-row">
-                <span className="data-label">Return on Investment (ROI)</span>
-                <span className="data-value">{formatPercent(investmentAnalysis.roi)}</span>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* NPV & IRR Analysis */}
-        {hasNpvData && (
-          <div className="data-section">
-            <div className="section-header">NPV & IRR Analysis</div>
-            {npvIrrAnalysis.npv && (
-              <div className="data-row">
-                <span className="data-label">Net Present Value (NPV)</span>
-                <span className="data-value">{formatCurrency(npvIrrAnalysis.npv)}</span>
-              </div>
-            )}
-            {npvIrrAnalysis.irr && (
-              <div className="data-row">
-                <span className="data-label">Internal Rate of Return (IRR)</span>
-                <span className="data-value">{formatPercent(npvIrrAnalysis.irr * 100)}</span>
-              </div>
-            )}
-            {npvIrrAnalysis.discount_rate && (
-              <div className="data-row">
-                <span className="data-label">Discount Rate</span>
-                <span className="data-value">{formatPercent(npvIrrAnalysis.discount_rate * 100)}</span>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Valuation */}
-        {hasValuationData && (
-          <div className="data-section">
-            <div className="section-header">Valuation</div>
-            {valuation.enterprise_value && (
-              <div className="data-row">
-                <span className="data-label">Enterprise Value</span>
-                <span className="data-value">{formatCurrency(valuation.enterprise_value)}</span>
-              </div>
-            )}
-            {valuation.multiple && (
-              <div className="data-row">
-                <span className="data-label">EBITDA Multiple</span>
-                <span className="data-value">{valuation.multiple}x</span>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Before vs After Financial Analysis */}
-        {(before.revenue || after.revenue) && (
-          <div className="data-section">
-            <div className="section-header">Before vs After Financial Analysis</div>
-            {(before.revenue || after.revenue) && (
-              <>
-                <div className="data-row">
-                  <span className="data-label">Revenue (Before)</span>
-                  <span className="data-value">{formatCurrency(before.revenue)}</span>
-                </div>
-                <div className="data-row">
-                  <span className="data-label">Revenue (After)</span>
-                  <span className="data-value">{formatCurrency(after.revenue)}</span>
-                </div>
-              </>
-            )}
-            {(before.ebitda || after.ebitda) && (
-              <>
-                <div className="data-row">
-                  <span className="data-label">EBITDA (Before)</span>
-                  <span className="data-value">{formatCurrency(before.ebitda)}</span>
-                </div>
-                <div className="data-row">
-                  <span className="data-label">EBITDA (After)</span>
-                  <span className="data-value">{formatCurrency(after.ebitda)}</span>
-                </div>
-              </>
-            )}
           </div>
         )}
     </div>
