@@ -641,8 +641,19 @@ def _require_tool_access(user_id, tool_id, access='read'):
     return user, plan_key, None
 
 
-def _generate_jaspen_scorecard(client, project_description, llm_model):
+def _generate_jaspen_scorecard(
+    client,
+    project_description,
+    llm_model,
+    *,
+    model_selection=None,
+    strategy_objective='balanced',
+):
     """Run the existing LLM scoring flow and return parsed scorecard JSON."""
+    system_prompt = (
+        "You are a Jaspen strategy analyst specializing in commercialization strategy. "
+        "Always respond with valid JSON only."
+    )
     analysis_prompt = f"""
 You are a Jaspen strategy analyst specializing in commercialization strategy and financial impact assessment. Analyze the following project and provide a comprehensive strategy score and breakdown.
 
@@ -698,10 +709,29 @@ Focus on:
 Provide specific, actionable insights with quantified financial impacts where possible.
 """
 
+    if isinstance(model_selection, dict):
+        try:
+            from .ai_agent import _generate_routed_chat_reply
+
+            routed_text, _usage = _generate_routed_chat_reply(
+                [{"role": "user", "content": analysis_prompt}],
+                model_selection,
+                system_prompt=system_prompt,
+                strategy_objective=strategy_objective,
+                max_tokens=2000,
+                temperature=0.2,
+            )
+            return _extract_json_object(routed_text)
+        except Exception as routed_exc:
+            current_app.logger.warning(
+                "[strategy.analyze] routed scorecard generation failed, falling back to legacy client: %s",
+                routed_exc,
+            )
+
     response = client.chat.completions.create(
         model=llm_model,
         messages=[
-            {"role": "system", "content": "You are a Jaspen strategy analyst specializing in commercialization strategy. Always respond with valid JSON only."},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": analysis_prompt}
         ],
         temperature=0.7,
@@ -788,10 +818,21 @@ def analyze_project():
             return jsonify(model_error), 403
 
         client = get_llm_client()
+        session_key, current_session = _resolve_session_entry(
+            load_user_sessions(current_user_id) or {},
+            thread_id,
+        ) if thread_id else (None, None)
+        strategy_objective = _normalize_strategy_objective(
+            data.get('strategy_objective')
+            or (current_session or {}).get('strategy_objective')
+            or 'balanced'
+        )
         analysis_result = _generate_jaspen_scorecard(
             client,
             effective_description,
             llm_model=model_selection['llm_model'],
+            model_selection=model_selection,
+            strategy_objective=strategy_objective,
         )
 
         analysis_id = str(uuid.uuid4())
