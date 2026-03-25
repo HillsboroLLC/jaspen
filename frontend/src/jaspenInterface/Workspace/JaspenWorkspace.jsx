@@ -37,10 +37,10 @@ import ScoreDashboard   from './ScoreDashboard';
 import ScenarioModeler  from './ScenarioModeler';
 import ComparisonView   from './ComparisonView';
 import BatchIdeaManager from './components/BatchIdeaManager';
-import ExecutionPanel from './components/ExecutionPanel';
 import Onboarding from './components/Onboarding';
 import SidebarIdentityFooter from './components/SidebarIdentityFooter';
 import ThreadEditModal from '../components/ThreadEditModal';
+import { buildInviteDisplay, buildInviteLink } from '../../shared/inviteLink';
 
 // Styles - Single source of truth
 import "./JaspenWorkspace.css";
@@ -1257,14 +1257,15 @@ useEffect(() => {
   const [threadUsage, setThreadUsage] = useState(null);
   const [threadUsageLoading, setThreadUsageLoading] = useState(false);
   const [threadUsageError, setThreadUsageError] = useState('');
+  const [scoreShellMenu, setScoreShellMenu] = useState(null);
+  const scoreShellMenuRef = useRef(null);
   const savedEmail = (() => {
     try { return localStorage.getItem('jaspen_last_email'); } catch { return null; }
   })();
   const userName = displayName || user?.name || user?.email?.split('@')[0] || savedEmail?.split?.('@')[0] || 'User';
   const inviteCode = String(user?.referral_code || '').trim();
-  const inviteLink = inviteCode && typeof window !== 'undefined'
-    ? `${window.location.origin}/?ref=${encodeURIComponent(inviteCode)}`
-    : '';
+  const inviteLink = buildInviteLink(inviteCode);
+  const inviteDisplay = buildInviteDisplay(inviteCode);
   const adminWorkspacePreviewPlan = useMemo(() => {
     if (!Boolean(user?.is_admin)) return '';
     const params = new URLSearchParams(location.search);
@@ -1765,11 +1766,11 @@ useEffect(() => {
   }, [canUseScenarios, activeTab]);
 
   useEffect(() => {
-    if (!canAccessExecutionTab && activeTab === 'execution') {
+    if (activeTab === 'execution') {
       setActiveTab('summary');
       setView('summary');
     }
-  }, [canAccessExecutionTab, activeTab]);
+  }, [activeTab]);
 
   const loadThreadUsage = useCallback(async (targetThreadId = activeThreadId) => {
     if (!targetThreadId) {
@@ -2436,7 +2437,7 @@ useEffect(() => {
               Share your invite link from here or find it again in Account settings.
             </p>
             <div className="jas-ud-invite-row">
-              <code>{inviteCode || 'Generating…'}</code>
+              <code>{inviteDisplay || 'Generating…'}</code>
               <button
                 type="button"
                 className="jas-ud-invite-btn"
@@ -4141,6 +4142,11 @@ const liveStatusMessage = useMemo(() => {
 }, [beginBusy, busy, isStreamingReply, streamToolStatus, sessionId]);
 
 async function onBeginProject() {
+    if (!canAccessExecutionTab) {
+      showToast('Upgrade to Essential to begin a project from this scorecard.', 'info');
+      setBillingModalOpen(true);
+      return;
+    }
     if (!canStartOrgProjects) {
       showToast('Only creators and admins can start new projects in a shared workspace.', 'info');
       return;
@@ -5757,12 +5763,29 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
     window.location.assign('/new');
   }, [sessionId, currentSessionId, analysisResult]);
 
+  const returnToMainJaspenHref = useMemo(() => {
+    const tid = sessionId || currentSessionId || analysisResult?.analysis_id;
+    if (!tid) return '/new';
+    const encoded = encodeURIComponent(String(tid));
+    return `/new?session_id=${encoded}&sid=${encoded}`;
+  }, [sessionId, currentSessionId, analysisResult]);
+
   useEffect(() => {
     if (!analysisResult) return;
     if (activeTab !== 'chat') return;
     setActiveTab('summary');
     setView('summary');
   }, [analysisResult, activeTab]);
+
+  useEffect(() => {
+    if (!scoreShellMenu) return undefined;
+    const handlePointerDown = (event) => {
+      if (scoreShellMenuRef.current?.contains(event.target)) return;
+      setScoreShellMenu(null);
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [scoreShellMenu]);
 
   useEffect(() => {
     const isEditableTarget = (target) => {
@@ -6218,14 +6241,27 @@ const handleSaveScenario = async (scenario) => {
     const scoreSelectValue = useSnapshotSelect
       ? (selectedScorecardId || snapshotOptions[0]?.id || '')
       : selectedVariantId;
+    const selectedScoreLabel = useSnapshotSelect
+      ? (snapshotOptions.find((option) => option.id === scoreSelectValue)?.label || snapshotOptions[0]?.label || 'Baseline Analysis')
+      : (scoreVariants.find((variant) => variant.id === scoreSelectValue)?.label || 'Baseline Analysis');
+    const completedScoreOptions = analysisHistory
+      .filter((item) => (item.result?.status || 'completed') === 'completed')
+      .map((item) => ({
+        id: item.id,
+        label: `${(item.result?.project_name || 'Analysis').slice(0, 32)}${item.result?.jaspen_score != null ? ` — ${item.result.jaspen_score}` : ''}`,
+        result: item.result,
+      }));
+    const selectedCompletedScoreLabel = 'Completed Scores';
     const scenarioTabLocked = !canUseScenarios || effectiveIsViewer;
+    const canBeginProject = canAccessExecutionTab && canStartOrgProjects;
+    const projectActionTitle = !canAccessExecutionTab
+      ? 'Upgrade to begin project'
+      : !canStartOrgProjects
+      ? 'Only creators and admins can begin a project in a shared workspace.'
+      : 'Begin project';
     const TabButton = ({ id, label }) => {
-      const isLocked = (id === 'scenario' && scenarioTabLocked) || (id === 'execution' && executionTabLocked);
-      const badgeLabel = id === 'scenario' && isLocked
-        ? 'Essential+'
-        : id === 'execution' && isLocked
-        ? 'Locked'
-        : '';
+      const isLocked = id === 'scenario' && scenarioTabLocked;
+      const badgeLabel = id === 'scenario' && isLocked ? 'Essential+' : '';
       return (
       <button
         className={`jas-top-tab ${activeTab === id ? 'active' : ''} ${isLocked ? 'disabled' : ''}`}
@@ -6239,14 +6275,11 @@ onClick={async () => {
     } else if (id === 'scenario') {
       showToast('Scenarios are available on Essential, Team, and Enterprise plans.', 'info');
       setBillingModalOpen(true);
-    } else if (id === 'execution') {
-      showToast('Execution planning is available on Essential, Team, and Enterprise plans.', 'info');
-      setBillingModalOpen(true);
     }
     return;
   }
   setActiveTab(id);
-setView(id === 'chat' ? 'intake' : id);
+  setView(id);
 
   // If the user opens the Scenarios tab, pull the latest bundle from the backend
   if (id === 'scenario' && (sessionId || analysisResult?.analysis_id)) {
@@ -6255,19 +6288,9 @@ setView(id === 'chat' ? 'intake' : id);
       await refreshBundle(tid);
     } catch {}
   }
-
-  if (id === 'execution') {
-    const tid = sessionId || currentSessionId || analysisResult?.analysis_id;
-    if (tid) {
-      try {
-        await refreshThreadWbs(tid);
-      } catch {}
-    }
-  }
 }}
       >
         {label}
-        {id === 'execution' && executionTabLocked && <FontAwesomeIcon icon={faLock} style={{ marginLeft: 8 }} />}
         {badgeLabel && <span className="jas-ud-item-badge" style={{ marginLeft: 8 }}>{badgeLabel}</span>}
       </button>
       );
@@ -6611,89 +6634,107 @@ setView(id === 'chat' ? 'intake' : id);
                 </h2>
               </div>
 
-              <button
-                type="button"
+              <a
+                href={returnToMainJaspenHref}
                 className="jas-return-main-btn"
-                onClick={returnToMainJaspen}
                 title="Back to Jaspen"
                 aria-label="Back to Jaspen"
               >
-                <span className="jas-return-main-brand">
-                  <img
-                    src="/android-chrome-192x192.png"
-                    alt=""
-                    aria-hidden="true"
-                    className="jas-return-main-logo"
-                  />
-                  <span className="jas-return-main-label">Jaspen</span>
-                </span>
-                <span className="jas-return-main-plus" aria-hidden="true">
-                  <FontAwesomeIcon icon={faPlus} />
-                </span>
-              </button>
-
-              <div className="jas-workspace-header-spacer" aria-hidden="true" />
+                Back to Jaspen
+              </a>
             </div>
 
             <nav className="jas-top-tabs" role="tablist" aria-label="Jaspen views">
               <TabButton id="summary"  label="Score" />
               <TabButton id="scenario" label="Scenarios" />
-              <TabButton id="execution" label="Execution" />
 
               {/* Only show dropdowns and Begin Project on Score tab */}
               {activeTab === 'summary' && (
-                <div className="jas-right-rail">
-                  <select
-                    className="jas-variant-select"
-                    aria-label="Score View"
-                    value={scoreSelectValue}
-                    onChange={(e) => {
-                      const next = e.target.value;
-                      if (useSnapshotSelect) {
-                        setSelectedScorecardId(next);
-                        return;
-                      }
-                      setSelectedVariantId(next);
-                    }}
-                  >
-                    {useSnapshotSelect
-                      ? snapshotOptions.map((opt) => (
-                          <option key={opt.id} value={opt.id}>{opt.label}</option>
-                        ))
-                      : scoreVariants.map((v) => (
-                          <option key={v.id} value={v.id}>{v.label}</option>
-                        ))}
-                  </select>
-
-                  <select
-                    className="jas-scores-select"
-                    aria-label="Completed Scores"
-                    onChange={(e) => {
-                      const sel = analysisHistory.find(s => s.id === e.target.value);
-                      if (sel?.result) handleSelectAnalysis(sel.result);
-                    }}
-                  >
-                    <option value="">Completed Scores</option>
-                    {analysisHistory
-                      .filter(s => (s.result?.status || 'completed') === 'completed')
-                      .map(s => (
-                        <option key={s.id} value={s.id}>
-                          {(s.result?.project_name || 'Analysis').slice(0, 32)}
-                          {s.result?.jaspen_score != null ? ` — ${s.result.jaspen_score}` : ''}
-                        </option>
-                      ))}
-                  </select>
-
-                  {canStartOrgProjects && (
+                <div className="jas-right-rail" ref={scoreShellMenuRef}>
+                  <div className={`jas-select-menu ${scoreShellMenu === 'scorecard' ? 'open' : ''}`}>
                     <button
+                      type="button"
+                      className="jas-select-trigger"
+                      aria-haspopup="menu"
+                      aria-expanded={scoreShellMenu === 'scorecard'}
+                      onClick={() => setScoreShellMenu((prev) => (prev === 'scorecard' ? null : 'scorecard'))}
+                    >
+                      <span>{selectedScoreLabel}</span>
+                      <FontAwesomeIcon icon={faChevronDown} />
+                    </button>
+                    {scoreShellMenu === 'scorecard' && (
+                      <div className="jas-select-dropdown" role="menu" aria-label="Scorecard views">
+                        {(useSnapshotSelect ? snapshotOptions : scoreVariants).map((option) => (
+                          <button
+                            key={option.id}
+                            type="button"
+                            className={`jas-select-option ${scoreSelectValue === option.id ? 'selected' : ''}`}
+                            role="menuitemradio"
+                            aria-checked={scoreSelectValue === option.id}
+                            onClick={() => {
+                              if (useSnapshotSelect) {
+                                setSelectedScorecardId(option.id);
+                              } else {
+                                setSelectedVariantId(option.id);
+                              }
+                              setScoreShellMenu(null);
+                            }}
+                          >
+                            {scoreSelectValue === option.id && <FontAwesomeIcon icon={faCheck} />}
+                            <span>{option.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className={`jas-select-menu ${scoreShellMenu === 'history' ? 'open' : ''}`}>
+                    <button
+                      type="button"
+                      className="jas-select-trigger"
+                      aria-haspopup="menu"
+                      aria-expanded={scoreShellMenu === 'history'}
+                      onClick={() => setScoreShellMenu((prev) => (prev === 'history' ? null : 'history'))}
+                    >
+                      <span>{selectedCompletedScoreLabel}</span>
+                      <FontAwesomeIcon icon={faChevronDown} />
+                    </button>
+                    {scoreShellMenu === 'history' && (
+                      <div className="jas-select-dropdown" role="menu" aria-label="Completed scores">
+                        {completedScoreOptions.length === 0 ? (
+                          <div className="jas-select-empty">No completed scores yet.</div>
+                        ) : (
+                          completedScoreOptions.map((option) => (
+                            <button
+                              key={option.id}
+                              type="button"
+                              className="jas-select-option"
+                              role="menuitem"
+                              onClick={() => {
+                                if (option.result) {
+                                  handleSelectAnalysis(option.result);
+                                }
+                                setScoreShellMenu(null);
+                              }}
+                            >
+                              <span>{option.label}</span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                    <button
+                      type="button"
                       className="begin-project-btn"
                       onClick={onBeginProject}
-                      disabled={beginBusy}
+                      disabled={beginBusy || !canBeginProject}
+                      title={projectActionTitle}
                     >
                       <FontAwesomeIcon icon={beginBusy ? faSpinner : faPlay} spin={beginBusy} />
                       <span>{beginBusy ? "Working…" : "Project"}</span>
                     </button>
-                  )}
                   <button
                     type="button"
                     className="save-starter-btn"
@@ -6781,8 +6822,6 @@ setView(id === 'chat' ? 'intake' : id);
         threadBundleId={sessionId}
         scoreCommentary={scoreCommentary}
         onOpenThreadEdit={() => setThreadEditOpen(true)}
-        onGenerateAiWbs={handleGenerateAiWbsFromScorecard}
-        generatingAiWbs={aiWbsBusy}
         canExportScorecardPdf={canExportScorecardPdf}
         canExportScorecardPptx={canExportScorecardPptx}
         canExportWbsCsv={canExportWbsCsv}
@@ -6798,63 +6837,10 @@ setView(id === 'chat' ? 'intake' : id);
         onBackToMain={handleNewAnalysis}
         onOpenChat={returnToMainJaspen}
         onOpenScenario={() => { setActiveTab('scenario'); setView('scenario'); }}
-        onConvertToProject={() => {
-          storage.saveProject({
-            id: `proj_${Date.now()}`,
-            source_analysis_id: sessionId,
-            createdAt: Date.now(),
-            title: deriveIdeaTitle({ result: analysisResult, messages, fallback: 'Untitled Idea' }),
-            payload: analysisResult,
-          });
-          window.location.href = `https://www.jaspen.ai/ops/project-planning?from=jas&analysis=${encodeURIComponent(sessionId)}`;
-        }}
       />
     </ErrorBoundary>
   </div>
 )}
-
-            {activeTab === 'execution' && (
-              <ErrorBoundary title="Execution panel unavailable" onRetry={() => {
-                const tid = sessionId || currentSessionId || analysisResult?.analysis_id;
-                if (tid) refreshThreadWbs(tid);
-              }}>
-                <ExecutionPanel
-                  threadId={sessionId || currentSessionId || analysisResult?.analysis_id || ''}
-                  wbs={threadWbs}
-                  loading={wbsLoading && !threadWbs}
-                  authFetch={authFetch}
-                  onRefresh={async () => {
-                    const tid = sessionId || currentSessionId || analysisResult?.analysis_id;
-                    if (tid) await refreshThreadWbs(tid);
-                  }}
-                  onUpdateTask={async (taskId, updates) => {
-                    await chatCommandHandlers[ChatActionTypes.WBS_UPDATE_TASK]({
-                      id: taskId,
-                      ...updates,
-                    });
-                  }}
-                  onAddTask={async (taskData) => {
-                    await chatCommandHandlers[ChatActionTypes.WBS_ADD_TASK](taskData);
-                  }}
-                  onRemoveTask={async (taskId) => {
-                    await chatCommandHandlers[ChatActionTypes.WBS_REMOVE_TASK]({ id: taskId });
-                  }}
-                  onAddDependency={async (taskId, dependsOnId) => {
-                    await chatCommandHandlers[ChatActionTypes.WBS_ADD_DEPENDENCY]({
-                      task_id: taskId,
-                      depends_on: dependsOnId,
-                    });
-                  }}
-                  canEditFields={canEditExecutionFields}
-                  canEditStructure={canEditExecutionStructure}
-                  canEditDependencies={canEditExecutionDependencies}
-                  isViewer={executionReadOnly}
-                  isLocked={executionTabLocked}
-                  onOpenChat={returnToMainJaspen}
-                  onOpenBilling={() => setBillingModalOpen(true)}
-                />
-              </ErrorBoundary>
-            )}
 
             {activeTab === 'scenario' && (
               <>

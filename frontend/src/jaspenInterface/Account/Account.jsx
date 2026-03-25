@@ -4,6 +4,7 @@ import { API_BASE } from '../../config/apiBase';
 import { getPlanConnectorSentence } from '../../shared/billing/planConnectors';
 import { useAuth } from '../../shared/auth/AuthContext';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
+import { buildInviteDisplay, buildInviteLink } from '../../shared/inviteLink';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faBookOpen,
@@ -349,9 +350,8 @@ export default function Account() {
     pending: false,
   });
   const inviteCode = String(user?.referral_code || '').trim();
-  const inviteLink = inviteCode && typeof window !== 'undefined'
-    ? `${window.location.origin}/?ref=${encodeURIComponent(inviteCode)}`
-    : '';
+  const inviteLink = buildInviteLink(inviteCode);
+  const inviteDisplay = buildInviteDisplay(inviteCode);
 
   useEffect(() => {
     let mounted = true;
@@ -1500,7 +1500,7 @@ export default function Account() {
             </article>
             <article className="account-overview-card">
               <h3>Invite others</h3>
-              <p>{inviteCode || 'Generating your code...'}</p>
+              <p>{inviteDisplay || 'Generating your invite link...'}</p>
               <button type="button" className="account-secondary-btn" onClick={copyInviteLink} disabled={!inviteLink}>
                 Copy invite link
               </button>

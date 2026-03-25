@@ -1,4 +1,4 @@
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse, parse_qs
 from datetime import datetime, timedelta, timezone
 import base64
 import io
@@ -199,6 +199,20 @@ def _password_reset_link(token):
 
 def _normalize_referral_code(value):
     normalized = str(value or '').strip()
+    if normalized and ('://' in normalized or normalized.startswith('jaspen.ai/')):
+        raw_url = normalized if '://' in normalized else f'https://{normalized}'
+        try:
+            parsed = urlparse(raw_url)
+            query = parse_qs(parsed.query or '')
+            normalized = (
+                query.get('ref', [None])[0]
+                or query.get('referral_code', [None])[0]
+                or query.get('invite', [None])[0]
+                or query.get('invite_code', [None])[0]
+                or normalized
+            )
+        except Exception:
+            pass
     return normalized or None
 
 
@@ -206,7 +220,16 @@ def _resolve_referring_user(referral_code):
     normalized = _normalize_referral_code(referral_code)
     if not normalized:
         return None
-    return User.query.filter_by(referral_code=normalized).first()
+    exact_match = User.query.filter_by(referral_code=normalized).first()
+    if exact_match:
+        return exact_match
+
+    # Allow a shorter shareable invite code as long as it resolves unambiguously.
+    if len(normalized) < 36:
+        matches = User.query.filter(User.referral_code.like(f'{normalized}%')).limit(2).all()
+        if len(matches) == 1:
+            return matches[0]
+    return None
 
 
 def _verification_required_enabled():
