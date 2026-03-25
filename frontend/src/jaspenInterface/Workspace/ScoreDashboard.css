@@ -272,6 +272,7 @@
 /* --- Score Header Row --- */
 .score-dashboard-container .score-header-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 28px;
   margin-bottom: 28px;
 }
@@ -349,11 +350,40 @@
 
 /* --- Financial Impact Card --- */
 .score-dashboard-container .financial-card {
-  flex: 1;
+  flex: 1 1 320px;
   background: var(--white);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: 24px;
+}
+
+.score-dashboard-container .summary-card {
+  flex: 1 1 320px;
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 24px;
+}
+
+.score-dashboard-container .summary-card h4 {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin: 0 0 16px 0;
+}
+
+.score-dashboard-container .summary-list {
+  display: grid;
+  gap: 12px;
+}
+
+.score-dashboard-container .summary-list p {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
 }
 
 .score-dashboard-container .financial-card h4 {

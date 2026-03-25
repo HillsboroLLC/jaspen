@@ -5,7 +5,7 @@
 // ============================================================================
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faChevronDown, faDownload, faPlay, faSpinner } from '@fortawesome/free-solid-svg-icons';
+import { faChevronDown, faDownload, faSpinner } from '@fortawesome/free-solid-svg-icons';
 import { ScoreDashboardSkeleton } from '../../shared/components/SkeletonLoader';
 import './ScoreDashboard.css';
 
@@ -20,9 +20,7 @@ export default function ScoreDashboard({
   scorecardSnapshots = [],
   selectedScorecardId = null,
   threadBundleId = null,
-  onBeginProject = null,
-  onGenerateAiWbs = null,
-  generatingAiWbs = false,
+  scoreCommentary = null,
   canExportScorecardPdf = false,
   canExportScorecardPptx = false,
   canExportWbsCsv = false,
@@ -51,6 +49,11 @@ export default function ScoreDashboard({
   const risks = result.top_risks || result.risks || [];
   const recommendations = result.recommendations || [];
   const aiInsights = Array.isArray(result.ai_insights) ? result.ai_insights : [];
+  const keyInsights = Array.isArray(result.key_insights)
+    ? result.key_insights
+    : typeof result.key_insights === 'string' && result.key_insights.trim()
+    ? [result.key_insights.trim()]
+    : [];
 
   // Before/After financial data
   const beforeAfter = result.before_after_financials || {};
@@ -242,6 +245,19 @@ export default function ScoreDashboard({
     return items;
   }, [financialImpact]);
 
+  const narrativeHighlights = useMemo(() => {
+    const items = [];
+    const commentaryOverall = String(scoreCommentary?.overall || '').trim();
+    if (commentaryOverall) items.push(commentaryOverall);
+    keyInsights.forEach((entry) => {
+      const text = typeof entry === 'string'
+        ? entry.trim()
+        : String(entry?.summary || entry?.title || entry?.description || '').trim();
+      if (text) items.push(text);
+    });
+    return Array.from(new Set(items)).slice(0, 3);
+  }, [scoreCommentary, keyInsights]);
+
   // Category scores with progress bar data
   const categoryScoreRows = useMemo(() => {
     const scoreMapping = {
@@ -266,6 +282,7 @@ export default function ScoreDashboard({
   const hasScores = categoryScoreRows.length > 0;
   const hasFinancialImpact = financialGridItems.length > 0;
   const hasAiInsights = aiInsights.length > 0;
+  const hasNarrativeHighlights = narrativeHighlights.length > 0;
 
   if (loading) {
     return <div className="score-dashboard-container"><ScoreDashboardSkeleton /></div>;
@@ -327,10 +344,20 @@ export default function ScoreDashboard({
             </div>
           </div>
 
-          {/* Financial Impact Card */}
-          <div className="financial-card">
-            <h4>Financial Impact</h4>
-            {hasFinancialImpact ? (
+          {hasNarrativeHighlights && (
+            <div className="summary-card">
+              <h4>What drove this score</h4>
+              <div className="summary-list">
+                {narrativeHighlights.map((item, idx) => (
+                  <p key={`summary_${idx}`}>{item}</p>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {hasFinancialImpact && (
+            <div className="financial-card">
+              <h4>Financial Impact</h4>
               <div className="fi-grid">
                 {financialGridItems.map((item, idx) => (
                   <div key={idx} className="fi-item">
@@ -339,12 +366,8 @@ export default function ScoreDashboard({
                   </div>
                 ))}
               </div>
-            ) : (
-              <div className="empty-state">
-                <p>No financial impact data available</p>
-              </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
 
         {/* Category Scores */}
@@ -559,51 +582,6 @@ export default function ScoreDashboard({
                 </div>
               </>
             )}
-          </div>
-        )}
-
-        {/* Begin Project Card (alternate placement) */}
-        {(onBeginProject || onGenerateAiWbs) && threadBundleId && selectedScorecardId && (
-          <div className="begin-project-card">
-            <h3>Ready to Begin?</h3>
-            <p>
-              Generate a detailed Work Breakdown Structure and project plan based on this scorecard.
-            </p>
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              {onGenerateAiWbs && (
-                <button
-                  className="sc-btn sc-btn-primary"
-                  onClick={() => onGenerateAiWbs({
-                    threadBundleId,
-                    scorecardId: selectedScorecardId,
-                    projectName: result.project_name || 'Untitled Idea',
-                  })}
-                  disabled={generatingAiWbs}
-                >
-                  <FontAwesomeIcon icon={generatingAiWbs ? faSpinner : faPlay} spin={generatingAiWbs} /> {generatingAiWbs ? 'Generating project plan…' : 'Generate with AI'}
-                </button>
-              )}
-              {onBeginProject && (
-                <button
-                  className="sc-btn sc-btn-primary"
-                  onClick={async () => {
-                    try {
-                      const projectData = await onBeginProject({
-                        threadBundleId,
-                        scorecardId: selectedScorecardId,
-                        projectName: result.project_name || 'Untitled Idea'
-                      });
-                      console.log('[ScoreDashboard] Project created:', projectData);
-                    } catch (err) {
-                      console.error('[ScoreDashboard] Begin Project failed:', err);
-                      alert('Failed to create project. Please try again.');
-                    }
-                  }}
-                >
-                  <FontAwesomeIcon icon={faPlay} /> Project
-                </button>
-              )}
-            </div>
           </div>
         )}
     </div>

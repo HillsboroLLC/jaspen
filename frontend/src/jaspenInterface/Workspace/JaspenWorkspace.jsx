@@ -1208,6 +1208,10 @@ useEffect(() => {
 
   const navigate = useNavigate();
   const location = useLocation();
+  const requestedWorkspaceMode = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    return String(params.get('mode') || '').trim().toLowerCase();
+  }, [location.search]);
   const handleUnauthorized = useCallback(async () => {
     const status = await checkAuthStatus({ silent: true });
     if (!status?.authenticated) {
@@ -3122,6 +3126,7 @@ useEffect(() => {
         return;
       }
       const sid = resolvedUrlSessionId;
+      const restoreRefineMode = requestedWorkspaceMode === 'refine';
 
 
       // prevent readiness “snap” edge cases during restore
@@ -3196,9 +3201,14 @@ if (rawHistory.length > 0) {
         const normalized = normalizeAnalysis(fullScorecard);
         setAnalysisResult(normalized);
         baselineRef.current = normalized;
-
-        setView('summary');
-        setActiveTab('summary');
+        if (restoreRefineMode) {
+          setView('intake');
+          setActiveTab('summary');
+          dispatchSidebar({ type: 'CLOSE_ALL' });
+        } else {
+          setView('summary');
+          setActiveTab('summary');
+        }
       } else {
         setView('intake');
       }
@@ -3209,7 +3219,7 @@ if (rawHistory.length > 0) {
     })();
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allowedModelTypes]);
+  }, [allowedModelTypes, requestedWorkspaceMode]);
 
   const scrollToEnd = () => endRef.current?.scrollIntoView({ behavior: 'smooth' });
   useEffect(scrollToEnd, [messages, busy]);
@@ -5765,9 +5775,9 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
 
   const returnToMainJaspenHref = useMemo(() => {
     const tid = sessionId || currentSessionId || analysisResult?.analysis_id;
-    if (!tid) return '/new';
+    if (!tid) return '/new?mode=refine';
     const encoded = encodeURIComponent(String(tid));
-    return `/new?session_id=${encoded}&sid=${encoded}`;
+    return `/new?session_id=${encoded}&sid=${encoded}&mode=refine`;
   }, [sessionId, currentSessionId, analysisResult]);
 
   useEffect(() => {
@@ -6899,7 +6909,7 @@ onClick={async () => {
   // =========================
 
   // If we have an analysis, render the workspace with tabs (post-Analyze)
-  if (analysisResult) {
+  if (analysisResult && view !== 'intake') {
     return renderWorkspaceShell();
   }
 
