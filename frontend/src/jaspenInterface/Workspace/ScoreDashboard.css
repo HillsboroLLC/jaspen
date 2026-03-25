@@ -733,6 +733,11 @@
   color: #c0392b;
 }
 
+.score-dashboard-container .badge-warning {
+  background: #fff3d6;
+  color: #9a6700;
+}
+
 /* --- Data Section --- */
 .score-dashboard-container .data-section {
   background: var(--white);

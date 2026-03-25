@@ -44,33 +44,45 @@ export default function ScoreDashboard({
 
   const result = selectedSnapshot || analysisResult || {};
   const score = result.jaspen_score || 0;
-  const componentScores = result.component_scores || {};
-  const financialImpact = result.financial_impact || {};
+  const componentScores = useMemo(() => result.component_scores || {}, [result.component_scores]);
+  const componentRationale = useMemo(() => result.component_rationale || {}, [result.component_rationale]);
+  const financialImpact = useMemo(() => result.financial_impact || {}, [result.financial_impact]);
   const risks = result.top_risks || result.risks || [];
   const recommendations = result.recommendations || [];
   const aiInsights = Array.isArray(result.ai_insights) ? result.ai_insights : [];
-  const keyInsights = Array.isArray(result.key_insights)
-    ? result.key_insights
-    : typeof result.key_insights === 'string' && result.key_insights.trim()
-    ? [result.key_insights.trim()]
-    : [];
+  const keyInsights = useMemo(() => (
+    Array.isArray(result.key_insights)
+      ? result.key_insights
+      : typeof result.key_insights === 'string' && result.key_insights.trim()
+      ? [result.key_insights.trim()]
+      : []
+  ), [result.key_insights]);
 
   // Before/After financial data
   const beforeAfter = result.before_after_financials || {};
   const before = beforeAfter.before || {};
   const after = beforeAfter.after || {};
 
+  const hasMeaningfulValue = (value) => {
+    if (value === null || value === undefined || value === '') return false;
+    if (Array.isArray(value)) return value.some(hasMeaningfulValue);
+    if (typeof value === 'object') {
+      return Object.entries(value).some(([key, inner]) => key !== '_numeric' && hasMeaningfulValue(inner));
+    }
+    return true;
+  };
+
   // Investment Analysis
   const investmentAnalysis = result.investment_analysis || {};
-  const hasInvestmentData = Object.keys(investmentAnalysis).length > 0;
+  const hasInvestmentData = hasMeaningfulValue(investmentAnalysis);
 
   // NPV/IRR Analysis
   const npvIrrAnalysis = result.npv_irr_analysis || {};
-  const hasNpvData = Object.keys(npvIrrAnalysis).length > 0;
+  const hasNpvData = hasMeaningfulValue(npvIrrAnalysis);
 
   // Valuation
   const valuation = result.valuation || {};
-  const hasValuationData = Object.keys(valuation).length > 0;
+  const hasValuationData = hasMeaningfulValue(valuation);
 
   // Decision Framework (supports object or JSON string)
   const dfRaw =
@@ -81,8 +93,8 @@ export default function ScoreDashboard({
       ? (() => { try { return JSON.parse(dfRaw); } catch { return null; } })()
       : (dfRaw && typeof dfRaw === 'object' ? dfRaw : null);
 
-  const hasDecisionData = !!(decisionFramework && Object.keys(decisionFramework).length);
-  const hasBeforeAfterData = Boolean(before.revenue || after.revenue || before.ebitda || after.ebitda);
+  const hasDecisionData = hasMeaningfulValue(decisionFramework);
+  const hasBeforeAfterData = hasMeaningfulValue(before) || hasMeaningfulValue(after);
 
   const cleanNarrativeText = (value) => {
     const text = String(value || '')
@@ -99,10 +111,10 @@ export default function ScoreDashboard({
 
   const buildSmartExplanations = () => {
     const byCategory = {
-      financial_health: 'Reflects available revenue, margin, and churn inputs.',
-      market_position: 'Reflects stated market and competitive context.',
-      operational_efficiency: 'Based on available execution and ops inputs.',
-      execution_readiness: 'Reflects stated timeline, team, and funding inputs.',
+      financial_health: componentRationale.financial_health || 'Reflects available revenue, margin, and churn inputs.',
+      market_position: componentRationale.market_position || 'Reflects stated market and competitive context.',
+      operational_efficiency: componentRationale.operational_efficiency || 'Based on available execution and ops inputs.',
+      execution_readiness: componentRationale.execution_readiness || 'Reflects stated timeline, team, and funding inputs.',
     };
 
     return { byCategory };
@@ -120,23 +132,6 @@ export default function ScoreDashboard({
     if (s >= 60) return 'good';
     if (s >= 40) return 'fair';
     return 'at-risk';
-  };
-
-  const formatCurrency = (v) => {
-    if (v === null || v === undefined || v === '') return 'N/A';
-    const n = Number(String(v).replace(/[^\d.-]/g, ''));
-    if (isNaN(n)) return 'N/A';
-    if (Math.abs(n) >= 1e9) return `$${(n / 1e9).toFixed(1)}B`;
-    if (Math.abs(n) >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
-    if (Math.abs(n) >= 1e3) return `$${(n / 1e3).toFixed(1)}K`;
-    return `$${n.toLocaleString()}`;
-  };
-
-  const formatPercent = (v) => {
-    if (v === null || v === undefined || v === '') return 'N/A';
-    const n = Number(String(v).replace(/[^\d.-]/g, ''));
-    if (isNaN(n)) return 'N/A';
-    return `${n.toFixed(1)}%`;
   };
 
   const formatLabel = (k) =>
@@ -232,25 +227,26 @@ export default function ScoreDashboard({
 
   // Financial impact rows for the grid
   const financialGridItems = useMemo(() => {
-    const priorityKeys = ['ebitda_at_risk', 'potential_loss', 'roi_opportunity', 'projected_ebitda'];
+    const priorityKeys = ['ebitda_at_risk', 'potential_loss', 'roi_opportunity', 'projected_ebitda', 'time_to_market_impact'];
     const items = [];
 
     priorityKeys.forEach((key) => {
-      if (financialImpact && financialImpact[key] !== undefined && financialImpact[key] !== null) {
+      const rawValue = financialImpact?.[key];
+      if (rawValue !== undefined && rawValue !== null && rawValue !== '') {
         items.push({
           label: formatLabel(key),
-          value: formatCurrency(financialImpact[key]),
+          value: String(rawValue),
         });
       }
     });
 
-    // If we have fewer than 4 items, add other financial impact values
-    if (items.length < 4) {
+    if (items.length < 5) {
       Object.entries(financialImpact || {}).forEach(([key, value]) => {
-        if (!priorityKeys.includes(key) && value !== null && value !== undefined && items.length < 4) {
+        if (key === '_numeric') return;
+        if (!priorityKeys.includes(key) && value !== null && value !== undefined && value !== '' && items.length < 5) {
           items.push({
             label: formatLabel(key),
-            value: formatCurrency(value),
+            value: String(value),
           });
         }
       });
@@ -263,6 +259,10 @@ export default function ScoreDashboard({
     const items = [];
     const commentaryOverall = cleanNarrativeText(scoreCommentary?.overall || '');
     if (commentaryOverall) items.push(commentaryOverall);
+    Object.values(componentRationale || {}).forEach((entry) => {
+      const text = cleanNarrativeText(entry);
+      if (text) items.push(text);
+    });
     keyInsights.forEach((entry) => {
       const text = typeof entry === 'string'
         ? cleanNarrativeText(entry)
@@ -270,7 +270,7 @@ export default function ScoreDashboard({
       if (text) items.push(text);
     });
     return Array.from(new Set(items)).slice(0, 3);
-  }, [scoreCommentary, keyInsights]);
+  }, [scoreCommentary, componentRationale, keyInsights]);
 
   // Category scores with progress bar data
   const categoryScoreRows = useMemo(() => {
@@ -346,9 +346,16 @@ export default function ScoreDashboard({
           {risks.map((risk, idx) => (
             <div key={idx} className="risk-item">
               <span className="ri-num">{idx + 1}</span>
-              <span className="ri-text">
-                {typeof risk === 'string' ? risk : (risk.title || risk.risk || risk.description || `Risk ${idx + 1}`)}
-              </span>
+              <div className="ri-text">
+                <div>{typeof risk === 'string' ? risk : (risk.title || risk.risk || risk.description || `Risk ${idx + 1}`)}</div>
+                {typeof risk === 'object' && (
+                  <div className="sr-desc">
+                    {[risk.probability, risk.impact_category && formatLabel(risk.impact_category), risk.impact_dollars || risk.impact]
+                      .filter(Boolean)
+                      .join(' • ') || (risk.mitigation ? `Mitigation: ${risk.mitigation}` : '')}
+                  </div>
+                )}
+              </div>
             </div>
           ))}
         </div>
@@ -401,41 +408,40 @@ export default function ScoreDashboard({
       render: () => (
         <div className="decision-section">
           <div className="ds-header">Strategic Decision Framework</div>
-          {[
-            ['acceptable_payback', 'Acceptable Payback'],
-            ['irr_above_hurdle', 'IRR Above Hurdle'],
-            ['npv_positive', 'NPV Positive'],
-            ['strategic_alignment', 'Strategic Alignment'],
-            ['robust_sensitivity', 'Robust Sensitivity'],
-          ].map(([key, label]) => {
-            const yes = !!decisionFramework?.[key];
-            return (
-              <div key={key} className="decision-row">
-                <span className="dr-criteria">{label}</span>
-                <span className="dr-status">
-                  <span className={`badge ${yes ? 'badge-success' : 'badge-danger'}`}>
-                    {yes ? 'YES' : 'NO'}
-                  </span>
-                </span>
-                <span className="dr-desc">{yes ? 'Criteria met' : 'Criteria not met'}</span>
-              </div>
-            );
-          })}
-          {decisionFramework?.overall_recommendation && (
+          {decisionFramework?.go_no_go && (
             <div className="decision-row">
-              <span className="dr-criteria">Overall Recommendation</span>
+              <span className="dr-criteria">Decision</span>
               <span className="dr-status">
                 <span className={`badge ${
-                  decisionFramework.overall_recommendation === 'Go' ||
-                  decisionFramework.overall_recommendation === 'YES'
+                  decisionFramework.go_no_go === 'GO'
                     ? 'badge-success'
+                    : decisionFramework.go_no_go === 'CONDITIONAL'
+                    ? 'badge-warning'
                     : 'badge-danger'
                 }`}>
-                  {decisionFramework.overall_recommendation === 'Go' ||
-                   decisionFramework.overall_recommendation === 'YES' ? 'YES' : 'NO'}
+                  {decisionFramework.go_no_go}
                 </span>
               </span>
-              <span className="dr-desc">{decisionFramework.overall_recommendation}</span>
+              <span className="dr-desc">{decisionFramework.key_condition || 'Decision outcome generated from current score inputs.'}</span>
+            </div>
+          )}
+          {decisionFramework?.confidence_level && (
+            <div className="decision-row">
+              <span className="dr-criteria">Confidence Level</span>
+              <span className="dr-status">{decisionFramework.confidence_level}</span>
+              <span className="dr-desc">Confidence in the current recommendation.</span>
+            </div>
+          )}
+          {decisionFramework?.downside_scenario && (
+            <div className="decision-row">
+              <span className="dr-criteria">Downside Scenario</span>
+              <span className="dr-desc">{decisionFramework.downside_scenario}</span>
+            </div>
+          )}
+          {decisionFramework?.upside_scenario && (
+            <div className="decision-row">
+              <span className="dr-criteria">Upside Scenario</span>
+              <span className="dr-desc">{decisionFramework.upside_scenario}</span>
             </div>
           )}
         </div>
@@ -448,22 +454,28 @@ export default function ScoreDashboard({
       render: () => (
         <div className="data-section">
           <div className="section-header">Investment Analysis</div>
-          {investmentAnalysis.initial_investment && (
+          {investmentAnalysis.total_investment_required && (
             <div className="data-row">
-              <span className="data-label">Initial Investment</span>
-              <span className="data-value">{formatCurrency(investmentAnalysis.initial_investment)}</span>
+              <span className="data-label">Total Investment Required</span>
+              <span className="data-value">{investmentAnalysis.total_investment_required}</span>
+            </div>
+          )}
+          {investmentAnalysis.expected_annual_return && (
+            <div className="data-row">
+              <span className="data-label">Expected Annual Return</span>
+              <span className="data-value">{investmentAnalysis.expected_annual_return}</span>
             </div>
           )}
           {investmentAnalysis.payback_period && (
             <div className="data-row">
               <span className="data-label">Payback Period</span>
-              <span className="data-value">{investmentAnalysis.payback_period.toFixed(1)} years</span>
+              <span className="data-value">{investmentAnalysis.payback_period}</span>
             </div>
           )}
-          {investmentAnalysis.roi && (
+          {investmentAnalysis.cost_of_inaction && (
             <div className="data-row">
-              <span className="data-label">Return on Investment (ROI)</span>
-              <span className="data-value">{formatPercent(investmentAnalysis.roi)}</span>
+              <span className="data-label">Cost of Inaction</span>
+              <span className="data-value">{investmentAnalysis.cost_of_inaction}</span>
             </div>
           )}
         </div>
@@ -476,22 +488,28 @@ export default function ScoreDashboard({
       render: () => (
         <div className="data-section">
           <div className="section-header">NPV & IRR Analysis</div>
-          {npvIrrAnalysis.npv && (
+          {npvIrrAnalysis.npv_3_year && (
             <div className="data-row">
-              <span className="data-label">Net Present Value (NPV)</span>
-              <span className="data-value">{formatCurrency(npvIrrAnalysis.npv)}</span>
+              <span className="data-label">3-Year NPV</span>
+              <span className="data-value">{npvIrrAnalysis.npv_3_year}</span>
             </div>
           )}
           {npvIrrAnalysis.irr && (
             <div className="data-row">
               <span className="data-label">Internal Rate of Return (IRR)</span>
-              <span className="data-value">{formatPercent(npvIrrAnalysis.irr * 100)}</span>
+              <span className="data-value">{npvIrrAnalysis.irr}</span>
             </div>
           )}
-          {npvIrrAnalysis.discount_rate && (
+          {npvIrrAnalysis.discount_rate_used && (
             <div className="data-row">
               <span className="data-label">Discount Rate</span>
-              <span className="data-value">{formatPercent(npvIrrAnalysis.discount_rate * 100)}</span>
+              <span className="data-value">{npvIrrAnalysis.discount_rate_used}</span>
+            </div>
+          )}
+          {npvIrrAnalysis.break_even_month !== null && npvIrrAnalysis.break_even_month !== undefined && (
+            <div className="data-row">
+              <span className="data-label">Break-even Month</span>
+              <span className="data-value">{npvIrrAnalysis.break_even_month}</span>
             </div>
           )}
         </div>
@@ -507,13 +525,25 @@ export default function ScoreDashboard({
           {valuation.enterprise_value && (
             <div className="data-row">
               <span className="data-label">Enterprise Value</span>
-              <span className="data-value">{formatCurrency(valuation.enterprise_value)}</span>
+              <span className="data-value">{valuation.enterprise_value}</span>
             </div>
           )}
-          {valuation.multiple && (
+          {valuation.multiple !== null && valuation.multiple !== undefined && valuation.multiple !== '' && (
             <div className="data-row">
-              <span className="data-label">EBITDA Multiple</span>
+              <span className="data-label">Multiple</span>
               <span className="data-value">{valuation.multiple}x</span>
+            </div>
+          )}
+          {valuation.basis && (
+            <div className="data-row">
+              <span className="data-label">Basis</span>
+              <span className="data-value">{valuation.basis}</span>
+            </div>
+          )}
+          {valuation.comparable_range && (
+            <div className="data-row">
+              <span className="data-label">Comparable Range</span>
+              <span className="data-value">{valuation.comparable_range}</span>
             </div>
           )}
         </div>
@@ -530,11 +560,11 @@ export default function ScoreDashboard({
             <>
               <div className="data-row">
                 <span className="data-label">Revenue (Before)</span>
-                <span className="data-value">{formatCurrency(before.revenue)}</span>
+                <span className="data-value">{before.revenue}</span>
               </div>
               <div className="data-row">
                 <span className="data-label">Revenue (After)</span>
-                <span className="data-value">{formatCurrency(after.revenue)}</span>
+                <span className="data-value">{after.revenue}</span>
               </div>
             </>
           )}
@@ -542,11 +572,11 @@ export default function ScoreDashboard({
             <>
               <div className="data-row">
                 <span className="data-label">EBITDA (Before)</span>
-                <span className="data-value">{formatCurrency(before.ebitda)}</span>
+                <span className="data-value">{before.ebitda}</span>
               </div>
               <div className="data-row">
                 <span className="data-label">EBITDA (After)</span>
-                <span className="data-value">{formatCurrency(after.ebitda)}</span>
+                <span className="data-value">{after.ebitda}</span>
               </div>
             </>
           )}

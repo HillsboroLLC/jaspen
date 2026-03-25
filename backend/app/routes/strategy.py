@@ -473,6 +473,286 @@ def _extract_json_object(text):
         return json.loads(json_match.group())
 
 
+def _clean_scorecard_text(value):
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _safe_int(value):
+    parsed = _safe_float(value)
+    if parsed is None:
+        return None
+    return int(round(parsed))
+
+
+def _normalize_score_value(value):
+    parsed = _safe_float(value)
+    if parsed is None:
+        return None
+    return max(0, min(100, int(round(parsed))))
+
+
+def _normalize_metric_field(value, kind='text'):
+    raw = _clean_scorecard_text(value)
+    numeric = None
+
+    if kind in {'currency', 'percentage'}:
+        numeric = _safe_float(value)
+    elif kind == 'duration':
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            numeric = float(value)
+        elif isinstance(value, str):
+            match = re.search(r'-?\d+(?:\.\d+)?', value.replace(',', ''))
+            if match:
+                try:
+                    numeric = float(match.group())
+                except Exception:
+                    numeric = None
+    elif kind == 'number':
+        numeric = _safe_float(value)
+
+    return raw, numeric
+
+
+def _normalize_metric_group(raw_group, field_types):
+    source = raw_group if isinstance(raw_group, dict) else {}
+    normalized = {}
+    numeric_map = {}
+    for key, kind in field_types.items():
+        raw_value, numeric_value = _normalize_metric_field(source.get(key), kind=kind)
+        normalized[key] = raw_value
+        numeric_map[key] = numeric_value
+    normalized['_numeric'] = numeric_map
+    return normalized
+
+
+def _metric_numeric_value(group, key):
+    if not isinstance(group, dict):
+        return None
+    numeric_map = group.get('_numeric')
+    if isinstance(numeric_map, dict):
+        numeric_value = _safe_float(numeric_map.get(key))
+        if numeric_value is not None:
+            return numeric_value
+    return _safe_float(group.get(key))
+
+
+def _normalize_scorecard_payload(payload):
+    source = payload if isinstance(payload, dict) else {}
+    normalized = dict(source)
+
+    jaspen_score = _normalize_score_value(
+        source.get('jaspen_score')
+        if source.get('jaspen_score') is not None
+        else source.get('overall_score')
+    )
+    normalized['jaspen_score'] = jaspen_score if jaspen_score is not None else 0
+    normalized['score_category'] = _scores_category_from_values(
+        normalized['jaspen_score'],
+        explicit_category=source.get('score_category'),
+    )
+
+    component_source = source.get('component_scores') if isinstance(source.get('component_scores'), dict) else {}
+    component_fallback = source.get('scores') if isinstance(source.get('scores'), dict) else {}
+    component_scores = {}
+    for key in ('financial_health', 'operational_efficiency', 'market_position', 'execution_readiness'):
+        component_scores[key] = _normalize_score_value(component_source.get(key))
+        if component_scores[key] is None:
+            component_scores[key] = _normalize_score_value(component_fallback.get(key))
+        if component_scores[key] is None:
+            component_scores[key] = 0
+    normalized['component_scores'] = component_scores
+
+    component_rationale_source = source.get('component_rationale') if isinstance(source.get('component_rationale'), dict) else {}
+    normalized['component_rationale'] = {
+        key: _clean_scorecard_text(component_rationale_source.get(key))
+        for key in ('financial_health', 'operational_efficiency', 'market_position', 'execution_readiness')
+    }
+
+    normalized['financial_impact'] = _normalize_metric_group(
+        source.get('financial_impact'),
+        {
+            'ebitda_at_risk': 'percentage',
+            'potential_loss': 'currency',
+            'roi_opportunity': 'percentage',
+            'projected_ebitda': 'currency',
+            'time_to_market_impact': 'duration',
+        },
+    )
+
+    before_after_source = source.get('before_after_financials') if isinstance(source.get('before_after_financials'), dict) else {}
+    normalized['before_after_financials'] = {
+        'before': _normalize_metric_group(
+            before_after_source.get('before'),
+            {
+                'revenue': 'currency',
+                'ebitda': 'currency',
+                'margin': 'percentage',
+                'growth_rate': 'percentage',
+            },
+        ),
+        'after': _normalize_metric_group(
+            before_after_source.get('after'),
+            {
+                'revenue': 'currency',
+                'ebitda': 'currency',
+                'margin': 'percentage',
+                'growth_rate': 'percentage',
+            },
+        ),
+    }
+
+    normalized['investment_analysis'] = _normalize_metric_group(
+        source.get('investment_analysis'),
+        {
+            'total_investment_required': 'currency',
+            'expected_annual_return': 'currency',
+            'payback_period': 'duration',
+            'cost_of_inaction': 'currency',
+        },
+    )
+
+    normalized['npv_irr_analysis'] = _normalize_metric_group(
+        source.get('npv_irr_analysis'),
+        {
+            'npv_3_year': 'currency',
+            'irr': 'percentage',
+            'discount_rate_used': 'percentage',
+            'break_even_month': 'number',
+        },
+    )
+
+    normalized['valuation'] = _normalize_metric_group(
+        source.get('valuation'),
+        {
+            'enterprise_value': 'currency',
+            'multiple': 'number',
+            'basis': 'text',
+            'comparable_range': 'text',
+        },
+    )
+
+    decision_source = source.get('decision_framework') if isinstance(source.get('decision_framework'), dict) else {}
+    decision_confidence_raw, decision_confidence_numeric = _normalize_metric_field(
+        decision_source.get('confidence_level'),
+        kind='percentage',
+    )
+    normalized['decision_framework'] = {
+        'go_no_go': _clean_scorecard_text(decision_source.get('go_no_go')),
+        'confidence_level': decision_confidence_raw,
+        'key_condition': _clean_scorecard_text(decision_source.get('key_condition')),
+        'downside_scenario': _clean_scorecard_text(decision_source.get('downside_scenario')),
+        'upside_scenario': _clean_scorecard_text(decision_source.get('upside_scenario')),
+        '_numeric': {
+            'confidence_level': decision_confidence_numeric,
+        },
+    }
+
+    def _normalize_string_list(value):
+        if not isinstance(value, list):
+            return []
+        items = []
+        for item in value:
+            cleaned = _clean_scorecard_text(item)
+            if cleaned:
+                items.append(cleaned)
+        return items
+
+    normalized['key_insights'] = _normalize_string_list(source.get('key_insights'))
+    normalized['assumptions'] = _normalize_string_list(source.get('assumptions'))
+
+    risk_items = []
+    for item in source.get('top_risks') if isinstance(source.get('top_risks'), list) else []:
+        if not isinstance(item, dict):
+            cleaned = _clean_scorecard_text(item)
+            if cleaned:
+                risk_items.append({
+                    'risk': cleaned,
+                    'probability': None,
+                    'impact_dollars': None,
+                    'impact_category': None,
+                    'impact': None,
+                    'mitigation': None,
+                    'mitigation_cost': None,
+                    'residual_risk': None,
+                })
+            continue
+        impact_raw, impact_numeric = _normalize_metric_field(
+            item.get('impact_dollars') if item.get('impact_dollars') is not None else item.get('impact'),
+            kind='currency',
+        )
+        mitigation_cost_raw, mitigation_cost_numeric = _normalize_metric_field(
+            item.get('mitigation_cost'),
+            kind='currency',
+        )
+        risk_text = _clean_scorecard_text(item.get('risk'))
+        mitigation = _clean_scorecard_text(item.get('mitigation'))
+        probability = _clean_scorecard_text(item.get('probability'))
+        if probability not in {'High', 'Medium', 'Low'}:
+            probability = None
+        residual_risk = _clean_scorecard_text(item.get('residual_risk'))
+        if residual_risk not in {'High', 'Medium', 'Low'}:
+            residual_risk = None
+        impact_category = _clean_scorecard_text(item.get('impact_category'))
+        if impact_category not in {'financial_health', 'operational_efficiency', 'market_position', 'execution_readiness'}:
+            impact_category = None
+        if not any((risk_text, impact_raw, mitigation, probability, residual_risk, impact_category)):
+            continue
+        risk_items.append({
+            **item,
+            'risk': risk_text,
+            'probability': probability,
+            'impact_dollars': impact_raw,
+            'impact_category': impact_category,
+            'impact': impact_raw,
+            'impact_numeric': impact_numeric,
+            'mitigation': mitigation,
+            'mitigation_cost': mitigation_cost_raw,
+            'mitigation_cost_numeric': mitigation_cost_numeric,
+            'residual_risk': residual_risk,
+        })
+    normalized['top_risks'] = risk_items
+
+    recommendation_items = []
+    raw_recommendations = source.get('recommendations') if isinstance(source.get('recommendations'), list) else []
+    for index, item in enumerate(raw_recommendations, start=1):
+        if not isinstance(item, dict):
+            action = _clean_scorecard_text(item)
+            if not action:
+                continue
+            recommendation_items.append({
+                'action': action,
+                'expected_impact': None,
+                'effort': None,
+                'timeline': None,
+                'priority': index,
+            })
+            continue
+        action = _clean_scorecard_text(item.get('action'))
+        impact = _clean_scorecard_text(item.get('expected_impact'))
+        effort = _clean_scorecard_text(item.get('effort'))
+        timeline = _clean_scorecard_text(item.get('timeline'))
+        priority = _safe_int(item.get('priority')) or index
+        if not any((action, impact, effort, timeline)):
+            continue
+        recommendation_items.append({
+            **item,
+            'action': action,
+            'expected_impact': impact,
+            'effort': effort,
+            'timeline': timeline,
+            'priority': max(1, priority),
+        })
+    recommendation_items.sort(key=lambda item: item.get('priority') or 9999)
+    normalized['recommendations'] = recommendation_items
+
+    normalized['ai_insights'] = source.get('ai_insights') if isinstance(source.get('ai_insights'), list) else []
+
+    return normalized
+
+
 def _load_thread_conversation(user_id, thread_id):
     """
     Load stored conversation history for a thread from user session storage.
@@ -659,6 +939,22 @@ You are a Jaspen strategy analyst specializing in commercialization strategy and
 
 Project Description: {project_description}
 
+Strategy Objective: {_normalize_strategy_objective(strategy_objective)}
+Objective Guidance: {_scorecard_objective_guidance(strategy_objective)}
+
+Return a single valid JSON object only. Do not include markdown fences, commentary, or explanatory text outside the JSON.
+
+Use null for any field that cannot be supported from the provided information. Do not invent benchmarks or placeholder prose.
+
+Every numeric, currency, percentage, or time-based field must contain an actual numeric value when present. Do not use words like "significant", "varies", "material", or "TBD". Examples of acceptable values:
+- "$250000"
+- "18%"
+- "6 months"
+- 14
+- 7.5
+
+If a field is null because information is missing, add a short explanation to the assumptions array describing what data would be needed.
+
 Please provide your analysis in the following JSON format:
 
 {{
@@ -670,12 +966,57 @@ Please provide your analysis in the following JSON format:
         "market_position": <0-100>,
         "execution_readiness": <0-100>
     }},
+    "component_rationale": {{
+        "financial_health": "<2-3 sentence explanation or null>",
+        "operational_efficiency": "<2-3 sentence explanation or null>",
+        "market_position": "<2-3 sentence explanation or null>",
+        "execution_readiness": "<2-3 sentence explanation or null>"
+    }},
     "financial_impact": {{
-        "ebitda_at_risk": "<percentage>",
-        "potential_loss": "<dollar amount>",
-        "roi_opportunity": "<percentage>",
-        "projected_ebitda": "<dollar amount>",
-        "time_to_market_impact": "<description>"
+        "ebitda_at_risk": "<percentage or null>",
+        "potential_loss": "<dollar amount or null>",
+        "roi_opportunity": "<percentage or null>",
+        "projected_ebitda": "<dollar amount or null>",
+        "time_to_market_impact": "<numeric duration impact or null>"
+    }},
+    "before_after_financials": {{
+        "before": {{
+            "revenue": "<dollar amount or null>",
+            "ebitda": "<dollar amount or null>",
+            "margin": "<percentage or null>",
+            "growth_rate": "<percentage or null>"
+        }},
+        "after": {{
+            "revenue": "<dollar amount or null>",
+            "ebitda": "<dollar amount or null>",
+            "margin": "<percentage or null>",
+            "growth_rate": "<percentage or null>"
+        }}
+    }},
+    "investment_analysis": {{
+        "total_investment_required": "<dollar amount or null>",
+        "expected_annual_return": "<dollar amount or null>",
+        "payback_period": "<numeric duration or null>",
+        "cost_of_inaction": "<dollar amount per year or null>"
+    }},
+    "npv_irr_analysis": {{
+        "npv_3_year": "<dollar amount or null>",
+        "irr": "<percentage or null>",
+        "discount_rate_used": "<percentage or null>",
+        "break_even_month": <integer or null>
+    }},
+    "valuation": {{
+        "enterprise_value": "<dollar amount or null>",
+        "multiple": <number or null>,
+        "basis": "<revenue|ebitda|arr|null>",
+        "comparable_range": "<numeric dollar range or null>"
+    }},
+    "decision_framework": {{
+        "go_no_go": "<GO|CONDITIONAL|NO-GO|null>",
+        "confidence_level": "<percentage or null>",
+        "key_condition": "<single biggest prerequisite or null>",
+        "downside_scenario": "<worst-case outcome or null>",
+        "upside_scenario": "<best-case outcome or null>"
     }},
     "key_insights": [
         "<insight 1>",
@@ -685,17 +1026,25 @@ Please provide your analysis in the following JSON format:
     "top_risks": [
         {{
             "risk": "<risk description>",
-            "impact": "<financial impact>",
-            "mitigation": "<mitigation strategy>"
+            "probability": "<High|Medium|Low|null>",
+            "impact_dollars": "<numeric dollar amount or null>",
+            "impact_category": "<financial_health|operational_efficiency|market_position|execution_readiness|null>",
+            "mitigation": "<mitigation strategy or null>",
+            "mitigation_cost": "<numeric dollar amount or null>",
+            "residual_risk": "<High|Medium|Low|null>"
         }}
     ],
     "recommendations": [
         {{
             "action": "<action description>",
-            "expected_impact": "<expected outcome>",
+            "expected_impact": "<expected quantified outcome>",
             "effort": "<Low/Medium/High>",
-            "timeline": "<timeframe>"
+            "timeline": "<timeframe>",
+            "priority": <positive integer>
         }}
+    ],
+    "assumptions": [
+        "<short note describing any missing data, null field, or estimation dependency>"
     ]
 }}
 
@@ -706,7 +1055,7 @@ Focus on:
 4. Operational efficiency improvements
 5. Market positioning and competitive advantage
 
-Provide specific, actionable insights with quantified financial impacts where possible.
+Provide specific, actionable insights with quantified financial impacts where the conversation supports them. When it does not, keep the affected field null and explain the gap in assumptions.
 """
 
     if isinstance(model_selection, dict):
@@ -718,10 +1067,10 @@ Provide specific, actionable insights with quantified financial impacts where po
                 model_selection,
                 system_prompt=system_prompt,
                 strategy_objective=strategy_objective,
-                max_tokens=2000,
+                max_tokens=4000,
                 temperature=0.2,
             )
-            return _extract_json_object(routed_text)
+            return _normalize_scorecard_payload(_extract_json_object(routed_text))
         except Exception as routed_exc:
             current_app.logger.warning(
                 "[strategy.analyze] routed scorecard generation failed, falling back to legacy client: %s",
@@ -735,11 +1084,11 @@ Provide specific, actionable insights with quantified financial impacts where po
             {"role": "user", "content": analysis_prompt}
         ],
         temperature=0.7,
-        max_tokens=2000
+        max_tokens=4000
     )
 
     analysis_text = response.choices[0].message.content
-    return _extract_json_object(analysis_text)
+    return _normalize_scorecard_payload(_extract_json_object(analysis_text))
 
 
 @strategy_bp.route('/analyze', methods=['POST'])
@@ -1506,6 +1855,29 @@ def _objective_guidance(objective):
     if target == 'growth':
         return 'Focus on growth: prioritize demand, expansion, and revenue acceleration.'
     return 'Keep tradeoffs balanced across cost, speed, and growth.'
+
+
+def _scorecard_objective_guidance(objective):
+    target = _normalize_strategy_objective(objective)
+    if target == 'cost':
+        return (
+            "Weight the scorecard toward cost reduction, margin expansion, and capital efficiency. "
+            "Financial projections should emphasize savings, avoided waste, and cost-per-unit improvement."
+        )
+    if target == 'speed':
+        return (
+            "Weight the scorecard toward time-to-market, execution velocity, and quick wins. "
+            "Recommendations should prioritize fast impact, dependency removal, and shorter payback horizons."
+        )
+    if target == 'growth':
+        return (
+            "Weight the scorecard toward revenue growth, market expansion, and customer acquisition. "
+            "Financial projections should emphasize top-line upside, adoption, and addressable-market capture."
+        )
+    return (
+        "Provide an even-weighted analysis across financial health, operational efficiency, "
+        "market position, and execution readiness."
+    )
 
 
 def _heuristic_scenario_suggestion(instruction, baseline_inputs, objective='balanced'):
@@ -2307,6 +2679,22 @@ def _fmt_currency(num):
     return f"${num:,.0f}"
 
 
+def _fmt_percentage(num):
+    if num is None:
+        return None
+    return f"{float(num):.1f}%"
+
+
+def _fmt_months(num):
+    if num is None:
+        return None
+    value = float(num)
+    label = 'month' if abs(value) == 1 else 'months'
+    if value.is_integer():
+        return f"{int(value)} {label}"
+    return f"{value:.1f} {label}"
+
+
 def _extract_baseline_inputs(baseline):
     """Pull numeric lever values out of a baseline scorecard."""
     inputs = {}
@@ -2387,56 +2775,115 @@ def _compute_scenario_scorecard(baseline, deltas, baseline_inputs):
 
     category = 'Excellent' if overall_int >= 80 else 'Good' if overall_int >= 60 else 'Fair' if overall_int >= 40 else 'At Risk'
 
-    # --- adjust financial-impact strings from baseline ---
-    base_fin = baseline.get('financial_impact') or {}
-    adj_fin = {}
+    base_fin = baseline.get('financial_impact') if isinstance(baseline.get('financial_impact'), dict) else {}
+    fin_raw = {}
     for field in ('ebitda_at_risk', 'potential_loss', 'roi_opportunity', 'projected_ebitda'):
-        raw = base_fin.get(field)
-        num = _parse_currency(raw)
+        num = _metric_numeric_value(base_fin, field)
         if num is None:
-            adj_fin[field] = raw if raw else 'N/A'
+            fin_raw[field] = _clean_scorecard_text(base_fin.get(field))
             continue
-        # Risk/loss fields move inversely to financial health
         adjusted = num / financial_factor if field in ('ebitda_at_risk', 'potential_loss') else num * financial_factor
-        # Preserve format hint
-        if raw and '%' in str(raw):
-            adj_fin[field] = f"{adjusted:.1f}%"
-        else:
-            adj_fin[field] = _fmt_currency(adjusted)
+        fin_raw[field] = _fmt_percentage(adjusted) if field in ('ebitda_at_risk', 'roi_opportunity') else _fmt_currency(adjusted)
 
-    # Synthetic numeric fields the frontend ScenarioModeler reads directly
-    proj_num = _parse_currency(adj_fin.get('projected_ebitda'))
-    base_proj = _parse_currency(base_fin.get('projected_ebitda'))
-    if proj_num is not None and base_proj is not None:
-        adj_fin['npv'] = round(proj_num - base_proj, 2)
+    time_to_market_num = _metric_numeric_value(base_fin, 'time_to_market_impact')
+    if time_to_market_num is not None:
+        adjusted_ttm = max(0.0, time_to_market_num / max(0.75, min(1.5, financial_factor)))
+        fin_raw['time_to_market_impact'] = _fmt_months(adjusted_ttm)
+    else:
+        fin_raw['time_to_market_impact'] = _clean_scorecard_text(base_fin.get('time_to_market_impact'))
 
-    roi_num = _parse_currency(adj_fin.get('roi_opportunity'))
-    if roi_num is not None:
-        adj_fin['irr'] = round(roi_num, 1)
+    projected_ebitda_num = _metric_numeric_value({'_numeric': {'projected_ebitda': _safe_float(fin_raw.get('projected_ebitda'))}}, 'projected_ebitda')
+    roi_num = _metric_numeric_value({'_numeric': {'roi_opportunity': _safe_float(fin_raw.get('roi_opportunity'))}}, 'roi_opportunity')
 
-    # Synthetic payback from budget/investment lever if present
-    for lk in (deltas or {}):
-        if 'budget' in lk.lower() or 'invest' in lk.lower():
-            inv = float((deltas or {}).get(lk, 0) or 0)
-            if inv > 0 and proj_num and proj_num > 0:
-                adj_fin['payback_months'] = round((inv / proj_num) * 12, 1)
-            break
+    before_after_source = baseline.get('before_after_financials') if isinstance(baseline.get('before_after_financials'), dict) else {}
+    before_group = before_after_source.get('before') if isinstance(before_after_source.get('before'), dict) else {}
+    after_group = before_after_source.get('after') if isinstance(before_after_source.get('after'), dict) else {}
 
-    adj_fin['time_to_market_impact'] = base_fin.get('time_to_market_impact', 'N/A')
+    before_after = {'before': {}, 'after': {}}
+    for phase, group in (('before', before_group), ('after', after_group)):
+        for field in ('revenue', 'ebitda', 'margin', 'growth_rate'):
+            num = _metric_numeric_value(group, field)
+            if num is None:
+                before_after[phase][field] = _clean_scorecard_text(group.get(field))
+                continue
+            adjusted = num if phase == 'before' else num * financial_factor
+            before_after[phase][field] = _fmt_percentage(adjusted) if field in ('margin', 'growth_rate') else _fmt_currency(adjusted)
 
-    # Build result, preserving narrative fields from baseline
+    investment_source = baseline.get('investment_analysis') if isinstance(baseline.get('investment_analysis'), dict) else {}
+    total_investment_required = _metric_numeric_value(investment_source, 'total_investment_required')
+    expected_annual_return = _metric_numeric_value(investment_source, 'expected_annual_return')
+    cost_of_inaction = _metric_numeric_value(investment_source, 'cost_of_inaction')
+    if expected_annual_return is None and projected_ebitda_num is not None:
+        expected_annual_return = projected_ebitda_num
+    if cost_of_inaction is None and _metric_numeric_value(base_fin, 'potential_loss') is not None:
+        cost_of_inaction = _metric_numeric_value(base_fin, 'potential_loss')
+    investment_analysis = {
+        'total_investment_required': _fmt_currency(total_investment_required) if total_investment_required is not None else _clean_scorecard_text(investment_source.get('total_investment_required')),
+        'expected_annual_return': _fmt_currency(expected_annual_return) if expected_annual_return is not None else _clean_scorecard_text(investment_source.get('expected_annual_return')),
+        'cost_of_inaction': _fmt_currency(cost_of_inaction) if cost_of_inaction is not None else _clean_scorecard_text(investment_source.get('cost_of_inaction')),
+        'payback_period': _clean_scorecard_text(investment_source.get('payback_period')),
+    }
+    if total_investment_required is not None and expected_annual_return and expected_annual_return > 0:
+        investment_analysis['payback_period'] = _fmt_months((total_investment_required / expected_annual_return) * 12.0)
+
+    npv_source = baseline.get('npv_irr_analysis') if isinstance(baseline.get('npv_irr_analysis'), dict) else {}
+    discount_rate = _metric_numeric_value(npv_source, 'discount_rate_used')
+    if discount_rate is None:
+        discount_rate = 10.0
+    npv_3_year = None
+    if expected_annual_return is not None:
+        yearly_rate = max(0.0, discount_rate) / 100.0
+        npv_3_year = sum(expected_annual_return / ((1 + yearly_rate) ** year) for year in range(1, 4))
+        if total_investment_required is not None:
+            npv_3_year -= total_investment_required
+    break_even_month = None
+    if total_investment_required is not None and expected_annual_return and expected_annual_return > 0:
+        break_even_month = int(round((total_investment_required / expected_annual_return) * 12.0))
+    npv_irr_analysis = {
+        'npv_3_year': _fmt_currency(npv_3_year) if npv_3_year is not None else _clean_scorecard_text(npv_source.get('npv_3_year')),
+        'irr': _fmt_percentage(roi_num) if roi_num is not None else _clean_scorecard_text(npv_source.get('irr')),
+        'discount_rate_used': _fmt_percentage(discount_rate),
+        'break_even_month': break_even_month,
+    }
+
+    valuation_source = baseline.get('valuation') if isinstance(baseline.get('valuation'), dict) else {}
+    enterprise_value = _metric_numeric_value(valuation_source, 'enterprise_value')
+    if enterprise_value is not None:
+        enterprise_value *= financial_factor
+    multiple = _metric_numeric_value(valuation_source, 'multiple')
+    valuation = {
+        'enterprise_value': _fmt_currency(enterprise_value) if enterprise_value is not None else _clean_scorecard_text(valuation_source.get('enterprise_value')),
+        'multiple': multiple,
+        'basis': _clean_scorecard_text(valuation_source.get('basis')),
+        'comparable_range': _clean_scorecard_text(valuation_source.get('comparable_range')),
+    }
+
     result = {
         'jaspen_score': overall_int,
         'score_category': category,
         'component_scores': components,
-        'financial_impact': adj_fin,
+        'financial_impact': fin_raw,
+        'before_after_financials': before_after,
+        'investment_analysis': investment_analysis,
+        'npv_irr_analysis': npv_irr_analysis,
+        'valuation': valuation,
         'inputs': deltas,
     }
-    for narrative_key in ('project_name', 'project_description', 'key_insights', 'top_risks', 'recommendations'):
+    for narrative_key in (
+        'project_name',
+        'project_description',
+        'key_insights',
+        'top_risks',
+        'recommendations',
+        'component_rationale',
+        'decision_framework',
+        'assumptions',
+        'ai_insights',
+    ):
         if narrative_key in baseline:
             result[narrative_key] = baseline[narrative_key]
 
-    return result
+    return _normalize_scorecard_payload(result)
 
 
 # ============================================================
