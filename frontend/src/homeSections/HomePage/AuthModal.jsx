@@ -12,6 +12,7 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
   const [errorDetail, setErrorDetail] = useState('');
 
   const isEmailMode = mode === 'email';
+  const isForgotMode = mode === 'forgot';
 
   const resetState = () => {
     setStatus('idle');
@@ -40,6 +41,9 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
   const statusMessage = useMemo(() => {
     if (status === 'sent') {
       return 'Authenticated. Redirecting...';
+    }
+    if (status === 'reset_sent') {
+      return 'If that account exists, we’ll send a password reset link shortly.';
     }
     return '';
   }, [status]);
@@ -118,6 +122,38 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
     }
   };
 
+  const handleForgotSubmit = async (event) => {
+    event.preventDefault();
+
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    if (!normalizedEmail) {
+      setError('Please enter a valid email address.');
+      setErrorDetail('');
+      return;
+    }
+
+    setStatus('sending');
+    setError('');
+    setErrorDetail('');
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/auth/forgot-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email: normalizedEmail }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.message || 'Unable to send a reset link right now.');
+      }
+      setStatus('reset_sent');
+    } catch (authError) {
+      setError(authError?.message || 'Unable to send a reset link right now.');
+      setErrorDetail('');
+      setStatus('idle');
+    }
+  };
+
   return (
     <div className="auth-modal-backdrop" onMouseDown={handleBackdropClick}>
       <div className="auth-modal" role="dialog" aria-modal="true" aria-label="Authentication">
@@ -127,9 +163,11 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
 
         <div className="auth-modal-header">
           <div className="auth-modal-eyebrow">STRATEGY ACCESS</div>
-          <h2>{isEmailMode ? 'Continue with email' : 'Continue with Google'}</h2>
+          <h2>{isForgotMode ? 'Reset your password' : (isEmailMode ? 'Continue with email' : 'Continue with Google')}</h2>
           <p>
-            {isEmailMode
+            {isForgotMode
+              ? 'Enter your email and we’ll send you a link to reset your password.'
+              : isEmailMode
               ? 'Use your email and password to sign in. New email users are auto-created.'
               : 'Use your Google account to access Jaspen instantly.'}
           </p>
@@ -143,8 +181,8 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
         )}
         {statusMessage && <div className="auth-modal-success">{statusMessage}</div>}
 
-        {isEmailMode ? (
-          <form className="auth-modal-form" onSubmit={handleEmailSubmit}>
+        {isEmailMode || isForgotMode ? (
+          <form className="auth-modal-form" onSubmit={isForgotMode ? handleForgotSubmit : handleEmailSubmit}>
             <label className="auth-modal-label" htmlFor="auth-email">Email</label>
             <input
               id="auth-email"
@@ -155,22 +193,28 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
               onChange={(event) => setEmail(event.target.value)}
               disabled={status === 'sending' || status === 'sent'}
             />
-            <label className="auth-modal-label" htmlFor="auth-password">Password</label>
-            <input
-              id="auth-password"
-              type="password"
-              className="auth-modal-input"
-              placeholder="Enter your password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              disabled={status === 'sending' || status === 'sent'}
-            />
+            {!isForgotMode && (
+              <>
+                <label className="auth-modal-label" htmlFor="auth-password">Password</label>
+                <input
+                  id="auth-password"
+                  type="password"
+                  className="auth-modal-input"
+                  placeholder="Enter your password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  disabled={status === 'sending' || status === 'sent'}
+                />
+              </>
+            )}
             <button
               type="submit"
               className="jaspen-btn jaspen-btn-primary auth-modal-submit"
               disabled={status === 'sending' || status === 'sent'}
             >
-              {status === 'sending' ? 'Signing in…' : 'Continue with email'}
+              {status === 'sending'
+                ? (isForgotMode ? 'Sending reset link…' : 'Signing in…')
+                : (isForgotMode ? 'Send reset link' : 'Continue with email')}
             </button>
           </form>
         ) : (
@@ -180,10 +224,19 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
         )}
 
         <div className="auth-modal-footer">
-          {isEmailMode ? (
-            <button type="button" className="auth-modal-switch" onClick={() => onModeChange?.('google')}>
-              Prefer Google instead?
+          {isForgotMode ? (
+            <button type="button" className="auth-modal-switch" onClick={() => onModeChange?.('email')}>
+              Back to sign in
             </button>
+          ) : isEmailMode ? (
+            <>
+              <button type="button" className="auth-modal-switch" onClick={() => onModeChange?.('forgot')}>
+                Forgot password?
+              </button>
+              <button type="button" className="auth-modal-switch" onClick={() => onModeChange?.('google')}>
+                Prefer Google instead?
+              </button>
+            </>
           ) : (
             <button type="button" className="auth-modal-switch" onClick={() => onModeChange?.('email')}>
               Prefer email instead?

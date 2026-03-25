@@ -18,6 +18,7 @@ import Privacy       from './pages/Privacy/privacy';
 import Terms         from './pages/Terms/terms';
 import Support       from './pages/Support/Support';
 import AuthCallback  from './shared/components/AuthCallback';
+import ResetPasswordPage from './pages/Auth/ResetPasswordPage';
 import JaspenScorePage from './pages/Marketing/JaspenScorePage';
 import SolutionsPage from './pages/Marketing/SolutionsPage';
 import PricingPage from './pages/Marketing/PricingPage';
@@ -95,6 +96,7 @@ export default function App() {
         <Route path="/pages/resources/connectors" element={withShell(<ConnectorsPage />, { showHeader: false, fullBleed: true, noPadding: true })} />
         <Route path="/pages/resources/plugins" element={withShell(<PluginsPage />, { showHeader: false, fullBleed: true, noPadding: true })} />
         <Route path="/auth/callback"  element={withShell(<AuthCallback />, { showHeader: false, fullBleed: true, noPadding: true })} />
+        <Route path="/reset-password" element={withShell(<ResetPasswordPage />, { showHeader: false, fullBleed: true, noPadding: true })} />
 
         {/* Protected (Market) */}
         <Route

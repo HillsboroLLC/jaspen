@@ -617,6 +617,25 @@
   width: 100%;
 }
 
+.strategy-card-meta {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.strategy-meta-link {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--navy);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.strategy-meta-link:hover {
+  text-decoration: underline;
+}
+
 .strategy-card-disclaimer {
   font-size: 0.75rem;
   color: var(--gray-400);
@@ -672,6 +691,38 @@
 .auth-modal-alert.is-success {
   background: #ecfdf5;
   color: #0f766e;
+}
+
+.auth-modal-success {
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #ecfdf5;
+  color: #0f766e;
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.auth-modal-footer {
+  margin-top: 14px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.auth-modal-switch {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--navy);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.auth-modal-switch:hover {
+  text-decoration: underline;
 }
 
 @keyframes float-soft {

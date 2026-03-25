@@ -13,6 +13,7 @@ export default function StrategyAccessCard() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [authStatus, setAuthStatus] = useState('idle');
+  const [authMode, setAuthMode] = useState('email');
   const [authError, setAuthError] = useState('');
   const [authErrorDetail, setAuthErrorDetail] = useState('');
 
@@ -52,6 +53,7 @@ export default function StrategyAccessCard() {
 
   const helperText = useMemo(() => {
     if (authError) return authError;
+    if (authStatus === 'reset_sent') return 'If that account exists, we’ll send a password reset link shortly.';
     if (authStatus === 'sent') return 'Authenticated. Redirecting...';
     if (typeof window !== 'undefined') {
       const authNotice = readAuthQueryNotice(window.location.search || '');
@@ -75,6 +77,8 @@ export default function StrategyAccessCard() {
 
   const helperClassName = authError
     ? 'strategy-card-disclaimer is-error'
+    : authStatus === 'reset_sent'
+      ? 'strategy-card-disclaimer is-success'
     : authStatus === 'sent'
       ? 'strategy-card-disclaimer is-success'
       : queryNoticeTone === 'error'
@@ -95,6 +99,39 @@ export default function StrategyAccessCard() {
       console.debug('Unable to preserve referral code for Google auth:', error);
     }
     window.location.href = `${API_BASE}/api/v1/auth/google/start?${params.toString()}`;
+  };
+
+  const handleForgotPassword = async (event) => {
+    event?.preventDefault?.();
+
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    if (!normalizedEmail) {
+      setAuthError('Enter your email first so we know where to send the reset link.');
+      setAuthErrorDetail('');
+      return;
+    }
+
+    setAuthStatus('sending');
+    setAuthError('');
+    setAuthErrorDetail('');
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/auth/forgot-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email: normalizedEmail }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.message || 'Unable to send a reset link right now.');
+      }
+      setAuthStatus('reset_sent');
+      setAuthMode('forgot');
+    } catch (error) {
+      setAuthError(error?.message || 'Unable to send a reset link right now.');
+      setAuthErrorDetail('');
+      setAuthStatus('idle');
+    }
   };
 
   const handleEmailSubmit = async (event) => {
@@ -159,17 +196,19 @@ export default function StrategyAccessCard() {
       </div>
 
       <div className="strategy-card-section strategy-card-auth">
-        <>
-          <button
-            type="button"
-            className="jaspen-btn jaspen-btn-outline strategy-google-btn"
-            onClick={handleGoogleClick}
-          >
-            Continue with Google
-          </button>
-          <div className="strategy-card-divider"><span>OR</span></div>
-        </>
-        <form className="strategy-card-form" onSubmit={handleEmailSubmit}>
+        {authMode !== 'forgot' && (
+          <>
+            <button
+              type="button"
+              className="jaspen-btn jaspen-btn-outline strategy-google-btn"
+              onClick={handleGoogleClick}
+            >
+              Continue with Google
+            </button>
+            <div className="strategy-card-divider"><span>OR</span></div>
+          </>
+        )}
+        <form className="strategy-card-form" onSubmit={authMode === 'forgot' ? handleForgotPassword : handleEmailSubmit}>
           <input
             type="email"
             className="strategy-email-input"
@@ -179,23 +218,56 @@ export default function StrategyAccessCard() {
             onChange={(event) => setEmail(event.target.value)}
             disabled={authStatus === 'sending' || authStatus === 'sent'}
           />
-          <input
-            type="password"
-            className="strategy-email-input"
-            placeholder="Password"
-            aria-label="Password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            disabled={authStatus === 'sending' || authStatus === 'sent'}
-          />
+          {authMode !== 'forgot' && (
+            <input
+              type="password"
+              className="strategy-email-input"
+              placeholder="Password"
+              aria-label="Password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              disabled={authStatus === 'sending' || authStatus === 'sent'}
+            />
+          )}
           <button
             type="submit"
             className="jaspen-btn jaspen-btn-primary strategy-email-btn"
             disabled={authStatus === 'sending' || authStatus === 'sent'}
           >
-            {authStatus === 'sending' ? 'Sending...' : 'Continue with email'}
+            {authStatus === 'sending'
+              ? (authMode === 'forgot' ? 'Sending reset link…' : 'Sending...')
+              : (authMode === 'forgot' ? 'Send reset link' : 'Continue with email')}
           </button>
         </form>
+        <div className="strategy-card-meta">
+          {authMode === 'forgot' ? (
+            <button
+              type="button"
+              className="strategy-meta-link"
+              onClick={() => {
+                setAuthMode('email');
+                setAuthStatus('idle');
+                setAuthError('');
+                setAuthErrorDetail('');
+              }}
+            >
+              Back to sign in
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="strategy-meta-link"
+              onClick={() => {
+                setAuthMode('forgot');
+                setAuthStatus('idle');
+                setAuthError('');
+                setAuthErrorDetail('');
+              }}
+            >
+              Forgot password?
+            </button>
+          )}
+        </div>
       </div>
 
       <div className={helperClassName}>
