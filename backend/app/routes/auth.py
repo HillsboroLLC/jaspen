@@ -142,6 +142,13 @@ def _email_verification_serializer():
     return URLSafeTimedSerializer(secret_key=secret, salt='email-verification')
 
 
+def _password_reset_serializer():
+    secret = current_app.config.get('SECRET_KEY') or current_app.config.get('JWT_SECRET_KEY')
+    if not secret:
+        raise RuntimeError('Missing SECRET_KEY/JWT_SECRET_KEY for password reset signing')
+    return URLSafeTimedSerializer(secret_key=secret, salt='password-reset')
+
+
 def _google_callback_url():
     configured = str(current_app.config.get('GOOGLE_REDIRECT_URI') or '').strip()
     if configured:
@@ -162,6 +169,10 @@ def _email_verification_ttl_seconds():
     return int(current_app.config.get('EMAIL_VERIFICATION_TOKEN_TTL_SECONDS') or 86400)
 
 
+def _password_reset_ttl_seconds():
+    return int(current_app.config.get('PASSWORD_RESET_TOKEN_TTL_SECONDS') or 3600)
+
+
 def _build_email_verification_token(user):
     return _email_verification_serializer().dumps({
         'user_id': str(user.id),
@@ -172,6 +183,18 @@ def _build_email_verification_token(user):
 def _email_verification_link(token):
     query = urlencode({'token': token})
     return f"{request.url_root.rstrip('/')}/api/v1/auth/verify-email?{query}"
+
+
+def _build_password_reset_token(user):
+    return _password_reset_serializer().dumps({
+        'user_id': str(user.id),
+        'email': str(user.email or '').strip().lower(),
+        'reset_version': int(getattr(user, 'password_reset_version', 0) or 0),
+    })
+
+
+def _password_reset_link(token):
+    return f"{_frontend_base_url()}/reset-password?{urlencode({'token': token})}"
 
 
 def _normalize_referral_code(value):
@@ -287,6 +310,24 @@ def _send_email_verification_email(user):
     user.email_verification_sent_at = datetime.utcnow()
 
 
+def _send_password_reset_email(user):
+    token = _build_password_reset_token(user)
+    reset_link = _password_reset_link(token)
+    msg = Message(
+        subject='Reset your Jaspen password',
+        recipients=[user.email],
+    )
+    msg.body = (
+        "We received a request to reset your Jaspen password.\n\n"
+        "Use the link below to choose a new password:\n"
+        f"{reset_link}\n\n"
+        f"This link expires in {_password_reset_ttl_seconds() // 60} minutes.\n"
+        "If you did not request this, you can ignore this email."
+    )
+    mail.send(msg)
+    user.password_reset_requested_at = datetime.utcnow()
+
+
 def _load_user_from_verification_token(token):
     decoded = _email_verification_serializer().loads(
         token,
@@ -299,6 +340,26 @@ def _load_user_from_verification_token(token):
     user = User.query.get(user_id)
     if not user or str(user.email or '').strip().lower() != email:
         raise BadSignature('Invalid verification target')
+    return user
+
+
+def _load_user_from_password_reset_token(token):
+    decoded = _password_reset_serializer().loads(
+        token,
+        max_age=_password_reset_ttl_seconds(),
+    )
+    user_id = str(decoded.get('user_id') or '').strip()
+    email = str(decoded.get('email') or '').strip().lower()
+    reset_version = int(decoded.get('reset_version') or 0)
+    if not user_id or not email:
+        raise BadSignature('Invalid reset payload')
+    user = User.query.get(user_id)
+    if not user or user.deactivated_at is not None:
+        raise BadSignature('Invalid reset target')
+    if str(user.email or '').strip().lower() != email:
+        raise BadSignature('Invalid reset target')
+    if int(getattr(user, 'password_reset_version', 0) or 0) != reset_version:
+        raise BadSignature('Reset token has been superseded')
     return user
 
 
@@ -628,6 +689,7 @@ def change_password():
     user.failed_login_attempts = 0
     user.locked_until = None
     user.auth_token_version = int(user.auth_token_version or 0) + 1
+    user.password_reset_version = int(user.password_reset_version or 0) + 1
     db.session.commit()
 
     token = _create_user_access_token(user)
@@ -638,6 +700,61 @@ def change_password():
     )
     _audit_auth_event('auth.password.changed', actor=user, target_user=user)
     return _attach_auth_cookie(resp, token), 200
+
+
+@auth_bp.route('/forgot-password', methods=['POST'])
+@limiter.limit("3 per minute")
+def forgot_password():
+    data = request.get_json(silent=True) or {}
+    email = str(data.get('email') or '').strip().lower()
+    if not email:
+        return jsonify(message='Email is required.'), 400
+
+    user = User.query.filter_by(email=email).first()
+    if user and user.deactivated_at is None:
+        try:
+            _send_password_reset_email(user)
+            db.session.commit()
+            _audit_auth_event('auth.password_reset.requested', target_user=user)
+        except Exception:
+            db.session.rollback()
+            current_app.logger.exception('Failed to send password reset email for %s', email)
+
+    return jsonify(message='If that account exists, we’ll send a password reset link shortly.'), 200
+
+
+@auth_bp.route('/reset-password', methods=['POST'])
+@limiter.limit("5 per minute")
+def reset_password():
+    data = request.get_json(silent=True) or {}
+    token = str(data.get('token') or '').strip()
+    new_password = str(data.get('new_password') or '')
+
+    if not token or not new_password:
+        return jsonify(message='Reset token and new password are required.'), 400
+
+    try:
+        user = _load_user_from_password_reset_token(token)
+    except SignatureExpired:
+        return jsonify(message='That reset link has expired.'), 400
+    except BadSignature:
+        return jsonify(message='That reset link is invalid.'), 400
+
+    pw_valid, pw_error = _validate_password(new_password)
+    if not pw_valid:
+        return jsonify(message=pw_error), 400
+    if check_password_hash(user.password_hash, new_password):
+        return jsonify(message='Choose a different password.'), 400
+
+    user.password_hash = generate_password_hash(new_password)
+    user.failed_login_attempts = 0
+    user.locked_until = None
+    user.auth_token_version = int(user.auth_token_version or 0) + 1
+    user.password_reset_version = int(user.password_reset_version or 0) + 1
+    db.session.commit()
+
+    _audit_auth_event('auth.password_reset.completed', target_user=user)
+    return jsonify(message='Your password has been updated. You can sign in now.'), 200
 
 
 @auth_bp.route('/mfa/setup', methods=['POST'])

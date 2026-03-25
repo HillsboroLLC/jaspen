@@ -103,6 +103,15 @@ class User(db.Model):
         db.DateTime,
         nullable=True,
     )
+    password_reset_requested_at = db.Column(
+        db.DateTime,
+        nullable=True,
+    )
+    password_reset_version = db.Column(
+        db.Integer,
+        nullable=False,
+        default=0,
+    )
     access_approval_status = db.Column(
         db.String(32),
         nullable=False,
@@ -193,6 +202,8 @@ class User(db.Model):
             'email_verified': bool(self.email_verified),
             'email_verified_at': self.email_verified_at.isoformat() if self.email_verified_at else None,
             'email_verification_sent_at': self.email_verification_sent_at.isoformat() if self.email_verification_sent_at else None,
+            'password_reset_requested_at': self.password_reset_requested_at.isoformat() if self.password_reset_requested_at else None,
+            'password_reset_version': self.password_reset_version,
             'access_approval_status': self.access_approval_status,
             'access_approved_at': self.access_approved_at.isoformat() if self.access_approved_at else None,
             'access_reviewed_by_user_id': self.access_reviewed_by_user_id,

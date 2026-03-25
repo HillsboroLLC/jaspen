@@ -298,6 +298,122 @@ def test_verify_email_marks_user_verified(client, app, test_user, db):
     assert test_user.email_verified_at is not None
 
 
+def test_forgot_password_sends_reset_email_for_existing_user(client, app, test_user, db, monkeypatch):
+    sent_messages = []
+
+    def fake_send(msg):
+        sent_messages.append(msg)
+
+    monkeypatch.setattr("app.routes.auth.mail.send", fake_send)
+
+    resp = client.post(
+        "/api/v1/auth/forgot-password",
+        json={"email": "test@example.com"},
+    )
+
+    assert resp.status_code == 200
+    assert "If that account exists" in resp.get_json()["message"]
+    assert len(sent_messages) == 1
+    assert sent_messages[0].subject == "Reset your Jaspen password"
+    assert "/reset-password?token=" in (sent_messages[0].body or "")
+    db.session.refresh(test_user)
+    assert test_user.password_reset_requested_at is not None
+
+
+def test_forgot_password_is_neutral_for_unknown_user(client, monkeypatch):
+    sent_messages = []
+
+    def fake_send(msg):
+        sent_messages.append(msg)
+
+    monkeypatch.setattr("app.routes.auth.mail.send", fake_send)
+
+    resp = client.post(
+        "/api/v1/auth/forgot-password",
+        json={"email": "missing@example.com"},
+    )
+
+    assert resp.status_code == 200
+    assert "If that account exists" in resp.get_json()["message"]
+    assert sent_messages == []
+
+
+def test_reset_password_updates_password_and_invalidates_old_sessions(app, client, test_user, db, auth_headers):
+    with app.app_context():
+        serializer = URLSafeTimedSerializer(
+            secret_key=app.config["SECRET_KEY"] or app.config["JWT_SECRET_KEY"],
+            salt="password-reset",
+        )
+        token = serializer.dumps({
+            "user_id": str(test_user.id),
+            "email": str(test_user.email).lower(),
+            "reset_version": int(test_user.password_reset_version or 0),
+        })
+
+    resp = client.post(
+        "/api/v1/auth/reset-password",
+        json={
+            "token": token,
+            "new_password": "ResetPass2",
+        },
+    )
+
+    assert resp.status_code == 200
+    db.session.refresh(test_user)
+    assert test_user.auth_token_version == 1
+    assert test_user.password_reset_version == 1
+
+    stale_client = app.test_client(use_cookies=False)
+    stale_resp = stale_client.get(
+        "/api/v1/auth/me",
+        headers=auth_headers,
+    )
+    assert stale_resp.status_code == 401
+
+    fresh_login_client = app.test_client(use_cookies=False)
+    login_resp = fresh_login_client.post(
+        "/api/v1/auth/login",
+        json={
+            "email": "test@example.com",
+            "password": "ResetPass2",
+        },
+        environ_overrides={"REMOTE_ADDR": "10.0.0.210"},
+    )
+    assert login_resp.status_code == 200
+
+
+def test_reset_password_rejects_reused_token(client, app, test_user):
+    with app.app_context():
+        serializer = URLSafeTimedSerializer(
+            secret_key=app.config["SECRET_KEY"] or app.config["JWT_SECRET_KEY"],
+            salt="password-reset",
+        )
+        token = serializer.dumps({
+            "user_id": str(test_user.id),
+            "email": str(test_user.email).lower(),
+            "reset_version": int(test_user.password_reset_version or 0),
+        })
+
+    first = client.post(
+        "/api/v1/auth/reset-password",
+        json={
+            "token": token,
+            "new_password": "ResetPass2",
+        },
+    )
+    assert first.status_code == 200
+
+    second = client.post(
+        "/api/v1/auth/reset-password",
+        json={
+            "token": token,
+            "new_password": "AnotherPass3",
+        },
+    )
+    assert second.status_code == 400
+    assert "invalid" in second.get_json()["message"].lower()
+
+
 def test_login_requires_verified_email_when_flag_enabled(client, app, db):
     with app.app_context():
         gated_user = User(
