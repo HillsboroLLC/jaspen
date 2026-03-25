@@ -299,8 +299,9 @@
   display: flex;
   align-items: center;
   gap: 24px;
-  width: fit-content;
-  min-width: 320px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 /* --- Score Circle --- */
