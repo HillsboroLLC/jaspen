@@ -539,6 +539,31 @@ def _metric_numeric_value(group, key):
     return _safe_float(group.get(key))
 
 
+def _group_has_values(group):
+    if not isinstance(group, dict):
+        return False
+    for key, value in group.items():
+        if key == '_numeric':
+            continue
+        if value not in (None, '', []):
+            return True
+    return False
+
+
+def _list_has_values(items):
+    return isinstance(items, list) and any(item not in (None, '', [], {}) for item in items)
+
+
+def _section_provenance(has_values, *, estimated=False, uploaded=False):
+    if not has_values:
+        return 'missing'
+    if uploaded:
+        return 'uploaded_data'
+    if estimated:
+        return 'estimated'
+    return 'derived_from_conversation'
+
+
 def _normalize_scorecard_payload(payload):
     source = payload if isinstance(payload, dict) else {}
     normalized = dict(source)
@@ -662,6 +687,14 @@ def _normalize_scorecard_payload(payload):
 
     normalized['key_insights'] = _normalize_string_list(source.get('key_insights'))
     normalized['assumptions'] = _normalize_string_list(source.get('assumptions'))
+    assumptions_joined = ' '.join(normalized['assumptions']).lower()
+    has_financial_assumptions = any(
+        token in assumptions_joined
+        for token in (
+            'financial', 'ebitda', 'roi', 'loss', 'revenue', 'margin',
+            'cost', 'payback', 'npv', 'irr', 'valuation', 'budget',
+        )
+    )
 
     risk_items = []
     for item in source.get('top_risks') if isinstance(source.get('top_risks'), list) else []:
@@ -749,6 +782,23 @@ def _normalize_scorecard_payload(payload):
     normalized['recommendations'] = recommendation_items
 
     normalized['ai_insights'] = source.get('ai_insights') if isinstance(source.get('ai_insights'), list) else []
+    normalized['section_provenance'] = {
+        'component_scores': _section_provenance(any(value > 0 for value in normalized['component_scores'].values())),
+        'component_rationale': _section_provenance(any(normalized['component_rationale'].values())),
+        'financial_impact': _section_provenance(_group_has_values(normalized['financial_impact']), estimated=has_financial_assumptions),
+        'before_after_financials': _section_provenance(
+            _group_has_values(normalized['before_after_financials'].get('before')) or _group_has_values(normalized['before_after_financials'].get('after')),
+            estimated=has_financial_assumptions,
+        ),
+        'investment_analysis': _section_provenance(_group_has_values(normalized['investment_analysis']), estimated=has_financial_assumptions),
+        'npv_irr_analysis': _section_provenance(_group_has_values(normalized['npv_irr_analysis']), estimated=has_financial_assumptions),
+        'valuation': _section_provenance(_group_has_values(normalized['valuation']), estimated=has_financial_assumptions),
+        'decision_framework': _section_provenance(_group_has_values(normalized['decision_framework']), estimated=bool(normalized['assumptions'])),
+        'key_insights': _section_provenance(_list_has_values(normalized['key_insights'])),
+        'top_risks': _section_provenance(_list_has_values(normalized['top_risks'])),
+        'recommendations': _section_provenance(_list_has_values(normalized['recommendations'])),
+        'ai_insights': _section_provenance(_list_has_values(normalized['ai_insights']), uploaded=True),
+    }
 
     return normalized
 

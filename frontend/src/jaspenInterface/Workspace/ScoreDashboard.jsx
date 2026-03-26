@@ -47,6 +47,7 @@ export default function ScoreDashboard({
   const componentScores = useMemo(() => result.component_scores || {}, [result.component_scores]);
   const componentRationale = useMemo(() => result.component_rationale || {}, [result.component_rationale]);
   const financialImpact = useMemo(() => result.financial_impact || {}, [result.financial_impact]);
+  const sectionProvenance = useMemo(() => result.section_provenance || {}, [result.section_provenance]);
   const risks = result.top_risks || result.risks || [];
   const recommendations = result.recommendations || [];
   const aiInsights = Array.isArray(result.ai_insights) ? result.ai_insights : [];
@@ -111,10 +112,10 @@ export default function ScoreDashboard({
 
   const buildSmartExplanations = () => {
     const byCategory = {
-      financial_health: componentRationale.financial_health || 'Reflects available revenue, margin, and churn inputs.',
-      market_position: componentRationale.market_position || 'Reflects stated market and competitive context.',
-      operational_efficiency: componentRationale.operational_efficiency || 'Based on available execution and ops inputs.',
-      execution_readiness: componentRationale.execution_readiness || 'Reflects stated timeline, team, and funding inputs.',
+      financial_health: componentRationale.financial_health || 'Not enough information.',
+      market_position: componentRationale.market_position || 'Not enough information.',
+      operational_efficiency: componentRationale.operational_efficiency || 'Not enough information.',
+      execution_readiness: componentRationale.execution_readiness || 'Not enough information.',
     };
 
     return { byCategory };
@@ -257,20 +258,33 @@ export default function ScoreDashboard({
 
   const narrativeHighlights = useMemo(() => {
     const items = [];
-    const commentaryOverall = cleanNarrativeText(scoreCommentary?.overall || '');
-    if (commentaryOverall) items.push(commentaryOverall);
-    Object.values(componentRationale || {}).forEach((entry) => {
-      const text = cleanNarrativeText(entry);
-      if (text) items.push(text);
-    });
     keyInsights.forEach((entry) => {
       const text = typeof entry === 'string'
         ? cleanNarrativeText(entry)
         : cleanNarrativeText(entry?.summary || entry?.title || entry?.description || '');
       if (text) items.push(text);
     });
+    Object.values(componentRationale || {}).forEach((entry) => {
+      const text = cleanNarrativeText(entry);
+      if (text) items.push(text);
+    });
+    const commentaryOverall = cleanNarrativeText(scoreCommentary?.overall || '');
+    if (commentaryOverall) items.push(commentaryOverall);
     return Array.from(new Set(items)).slice(0, 3);
   }, [scoreCommentary, componentRationale, keyInsights]);
+
+  const provenanceLabel = (key) => {
+    switch (sectionProvenance?.[key]) {
+      case 'uploaded_data':
+        return 'From uploaded data';
+      case 'estimated':
+        return 'Estimated from current context';
+      case 'derived_from_conversation':
+        return 'Based on current conversation';
+      default:
+        return null;
+    }
+  };
 
   // Category scores with progress bar data
   const categoryScoreRows = useMemo(() => {
@@ -317,7 +331,12 @@ export default function ScoreDashboard({
       priority: 1,
       render: () => (
         <div className="scores-section">
-          <div className="ss-header">Category Scores</div>
+          <div className="ss-header">
+            <span>Category Scores</span>
+            {provenanceLabel('component_rationale') && (
+              <span className="section-provenance">{provenanceLabel('component_rationale')}</span>
+            )}
+          </div>
           {categoryScoreRows.map((row) => (
             <div key={row.key} className="score-row">
               <span className="sr-name">{row.name}</span>
@@ -342,17 +361,25 @@ export default function ScoreDashboard({
       priority: 2,
       render: () => (
         <div className="risks-section">
-          <div className="rs-header">Top Risks</div>
+          <div className="rs-header">
+            <span>Top Risks</span>
+            {provenanceLabel('top_risks') && (
+              <span className="section-provenance">{provenanceLabel('top_risks')}</span>
+            )}
+          </div>
           {risks.map((risk, idx) => (
             <div key={idx} className="risk-item">
               <span className="ri-num">{idx + 1}</span>
               <div className="ri-text">
-                <div>{typeof risk === 'string' ? risk : (risk.title || risk.risk || risk.description || `Risk ${idx + 1}`)}</div>
+                <div>{typeof risk === 'string' ? risk : (risk.risk || risk.title || risk.description || 'Not enough information.')}</div>
                 {typeof risk === 'object' && (
                   <div className="sr-desc">
-                    {[risk.probability, risk.impact_category && formatLabel(risk.impact_category), risk.impact_dollars || risk.impact]
-                      .filter(Boolean)
-                      .join(' • ') || (risk.mitigation ? `Mitigation: ${risk.mitigation}` : '')}
+                    {[
+                      risk.probability,
+                      risk.impact_category && formatLabel(risk.impact_category),
+                      risk.impact_dollars || risk.impact,
+                      risk.mitigation ? `Mitigation: ${risk.mitigation}` : null,
+                    ].filter(Boolean).join(' • ') || 'Not enough information.'}
                   </div>
                 )}
               </div>
@@ -367,13 +394,23 @@ export default function ScoreDashboard({
       priority: 3,
       render: () => (
         <div className="recommendations-section">
-          <div className="rec-header">Recommendations</div>
+          <div className="rec-header">
+            <span>Recommendations</span>
+            {provenanceLabel('recommendations') && (
+              <span className="section-provenance">{provenanceLabel('recommendations')}</span>
+            )}
+          </div>
           {recommendations.map((rec, idx) => (
             <div key={idx} className="rec-item">
               <span className="rec-num">{idx + 1}</span>
-              <span className="rec-text">
-                {typeof rec === 'string' ? rec : (rec.title || rec.recommendation || rec.description || `Recommendation ${idx + 1}`)}
-              </span>
+              <div className="rec-text">
+                <div>{typeof rec === 'string' ? rec : (rec.action || rec.title || rec.recommendation || rec.description || 'Not enough information.')}</div>
+                {typeof rec === 'object' && (
+                  <div className="sr-desc">
+                    {[rec.expected_impact, rec.effort, rec.timeline].filter(Boolean).join(' • ') || 'Not enough information.'}
+                  </div>
+                )}
+              </div>
             </div>
           ))}
         </div>
@@ -665,6 +702,9 @@ export default function ScoreDashboard({
           <div className="score-secondary-column">
             <div className="financial-card">
               <h4>Financial Impact</h4>
+              {provenanceLabel('financial_impact') && (
+                <div className="section-provenance">{provenanceLabel('financial_impact')}</div>
+              )}
               {hasFinancialImpact ? (
                 <div className="fi-grid">
                   {financialGridItems.map((item, idx) => (

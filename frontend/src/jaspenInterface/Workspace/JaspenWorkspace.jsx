@@ -2466,7 +2466,7 @@ useEffect(() => {
           <div className="jas-ud-role-switcher jas-ud-invite-card">
             <span className="jas-ud-role-switcher-label">Invite others</span>
             <p className="jas-ud-role-switcher-note">
-              Share your invite link from here or find it again in Account settings.
+              Share your invite link from here.
             </p>
             <div className="jas-ud-invite-row">
               <code>{inviteDisplay || 'Generating…'}</code>
@@ -2689,11 +2689,12 @@ useEffect(() => {
     } catch {}
   };
 
-  // AI Assistant drawer state
+// AI Assistant drawer state
 const [aiDrawerOpen, setAiDrawerOpen] = useState(true);
 const [aiInput, setAiInput] = useState('');
 const [aiScenarioProposal, setAiScenarioProposal] = useState(null);
 const [aiScenarioBusy, setAiScenarioBusy] = useState(false);
+const aiMessagesRef = useRef(null);
   const closeShortcutSurface = useCallback(() => {
     if (modelMenuOpen) {
       setModelMenuOpen(false);
@@ -3249,6 +3250,17 @@ if (rawHistory.length > 0) {
 
   const scrollToEnd = () => endRef.current?.scrollIntoView({ behavior: 'smooth' });
   useEffect(scrollToEnd, [messages, busy]);
+
+  useEffect(() => {
+    if (!aiDrawerOpen) return;
+    if (activeTab === 'scenario' && scenarioDrawerView !== 'assistant') return;
+    const node = aiMessagesRef.current;
+    if (!node) return;
+    const id = window.requestAnimationFrame(() => {
+      node.scrollTop = node.scrollHeight;
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [aiDrawerOpen, activeTab, scenarioDrawerView, messages, busy]);
 
   // Hoisted function declaration to avoid TDZ issues
   function toConversationHistory(msgs) {
@@ -6446,7 +6458,7 @@ onClick={async () => {
 
     {(!isScenarioTab || scenarioDrawerView === 'assistant') ? (
       <>
-	        <div className="jas-ai-messages">
+	        <div className="jas-ai-messages" ref={aiMessagesRef}>
 	          {messages.map((m, idx) => (
 	            <div
 	              key={idx}
