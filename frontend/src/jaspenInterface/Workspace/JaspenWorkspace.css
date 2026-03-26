@@ -3185,6 +3185,11 @@
   padding: 16px 20px;
 }
 
+.jas-restore-shell {
+  min-height: 100vh;
+  background: var(--surface, #f8fafc);
+}
+
 .jas-ai-message {
   margin-bottom: 16px;
 }

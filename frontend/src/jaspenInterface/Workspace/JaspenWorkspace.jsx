@@ -45,6 +45,15 @@ import { buildInviteDisplay, buildInviteLink } from '../../shared/inviteLink';
 // Styles - Single source of truth
 import "./JaspenWorkspace.css";
 
+const getRestorableSessionIdFromLocation = () => {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('sid') || params.get('session_id') || null;
+  } catch {
+    return null;
+  }
+};
+
 // === Header Icon Helpers =====================================================
 const PM_VARIANT  = "monitor-check";
 const LSS_VARIANT = "chart-scatter";
@@ -2720,6 +2729,7 @@ const [aiScenarioBusy, setAiScenarioBusy] = useState(false);
 const aiMessagesRef = useRef(null);
 const aiMessagesEndRef = useRef(null);
 const aiDrawerPanelRef = useRef(null);
+const [initialRestorePending, setInitialRestorePending] = useState(() => Boolean(getRestorableSessionIdFromLocation()));
   const closeShortcutSurface = useCallback(() => {
     if (modelMenuOpen) {
       setModelMenuOpen(false);
@@ -3182,6 +3192,7 @@ useEffect(() => {
         setView('intake');
         setActiveTab('summary');
         dispatchSidebar({ type: 'CLOSE_ALL' });
+        setInitialRestorePending(false);
         return;
       }
       const sid = resolvedUrlSessionId;
@@ -3229,7 +3240,10 @@ useEffect(() => {
         }
       }
 
-      if (!session) return;
+      if (!session) {
+        setInitialRestorePending(false);
+        return;
+      }
 
       setSessionId(sid);
       setCurrentSessionId(sid);
@@ -3284,6 +3298,7 @@ if (rawHistory.length > 0) {
       // Always refresh readiness + scenarios from backend truth
       fetchReadinessFor(sid);
       refreshBundle(sid);
+      setInitialRestorePending(false);
     })();
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3304,11 +3319,23 @@ if (rawHistory.length > 0) {
     const rafB = window.requestAnimationFrame(() => window.requestAnimationFrame(run));
     const timeoutA = window.setTimeout(run, 60);
     const timeoutB = window.setTimeout(run, 180);
+    let resizeObserver = null;
+    let mutationObserver = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(() => run());
+      resizeObserver.observe(node);
+    }
+    if (typeof MutationObserver !== 'undefined') {
+      mutationObserver = new MutationObserver(() => run());
+      mutationObserver.observe(node, { childList: true, subtree: true, characterData: true });
+    }
     return () => {
       window.cancelAnimationFrame(rafA);
       window.cancelAnimationFrame(rafB);
       window.clearTimeout(timeoutA);
       window.clearTimeout(timeoutB);
+      resizeObserver?.disconnect();
+      mutationObserver?.disconnect();
     };
   }, []);
 
@@ -7050,6 +7077,16 @@ onClick={async () => {
   // If we have an analysis, render the workspace with tabs (post-Analyze)
   if (analysisResult && view !== 'intake') {
     return renderWorkspaceShell();
+  }
+
+  if (initialRestorePending) {
+    return (
+      <div className="jas jas-shell">
+        <main className="jas-main" aria-label="Jaspen workspace">
+          <div className="jas-restore-shell" />
+        </main>
+      </div>
+    );
   }
 
   // Default: conversational intake (no tabs)
