@@ -4845,6 +4845,49 @@ console.log('[Finish&Analyze] data.analysis_result.meta.extracted_levers?', data
     );
   };
 
+  const upsertEditedScorecardSnapshot = useCallback((nextScorecard, {
+    scorecardId = null,
+    label = null,
+  } = {}) => {
+    if (!nextScorecard || typeof nextScorecard !== 'object') return null;
+
+    const baseId = scorecardId || selectedScorecardId || baselineScorecardId || nextScorecard.id || nextScorecard.analysis_id || sessionId;
+    if (!baseId) return null;
+
+    const source =
+      (Array.isArray(scorecardSnapshots) ? scorecardSnapshots.find((s) => s.id === baseId) : null) ||
+      (analysisResult ? { ...analysisResult, id: baseId } : null) ||
+      null;
+
+    const editedId = String(nextScorecard.id || scorecardId || '').trim() || (
+      String(baseId).endsWith('__edited') ? String(baseId) : `${String(baseId)}__edited`
+    );
+
+    const resolvedLabel =
+      label ||
+      nextScorecard.label ||
+      (source?.label ? `${source.label.replace(/\s+\(Edited\)$/i, '')} (Edited)` : 'Edited Scorecard');
+
+    const editedSnapshot = {
+      ...(source || {}),
+      ...(nextScorecard || {}),
+      id: editedId,
+      label: resolvedLabel,
+      isBaseline: false,
+      createdAt: nextScorecard.createdAt || Date.now(),
+    };
+
+    setScorecardSnapshots((prev) => {
+      const current = Array.isArray(prev) ? prev : [];
+      const exists = current.some((item) => item.id === editedId);
+      return exists
+        ? current.map((item) => (item.id === editedId ? editedSnapshot : item))
+        : [...current, editedSnapshot];
+    });
+    setSelectedScorecardId(editedId);
+    return editedId;
+  }, [analysisResult, baselineScorecardId, scorecardSnapshots, selectedScorecardId, sessionId]);
+
   // === Chat Command Handlers ===
   const chatCommandHandlers = {
     [ChatActionTypes.SCORECARD_SELECT]: (payload) => {
@@ -5560,6 +5603,10 @@ const sendAIMessage = async () => {
     const lower = text.toLowerCase();
     const aiThreadId = currentSessionId || sessionId;
     const hasScorecardContext = Boolean(analysisResult || selectedScorecardId);
+    const scorecardEditIntent =
+      activeTab === 'summary' &&
+      hasScorecardContext &&
+      /\b(rewrite|reword|rephrase|shorten|tighten|polish|edit|revise|change the wording|make .*executive|make .*clearer|update (the )?(insight|recommendation|risk|decision)|wording)\b/i.test(text);
     const scenarioIntent =
       hasScorecardContext &&
       (
@@ -5597,6 +5644,39 @@ const sendAIMessage = async () => {
       } catch (scenarioErr) {
         console.error('[sendAIMessage] AI scenario generation failed', scenarioErr);
         showToast('Could not auto-generate scenario from that prompt. Continuing in chat.', 'error');
+      }
+    }
+
+    if (scorecardEditIntent && aiThreadId && activeScorecard) {
+      try {
+        const response = await Jaspen.scorecardAssistant(aiThreadId, {
+          instruction: text,
+          scorecard: activeScorecard,
+          scorecard_id: selectedScorecardId || null,
+          model_type: selectedModelType,
+          strategy_objective: strategyObjective,
+        });
+
+        if (response?.updated_scorecard && typeof response.updated_scorecard === 'object') {
+          upsertEditedScorecardSnapshot(response.updated_scorecard, {
+            scorecardId: response.selected_scorecard_id || selectedScorecardId || baselineScorecardId,
+            label: response.updated_scorecard.label || undefined,
+          });
+          showToast('Updated scorecard wording', 'success');
+        }
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: 'ai',
+            text: response?.reply || 'Updated the scorecard wording.',
+          },
+        ]);
+        return;
+      } catch (scorecardErr) {
+        console.error('[sendAIMessage] scorecard assistant failed', scorecardErr);
+        showToast(scorecardErr?.message || 'Could not update the scorecard wording just now.', 'error');
+        return;
       }
     }
 
@@ -6425,6 +6505,17 @@ const handleSaveScenario = async (scenario) => {
       : !canStartOrgProjects
       ? 'Only creators and admins can begin a project in a shared workspace.'
       : 'Begin project';
+    const scoreDrawerPrompts = activeTab === 'summary'
+      ? [
+          'Explain what drove this score',
+          'Rewrite the top recommendation to sound more executive',
+          'Tighten the wording of the biggest risk',
+          'What would raise this score fastest?',
+        ]
+      : [];
+    const aiDrawerPlaceholder = activeTab === 'summary'
+      ? 'Ask about this scorecard, its risks, or how to sharpen the wording...'
+      : 'Ask about tasks, timeline, resources...';
     const TabButton = ({ id, label }) => {
       const isLocked = id === 'scenario' && scenarioTabLocked;
       const badgeLabel = id === 'scenario' && isLocked ? 'Essential+' : '';
@@ -6723,11 +6814,25 @@ onClick={async () => {
         )}
 
         <div className="jas-ai-input-area">
+          {scoreDrawerPrompts.length > 0 && (
+            <div className="jas-ai-starter-row">
+              {scoreDrawerPrompts.map((prompt) => (
+                <button
+                  key={prompt}
+                  type="button"
+                  className="jas-ai-starter-chip"
+                  onClick={() => setAiInput(prompt)}
+                >
+                  {prompt}
+                </button>
+              ))}
+            </div>
+          )}
           {renderObjectiveTags('jas-ai-objective-tags')}
           <div className="jas-ai-input-row">
             <textarea
               className="jas-ai-input"
-              placeholder="Ask about tasks, timeline, resources..."
+              placeholder={aiDrawerPlaceholder}
               rows="3"
               value={aiInput}
               onChange={(e) => setAiInput(e.target.value)}

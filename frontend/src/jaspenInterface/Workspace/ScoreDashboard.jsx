@@ -58,6 +58,11 @@ export default function ScoreDashboard({
       ? [result.key_insights.trim()]
       : []
   ), [result.key_insights]);
+  const assumptions = useMemo(() => (
+    Array.isArray(result.assumptions)
+      ? result.assumptions.filter((item) => typeof item === 'string' && item.trim())
+      : []
+  ), [result.assumptions]);
 
   // Before/After financial data
   const beforeAfter = result.before_after_financials || {};
@@ -114,13 +119,16 @@ export default function ScoreDashboard({
     const fallbackByCategory = (key) => {
       if (!Object.prototype.hasOwnProperty.call(componentScores, key)) return 'Not enough information.';
       const provenance = sectionProvenance?.component_rationale || sectionProvenance?.component_scores;
+      const byCategory = {
+        financial_health: 'Scored from the current financial and value signals in the conversation. Add clearer budget, ROI, or savings detail if you want a sharper rationale here.',
+        operational_efficiency: 'Scored from the operating model and workflow detail currently in the conversation. Add more process, capacity, or handoff context if you want a stronger explanation here.',
+        market_position: 'Scored from the current market and strategic context. Add customer outcome, positioning, or competitive detail if you want a clearer rationale here.',
+        execution_readiness: 'Scored from the team, sequencing, and delivery detail currently in the conversation. Add more ownership, timeline, and dependency context if you want a fuller rationale here.',
+      };
       if (provenance === 'estimated') {
-        return 'Estimated from the current conversation. Add more detail if you want a stronger rationale for this dimension.';
+        return byCategory[key] || 'Estimated from the current conversation. Add more detail if you want a stronger rationale for this dimension.';
       }
-      if (provenance === 'derived_from_conversation' || provenance === 'uploaded_data') {
-        return 'Scored from the current conversation, but Jaspen did not return a detailed rationale for this dimension yet.';
-      }
-      return 'Scored from the current context. Add more detail if you want a fuller explanation for this dimension.';
+      return byCategory[key] || 'Scored from the current context. Add more detail if you want a fuller explanation for this dimension.';
     };
 
     const byCategory = {
@@ -285,19 +293,6 @@ export default function ScoreDashboard({
     return Array.from(new Set(items)).slice(0, 3);
   }, [scoreCommentary, componentRationale, keyInsights]);
 
-  const provenanceLabel = (key) => {
-    switch (sectionProvenance?.[key]) {
-      case 'uploaded_data':
-        return 'From uploaded data';
-      case 'estimated':
-        return 'Estimated from current context';
-      case 'derived_from_conversation':
-        return 'Based on current conversation';
-      default:
-        return null;
-    }
-  };
-
   // Category scores with progress bar data
   const categoryScoreRows = useMemo(() => {
     const scoreMapping = {
@@ -335,29 +330,54 @@ export default function ScoreDashboard({
     !hasBeforeAfterData ? 'Before vs After Financial Analysis' : null,
   ].filter(Boolean);
 
-  const lowerSections = [
+  const getSectionState = (key, populated, { missingLabel = 'Needs more detail' } = {}) => {
+    if (!populated) {
+      return { label: missingLabel, tone: 'missing' };
+    }
+    const provenance = sectionProvenance?.[key] || (key === 'component_rationale' ? sectionProvenance?.component_scores : null);
+    switch (provenance) {
+      case 'uploaded_data':
+        return { label: 'Uploaded data', tone: 'uploaded' };
+      case 'estimated':
+        return { label: 'Estimated', tone: 'estimated' };
+      case 'derived_from_conversation':
+        return { label: 'Current context', tone: 'grounded' };
+      default:
+        return { label: 'Available', tone: 'grounded' };
+    }
+  };
+
+  const renderSectionBadge = (state) => (
+    <span className={`section-status-pill ${state.tone}`}>{state.label}</span>
+  );
+
+  const renderMetricRows = (fields = []) => (
+    <div className="metric-stack">
+      {fields.filter((field) => field?.value !== null && field?.value !== undefined && field?.value !== '').map((field) => (
+        <div className="metric-row" key={field.key || field.label}>
+          <span className="metric-label">{field.label}</span>
+          <span className="metric-value">{field.value}</span>
+        </div>
+      ))}
+    </div>
+  );
+
+  const sectionCards = [
     {
       key: 'scores',
       title: 'Category Scores',
       populated: hasScores,
       priority: 1,
+      span: 'wide',
+      state: getSectionState('component_rationale', hasScores, { missingLabel: 'Needs stronger rationale' }),
       render: () => (
         <div className="scores-section">
-          <div className="ss-header">
-            <span>Category Scores</span>
-            {provenanceLabel('component_rationale') && (
-              <span className="section-provenance">{provenanceLabel('component_rationale')}</span>
-            )}
-          </div>
           {categoryScoreRows.map((row) => (
             <div key={row.key} className="score-row">
               <span className="sr-name">{row.name}</span>
               <div className="sr-bar">
                 <div className="progress-bar">
-                  <div
-                    className={`fill ${row.color}`}
-                    style={{ width: `${row.value}%` }}
-                  />
+                  <div className={`fill ${row.color}`} style={{ width: `${row.value}%` }} />
                 </div>
               </div>
               <span className="sr-value">{row.value}</span>
@@ -368,73 +388,188 @@ export default function ScoreDashboard({
       ),
     },
     {
-      key: 'risks',
-      populated: risks.length > 0,
+      key: 'recommendations',
+      title: 'Recommendations',
+      populated: recommendations.length > 0,
       priority: 2,
+      span: 'wide',
+      state: getSectionState('recommendations', recommendations.length > 0),
       render: () => (
-        <div className="risks-section">
-          <div className="rs-header">
-            <span>Top Risks</span>
-            {provenanceLabel('top_risks') && (
-              <span className="section-provenance">{provenanceLabel('top_risks')}</span>
-            )}
-          </div>
-          {risks.map((risk, idx) => (
-            <div key={idx} className="risk-item">
-              <span className="ri-num">{idx + 1}</span>
-              <div className="ri-text">
-                <div>{typeof risk === 'string' ? risk : (risk.risk || risk.title || risk.description || 'Not enough information.')}</div>
-                {typeof risk === 'object' && (
-                  <div className="sr-desc">
-                    {[
-                      risk.probability,
-                      risk.impact_category && formatLabel(risk.impact_category),
-                      risk.impact_dollars || risk.impact,
-                      risk.mitigation ? `Mitigation: ${risk.mitigation}` : null,
-                    ].filter(Boolean).join(' • ') || 'Not enough information.'}
-                  </div>
-                )}
+        <div className="recommendations-section">
+          {recommendations.map((rec, idx) => {
+            const recommendationText = typeof rec === 'string'
+              ? rec
+              : (rec.action || rec.title || rec.recommendation || rec.description || 'Not enough information.');
+            const chips = [rec.expected_impact, rec.effort, rec.timeline].filter(Boolean);
+            return (
+              <div key={idx} className="rec-item">
+                <span className="rec-num">{idx + 1}</span>
+                <div className="rec-text">
+                  <div className="section-item-title">{recommendationText}</div>
+                  {chips.length > 0 && (
+                    <div className="section-chip-row">
+                      {chips.map((chip) => (
+                        <span className="section-chip" key={`${idx}_${chip}`}>{chip}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       ),
     },
     {
-      key: 'recommendations',
-      populated: recommendations.length > 0,
+      key: 'risks',
+      title: 'Top Risks',
+      populated: risks.length > 0,
       priority: 3,
+      span: 'wide',
+      state: getSectionState('top_risks', risks.length > 0),
       render: () => (
-        <div className="recommendations-section">
-          <div className="rec-header">
-            <span>Recommendations</span>
-            {provenanceLabel('recommendations') && (
-              <span className="section-provenance">{provenanceLabel('recommendations')}</span>
-            )}
-          </div>
-          {recommendations.map((rec, idx) => (
-            <div key={idx} className="rec-item">
-              <span className="rec-num">{idx + 1}</span>
-              <div className="rec-text">
-                <div>{typeof rec === 'string' ? rec : (rec.action || rec.title || rec.recommendation || rec.description || 'Not enough information.')}</div>
-                {typeof rec === 'object' && (
-                  <div className="sr-desc">
-                    {[rec.expected_impact, rec.effort, rec.timeline].filter(Boolean).join(' • ') || 'Not enough information.'}
-                  </div>
-                )}
+        <div className="risks-section">
+          {risks.map((risk, idx) => {
+            const riskText = typeof risk === 'string'
+              ? risk
+              : (risk.risk || risk.title || risk.description || 'Not enough information.');
+            const chips = [
+              risk.probability,
+              risk.impact_category ? formatLabel(risk.impact_category) : null,
+              risk.impact_dollars || risk.impact,
+              risk.residual_risk ? `Residual: ${risk.residual_risk}` : null,
+            ].filter(Boolean);
+            return (
+              <div key={idx} className="risk-item">
+                <span className="ri-num">{idx + 1}</span>
+                <div className="ri-text">
+                  <div className="section-item-title">{riskText}</div>
+                  {chips.length > 0 && (
+                    <div className="section-chip-row">
+                      {chips.map((chip) => (
+                        <span className="section-chip" key={`${idx}_${chip}`}>{chip}</span>
+                      ))}
+                    </div>
+                  )}
+                  {typeof risk === 'object' && risk.mitigation && (
+                    <div className="section-inline-note">Mitigation: {risk.mitigation}</div>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       ),
+    },
+    {
+      key: 'decision',
+      title: 'Decision Framework',
+      populated: hasDecisionData,
+      priority: 4,
+      state: getSectionState('decision_framework', hasDecisionData),
+      render: () => (
+        <div className="decision-section">
+          {decisionFramework?.go_no_go && (
+            <div className="decision-row">
+              <span className="dr-criteria">Decision</span>
+              <span className="dr-status">
+                <span className={`badge ${
+                  decisionFramework.go_no_go === 'GO'
+                    ? 'badge-success'
+                    : decisionFramework.go_no_go === 'CONDITIONAL'
+                    ? 'badge-warning'
+                    : 'badge-danger'
+                }`}>
+                  {decisionFramework.go_no_go}
+                </span>
+              </span>
+              <span className="dr-desc">{decisionFramework.key_condition || 'Decision outcome derived from the current scorecard context.'}</span>
+            </div>
+          )}
+          {decisionFramework?.confidence_level && (
+            <div className="decision-row">
+              <span className="dr-criteria">Confidence</span>
+              <span className="dr-status">{decisionFramework.confidence_level}</span>
+              <span className="dr-desc">Confidence in the current recommendation.</span>
+            </div>
+          )}
+          {decisionFramework?.downside_scenario && (
+            <div className="decision-row">
+              <span className="dr-criteria">Downside</span>
+              <span className="dr-desc">{decisionFramework.downside_scenario}</span>
+            </div>
+          )}
+          {decisionFramework?.upside_scenario && (
+            <div className="decision-row">
+              <span className="dr-criteria">Upside</span>
+              <span className="dr-desc">{decisionFramework.upside_scenario}</span>
+            </div>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: 'investment',
+      title: 'Investment Analysis',
+      populated: hasInvestmentData,
+      priority: 5,
+      state: getSectionState('investment_analysis', hasInvestmentData),
+      render: () => renderMetricRows([
+        { key: 'investment', label: 'Total Investment Required', value: investmentAnalysis.total_investment_required },
+        { key: 'annual-return', label: 'Expected Annual Return', value: investmentAnalysis.expected_annual_return },
+        { key: 'payback', label: 'Payback Period', value: investmentAnalysis.payback_period },
+        { key: 'inaction', label: 'Cost of Inaction', value: investmentAnalysis.cost_of_inaction },
+      ]),
+    },
+    {
+      key: 'before-after',
+      title: 'Before vs After',
+      populated: hasBeforeAfterData,
+      priority: 6,
+      state: getSectionState('before_after_financials', hasBeforeAfterData),
+      render: () => renderMetricRows([
+        { key: 'before-revenue', label: 'Revenue (Before)', value: before.revenue },
+        { key: 'after-revenue', label: 'Revenue (After)', value: after.revenue },
+        { key: 'before-ebitda', label: 'EBITDA (Before)', value: before.ebitda },
+        { key: 'after-ebitda', label: 'EBITDA (After)', value: after.ebitda },
+        { key: 'before-margin', label: 'Margin (Before)', value: before.margin },
+        { key: 'after-margin', label: 'Margin (After)', value: after.margin },
+      ]),
+    },
+    {
+      key: 'npv',
+      title: 'NPV & IRR Analysis',
+      populated: hasNpvData,
+      priority: 7,
+      state: getSectionState('npv_irr_analysis', hasNpvData),
+      render: () => renderMetricRows([
+        { key: 'npv', label: '3-Year NPV', value: npvIrrAnalysis.npv_3_year },
+        { key: 'irr', label: 'Internal Rate of Return (IRR)', value: npvIrrAnalysis.irr },
+        { key: 'discount-rate', label: 'Discount Rate', value: npvIrrAnalysis.discount_rate_used },
+        { key: 'break-even', label: 'Break-even Month', value: npvIrrAnalysis.break_even_month },
+      ]),
+    },
+    {
+      key: 'valuation',
+      title: 'Valuation',
+      populated: hasValuationData,
+      priority: 8,
+      state: getSectionState('valuation', hasValuationData),
+      render: () => renderMetricRows([
+        { key: 'enterprise-value', label: 'Enterprise Value', value: valuation.enterprise_value },
+        { key: 'multiple', label: 'Multiple', value: valuation.multiple !== null && valuation.multiple !== undefined && valuation.multiple !== '' ? `${valuation.multiple}x` : null },
+        { key: 'basis', label: 'Basis', value: valuation.basis },
+        { key: 'comparables', label: 'Comparable Range', value: valuation.comparable_range },
+      ]),
     },
     {
       key: 'insights',
+      title: 'AI Insights',
       populated: hasAiInsights,
-      priority: 4,
+      priority: 9,
+      state: getSectionState('ai_insights', hasAiInsights),
       render: () => (
         <div className="insights-section">
-          <div className="ins-header">AI Insights</div>
           {aiInsights.slice(0, 5).map((entry, idx) => {
             const summary =
               String(entry?.summary || entry?.insight?.insight_text || '').trim() ||
@@ -451,184 +586,16 @@ export default function ScoreDashboard({
       ),
     },
     {
-      key: 'decision',
-      populated: hasDecisionData,
-      priority: 5,
+      key: 'assumptions',
+      title: 'What Would Sharpen This Score',
+      populated: assumptions.length > 0,
+      priority: 10,
+      state: getSectionState('assumptions', assumptions.length > 0, { missingLabel: 'No major gaps flagged' }),
       render: () => (
-        <div className="decision-section">
-          <div className="ds-header">Strategic Decision Framework</div>
-          {decisionFramework?.go_no_go && (
-            <div className="decision-row">
-              <span className="dr-criteria">Decision</span>
-              <span className="dr-status">
-                <span className={`badge ${
-                  decisionFramework.go_no_go === 'GO'
-                    ? 'badge-success'
-                    : decisionFramework.go_no_go === 'CONDITIONAL'
-                    ? 'badge-warning'
-                    : 'badge-danger'
-                }`}>
-                  {decisionFramework.go_no_go}
-                </span>
-              </span>
-              <span className="dr-desc">{decisionFramework.key_condition || 'Decision outcome generated from current score inputs.'}</span>
-            </div>
-          )}
-          {decisionFramework?.confidence_level && (
-            <div className="decision-row">
-              <span className="dr-criteria">Confidence Level</span>
-              <span className="dr-status">{decisionFramework.confidence_level}</span>
-              <span className="dr-desc">Confidence in the current recommendation.</span>
-            </div>
-          )}
-          {decisionFramework?.downside_scenario && (
-            <div className="decision-row">
-              <span className="dr-criteria">Downside Scenario</span>
-              <span className="dr-desc">{decisionFramework.downside_scenario}</span>
-            </div>
-          )}
-          {decisionFramework?.upside_scenario && (
-            <div className="decision-row">
-              <span className="dr-criteria">Upside Scenario</span>
-              <span className="dr-desc">{decisionFramework.upside_scenario}</span>
-            </div>
-          )}
-        </div>
-      ),
-    },
-    {
-      key: 'investment',
-      populated: hasInvestmentData,
-      priority: 6,
-      render: () => (
-        <div className="data-section">
-          <div className="section-header">Investment Analysis</div>
-          {investmentAnalysis.total_investment_required && (
-            <div className="data-row">
-              <span className="data-label">Total Investment Required</span>
-              <span className="data-value">{investmentAnalysis.total_investment_required}</span>
-            </div>
-          )}
-          {investmentAnalysis.expected_annual_return && (
-            <div className="data-row">
-              <span className="data-label">Expected Annual Return</span>
-              <span className="data-value">{investmentAnalysis.expected_annual_return}</span>
-            </div>
-          )}
-          {investmentAnalysis.payback_period && (
-            <div className="data-row">
-              <span className="data-label">Payback Period</span>
-              <span className="data-value">{investmentAnalysis.payback_period}</span>
-            </div>
-          )}
-          {investmentAnalysis.cost_of_inaction && (
-            <div className="data-row">
-              <span className="data-label">Cost of Inaction</span>
-              <span className="data-value">{investmentAnalysis.cost_of_inaction}</span>
-            </div>
-          )}
-        </div>
-      ),
-    },
-    {
-      key: 'npv',
-      populated: hasNpvData,
-      priority: 7,
-      render: () => (
-        <div className="data-section">
-          <div className="section-header">NPV & IRR Analysis</div>
-          {npvIrrAnalysis.npv_3_year && (
-            <div className="data-row">
-              <span className="data-label">3-Year NPV</span>
-              <span className="data-value">{npvIrrAnalysis.npv_3_year}</span>
-            </div>
-          )}
-          {npvIrrAnalysis.irr && (
-            <div className="data-row">
-              <span className="data-label">Internal Rate of Return (IRR)</span>
-              <span className="data-value">{npvIrrAnalysis.irr}</span>
-            </div>
-          )}
-          {npvIrrAnalysis.discount_rate_used && (
-            <div className="data-row">
-              <span className="data-label">Discount Rate</span>
-              <span className="data-value">{npvIrrAnalysis.discount_rate_used}</span>
-            </div>
-          )}
-          {npvIrrAnalysis.break_even_month !== null && npvIrrAnalysis.break_even_month !== undefined && (
-            <div className="data-row">
-              <span className="data-label">Break-even Month</span>
-              <span className="data-value">{npvIrrAnalysis.break_even_month}</span>
-            </div>
-          )}
-        </div>
-      ),
-    },
-    {
-      key: 'valuation',
-      populated: hasValuationData,
-      priority: 8,
-      render: () => (
-        <div className="data-section">
-          <div className="section-header">Valuation</div>
-          {valuation.enterprise_value && (
-            <div className="data-row">
-              <span className="data-label">Enterprise Value</span>
-              <span className="data-value">{valuation.enterprise_value}</span>
-            </div>
-          )}
-          {valuation.multiple !== null && valuation.multiple !== undefined && valuation.multiple !== '' && (
-            <div className="data-row">
-              <span className="data-label">Multiple</span>
-              <span className="data-value">{valuation.multiple}x</span>
-            </div>
-          )}
-          {valuation.basis && (
-            <div className="data-row">
-              <span className="data-label">Basis</span>
-              <span className="data-value">{valuation.basis}</span>
-            </div>
-          )}
-          {valuation.comparable_range && (
-            <div className="data-row">
-              <span className="data-label">Comparable Range</span>
-              <span className="data-value">{valuation.comparable_range}</span>
-            </div>
-          )}
-        </div>
-      ),
-    },
-    {
-      key: 'before-after',
-      populated: hasBeforeAfterData,
-      priority: 9,
-      render: () => (
-        <div className="data-section">
-          <div className="section-header">Before vs After Financial Analysis</div>
-          {(before.revenue || after.revenue) && (
-            <>
-              <div className="data-row">
-                <span className="data-label">Revenue (Before)</span>
-                <span className="data-value">{before.revenue}</span>
-              </div>
-              <div className="data-row">
-                <span className="data-label">Revenue (After)</span>
-                <span className="data-value">{after.revenue}</span>
-              </div>
-            </>
-          )}
-          {(before.ebitda || after.ebitda) && (
-            <>
-              <div className="data-row">
-                <span className="data-label">EBITDA (Before)</span>
-                <span className="data-value">{before.ebitda}</span>
-              </div>
-              <div className="data-row">
-                <span className="data-label">EBITDA (After)</span>
-                <span className="data-value">{after.ebitda}</span>
-              </div>
-            </>
-          )}
+        <div className="section-bullet-list">
+          {assumptions.map((item, idx) => (
+            <div className="section-bullet-item" key={`assumption_${idx}`}>{item}</div>
+          ))}
         </div>
       ),
     },
@@ -698,7 +665,10 @@ export default function ScoreDashboard({
             </div>
 
             <div className="summary-card">
-              <h4>What drove this score</h4>
+              <div className="card-title-row">
+                <h4>What drove this score</h4>
+                {renderSectionBadge(getSectionState('component_rationale', hasNarrativeHighlights, { missingLabel: 'Needs more detail' }))}
+              </div>
               {hasNarrativeHighlights ? (
                 <div className="summary-list">
                   {narrativeHighlights.map((item, idx) => (
@@ -706,17 +676,17 @@ export default function ScoreDashboard({
                   ))}
                 </div>
               ) : (
-                <p className="section-fallback-message">Not enough information.</p>
+                <p className="section-fallback-message">Jaspen needs a little more context to explain what most affected this score.</p>
               )}
             </div>
           </div>
 
           <div className="score-secondary-column">
             <div className="financial-card">
-              <h4>Financial Impact</h4>
-              {provenanceLabel('financial_impact') && (
-                <div className="section-provenance">{provenanceLabel('financial_impact')}</div>
-              )}
+              <div className="card-title-row">
+                <h4>Financial Impact</h4>
+                {renderSectionBadge(getSectionState('financial_impact', hasFinancialImpact, { missingLabel: 'Needs more detail' }))}
+              </div>
               {hasFinancialImpact ? (
                 <div className="fi-grid">
                   {financialGridItems.map((item, idx) => (
@@ -728,27 +698,44 @@ export default function ScoreDashboard({
                 </div>
               ) : (
                 <p className="section-fallback-message">
-                  Not enough information.
+                  Not enough information to estimate financial impact yet.
                 </p>
               )}
             </div>
           </div>
         </div>
 
-        {lowerSections.filter((section) => section.populated).map((section) => (
-          <React.Fragment key={section.key}>{section.render()}</React.Fragment>
-        ))}
+        <div className="score-body-grid">
+          {sectionCards.filter((section) => section.populated).map((section) => (
+            <section
+              key={section.key}
+              className={`score-section-card ${section.span === 'wide' ? 'span-2' : ''}`}
+            >
+              <div className="section-card-head">
+                <span className="section-card-title">{section.title}</span>
+                {renderSectionBadge(section.state)}
+              </div>
+              <div className="section-card-body">{section.render()}</div>
+            </section>
+          ))}
+        </div>
 
         {missingSectionLabels.length > 0 && (
-          <div className="data-section muted-section">
-            <div className="section-header">Additional analysis areas</div>
-            {missingSectionLabels.map((label) => (
-              <div className="data-row" key={label}>
-                <span className="data-label">{label}</span>
-                <span className="data-value muted">Not enough information.</span>
+          <section className="score-section-card muted-section">
+            <div className="section-card-head">
+              <span className="section-card-title">Additional analysis areas</span>
+              {renderSectionBadge({ label: 'Needs more detail', tone: 'missing' })}
+            </div>
+            <div className="section-card-body">
+              <div className="section-bullet-list">
+                {missingSectionLabels.map((label) => (
+                  <div className="section-bullet-item" key={label}>
+                    {label}: Not enough information.
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            </div>
+          </section>
         )}
     </div>
   );

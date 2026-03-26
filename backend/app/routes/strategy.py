@@ -798,9 +798,100 @@ def _normalize_scorecard_payload(payload):
         'top_risks': _section_provenance(_list_has_values(normalized['top_risks'])),
         'recommendations': _section_provenance(_list_has_values(normalized['recommendations'])),
         'ai_insights': _section_provenance(_list_has_values(normalized['ai_insights']), uploaded=True),
+        'assumptions': _section_provenance(_list_has_values(normalized['assumptions']), estimated=bool(normalized['assumptions'])),
     }
 
     return normalized
+
+
+def _merge_scorecard_patch(base_scorecard, patch):
+    base = base_scorecard if isinstance(base_scorecard, dict) else {}
+    update = patch if isinstance(patch, dict) else {}
+    merged = dict(base)
+
+    editable_dict_keys = {'component_rationale', 'decision_framework'}
+    editable_list_keys = {'key_insights', 'top_risks', 'recommendations', 'assumptions'}
+
+    for key in editable_dict_keys:
+        value = update.get(key)
+        if isinstance(value, dict):
+            merged[key] = value
+
+    for key in editable_list_keys:
+        value = update.get(key)
+        if isinstance(value, list):
+            merged[key] = value
+
+    return _normalize_scorecard_payload(merged)
+
+
+def _scorecard_snapshot_state(scorecard_result, thread_id):
+    result = scorecard_result if isinstance(scorecard_result, dict) else {}
+    baseline = result.get('_baseline_scorecard') if isinstance(result.get('_baseline_scorecard'), dict) else None
+    snapshots = result.get('scorecard_snapshots') if isinstance(result.get('scorecard_snapshots'), list) else []
+    selected_id = str(result.get('selected_scorecard_id') or '').strip() or None
+    normalized_snapshots = []
+
+    if baseline:
+        normalized_baseline = _normalize_scorecard_payload(baseline)
+        normalized_baseline.setdefault('id', str(normalized_baseline.get('analysis_id') or thread_id))
+        normalized_baseline['isBaseline'] = True
+        normalized_baseline['label'] = normalized_baseline.get('label') or 'Baseline'
+        normalized_baseline['createdAt'] = normalized_baseline.get('createdAt') or normalized_baseline.get('timestamp')
+        normalized_snapshots.append(normalized_baseline)
+    else:
+        normalized_baseline = None
+
+    for snapshot in snapshots:
+        if not isinstance(snapshot, dict):
+            continue
+        normalized_snapshot = _normalize_scorecard_payload(snapshot)
+        normalized_snapshot['id'] = str(
+            normalized_snapshot.get('id')
+            or normalized_snapshot.get('analysis_id')
+            or uuid.uuid4()
+        )
+        normalized_snapshot['label'] = normalized_snapshot.get('label') or (
+            'Baseline' if normalized_snapshot.get('isBaseline') else 'Edited scorecard'
+        )
+        normalized_snapshot['isBaseline'] = bool(normalized_snapshot.get('isBaseline'))
+        normalized_snapshot['createdAt'] = normalized_snapshot.get('createdAt') or normalized_snapshot.get('timestamp')
+        if normalized_snapshot['isBaseline']:
+            if normalized_baseline is None:
+                normalized_baseline = normalized_snapshot
+            continue
+        normalized_snapshots.append(normalized_snapshot)
+
+    if normalized_baseline is None:
+        normalized_baseline = _normalize_scorecard_payload(result)
+        normalized_baseline['id'] = str(normalized_baseline.get('analysis_id') or thread_id)
+        normalized_baseline['isBaseline'] = True
+        normalized_baseline['label'] = normalized_baseline.get('label') or 'Baseline'
+        normalized_baseline['createdAt'] = normalized_baseline.get('createdAt') or normalized_baseline.get('timestamp')
+        normalized_snapshots.insert(0, normalized_baseline)
+
+    deduped = []
+    seen_ids = set()
+    for snapshot in normalized_snapshots:
+        snapshot_id = str(snapshot.get('id') or '')
+        if not snapshot_id or snapshot_id in seen_ids:
+            continue
+        seen_ids.add(snapshot_id)
+        deduped.append(snapshot)
+
+    selected_snapshot = None
+    if selected_id:
+        selected_snapshot = next((item for item in deduped if item.get('id') == selected_id), None)
+    if not selected_snapshot:
+        selected_snapshot = normalized_baseline
+        selected_id = selected_snapshot.get('id')
+
+    return {
+        'baseline': normalized_baseline,
+        'snapshots': deduped,
+        'selected_id': selected_id,
+        'selected_snapshot': selected_snapshot,
+    }
 
 
 def _load_thread_conversation(user_id, thread_id):
@@ -3713,6 +3804,7 @@ def get_thread_bundle(thread_id):
         scenarios_dict = td.get('scenarios', {})
         adopted_id = td.get('adopted_scenario_id')
         session_result = session.get('result') if isinstance(session, dict) and isinstance(session.get('result'), dict) else None
+        snapshot_state = _scorecard_snapshot_state(session_result, thread_id) if isinstance(session_result, dict) else None
         strategy_objective = _normalize_strategy_objective(
             (session.get('strategy_objective') if isinstance(session, dict) else None)
             or td.get('strategy_objective')
@@ -3721,7 +3813,9 @@ def get_thread_bundle(thread_id):
         baseline_inputs = td.get('baseline_inputs') or (
             session.get('baseline_inputs') if isinstance(session, dict) and isinstance(session.get('baseline_inputs'), dict) else {}
         )
-        if baseline is None and session_result:
+        if snapshot_state:
+            baseline = snapshot_state['baseline']
+        elif baseline is None and session_result:
             baseline = session_result
         if not isinstance(scenarios_dict, dict):
             scenarios_dict = {}
@@ -3734,6 +3828,8 @@ def get_thread_bundle(thread_id):
 
         # Current scorecard = adopted scenario result if set, else baseline
         current_scorecard = baseline
+        if snapshot_state and isinstance(snapshot_state.get('selected_snapshot'), dict):
+            current_scorecard = snapshot_state['selected_snapshot']
         if adopted_id and adopted_id in scenarios_dict:
             current_scorecard = scenarios_dict[adopted_id].get('result') or baseline
 
@@ -3767,6 +3863,8 @@ def get_thread_bundle(thread_id):
             'messages': (session.get('chat_history') if isinstance(session, dict) and isinstance(session.get('chat_history'), list) else []),
             'baseline_scorecard': baseline,
             'current_scorecard': current_scorecard,
+            'scorecard_snapshots': snapshot_state['snapshots'] if snapshot_state else [],
+            'selected_scorecard_id': snapshot_state['selected_id'] if snapshot_state else None,
             'scenarios': scenarios_list,
             'scenario_levers': scenario_levers,
             'adopted_scenario_id': adopted_id,
@@ -3779,6 +3877,241 @@ def get_thread_bundle(thread_id):
 
     except Exception as e:
         current_app.logger.error("[get_thread_bundle] %s", e)
+        return jsonify({'error': str(e)}), 500
+
+
+@strategy_bp.route('/threads/<thread_id>/scorecard-assistant', methods=['POST'])
+@jwt_required()
+@limiter.limit("20 per minute")
+def scorecard_assistant(thread_id):
+    try:
+        user_id = get_jwt_identity()
+        user = User.query.get(user_id)
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+
+        payload = request.get_json() or {}
+        instruction = str(payload.get('instruction') or '').strip()
+        if not instruction:
+            return jsonify({'error': 'instruction is required'}), 400
+
+        model_selection, model_error = _resolve_user_model_selection(
+            user,
+            requested_model_type=payload.get('model_type'),
+        )
+        if model_error:
+            return model_error
+
+        sessions = load_user_sessions(user_id) or {}
+        session_key, session = _resolve_session_entry(sessions, thread_id)
+        if not isinstance(session, dict):
+            return jsonify({'error': 'Thread not found'}), 404
+
+        session_result = session.get('result') if isinstance(session.get('result'), dict) else {}
+        snapshot_state = _scorecard_snapshot_state(session_result, thread_id)
+        base_scorecard = payload.get('scorecard') if isinstance(payload.get('scorecard'), dict) else snapshot_state['selected_snapshot']
+        base_scorecard = _normalize_scorecard_payload(base_scorecard)
+
+        recent_history = _load_thread_conversation(user_id, thread_id)
+        recent_excerpt = []
+        for item in recent_history[-8:]:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get('role') or '').strip() or 'user'
+            content = str(item.get('content') or item.get('text') or '').strip()
+            if not content:
+                continue
+            recent_excerpt.append({'role': role, 'content': content[:500]})
+
+        objective = _normalize_strategy_objective(
+            payload.get('strategy_objective')
+            or session.get('strategy_objective')
+            or snapshot_state['selected_snapshot'].get('strategy_objective')
+        )
+
+        editable_scorecard = {
+            'project_name': base_scorecard.get('project_name') or session.get('name') or 'Jaspen Scorecard',
+            'jaspen_score': base_scorecard.get('jaspen_score'),
+            'score_category': base_scorecard.get('score_category'),
+            'component_scores': base_scorecard.get('component_scores'),
+            'component_rationale': base_scorecard.get('component_rationale'),
+            'financial_impact': base_scorecard.get('financial_impact'),
+            'key_insights': base_scorecard.get('key_insights'),
+            'top_risks': base_scorecard.get('top_risks'),
+            'recommendations': base_scorecard.get('recommendations'),
+            'decision_framework': base_scorecard.get('decision_framework'),
+            'assumptions': base_scorecard.get('assumptions'),
+        }
+
+        system_prompt = (
+            "You are Jaspen's scorecard editor. "
+            "You can answer questions about the current scorecard and, when the user asks, rewrite scorecard wording. "
+            "Return valid JSON only."
+        )
+        editor_prompt = f"""
+You are reviewing an existing Jaspen scorecard.
+
+User request:
+{instruction}
+
+Objective profile:
+{objective}
+
+Objective guidance:
+{_scorecard_objective_guidance(objective)}
+
+Current scorecard:
+{json.dumps(editable_scorecard, indent=2)}
+
+Recent thread context:
+{json.dumps(recent_excerpt, indent=2)}
+
+Return one valid JSON object only in this format:
+{{
+  "reply": "<short, polished response to the user>",
+  "updated_scorecard": {{
+    "component_rationale": {{
+      "financial_health": "<optional rewritten rationale or null>",
+      "operational_efficiency": "<optional rewritten rationale or null>",
+      "market_position": "<optional rewritten rationale or null>",
+      "execution_readiness": "<optional rewritten rationale or null>"
+    }},
+    "key_insights": ["<optional replacement insight list>"],
+    "top_risks": [
+      {{
+        "risk": "<risk wording>",
+        "probability": "<High|Medium|Low|null>",
+        "impact_dollars": "<currency or null>",
+        "impact_category": "<financial_health|operational_efficiency|market_position|execution_readiness|null>",
+        "mitigation": "<mitigation or null>",
+        "mitigation_cost": "<currency or null>",
+        "residual_risk": "<High|Medium|Low|null>"
+      }}
+    ],
+    "recommendations": [
+      {{
+        "action": "<recommendation wording>",
+        "expected_impact": "<impact wording or quantified outcome>",
+        "effort": "<Low|Medium|High|null>",
+        "timeline": "<timeframe or null>",
+        "priority": <positive integer>
+      }}
+    ],
+    "decision_framework": {{
+      "go_no_go": "<GO|CONDITIONAL|NO-GO|null>",
+      "confidence_level": "<percentage or null>",
+      "key_condition": "<single prerequisite or null>",
+      "downside_scenario": "<downside wording or null>",
+      "upside_scenario": "<upside wording or null>"
+    }},
+    "assumptions": ["<optional updated assumption list>"]
+  }},
+  "updated_sections": ["<section keys you changed>"]
+}}
+
+Rules:
+- If the user is only asking a question and not asking to rewrite or reword the scorecard, set updated_scorecard to null and updated_sections to [].
+- Never change numeric scores, category scores, or financial values in the scorecard.
+- Only rewrite wording or organization for text sections.
+- Preserve the original meaning unless the user explicitly asks to change the substance.
+- If you update a list section, return the full replacement list for that section.
+- Keep the reply crisp and professional.
+""".strip()
+
+        assistant_text = None
+        try:
+            from .ai_agent import _generate_routed_chat_reply
+
+            assistant_text, _usage = _generate_routed_chat_reply(
+                [{"role": "user", "content": editor_prompt}],
+                model_selection,
+                system_prompt=system_prompt,
+                strategy_objective=objective,
+                max_tokens=2200,
+                temperature=0.2,
+            )
+        except Exception as routed_exc:
+            current_app.logger.warning(
+                "[strategy.scorecard_assistant] routed generation failed, falling back to legacy client: %s",
+                routed_exc,
+            )
+            client = get_llm_client()
+            legacy_response = client.chat.completions.create(
+                model=model_selection['llm_model'],
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": editor_prompt},
+                ],
+                temperature=0.2,
+                max_tokens=2200,
+            )
+            assistant_text = legacy_response.choices[0].message.content
+
+        parsed = _extract_json_object(assistant_text)
+        reply = _clean_scorecard_text(parsed.get('reply')) or 'Updated the scorecard wording.'
+        updated_patch = parsed.get('updated_scorecard') if isinstance(parsed.get('updated_scorecard'), dict) else None
+        updated_sections = parsed.get('updated_sections') if isinstance(parsed.get('updated_sections'), list) else []
+
+        updated_scorecard = None
+        selected_scorecard_id = snapshot_state['selected_id']
+
+        if updated_patch:
+            updated_scorecard = _merge_scorecard_patch(base_scorecard, updated_patch)
+            current_selected = snapshot_state['selected_snapshot'] or snapshot_state['baseline']
+            current_selected_id = str(
+                payload.get('selected_scorecard_id')
+                or current_selected.get('id')
+                or snapshot_state['selected_id']
+                or thread_id
+            )
+            edited_id = current_selected_id if current_selected_id.endswith('__edited') else f"{current_selected_id}__edited"
+            edited_label = (
+                current_selected.get('label')
+                or ('Baseline' if current_selected.get('isBaseline') else 'Edited scorecard')
+            )
+            edited_snapshot = {
+                **updated_scorecard,
+                'id': edited_id,
+                'label': edited_label if edited_label.endswith('(Edited)') else f"{edited_label} (Edited)",
+                'isBaseline': False,
+                'createdAt': int(time.time() * 1000),
+            }
+
+            next_snapshots = []
+            replaced = False
+            for snapshot in snapshot_state['snapshots']:
+                snapshot_id = str(snapshot.get('id') or '')
+                if snapshot_id == edited_id:
+                    next_snapshots.append(edited_snapshot)
+                    replaced = True
+                else:
+                    next_snapshots.append(snapshot)
+            if not replaced:
+                next_snapshots.append(edited_snapshot)
+
+            session_result = {
+                **session_result,
+                '_baseline_scorecard': session_result.get('_baseline_scorecard') or snapshot_state['baseline'],
+                'scorecard_snapshots': next_snapshots,
+                'selected_scorecard_id': edited_id,
+            }
+            session['result'] = session_result
+            session['timestamp'] = datetime.utcnow().isoformat()
+            sessions[session_key or thread_id] = session
+            save_user_sessions(user_id, sessions)
+
+            selected_scorecard_id = edited_id
+
+        return jsonify({
+            'success': True,
+            'reply': reply,
+            'updated_scorecard': updated_scorecard,
+            'updated_sections': updated_sections,
+            'selected_scorecard_id': selected_scorecard_id,
+        }), 200
+
+    except Exception as e:
+        current_app.logger.error("[scorecard_assistant] %s", e)
         return jsonify({'error': str(e)}), 500
 
 

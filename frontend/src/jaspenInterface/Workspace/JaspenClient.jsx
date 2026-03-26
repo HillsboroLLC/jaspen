@@ -58,6 +58,7 @@ export const endpoints = {
   exportWbsCsv:      (threadId) => `${API_BASE}/api/v1/export/threads/${encodeURIComponent(threadId)}/wbs/csv`,
   exportConversationMarkdown: (threadId) => `${API_BASE}/api/v1/export/threads/${encodeURIComponent(threadId)}/conversation/markdown`,
   exportConversationPdf: (threadId) => `${API_BASE}/api/v1/export/threads/${encodeURIComponent(threadId)}/conversation/pdf`,
+  scorecardAssistant: (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/scorecard-assistant`,
   batchIdeasUpload: `${API_BASE}/api/v1/ai-agent/batch-ideas/upload`,
   batchIdeasById:   (batchId) => `${API_BASE}/api/v1/ai-agent/batch-ideas/${encodeURIComponent(batchId)}`,
   batchIdeasRank:   (batchId) => `${API_BASE}/api/v1/ai-agent/batch-ideas/${encodeURIComponent(batchId)}/rank`,
@@ -1049,6 +1050,9 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
   // Threads bundle
   getThreadBundle: async (threadId, { msg_limit = 50, scn_limit = 50 } = {}) =>
     getJSON(endpoints.threadBundle(threadId, msg_limit, scn_limit), { withSid: true }),
+
+  scorecardAssistant: async (threadId, payload = {}) =>
+    postJSON(endpoints.scorecardAssistant(threadId), payload, { withSid: true }),
 
   // Connector settings
   getConnectorStatus: async () =>
