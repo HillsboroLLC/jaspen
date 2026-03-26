@@ -827,6 +827,12 @@ const refreshBundle = async (tid) => {
     const baselineScorecard = bundle?.baseline_scorecard || null;
     setBundleCurrentScorecard(currentScorecard);
     setBundleBaselineScorecard(baselineScorecard);
+    const resolvedBundleScorecard =
+      (currentScorecard && typeof currentScorecard === 'object' && Object.keys(currentScorecard).length > 0)
+        ? currentScorecard
+        : (baselineScorecard && typeof baselineScorecard === 'object' && Object.keys(baselineScorecard).length > 0)
+          ? baselineScorecard
+          : null;
     if (currentScorecard && typeof currentScorecard === 'object') {
       bundleSnapshots.push({
         ...currentScorecard,
@@ -883,6 +889,23 @@ const refreshBundle = async (tid) => {
         });
       }
     }
+
+    if (resolvedBundleScorecard) {
+      const normalizedScorecard = normalizeAnalysis(resolvedBundleScorecard);
+      baselineRef.current = normalizedScorecard;
+      setAnalysisResult((prev) => {
+        if (!prev) return normalizedScorecard;
+        const prevId = prev.analysis_id || prev.id || null;
+        const nextId = normalizedScorecard.analysis_id || normalizedScorecard.id || null;
+        if (prevId === nextId && view !== 'intake') return prev;
+        return normalizedScorecard;
+      });
+      if (view === 'intake') {
+        setView('summary');
+        setActiveTab('summary');
+      }
+    }
+
     const bundleMessages = toUiMessages(
       (Array.isArray(bundle?.messages) ? bundle.messages : []).map((m) => ({
         role: m?.role || (m?.sender === 'user' ? 'user' : 'assistant'),
