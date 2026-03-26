@@ -1235,10 +1235,6 @@ useEffect(() => {
 
   const navigate = useNavigate();
   const location = useLocation();
-  const requestedWorkspaceMode = useMemo(() => {
-    const params = new URLSearchParams(location.search);
-    return String(params.get('mode') || '').trim().toLowerCase();
-  }, [location.search]);
   const handleUnauthorized = useCallback(async () => {
     const status = await checkAuthStatus({ silent: true });
     if (!status?.authenticated) {
@@ -3163,8 +3159,6 @@ useEffect(() => {
         return;
       }
       const sid = resolvedUrlSessionId;
-      const restoreRefineMode = requestedWorkspaceMode === 'refine';
-
 
       // prevent readiness “snap” edge cases during restore
       skipPingRef.current = true;
@@ -3238,20 +3232,9 @@ if (rawHistory.length > 0) {
       if ((session.status === 'completed' || session.score != null) && fullScorecard) {
         const normalized = normalizeAnalysis(fullScorecard);
         baselineRef.current = normalized;
-        if (restoreRefineMode) {
-          setAnalysisResult(null);
-          setScorecardSnapshots([]);
-          setSelectedScorecardId(null);
-          setBaselineScorecardId(null);
-          setView('intake');
-          setActiveTab('summary');
-          dispatchSidebar({ type: 'CLOSE_ALL' });
-          dispatchSidebar({ type: 'OPEN_READINESS' });
-        } else {
-          setAnalysisResult(normalized);
-          setView('summary');
-          setActiveTab('summary');
-        }
+        setAnalysisResult(normalized);
+        setView('summary');
+        setActiveTab('summary');
       } else {
         setView('intake');
       }
@@ -3262,7 +3245,7 @@ if (rawHistory.length > 0) {
     })();
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allowedModelTypes, requestedWorkspaceMode, applyPersistedReadinessSnapshot]);
+  }, [allowedModelTypes, applyPersistedReadinessSnapshot]);
 
   const scrollToEnd = () => endRef.current?.scrollIntoView({ behavior: 'smooth' });
   useEffect(scrollToEnd, [messages, busy]);
@@ -5814,29 +5797,6 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
     dispatchSidebar({ type: 'CLOSE_READINESS' });
   }, [user]);
 
-  const refineCurrentBaseline = useCallback(() => {
-    const tid = sessionId || currentSessionId || analysisResult?.analysis_id;
-    if (tid) {
-      setSessionId(tid);
-      setCurrentSessionId(tid);
-      const entry =
-        analysisHistory.find((s) => s.id === tid) ||
-        analysisHistory.find((s) => s.result?.analysis_id === tid);
-      applyPersistedReadinessSnapshot(entry?.readiness || entry?.result?.readiness || null);
-      setAnalysisResult(null);
-      setScorecardSnapshots([]);
-      setSelectedScorecardId(null);
-      setBaselineScorecardId(null);
-      setView('intake');
-      setActiveTab('summary');
-      dispatchSidebar({ type: 'CLOSE_ALL' });
-      dispatchSidebar({ type: 'OPEN_READINESS' });
-      void fetchReadinessFor(tid);
-      return;
-    }
-    window.location.assign('/new?mode=refine');
-  }, [sessionId, currentSessionId, analysisResult, analysisHistory, applyPersistedReadinessSnapshot]);
-
   useEffect(() => {
     if (!analysisResult) return;
     if (activeTab !== 'chat') return;
@@ -6721,16 +6681,6 @@ onClick={async () => {
                   <FontAwesomeIcon icon={faPlus} />
                 </span>
               </button>
-
-              <button
-                type="button"
-                className="jas-refine-baseline-link"
-                onClick={refineCurrentBaseline}
-                title="Add context and rescore this baseline"
-                aria-label="Refine baseline"
-              >
-                Refine Baseline
-              </button>
             </div>
 
             <nav className="jas-top-tabs" role="tablist" aria-label="Jaspen views">
@@ -6924,7 +6874,6 @@ onClick={async () => {
         onExportConversationMarkdown={handleExportConversationMarkdown}
 
         onBackToMain={handleNewAnalysis}
-        onOpenChat={refineCurrentBaseline}
         onOpenScenario={() => { setActiveTab('scenario'); setView('scenario'); }}
       />
     </ErrorBoundary>
@@ -6954,7 +6903,6 @@ onClick={async () => {
                       onAdoptScenario={handleScenarioAdopt}
                       onAdoptScorecard={handleAdoptScorecard}
                       onBackToSummary={() => { setActiveTab('summary'); setView('summary'); }}
-                      onOpenChat={refineCurrentBaseline}
                       onAdopt={handleScenarioUpdate}
                       onSaveScenario={handleSaveScenario}
                       onCompare={handleCompareScenarios}
