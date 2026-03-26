@@ -3,7 +3,7 @@
 // Purpose: Render dynamic scorecard with AI Agent Enterprise Design System
 // Colors: Navy (#161f3b), Magenta (#a0036c), Ice (#eff9fc)
 // ============================================================================
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faChevronDown, faDownload, faSpinner } from '@fortawesome/free-solid-svg-icons';
 import { ScoreDashboardSkeleton } from '../../shared/components/SkeletonLoader';
@@ -46,8 +46,8 @@ export default function ScoreDashboard({
   const score = result.jaspen_score || 0;
   const componentScores = useMemo(() => result.component_scores || {}, [result.component_scores]);
   const componentRationale = useMemo(() => result.component_rationale || {}, [result.component_rationale]);
-  const financialImpact = useMemo(() => result.financial_impact || {}, [result.financial_impact]);
   const sectionProvenance = useMemo(() => result.section_provenance || {}, [result.section_provenance]);
+  const financialImpact = useMemo(() => result.financial_impact || {}, [result.financial_impact]);
   const risks = result.top_risks || result.risks || [];
   const recommendations = result.recommendations || [];
   const aiInsights = Array.isArray(result.ai_insights) ? result.ai_insights : [];
@@ -292,6 +292,14 @@ export default function ScoreDashboard({
     if (commentaryOverall) items.push(commentaryOverall);
     return Array.from(new Set(items)).slice(0, 3);
   }, [scoreCommentary, componentRationale, keyInsights]);
+  const executiveSummary = useMemo(() => {
+    const direct = cleanNarrativeText(result.executive_summary || result.executive_narrative || '');
+    if (direct) return direct;
+    if (narrativeHighlights.length > 0) {
+      return narrativeHighlights.slice(0, 2).join(' ');
+    }
+    return '';
+  }, [result.executive_summary, result.executive_narrative, narrativeHighlights]);
 
   // Category scores with progress bar data
   const categoryScoreRows = useMemo(() => {
@@ -318,38 +326,30 @@ export default function ScoreDashboard({
   const hasFinancialImpact = financialGridItems.length > 0;
   const hasAiInsights = aiInsights.length > 0;
   const hasNarrativeHighlights = narrativeHighlights.length > 0;
-  const missingSectionLabels = [
-    !hasScores ? 'Category Scores' : null,
-    risks.length === 0 ? 'Top Risks' : null,
-    recommendations.length === 0 ? 'Recommendations' : null,
-    !hasAiInsights ? 'AI Insights' : null,
-    !hasDecisionData ? 'Strategic Decision Framework' : null,
-    !hasInvestmentData ? 'Investment Analysis' : null,
-    !hasNpvData ? 'NPV & IRR Analysis' : null,
-    !hasValuationData ? 'Valuation' : null,
-    !hasBeforeAfterData ? 'Before vs After Financial Analysis' : null,
-  ].filter(Boolean);
+  const layoutStorageKey = useMemo(() => (
+    `jaspen_scorecard_layout_v3:${threadBundleId || selectedScorecardId || result.analysis_id || result.id || result.thread_id || 'default'}`
+  ), [threadBundleId, selectedScorecardId, result.analysis_id, result.id, result.thread_id]);
+  const [cardOrder, setCardOrder] = useState([]);
+  const [draggedCardKey, setDraggedCardKey] = useState(null);
 
-  const getSectionState = (key, populated, { missingLabel = 'Needs more detail' } = {}) => {
-    if (!populated) {
-      return { label: missingLabel, tone: 'missing' };
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(layoutStorageKey);
+      const parsed = raw ? JSON.parse(raw) : [];
+      setCardOrder(Array.isArray(parsed) ? parsed.filter((item) => typeof item === 'string') : []);
+    } catch {
+      setCardOrder([]);
     }
-    const provenance = sectionProvenance?.[key] || (key === 'component_rationale' ? sectionProvenance?.component_scores : null);
-    switch (provenance) {
-      case 'uploaded_data':
-        return { label: 'Uploaded data', tone: 'uploaded' };
-      case 'estimated':
-        return { label: 'Estimated', tone: 'estimated' };
-      case 'derived_from_conversation':
-        return { label: 'Current context', tone: 'grounded' };
-      default:
-        return { label: 'Available', tone: 'grounded' };
-    }
-  };
+  }, [layoutStorageKey]);
 
-  const renderSectionBadge = (state) => (
-    <span className={`section-status-pill ${state.tone}`}>{state.label}</span>
-  );
+  const persistCardOrder = useCallback((nextOrder) => {
+    setCardOrder(nextOrder);
+    try {
+      window.localStorage.setItem(layoutStorageKey, JSON.stringify(nextOrder));
+    } catch {
+      // ignore storage failures
+    }
+  }, [layoutStorageKey]);
 
   const renderMetricRows = (fields = []) => (
     <div className="metric-stack">
@@ -362,14 +362,12 @@ export default function ScoreDashboard({
     </div>
   );
 
-  const sectionCards = [
+  const sectionCards = useMemo(() => ([
     {
       key: 'scores',
       title: 'Category Scores',
       populated: hasScores,
       priority: 1,
-      span: 'wide',
-      state: getSectionState('component_rationale', hasScores, { missingLabel: 'Needs stronger rationale' }),
       render: () => (
         <div className="scores-section">
           {categoryScoreRows.map((row) => (
@@ -392,8 +390,6 @@ export default function ScoreDashboard({
       title: 'Recommendations',
       populated: recommendations.length > 0,
       priority: 2,
-      span: 'wide',
-      state: getSectionState('recommendations', recommendations.length > 0),
       render: () => (
         <div className="recommendations-section">
           {recommendations.map((rec, idx) => {
@@ -425,8 +421,6 @@ export default function ScoreDashboard({
       title: 'Top Risks',
       populated: risks.length > 0,
       priority: 3,
-      span: 'wide',
-      state: getSectionState('top_risks', risks.length > 0),
       render: () => (
         <div className="risks-section">
           {risks.map((risk, idx) => {
@@ -466,7 +460,6 @@ export default function ScoreDashboard({
       title: 'Decision Framework',
       populated: hasDecisionData,
       priority: 4,
-      state: getSectionState('decision_framework', hasDecisionData),
       render: () => (
         <div className="decision-section">
           {decisionFramework?.go_no_go && (
@@ -513,7 +506,6 @@ export default function ScoreDashboard({
       title: 'Investment Analysis',
       populated: hasInvestmentData,
       priority: 5,
-      state: getSectionState('investment_analysis', hasInvestmentData),
       render: () => renderMetricRows([
         { key: 'investment', label: 'Total Investment Required', value: investmentAnalysis.total_investment_required },
         { key: 'annual-return', label: 'Expected Annual Return', value: investmentAnalysis.expected_annual_return },
@@ -526,7 +518,6 @@ export default function ScoreDashboard({
       title: 'Before vs After',
       populated: hasBeforeAfterData,
       priority: 6,
-      state: getSectionState('before_after_financials', hasBeforeAfterData),
       render: () => renderMetricRows([
         { key: 'before-revenue', label: 'Revenue (Before)', value: before.revenue },
         { key: 'after-revenue', label: 'Revenue (After)', value: after.revenue },
@@ -541,7 +532,6 @@ export default function ScoreDashboard({
       title: 'NPV & IRR Analysis',
       populated: hasNpvData,
       priority: 7,
-      state: getSectionState('npv_irr_analysis', hasNpvData),
       render: () => renderMetricRows([
         { key: 'npv', label: '3-Year NPV', value: npvIrrAnalysis.npv_3_year },
         { key: 'irr', label: 'Internal Rate of Return (IRR)', value: npvIrrAnalysis.irr },
@@ -554,7 +544,6 @@ export default function ScoreDashboard({
       title: 'Valuation',
       populated: hasValuationData,
       priority: 8,
-      state: getSectionState('valuation', hasValuationData),
       render: () => renderMetricRows([
         { key: 'enterprise-value', label: 'Enterprise Value', value: valuation.enterprise_value },
         { key: 'multiple', label: 'Multiple', value: valuation.multiple !== null && valuation.multiple !== undefined && valuation.multiple !== '' ? `${valuation.multiple}x` : null },
@@ -567,7 +556,6 @@ export default function ScoreDashboard({
       title: 'AI Insights',
       populated: hasAiInsights,
       priority: 9,
-      state: getSectionState('ai_insights', hasAiInsights),
       render: () => (
         <div className="insights-section">
           {aiInsights.slice(0, 5).map((entry, idx) => {
@@ -590,7 +578,6 @@ export default function ScoreDashboard({
       title: 'What Would Sharpen This Score',
       populated: assumptions.length > 0,
       priority: 10,
-      state: getSectionState('assumptions', assumptions.length > 0, { missingLabel: 'No major gaps flagged' }),
       render: () => (
         <div className="section-bullet-list">
           {assumptions.map((item, idx) => (
@@ -599,11 +586,51 @@ export default function ScoreDashboard({
         </div>
       ),
     },
-  ]
-    .sort((a, b) => {
-      if (a.populated !== b.populated) return a.populated ? -1 : 1;
-      return a.priority - b.priority;
+  ]), [
+    assumptions,
+    before,
+    after,
+    categoryScoreRows,
+    decisionFramework,
+    hasAiInsights,
+    hasBeforeAfterData,
+    hasDecisionData,
+    hasInvestmentData,
+    hasNpvData,
+    hasScores,
+    hasValuationData,
+    investmentAnalysis,
+    npvIrrAnalysis,
+    recommendations,
+    risks,
+    aiInsights,
+    valuation,
+  ]);
+
+  const orderedSectionCards = useMemo(() => {
+    const populatedCards = sectionCards
+      .filter((section) => section.populated)
+      .sort((a, b) => a.priority - b.priority);
+
+    if (cardOrder.length === 0) return populatedCards;
+
+    const rank = new Map(cardOrder.map((key, idx) => [key, idx]));
+    return [...populatedCards].sort((a, b) => {
+      const aRank = rank.has(a.key) ? rank.get(a.key) : cardOrder.length + a.priority;
+      const bRank = rank.has(b.key) ? rank.get(b.key) : cardOrder.length + b.priority;
+      return aRank - bRank;
     });
+  }, [sectionCards, cardOrder]);
+
+  const moveCard = useCallback((sourceKey, targetKey) => {
+    if (!sourceKey || !targetKey || sourceKey === targetKey) return;
+    const orderedKeys = orderedSectionCards.map((section) => section.key);
+    const next = orderedKeys.filter((key) => key !== sourceKey);
+    const targetIndex = next.indexOf(targetKey);
+    if (targetIndex === -1) return;
+    next.splice(targetIndex, 0, sourceKey);
+    persistCardOrder(next);
+  }, [orderedSectionCards, persistCardOrder]);
 
   if (loading) {
     return <div className="score-dashboard-container"><ScoreDashboardSkeleton /></div>;
@@ -667,7 +694,6 @@ export default function ScoreDashboard({
             <div className="summary-card">
               <div className="card-title-row">
                 <h4>What drove this score</h4>
-                {renderSectionBadge(getSectionState('component_rationale', hasNarrativeHighlights, { missingLabel: 'Needs more detail' }))}
               </div>
               {hasNarrativeHighlights ? (
                 <div className="summary-list">
@@ -685,7 +711,6 @@ export default function ScoreDashboard({
             <div className="financial-card">
               <div className="card-title-row">
                 <h4>Financial Impact</h4>
-                {renderSectionBadge(getSectionState('financial_impact', hasFinancialImpact, { missingLabel: 'Needs more detail' }))}
               </div>
               {hasFinancialImpact ? (
                 <div className="fi-grid">
@@ -702,41 +727,40 @@ export default function ScoreDashboard({
                 </p>
               )}
             </div>
+
+            {executiveSummary && (
+              <div className="executive-summary-card">
+                <div className="card-title-row">
+                  <h4>Executive Summary</h4>
+                </div>
+                <p className="executive-summary-text">{executiveSummary}</p>
+              </div>
+            )}
           </div>
         </div>
 
         <div className="score-body-grid">
-          {sectionCards.filter((section) => section.populated).map((section) => (
+          {orderedSectionCards.map((section) => (
             <section
               key={section.key}
-              className={`score-section-card ${section.span === 'wide' ? 'span-2' : ''}`}
+              className="score-section-card"
+              draggable
+              onDragStart={() => setDraggedCardKey(section.key)}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={() => {
+                moveCard(draggedCardKey, section.key);
+                setDraggedCardKey(null);
+              }}
+              onDragEnd={() => setDraggedCardKey(null)}
+              title="Drag to reorder"
             >
               <div className="section-card-head">
                 <span className="section-card-title">{section.title}</span>
-                {renderSectionBadge(section.state)}
               </div>
               <div className="section-card-body">{section.render()}</div>
             </section>
           ))}
         </div>
-
-        {missingSectionLabels.length > 0 && (
-          <section className="score-section-card muted-section">
-            <div className="section-card-head">
-              <span className="section-card-title">Additional analysis areas</span>
-              {renderSectionBadge({ label: 'Needs more detail', tone: 'missing' })}
-            </div>
-            <div className="section-card-body">
-              <div className="section-bullet-list">
-                {missingSectionLabels.map((label) => (
-                  <div className="section-bullet-item" key={label}>
-                    {label}: Not enough information.
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
-        )}
     </div>
   );
 }

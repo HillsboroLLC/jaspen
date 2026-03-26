@@ -595,6 +595,9 @@ def _normalize_scorecard_payload(payload):
         key: _clean_scorecard_text(component_rationale_source.get(key))
         for key in ('financial_health', 'operational_efficiency', 'market_position', 'execution_readiness')
     }
+    normalized['executive_summary'] = _clean_scorecard_text(
+        source.get('executive_summary') or source.get('executive_narrative')
+    )
 
     normalized['financial_impact'] = _normalize_metric_group(
         source.get('financial_impact'),
@@ -794,6 +797,7 @@ def _normalize_scorecard_payload(payload):
         'npv_irr_analysis': _section_provenance(_group_has_values(normalized['npv_irr_analysis']), estimated=has_financial_assumptions),
         'valuation': _section_provenance(_group_has_values(normalized['valuation']), estimated=has_financial_assumptions),
         'decision_framework': _section_provenance(_group_has_values(normalized['decision_framework']), estimated=bool(normalized['assumptions'])),
+        'executive_summary': _section_provenance(bool(normalized['executive_summary'])),
         'key_insights': _section_provenance(_list_has_values(normalized['key_insights'])),
         'top_risks': _section_provenance(_list_has_values(normalized['top_risks'])),
         'recommendations': _section_provenance(_list_has_values(normalized['recommendations'])),
@@ -811,6 +815,7 @@ def _merge_scorecard_patch(base_scorecard, patch):
 
     editable_dict_keys = {'component_rationale', 'decision_framework'}
     editable_list_keys = {'key_insights', 'top_risks', 'recommendations', 'assumptions'}
+    editable_scalar_keys = {'executive_summary'}
 
     for key in editable_dict_keys:
         value = update.get(key)
@@ -820,6 +825,11 @@ def _merge_scorecard_patch(base_scorecard, patch):
     for key in editable_list_keys:
         value = update.get(key)
         if isinstance(value, list):
+            merged[key] = value
+
+    for key in editable_scalar_keys:
+        value = _clean_scorecard_text(update.get(key))
+        if value:
             merged[key] = value
 
     return _normalize_scorecard_payload(merged)
@@ -1113,6 +1123,7 @@ Please provide your analysis in the following JSON format:
         "market_position": "<2-3 sentence explanation or null>",
         "execution_readiness": "<2-3 sentence explanation or null>"
     }},
+    "executive_summary": "<2-4 sentence board-ready summary of the score, current opportunity, and biggest constraint or null>",
     "financial_impact": {{
         "ebitda_at_risk": "<percentage or null>",
         "potential_loss": "<dollar amount or null>",
@@ -1197,6 +1208,8 @@ Focus on:
 5. Market positioning and competitive advantage
 
 Provide specific, actionable insights with quantified financial impacts where the conversation supports them. When it does not, keep the affected field null and explain the gap in assumptions.
+
+The executive_summary must read like a concise leadership briefing. It should never repeat raw prompt text or user questions.
 """
 
     if isinstance(model_selection, dict):
@@ -3933,6 +3946,7 @@ def scorecard_assistant(thread_id):
             'project_name': base_scorecard.get('project_name') or session.get('name') or 'Jaspen Scorecard',
             'jaspen_score': base_scorecard.get('jaspen_score'),
             'score_category': base_scorecard.get('score_category'),
+            'executive_summary': base_scorecard.get('executive_summary'),
             'component_scores': base_scorecard.get('component_scores'),
             'component_rationale': base_scorecard.get('component_rationale'),
             'financial_impact': base_scorecard.get('financial_impact'),
@@ -3970,6 +3984,7 @@ Return one valid JSON object only in this format:
 {{
   "reply": "<short, polished response to the user>",
   "updated_scorecard": {{
+    "executive_summary": "<optional rewritten executive summary or null>",
     "component_rationale": {{
       "financial_health": "<optional rewritten rationale or null>",
       "operational_efficiency": "<optional rewritten rationale or null>",

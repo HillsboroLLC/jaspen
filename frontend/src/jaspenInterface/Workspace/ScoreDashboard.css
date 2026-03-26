@@ -288,6 +288,9 @@
 .score-dashboard-container .score-secondary-column {
   flex: 1 1 360px;
   min-width: 320px;
+  display: grid;
+  gap: 20px;
+  align-content: start;
 }
 
 /* --- Score Main Card --- */
@@ -369,7 +372,6 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: 24px;
-  min-height: 100%;
 }
 
 .score-dashboard-container .summary-card {
@@ -391,7 +393,7 @@
 .score-dashboard-container .card-title-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 12px;
   margin-bottom: 16px;
 }
@@ -409,38 +411,6 @@
   color: var(--text-muted);
   text-transform: none;
   letter-spacing: 0;
-}
-
-.score-dashboard-container .section-status-pill {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 4px 10px;
-  border-radius: 999px;
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  white-space: nowrap;
-}
-
-.score-dashboard-container .section-status-pill.grounded {
-  background: #eef5ff;
-  color: #2f4f94;
-}
-
-.score-dashboard-container .section-status-pill.estimated {
-  background: #fff3d6;
-  color: #9a6700;
-}
-
-.score-dashboard-container .section-status-pill.uploaded {
-  background: #e6f9ee;
-  color: #0d7a3e;
-}
-
-.score-dashboard-container .section-status-pill.missing {
-  background: var(--gray-100);
-  color: var(--text-muted);
 }
 
 .score-dashboard-container .summary-list {
@@ -473,26 +443,43 @@
 
 .score-dashboard-container .fi-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px 24px;
 }
 
 .score-dashboard-container .fi-item .fi-label {
   font-size: 0.6875rem;
   color: var(--text-muted);
-  margin-bottom: 2px;
+  margin-bottom: 6px;
 }
 
 .score-dashboard-container .fi-item .fi-value {
-  font-size: 1.125rem;
+  font-size: clamp(0.95rem, 1.45vw, 1.45rem);
   font-weight: 700;
   color: var(--navy);
+  line-height: 1.25;
+  word-break: break-word;
+}
+
+.score-dashboard-container .executive-summary-card {
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 24px;
+}
+
+.score-dashboard-container .executive-summary-text {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.7;
+  color: var(--text-secondary);
 }
 
 .score-dashboard-container .score-body-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 24px;
+  grid-auto-flow: dense;
   align-items: start;
   margin-bottom: 28px;
 }
@@ -503,10 +490,7 @@
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-sm);
   overflow: hidden;
-}
-
-.score-dashboard-container .score-section-card.span-2 {
-  grid-column: span 2;
+  cursor: grab;
 }
 
 .score-dashboard-container .section-card-head {
@@ -529,6 +513,10 @@
 
 .score-dashboard-container .section-card-body {
   padding: 0;
+}
+
+.score-dashboard-container .score-section-card:hover {
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
 }
 
 .score-dashboard-container .score-section-card .scores-section,
@@ -656,9 +644,11 @@
 
 /* --- Score Row --- */
 .score-dashboard-container .score-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(140px, 180px) minmax(120px, 1fr) 44px minmax(180px, 220px);
   align-items: center;
   padding: 14px 20px;
+  gap: 16px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -667,19 +657,16 @@
 }
 
 .score-dashboard-container .sr-name {
-  width: 200px;
   font-size: 0.875rem;
   font-weight: 500;
   color: var(--navy);
 }
 
 .score-dashboard-container .sr-bar {
-  flex: 1;
-  margin: 0 20px;
+  min-width: 0;
 }
 
 .score-dashboard-container .sr-value {
-  width: 40px;
   text-align: right;
   font-size: 0.875rem;
   font-weight: 700;
@@ -687,10 +674,9 @@
 }
 
 .score-dashboard-container .sr-desc {
-  width: 280px;
   font-size: 0.75rem;
   color: var(--text-muted);
-  padding-left: 20px;
+  line-height: 1.55;
 }
 
 /* --- Progress Bar --- */
@@ -1043,20 +1029,13 @@
     grid-template-columns: 1fr;
   }
 
-  .score-dashboard-container .score-section-card.span-2 {
-    grid-column: auto;
-  }
-
   .score-dashboard-container .fi-grid {
     grid-template-columns: repeat(2, 1fr);
   }
 
-  .score-dashboard-container .sr-desc {
-    display: none;
-  }
-
-  .score-dashboard-container .sr-name {
-    width: 160px;
+  .score-dashboard-container .score-row {
+    grid-template-columns: 1fr;
+    align-items: flex-start;
   }
 }
 
@@ -1085,7 +1064,7 @@
   }
 
   .score-dashboard-container .fi-grid {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
   }
 
   .score-dashboard-container .card-title-row,
@@ -1094,16 +1073,13 @@
     align-items: flex-start;
   }
 
-  .score-dashboard-container .sr-name {
-    width: 120px;
-    font-size: 0.8125rem;
+  .score-dashboard-container .score-main-card {
+    padding: 22px;
+    gap: 18px;
   }
 
-  .score-dashboard-container .sr-value {
-    width: 36px;
-  }
-
-  .score-dashboard-container .dr-criteria {
-    width: 140px;
+  .score-dashboard-container .score-circle {
+    width: 104px;
+    height: 104px;
   }
 }
