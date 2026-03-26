@@ -4742,7 +4742,7 @@ console.log('[Finish&Analyze] data.analysis_result.meta.extracted_levers?', data
   // === AI Assistant Handlers ===
   const toggleAIDrawer = () => setAiDrawerOpen(!aiDrawerOpen);
 
-  // === Sidebar content for Refine & Rescore (mini scorecard, no duplicate buttons) ===
+  // === Sidebar mini scorecard ===
   const renderMiniScorecard = (result) => {
     if (!result) return null;
     const comps = result.component_scores || result.scores || result.compat?.components || {};
@@ -6048,7 +6048,7 @@ if (missingSections) {
   setView('summary');
   setActiveTab('summary');
 
-} catch (e) {
+  } catch (e) {
   console.error('[handleSelectAnalysis] hydrate failed', e, { merged });
   // Safe fallback so the UI still renders something
 const normalizedFallback = normalizeAnalysis(merged || {});
@@ -6056,6 +6056,36 @@ setAnalysisResult(normalizedFallback);
 if (!baselineRef.current) baselineRef.current = normalizedFallback; // only set if not set yet
 }
   }
+
+  const didPromoteCompletedRefreshRef = useRef(null);
+  useEffect(() => {
+    const activeId = sessionId || currentSessionId;
+    if (!activeId) {
+      didPromoteCompletedRefreshRef.current = null;
+      return;
+    }
+    if (view !== 'intake') return;
+    if (analysisResult) return;
+    const entry =
+      analysisHistory.find((s) => s.id === activeId) ||
+      analysisHistory.find((s) => s.result?.analysis_id === activeId);
+    const result = entry?.result;
+    const hasScorecard =
+      Boolean(result) && (
+        result?.jaspen_score != null ||
+        Boolean(result?.score_category) ||
+        (result?.component_scores && Object.keys(result.component_scores).length > 0) ||
+        (result?.financial_impact && Object.keys(result.financial_impact).length > 0) ||
+        Boolean(result?.decision_framework) ||
+        Boolean(result?.before_after_financials) ||
+        (Array.isArray(result?.top_risks) && result.top_risks.length > 0) ||
+        (Array.isArray(result?.recommendations) && result.recommendations.length > 0)
+      );
+    if (!hasScorecard) return;
+    if (didPromoteCompletedRefreshRef.current === activeId) return;
+    didPromoteCompletedRefreshRef.current = activeId;
+    void handleSelectAnalysis(result);
+  }, [sessionId, currentSessionId, view, analysisResult, analysisHistory]);
 
   // Delete a session
   const deleteAnalysisById = async (itemId) => {
@@ -6681,8 +6711,6 @@ onClick={async () => {
     />
   </div>
 )}
-
-{/* Refine & Rescore shows only the readiness sidebar (no assistant drawer). */}
 
       <ThreadEditModal
         open={threadEditOpen}
