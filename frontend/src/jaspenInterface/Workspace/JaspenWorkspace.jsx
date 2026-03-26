@@ -3166,14 +3166,15 @@ useEffect(() => {
       skipPingRef.current = true;
 
       let session = await loadSessionById(sid);
+      let restoreBundle = null;
 
       // Fallback: if session detail is blocked by auth on refresh, restore via thread bundle
       if (!session) {
         try {
-          const bundle = await Jaspen.getThreadBundle(sid, { msg_limit: 50, scn_limit: 50 });
+          restoreBundle = await Jaspen.getThreadBundle(sid, { msg_limit: 50, scn_limit: 50 });
 
           // Normalize bundle messages into the same chat_history shape your UI expects
-          const bundleMsgs = Array.isArray(bundle?.messages) ? bundle.messages : [];
+          const bundleMsgs = Array.isArray(restoreBundle?.messages) ? restoreBundle.messages : [];
           const chat_history = bundleMsgs.map((m) => ({
             role: m.role || (m.sender === 'user' ? 'user' : 'assistant'),
             content: m.content || m.text || m.message || '',
@@ -3182,17 +3183,25 @@ useEffect(() => {
           session = {
             session_id: sid,
             chat_history,
-            collected_data: bundle?.collected_data || {},
-            status: bundle?.status || 'in_progress',
-            result: bundle?.result || bundle?.analysis_result || null,
-            score: bundle?.score ?? null,
+            collected_data: restoreBundle?.collected_data || {},
+            status: restoreBundle?.status || 'in_progress',
+            result: restoreBundle?.result || restoreBundle?.analysis_result || null,
+            score: restoreBundle?.score ?? null,
             strategy_objective: normalizeStrategyObjective(
-              bundle?.strategy_objective || bundle?.thread?.strategy_objective || 'balanced'
+              restoreBundle?.strategy_objective || restoreBundle?.thread?.strategy_objective || 'balanced'
             ),
             objective_explicitly_set: false,
           };
         } catch (e) {
           console.debug('[auto-restore] bundle fallback failed', e);
+        }
+      }
+
+      if (!restoreBundle) {
+        try {
+          restoreBundle = await Jaspen.getThreadBundle(sid, { msg_limit: 50, scn_limit: 50 });
+        } catch (e) {
+          console.debug('[auto-restore] bundle hydrate skipped', e);
         }
       }
 
@@ -3226,12 +3235,19 @@ if (rawHistory.length > 0) {
       }
 
       // Restore scorecard (completed sessions)
+      const bundleScorecard =
+        (restoreBundle?.current_scorecard && typeof restoreBundle.current_scorecard === 'object' && Object.keys(restoreBundle.current_scorecard).length > 0)
+          ? restoreBundle.current_scorecard
+          : (restoreBundle?.baseline_scorecard && typeof restoreBundle.baseline_scorecard === 'object' && Object.keys(restoreBundle.baseline_scorecard).length > 0)
+            ? restoreBundle.baseline_scorecard
+            : null;
+
       const fullScorecard =
         (session.result && typeof session.result === 'object' && Object.keys(session.result).length > 0)
           ? session.result
-          : null;
+          : bundleScorecard;
 
-      if ((session.status === 'completed' || session.score != null) && fullScorecard) {
+      if (((session.status === 'completed' || session.score != null) && fullScorecard) || bundleScorecard) {
         const normalized = normalizeAnalysis(fullScorecard);
         baselineRef.current = normalized;
         setAnalysisResult(normalized);
