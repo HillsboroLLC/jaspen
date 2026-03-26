@@ -2719,6 +2719,7 @@ const [aiScenarioProposal, setAiScenarioProposal] = useState(null);
 const [aiScenarioBusy, setAiScenarioBusy] = useState(false);
 const aiMessagesRef = useRef(null);
 const aiMessagesEndRef = useRef(null);
+const aiDrawerPanelRef = useRef(null);
   const closeShortcutSurface = useCallback(() => {
     if (modelMenuOpen) {
       setModelMenuOpen(false);
@@ -3291,25 +3292,45 @@ if (rawHistory.length > 0) {
   const scrollToEnd = () => endRef.current?.scrollIntoView({ behavior: 'smooth' });
   useEffect(scrollToEnd, [messages, busy]);
 
+  const syncAiDrawerToBottom = useCallback(() => {
+    const node = aiMessagesRef.current;
+    const endNode = aiMessagesEndRef.current;
+    if (!node || !endNode) return () => {};
+    const run = () => {
+      endNode.scrollIntoView({ block: 'end' });
+      node.scrollTo({ top: node.scrollHeight, behavior: 'auto' });
+    };
+    const rafA = window.requestAnimationFrame(run);
+    const rafB = window.requestAnimationFrame(() => window.requestAnimationFrame(run));
+    const timeoutA = window.setTimeout(run, 60);
+    const timeoutB = window.setTimeout(run, 180);
+    return () => {
+      window.cancelAnimationFrame(rafA);
+      window.cancelAnimationFrame(rafB);
+      window.clearTimeout(timeoutA);
+      window.clearTimeout(timeoutB);
+    };
+  }, []);
+
   useLayoutEffect(() => {
     if (!aiDrawerOpen) return;
     if (activeTab === 'scenario' && scenarioDrawerView !== 'assistant') return;
-    const node = aiMessagesRef.current;
-    const endNode = aiMessagesEndRef.current;
-    if (!node || !endNode) return;
-    const rafId = window.requestAnimationFrame(() => {
-      endNode.scrollIntoView({ block: 'end' });
-      node.scrollTop = node.scrollHeight;
-    });
-    const timeoutId = window.setTimeout(() => {
-      endNode.scrollIntoView({ block: 'end' });
-      node.scrollTop = node.scrollHeight;
-    }, 60);
-    return () => {
-      window.cancelAnimationFrame(rafId);
-      window.clearTimeout(timeoutId);
+    return syncAiDrawerToBottom();
+  }, [aiDrawerOpen, activeTab, scenarioDrawerView, messages, busy, syncAiDrawerToBottom]);
+
+  useEffect(() => {
+    const panel = aiDrawerPanelRef.current;
+    if (!panel || !aiDrawerOpen) return undefined;
+    const handleTransitionEnd = (event) => {
+      if (event.target !== panel) return;
+      if (activeTab === 'scenario' && scenarioDrawerView !== 'assistant') return;
+      syncAiDrawerToBottom();
     };
-  }, [aiDrawerOpen, activeTab, scenarioDrawerView, messages, busy]);
+    panel.addEventListener('transitionend', handleTransitionEnd);
+    return () => {
+      panel.removeEventListener('transitionend', handleTransitionEnd);
+    };
+  }, [aiDrawerOpen, activeTab, scenarioDrawerView, syncAiDrawerToBottom]);
 
   // Hoisted function declaration to avoid TDZ issues
   function toConversationHistory(msgs) {
@@ -6504,6 +6525,7 @@ onClick={async () => {
 {activeTab !== 'chat' && (
   <div
     id="jas-ai-drawer-panel"
+    ref={aiDrawerPanelRef}
     className={`jas-ai-drawer ${aiDrawerOpen ? 'jas-drawer-open' : ''}`}
     aria-label="Jaspen assistant drawer"
   >
