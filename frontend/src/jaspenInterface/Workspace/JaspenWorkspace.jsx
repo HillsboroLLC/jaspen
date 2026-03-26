@@ -4,7 +4,7 @@
 //          and show tabs AFTER Finish & Analyze.
 // ============================================================================
 
-import React, { useEffect, useRef, useState, useMemo, useReducer, useCallback } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState, useMemo, useReducer, useCallback } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -2695,6 +2695,7 @@ const [aiInput, setAiInput] = useState('');
 const [aiScenarioProposal, setAiScenarioProposal] = useState(null);
 const [aiScenarioBusy, setAiScenarioBusy] = useState(false);
 const aiMessagesRef = useRef(null);
+const aiMessagesEndRef = useRef(null);
   const closeShortcutSurface = useCallback(() => {
     if (modelMenuOpen) {
       setModelMenuOpen(false);
@@ -3251,15 +3252,24 @@ if (rawHistory.length > 0) {
   const scrollToEnd = () => endRef.current?.scrollIntoView({ behavior: 'smooth' });
   useEffect(scrollToEnd, [messages, busy]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!aiDrawerOpen) return;
     if (activeTab === 'scenario' && scenarioDrawerView !== 'assistant') return;
     const node = aiMessagesRef.current;
-    if (!node) return;
-    const id = window.requestAnimationFrame(() => {
+    const endNode = aiMessagesEndRef.current;
+    if (!node || !endNode) return;
+    const rafId = window.requestAnimationFrame(() => {
+      endNode.scrollIntoView({ block: 'end' });
       node.scrollTop = node.scrollHeight;
     });
-    return () => window.cancelAnimationFrame(id);
+    const timeoutId = window.setTimeout(() => {
+      endNode.scrollIntoView({ block: 'end' });
+      node.scrollTop = node.scrollHeight;
+    }, 60);
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      window.clearTimeout(timeoutId);
+    };
   }, [aiDrawerOpen, activeTab, scenarioDrawerView, messages, busy]);
 
   // Hoisted function declaration to avoid TDZ issues
@@ -6469,6 +6479,7 @@ onClick={async () => {
 	              {renderMessageActions(m, `drawer:${idx}`, idx, messages.length)}
 	            </div>
 	          ))}
+            <div ref={aiMessagesEndRef} aria-hidden="true" />
 	        </div>
         {renderStreamToolStatus()}
 

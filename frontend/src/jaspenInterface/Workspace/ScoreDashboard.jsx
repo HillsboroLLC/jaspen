@@ -111,11 +111,23 @@ export default function ScoreDashboard({
   };
 
   const buildSmartExplanations = () => {
+    const fallbackByCategory = (key) => {
+      if (!Object.prototype.hasOwnProperty.call(componentScores, key)) return 'Not enough information.';
+      const provenance = sectionProvenance?.component_rationale || sectionProvenance?.component_scores;
+      if (provenance === 'estimated') {
+        return 'Estimated from the current conversation. Add more detail if you want a stronger rationale for this dimension.';
+      }
+      if (provenance === 'derived_from_conversation' || provenance === 'uploaded_data') {
+        return 'Scored from the current conversation, but Jaspen did not return a detailed rationale for this dimension yet.';
+      }
+      return 'Scored from the current context. Add more detail if you want a fuller explanation for this dimension.';
+    };
+
     const byCategory = {
-      financial_health: componentRationale.financial_health || 'Not enough information.',
-      market_position: componentRationale.market_position || 'Not enough information.',
-      operational_efficiency: componentRationale.operational_efficiency || 'Not enough information.',
-      execution_readiness: componentRationale.execution_readiness || 'Not enough information.',
+      financial_health: componentRationale.financial_health || fallbackByCategory('financial_health'),
+      market_position: componentRationale.market_position || fallbackByCategory('market_position'),
+      operational_efficiency: componentRationale.operational_efficiency || fallbackByCategory('operational_efficiency'),
+      execution_readiness: componentRationale.execution_readiness || fallbackByCategory('execution_readiness'),
     };
 
     return { byCategory };
