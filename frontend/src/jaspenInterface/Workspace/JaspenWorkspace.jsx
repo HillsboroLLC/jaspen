@@ -593,6 +593,33 @@ const [specMap, setSpecMap] = useState({});                 // key -> {label, we
 const [readinessSource, setReadinessSource] = useState(null); // "ml" or "heuristic"
 const [readinessVersion, setReadinessVersion] = useState(null);
 
+const applyPersistedReadinessSnapshot = useCallback((snapshot) => {
+  const normalized = normalizeReadiness(snapshot);
+  const hasMeaningfulReadiness = Boolean(
+    normalized.percent > 0 ||
+    normalized.categories.length > 0 ||
+    normalized.items.length > 0 ||
+    normalized.checklist_summary
+  );
+  if (!hasMeaningfulReadiness) return false;
+
+  setReadinessAudit({
+    overall: {
+      percent: normalized.percent,
+      source: 'persisted',
+      heur_overall: normalized.percent,
+    },
+    categories: normalized.categories,
+    items: normalized.items,
+    checklist_summary: normalized.checklist_summary,
+    version: normalized.version,
+    objective_profile: normalized.objective_profile,
+  });
+  setReadinessSource('persisted');
+  setReadinessVersion(normalized.version || readinessVersion || null);
+  return true;
+}, [readinessVersion]);
+
 // Variant selector (Baseline, Scenario A/B/C)
 const [scoreVariants, setScoreVariants] = useState([]);
 const [selectedVariantId, setSelectedVariantId] = useState('baseline');
@@ -3186,6 +3213,7 @@ const rawHistory =
 if (rawHistory.length > 0) {
   setMessages(toUiMessages(rawHistory));
 }
+      applyPersistedReadinessSnapshot(session?.readiness || null);
       // Restore collected_data
       if (session.collected_data && typeof session.collected_data === 'object') {
         setCollectedData(session.collected_data);
@@ -3208,6 +3236,7 @@ if (rawHistory.length > 0) {
           setView('intake');
           setActiveTab('summary');
           dispatchSidebar({ type: 'CLOSE_ALL' });
+          dispatchSidebar({ type: 'OPEN_READINESS' });
         } else {
           setAnalysisResult(normalized);
           setView('summary');
@@ -3223,7 +3252,7 @@ if (rawHistory.length > 0) {
     })();
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allowedModelTypes, requestedWorkspaceMode]);
+  }, [allowedModelTypes, requestedWorkspaceMode, applyPersistedReadinessSnapshot]);
 
   const scrollToEnd = () => endRef.current?.scrollIntoView({ behavior: 'smooth' });
   useEffect(scrollToEnd, [messages, busy]);
@@ -5780,6 +5809,10 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
     if (tid) {
       setSessionId(tid);
       setCurrentSessionId(tid);
+      const entry =
+        analysisHistory.find((s) => s.id === tid) ||
+        analysisHistory.find((s) => s.result?.analysis_id === tid);
+      applyPersistedReadinessSnapshot(entry?.readiness || entry?.result?.readiness || null);
       setAnalysisResult(null);
       setScorecardSnapshots([]);
       setSelectedScorecardId(null);
@@ -5792,7 +5825,7 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
       return;
     }
     window.location.assign('/new?mode=refine');
-  }, [sessionId, currentSessionId, analysisResult]);
+  }, [sessionId, currentSessionId, analysisResult, analysisHistory, applyPersistedReadinessSnapshot]);
 
   useEffect(() => {
     if (!analysisResult) return;
