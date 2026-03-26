@@ -35,6 +35,7 @@ export default function ScoreDashboard({
   loading = false,
 }) {
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [expandedCategoryKeys, setExpandedCategoryKeys] = useState([]);
   const exportMenuRef = useRef(null);
   // If snapshots are provided, render the selected snapshot as the source of truth.
   const selectedSnapshot = useMemo(() => {
@@ -48,9 +49,9 @@ export default function ScoreDashboard({
   const componentRationale = useMemo(() => result.component_rationale || {}, [result.component_rationale]);
   const sectionProvenance = useMemo(() => result.section_provenance || {}, [result.section_provenance]);
   const financialImpact = useMemo(() => result.financial_impact || {}, [result.financial_impact]);
-  const risks = result.top_risks || result.risks || [];
-  const recommendations = result.recommendations || [];
-  const aiInsights = Array.isArray(result.ai_insights) ? result.ai_insights : [];
+  const risks = useMemo(() => result.top_risks || result.risks || [], [result.top_risks, result.risks]);
+  const recommendations = useMemo(() => result.recommendations || [], [result.recommendations]);
+  const aiInsights = useMemo(() => (Array.isArray(result.ai_insights) ? result.ai_insights : []), [result.ai_insights]);
   const keyInsights = useMemo(() => (
     Array.isArray(result.key_insights)
       ? result.key_insights
@@ -65,9 +66,9 @@ export default function ScoreDashboard({
   ), [result.assumptions]);
 
   // Before/After financial data
-  const beforeAfter = result.before_after_financials || {};
-  const before = beforeAfter.before || {};
-  const after = beforeAfter.after || {};
+  const beforeAfter = useMemo(() => result.before_after_financials || {}, [result.before_after_financials]);
+  const before = useMemo(() => beforeAfter.before || {}, [beforeAfter]);
+  const after = useMemo(() => beforeAfter.after || {}, [beforeAfter]);
 
   const hasMeaningfulValue = (value) => {
     if (value === null || value === undefined || value === '') return false;
@@ -79,15 +80,15 @@ export default function ScoreDashboard({
   };
 
   // Investment Analysis
-  const investmentAnalysis = result.investment_analysis || {};
+  const investmentAnalysis = useMemo(() => result.investment_analysis || {}, [result.investment_analysis]);
   const hasInvestmentData = hasMeaningfulValue(investmentAnalysis);
 
   // NPV/IRR Analysis
-  const npvIrrAnalysis = result.npv_irr_analysis || {};
+  const npvIrrAnalysis = useMemo(() => result.npv_irr_analysis || {}, [result.npv_irr_analysis]);
   const hasNpvData = hasMeaningfulValue(npvIrrAnalysis);
 
   // Valuation
-  const valuation = result.valuation || {};
+  const valuation = useMemo(() => result.valuation || {}, [result.valuation]);
   const hasValuationData = hasMeaningfulValue(valuation);
 
   // Decision Framework (supports object or JSON string)
@@ -322,6 +323,19 @@ export default function ScoreDashboard({
       .sort((a, b) => a.order - b.order);
   }, [componentScores, smartExplanations]);
 
+  useEffect(() => {
+    if (categoryScoreRows.length === 0) {
+      setExpandedCategoryKeys([]);
+      return;
+    }
+
+    setExpandedCategoryKeys((current) => {
+      const valid = current.filter((key) => categoryScoreRows.some((row) => row.key === key));
+      if (valid.length > 0) return valid;
+      return [categoryScoreRows[0].key];
+    });
+  }, [categoryScoreRows]);
+
   const hasScores = categoryScoreRows.length > 0;
   const hasFinancialImpact = financialGridItems.length > 0;
   const hasAiInsights = aiInsights.length > 0;
@@ -351,6 +365,14 @@ export default function ScoreDashboard({
     }
   }, [layoutStorageKey]);
 
+  const toggleCategoryRow = useCallback((key) => {
+    setExpandedCategoryKeys((current) => (
+      current.includes(key)
+        ? current.filter((entry) => entry !== key)
+        : [...current, key]
+    ));
+  }, []);
+
   const renderMetricRows = (fields = []) => (
     <div className="metric-stack">
       {fields.filter((field) => field?.value !== null && field?.value !== undefined && field?.value !== '').map((field) => (
@@ -369,17 +391,32 @@ export default function ScoreDashboard({
       populated: hasScores,
       priority: 1,
       render: () => (
-        <div className="scores-section">
+        <div className="scores-section scores-accordion">
           {categoryScoreRows.map((row) => (
-            <div key={row.key} className="score-row">
-              <span className="sr-name">{row.name}</span>
-              <div className="sr-bar">
-                <div className="progress-bar">
-                  <div className={`fill ${row.color}`} style={{ width: `${row.value}%` }} />
+            <div
+              key={row.key}
+              className={`score-row score-accordion-item ${expandedCategoryKeys.includes(row.key) ? 'expanded' : ''}`}
+            >
+              <button
+                type="button"
+                className="score-accordion-toggle"
+                onClick={() => toggleCategoryRow(row.key)}
+                aria-expanded={expandedCategoryKeys.includes(row.key)}
+              >
+                <span className="sr-name-wrap">
+                  <span className="sr-name">{row.name}</span>
+                  <span className={`sr-score-pill ${row.color}`}>{row.value}</span>
+                </span>
+                <FontAwesomeIcon
+                  icon={faChevronDown}
+                  className={`score-accordion-chevron ${expandedCategoryKeys.includes(row.key) ? 'expanded' : ''}`}
+                />
+              </button>
+              {expandedCategoryKeys.includes(row.key) && (
+                <div className="score-accordion-body">
+                  <p className="sr-desc">{row.description}</p>
                 </div>
-              </div>
-              <span className="sr-value">{row.value}</span>
-              <span className="sr-desc">{row.description}</span>
+              )}
             </div>
           ))}
         </div>
@@ -592,6 +629,7 @@ export default function ScoreDashboard({
     after,
     categoryScoreRows,
     decisionFramework,
+    expandedCategoryKeys,
     hasAiInsights,
     hasBeforeAfterData,
     hasDecisionData,
@@ -604,6 +642,7 @@ export default function ScoreDashboard({
     recommendations,
     risks,
     aiInsights,
+    toggleCategoryRow,
     valuation,
   ]);
 
@@ -708,6 +747,15 @@ export default function ScoreDashboard({
           </div>
 
           <div className="score-secondary-column">
+            {executiveSummary && (
+              <div className="executive-summary-card">
+                <div className="card-title-row">
+                  <h4>Executive Summary</h4>
+                </div>
+                <p className="executive-summary-text">{executiveSummary}</p>
+              </div>
+            )}
+
             <div className="financial-card">
               <div className="card-title-row">
                 <h4>Financial Impact</h4>
@@ -727,15 +775,6 @@ export default function ScoreDashboard({
                 </p>
               )}
             </div>
-
-            {executiveSummary && (
-              <div className="executive-summary-card">
-                <div className="card-title-row">
-                  <h4>Executive Summary</h4>
-                </div>
-                <p className="executive-summary-text">{executiveSummary}</p>
-              </div>
-            )}
           </div>
         </div>
 
