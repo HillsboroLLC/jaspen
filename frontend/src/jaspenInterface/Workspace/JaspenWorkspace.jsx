@@ -1818,6 +1818,11 @@ useEffect(() => {
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
+        if (response.status === 404) {
+          setThreadUsage(null);
+          setThreadUsageError('');
+          return;
+        }
         if (response.status === 401) {
           await handleUnauthorized();
         }
@@ -2535,7 +2540,11 @@ useEffect(() => {
           {activeThreadId && !threadUsageLoading && threadUsageError && (
             <p className="jas-ud-usage-error">{threadUsageError}</p>
           )}
+          {activeThreadId && !threadUsageLoading && !threadUsageError && !threadUsage && (
+            <p className="jas-ud-usage-empty">Usage details are not available for this thread yet.</p>
+          )}
           {activeThreadId && !threadUsageLoading && !threadUsageError && (
+            threadUsage ? (
             <>
               <div className="jas-ud-usage-top">
                 <span className="jas-ud-usage-model">
@@ -2579,6 +2588,7 @@ useEffect(() => {
                 </div>
               )}
             </>
+            ) : null
           )}
         </div>
 
