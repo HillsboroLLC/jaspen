@@ -5,7 +5,7 @@
 // ============================================================================
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faChevronDown, faDownload, faSpinner } from '@fortawesome/free-solid-svg-icons';
+import { faChevronDown, faDownload, faSpinner, faUpRightAndDownLeftFromCenter } from '@fortawesome/free-solid-svg-icons';
 import { ScoreDashboardSkeleton } from '../../shared/components/SkeletonLoader';
 import './ScoreDashboard.css';
 
@@ -331,8 +331,7 @@ export default function ScoreDashboard({
 
     setExpandedCategoryKeys((current) => {
       const valid = current.filter((key) => categoryScoreRows.some((row) => row.key === key));
-      if (valid.length > 0) return valid;
-      return [categoryScoreRows[0].key];
+      return valid;
     });
   }, [categoryScoreRows]);
 
@@ -343,8 +342,17 @@ export default function ScoreDashboard({
   const layoutStorageKey = useMemo(() => (
     `jaspen_scorecard_layout_v3:${threadBundleId || selectedScorecardId || result.analysis_id || result.id || result.thread_id || 'default'}`
   ), [threadBundleId, selectedScorecardId, result.analysis_id, result.id, result.thread_id]);
+  const topLayoutStorageKey = useMemo(() => (
+    `jaspen_scorecard_top_layout_v1:${threadBundleId || selectedScorecardId || result.analysis_id || result.id || result.thread_id || 'default'}`
+  ), [threadBundleId, selectedScorecardId, result.analysis_id, result.id, result.thread_id]);
+  const sizeStorageKey = useMemo(() => (
+    `jaspen_scorecard_card_sizes_v1:${threadBundleId || selectedScorecardId || result.analysis_id || result.id || result.thread_id || 'default'}`
+  ), [threadBundleId, selectedScorecardId, result.analysis_id, result.id, result.thread_id]);
   const [cardOrder, setCardOrder] = useState([]);
+  const [topCardOrder, setTopCardOrder] = useState([]);
+  const [cardSizes, setCardSizes] = useState({});
   const [draggedCardKey, setDraggedCardKey] = useState(null);
+  const [draggedTopCardKey, setDraggedTopCardKey] = useState(null);
 
   useEffect(() => {
     try {
@@ -356,6 +364,26 @@ export default function ScoreDashboard({
     }
   }, [layoutStorageKey]);
 
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(topLayoutStorageKey);
+      const parsed = raw ? JSON.parse(raw) : [];
+      setTopCardOrder(Array.isArray(parsed) ? parsed.filter((item) => typeof item === 'string') : []);
+    } catch {
+      setTopCardOrder([]);
+    }
+  }, [topLayoutStorageKey]);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(sizeStorageKey);
+      const parsed = raw ? JSON.parse(raw) : {};
+      setCardSizes(parsed && typeof parsed === 'object' ? parsed : {});
+    } catch {
+      setCardSizes({});
+    }
+  }, [sizeStorageKey]);
+
   const persistCardOrder = useCallback((nextOrder) => {
     setCardOrder(nextOrder);
     try {
@@ -364,6 +392,24 @@ export default function ScoreDashboard({
       // ignore storage failures
     }
   }, [layoutStorageKey]);
+
+  const persistTopCardOrder = useCallback((nextOrder) => {
+    setTopCardOrder(nextOrder);
+    try {
+      window.localStorage.setItem(topLayoutStorageKey, JSON.stringify(nextOrder));
+    } catch {
+      // ignore storage failures
+    }
+  }, [topLayoutStorageKey]);
+
+  const persistCardSizes = useCallback((nextSizes) => {
+    setCardSizes(nextSizes);
+    try {
+      window.localStorage.setItem(sizeStorageKey, JSON.stringify(nextSizes));
+    } catch {
+      // ignore storage failures
+    }
+  }, [sizeStorageKey]);
 
   const toggleCategoryRow = useCallback((key) => {
     setExpandedCategoryKeys((current) => (
@@ -383,6 +429,91 @@ export default function ScoreDashboard({
       ))}
     </div>
   );
+
+  const topCards = useMemo(() => ([
+    {
+      key: 'score',
+      render: () => (
+        <div className="score-main-card top-grid-card">
+          <div className="score-circle">
+            <span className="score-value">{score}</span>
+            <span className="score-label">Score</span>
+          </div>
+          <div className="score-text">
+            <h3>Strategy Score</h3>
+            <span className={`score-rating ${scoreRatingClass}`}>{scoreLabel}</span>
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: 'summary',
+      render: () => (
+        <div className="summary-card top-grid-card">
+          <div className="card-title-row">
+            <h4>What drove this score</h4>
+          </div>
+          {hasNarrativeHighlights ? (
+            <div className="summary-list top-card-scroll">
+              {narrativeHighlights.map((item, idx) => (
+                <p key={`summary_${idx}`}>{item}</p>
+              ))}
+            </div>
+          ) : (
+            <p className="section-fallback-message">Jaspen needs a little more context to explain what most affected this score.</p>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: 'executive',
+      render: () => (
+        <div className="executive-summary-card top-grid-card">
+          <div className="card-title-row">
+            <h4>Executive Summary</h4>
+          </div>
+          <div className="top-card-scroll">
+            <p className="executive-summary-text">
+              {executiveSummary || 'Not enough information to generate an executive summary yet.'}
+            </p>
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: 'financial',
+      render: () => (
+        <div className="financial-card top-grid-card">
+          <div className="card-title-row">
+            <h4>Financial Impact</h4>
+          </div>
+          {hasFinancialImpact ? (
+            <div className="fi-grid">
+              {financialGridItems.map((item, idx) => (
+                <div key={idx} className="fi-item">
+                  <div className="fi-label">{item.label}</div>
+                  <div className="fi-value">{item.value}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="section-fallback-message">
+              Not enough information to estimate financial impact yet.
+            </p>
+          )}
+        </div>
+      ),
+    },
+  ]), [
+    executiveSummary,
+    financialGridItems,
+    hasFinancialImpact,
+    hasNarrativeHighlights,
+    narrativeHighlights,
+    score,
+    scoreLabel,
+    scoreRatingClass,
+  ]);
 
   const sectionCards = useMemo(() => ([
     {
@@ -671,6 +802,34 @@ export default function ScoreDashboard({
     persistCardOrder(next);
   }, [orderedSectionCards, persistCardOrder]);
 
+  const orderedTopCards = useMemo(() => {
+    if (topCardOrder.length === 0) return topCards;
+    const rank = new Map(topCardOrder.map((key, idx) => [key, idx]));
+    return [...topCards].sort((a, b) => {
+      const aRank = rank.has(a.key) ? rank.get(a.key) : topCardOrder.length;
+      const bRank = rank.has(b.key) ? rank.get(b.key) : topCardOrder.length;
+      return aRank - bRank;
+    });
+  }, [topCardOrder, topCards]);
+
+  const moveTopCard = useCallback((sourceKey, targetKey) => {
+    if (!sourceKey || !targetKey || sourceKey === targetKey) return;
+    const orderedKeys = orderedTopCards.map((card) => card.key);
+    const next = orderedKeys.filter((key) => key !== sourceKey);
+    const targetIndex = next.indexOf(targetKey);
+    if (targetIndex === -1) return;
+    next.splice(targetIndex, 0, sourceKey);
+    persistTopCardOrder(next);
+  }, [orderedTopCards, persistTopCardOrder]);
+
+  const toggleCardSpan = useCallback((key) => {
+    const nextSizes = {
+      ...cardSizes,
+      [key]: cardSizes[key] === 'wide' ? 'compact' : 'wide',
+    };
+    persistCardSizes(nextSizes);
+  }, [cardSizes, persistCardSizes]);
+
   if (loading) {
     return <div className="score-dashboard-container"><ScoreDashboardSkeleton /></div>;
   }
@@ -717,72 +876,31 @@ export default function ScoreDashboard({
             </div>
           )}
         </div>
-        <div className="score-header-row">
-          <div className="score-primary-column">
-            <div className="score-main-card">
-              <div className="score-circle">
-                <span className="score-value">{score}</span>
-                <span className="score-label">Score</span>
-              </div>
-              <div className="score-text">
-                <h3>Strategy Score</h3>
-                <span className={`score-rating ${scoreRatingClass}`}>{scoreLabel}</span>
-              </div>
-            </div>
-
-            <div className="summary-card">
-              <div className="card-title-row">
-                <h4>What drove this score</h4>
-              </div>
-              {hasNarrativeHighlights ? (
-                <div className="summary-list">
-                  {narrativeHighlights.map((item, idx) => (
-                    <p key={`summary_${idx}`}>{item}</p>
-                  ))}
-                </div>
-              ) : (
-                <p className="section-fallback-message">Jaspen needs a little more context to explain what most affected this score.</p>
-              )}
-            </div>
-          </div>
-
-          <div className="score-secondary-column">
-            {executiveSummary && (
-              <div className="executive-summary-card">
-                <div className="card-title-row">
-                  <h4>Executive Summary</h4>
-                </div>
-                <p className="executive-summary-text">{executiveSummary}</p>
-              </div>
-            )}
-
-            <div className="financial-card">
-              <div className="card-title-row">
-                <h4>Financial Impact</h4>
-              </div>
-              {hasFinancialImpact ? (
-                <div className="fi-grid">
-                  {financialGridItems.map((item, idx) => (
-                    <div key={idx} className="fi-item">
-                      <div className="fi-label">{item.label}</div>
-                      <div className="fi-value">{item.value}</div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="section-fallback-message">
-                  Not enough information to estimate financial impact yet.
-                </p>
-              )}
-            </div>
-          </div>
+        <div className="score-header-row score-top-grid">
+          {orderedTopCards.map((card) => (
+            <section
+              key={card.key}
+              className="score-top-card-shell"
+              draggable
+              onDragStart={() => setDraggedTopCardKey(card.key)}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={() => {
+                moveTopCard(draggedTopCardKey, card.key);
+                setDraggedTopCardKey(null);
+              }}
+              onDragEnd={() => setDraggedTopCardKey(null)}
+              title="Drag to reorder"
+            >
+              {card.render()}
+            </section>
+          ))}
         </div>
 
         <div className="score-body-grid">
           {orderedSectionCards.map((section) => (
             <section
               key={section.key}
-              className="score-section-card"
+              className={`score-section-card ${cardSizes[section.key] === 'wide' ? 'span-2' : 'span-1'}`}
               draggable
               onDragStart={() => setDraggedCardKey(section.key)}
               onDragOver={(event) => event.preventDefault()}
@@ -795,6 +913,15 @@ export default function ScoreDashboard({
             >
               <div className="section-card-head">
                 <span className="section-card-title">{section.title}</span>
+                <button
+                  type="button"
+                  className="section-resize-button"
+                  onClick={() => toggleCardSpan(section.key)}
+                  aria-label={cardSizes[section.key] === 'wide' ? 'Make card compact' : 'Make card wide'}
+                  title={cardSizes[section.key] === 'wide' ? 'Make compact' : 'Make wider'}
+                >
+                  <FontAwesomeIcon icon={faUpRightAndDownLeftFromCenter} />
+                </button>
               </div>
               <div className="section-card-body">{section.render()}</div>
             </section>

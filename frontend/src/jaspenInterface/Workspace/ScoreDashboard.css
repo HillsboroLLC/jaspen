@@ -278,6 +278,18 @@
   align-items: flex-start;
 }
 
+.score-dashboard-container .score-top-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(320px, 1fr));
+  gap: 24px;
+  align-items: stretch;
+}
+
+.score-dashboard-container .score-top-card-shell {
+  min-width: 0;
+  cursor: grab;
+}
+
 .score-dashboard-container .score-primary-column {
   flex: 0 0 420px;
   min-width: 320px;
@@ -304,6 +316,11 @@
   gap: 24px;
   width: 100%;
   min-width: 0;
+  box-sizing: border-box;
+}
+
+.score-dashboard-container .top-grid-card {
+  height: 240px;
   box-sizing: border-box;
 }
 
@@ -379,6 +396,12 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: 24px;
+}
+
+.score-dashboard-container .top-card-scroll {
+  overflow-y: auto;
+  height: calc(100% - 32px);
+  padding-right: 4px;
 }
 
 .score-dashboard-container .summary-card h4 {
@@ -508,6 +531,10 @@
   cursor: grab;
 }
 
+.score-dashboard-container .score-section-card.span-2 {
+  grid-column: span 2;
+}
+
 .score-dashboard-container .section-card-head {
   display: flex;
   align-items: center;
@@ -524,6 +551,24 @@
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-muted);
+}
+
+.score-dashboard-container .section-resize-button {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.score-dashboard-container .section-resize-button:hover {
+  background: var(--gray-100);
+  color: var(--navy);
 }
 
 .score-dashboard-container .section-card-body {
@@ -1057,8 +1102,21 @@
 
 /* --- Responsive --- */
 @media (max-width: 1024px) {
+  .score-dashboard-container .score-top-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .score-dashboard-container .top-grid-card {
+    height: auto;
+    min-height: 220px;
+  }
+
   .score-dashboard-container .score-body-grid {
     grid-template-columns: 1fr;
+  }
+
+  .score-dashboard-container .score-section-card.span-2 {
+    grid-column: span 1;
   }
 }
 
@@ -1084,6 +1142,10 @@
   .score-dashboard-container .score-main-card {
     width: 100%;
     min-width: 0;
+  }
+
+  .score-dashboard-container .score-top-grid {
+    width: 100%;
   }
 
   .score-dashboard-container .fi-item {
