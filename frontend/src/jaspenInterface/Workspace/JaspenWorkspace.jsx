@@ -5732,7 +5732,7 @@ const sendAIMessage = async () => {
     const lower = text.toLowerCase();
     const aiThreadId = currentSessionId || sessionId;
     const renameMatch = text.match(/^(?:please\s+)?(?:rename|change|update)\s+(?:the\s+)?(?:idea|initiative|project|title)(?:\s+(?:to|as)\s+)(.+)$/i);
-    const hasScorecardContext = Boolean(analysisResult || selectedScorecardId);
+    const hasScorecardContext = Boolean(activeScorecard || analysisResult || selectedScorecardId);
     const scorecardEditIntent =
       activeTab === 'summary' &&
       hasScorecardContext &&
@@ -5750,6 +5750,14 @@ const sendAIMessage = async () => {
       hasScorecardContext &&
       /\b(wbs|work breakdown|project plan|task plan|task list)\b/.test(lower) &&
       /\b(generate|create|build|draft|recommend|suggest|regenerate|optimiz)\b/.test(lower);
+    const summaryAssistantIntent =
+      activeTab === 'summary' &&
+      hasScorecardContext &&
+      aiThreadId &&
+      !renameMatch &&
+      !scorecardEditIntent &&
+      !scenarioIntent &&
+      !wbsIntent;
 
     if (renameMatch && aiThreadId) {
       const nextTitle = String(renameMatch[1] || '').trim().replace(/^["“']|["”']$/g, '');
@@ -5827,7 +5835,7 @@ const sendAIMessage = async () => {
       }
     }
 
-    if (scorecardEditIntent && aiThreadId && activeScorecard) {
+    if ((scorecardEditIntent || summaryAssistantIntent) && aiThreadId && activeScorecard) {
       try {
         const response = await Jaspen.scorecardAssistant(aiThreadId, {
           instruction: text,
@@ -5849,7 +5857,9 @@ const sendAIMessage = async () => {
           ...prev,
           {
             role: 'ai',
-            text: response?.reply || 'Updated the scorecard wording.',
+            text: response?.reply || (scorecardEditIntent
+              ? 'Updated the scorecard wording.'
+              : 'Here is my read on the current scorecard.'),
           },
         ]);
         return;
@@ -6303,6 +6313,13 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
           result.jaspen_score,
       }
 	    : result;
+  const mergedScorecard =
+    hasMeaningfulScorecardData(merged?.result)
+      ? merged.result
+      : hasMeaningfulScorecardData(merged)
+        ? merged
+        : null;
+
   const mergedObjective = normalizeStrategyObjective(
     merged?.strategy_objective || merged?.result?.strategy_objective || 'balanced'
   );
@@ -6312,8 +6329,9 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
   // Readiness normalization handled by normalizeReadiness() helper
   // Readiness is ONLY fetched from backend via fetchReadinessFor - no session cache
 
-  // Branch: in-progress sessions return to intake with chat restored
-  if (merged?.status === 'in_progress' && Array.isArray(merged.chat_history)) {
+  // Branch: in-progress sessions return to intake with chat restored only when
+  // they do not already carry a meaningful saved scorecard.
+  if (!mergedScorecard && merged?.status === 'in_progress' && Array.isArray(merged.chat_history)) {
     const sid = merged.analysis_id || merged.session_id || baseId || `restored_${Date.now()}`;
     setSessionId(sid);
     setCurrentSessionId(sid);
@@ -6348,12 +6366,7 @@ try {
   
 // Try multiple paths to find the full scorecard
 // Backend stores complete scorecard in session.result field
-const full =
-  (merged?.result && typeof merged.result === 'object' && Object.keys(merged.result).length > 0)
-    ? merged.result
-    : (merged && typeof merged === 'object' && merged.jaspen_score)
-      ? merged
-      : null;
+const full = mergedScorecard;
 
 // GOAL B part 2: Check for missing detailed sections and hydrate if needed
 const missingSections =
