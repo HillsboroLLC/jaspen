@@ -3057,6 +3057,16 @@ async function loadSessionById(id) {
       const thread = data.thread;
       const analyses = data.analyses || [];
       const latestAnalysis = analyses.length > 0 ? analyses[0] : null;
+      const latestAnalysisResult = (latestAnalysis && typeof latestAnalysis.result === 'object')
+        ? latestAnalysis.result
+        : null;
+      const sessionResult = (data?.session?.result && typeof data.session.result === 'object')
+        ? data.session.result
+        : null;
+      const resolvedResult = latestAnalysisResult || sessionResult || null;
+      const resolvedReadiness = normalizeReadiness(
+        thread.readiness_snapshot || data?.session?.readiness || null
+      );
       
       return {
         session_id: thread.id,
@@ -3069,14 +3079,35 @@ async function loadSessionById(id) {
           thread.objective_explicitly_set ?? data?.session?.objective_explicitly_set
         ),
         chat_history: thread.conversation_history || [],
-        readiness: normalizeReadiness(thread.readiness_snapshot || null),
-        collected_data: {},
-        status: latestAnalysis ? 'completed' : 'in_progress',
-result: latestAnalysis ? {
-  ...latestAnalysis,
-  jaspen_score: latestAnalysis.overall_score,
-  component_scores: latestAnalysis.scores || {}
-} : null,
+        readiness: resolvedReadiness,
+        collected_data: data?.session?.collected_data || {},
+        status: resolvedResult || latestAnalysis ? 'completed' : 'in_progress',
+        analysis_history: analyses,
+        result: resolvedResult ? {
+          ...resolvedResult,
+          analysis_id:
+            resolvedResult.analysis_id ||
+            latestAnalysis?.analysis_id ||
+            resolvedResult.id ||
+            thread.id,
+          project_name: resolvedResult.project_name || thread.name,
+          chat_history:
+            Array.isArray(resolvedResult.chat_history) && resolvedResult.chat_history.length > 0
+              ? resolvedResult.chat_history
+              : (thread.conversation_history || []),
+          readiness: normalizeReadiness(resolvedResult.readiness || resolvedReadiness),
+          strategy_objective: normalizeStrategyObjective(
+            resolvedResult.strategy_objective ||
+            thread.strategy_objective ||
+            data?.session?.strategy_objective ||
+            'balanced'
+          ),
+          objective_explicitly_set: Boolean(
+            resolvedResult.objective_explicitly_set ??
+            thread.objective_explicitly_set ??
+            data?.session?.objective_explicitly_set
+          ),
+        } : null,
       };
     }
     
@@ -6187,9 +6218,19 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
         chat_history: Array.isArray(full.chat_history) ? full.chat_history : result.chat_history,
         collected_data: full.collected_data ?? result.collected_data,
         status: full.status ?? result.status,
-        analysis_id: full.session_id ?? result.analysis_id,
-        project_name: full.name ?? result.project_name,
-        jaspen_score: (full.score ?? result.jaspen_score),
+        analysis_id:
+          full?.result?.analysis_id ??
+          result?.analysis_id ??
+          full.session_id ??
+          result.session_id,
+        project_name:
+          full?.result?.project_name ??
+          full.name ??
+          result.project_name,
+        jaspen_score:
+          full?.result?.jaspen_score ??
+          full.score ??
+          result.jaspen_score,
       }
 	    : result;
   const mergedObjective = normalizeStrategyObjective(
