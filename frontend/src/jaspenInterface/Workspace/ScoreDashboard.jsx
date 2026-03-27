@@ -868,21 +868,6 @@ export default function ScoreDashboard({
     persistCardOrder(next);
   }, [orderedSectionCards, persistCardOrder]);
 
-  const handleCardDragStart = useCallback((event, key) => {
-    setDraggedCardKey(key);
-    if (event.dataTransfer) {
-      event.dataTransfer.effectAllowed = 'move';
-      event.dataTransfer.setData('text/plain', key);
-    }
-  }, []);
-
-  const handleCardDrop = useCallback((event, targetKey) => {
-    event.preventDefault();
-    const sourceKey = draggedCardKey || event.dataTransfer?.getData('text/plain');
-    moveCard(sourceKey, targetKey);
-    setDraggedCardKey(null);
-  }, [draggedCardKey, moveCard]);
-
   if (loading) {
     return <div className="score-dashboard-container"><ScoreDashboardSkeleton /></div>;
   }
@@ -934,21 +919,21 @@ export default function ScoreDashboard({
             <section
               key={section.key}
               className="score-section-card"
+              draggable
+              onDragStart={() => setDraggedCardKey(section.key)}
               onDragOver={(event) => event.preventDefault()}
-              onDrop={(event) => handleCardDrop(event, section.key)}
+              onDrop={() => {
+                moveCard(draggedCardKey, section.key);
+                setDraggedCardKey(null);
+              }}
               onDragEnd={() => setDraggedCardKey(null)}
+              title="Drag to reorder"
               style={{
                 gridColumn: `span ${Math.max(1, Math.min(3, (cardLayouts[section.key] || DEFAULT_CARD_LAYOUT[section.key] || { colSpan: 1 }).colSpan || 1))}`,
                 gridRow: `span ${Math.max(1, Math.min(3, (cardLayouts[section.key] || DEFAULT_CARD_LAYOUT[section.key] || { rowSpan: 1 }).rowSpan || 1))}`,
               }}
             >
-              <div
-                className="section-card-head"
-                draggable
-                onDragStart={(event) => handleCardDragStart(event, section.key)}
-                onDragEnd={() => setDraggedCardKey(null)}
-                title="Drag to reorder"
-              >
+              <div className="section-card-head">
                 <span className="section-card-title">{section.title}</span>
               </div>
               <div className="section-card-body">{section.render()}</div>
