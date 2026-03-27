@@ -434,6 +434,7 @@
 .score-dashboard-container .summary-list {
   display: grid;
   gap: 12px;
+  align-content: start;
 }
 
 .score-dashboard-container .summary-list p {
@@ -508,6 +509,12 @@
   color: var(--text-secondary);
 }
 
+.score-dashboard-container .executive-summary-card,
+.score-dashboard-container .summary-card,
+.score-dashboard-container .financial-card {
+  height: 100%;
+}
+
 .score-dashboard-container .score-body-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(260px, 1fr));
@@ -538,6 +545,8 @@
   padding: 16px 20px;
   border-bottom: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.92);
+  cursor: move;
+  user-select: none;
 }
 
 .score-dashboard-container .section-card-title {
@@ -552,6 +561,7 @@
   padding: 0;
   height: calc(100% - 53px);
   min-height: 0;
+  overflow: auto;
 }
 
 .score-dashboard-container .score-section-card:hover {
@@ -769,14 +779,15 @@
   position: absolute;
   right: 6px;
   bottom: 6px;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   cursor: nwse-resize;
   background-image:
     linear-gradient(135deg, transparent 0 42%, var(--gray-400) 42% 49%, transparent 49% 100%),
     linear-gradient(135deg, transparent 0 60%, var(--gray-400) 60% 67%, transparent 67% 100%),
     linear-gradient(135deg, transparent 0 78%, var(--gray-400) 78% 85%, transparent 85% 100%);
   opacity: 0.45;
+  z-index: 2;
 }
 
 .score-dashboard-container .score-section-card:hover .card-resize-handle {
