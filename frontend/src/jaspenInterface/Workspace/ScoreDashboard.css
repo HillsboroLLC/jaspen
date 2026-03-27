@@ -312,7 +312,8 @@
 }
 
 .score-dashboard-container .card-shell {
-  height: 100%;
+  height: auto;
+  min-height: 100%;
   box-sizing: border-box;
   background: transparent;
   border: none;
@@ -511,7 +512,7 @@
 .score-dashboard-container .score-body-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(260px, 1fr));
-  grid-auto-rows: 190px;
+  grid-auto-rows: minmax(190px, auto);
   gap: 20px;
   grid-auto-flow: dense;
   align-items: start;
@@ -524,10 +525,12 @@
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-sm);
   overflow: hidden;
-  cursor: grab;
   min-width: 0;
   position: relative;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
 }
 
 .score-dashboard-container .section-card-head {
@@ -538,6 +541,8 @@
   padding: 16px 20px;
   border-bottom: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.92);
+  cursor: grab;
+  user-select: none;
 }
 
 .score-dashboard-container .section-card-title {
@@ -550,8 +555,9 @@
 
 .score-dashboard-container .section-card-body {
   padding: 0;
-  height: calc(100% - 53px);
   min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
 }
 
 .score-dashboard-container .score-section-card:hover {
@@ -769,14 +775,16 @@
   position: absolute;
   right: 6px;
   bottom: 6px;
-  width: 16px;
-  height: 16px;
+  width: 20px;
+  height: 20px;
   cursor: nwse-resize;
   background-image:
     linear-gradient(135deg, transparent 0 42%, var(--gray-400) 42% 49%, transparent 49% 100%),
     linear-gradient(135deg, transparent 0 60%, var(--gray-400) 60% 67%, transparent 67% 100%),
     linear-gradient(135deg, transparent 0 78%, var(--gray-400) 78% 85%, transparent 85% 100%);
   opacity: 0.45;
+  z-index: 3;
+  touch-action: none;
 }
 
 .score-dashboard-container .score-section-card:hover .card-resize-handle {

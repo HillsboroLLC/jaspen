@@ -2827,6 +2827,35 @@
   color: var(--navy);
 }
 
+.jas-project-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.jas-project-title-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--gray-300);
+  background: var(--white);
+  color: var(--gray-700);
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+  flex-shrink: 0;
+}
+
+.jas-project-title-edit:hover {
+  color: var(--navy);
+  border-color: var(--navy);
+  background: var(--gray-50);
+}
+
 .jas-return-main-btn {
   display: inline-flex;
   align-items: center;

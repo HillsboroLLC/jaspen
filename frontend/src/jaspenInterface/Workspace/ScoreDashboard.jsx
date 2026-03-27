@@ -49,6 +49,7 @@ export default function ScoreDashboard({
   onOpenChat: _onOpenChat,
   onOpenScenario: _onOpenScenario,
   onSelectScorecard: _onSelectScorecard,
+  onOpenThreadEdit: _onOpenThreadEdit,
 
   // Scorecard snapshot props
   scorecardSnapshots = [],
@@ -228,48 +229,12 @@ export default function ScoreDashboard({
         }),
       });
     }
-    if (canExportWbsCsv && onExportWbsCsv) {
-      options.push({
-        key: 'csv',
-        label: 'Export WBS CSV',
-        onClick: () => onExportWbsCsv({
-          threadBundleId,
-          projectName: result.project_name || 'Untitled Idea',
-        }),
-      });
-    }
-    if (canExportConversationMarkdown && onExportConversationMarkdown) {
-      options.push({
-        key: 'conversation-md',
-        label: 'Export Transcript (.md)',
-        onClick: () => onExportConversationMarkdown({
-          threadBundleId,
-          projectName: result.project_name || 'Untitled Idea',
-        }),
-      });
-    }
-    if (canExportConversationPdf && onExportConversationPdf) {
-      options.push({
-        key: 'conversation-pdf',
-        label: 'Export Transcript PDF',
-        onClick: () => onExportConversationPdf({
-          threadBundleId,
-          projectName: result.project_name || 'Untitled Idea',
-        }),
-      });
-    }
     return options;
   }, [
     canExportScorecardPdf,
     canExportScorecardPptx,
-    canExportWbsCsv,
-    canExportConversationPdf,
-    canExportConversationMarkdown,
     onExportScorecardPdf,
     onExportScorecardPptx,
-    onExportWbsCsv,
-    onExportConversationPdf,
-    onExportConversationMarkdown,
     threadBundleId,
     selectedScorecardId,
     result.project_name,
@@ -489,7 +454,7 @@ export default function ScoreDashboard({
   }, [resizeState, persistCardLayouts]);
 
   const renderMetricRows = (fields = []) => (
-    <div className="metric-stack">
+    <div className="metric-stack card-scroll">
       {fields.filter((field) => field?.value !== null && field?.value !== undefined && field?.value !== '').map((field) => (
         <div className="metric-row" key={field.key || field.label}>
           <span className="metric-label">{field.label}</span>
@@ -920,10 +885,18 @@ export default function ScoreDashboard({
               key={section.key}
               className="score-section-card"
               draggable
-              onDragStart={() => setDraggedCardKey(section.key)}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={() => {
-                moveCard(draggedCardKey, section.key);
+              onDragStart={(event) => {
+                setDraggedCardKey(section.key);
+                event.dataTransfer.effectAllowed = 'move';
+                event.dataTransfer.setData('text/plain', section.key);
+              }}
+              onDragOver={(event) => {
+                event.preventDefault();
+                event.dataTransfer.dropEffect = 'move';
+              }}
+              onDrop={(event) => {
+                const sourceKey = draggedCardKey || event.dataTransfer.getData('text/plain');
+                moveCard(sourceKey, section.key);
                 setDraggedCardKey(null);
               }}
               onDragEnd={() => setDraggedCardKey(null)}

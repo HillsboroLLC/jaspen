@@ -22,7 +22,7 @@ import {
   faPaperPlane, faSpinner, faTimes, faBars, faCheck, faExclamationTriangle,
   faChartLine, faTrash, faPlus, faMinus, faMicrophone,
   faBolt, faLayerGroup, faPlay, faListCheck, faArrowUpRightFromSquare, faGaugeHigh, faClockRotateLeft, faPaperclip, faArrowUp,
-  faDownload, faChevronDown, faUser, faBell, faLock, faCopy, faThumbsUp, faThumbsDown, faRotate
+  faDownload, faChevronDown, faUser, faBell, faLock, faCopy, faThumbsUp, faThumbsDown, faRotate, faPen
 } from '@fortawesome/free-solid-svg-icons';
 import {
   MonitorCheck, MessageCircleQuestion,
@@ -5602,6 +5602,7 @@ const sendAIMessage = async () => {
 
     const lower = text.toLowerCase();
     const aiThreadId = currentSessionId || sessionId;
+    const renameMatch = text.match(/^(?:please\s+)?(?:rename|change|update)\s+(?:the\s+)?(?:idea|initiative|project|title)(?:\s+(?:to|as)\s+)(.+)$/i);
     const hasScorecardContext = Boolean(analysisResult || selectedScorecardId);
     const scorecardEditIntent =
       activeTab === 'summary' &&
@@ -5620,6 +5621,43 @@ const sendAIMessage = async () => {
       hasScorecardContext &&
       /\b(wbs|work breakdown|project plan|task plan|task list)\b/.test(lower) &&
       /\b(generate|create|build|draft|recommend|suggest|regenerate|optimiz)\b/.test(lower);
+
+    if (renameMatch && aiThreadId) {
+      const nextTitle = String(renameMatch[1] || '').trim().replace(/^["“']|["”']$/g, '');
+      if (nextTitle) {
+        try {
+          const renameResp = await authFetch(`/api/v1/ai-agent/threads/${encodeURIComponent(aiThreadId)}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ name: nextTitle }),
+          });
+          const renamePayload = await renameResp.json().catch(() => ({}));
+          if (!renameResp.ok) {
+            throw new Error(renamePayload?.error || renamePayload?.msg || `Rename failed (HTTP ${renameResp.status})`);
+          }
+
+          setAnalysisResult((prev) => (prev ? { ...prev, project_name: nextTitle } : prev));
+          setBundleCurrentScorecard((prev) => (prev ? { ...prev, project_name: nextTitle } : prev));
+          setBundleBaselineScorecard((prev) => (prev ? { ...prev, project_name: nextTitle } : prev));
+          setScorecardSnapshots((prev) => (
+            Array.isArray(prev)
+              ? prev.map((snapshot) => ({ ...snapshot, project_name: nextTitle }))
+              : prev
+          ));
+
+          setMessages((prev) => [
+            ...prev,
+            { role: 'ai', text: `Updated the initiative title to "${nextTitle}".` },
+          ]);
+          showToast('Initiative title updated', 'success');
+          return;
+        } catch (renameErr) {
+          console.error('[sendAIMessage] title rename failed', renameErr);
+          showToast(renameErr?.message || 'Could not update the initiative title.', 'error');
+          return;
+        }
+      }
+    }
 
     if (scenarioIntent && aiThreadId) {
       try {
@@ -6871,12 +6909,19 @@ onClick={async () => {
         onClose={() => setThreadEditOpen(false)}
         sessionId={sessionId}
         threadId={sessionId}
-        initialName={analysisResult?.project_name || ''}
+        initialName={activeScorecard?.project_name || analysisResult?.project_name || ''}
         initialAdoptedAnalysisId={analysisResult?.analysis_id || ''}
         authFetch={authFetch}
         onSaved={(payload) => {
           if (payload?.name) {
             setAnalysisResult((prev) => prev ? { ...prev, project_name: payload.name } : prev);
+            setBundleCurrentScorecard((prev) => prev ? { ...prev, project_name: payload.name } : prev);
+            setBundleBaselineScorecard((prev) => prev ? { ...prev, project_name: payload.name } : prev);
+            setScorecardSnapshots((prev) => (
+              Array.isArray(prev)
+                ? prev.map((snapshot) => ({ ...snapshot, project_name: payload.name }))
+                : prev
+            ));
           }
           refreshBundle(sessionId);
         }}
@@ -6900,9 +6945,23 @@ onClick={async () => {
             )}
             <div className="jas-workspace-header-top">
               <div className="jas-workspace-title">
-                <h2 className="jas-project-title">
-                  {workspaceProjectTitle}
-                </h2>
+                <div className="jas-project-title-row">
+                  <h2 className="jas-project-title">
+                    {workspaceProjectTitle}
+                  </h2>
+                  {sessionId && (
+                    <button
+                      type="button"
+                      className="jas-project-title-edit"
+                      onClick={() => setThreadEditOpen(true)}
+                      title="Edit initiative title"
+                      aria-label="Edit initiative title"
+                    >
+                      <FontAwesomeIcon icon={faPen} />
+                      <span>Edit</span>
+                    </button>
+                  )}
+                </div>
               </div>
 
               <button
