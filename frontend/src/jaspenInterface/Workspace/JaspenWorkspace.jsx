@@ -54,6 +54,37 @@ const getRestorableSessionIdFromLocation = () => {
   }
 };
 
+const hasMeaningfulScorecardData = (value) => {
+  if (!value || typeof value !== 'object') return false;
+  if (Number.isFinite(Number(value.jaspen_score))) return true;
+  if (typeof value.score_category === 'string' && value.score_category.trim()) return true;
+  if (value.component_scores && typeof value.component_scores === 'object' && Object.keys(value.component_scores).length > 0) return true;
+  if (value.financial_impact && typeof value.financial_impact === 'object' && Object.keys(value.financial_impact).length > 0) return true;
+  if (Array.isArray(value.key_insights) && value.key_insights.length > 0) return true;
+  if (Array.isArray(value.top_risks) && value.top_risks.length > 0) return true;
+  if (Array.isArray(value.recommendations) && value.recommendations.length > 0) return true;
+  if (typeof value.executive_summary === 'string' && value.executive_summary.trim()) return true;
+  if (value.compat && typeof value.compat === 'object' && Object.keys(value.compat).length > 0) return true;
+  if (value._baseline_scorecard && typeof value._baseline_scorecard === 'object') return true;
+  if (Array.isArray(value.scorecard_snapshots) && value.scorecard_snapshots.length > 0) return true;
+  if (value.before_after_financials && typeof value.before_after_financials === 'object' && Object.keys(value.before_after_financials).length > 0) return true;
+  if (value.investment_analysis && typeof value.investment_analysis === 'object' && Object.keys(value.investment_analysis).length > 0) return true;
+  if (value.npv_irr_analysis && typeof value.npv_irr_analysis === 'object' && Object.keys(value.npv_irr_analysis).length > 0) return true;
+  if (value.valuation && typeof value.valuation === 'object' && Object.keys(value.valuation).length > 0) return true;
+  if (value.decision_framework && typeof value.decision_framework === 'object' && Object.keys(value.decision_framework).length > 0) return true;
+  return false;
+};
+
+const extractMeaningfulHistoryResult = (history) => {
+  if (!Array.isArray(history)) return null;
+  for (const entry of history) {
+    if (entry && typeof entry === 'object' && hasMeaningfulScorecardData(entry.result)) {
+      return entry.result;
+    }
+  }
+  return null;
+};
+
 // === Header Icon Helpers =====================================================
 const PM_VARIANT  = "monitor-check";
 const LSS_VARIANT = "chart-scatter";
@@ -948,7 +979,7 @@ const refreshBundle = async (tid) => {
       }
     }
 
-    if (resolvedBundleScorecard) {
+    if (hasMeaningfulScorecardData(resolvedBundleScorecard)) {
       const normalizedScorecard = normalizeAnalysis(resolvedBundleScorecard);
       baselineRef.current = normalizedScorecard;
       setAnalysisResult((prev) => {
@@ -2983,8 +3014,13 @@ const [initialRestorePending, setInitialRestorePending] = useState(() => Boolean
             : data.sessions;
 
           const apiSessions = scopedSessions.map((session) => {
-            // Preserve any full scorecard the backend already returned
-            const full = (session && typeof session.result === 'object') ? session.result : {};
+            const sessionResult = (session && typeof session.result === 'object') ? session.result : null;
+            const historyResult = extractMeaningfulHistoryResult(
+              Array.isArray(session.analysis_history) ? session.analysis_history : session.analyses
+            );
+            const full = hasMeaningfulScorecardData(sessionResult)
+              ? sessionResult
+              : (hasMeaningfulScorecardData(historyResult) ? historyResult : {});
 
             return {
               id: session.session_id,
@@ -3063,7 +3099,14 @@ async function loadSessionById(id) {
       const sessionResult = (data?.session?.result && typeof data.session.result === 'object')
         ? data.session.result
         : null;
-      const resolvedResult = latestAnalysisResult || sessionResult || null;
+      const historyResult = extractMeaningfulHistoryResult(analyses);
+      const resolvedResult = hasMeaningfulScorecardData(latestAnalysisResult)
+        ? latestAnalysisResult
+        : hasMeaningfulScorecardData(sessionResult)
+          ? sessionResult
+          : hasMeaningfulScorecardData(historyResult)
+            ? historyResult
+            : null;
       const resolvedReadiness = normalizeReadiness(
         thread.readiness_snapshot || data?.session?.readiness || null
       );
@@ -3360,10 +3403,15 @@ if (rawHistory.length > 0) {
             ? restoreBundle.baseline_scorecard
             : null;
 
+      const historyScorecard = extractMeaningfulHistoryResult(session?.analysis_history);
       const fullScorecard =
-        (session.result && typeof session.result === 'object' && Object.keys(session.result).length > 0)
-          ? session.result
-          : bundleScorecard;
+        hasMeaningfulScorecardData(bundleScorecard)
+          ? bundleScorecard
+          : hasMeaningfulScorecardData(session?.result)
+            ? session.result
+            : hasMeaningfulScorecardData(historyScorecard)
+              ? historyScorecard
+              : null;
 
       if (((session.status === 'completed' || session.score != null) && fullScorecard) || bundleScorecard) {
         const normalized = normalizeAnalysis(fullScorecard);
@@ -6218,17 +6266,24 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
         chat_history: Array.isArray(full.chat_history) ? full.chat_history : result.chat_history,
         collected_data: full.collected_data ?? result.collected_data,
         status: full.status ?? result.status,
+        result:
+          hasMeaningfulScorecardData(full?.result)
+            ? full.result
+            : (hasMeaningfulScorecardData(result?.result) ? result.result : full?.result ?? result?.result),
         analysis_id:
-          full?.result?.analysis_id ??
+          (hasMeaningfulScorecardData(full?.result) ? full.result.analysis_id : null) ??
+          (hasMeaningfulScorecardData(result?.result) ? result.result.analysis_id : null) ??
           result?.analysis_id ??
           full.session_id ??
           result.session_id,
         project_name:
-          full?.result?.project_name ??
+          (hasMeaningfulScorecardData(full?.result) ? full.result.project_name : null) ??
+          (hasMeaningfulScorecardData(result?.result) ? result.result.project_name : null) ??
           full.name ??
           result.project_name,
         jaspen_score:
-          full?.result?.jaspen_score ??
+          (hasMeaningfulScorecardData(full?.result) ? full.result.jaspen_score : null) ??
+          (hasMeaningfulScorecardData(result?.result) ? result.result.jaspen_score : null) ??
           full.score ??
           result.jaspen_score,
       }
