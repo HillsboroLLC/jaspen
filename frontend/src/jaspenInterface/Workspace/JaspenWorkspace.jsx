@@ -764,6 +764,55 @@ const activeScorecard = useMemo(() => {
   return selectedVariant || analysisResult;
 }, [selectedScorecardId, scorecardSnapshots, selectedVariant, analysisResult]);
 
+const editableThreadId = useMemo(() => {
+  const findHistoryOwner = (candidateId) => {
+    const tid = String(candidateId || '').trim();
+    if (!tid || !Array.isArray(analysisHistory) || analysisHistory.length === 0) return null;
+
+    const exactEntry = analysisHistory.find((entry) => String(entry?.id || '').trim() === tid);
+    if (exactEntry?.id) return String(exactEntry.id);
+
+    const byAnalysis = analysisHistory.find((entry) => {
+      const result = entry?.result;
+      if (!result || typeof result !== 'object') return false;
+      const resultIds = [
+        result.analysis_id,
+        result.id,
+        result.session_id,
+        result.thread_id,
+        result?.meta?.thread_id,
+      ].map((value) => String(value || '').trim()).filter(Boolean);
+      return resultIds.includes(tid);
+    });
+    if (byAnalysis?.id) return String(byAnalysis.id);
+
+    return null;
+  };
+
+  const candidates = [
+    sessionId,
+    currentSessionId,
+    activeScorecard?.thread_id,
+    activeScorecard?.session_id,
+    activeScorecard?.meta?.thread_id,
+    activeScorecard?.analysis_id,
+    activeScorecard?.id,
+    analysisResult?.thread_id,
+    analysisResult?.session_id,
+    analysisResult?.meta?.thread_id,
+    analysisResult?.analysis_id,
+    analysisResult?.id,
+  ];
+
+  for (const candidate of candidates) {
+    const ownerId = findHistoryOwner(candidate);
+    if (ownerId) return ownerId;
+  }
+
+  const fallback = candidates.find((candidate) => String(candidate || '').trim());
+  return fallback ? String(fallback).trim() : '';
+}, [analysisHistory, sessionId, currentSessionId, activeScorecard, analysisResult]);
+
 // Preserve the original/baseline analysis result for quick switching
 const baselineRef = useRef(null);
   // GOAL B: Track which sessionIds have had their scorecard hydrated
@@ -6920,8 +6969,8 @@ onClick={async () => {
       <ThreadEditModal
         open={threadEditOpen}
         onClose={() => setThreadEditOpen(false)}
-        sessionId={sessionId}
-        threadId={sessionId}
+        sessionId={editableThreadId || sessionId}
+        threadId={editableThreadId || sessionId}
         threadMode="auto"
         initialName={activeScorecard?.project_name || analysisResult?.project_name || ''}
         initialAdoptedAnalysisId={analysisResult?.analysis_id || ''}
@@ -6936,8 +6985,27 @@ onClick={async () => {
                 ? prev.map((snapshot) => ({ ...snapshot, project_name: payload.name }))
                 : prev
             ));
+            setAnalysisHistory((prev) => (
+              Array.isArray(prev)
+                ? prev.map((entry) => {
+                    if (!entry || typeof entry !== 'object') return entry;
+                    const entryId = String(entry.id || '').trim();
+                    const resultId = String(entry?.result?.analysis_id || '').trim();
+                    const currentActiveId = String(activeScorecard?.analysis_id || activeScorecard?.id || '').trim();
+                    if (entryId !== String(editableThreadId || sessionId || '').trim() && resultId !== currentActiveId) {
+                      return entry;
+                    }
+                    return {
+                      ...entry,
+                      result: entry.result && typeof entry.result === 'object'
+                        ? { ...entry.result, project_name: payload.name }
+                        : entry.result,
+                    };
+                  })
+                : prev
+            ));
           }
-          refreshBundle(sessionId);
+          refreshBundle(editableThreadId || sessionId);
         }}
       />
 
