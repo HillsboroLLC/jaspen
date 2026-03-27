@@ -3030,6 +3030,7 @@ const [initialRestorePending, setInitialRestorePending] = useState(() => Boolean
                 ...full,
                 analysis_id: full.analysis_id ?? session.session_id,
                 project_name: full.project_name ?? session.name ?? 'Untitled Idea',
+                _owner_thread_id: session.session_id,
                 jaspen_score: full.jaspen_score ?? session.score,
                 status: full.status ?? session.status,
                 chat_history: full.chat_history ?? session.chat_history,
@@ -6236,12 +6237,25 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
   }, [closeShortcutSurface, focusVisibleComposer, handleNewAnalysis, openHistorySearch]);
 
   // ======== FIXED: Select analysis (history restore) ========================
-  const handleSelectAnalysis = async (result) => {
+  const handleSelectAnalysis = async (selection) => {
   // Block the very first readiness ping after selecting history
   skipPingRef.current = true;
 
+  const result =
+    selection && typeof selection === 'object' && selection.result && typeof selection.result === 'object'
+      ? selection.result
+      : selection;
+  const ownerThreadId = String(
+    (selection && typeof selection === 'object' ? selection.id : '') ||
+    result?._owner_thread_id ||
+    result?.thread_id ||
+    result?.session_id ||
+    ''
+  ).trim();
+
   // Prefer a full record from the backend if the list item looks incomplete
   const baseId =
+    ownerThreadId ||
     result?.analysis_id ||
     result?.session_id ||
     result?.id;
@@ -6274,6 +6288,7 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
           (hasMeaningfulScorecardData(full?.result) ? full.result.analysis_id : null) ??
           (hasMeaningfulScorecardData(result?.result) ? result.result.analysis_id : null) ??
           result?.analysis_id ??
+          ownerThreadId ??
           full.session_id ??
           result.session_id,
         project_name:
@@ -6393,22 +6408,10 @@ if (!baselineRef.current) baselineRef.current = normalizedFallback; // only set 
     const entry =
       analysisHistory.find((s) => s.id === activeId) ||
       analysisHistory.find((s) => s.result?.analysis_id === activeId);
-    const result = entry?.result;
-    const hasScorecard =
-      Boolean(result) && (
-        result?.jaspen_score != null ||
-        Boolean(result?.score_category) ||
-        (result?.component_scores && Object.keys(result.component_scores).length > 0) ||
-        (result?.financial_impact && Object.keys(result.financial_impact).length > 0) ||
-        Boolean(result?.decision_framework) ||
-        Boolean(result?.before_after_financials) ||
-        (Array.isArray(result?.top_risks) && result.top_risks.length > 0) ||
-        (Array.isArray(result?.recommendations) && result.recommendations.length > 0)
-      );
-    if (!hasScorecard) return;
+    if (!hasMeaningfulScorecardData(entry?.result)) return;
     if (didPromoteCompletedRefreshRef.current === activeId) return;
     didPromoteCompletedRefreshRef.current = activeId;
-    void handleSelectAnalysis(result);
+    void handleSelectAnalysis(entry);
   }, [sessionId, currentSessionId, view, analysisResult, analysisHistory]);
 
   // Delete a session
@@ -7232,7 +7235,7 @@ onClick={async () => {
                               role="menuitem"
                               onClick={() => {
                                 if (option.result) {
-                                  handleSelectAnalysis(option.result);
+                                  handleSelectAnalysis(option);
                                 }
                                 setScoreShellMenu(null);
                               }}
@@ -7633,7 +7636,7 @@ onClick={async () => {
                   <button
                     type="button"
                     className="jas-history-item-select"
-                    onClick={() => handleSelectAnalysis(item.result)}
+                    onClick={() => handleSelectAnalysis(item)}
                     aria-label={`Open ${title || `Analysis ${item.id?.slice(-8) || index + 1}`}`}
                   >
                     <div className="hi-text">
