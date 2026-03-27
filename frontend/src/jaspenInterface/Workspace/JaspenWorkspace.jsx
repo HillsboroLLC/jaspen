@@ -5626,14 +5626,27 @@ const sendAIMessage = async () => {
       const nextTitle = String(renameMatch[1] || '').trim().replace(/^["“']|["”']$/g, '');
       if (nextTitle) {
         try {
-          const renameResp = await authFetch(`/api/v1/ai-agent/threads/${encodeURIComponent(aiThreadId)}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-            body: JSON.stringify({ name: nextTitle }),
-          });
-          const renamePayload = await renameResp.json().catch(() => ({}));
-          if (!renameResp.ok) {
-            throw new Error(renamePayload?.error || renamePayload?.msg || `Rename failed (HTTP ${renameResp.status})`);
+          let renameSucceeded = false;
+          let renameFailure = null;
+          for (const endpoint of [
+            `/api/v1/ai-agent/threads/${encodeURIComponent(aiThreadId)}`,
+            `/api/v1/strategy/threads/${encodeURIComponent(aiThreadId)}`,
+          ]) {
+            const renameResp = await authFetch(endpoint, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+              body: JSON.stringify({ name: nextTitle }),
+            });
+            const renamePayload = await renameResp.json().catch(() => ({}));
+            if (renameResp.ok) {
+              renameSucceeded = true;
+              break;
+            }
+            renameFailure = new Error(renamePayload?.error || renamePayload?.msg || `Rename failed (HTTP ${renameResp.status})`);
+          }
+
+          if (!renameSucceeded && renameFailure) {
+            throw renameFailure;
           }
 
           setAnalysisResult((prev) => (prev ? { ...prev, project_name: nextTitle } : prev));
@@ -6909,6 +6922,7 @@ onClick={async () => {
         onClose={() => setThreadEditOpen(false)}
         sessionId={sessionId}
         threadId={sessionId}
+        threadMode="strategy"
         initialName={activeScorecard?.project_name || analysisResult?.project_name || ''}
         initialAdoptedAnalysisId={analysisResult?.analysis_id || ''}
         authFetch={authFetch}

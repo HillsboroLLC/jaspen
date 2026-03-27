@@ -3893,6 +3893,120 @@ def get_thread_bundle(thread_id):
         return jsonify({'error': str(e)}), 500
 
 
+@strategy_bp.route('/threads/<thread_id>', methods=['PATCH'])
+@jwt_required()
+def update_strategy_thread(thread_id):
+    try:
+        user_id = get_jwt_identity()
+        payload = request.get_json() or {}
+        next_name = str(payload.get('name') or payload.get('project_name') or '').strip()
+        if not next_name:
+            return jsonify({'error': 'name is required'}), 400
+
+        sessions = load_user_sessions(user_id) or {}
+        session_key, session = _resolve_session_entry(sessions, thread_id)
+        if not isinstance(session, dict):
+            return jsonify({'error': 'Thread not found'}), 404
+
+        now_iso = datetime.utcnow().isoformat()
+        session['name'] = next_name
+        session['timestamp'] = now_iso
+
+        if isinstance(session.get('result'), dict):
+            result = dict(session['result'])
+            result['project_name'] = next_name
+
+            compat = result.get('compat')
+            if isinstance(compat, dict):
+                compat = dict(compat)
+                compat['title'] = next_name
+                result['compat'] = compat
+
+            baseline_scorecard = result.get('_baseline_scorecard')
+            if isinstance(baseline_scorecard, dict):
+                patched_baseline = dict(baseline_scorecard)
+                patched_baseline['project_name'] = next_name
+                result['_baseline_scorecard'] = patched_baseline
+
+            snapshots = result.get('scorecard_snapshots')
+            if isinstance(snapshots, list):
+                next_snapshots = []
+                for snapshot in snapshots:
+                    if isinstance(snapshot, dict):
+                        patched_snapshot = dict(snapshot)
+                        patched_snapshot['project_name'] = next_name
+                        next_snapshots.append(patched_snapshot)
+                    else:
+                        next_snapshots.append(snapshot)
+                result['scorecard_snapshots'] = next_snapshots
+
+            session['result'] = result
+
+        history = session.get('analysis_history')
+        if isinstance(history, list):
+            next_history = []
+            for entry in history:
+                if not isinstance(entry, dict):
+                    next_history.append(entry)
+                    continue
+                patched_entry = dict(entry)
+                if isinstance(patched_entry.get('result'), dict):
+                    patched_result = dict(patched_entry['result'])
+                    patched_result['project_name'] = next_name
+                    if isinstance(patched_result.get('compat'), dict):
+                        compat = dict(patched_result['compat'])
+                        compat['title'] = next_name
+                        patched_result['compat'] = compat
+                    patched_entry['result'] = patched_result
+                next_history.append(patched_entry)
+            session['analysis_history'] = next_history
+
+        sessions[session_key or thread_id] = session
+        save_user_sessions(user_id, sessions)
+
+        all_data = _load_scenarios(user_id)
+        thread_data = all_data.get(thread_id)
+        if isinstance(thread_data, dict):
+            baseline = thread_data.get('baseline')
+            if isinstance(baseline, dict):
+                patched_baseline = dict(baseline)
+                patched_baseline['project_name'] = next_name
+                thread_data['baseline'] = patched_baseline
+
+            scenarios = thread_data.get('scenarios')
+            if isinstance(scenarios, dict):
+                next_scenarios = {}
+                for scenario_id, scenario in scenarios.items():
+                    if isinstance(scenario, dict):
+                        patched_scenario = dict(scenario)
+                        if isinstance(patched_scenario.get('result'), dict):
+                            patched_result = dict(patched_scenario['result'])
+                            patched_result['project_name'] = next_name
+                            patched_scenario['result'] = patched_result
+                        next_scenarios[scenario_id] = patched_scenario
+                    else:
+                        next_scenarios[scenario_id] = scenario
+                thread_data['scenarios'] = next_scenarios
+
+            all_data[thread_id] = thread_data
+            _save_scenarios(user_id, all_data)
+
+        return jsonify({
+            'success': True,
+            'thread': {
+                'id': thread_id,
+                'session_id': thread_id,
+                'name': next_name,
+                'status': session.get('status') or 'in_progress',
+                'timestamp': now_iso,
+            },
+        }), 200
+
+    except Exception as e:
+        current_app.logger.error("[update_strategy_thread] %s", e)
+        return jsonify({'error': str(e)}), 500
+
+
 @strategy_bp.route('/threads/<thread_id>/scorecard-assistant', methods=['POST'])
 @jwt_required()
 @limiter.limit("20 per minute")

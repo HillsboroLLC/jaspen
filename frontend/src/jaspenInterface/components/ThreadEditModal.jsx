@@ -16,6 +16,9 @@ export default function ThreadEditModal({
   // auth fetch
   authFetch,
 
+  // thread persistence mode
+  threadMode = 'auto',
+
   // callbacks to refresh parent UI
   onSaved,
 }) {
@@ -58,10 +61,38 @@ export default function ThreadEditModal({
     if (!open || !targetThreadId || !authFetch) return;
 
     (async () => {
-      try {
-        setLoading(true);
-        setDetailsWarning(null);
+      const hydrateFromBundle = async () => {
+        const res = await authFetch(`/api/v1/strategy/threads/${encodeURIComponent(targetThreadId)}/bundle`, {
+          method: 'GET',
+          headers: { Accept: 'application/json' },
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data?.error || data?.msg || `HTTP ${res.status}`);
 
+        const snapshots = Array.isArray(data?.scorecard_snapshots) ? data.scorecard_snapshots : [];
+        const opts = snapshots
+          .map((snapshot) => {
+            const id = snapshot?.id || '';
+            const labelBase = snapshot?.label || snapshot?.project_name || nameRef.current || 'Analysis';
+            const score = snapshot?.jaspen_score;
+            const label = score !== null && score !== undefined ? `${labelBase} — ${score}` : labelBase;
+            return id ? { analysis_id: id, label, created_at: snapshot?.createdAt || '' } : null;
+          })
+          .filter(Boolean);
+
+        if (alive) {
+          setAnalysisOptions(opts);
+          if (data?.thread?.name && !nameRef.current) {
+            setName(data.thread.name);
+          }
+          const selectedId = data?.selected_scorecard_id || '';
+          if (selectedId && !adoptedAnalysisIdRef.current) {
+            setAdoptedAnalysisId(selectedId);
+          }
+        }
+      };
+
+      const hydrateFromAiThread = async () => {
         const res = await authFetch(`/api/v1/ai-agent/threads/${encodeURIComponent(targetThreadId)}`, {
           method: 'GET',
           headers: { Accept: 'application/json' },
@@ -70,8 +101,6 @@ export default function ThreadEditModal({
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data?.error || data?.msg || `HTTP ${res.status}`);
 
-        // Expected shapes we can tolerate:
-        // data.analysis_history = [{analysis_id, created_at, result:{project_name, score_category, jaspen_score}}]
         const hist = Array.isArray(data?.analysis_history) ? data.analysis_history : [];
         const opts = hist
           .map((h) => {
@@ -90,9 +119,24 @@ export default function ThreadEditModal({
 
         if (alive) setAnalysisOptions(opts);
 
-        // If backend provides adopted/current id in bundle, prefer it
         const adopted = data?.adopted_analysis_id || '';
         if (alive && adopted && !adoptedAnalysisIdRef.current) setAdoptedAnalysisId(adopted);
+      };
+
+      try {
+        setLoading(true);
+        setDetailsWarning(null);
+        if (threadMode === 'strategy') {
+          await hydrateFromBundle();
+        } else if (threadMode === 'ai-agent') {
+          await hydrateFromAiThread();
+        } else {
+          try {
+            await hydrateFromBundle();
+          } catch {
+            await hydrateFromAiThread();
+          }
+        }
       } catch (e) {
         if (alive) {
           setAnalysisOptions([]);
@@ -106,7 +150,7 @@ export default function ThreadEditModal({
     return () => {
       alive = false;
     };
-  }, [open, sessionId, threadId, authFetch]); // intentionally not depending on name
+  }, [open, sessionId, threadId, authFetch, threadMode]); // intentionally not depending on name
 
   const doSave = async () => {
     if (!authFetch) return;
@@ -117,22 +161,40 @@ export default function ThreadEditModal({
 
     try {
       // 1) Rename
-      // You may already have an endpoint. If not, you'll add it backend-side.
-      // This expects: PATCH /api/v1/ai-agent/threads/:sid { name }
       if (name && name.trim()) {
-        const r1 = await authFetch(`/api/v1/ai-agent/threads/${encodeURIComponent(targetThreadId)}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-          body: JSON.stringify({ name: name.trim() }),
-        });
-        const d1 = await r1.json().catch(() => ({}));
-        if (!r1.ok) throw new Error(d1?.error || d1?.msg || `Rename failed (HTTP ${r1.status})`);
+        const renameBody = JSON.stringify({ name: name.trim() });
+        const renameEndpoints = threadMode === 'strategy'
+          ? [`/api/v1/strategy/threads/${encodeURIComponent(targetThreadId)}`]
+          : threadMode === 'ai-agent'
+          ? [`/api/v1/ai-agent/threads/${encodeURIComponent(targetThreadId)}`]
+          : [
+              `/api/v1/strategy/threads/${encodeURIComponent(targetThreadId)}`,
+              `/api/v1/ai-agent/threads/${encodeURIComponent(targetThreadId)}`,
+            ];
+        let renameSucceeded = false;
+        let renameError = null;
+
+        for (const endpoint of renameEndpoints) {
+          const res = await authFetch(endpoint, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: renameBody,
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok) {
+            renameSucceeded = true;
+            break;
+          }
+          renameError = new Error(data?.error || data?.msg || `Rename failed (HTTP ${res.status})`);
+        }
+
+        if (!renameSucceeded && renameError) {
+          throw renameError;
+        }
       }
 
       // 2) Adopt analysis for AI context
-      // You likely already have thread_id. If not, backend can derive from session.
-      // Expected: POST /api/v1/strategy/threads/:threadId/adopt { analysis_id }
-      if (threadId && adoptedAnalysisId) {
+      if ((threadMode === 'strategy' || threadMode === 'auto') && threadId && adoptedAnalysisId) {
         const r2 = await authFetch(`/api/v1/strategy/threads/${encodeURIComponent(threadId)}/adopt`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Accept: 'application/json' },

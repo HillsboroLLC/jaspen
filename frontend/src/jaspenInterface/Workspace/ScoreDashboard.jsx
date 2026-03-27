@@ -10,20 +10,20 @@ import { ScoreDashboardSkeleton } from '../../shared/components/SkeletonLoader';
 import './ScoreDashboard.css';
 
 const DEFAULT_CARD_LAYOUT = {
-  score: { colSpan: 1, rowSpan: 1 },
-  executive: { colSpan: 1, rowSpan: 1 },
-  summary: { colSpan: 1, rowSpan: 1 },
-  financial: { colSpan: 1, rowSpan: 1 },
-  scores: { colSpan: 1, rowSpan: 2 },
-  risks: { colSpan: 1, rowSpan: 2 },
-  recommendations: { colSpan: 1, rowSpan: 2 },
-  decision: { colSpan: 1, rowSpan: 1 },
-  investment: { colSpan: 1, rowSpan: 1 },
-  'before-after': { colSpan: 1, rowSpan: 1 },
-  npv: { colSpan: 1, rowSpan: 1 },
-  valuation: { colSpan: 1, rowSpan: 1 },
-  insights: { colSpan: 1, rowSpan: 1 },
-  assumptions: { colSpan: 1, rowSpan: 1 },
+  score: { colSpan: 4, rowSpan: 1 },
+  executive: { colSpan: 4, rowSpan: 1 },
+  summary: { colSpan: 4, rowSpan: 1 },
+  financial: { colSpan: 4, rowSpan: 1 },
+  scores: { colSpan: 4, rowSpan: 2 },
+  risks: { colSpan: 4, rowSpan: 2 },
+  recommendations: { colSpan: 4, rowSpan: 2 },
+  decision: { colSpan: 4, rowSpan: 1 },
+  investment: { colSpan: 4, rowSpan: 1 },
+  'before-after': { colSpan: 4, rowSpan: 1 },
+  npv: { colSpan: 4, rowSpan: 1 },
+  valuation: { colSpan: 4, rowSpan: 1 },
+  insights: { colSpan: 4, rowSpan: 1 },
+  assumptions: { colSpan: 4, rowSpan: 1 },
 };
 
 const DEFAULT_CARD_ORDER = [
@@ -69,12 +69,20 @@ export default function ScoreDashboard({
   onExportConversationMarkdown = null,
   loading = false,
 }) {
+  const getGridColumns = useCallback(() => {
+    if (typeof window === 'undefined') return 6;
+    if (window.innerWidth <= 768) return 1;
+    if (window.innerWidth <= 1024) return 4;
+    if (window.innerWidth <= 1320) return 8;
+    return 12;
+  }, []);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [expandedCategoryKeys, setExpandedCategoryKeys] = useState([]);
   const [cardOrder, setCardOrder] = useState([]);
   const [cardLayouts, setCardLayouts] = useState({});
   const [draggedCardKey, setDraggedCardKey] = useState(null);
   const [resizeState, setResizeState] = useState(null);
+  const [gridColumns, setGridColumns] = useState(() => getGridColumns());
   const exportMenuRef = useRef(null);
   const dashboardGridRef = useRef(null);
   const cardLayoutsRef = useRef(DEFAULT_CARD_LAYOUT);
@@ -348,8 +356,15 @@ export default function ScoreDashboard({
     `jaspen_scorecard_layout_v4:${threadBundleId || selectedScorecardId || result.analysis_id || result.id || result.thread_id || 'default'}`
   ), [threadBundleId, selectedScorecardId, result.analysis_id, result.id, result.thread_id]);
   const sizeStorageKey = useMemo(() => (
-    `jaspen_scorecard_layout_sizes_v2:${threadBundleId || selectedScorecardId || result.analysis_id || result.id || result.thread_id || 'default'}`
+    `jaspen_scorecard_layout_sizes_v4:${threadBundleId || selectedScorecardId || result.analysis_id || result.id || result.thread_id || 'default'}`
   ), [threadBundleId, selectedScorecardId, result.analysis_id, result.id, result.thread_id]);
+
+  useEffect(() => {
+    const updateGridColumns = () => setGridColumns(getGridColumns());
+    updateGridColumns();
+    window.addEventListener('resize', updateGridColumns);
+    return () => window.removeEventListener('resize', updateGridColumns);
+  }, [getGridColumns]);
 
   useEffect(() => {
     try {
@@ -406,11 +421,13 @@ export default function ScoreDashboard({
   }, []);
 
   const handleResizeStart = useCallback((event, key) => {
+    const direction = event.currentTarget?.dataset?.direction || 'both';
     event.preventDefault();
     event.stopPropagation();
     const current = cardLayouts[key] || DEFAULT_CARD_LAYOUT[key] || { colSpan: 1, rowSpan: 1 };
     setResizeState({
       key,
+      direction,
       startX: event.clientX,
       startY: event.clientY,
       startColSpan: current.colSpan,
@@ -424,15 +441,19 @@ export default function ScoreDashboard({
     const handlePointerMove = (event) => {
       const deltaX = event.clientX - resizeState.startX;
       const deltaY = event.clientY - resizeState.startY;
-      const colSpan = Math.min(3, Math.max(1, resizeState.startColSpan + Math.round(deltaX / 220)));
-      const rowSpan = Math.min(3, Math.max(1, resizeState.startRowSpan + Math.round(deltaY / 170)));
+      const nextColSpan = resizeState.direction === 'y'
+        ? resizeState.startColSpan
+        : Math.min(gridColumns, Math.max(1, resizeState.startColSpan + Math.round(deltaX / 80)));
+      const nextRowSpan = resizeState.direction === 'x'
+        ? resizeState.startRowSpan
+        : Math.min(4, Math.max(1, resizeState.startRowSpan + Math.round(deltaY / 140)));
 
       setCardLayouts((current) => {
         const nextLayouts = {
           ...current,
           [resizeState.key]: {
-            colSpan,
-            rowSpan,
+            colSpan: nextColSpan,
+            rowSpan: nextRowSpan,
           },
         };
         cardLayoutsRef.current = nextLayouts;
@@ -451,7 +472,7 @@ export default function ScoreDashboard({
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
     };
-  }, [resizeState, persistCardLayouts]);
+  }, [gridColumns, resizeState, persistCardLayouts]);
 
   const renderMetricRows = (fields = []) => (
     <div className="metric-stack card-scroll">
@@ -902,8 +923,8 @@ export default function ScoreDashboard({
               onDragEnd={() => setDraggedCardKey(null)}
               title="Drag to reorder"
               style={{
-                gridColumn: `span ${Math.max(1, Math.min(3, (cardLayouts[section.key] || DEFAULT_CARD_LAYOUT[section.key] || { colSpan: 1 }).colSpan || 1))}`,
-                gridRow: `span ${Math.max(1, Math.min(3, (cardLayouts[section.key] || DEFAULT_CARD_LAYOUT[section.key] || { rowSpan: 1 }).rowSpan || 1))}`,
+                gridColumn: `span ${Math.max(1, Math.min(gridColumns, (cardLayouts[section.key] || DEFAULT_CARD_LAYOUT[section.key] || { colSpan: 4 }).colSpan || 4))}`,
+                gridRow: `span ${Math.max(1, Math.min(4, (cardLayouts[section.key] || DEFAULT_CARD_LAYOUT[section.key] || { rowSpan: 1 }).rowSpan || 1))}`,
               }}
             >
               <div className="section-card-head">
@@ -911,7 +932,14 @@ export default function ScoreDashboard({
               </div>
               <div className="section-card-body">{section.render()}</div>
               <div
+                className="card-resize-handle-x"
+                data-direction="x"
+                onPointerDown={(event) => handleResizeStart(event, section.key)}
+                title="Drag to resize width"
+              />
+              <div
                 className="card-resize-handle"
+                data-direction="both"
                 onPointerDown={(event) => handleResizeStart(event, section.key)}
                 title="Drag to resize"
               />
