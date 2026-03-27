@@ -9,6 +9,40 @@ import { faChevronDown, faDownload, faSpinner } from '@fortawesome/free-solid-sv
 import { ScoreDashboardSkeleton } from '../../shared/components/SkeletonLoader';
 import './ScoreDashboard.css';
 
+const DEFAULT_CARD_LAYOUT = {
+  score: { colSpan: 1, rowSpan: 1 },
+  executive: { colSpan: 1, rowSpan: 1 },
+  summary: { colSpan: 1, rowSpan: 1 },
+  financial: { colSpan: 1, rowSpan: 1 },
+  scores: { colSpan: 1, rowSpan: 2 },
+  risks: { colSpan: 1, rowSpan: 2 },
+  recommendations: { colSpan: 1, rowSpan: 2 },
+  decision: { colSpan: 1, rowSpan: 1 },
+  investment: { colSpan: 1, rowSpan: 1 },
+  'before-after': { colSpan: 1, rowSpan: 1 },
+  npv: { colSpan: 1, rowSpan: 1 },
+  valuation: { colSpan: 1, rowSpan: 1 },
+  insights: { colSpan: 1, rowSpan: 1 },
+  assumptions: { colSpan: 1, rowSpan: 1 },
+};
+
+const DEFAULT_CARD_ORDER = [
+  'score',
+  'executive',
+  'scores',
+  'summary',
+  'financial',
+  'risks',
+  'recommendations',
+  'decision',
+  'investment',
+  'before-after',
+  'npv',
+  'valuation',
+  'insights',
+  'assumptions',
+];
+
 export default function ScoreDashboard({
   analysisResult,
   // Props passed from parent workspace (kept for API compatibility)
@@ -36,7 +70,13 @@ export default function ScoreDashboard({
 }) {
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [expandedCategoryKeys, setExpandedCategoryKeys] = useState([]);
+  const [cardOrder, setCardOrder] = useState([]);
+  const [cardLayouts, setCardLayouts] = useState({});
+  const [draggedCardKey, setDraggedCardKey] = useState(null);
+  const [resizeState, setResizeState] = useState(null);
   const exportMenuRef = useRef(null);
+  const dashboardGridRef = useRef(null);
+  const cardLayoutsRef = useRef(DEFAULT_CARD_LAYOUT);
   // If snapshots are provided, render the selected snapshot as the source of truth.
   const selectedSnapshot = useMemo(() => {
     if (!Array.isArray(scorecardSnapshots) || !selectedScorecardId) return null;
@@ -331,8 +371,7 @@ export default function ScoreDashboard({
 
     setExpandedCategoryKeys((current) => {
       const valid = current.filter((key) => categoryScoreRows.some((row) => row.key === key));
-      if (valid.length > 0) return valid;
-      return [categoryScoreRows[0].key];
+      return valid;
     });
   }, [categoryScoreRows]);
 
@@ -341,20 +380,38 @@ export default function ScoreDashboard({
   const hasAiInsights = aiInsights.length > 0;
   const hasNarrativeHighlights = narrativeHighlights.length > 0;
   const layoutStorageKey = useMemo(() => (
-    `jaspen_scorecard_layout_v3:${threadBundleId || selectedScorecardId || result.analysis_id || result.id || result.thread_id || 'default'}`
+    `jaspen_scorecard_layout_v4:${threadBundleId || selectedScorecardId || result.analysis_id || result.id || result.thread_id || 'default'}`
   ), [threadBundleId, selectedScorecardId, result.analysis_id, result.id, result.thread_id]);
-  const [cardOrder, setCardOrder] = useState([]);
-  const [draggedCardKey, setDraggedCardKey] = useState(null);
+  const sizeStorageKey = useMemo(() => (
+    `jaspen_scorecard_layout_sizes_v2:${threadBundleId || selectedScorecardId || result.analysis_id || result.id || result.thread_id || 'default'}`
+  ), [threadBundleId, selectedScorecardId, result.analysis_id, result.id, result.thread_id]);
 
   useEffect(() => {
     try {
       const raw = window.localStorage.getItem(layoutStorageKey);
       const parsed = raw ? JSON.parse(raw) : [];
-      setCardOrder(Array.isArray(parsed) ? parsed.filter((item) => typeof item === 'string') : []);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        setCardOrder(parsed.filter((item) => typeof item === 'string'));
+      } else {
+        setCardOrder(DEFAULT_CARD_ORDER);
+      }
     } catch {
-      setCardOrder([]);
+      setCardOrder(DEFAULT_CARD_ORDER);
     }
   }, [layoutStorageKey]);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(sizeStorageKey);
+      const parsed = raw ? JSON.parse(raw) : {};
+      const nextLayouts = parsed && typeof parsed === 'object' ? parsed : DEFAULT_CARD_LAYOUT;
+      cardLayoutsRef.current = nextLayouts;
+      setCardLayouts(nextLayouts);
+    } catch {
+      cardLayoutsRef.current = DEFAULT_CARD_LAYOUT;
+      setCardLayouts(DEFAULT_CARD_LAYOUT);
+    }
+  }, [sizeStorageKey]);
 
   const persistCardOrder = useCallback((nextOrder) => {
     setCardOrder(nextOrder);
@@ -365,6 +422,16 @@ export default function ScoreDashboard({
     }
   }, [layoutStorageKey]);
 
+  const persistCardLayouts = useCallback((nextLayouts) => {
+    cardLayoutsRef.current = nextLayouts;
+    setCardLayouts(nextLayouts);
+    try {
+      window.localStorage.setItem(sizeStorageKey, JSON.stringify(nextLayouts));
+    } catch {
+      // ignore storage failures
+    }
+  }, [sizeStorageKey]);
+
   const toggleCategoryRow = useCallback((key) => {
     setExpandedCategoryKeys((current) => (
       current.includes(key)
@@ -372,6 +439,54 @@ export default function ScoreDashboard({
         : [...current, key]
     ));
   }, []);
+
+  const handleResizeStart = useCallback((event, key) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const current = cardLayouts[key] || DEFAULT_CARD_LAYOUT[key] || { colSpan: 1, rowSpan: 1 };
+    setResizeState({
+      key,
+      startX: event.clientX,
+      startY: event.clientY,
+      startColSpan: current.colSpan,
+      startRowSpan: current.rowSpan,
+    });
+  }, [cardLayouts]);
+
+  useEffect(() => {
+    if (!resizeState) return undefined;
+
+    const handlePointerMove = (event) => {
+      const deltaX = event.clientX - resizeState.startX;
+      const deltaY = event.clientY - resizeState.startY;
+      const colSpan = Math.min(3, Math.max(1, resizeState.startColSpan + Math.round(deltaX / 220)));
+      const rowSpan = Math.min(3, Math.max(1, resizeState.startRowSpan + Math.round(deltaY / 170)));
+
+      setCardLayouts((current) => {
+        const nextLayouts = {
+          ...current,
+          [resizeState.key]: {
+            colSpan,
+            rowSpan,
+          },
+        };
+        cardLayoutsRef.current = nextLayouts;
+        return nextLayouts;
+      });
+    };
+
+    const handlePointerUp = () => {
+      setResizeState(null);
+      persistCardLayouts(cardLayoutsRef.current);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp, { once: true });
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [resizeState, persistCardLayouts]);
 
   const renderMetricRows = (fields = []) => (
     <div className="metric-stack">
@@ -386,10 +501,84 @@ export default function ScoreDashboard({
 
   const sectionCards = useMemo(() => ([
     {
+      key: 'score',
+      title: 'Strategy Score',
+      populated: true,
+      priority: 0,
+      render: () => (
+        <div className="score-main-card card-shell card-score">
+          <div className="score-circle">
+            <span className="score-value">{score}</span>
+            <span className="score-label">Score</span>
+          </div>
+          <div className="score-text">
+            <h3>Strategy Score</h3>
+            <span className={`score-rating ${scoreRatingClass}`}>{scoreLabel}</span>
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: 'executive',
+      title: 'Executive Summary',
+      populated: Boolean(executiveSummary),
+      priority: 1,
+      render: () => (
+        <div className="executive-summary-card card-shell card-scroll">
+          <p className="executive-summary-text">
+            {executiveSummary || 'Not enough information to generate an executive summary yet.'}
+          </p>
+        </div>
+      ),
+    },
+    {
+      key: 'summary',
+      title: 'What drove this score',
+      populated: hasNarrativeHighlights,
+      priority: 2,
+      render: () => (
+        <div className="summary-card card-shell card-scroll">
+          {hasNarrativeHighlights ? (
+            <div className="summary-list">
+              {narrativeHighlights.map((item, idx) => (
+                <p key={`summary_${idx}`}>{item}</p>
+              ))}
+            </div>
+          ) : (
+            <p className="section-fallback-message">Jaspen needs a little more context to explain what most affected this score.</p>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: 'financial',
+      title: 'Financial Impact',
+      populated: hasFinancialImpact,
+      priority: 3,
+      render: () => (
+        <div className="financial-card card-shell card-scroll">
+          {hasFinancialImpact ? (
+            <div className="fi-grid">
+              {financialGridItems.map((item, idx) => (
+                <div key={idx} className="fi-item">
+                  <div className="fi-label">{item.label}</div>
+                  <div className="fi-value">{item.value}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="section-fallback-message">
+              Not enough information to estimate financial impact yet.
+            </p>
+          )}
+        </div>
+      ),
+    },
+    {
       key: 'scores',
       title: 'Category Scores',
       populated: hasScores,
-      priority: 1,
+      priority: 4,
       render: () => (
         <div className="scores-section scores-accordion">
           {categoryScoreRows.map((row) => (
@@ -426,7 +615,7 @@ export default function ScoreDashboard({
       key: 'recommendations',
       title: 'Recommendations',
       populated: recommendations.length > 0,
-      priority: 2,
+      priority: 5,
       render: () => (
         <div className="recommendations-section">
           {recommendations.map((rec, idx) => {
@@ -457,7 +646,7 @@ export default function ScoreDashboard({
       key: 'risks',
       title: 'Top Risks',
       populated: risks.length > 0,
-      priority: 3,
+      priority: 6,
       render: () => (
         <div className="risks-section">
           {risks.map((risk, idx) => {
@@ -496,7 +685,7 @@ export default function ScoreDashboard({
       key: 'decision',
       title: 'Decision Framework',
       populated: hasDecisionData,
-      priority: 4,
+      priority: 7,
       render: () => (
         <div className="decision-section">
           {decisionFramework?.go_no_go && (
@@ -542,7 +731,7 @@ export default function ScoreDashboard({
       key: 'investment',
       title: 'Investment Analysis',
       populated: hasInvestmentData,
-      priority: 5,
+      priority: 8,
       render: () => renderMetricRows([
         { key: 'investment', label: 'Total Investment Required', value: investmentAnalysis.total_investment_required },
         { key: 'annual-return', label: 'Expected Annual Return', value: investmentAnalysis.expected_annual_return },
@@ -554,7 +743,7 @@ export default function ScoreDashboard({
       key: 'before-after',
       title: 'Before vs After',
       populated: hasBeforeAfterData,
-      priority: 6,
+      priority: 9,
       render: () => renderMetricRows([
         { key: 'before-revenue', label: 'Revenue (Before)', value: before.revenue },
         { key: 'after-revenue', label: 'Revenue (After)', value: after.revenue },
@@ -568,7 +757,7 @@ export default function ScoreDashboard({
       key: 'npv',
       title: 'NPV & IRR Analysis',
       populated: hasNpvData,
-      priority: 7,
+      priority: 10,
       render: () => renderMetricRows([
         { key: 'npv', label: '3-Year NPV', value: npvIrrAnalysis.npv_3_year },
         { key: 'irr', label: 'Internal Rate of Return (IRR)', value: npvIrrAnalysis.irr },
@@ -580,7 +769,7 @@ export default function ScoreDashboard({
       key: 'valuation',
       title: 'Valuation',
       populated: hasValuationData,
-      priority: 8,
+      priority: 11,
       render: () => renderMetricRows([
         { key: 'enterprise-value', label: 'Enterprise Value', value: valuation.enterprise_value },
         { key: 'multiple', label: 'Multiple', value: valuation.multiple !== null && valuation.multiple !== undefined && valuation.multiple !== '' ? `${valuation.multiple}x` : null },
@@ -592,7 +781,7 @@ export default function ScoreDashboard({
       key: 'insights',
       title: 'AI Insights',
       populated: hasAiInsights,
-      priority: 9,
+      priority: 12,
       render: () => (
         <div className="insights-section">
           {aiInsights.slice(0, 5).map((entry, idx) => {
@@ -614,7 +803,7 @@ export default function ScoreDashboard({
       key: 'assumptions',
       title: 'What Would Sharpen This Score',
       populated: assumptions.length > 0,
-      priority: 10,
+      priority: 13,
       render: () => (
         <div className="section-bullet-list">
           {assumptions.map((item, idx) => (
@@ -629,7 +818,11 @@ export default function ScoreDashboard({
     after,
     categoryScoreRows,
     decisionFramework,
+    executiveSummary,
     expandedCategoryKeys,
+    financialGridItems,
+    hasFinancialImpact,
+    hasNarrativeHighlights,
     hasAiInsights,
     hasBeforeAfterData,
     hasDecisionData,
@@ -638,9 +831,13 @@ export default function ScoreDashboard({
     hasScores,
     hasValuationData,
     investmentAnalysis,
+    narrativeHighlights,
     npvIrrAnalysis,
     recommendations,
     risks,
+    score,
+    scoreLabel,
+    scoreRatingClass,
     aiInsights,
     toggleCategoryRow,
     valuation,
@@ -717,68 +914,7 @@ export default function ScoreDashboard({
             </div>
           )}
         </div>
-        <div className="score-header-row">
-          <div className="score-primary-column">
-            <div className="score-main-card">
-              <div className="score-circle">
-                <span className="score-value">{score}</span>
-                <span className="score-label">Score</span>
-              </div>
-              <div className="score-text">
-                <h3>Strategy Score</h3>
-                <span className={`score-rating ${scoreRatingClass}`}>{scoreLabel}</span>
-              </div>
-            </div>
-
-            <div className="summary-card">
-              <div className="card-title-row">
-                <h4>What drove this score</h4>
-              </div>
-              {hasNarrativeHighlights ? (
-                <div className="summary-list">
-                  {narrativeHighlights.map((item, idx) => (
-                    <p key={`summary_${idx}`}>{item}</p>
-                  ))}
-                </div>
-              ) : (
-                <p className="section-fallback-message">Jaspen needs a little more context to explain what most affected this score.</p>
-              )}
-            </div>
-          </div>
-
-          <div className="score-secondary-column">
-            {executiveSummary && (
-              <div className="executive-summary-card">
-                <div className="card-title-row">
-                  <h4>Executive Summary</h4>
-                </div>
-                <p className="executive-summary-text">{executiveSummary}</p>
-              </div>
-            )}
-
-            <div className="financial-card">
-              <div className="card-title-row">
-                <h4>Financial Impact</h4>
-              </div>
-              {hasFinancialImpact ? (
-                <div className="fi-grid">
-                  {financialGridItems.map((item, idx) => (
-                    <div key={idx} className="fi-item">
-                      <div className="fi-label">{item.label}</div>
-                      <div className="fi-value">{item.value}</div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="section-fallback-message">
-                  Not enough information to estimate financial impact yet.
-                </p>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="score-body-grid">
+        <div className="score-body-grid unified-layout" ref={dashboardGridRef}>
           {orderedSectionCards.map((section) => (
             <section
               key={section.key}
@@ -792,11 +928,20 @@ export default function ScoreDashboard({
               }}
               onDragEnd={() => setDraggedCardKey(null)}
               title="Drag to reorder"
+              style={{
+                gridColumn: `span ${Math.max(1, Math.min(3, (cardLayouts[section.key] || DEFAULT_CARD_LAYOUT[section.key] || { colSpan: 1 }).colSpan || 1))}`,
+                gridRow: `span ${Math.max(1, Math.min(3, (cardLayouts[section.key] || DEFAULT_CARD_LAYOUT[section.key] || { rowSpan: 1 }).rowSpan || 1))}`,
+              }}
             >
               <div className="section-card-head">
                 <span className="section-card-title">{section.title}</span>
               </div>
               <div className="section-card-body">{section.render()}</div>
+              <div
+                className="card-resize-handle"
+                onPointerDown={(event) => handleResizeStart(event, section.key)}
+                title="Drag to resize"
+              />
             </section>
           ))}
         </div>

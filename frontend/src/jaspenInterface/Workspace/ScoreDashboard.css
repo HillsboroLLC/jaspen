@@ -278,6 +278,10 @@
   align-items: flex-start;
 }
 
+.score-dashboard-container .score-header-row.unified-layout {
+  display: none;
+}
+
 .score-dashboard-container .score-primary-column {
   flex: 0 0 420px;
   min-width: 320px;
@@ -305,6 +309,20 @@
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
+}
+
+.score-dashboard-container .card-shell {
+  height: 100%;
+  box-sizing: border-box;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 18px 20px;
+}
+
+.score-dashboard-container .card-scroll {
+  overflow-y: auto;
 }
 
 /* --- Score Circle --- */
@@ -444,7 +462,7 @@
 .score-dashboard-container .fi-grid {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 12px;
+  gap: 10px;
 }
 
 .score-dashboard-container .fi-item {
@@ -452,7 +470,7 @@
   align-items: baseline;
   justify-content: space-between;
   gap: 16px;
-  padding-bottom: 12px;
+  padding-bottom: 10px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -469,7 +487,7 @@
 
 .score-dashboard-container .fi-item .fi-value {
   font-size: 0.875rem;
-  font-weight: 500;
+  font-weight: 400;
   color: var(--navy);
   line-height: 1.4;
   white-space: nowrap;
@@ -486,14 +504,15 @@
 .score-dashboard-container .executive-summary-text {
   margin: 0;
   font-size: 0.875rem;
-  line-height: 1.7;
+  line-height: 1.6;
   color: var(--text-secondary);
 }
 
 .score-dashboard-container .score-body-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 24px;
+  grid-template-columns: repeat(3, minmax(260px, 1fr));
+  grid-auto-rows: 190px;
+  gap: 20px;
   grid-auto-flow: dense;
   align-items: start;
   margin-bottom: 28px;
@@ -506,6 +525,9 @@
   box-shadow: var(--shadow-sm);
   overflow: hidden;
   cursor: grab;
+  min-width: 0;
+  position: relative;
+  min-height: 0;
 }
 
 .score-dashboard-container .section-card-head {
@@ -528,6 +550,8 @@
 
 .score-dashboard-container .section-card-body {
   padding: 0;
+  height: calc(100% - 53px);
+  min-height: 0;
 }
 
 .score-dashboard-container .score-section-card:hover {
@@ -545,6 +569,7 @@
   border-radius: 0;
   margin-bottom: 0;
   box-shadow: none;
+  height: 100%;
 }
 
 .score-dashboard-container .score-section-card .ss-header,
@@ -558,6 +583,8 @@
 
 .score-dashboard-container .metric-stack {
   display: grid;
+  height: 100%;
+  align-content: start;
 }
 
 .score-dashboard-container .metric-row {
@@ -736,6 +763,24 @@
   font-size: 0.8125rem;
   color: var(--text-secondary);
   line-height: 1.6;
+}
+
+.score-dashboard-container .card-resize-handle {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  background-image:
+    linear-gradient(135deg, transparent 0 42%, var(--gray-400) 42% 49%, transparent 49% 100%),
+    linear-gradient(135deg, transparent 0 60%, var(--gray-400) 60% 67%, transparent 67% 100%),
+    linear-gradient(135deg, transparent 0 78%, var(--gray-400) 78% 85%, transparent 85% 100%);
+  opacity: 0.45;
+}
+
+.score-dashboard-container .score-section-card:hover .card-resize-handle {
+  opacity: 0.95;
 }
 
 /* --- Risks Section --- */
@@ -1058,7 +1103,8 @@
 /* --- Responsive --- */
 @media (max-width: 1024px) {
   .score-dashboard-container .score-body-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(240px, 1fr));
+    grid-auto-rows: 190px;
   }
 }
 
@@ -1084,6 +1130,11 @@
   .score-dashboard-container .score-main-card {
     width: 100%;
     min-width: 0;
+  }
+
+  .score-dashboard-container .score-body-grid {
+    grid-template-columns: 1fr;
+    grid-auto-rows: minmax(180px, auto);
   }
 
   .score-dashboard-container .fi-item {
