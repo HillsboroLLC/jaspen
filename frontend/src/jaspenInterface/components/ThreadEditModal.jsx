@@ -22,32 +22,47 @@ export default function ThreadEditModal({
   const [loading, setLoading] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState(null);
+  const [detailsWarning, setDetailsWarning] = React.useState(null);
 
   const [name, setName] = React.useState(initialName || '');
   const [adoptedAnalysisId, setAdoptedAnalysisId] = React.useState(initialAdoptedAnalysisId || '');
+  const nameRef = React.useRef(initialName || '');
+  const adoptedAnalysisIdRef = React.useRef(initialAdoptedAnalysisId || '');
 
   const [analysisOptions, setAnalysisOptions] = React.useState([]); // [{analysis_id,label,created_at}]
+
+  React.useEffect(() => {
+    nameRef.current = name;
+  }, [name]);
+
+  React.useEffect(() => {
+    adoptedAnalysisIdRef.current = adoptedAnalysisId;
+  }, [adoptedAnalysisId]);
 
   // Reset form when modal opens or the target changes
   React.useEffect(() => {
     if (!open) return;
     setError(null);
+    setDetailsWarning(null);
     setName(initialName || '');
     setAdoptedAnalysisId(initialAdoptedAnalysisId || '');
+    nameRef.current = initialName || '';
+    adoptedAnalysisIdRef.current = initialAdoptedAnalysisId || '';
     setAnalysisOptions([]);
   }, [open, initialName, initialAdoptedAnalysisId]);
 
   // Load analysis options when opened (from bundle)
   React.useEffect(() => {
     let alive = true;
-    if (!open || !sessionId || !authFetch) return;
+    const targetThreadId = threadId || sessionId;
+    if (!open || !targetThreadId || !authFetch) return;
 
     (async () => {
       try {
         setLoading(true);
-        setError(null);
+        setDetailsWarning(null);
 
-        const res = await authFetch(`/api/v1/ai-agent/threads/${encodeURIComponent(sessionId)}`, {
+        const res = await authFetch(`/api/v1/ai-agent/threads/${encodeURIComponent(targetThreadId)}`, {
           method: 'GET',
           headers: { Accept: 'application/json' },
         });
@@ -66,7 +81,7 @@ export default function ThreadEditModal({
             const labelBase =
               h?.result?.project_name ||
               h?.result?.compat?.title ||
-              name ||
+              nameRef.current ||
               'Analysis';
             const label = score ? `${labelBase} — ${score}` : labelBase;
             return id ? { analysis_id: id, label, created_at: created } : null;
@@ -77,9 +92,12 @@ export default function ThreadEditModal({
 
         // If backend provides adopted/current id in bundle, prefer it
         const adopted = data?.adopted_analysis_id || '';
-        if (alive && adopted && !adoptedAnalysisId) setAdoptedAnalysisId(adopted);
+        if (alive && adopted && !adoptedAnalysisIdRef.current) setAdoptedAnalysisId(adopted);
       } catch (e) {
-        if (alive) setError(e?.message || 'Failed to load thread details');
+        if (alive) {
+          setAnalysisOptions([]);
+          setDetailsWarning('Analysis options are unavailable right now. You can still rename this initiative.');
+        }
       } finally {
         if (alive) setLoading(false);
       }
@@ -88,11 +106,12 @@ export default function ThreadEditModal({
     return () => {
       alive = false;
     };
-  }, [open, sessionId, authFetch]); // intentionally not depending on name
+  }, [open, sessionId, threadId, authFetch]); // intentionally not depending on name
 
   const doSave = async () => {
     if (!authFetch) return;
-    if (!sessionId) return;
+    const targetThreadId = threadId || sessionId;
+    if (!targetThreadId) return;
     setSaving(true);
     setError(null);
 
@@ -101,7 +120,7 @@ export default function ThreadEditModal({
       // You may already have an endpoint. If not, you'll add it backend-side.
       // This expects: PATCH /api/v1/ai-agent/threads/:sid { name }
       if (name && name.trim()) {
-        const r1 = await authFetch(`/api/v1/ai-agent/threads/${encodeURIComponent(sessionId)}`, {
+        const r1 = await authFetch(`/api/v1/ai-agent/threads/${encodeURIComponent(targetThreadId)}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
           body: JSON.stringify({ name: name.trim() }),
@@ -169,6 +188,7 @@ export default function ThreadEditModal({
               value={adoptedAnalysisId || ''}
               onChange={(e) => setAdoptedAnalysisId(e.target.value)}
               style={styles.select}
+              disabled={Boolean(detailsWarning)}
             >
               <option value="">(No adopted analysis)</option>
               {analysisOptions.map((o) => (
@@ -179,6 +199,7 @@ export default function ThreadEditModal({
             </select>
           )}
 
+          {detailsWarning && <div style={styles.hint}>{detailsWarning}</div>}
           <div style={styles.hint}>
             Choosing an adopted analysis controls what the AI uses as the “current context” for this thread.
           </div>

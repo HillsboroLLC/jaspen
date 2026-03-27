@@ -387,17 +387,21 @@
 
 /* --- Financial Impact Card --- */
 .score-dashboard-container .financial-card {
-  background: var(--white);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  background: transparent;
+  border: none;
+  border-radius: 0;
   padding: 24px;
+  box-sizing: border-box;
+  height: 100%;
 }
 
 .score-dashboard-container .summary-card {
-  background: var(--white);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  background: transparent;
+  border: none;
+  border-radius: 0;
   padding: 24px;
+  box-sizing: border-box;
+  height: 100%;
 }
 
 .score-dashboard-container .summary-card h4 {
@@ -496,10 +500,12 @@
 }
 
 .score-dashboard-container .executive-summary-card {
-  background: var(--white);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  background: transparent;
+  border: none;
+  border-radius: 0;
   padding: 24px;
+  box-sizing: border-box;
+  height: 100%;
 }
 
 .score-dashboard-container .executive-summary-text {
@@ -565,6 +571,9 @@
 }
 
 .score-dashboard-container .score-section-card .scores-section,
+.score-dashboard-container .score-section-card .summary-card,
+.score-dashboard-container .score-section-card .financial-card,
+.score-dashboard-container .score-section-card .executive-summary-card,
 .score-dashboard-container .score-section-card .risks-section,
 .score-dashboard-container .score-section-card .recommendations-section,
 .score-dashboard-container .score-section-card .insights-section,
@@ -793,11 +802,11 @@
 
 /* --- Risks Section --- */
 .score-dashboard-container .risks-section {
-  background: var(--white);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  background: transparent;
+  border: none;
+  border-radius: 0;
   overflow: hidden;
-  margin-bottom: 28px;
+  margin-bottom: 0;
 }
 
 .score-dashboard-container .rs-header {
@@ -849,11 +858,11 @@
 
 /* --- Recommendations Section --- */
 .score-dashboard-container .recommendations-section {
-  background: var(--white);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  background: transparent;
+  border: none;
+  border-radius: 0;
   overflow: hidden;
-  margin-bottom: 28px;
+  margin-bottom: 0;
 }
 
 .score-dashboard-container .rec-header {
@@ -905,11 +914,11 @@
 
 /* --- AI Insights Section --- */
 .score-dashboard-container .insights-section {
-  background: var(--white);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  background: transparent;
+  border: none;
+  border-radius: 0;
   overflow: hidden;
-  margin-bottom: 28px;
+  margin-bottom: 0;
 }
 
 .score-dashboard-container .ins-header {
@@ -946,11 +955,11 @@
 
 /* --- Decision Section --- */
 .score-dashboard-container .decision-section {
-  background: var(--white);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  background: transparent;
+  border: none;
+  border-radius: 0;
   overflow: hidden;
-  margin-bottom: 28px;
+  margin-bottom: 0;
 }
 
 .score-dashboard-container .ds-header {
@@ -1023,11 +1032,11 @@
 
 /* --- Data Section --- */
 .score-dashboard-container .data-section {
-  background: var(--white);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  background: transparent;
+  border: none;
+  border-radius: 0;
   overflow: hidden;
-  margin-bottom: 28px;
+  margin-bottom: 0;
 }
 
 .score-dashboard-container .data-section .section-header {
