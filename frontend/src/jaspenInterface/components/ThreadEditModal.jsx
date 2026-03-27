@@ -31,6 +31,7 @@ export default function ThreadEditModal({
   const [adoptedAnalysisId, setAdoptedAnalysisId] = React.useState(initialAdoptedAnalysisId || '');
   const nameRef = React.useRef(initialName || '');
   const adoptedAnalysisIdRef = React.useRef(initialAdoptedAnalysisId || '');
+  const initialAdoptedAnalysisIdRef = React.useRef(initialAdoptedAnalysisId || '');
 
   const [analysisOptions, setAnalysisOptions] = React.useState([]); // [{analysis_id,label,created_at}]
 
@@ -51,6 +52,7 @@ export default function ThreadEditModal({
     setAdoptedAnalysisId(initialAdoptedAnalysisId || '');
     nameRef.current = initialName || '';
     adoptedAnalysisIdRef.current = initialAdoptedAnalysisId || '';
+    initialAdoptedAnalysisIdRef.current = initialAdoptedAnalysisId || '';
     setAnalysisOptions([]);
   }, [open, initialName, initialAdoptedAnalysisId]);
 
@@ -194,7 +196,12 @@ export default function ThreadEditModal({
       }
 
       // 2) Adopt analysis for AI context
-      if ((threadMode === 'strategy' || threadMode === 'auto') && threadId && adoptedAnalysisId) {
+      if (
+        (threadMode === 'strategy' || threadMode === 'auto')
+        && threadId
+        && adoptedAnalysisId
+        && adoptedAnalysisId !== (initialAdoptedAnalysisIdRef.current || '')
+      ) {
         const r2 = await authFetch(`/api/v1/strategy/threads/${encodeURIComponent(threadId)}/adopt`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Accept: 'application/json' },

@@ -6922,7 +6922,7 @@ onClick={async () => {
         onClose={() => setThreadEditOpen(false)}
         sessionId={sessionId}
         threadId={sessionId}
-        threadMode="strategy"
+        threadMode="auto"
         initialName={activeScorecard?.project_name || analysisResult?.project_name || ''}
         initialAdoptedAnalysisId={analysisResult?.analysis_id || ''}
         authFetch={authFetch}
