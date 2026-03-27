@@ -92,6 +92,13 @@ export default function ScoreDashboard({
     return scorecardSnapshots.find(s => s?.id === selectedScorecardId) || null;
   }, [scorecardSnapshots, selectedScorecardId]);
 
+  const selectedScorecardLabel = useMemo(() => {
+    if (selectedSnapshot?.label) return selectedSnapshot.label;
+    if (selectedSnapshot?.isBaseline) return 'Baseline';
+    if (selectedScorecardId) return 'Selected scorecard';
+    return 'Current scorecard';
+  }, [selectedSnapshot, selectedScorecardId]);
+
   const result = selectedSnapshot || analysisResult || {};
   const score = result.jaspen_score || 0;
   const componentScores = useMemo(() => result.component_scores || {}, [result.component_scores]);
@@ -865,7 +872,7 @@ export default function ScoreDashboard({
         <div className="score-toolbar">
           <div className="score-toolbar-copy">
             <span className="score-toolbar-kicker">{selectedSnapshot ? 'Selected scorecard' : 'Current scorecard'}</span>
-            <span className="score-toolbar-title">{result.project_name || 'Strategic snapshot'}</span>
+            <span className="score-toolbar-title">{selectedScorecardLabel}</span>
           </div>
           {hasExportMenu && (
             <div className="sc-export-wrap" ref={exportMenuRef}>

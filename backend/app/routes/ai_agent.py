@@ -5661,6 +5661,69 @@ def update_thread(thread_id):
     previous_status = str(session.get("status") or "").strip().lower() or None
     if name:
         session["name"] = name
+        if isinstance(session.get("result"), dict):
+            result = dict(session["result"])
+            result["project_name"] = name
+            compat = result.get("compat")
+            if isinstance(compat, dict):
+                compat = dict(compat)
+                compat["title"] = name
+                result["compat"] = compat
+            baseline_scorecard = result.get("_baseline_scorecard")
+            if isinstance(baseline_scorecard, dict):
+                patched_baseline = dict(baseline_scorecard)
+                patched_baseline["project_name"] = name
+                result["_baseline_scorecard"] = patched_baseline
+            snapshots = result.get("scorecard_snapshots")
+            if isinstance(snapshots, list):
+                next_snapshots = []
+                for snapshot in snapshots:
+                    if isinstance(snapshot, dict):
+                        patched_snapshot = dict(snapshot)
+                        patched_snapshot["project_name"] = name
+                        next_snapshots.append(patched_snapshot)
+                    else:
+                        next_snapshots.append(snapshot)
+                result["scorecard_snapshots"] = next_snapshots
+            session["result"] = result
+
+        history = session.get("analysis_history")
+        if isinstance(history, list):
+            next_history = []
+            for entry in history:
+                if not isinstance(entry, dict):
+                    next_history.append(entry)
+                    continue
+                patched_entry = dict(entry)
+                if isinstance(patched_entry.get("result"), dict):
+                    patched_result = dict(patched_entry["result"])
+                    patched_result["project_name"] = name
+                    if isinstance(patched_result.get("compat"), dict):
+                        compat = dict(patched_result["compat"])
+                        compat["title"] = name
+                        patched_result["compat"] = compat
+                    patched_entry["result"] = patched_result
+                next_history.append(patched_entry)
+            session["analysis_history"] = next_history
+
+        analyses = session.get("analyses")
+        if isinstance(analyses, list):
+            next_analyses = []
+            for entry in analyses:
+                if not isinstance(entry, dict):
+                    next_analyses.append(entry)
+                    continue
+                patched_entry = dict(entry)
+                if isinstance(patched_entry.get("result"), dict):
+                    patched_result = dict(patched_entry["result"])
+                    patched_result["project_name"] = name
+                    if isinstance(patched_result.get("compat"), dict):
+                        compat = dict(patched_result["compat"])
+                        compat["title"] = name
+                        patched_result["compat"] = compat
+                    patched_entry["result"] = patched_result
+                next_analyses.append(patched_entry)
+            session["analyses"] = next_analyses
     if objective_supplied:
         session["strategy_objective"] = normalize_strategy_objective(
             data.get("strategy_objective") or data.get("objective")

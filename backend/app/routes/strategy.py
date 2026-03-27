@@ -3981,6 +3981,14 @@ def update_strategy_thread(thread_id):
             return jsonify({'error': 'Thread not found'}), 404
         if not isinstance(session, dict):
             existing_baseline = thread_data.get('baseline') if isinstance(thread_data, dict) else None
+            scenarios = thread_data.get('scenarios') if isinstance(thread_data, dict) and isinstance(thread_data.get('scenarios'), dict) else {}
+            adopted_scenario_id = thread_data.get('adopted_scenario_id') if isinstance(thread_data, dict) else None
+            adopted_scenario = scenarios.get(adopted_scenario_id) if adopted_scenario_id and isinstance(scenarios.get(adopted_scenario_id), dict) else None
+            current_result = (
+                adopted_scenario.get('result') if isinstance(adopted_scenario, dict) and isinstance(adopted_scenario.get('result'), dict)
+                else existing_baseline if isinstance(existing_baseline, dict)
+                else None
+            )
             existing_name = None
             if isinstance(existing_baseline, dict):
                 existing_name = (
@@ -3997,6 +4005,12 @@ def update_strategy_thread(thread_id):
                 'timestamp': now_iso,
                 'status': 'completed' if isinstance(thread_data, dict) and (thread_data.get('baseline') or thread_data.get('scenarios')) else 'in_progress',
                 'chat_history': [],
+                'result': dict(current_result) if isinstance(current_result, dict) else None,
+                'analysis_history': (
+                    [{'analysis_id': str(current_result.get('analysis_id') or resolved_thread_id), 'result': dict(current_result)}]
+                    if isinstance(current_result, dict)
+                    else []
+                ),
             }
             session_key = resolved_thread_id
 

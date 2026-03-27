@@ -170,8 +170,8 @@ export default function ThreadEditModal({
           : threadMode === 'ai-agent'
           ? [`/api/v1/ai-agent/threads/${encodeURIComponent(targetThreadId)}`]
           : [
-              `/api/v1/strategy/threads/${encodeURIComponent(targetThreadId)}`,
               `/api/v1/ai-agent/threads/${encodeURIComponent(targetThreadId)}`,
+              `/api/v1/strategy/threads/${encodeURIComponent(targetThreadId)}`,
             ];
         let renameSucceeded = false;
         let renameError = null;
