@@ -3904,9 +3904,32 @@ def update_strategy_thread(thread_id):
             return jsonify({'error': 'name is required'}), 400
 
         sessions = load_user_sessions(user_id) or {}
+        all_data = _load_scenarios(user_id)
+        thread_data = all_data.get(thread_id) if isinstance(all_data, dict) else None
+        thread_data = thread_data if isinstance(thread_data, dict) else None
         session_key, session = _resolve_session_entry(sessions, thread_id)
-        if not isinstance(session, dict):
+        if not isinstance(session, dict) and not isinstance(thread_data, dict):
             return jsonify({'error': 'Thread not found'}), 404
+        if not isinstance(session, dict):
+            existing_baseline = thread_data.get('baseline') if isinstance(thread_data, dict) else None
+            existing_name = None
+            if isinstance(existing_baseline, dict):
+                existing_name = (
+                    existing_baseline.get('project_name')
+                    or existing_baseline.get('name')
+                    or existing_baseline.get('title')
+                )
+            now_iso = datetime.utcnow().isoformat()
+            session = {
+                'session_id': thread_id,
+                'name': str(existing_name or next_name or 'Jaspen Analysis').strip(),
+                'document_type': 'strategy',
+                'created': now_iso,
+                'timestamp': now_iso,
+                'status': 'completed' if isinstance(thread_data, dict) and (thread_data.get('baseline') or thread_data.get('scenarios')) else 'in_progress',
+                'chat_history': [],
+            }
+            session_key = thread_id
 
         now_iso = datetime.utcnow().isoformat()
         session['name'] = next_name
@@ -3964,8 +3987,6 @@ def update_strategy_thread(thread_id):
         sessions[session_key or thread_id] = session
         save_user_sessions(user_id, sessions)
 
-        all_data = _load_scenarios(user_id)
-        thread_data = all_data.get(thread_id)
         if isinstance(thread_data, dict):
             baseline = thread_data.get('baseline')
             if isinstance(baseline, dict):
