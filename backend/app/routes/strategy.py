@@ -1023,6 +1023,72 @@ def _resolve_session_entry(sessions, thread_id):
     return None, None
 
 
+def _resolve_strategy_thread_state(sessions, all_data, thread_id):
+    """Resolve a strategy thread across session/history storage and scenario bundle storage."""
+    tid = str(thread_id or '').strip()
+    if not tid:
+        return None, None, None
+
+    session_key, session = _resolve_session_entry(sessions, tid)
+    if isinstance(session, dict):
+        thread_data = all_data.get(tid) if isinstance(all_data, dict) else None
+        return tid, session_key, session if isinstance(session, dict) else None
+
+    if isinstance(sessions, dict):
+        for key, candidate in sessions.items():
+            if not isinstance(candidate, dict):
+                continue
+            result = candidate.get('result')
+            if isinstance(result, dict):
+                meta = result.get('meta') if isinstance(result.get('meta'), dict) else {}
+                candidate_tid = str(result.get('thread_id') or meta.get('thread_id') or '').strip()
+                if candidate_tid == tid:
+                    return tid, key, candidate
+            history = candidate.get('analysis_history')
+            if not isinstance(history, list):
+                history = candidate.get('analyses')
+            if not isinstance(history, list):
+                continue
+            for entry in history:
+                if not isinstance(entry, dict):
+                    continue
+                entry_result = entry.get('result') if isinstance(entry.get('result'), dict) else {}
+                entry_meta = entry_result.get('meta') if isinstance(entry_result.get('meta'), dict) else {}
+                candidate_tid = str(
+                    entry.get('thread_id')
+                    or entry_result.get('thread_id')
+                    or entry_meta.get('thread_id')
+                    or ''
+                ).strip()
+                if candidate_tid == tid:
+                    return tid, key, candidate
+
+    if isinstance(all_data, dict):
+        if tid in all_data and isinstance(all_data.get(tid), dict):
+            return tid, None, None
+        for key, candidate in all_data.items():
+            if not isinstance(candidate, dict):
+                continue
+            baseline = candidate.get('baseline') if isinstance(candidate.get('baseline'), dict) else {}
+            baseline_meta = baseline.get('meta') if isinstance(baseline.get('meta'), dict) else {}
+            candidate_tid = str(baseline.get('thread_id') or baseline_meta.get('thread_id') or '').strip()
+            if candidate_tid == tid:
+                return str(key), None, None
+            scenarios = candidate.get('scenarios')
+            if not isinstance(scenarios, dict):
+                continue
+            for scenario in scenarios.values():
+                if not isinstance(scenario, dict):
+                    continue
+                scenario_result = scenario.get('result') if isinstance(scenario.get('result'), dict) else {}
+                scenario_meta = scenario_result.get('meta') if isinstance(scenario_result.get('meta'), dict) else {}
+                candidate_tid = str(scenario_result.get('thread_id') or scenario_meta.get('thread_id') or '').strip()
+                if candidate_tid == tid:
+                    return str(key), None, None
+
+    return None, None, None
+
+
 def _resolve_user_model_selection(user, requested_model_type=None):
     plan_key = to_public_plan(user.subscription_plan)
     allowed_model_types = get_allowed_model_types(plan_key, current_app.config)
@@ -3905,9 +3971,12 @@ def update_strategy_thread(thread_id):
 
         sessions = load_user_sessions(user_id) or {}
         all_data = _load_scenarios(user_id)
-        thread_data = all_data.get(thread_id) if isinstance(all_data, dict) else None
+        resolved_thread_id, session_key, session = _resolve_strategy_thread_state(sessions, all_data, thread_id)
+        if not resolved_thread_id:
+            return jsonify({'error': 'Thread not found'}), 404
+
+        thread_data = all_data.get(resolved_thread_id) if isinstance(all_data, dict) else None
         thread_data = thread_data if isinstance(thread_data, dict) else None
-        session_key, session = _resolve_session_entry(sessions, thread_id)
         if not isinstance(session, dict) and not isinstance(thread_data, dict):
             return jsonify({'error': 'Thread not found'}), 404
         if not isinstance(session, dict):
@@ -3921,7 +3990,7 @@ def update_strategy_thread(thread_id):
                 )
             now_iso = datetime.utcnow().isoformat()
             session = {
-                'session_id': thread_id,
+                'session_id': resolved_thread_id,
                 'name': str(existing_name or next_name or 'Jaspen Analysis').strip(),
                 'document_type': 'strategy',
                 'created': now_iso,
@@ -3929,7 +3998,7 @@ def update_strategy_thread(thread_id):
                 'status': 'completed' if isinstance(thread_data, dict) and (thread_data.get('baseline') or thread_data.get('scenarios')) else 'in_progress',
                 'chat_history': [],
             }
-            session_key = thread_id
+            session_key = resolved_thread_id
 
         now_iso = datetime.utcnow().isoformat()
         session['name'] = next_name
@@ -3984,7 +4053,7 @@ def update_strategy_thread(thread_id):
                 next_history.append(patched_entry)
             session['analysis_history'] = next_history
 
-        sessions[session_key or thread_id] = session
+        sessions[session_key or resolved_thread_id] = session
         save_user_sessions(user_id, sessions)
 
         if isinstance(thread_data, dict):
@@ -4009,14 +4078,14 @@ def update_strategy_thread(thread_id):
                         next_scenarios[scenario_id] = scenario
                 thread_data['scenarios'] = next_scenarios
 
-            all_data[thread_id] = thread_data
+            all_data[resolved_thread_id] = thread_data
             _save_scenarios(user_id, all_data)
 
         return jsonify({
             'success': True,
             'thread': {
-                'id': thread_id,
-                'session_id': thread_id,
+                'id': resolved_thread_id,
+                'session_id': resolved_thread_id,
                 'name': next_name,
                 'status': session.get('status') or 'in_progress',
                 'timestamp': now_iso,
