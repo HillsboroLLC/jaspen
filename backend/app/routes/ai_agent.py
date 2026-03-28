@@ -5829,6 +5829,37 @@ def update_thread(thread_id):
     }), 200
 
 
+@ai_agent_bp.route("/threads/<thread_id>", methods=["DELETE"])
+@jwt_required()
+def delete_thread(thread_id):
+    user_id = str(get_jwt_identity())
+    user = User.query.get(user_id)
+    sessions = load_user_sessions(user_id) or {}
+    session_key, session = _resolve_user_session(sessions, thread_id)
+    if not isinstance(session, dict):
+        return jsonify({"error": "Thread not found"}), 404
+
+    resolved_thread_id = str(session.get("session_id") or session_key or thread_id)
+    target_key = session_key or resolved_thread_id
+    sessions.pop(target_key, None)
+    save_user_sessions(user_id, sessions)
+
+    if user:
+        _audit_ai_agent_event(
+            "session.archived",
+            user=user,
+            details={
+                "thread_id": resolved_thread_id,
+                "scope": "single",
+            },
+        )
+
+    return jsonify({
+        "success": True,
+        "deleted_thread_id": resolved_thread_id,
+    }), 200
+
+
 @ai_agent_bp.route("/threads/<thread_id>/messages/<int:message_index>/feedback", methods=["POST"])
 @jwt_required()
 @limiter.limit("60 per hour")

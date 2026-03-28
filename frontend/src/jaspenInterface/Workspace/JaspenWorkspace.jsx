@@ -6417,6 +6417,15 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
   );
   setStrategyObjective(mergedObjective);
   setObjectiveExplicitlySet(Boolean(merged?.objective_explicitly_set || merged?.result?.objective_explicitly_set));
+  const resolvedOwnerThreadId = String(
+    ownerThreadId ||
+    bundle?.thread?.id ||
+    bundle?.thread?.session_id ||
+    merged?.session_id ||
+    merged?.result?.session_id ||
+    baseId ||
+    ''
+  ).trim() || `restored_${Date.now()}`;
 
   // Readiness normalization handled by normalizeReadiness() helper
   // Readiness is ONLY fetched from backend via fetchReadinessFor - no session cache
@@ -6424,7 +6433,7 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
   // Branch: in-progress sessions return to intake with chat restored only when
   // they do not already carry a meaningful saved scorecard.
   if (!mergedScorecard && merged?.status === 'in_progress' && Array.isArray(merged.chat_history)) {
-    const sid = merged.analysis_id || merged.session_id || baseId || `restored_${Date.now()}`;
+    const sid = resolvedOwnerThreadId;
     setSessionId(sid);
     setCurrentSessionId(sid);
 
@@ -6442,12 +6451,7 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
 
 // Completed session -> workspace summary (prefer the persisted result blob)
 try {
-  const id =
-    bundleScorecard?.analysis_id ??
-    merged?.analysis_id ??
-    merged?.session_id ??
-    baseId ??
-    `restored_${Date.now()}`;
+  const id = resolvedOwnerThreadId;
 
   setSessionId(id);
   const bundleHistory = Array.isArray(bundle?.messages)
