@@ -54,24 +54,49 @@ const getRestorableSessionIdFromLocation = () => {
   }
 };
 
+const objectHasMeaningfulValue = (value) => {
+  if (value == null) return false;
+  if (typeof value === 'string') return value.trim().length > 0;
+  if (typeof value === 'number') return Number.isFinite(value) && value !== 0;
+  if (typeof value === 'boolean') return value;
+  if (Array.isArray(value)) return value.some((entry) => objectHasMeaningfulValue(entry));
+  if (typeof value === 'object') return Object.values(value).some((entry) => objectHasMeaningfulValue(entry));
+  return false;
+};
+
 const hasMeaningfulScorecardData = (value) => {
   if (!value || typeof value !== 'object') return false;
-  if (Number.isFinite(Number(value.jaspen_score))) return true;
-  if (typeof value.score_category === 'string' && value.score_category.trim()) return true;
-  if (value.component_scores && typeof value.component_scores === 'object' && Object.keys(value.component_scores).length > 0) return true;
-  if (value.financial_impact && typeof value.financial_impact === 'object' && Object.keys(value.financial_impact).length > 0) return true;
+
+  const explicitScore = Number(value.jaspen_score ?? value.score ?? value?.compat?.score);
+  if (Number.isFinite(explicitScore) && explicitScore > 0) return true;
+
+  if (typeof value.score_category === 'string' && value.score_category.trim()) {
+    const nonDefaultCategories = new Set(['excellent', 'good', 'fair', 'at risk', 'needs improvement']);
+    if (!nonDefaultCategories.has(value.score_category.trim().toLowerCase())) return true;
+  }
+
+  const componentScores = value.component_scores || value?.compat?.components;
+  if (componentScores && typeof componentScores === 'object') {
+    const scoreValues = Object.values(componentScores)
+      .map((entry) => Number(entry))
+      .filter((entry) => Number.isFinite(entry));
+    if (scoreValues.some((entry) => entry > 0)) return true;
+  }
+
+  if (objectHasMeaningfulValue(value.financial_impact || value?.compat?.financials)) return true;
   if (Array.isArray(value.key_insights) && value.key_insights.length > 0) return true;
   if (Array.isArray(value.top_risks) && value.top_risks.length > 0) return true;
   if (Array.isArray(value.recommendations) && value.recommendations.length > 0) return true;
   if (typeof value.executive_summary === 'string' && value.executive_summary.trim()) return true;
-  if (value.compat && typeof value.compat === 'object' && Object.keys(value.compat).length > 0) return true;
-  if (value._baseline_scorecard && typeof value._baseline_scorecard === 'object') return true;
-  if (Array.isArray(value.scorecard_snapshots) && value.scorecard_snapshots.length > 0) return true;
-  if (value.before_after_financials && typeof value.before_after_financials === 'object' && Object.keys(value.before_after_financials).length > 0) return true;
-  if (value.investment_analysis && typeof value.investment_analysis === 'object' && Object.keys(value.investment_analysis).length > 0) return true;
-  if (value.npv_irr_analysis && typeof value.npv_irr_analysis === 'object' && Object.keys(value.npv_irr_analysis).length > 0) return true;
-  if (value.valuation && typeof value.valuation === 'object' && Object.keys(value.valuation).length > 0) return true;
-  if (value.decision_framework && typeof value.decision_framework === 'object' && Object.keys(value.decision_framework).length > 0) return true;
+  if (typeof value.executive_narrative === 'string' && value.executive_narrative.trim()) return true;
+  if (objectHasMeaningfulValue(value.before_after_financials)) return true;
+  if (objectHasMeaningfulValue(value.investment_analysis)) return true;
+  if (objectHasMeaningfulValue(value.npv_irr_analysis)) return true;
+  if (objectHasMeaningfulValue(value.valuation)) return true;
+  if (objectHasMeaningfulValue(value.decision_framework)) return true;
+  if (hasMeaningfulScorecardData(value._baseline_scorecard)) return true;
+  if (Array.isArray(value.scorecard_snapshots) && value.scorecard_snapshots.some((entry) => hasMeaningfulScorecardData(entry))) return true;
+
   return false;
 };
 
@@ -94,29 +119,9 @@ const getMeaningfulBundleScorecard = (bundle) => {
   return null;
 };
 
-const HISTORY_LAST_USED_STORAGE_KEY = 'jaspen_history_last_used_v1';
-
 const parseHistoryTimestamp = (value) => {
   const ts = new Date(value || 0).getTime();
   return Number.isFinite(ts) ? ts : 0;
-};
-
-const readHistoryLastUsedMap = () => {
-  try {
-    const raw = window.localStorage.getItem(HISTORY_LAST_USED_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : {};
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch {
-    return {};
-  }
-};
-
-const writeHistoryLastUsedMap = (value) => {
-  try {
-    window.localStorage.setItem(HISTORY_LAST_USED_STORAGE_KEY, JSON.stringify(value || {}));
-  } catch {
-    // ignore storage failures
-  }
 };
 
 // === Header Icon Helpers =====================================================
@@ -256,6 +261,21 @@ function normalizeReadiness(value) {
  */
 function clampPercent(p) {
   return Math.max(0, Math.min(100, Math.round(Number(p) || 0)));
+}
+
+function formatHistoryLastUsed(value) {
+  const ts = parseHistoryTimestamp(value);
+  if (!ts) return '';
+  const date = new Date(ts);
+  const now = new Date();
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  if (sameDay) {
+    return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  }
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 function normalizeStrategyObjective(value, fallback = 'balanced') {
@@ -2835,6 +2855,24 @@ useEffect(() => {
     } catch {}
   };
 
+  const touchThreadLastUsed = useCallback(async (threadId) => {
+    const normalizedThreadId = String(threadId || '').trim();
+    if (!normalizedThreadId) return null;
+    try {
+      const response = await authFetch(`${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(normalizedThreadId)}/touch`, {
+        method: 'POST',
+        headers: buildAuthHeaders({}, 'POST'),
+        credentials: 'include',
+      });
+      if (!response.ok) return null;
+      const payload = await response.json().catch(() => ({}));
+      return payload?.thread?.updated_at || null;
+    } catch (error) {
+      console.debug('[touchThreadLastUsed] failed', error);
+      return null;
+    }
+  }, [authFetch]);
+
 // AI Assistant drawer state
 const [aiDrawerOpen, setAiDrawerOpen] = useState(true);
 const [aiInput, setAiInput] = useState('');
@@ -3035,7 +3073,6 @@ const [initialRestorePending, setInitialRestorePending] = useState(() => Boolean
   // Fetch sessions (cookie OR bearer)
   const fetchSessions = async () => {
     try {
-      const historyLastUsed = readHistoryLastUsedMap();
       const [threadResponse, scoresResponse] = await Promise.all([
         authFetch(`${API_BASE}/api/v1/ai-agent/threads`, {
           method: 'GET',
@@ -3064,11 +3101,10 @@ const [initialRestorePending, setInitialRestorePending] = useState(() => Boolean
           const threadId = String(row?.thread_id || '').trim();
           if (!threadId) continue;
           const serverTimestamp = parseHistoryTimestamp(row?.updated_at || row?.created_at || Date.now());
-          const lastUsedAt = Math.max(serverTimestamp, Number(historyLastUsed[threadId] || 0));
           completedById.set(threadId, {
             id: threadId,
             createdAt: serverTimestamp,
-            lastUsedAt,
+            lastUsedAt: serverTimestamp,
             result: {
               analysis_id: threadId,
               project_name: row?.project_name || 'Untitled Idea',
@@ -3116,11 +3152,10 @@ const [initialRestorePending, setInitialRestorePending] = useState(() => Boolean
         if (hasCompletedScorecard) {
           const existing = completedById.get(threadId);
           const serverTimestamp = parseHistoryTimestamp(session.timestamp || session.created || existing?.createdAt || Date.now());
-          const lastUsedAt = Math.max(serverTimestamp, Number(existing?.lastUsedAt || 0), Number(historyLastUsed[threadId] || 0));
           completedById.set(threadId, {
             id: threadId,
             createdAt: serverTimestamp,
-            lastUsedAt,
+            lastUsedAt: Math.max(serverTimestamp, Number(existing?.lastUsedAt || 0)),
             result: {
               ...(existing?.result || {}),
               ...full,
@@ -3146,10 +3181,7 @@ const [initialRestorePending, setInitialRestorePending] = useState(() => Boolean
         completedById.set(threadId, {
           id: threadId,
           createdAt: parseHistoryTimestamp(session.timestamp || session.created),
-          lastUsedAt: Math.max(
-            parseHistoryTimestamp(session.timestamp || session.created),
-            Number(historyLastUsed[threadId] || 0)
-          ),
+          lastUsedAt: parseHistoryTimestamp(session.timestamp || session.created),
           result: {
             analysis_id: threadId,
             project_name: session.name ?? 'Untitled Idea',
@@ -3345,18 +3377,18 @@ useEffect(() => {
   setLastSessionId(sessionId);
 }, [sessionId]);
 
-useEffect(() => {
-  if (!sessionId) return;
-  const touchedAt = Date.now();
-  const historyLastUsed = readHistoryLastUsedMap();
-  historyLastUsed[sessionId] = touchedAt;
-  writeHistoryLastUsedMap(historyLastUsed);
-  setAnalysisHistory((prev) =>
-    [...prev]
-      .map((item) => (String(item?.id || '').trim() === String(sessionId).trim() ? { ...item, lastUsedAt: touchedAt } : item))
-      .sort((a, b) => Number(b.lastUsedAt || b.createdAt || 0) - Number(a.lastUsedAt || a.createdAt || 0))
-  );
-}, [sessionId]);
+  useEffect(() => {
+    if (!sessionId) return;
+    void touchThreadLastUsed(sessionId).then((updatedAt) => {
+      if (!updatedAt) return;
+      const touchedAt = parseHistoryTimestamp(updatedAt);
+      setAnalysisHistory((prev) =>
+        [...prev]
+          .map((item) => (String(item?.id || '').trim() === String(sessionId).trim() ? { ...item, lastUsedAt: touchedAt } : item))
+          .sort((a, b) => Number(b.lastUsedAt || b.createdAt || 0) - Number(a.lastUsedAt || a.createdAt || 0))
+      );
+    });
+  }, [sessionId, touchThreadLastUsed]);
 
 // (removed duplicate /api/v1/readiness/spec effect)
 
@@ -3444,10 +3476,6 @@ useEffect(() => {
         return;
       }
       const sid = resolvedUrlSessionId;
-      const touchedAt = Date.now();
-      const historyLastUsed = readHistoryLastUsedMap();
-      historyLastUsed[sid] = touchedAt;
-      writeHistoryLastUsedMap(historyLastUsed);
 
       // prevent readiness “snap” edge cases during restore
       skipPingRef.current = true;
@@ -3500,6 +3528,15 @@ useEffect(() => {
       setSessionId(sid);
       setCurrentSessionId(sid);
       setLastSessionId(sid);
+      void touchThreadLastUsed(sid).then((updatedAt) => {
+        if (!updatedAt) return;
+        const touchedAt = parseHistoryTimestamp(updatedAt);
+        setAnalysisHistory((prev) =>
+          [...prev]
+            .map((item) => (String(item?.id || '').trim() === String(sid).trim() ? { ...item, lastUsedAt: touchedAt } : item))
+            .sort((a, b) => Number(b.lastUsedAt || b.createdAt || 0) - Number(a.lastUsedAt || a.createdAt || 0))
+        );
+      });
       const restoredModelType = String(session?.model_type || '').toLowerCase();
       if (restoredModelType && allowedModelTypes.includes(restoredModelType)) {
         setSelectedModelType(restoredModelType);
@@ -3559,7 +3596,7 @@ if (rawHistory.length > 0) {
     })();
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allowedModelTypes, applyPersistedReadinessSnapshot]);
+  }, [allowedModelTypes, applyPersistedReadinessSnapshot, touchThreadLastUsed]);
 
   const scrollToEnd = () => endRef.current?.scrollIntoView({ behavior: 'smooth' });
   useEffect(scrollToEnd, [messages, busy]);
@@ -6396,15 +6433,15 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
     ''
   ).trim();
   if (touchedThreadId) {
-    const touchedAt = Date.now();
-    const lastUsed = readHistoryLastUsedMap();
-    lastUsed[touchedThreadId] = touchedAt;
-    writeHistoryLastUsedMap(lastUsed);
-    setAnalysisHistory((prev) =>
-      [...prev]
-        .map((item) => (String(item?.id || '').trim() === touchedThreadId ? { ...item, lastUsedAt: touchedAt } : item))
-        .sort((a, b) => Number(b.lastUsedAt || b.createdAt || 0) - Number(a.lastUsedAt || a.createdAt || 0))
-    );
+    const updatedAt = await touchThreadLastUsed(touchedThreadId);
+    if (updatedAt) {
+      const touchedAt = parseHistoryTimestamp(updatedAt);
+      setAnalysisHistory((prev) =>
+        [...prev]
+          .map((item) => (String(item?.id || '').trim() === touchedThreadId ? { ...item, lastUsedAt: touchedAt } : item))
+          .sort((a, b) => Number(b.lastUsedAt || b.createdAt || 0) - Number(a.lastUsedAt || a.createdAt || 0))
+      );
+    }
   }
 
   const result =
@@ -7869,7 +7906,7 @@ onClick={async () => {
                         {title || `Analysis ${item.id?.slice(-8) || index + 1}`}
                       </div>
                       <div className="hi-meta">
-                        <span>{new Date(item.lastUsedAt || item.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+                        <span>{formatHistoryLastUsed(item.lastUsedAt || item.createdAt)}</span>
                         {item.result?.jaspen_score && (<span className="hi-score">Score: {item.result.jaspen_score}</span>)}
                       </div>
                       {matchSnippet ? (
