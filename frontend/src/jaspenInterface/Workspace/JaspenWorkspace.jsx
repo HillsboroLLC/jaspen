@@ -119,6 +119,113 @@ const getMeaningfulBundleScorecard = (bundle) => {
   return null;
 };
 
+const resolveHistoryOwnerId = (analysisHistory = [], ...candidateIds) => {
+  const candidates = candidateIds
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+
+  if (candidates.length === 0) return '';
+
+  for (const tid of candidates) {
+    const exactEntry = analysisHistory.find((entry) => String(entry?.id || '').trim() === tid);
+    if (exactEntry?.id) return String(exactEntry.id).trim();
+
+    const byAnalysis = analysisHistory.find((entry) => {
+      const result = entry?.result;
+      if (!result || typeof result !== 'object') return false;
+      const resultIds = [
+        result.analysis_id,
+        result.id,
+        result.session_id,
+        result.thread_id,
+        result?._owner_thread_id,
+        result?.meta?.thread_id,
+      ].map((value) => String(value || '').trim()).filter(Boolean);
+      return resultIds.includes(tid);
+    });
+    if (byAnalysis?.id) return String(byAnalysis.id).trim();
+  }
+
+  return candidates[0];
+};
+
+const resolveScoreWorkspaceContext = ({
+  analysisHistory = [],
+  sessionId = '',
+  currentSessionId = '',
+  selectedScorecardId = '',
+  scorecardSnapshots = [],
+  selectedVariant = null,
+  analysisResult = null,
+  bundleCurrentScorecard = null,
+  bundleBaselineScorecard = null,
+  view = 'intake',
+  activeTab = 'summary',
+}) => {
+  const snapshots = Array.isArray(scorecardSnapshots) ? scorecardSnapshots : [];
+  const snapshotMatch = selectedScorecardId
+    ? snapshots.find((snapshot) => snapshot?.id === selectedScorecardId)
+    : null;
+
+  const scorecard =
+    snapshotMatch ||
+    (hasMeaningfulScorecardData(selectedVariant) ? selectedVariant : null) ||
+    (hasMeaningfulScorecardData(analysisResult) ? analysisResult : null) ||
+    (hasMeaningfulScorecardData(bundleCurrentScorecard) ? bundleCurrentScorecard : null) ||
+    (hasMeaningfulScorecardData(bundleBaselineScorecard) ? bundleBaselineScorecard : null) ||
+    snapshotMatch ||
+    selectedVariant ||
+    analysisResult ||
+    bundleCurrentScorecard ||
+    bundleBaselineScorecard ||
+    null;
+
+  const scorecardId = String(
+    selectedScorecardId ||
+    scorecard?.analysis_id ||
+    scorecard?.id ||
+    scorecard?.analysisId ||
+    ''
+  ).trim();
+
+  const ownerThreadId = resolveHistoryOwnerId(
+    analysisHistory,
+    sessionId,
+    currentSessionId,
+    scorecard?.thread_id,
+    scorecard?.session_id,
+    scorecard?._owner_thread_id,
+    scorecard?.meta?.thread_id,
+    scorecard?.analysis_id,
+    scorecard?.id,
+    analysisResult?.thread_id,
+    analysisResult?.session_id,
+    analysisResult?._owner_thread_id,
+    analysisResult?.meta?.thread_id,
+    analysisResult?.analysis_id,
+    analysisResult?.id,
+    bundleCurrentScorecard?.thread_id,
+    bundleCurrentScorecard?.session_id,
+    bundleBaselineScorecard?.thread_id,
+    bundleBaselineScorecard?.session_id,
+  );
+
+  const hasScorecard = hasMeaningfulScorecardData(scorecard);
+  const mode = activeTab === 'scenario'
+    ? 'scenario'
+    : hasScorecard || view === 'summary'
+      ? 'summary'
+      : 'intake';
+
+  return {
+    ownerThreadId,
+    scorecard,
+    scorecardId,
+    hasScorecard,
+    mode,
+  };
+};
+
 const parseHistoryTimestamp = (value) => {
   const ts = new Date(value || 0).getTime();
   return Number.isFinite(ts) ? ts : 0;
@@ -845,70 +952,37 @@ const [aiWbsBusy, setAiWbsBusy] = useState(false);
     }
   }, [analysisResult, selectedScorecardId]);
 
-// ============================================================
-// Active scorecard = what the UI should display right now
-// Priority:
-// 1) selectedScorecardId (edited snapshot / adopted snapshot)
-// 2) selectedVariant (baseline vs scenario A/B/C)
-// 3) analysisResult fallback
-// ============================================================
-const activeScorecard = useMemo(() => {
-  const id = selectedScorecardId;
-  if (id && Array.isArray(scorecardSnapshots) && scorecardSnapshots.length > 0) {
-    const snap = scorecardSnapshots.find(s => s.id === id);
-    if (snap) return snap;
-  }
-  return selectedVariant || analysisResult;
-}, [selectedScorecardId, scorecardSnapshots, selectedVariant, analysisResult]);
+const scoreWorkspace = useMemo(() => resolveScoreWorkspaceContext({
+  analysisHistory,
+  sessionId,
+  currentSessionId,
+  selectedScorecardId,
+  scorecardSnapshots,
+  selectedVariant,
+  analysisResult,
+  bundleCurrentScorecard,
+  bundleBaselineScorecard,
+  view,
+  activeTab,
+}), [
+  analysisHistory,
+  sessionId,
+  currentSessionId,
+  selectedScorecardId,
+  scorecardSnapshots,
+  selectedVariant,
+  analysisResult,
+  bundleCurrentScorecard,
+  bundleBaselineScorecard,
+  view,
+  activeTab,
+]);
 
-const editableThreadId = useMemo(() => {
-  const findHistoryOwner = (candidateId) => {
-    const tid = String(candidateId || '').trim();
-    if (!tid || !Array.isArray(analysisHistory) || analysisHistory.length === 0) return null;
-
-    const exactEntry = analysisHistory.find((entry) => String(entry?.id || '').trim() === tid);
-    if (exactEntry?.id) return String(exactEntry.id);
-
-    const byAnalysis = analysisHistory.find((entry) => {
-      const result = entry?.result;
-      if (!result || typeof result !== 'object') return false;
-      const resultIds = [
-        result.analysis_id,
-        result.id,
-        result.session_id,
-        result.thread_id,
-        result?.meta?.thread_id,
-      ].map((value) => String(value || '').trim()).filter(Boolean);
-      return resultIds.includes(tid);
-    });
-    if (byAnalysis?.id) return String(byAnalysis.id);
-
-    return null;
-  };
-
-  const candidates = [
-    sessionId,
-    currentSessionId,
-    activeScorecard?.thread_id,
-    activeScorecard?.session_id,
-    activeScorecard?.meta?.thread_id,
-    activeScorecard?.analysis_id,
-    activeScorecard?.id,
-    analysisResult?.thread_id,
-    analysisResult?.session_id,
-    analysisResult?.meta?.thread_id,
-    analysisResult?.analysis_id,
-    analysisResult?.id,
-  ];
-
-  for (const candidate of candidates) {
-    const ownerId = findHistoryOwner(candidate);
-    if (ownerId) return ownerId;
-  }
-
-  const fallback = candidates.find((candidate) => String(candidate || '').trim());
-  return fallback ? String(fallback).trim() : '';
-}, [analysisHistory, sessionId, currentSessionId, activeScorecard, analysisResult]);
+const activeScorecard = scoreWorkspace.scorecard;
+const editableThreadId = scoreWorkspace.ownerThreadId;
+const activeScorecardId = scoreWorkspace.scorecardId;
+const scoreWorkspaceMode = scoreWorkspace.mode;
+const hasActiveScorecardContext = scoreWorkspace.hasScorecard;
 
 // Preserve the original/baseline analysis result for quick switching
 const baselineRef = useRef(null);
@@ -5875,12 +5949,12 @@ const sendAIMessage = async () => {
     setMessages(prev => [...prev, { role: 'user', text }]);
 
     const lower = text.toLowerCase();
-    const aiThreadId = currentSessionId || sessionId;
+    const aiThreadId = editableThreadId || currentSessionId || sessionId;
     const renameMatch = text.match(/^(?:please\s+)?(?:rename|change|update)\s+(?:the\s+)?(?:idea|initiative|project|title)(?:\s+(?:to|as)\s+)(.+)$/i);
-    const hasScorecardContext = Boolean(activeScorecard || analysisResult || selectedScorecardId);
+    const hasScorecardContext = hasActiveScorecardContext;
+    const isScoreWorkspace = scoreWorkspaceMode === 'summary' && hasScorecardContext;
     const scorecardEditIntent =
-      activeTab === 'summary' &&
-      hasScorecardContext &&
+      isScoreWorkspace &&
       /\b(rewrite|reword|rephrase|shorten|tighten|polish|edit|revise|change the wording|make .*executive|make .*clearer|update (the )?(insight|recommendation|risk|decision)|wording)\b/i.test(text);
     const scenarioIntent =
       hasScorecardContext &&
@@ -5896,8 +5970,7 @@ const sendAIMessage = async () => {
       /\b(wbs|work breakdown|project plan|task plan|task list)\b/.test(lower) &&
       /\b(generate|create|build|draft|recommend|suggest|regenerate|optimiz)\b/.test(lower);
     const summaryAssistantIntent =
-      activeTab === 'summary' &&
-      hasScorecardContext &&
+      isScoreWorkspace &&
       aiThreadId &&
       !renameMatch &&
       !scorecardEditIntent &&
@@ -5982,14 +6055,14 @@ const sendAIMessage = async () => {
 
     if ((scorecardEditIntent || summaryAssistantIntent) && aiThreadId && hasScorecardContext) {
       try {
-        const scorecardContext = activeScorecard || analysisResult || null;
+        const scorecardContext = activeScorecard || analysisResult || bundleCurrentScorecard || bundleBaselineScorecard || null;
         if (!scorecardContext) {
           throw new Error('No scorecard context is available for this thread.');
         }
         const response = await Jaspen.scorecardAssistant(aiThreadId, {
           instruction: text,
           scorecard: scorecardContext,
-          scorecard_id: selectedScorecardId || null,
+          scorecard_id: activeScorecardId || null,
           model_type: selectedModelType,
           strategy_objective: strategyObjective,
         });
@@ -6019,7 +6092,7 @@ const sendAIMessage = async () => {
       }
     }
 
-    if (activeTab === 'summary' && hasScorecardContext) {
+    if (isScoreWorkspace) {
       showToast('Jaspen could not route that scorecard request. Please try again.', 'error');
       return;
     }
@@ -6411,13 +6484,15 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
     selection && typeof selection === 'object' && selection.result && typeof selection.result === 'object'
       ? selection.result
       : selection;
-  const ownerThreadId = String(
-    (selection && typeof selection === 'object' ? selection.id : '') ||
-    result?._owner_thread_id ||
-    result?.thread_id ||
-    result?.session_id ||
-    ''
-  ).trim();
+  const ownerThreadId = resolveHistoryOwnerId(
+    analysisHistory,
+    selection && typeof selection === 'object' ? selection.id : '',
+    result?._owner_thread_id,
+    result?.thread_id,
+    result?.session_id,
+    result?.analysis_id,
+    result?.id,
+  );
 
   // Prefer a full record from the backend if the list item looks incomplete
   const baseId =
@@ -6487,15 +6562,16 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
   );
   setStrategyObjective(mergedObjective);
   setObjectiveExplicitlySet(Boolean(merged?.objective_explicitly_set || merged?.result?.objective_explicitly_set));
-  const resolvedOwnerThreadId = String(
-    ownerThreadId ||
-    bundle?.thread?.id ||
-    bundle?.thread?.session_id ||
-    merged?.session_id ||
-    merged?.result?.session_id ||
-    baseId ||
-    ''
-  ).trim() || `restored_${Date.now()}`;
+  const resolvedOwnerThreadId = resolveHistoryOwnerId(
+    analysisHistory,
+    ownerThreadId,
+    bundle?.thread?.id,
+    bundle?.thread?.session_id,
+    merged?.session_id,
+    merged?.result?.session_id,
+    merged?.result?._owner_thread_id,
+    baseId,
+  ) || `restored_${Date.now()}`;
 
   // Readiness normalization handled by normalizeReadiness() helper
   // Readiness is ONLY fetched from backend via fetchReadinessFor - no session cache
@@ -6929,7 +7005,7 @@ const handleSaveScenario = async (scenario) => {
       : !canStartOrgProjects
       ? 'Only creators and admins can begin a project in a shared workspace.'
       : 'Begin project';
-    const scoreDrawerPrompts = activeTab === 'summary'
+    const scoreDrawerPrompts = scoreWorkspaceMode === 'summary'
       ? [
           'Explain what drove this score',
           'Rewrite the top recommendation to sound more executive',
@@ -6937,7 +7013,7 @@ const handleSaveScenario = async (scenario) => {
           'What would raise this score fastest?',
         ]
       : [];
-    const aiDrawerPlaceholder = activeTab === 'summary'
+    const aiDrawerPlaceholder = scoreWorkspaceMode === 'summary'
       ? 'Ask about this scorecard, its risks, or how to sharpen the wording...'
       : 'Ask about tasks, timeline, resources...';
     const TabButton = ({ id, label }) => {
@@ -6977,7 +7053,7 @@ onClick={async () => {
       );
     };
 
-    if (process.env.NODE_ENV === "development" && activeTab === 'summary') {
+    if (process.env.NODE_ENV === "development" && scoreWorkspaceMode === 'summary') {
       const activeAnalysis = activeScorecard;
       console.log('[ScoreDashboard activeAnalysis]', {
         activeAnalysisName: 'activeScorecard',
