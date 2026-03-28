@@ -85,6 +85,15 @@ const extractMeaningfulHistoryResult = (history) => {
   return null;
 };
 
+const getMeaningfulBundleScorecard = (bundle) => {
+  if (!bundle || typeof bundle !== 'object') return null;
+  const currentScorecard = bundle.current_scorecard;
+  const baselineScorecard = bundle.baseline_scorecard;
+  if (hasMeaningfulScorecardData(currentScorecard)) return currentScorecard;
+  if (hasMeaningfulScorecardData(baselineScorecard)) return baselineScorecard;
+  return null;
+};
+
 // === Header Icon Helpers =====================================================
 const PM_VARIANT  = "monitor-check";
 const LSS_VARIANT = "chart-scatter";
@@ -2970,10 +2979,12 @@ const [initialRestorePending, setInitialRestorePending] = useState(() => Boolean
       }
       const m = document.cookie.match(/(?:^|;\s*)jaspen_sid=([^;]+)/);
       if (m) return decodeURIComponent(m[1]);
-      const v = `web_${Math.random().toString(36).slice(2)}`;
-      document.cookie = `jaspen_sid=${v}; Max-Age=${30*24*3600}; Path=/; Secure; SameSite=None`;
-      return v;
+      return null;
     })();
+
+    if (!sid) {
+      throw new Error('No active session was found for this conversation.');
+    }
 
     const json = await streamConversationReply({
       threadId: sid,
@@ -2999,63 +3010,129 @@ const [initialRestorePending, setInitialRestorePending] = useState(() => Boolean
   // Fetch sessions (cookie OR bearer)
   const fetchSessions = async () => {
     try {
-      const response = await authFetch(`${API_BASE}/api/v1/ai-agent/threads`, {
-        method: 'GET',
-        headers: buildAuthHeaders({}, 'GET'),
-        credentials: 'include'
-      } );
+      const [threadResponse, scoresResponse] = await Promise.all([
+        authFetch(`${API_BASE}/api/v1/ai-agent/threads`, {
+          method: 'GET',
+          headers: buildAuthHeaders({}, 'GET'),
+          credentials: 'include'
+        }),
+        authFetch(`${API_BASE}/api/v1/strategy/scores?limit=200`, {
+          method: 'GET',
+          headers: buildAuthHeaders({}, 'GET'),
+          credentials: 'include'
+        }),
+      ]);
 
-      if (response.ok) {
-        const data = await response.json();
-        if (data.success && data.sessions) {
-          const shouldScopeSelfServe = isSelfServePlan(user?.subscription_plan) && Boolean(user?.id);
-          const scopedSessions = shouldScopeSelfServe
-            ? data.sessions.filter((session) => String(session?.user_id || '') === String(user.id))
-            : data.sessions;
-
-          const apiSessions = scopedSessions.map((session) => {
-            const sessionResult = (session && typeof session.result === 'object') ? session.result : null;
-            const historyResult = extractMeaningfulHistoryResult(
-              Array.isArray(session.analysis_history) ? session.analysis_history : session.analyses
-            );
-            const full = hasMeaningfulScorecardData(sessionResult)
-              ? sessionResult
-              : (hasMeaningfulScorecardData(historyResult) ? historyResult : {});
-
-            return {
-              id: session.session_id,
-              createdAt: new Date(session.timestamp || session.created).getTime(),
-              result: {
-                // prefer the persisted result blob
-                ...full,
-                analysis_id: full.analysis_id ?? session.session_id,
-                project_name: full.project_name ?? session.name ?? 'Untitled Idea',
-                _owner_thread_id: session.session_id,
-                jaspen_score: full.jaspen_score ?? session.score,
-                status: full.status ?? session.status,
-                chat_history: full.chat_history ?? session.chat_history,
-                readiness: normalizeReadiness(full.readiness ?? session.readiness),
-                collected_data: full.collected_data ?? session.collected_data,
-                strategy_objective: normalizeStrategyObjective(
-                  full.strategy_objective ?? session.strategy_objective ?? 'balanced'
-                ),
-                objective_explicitly_set: Boolean(
-                  full.objective_explicitly_set ?? session.objective_explicitly_set
-                ),
-              },
-            };
-          });
-          apiSessions.sort((a, b) => b.createdAt - a.createdAt);
-          setAnalysisHistory(apiSessions);
-        } else {
-          setAnalysisHistory([]);
-        }
-      } else {
-        if (response.status === 401) {
-          await handleUnauthorized();
-        }
+      if (threadResponse.status === 401 || scoresResponse.status === 401) {
+        await handleUnauthorized();
         setAnalysisHistory([]);
+        return;
       }
+
+      const completedById = new Map();
+
+      if (scoresResponse.ok) {
+        const scoreData = await scoresResponse.json().catch(() => ({}));
+        const scoreRows = Array.isArray(scoreData?.scores) ? scoreData.scores : [];
+        for (const row of scoreRows) {
+          const threadId = String(row?.thread_id || '').trim();
+          if (!threadId) continue;
+          const createdAt = new Date(row?.updated_at || row?.created_at || Date.now()).getTime();
+          completedById.set(threadId, {
+            id: threadId,
+            createdAt,
+            result: {
+              analysis_id: threadId,
+              project_name: row?.project_name || 'Untitled Idea',
+              _owner_thread_id: threadId,
+              jaspen_score: row?.jaspen_score,
+              score_category: row?.score_category,
+              component_scores: row?.component_scores || {},
+              financial_impact: row?.financial_impact || {},
+              status: 'completed',
+              strategy_objective: normalizeStrategyObjective(row?.strategy_objective || 'balanced'),
+            },
+          });
+        }
+      }
+
+      if (!threadResponse.ok) {
+        setAnalysisHistory(Array.from(completedById.values()).sort((a, b) => b.createdAt - a.createdAt));
+        return;
+      }
+
+      const data = await threadResponse.json().catch(() => ({}));
+      if (!(data.success && data.sessions)) {
+        setAnalysisHistory(Array.from(completedById.values()).sort((a, b) => b.createdAt - a.createdAt));
+        return;
+      }
+
+      const shouldScopeSelfServe = isSelfServePlan(user?.subscription_plan) && Boolean(user?.id);
+      const scopedSessions = shouldScopeSelfServe
+        ? data.sessions.filter((session) => String(session?.user_id || '') === String(user.id))
+        : data.sessions;
+
+      for (const session of scopedSessions) {
+        const threadId = String(session?.session_id || '').trim();
+        if (!threadId) continue;
+
+        const sessionResult = (session && typeof session.result === 'object') ? session.result : null;
+        const historyResult = extractMeaningfulHistoryResult(
+          Array.isArray(session.analysis_history) ? session.analysis_history : session.analyses
+        );
+        const full = hasMeaningfulScorecardData(sessionResult)
+          ? sessionResult
+          : (hasMeaningfulScorecardData(historyResult) ? historyResult : {});
+
+        const hasCompletedScorecard = hasMeaningfulScorecardData(full) || completedById.has(threadId);
+        if (hasCompletedScorecard) {
+          const existing = completedById.get(threadId);
+          const createdAt = new Date(session.timestamp || session.created || existing?.createdAt || Date.now()).getTime();
+          completedById.set(threadId, {
+            id: threadId,
+            createdAt,
+            result: {
+              ...(existing?.result || {}),
+              ...full,
+              analysis_id: full.analysis_id ?? existing?.result?.analysis_id ?? threadId,
+              project_name: full.project_name ?? existing?.result?.project_name ?? session.name ?? 'Untitled Idea',
+              _owner_thread_id: threadId,
+              jaspen_score: full.jaspen_score ?? existing?.result?.jaspen_score ?? session.score,
+              status: 'completed',
+              chat_history: full.chat_history ?? session.chat_history,
+              readiness: normalizeReadiness(full.readiness ?? session.readiness),
+              collected_data: full.collected_data ?? session.collected_data,
+              strategy_objective: normalizeStrategyObjective(
+                full.strategy_objective ?? existing?.result?.strategy_objective ?? session.strategy_objective ?? 'balanced'
+              ),
+              objective_explicitly_set: Boolean(
+                full.objective_explicitly_set ?? existing?.result?.objective_explicitly_set ?? session.objective_explicitly_set
+              ),
+            },
+          });
+          continue;
+        }
+
+        completedById.set(threadId, {
+          id: threadId,
+          createdAt: new Date(session.timestamp || session.created).getTime(),
+          result: {
+            analysis_id: threadId,
+            project_name: session.name ?? 'Untitled Idea',
+            _owner_thread_id: threadId,
+            status: session.status,
+            chat_history: session.chat_history,
+            readiness: normalizeReadiness(session.readiness),
+            collected_data: session.collected_data,
+            strategy_objective: normalizeStrategyObjective(session.strategy_objective ?? 'balanced'),
+            objective_explicitly_set: Boolean(session.objective_explicitly_set),
+          },
+        });
+      }
+
+      const apiSessions = Array.from(completedById.values());
+      apiSessions.sort((a, b) => b.createdAt - a.createdAt);
+      setAnalysisHistory(apiSessions);
     } catch (error) {
       console.error('Error fetching sessions:', error);
       setAnalysisHistory([]);
@@ -5835,11 +5912,15 @@ const sendAIMessage = async () => {
       }
     }
 
-    if ((scorecardEditIntent || summaryAssistantIntent) && aiThreadId && activeScorecard) {
+    if ((scorecardEditIntent || summaryAssistantIntent) && aiThreadId && hasScorecardContext) {
       try {
+        const scorecardContext = activeScorecard || analysisResult || null;
+        if (!scorecardContext) {
+          throw new Error('No scorecard context is available for this thread.');
+        }
         const response = await Jaspen.scorecardAssistant(aiThreadId, {
           instruction: text,
-          scorecard: activeScorecard,
+          scorecard: scorecardContext,
           scorecard_id: selectedScorecardId || null,
           model_type: selectedModelType,
           strategy_objective: strategyObjective,
@@ -5868,6 +5949,11 @@ const sendAIMessage = async () => {
         showToast(scorecardErr?.message || 'Could not update the scorecard wording just now.', 'error');
         return;
       }
+    }
+
+    if (activeTab === 'summary' && hasScorecardContext) {
+      showToast('Jaspen could not route that scorecard request. Please try again.', 'error');
+      return;
     }
 
     if (wbsIntent && aiThreadId) {
@@ -6280,6 +6366,10 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
      result?.readiness?.value == null);
 
   const full = looksIncomplete && baseId ? await loadSessionById(baseId) : null;
+  const bundle = baseId
+    ? await Jaspen.getThreadBundle(baseId, { msg_limit: 50, scn_limit: 50 }).catch(() => null)
+    : null;
+  const bundleScorecard = getMeaningfulBundleScorecard(bundle);
 
   // Merge shallowly: prefer fields from the full fetch when present
 	  const merged = full
@@ -6314,7 +6404,9 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
       }
 	    : result;
   const mergedScorecard =
-    hasMeaningfulScorecardData(merged?.result)
+    hasMeaningfulScorecardData(bundleScorecard)
+      ? bundleScorecard
+      : hasMeaningfulScorecardData(merged?.result)
       ? merged.result
       : hasMeaningfulScorecardData(merged)
         ? merged
@@ -6351,45 +6443,91 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
 // Completed session -> workspace summary (prefer the persisted result blob)
 try {
   const id =
+    bundleScorecard?.analysis_id ??
     merged?.analysis_id ??
     merged?.session_id ??
     baseId ??
     `restored_${Date.now()}`;
 
   setSessionId(id);
-  const restoredMessages = toUiMessages(merged?.chat_history || merged?.result?.chat_history || []);
+  const bundleHistory = Array.isArray(bundle?.messages)
+    ? bundle.messages.map((m) => ({
+        role: m?.role || (m?.sender === 'user' ? 'user' : 'assistant'),
+        content: m?.content || m?.text || m?.message || '',
+      }))
+    : [];
+  const restoredMessages = toUiMessages(
+    bundleHistory.length > 0
+      ? bundleHistory
+      : (merged?.chat_history || merged?.result?.chat_history || [])
+  );
   if (restoredMessages.length > 0) {
     setMessages(restoredMessages);
   }
 
-  setCurrentSessionId(id); // ADD THIS LINE - was missing!
-  
-// Try multiple paths to find the full scorecard
-// Backend stores complete scorecard in session.result field
-const full = mergedScorecard;
+  setCurrentSessionId(id);
+
+  if (bundle) {
+    const currentScorecard = bundle.current_scorecard || null;
+    const baselineScorecard = bundle.baseline_scorecard || null;
+    setBundleCurrentScorecard(currentScorecard);
+    setBundleBaselineScorecard(baselineScorecard);
+
+    const nextSnapshots = [];
+    if (baselineScorecard && typeof baselineScorecard === 'object') {
+      nextSnapshots.push({
+        ...baselineScorecard,
+        id: baselineScorecard.analysis_id || baselineScorecard.id || `baseline_${id}`,
+        label: baselineScorecard.label || 'Baseline',
+        isBaseline: true,
+      });
+    }
+    if (
+      currentScorecard &&
+      typeof currentScorecard === 'object' &&
+      (currentScorecard.analysis_id || currentScorecard.id) !== (baselineScorecard?.analysis_id || baselineScorecard?.id)
+    ) {
+      nextSnapshots.push({
+        ...currentScorecard,
+        id: currentScorecard.analysis_id || currentScorecard.id || `current_${id}`,
+        label: currentScorecard.label || currentScorecard.project_name || 'Current',
+        isBaseline: false,
+      });
+    }
+    if (nextSnapshots.length > 0) {
+      setScorecardSnapshots(nextSnapshots);
+      const baselineId = baselineScorecard?.analysis_id || baselineScorecard?.id || nextSnapshots[0]?.id || null;
+      const currentId = currentScorecard?.analysis_id || currentScorecard?.id || baselineId;
+      setBaselineScorecardId(baselineId);
+      setSelectedScorecardId(currentId);
+    }
+  }
+
+const fullScorecard = mergedScorecard;
 
 // GOAL B part 2: Check for missing detailed sections and hydrate if needed
 const missingSections =
-  !full?.decision_framework &&
-  !full?.investment_analysis &&
-  !full?.npv_irr_analysis &&
-  !full?.valuation &&
-  !full?.before_after_financials;
+  !fullScorecard?.decision_framework &&
+  !fullScorecard?.investment_analysis &&
+  !fullScorecard?.npv_irr_analysis &&
+  !fullScorecard?.valuation &&
+  !fullScorecard?.before_after_financials;
 
 if (missingSections) {
   const fresh = await loadSessionById(id);
-  const freshScorecard = fresh?.result || fresh;
+  const freshBundle = await Jaspen.getThreadBundle(id, { msg_limit: 50, scn_limit: 50 }).catch(() => null);
+  const freshScorecard = getMeaningfulBundleScorecard(freshBundle) || fresh?.result || fresh;
   if (freshScorecard) {
     const normalized = normalizeAnalysis(freshScorecard);
     setAnalysisResult(normalized);
     baselineRef.current = normalized;
   } else {
-    const normalized = normalizeAnalysis(full || merged || {});
+    const normalized = normalizeAnalysis(fullScorecard || merged || {});
     setAnalysisResult(normalized);
     baselineRef.current = normalized;
   }
 } else {
-  const normalized = normalizeAnalysis(full);
+  const normalized = normalizeAnalysis(fullScorecard);
   setAnalysisResult(normalized);
   baselineRef.current = normalized;
 }

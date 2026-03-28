@@ -5136,18 +5136,10 @@ def conversation_continue():
             objective_supplied = True
     starter_lever_defaults = _sanitize_lever_defaults(data.get("lever_defaults"))
 
-    session_created = not isinstance(session, dict)
-    session = session or _new_session(
-        user_id,
-        thread_id,
-        "Jaspen Intake",
-        model_selection["model_type"],
-        strategy_objective=requested_objective,
-        objective_explicit=objective_supplied,
-        organization_id=active_org_id,
-        intake_context=intake_context_raw,
-        starter_lever_defaults=starter_lever_defaults,
-    )
+    if not isinstance(session, dict):
+        return jsonify({"error": "Thread not found"}), 404
+
+    session_created = False
     session["organization_id"] = session.get("organization_id") or active_org_id
     session["created_by_user_id"] = session.get("created_by_user_id") or user_id
     session["visibility"] = str(session.get("visibility") or "private").strip().lower() or "private"
