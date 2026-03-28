@@ -5,7 +5,7 @@
 // ============================================================================
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faChevronDown, faDownload, faSpinner } from '@fortawesome/free-solid-svg-icons';
+import { faChevronDown, faDownload, faGripVertical, faSpinner } from '@fortawesome/free-solid-svg-icons';
 import { ScoreDashboardSkeleton } from '../../shared/components/SkeletonLoader';
 import './ScoreDashboard.css';
 
@@ -81,6 +81,7 @@ export default function ScoreDashboard({
   const [cardOrder, setCardOrder] = useState([]);
   const [cardLayouts, setCardLayouts] = useState({});
   const [draggedCardKey, setDraggedCardKey] = useState(null);
+  const [dragOverCardKey, setDragOverCardKey] = useState(null);
   const [resizeState, setResizeState] = useState(null);
   const [gridColumns, setGridColumns] = useState(() => getGridColumns());
   const exportMenuRef = useRef(null);
@@ -911,24 +912,23 @@ export default function ScoreDashboard({
           {orderedSectionCards.map((section) => (
             <section
               key={section.key}
-              className="score-section-card"
-              draggable
-              onDragStart={(event) => {
-                setDraggedCardKey(section.key);
-                event.dataTransfer.effectAllowed = 'move';
-                event.dataTransfer.setData('text/plain', section.key);
-              }}
+              className={`score-section-card ${dragOverCardKey === section.key ? 'is-drag-target' : ''}`}
               onDragOver={(event) => {
                 event.preventDefault();
                 event.dataTransfer.dropEffect = 'move';
+                if (draggedCardKey && draggedCardKey !== section.key && dragOverCardKey !== section.key) {
+                  setDragOverCardKey(section.key);
+                }
               }}
               onDrop={(event) => {
                 const sourceKey = draggedCardKey || event.dataTransfer.getData('text/plain');
                 moveCard(sourceKey, section.key);
                 setDraggedCardKey(null);
+                setDragOverCardKey(null);
               }}
-              onDragEnd={() => setDraggedCardKey(null)}
-              title="Drag to reorder"
+              onDragLeave={() => {
+                if (dragOverCardKey === section.key) setDragOverCardKey(null);
+              }}
               style={{
                 gridColumn: `span ${Math.max(1, Math.min(gridColumns, (cardLayouts[section.key] || DEFAULT_CARD_LAYOUT[section.key] || { colSpan: 4 }).colSpan || 4))}`,
                 gridRow: `span ${Math.max(1, Math.min(4, (cardLayouts[section.key] || DEFAULT_CARD_LAYOUT[section.key] || { rowSpan: 1 }).rowSpan || 1))}`,
@@ -936,6 +936,24 @@ export default function ScoreDashboard({
             >
               <div className="section-card-head">
                 <span className="section-card-title">{section.title}</span>
+                <div
+                  className={`card-drag-handle ${draggedCardKey === section.key ? 'is-dragging' : ''}`}
+                  draggable
+                  title="Drag card to reorder"
+                  aria-label={`Drag ${section.title} card to reorder`}
+                  onDragStart={(event) => {
+                    setDraggedCardKey(section.key);
+                    setDragOverCardKey(null);
+                    event.dataTransfer.effectAllowed = 'move';
+                    event.dataTransfer.setData('text/plain', section.key);
+                  }}
+                  onDragEnd={() => {
+                    setDraggedCardKey(null);
+                    setDragOverCardKey(null);
+                  }}
+                >
+                  <FontAwesomeIcon icon={faGripVertical} />
+                </div>
               </div>
               <div className="section-card-body">{section.render()}</div>
               <div

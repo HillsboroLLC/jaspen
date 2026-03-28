@@ -3345,6 +3345,19 @@ useEffect(() => {
   setLastSessionId(sessionId);
 }, [sessionId]);
 
+useEffect(() => {
+  if (!sessionId) return;
+  const touchedAt = Date.now();
+  const historyLastUsed = readHistoryLastUsedMap();
+  historyLastUsed[sessionId] = touchedAt;
+  writeHistoryLastUsedMap(historyLastUsed);
+  setAnalysisHistory((prev) =>
+    [...prev]
+      .map((item) => (String(item?.id || '').trim() === String(sessionId).trim() ? { ...item, lastUsedAt: touchedAt } : item))
+      .sort((a, b) => Number(b.lastUsedAt || b.createdAt || 0) - Number(a.lastUsedAt || a.createdAt || 0))
+  );
+}, [sessionId]);
+
 // (removed duplicate /api/v1/readiness/spec effect)
 
   useEffect(() => {

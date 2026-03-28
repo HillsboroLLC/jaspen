@@ -539,6 +539,11 @@
   align-self: stretch;
 }
 
+.score-dashboard-container .score-section-card.is-drag-target {
+  outline: 2px dashed rgba(160, 3, 108, 0.35);
+  outline-offset: 4px;
+}
+
 .score-dashboard-container .section-card-head {
   display: flex;
   align-items: center;
@@ -547,7 +552,6 @@
   padding: 16px 20px;
   border-bottom: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.92);
-  cursor: grab;
   user-select: none;
 }
 
@@ -557,6 +561,35 @@
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-muted);
+}
+
+.score-dashboard-container .card-drag-handle {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface-alt);
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  flex-shrink: 0;
+  transition: border-color var(--transition), background var(--transition), color var(--transition), transform var(--transition);
+}
+
+.score-dashboard-container .card-drag-handle:hover {
+  border-color: rgba(22, 31, 59, 0.18);
+  background: #f8fafc;
+  color: var(--navy);
+}
+
+.score-dashboard-container .card-drag-handle.is-dragging {
+  cursor: grabbing;
+  background: rgba(160, 3, 108, 0.08);
+  border-color: rgba(160, 3, 108, 0.24);
+  color: var(--magenta);
+  transform: scale(0.98);
 }
 
 .score-dashboard-container .section-card-body {
