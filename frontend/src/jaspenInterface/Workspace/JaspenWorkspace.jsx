@@ -275,8 +275,19 @@ function formatHistoryLastUsed(value) {
   });
 }
 
-function sortAnalysisHistoryByLastUsed(items) {
-  return [...items].sort((a, b) => Number(b.lastUsedAt || b.createdAt || 0) - Number(a.lastUsedAt || a.createdAt || 0));
+function getLastUserMessageTimestamp(chatHistory, fallbackValue = null) {
+  if (Array.isArray(chatHistory)) {
+    for (let index = chatHistory.length - 1; index >= 0; index -= 1) {
+      const entry = chatHistory[index];
+      const role = String(entry?.role || entry?.sender || '').trim().toLowerCase();
+      if (role !== 'user') continue;
+      const ts = parseHistoryTimestamp(
+        entry?.timestamp || entry?.created_at || entry?.createdAt || entry?.updated_at || null
+      );
+      if (ts) return ts;
+    }
+  }
+  return parseHistoryTimestamp(fallbackValue);
 }
 
 function normalizeStrategyObjective(value, fallback = 'balanced') {
@@ -2856,36 +2867,6 @@ useEffect(() => {
     } catch {}
   };
 
-  const touchThreadLastUsed = useCallback(async (threadId) => {
-    const normalizedThreadId = String(threadId || '').trim();
-    if (!normalizedThreadId) return null;
-    try {
-      const response = await authFetch(`${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(normalizedThreadId)}/touch`, {
-        method: 'POST',
-        headers: buildAuthHeaders({}, 'POST'),
-        credentials: 'include',
-      });
-      if (!response.ok) return null;
-      const payload = await response.json().catch(() => ({}));
-      return payload?.thread?.updated_at || null;
-    } catch (error) {
-      console.debug('[touchThreadLastUsed] failed', error);
-      return null;
-    }
-  }, [authFetch]);
-
-  const bumpHistoryItemToTop = useCallback((threadId, touchedAt = Date.now()) => {
-    const normalizedThreadId = String(threadId || '').trim();
-    if (!normalizedThreadId) return;
-    setAnalysisHistory((prev) => sortAnalysisHistoryByLastUsed(
-      prev.map((item) => (
-        String(item?.id || '').trim() === normalizedThreadId
-          ? { ...item, lastUsedAt: Number(touchedAt) || Date.now() }
-          : item
-      ))
-    ));
-  }, []);
-
 // AI Assistant drawer state
 const [aiDrawerOpen, setAiDrawerOpen] = useState(true);
 const [aiInput, setAiInput] = useState('');
@@ -3165,10 +3146,14 @@ const [initialRestorePending, setInitialRestorePending] = useState(() => Boolean
         if (hasCompletedScorecard) {
           const existing = completedById.get(threadId);
           const serverTimestamp = parseHistoryTimestamp(session.timestamp || session.created || existing?.createdAt || Date.now());
+          const lastUserMessageAt = getLastUserMessageTimestamp(
+            full.chat_history ?? session.chat_history,
+            existing?.lastUsedAt || serverTimestamp
+          );
           completedById.set(threadId, {
             id: threadId,
             createdAt: serverTimestamp,
-            lastUsedAt: Math.max(serverTimestamp, Number(existing?.lastUsedAt || 0)),
+            lastUsedAt: lastUserMessageAt,
             result: {
               ...(existing?.result || {}),
               ...full,
@@ -3191,10 +3176,12 @@ const [initialRestorePending, setInitialRestorePending] = useState(() => Boolean
           continue;
         }
 
+        const createdAt = parseHistoryTimestamp(session.timestamp || session.created);
+        const lastUserMessageAt = getLastUserMessageTimestamp(session.chat_history, createdAt);
         completedById.set(threadId, {
           id: threadId,
-          createdAt: parseHistoryTimestamp(session.timestamp || session.created),
-          lastUsedAt: parseHistoryTimestamp(session.timestamp || session.created),
+          createdAt,
+          lastUsedAt: lastUserMessageAt,
           result: {
             analysis_id: threadId,
             project_name: session.name ?? 'Untitled Idea',
@@ -3390,16 +3377,6 @@ useEffect(() => {
   setLastSessionId(sessionId);
 }, [sessionId]);
 
-useEffect(() => {
-  if (!sessionId) return;
-  bumpHistoryItemToTop(sessionId);
-  void touchThreadLastUsed(sessionId).then((updatedAt) => {
-    if (!updatedAt) return;
-    const touchedAt = parseHistoryTimestamp(updatedAt);
-    bumpHistoryItemToTop(sessionId, touchedAt);
-  });
-}, [bumpHistoryItemToTop, sessionId, touchThreadLastUsed]);
-
 // (removed duplicate /api/v1/readiness/spec effect)
 
   useEffect(() => {
@@ -3538,12 +3515,6 @@ useEffect(() => {
       setSessionId(sid);
       setCurrentSessionId(sid);
       setLastSessionId(sid);
-      bumpHistoryItemToTop(sid);
-      void touchThreadLastUsed(sid).then((updatedAt) => {
-        if (!updatedAt) return;
-        const touchedAt = parseHistoryTimestamp(updatedAt);
-        bumpHistoryItemToTop(sid, touchedAt);
-      });
       const restoredModelType = String(session?.model_type || '').toLowerCase();
       if (restoredModelType && allowedModelTypes.includes(restoredModelType)) {
         setSelectedModelType(restoredModelType);
@@ -3603,7 +3574,7 @@ if (rawHistory.length > 0) {
     })();
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allowedModelTypes, applyPersistedReadinessSnapshot, bumpHistoryItemToTop, touchThreadLastUsed]);
+  }, [allowedModelTypes, applyPersistedReadinessSnapshot]);
 
   const scrollToEnd = () => endRef.current?.scrollIntoView({ behavior: 'smooth' });
   useEffect(scrollToEnd, [messages, busy]);
@@ -4438,6 +4409,8 @@ async function continueConversation(userText, options = {}) {
     } else {
       console.warn('[continueConversation] auditPayload is null/undefined - readiness NOT updated');
     }
+
+    await fetchSessions();
 
     // Note: AI Agent backend handles persistence automatically
     // No need to call saveSessionToBackend - readiness is already saved by backend
@@ -6093,6 +6066,8 @@ const sendAIMessage = async () => {
       updated_at: new Date().toISOString()
     };
 
+    await fetchSessions();
+
     // Build the chat_history from the latest visible thread
     const nextChatHistory = [
       ...toConversationHistory(messages),
@@ -6431,22 +6406,6 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
   const handleSelectAnalysis = async (selection) => {
   // Block the very first readiness ping after selecting history
   skipPingRef.current = true;
-
-  const touchedThreadId = String(
-    (selection && typeof selection === 'object' ? selection.id : '') ||
-    selection?.result?._owner_thread_id ||
-    selection?.result?.thread_id ||
-    selection?.result?.session_id ||
-    ''
-  ).trim();
-  if (touchedThreadId) {
-    bumpHistoryItemToTop(touchedThreadId);
-    const updatedAt = await touchThreadLastUsed(touchedThreadId);
-    if (updatedAt) {
-      const touchedAt = parseHistoryTimestamp(updatedAt);
-      bumpHistoryItemToTop(touchedThreadId, touchedAt);
-    }
-  }
 
   const result =
     selection && typeof selection === 'object' && selection.result && typeof selection.result === 'object'
