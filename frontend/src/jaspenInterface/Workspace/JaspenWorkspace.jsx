@@ -267,15 +267,16 @@ function formatHistoryLastUsed(value) {
   const ts = parseHistoryTimestamp(value);
   if (!ts) return '';
   const date = new Date(ts);
-  const now = new Date();
-  const sameDay =
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate();
-  if (sameDay) {
-    return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-  }
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return date.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function sortAnalysisHistoryByLastUsed(items) {
+  return [...items].sort((a, b) => Number(b.lastUsedAt || b.createdAt || 0) - Number(a.lastUsedAt || a.createdAt || 0));
 }
 
 function normalizeStrategyObjective(value, fallback = 'balanced') {
@@ -2873,6 +2874,18 @@ useEffect(() => {
     }
   }, [authFetch]);
 
+  const bumpHistoryItemToTop = useCallback((threadId, touchedAt = Date.now()) => {
+    const normalizedThreadId = String(threadId || '').trim();
+    if (!normalizedThreadId) return;
+    setAnalysisHistory((prev) => sortAnalysisHistoryByLastUsed(
+      prev.map((item) => (
+        String(item?.id || '').trim() === normalizedThreadId
+          ? { ...item, lastUsedAt: Number(touchedAt) || Date.now() }
+          : item
+      ))
+    ));
+  }, []);
+
 // AI Assistant drawer state
 const [aiDrawerOpen, setAiDrawerOpen] = useState(true);
 const [aiInput, setAiInput] = useState('');
@@ -3377,18 +3390,15 @@ useEffect(() => {
   setLastSessionId(sessionId);
 }, [sessionId]);
 
-  useEffect(() => {
-    if (!sessionId) return;
-    void touchThreadLastUsed(sessionId).then((updatedAt) => {
-      if (!updatedAt) return;
-      const touchedAt = parseHistoryTimestamp(updatedAt);
-      setAnalysisHistory((prev) =>
-        [...prev]
-          .map((item) => (String(item?.id || '').trim() === String(sessionId).trim() ? { ...item, lastUsedAt: touchedAt } : item))
-          .sort((a, b) => Number(b.lastUsedAt || b.createdAt || 0) - Number(a.lastUsedAt || a.createdAt || 0))
-      );
-    });
-  }, [sessionId, touchThreadLastUsed]);
+useEffect(() => {
+  if (!sessionId) return;
+  bumpHistoryItemToTop(sessionId);
+  void touchThreadLastUsed(sessionId).then((updatedAt) => {
+    if (!updatedAt) return;
+    const touchedAt = parseHistoryTimestamp(updatedAt);
+    bumpHistoryItemToTop(sessionId, touchedAt);
+  });
+}, [bumpHistoryItemToTop, sessionId, touchThreadLastUsed]);
 
 // (removed duplicate /api/v1/readiness/spec effect)
 
@@ -3528,14 +3538,11 @@ useEffect(() => {
       setSessionId(sid);
       setCurrentSessionId(sid);
       setLastSessionId(sid);
+      bumpHistoryItemToTop(sid);
       void touchThreadLastUsed(sid).then((updatedAt) => {
         if (!updatedAt) return;
         const touchedAt = parseHistoryTimestamp(updatedAt);
-        setAnalysisHistory((prev) =>
-          [...prev]
-            .map((item) => (String(item?.id || '').trim() === String(sid).trim() ? { ...item, lastUsedAt: touchedAt } : item))
-            .sort((a, b) => Number(b.lastUsedAt || b.createdAt || 0) - Number(a.lastUsedAt || a.createdAt || 0))
-        );
+        bumpHistoryItemToTop(sid, touchedAt);
       });
       const restoredModelType = String(session?.model_type || '').toLowerCase();
       if (restoredModelType && allowedModelTypes.includes(restoredModelType)) {
@@ -3596,7 +3603,7 @@ if (rawHistory.length > 0) {
     })();
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allowedModelTypes, applyPersistedReadinessSnapshot, touchThreadLastUsed]);
+  }, [allowedModelTypes, applyPersistedReadinessSnapshot, bumpHistoryItemToTop, touchThreadLastUsed]);
 
   const scrollToEnd = () => endRef.current?.scrollIntoView({ behavior: 'smooth' });
   useEffect(scrollToEnd, [messages, busy]);
@@ -6433,14 +6440,11 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
     ''
   ).trim();
   if (touchedThreadId) {
+    bumpHistoryItemToTop(touchedThreadId);
     const updatedAt = await touchThreadLastUsed(touchedThreadId);
     if (updatedAt) {
       const touchedAt = parseHistoryTimestamp(updatedAt);
-      setAnalysisHistory((prev) =>
-        [...prev]
-          .map((item) => (String(item?.id || '').trim() === touchedThreadId ? { ...item, lastUsedAt: touchedAt } : item))
-          .sort((a, b) => Number(b.lastUsedAt || b.createdAt || 0) - Number(a.lastUsedAt || a.createdAt || 0))
-      );
+      bumpHistoryItemToTop(touchedThreadId, touchedAt);
     }
   }
 
