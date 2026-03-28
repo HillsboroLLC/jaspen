@@ -94,6 +94,31 @@ const getMeaningfulBundleScorecard = (bundle) => {
   return null;
 };
 
+const HISTORY_LAST_USED_STORAGE_KEY = 'jaspen_history_last_used_v1';
+
+const parseHistoryTimestamp = (value) => {
+  const ts = new Date(value || 0).getTime();
+  return Number.isFinite(ts) ? ts : 0;
+};
+
+const readHistoryLastUsedMap = () => {
+  try {
+    const raw = window.localStorage.getItem(HISTORY_LAST_USED_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+};
+
+const writeHistoryLastUsedMap = (value) => {
+  try {
+    window.localStorage.setItem(HISTORY_LAST_USED_STORAGE_KEY, JSON.stringify(value || {}));
+  } catch {
+    // ignore storage failures
+  }
+};
+
 // === Header Icon Helpers =====================================================
 const PM_VARIANT  = "monitor-check";
 const LSS_VARIANT = "chart-scatter";
@@ -3010,6 +3035,7 @@ const [initialRestorePending, setInitialRestorePending] = useState(() => Boolean
   // Fetch sessions (cookie OR bearer)
   const fetchSessions = async () => {
     try {
+      const historyLastUsed = readHistoryLastUsedMap();
       const [threadResponse, scoresResponse] = await Promise.all([
         authFetch(`${API_BASE}/api/v1/ai-agent/threads`, {
           method: 'GET',
@@ -3037,10 +3063,12 @@ const [initialRestorePending, setInitialRestorePending] = useState(() => Boolean
         for (const row of scoreRows) {
           const threadId = String(row?.thread_id || '').trim();
           if (!threadId) continue;
-          const createdAt = new Date(row?.updated_at || row?.created_at || Date.now()).getTime();
+          const serverTimestamp = parseHistoryTimestamp(row?.updated_at || row?.created_at || Date.now());
+          const lastUsedAt = Math.max(serverTimestamp, Number(historyLastUsed[threadId] || 0));
           completedById.set(threadId, {
             id: threadId,
-            createdAt,
+            createdAt: serverTimestamp,
+            lastUsedAt,
             result: {
               analysis_id: threadId,
               project_name: row?.project_name || 'Untitled Idea',
@@ -3057,13 +3085,13 @@ const [initialRestorePending, setInitialRestorePending] = useState(() => Boolean
       }
 
       if (!threadResponse.ok) {
-        setAnalysisHistory(Array.from(completedById.values()).sort((a, b) => b.createdAt - a.createdAt));
+        setAnalysisHistory(Array.from(completedById.values()).sort((a, b) => Number(b.lastUsedAt || b.createdAt || 0) - Number(a.lastUsedAt || a.createdAt || 0)));
         return;
       }
 
       const data = await threadResponse.json().catch(() => ({}));
       if (!(data.success && data.sessions)) {
-        setAnalysisHistory(Array.from(completedById.values()).sort((a, b) => b.createdAt - a.createdAt));
+        setAnalysisHistory(Array.from(completedById.values()).sort((a, b) => Number(b.lastUsedAt || b.createdAt || 0) - Number(a.lastUsedAt || a.createdAt || 0)));
         return;
       }
 
@@ -3087,10 +3115,12 @@ const [initialRestorePending, setInitialRestorePending] = useState(() => Boolean
         const hasCompletedScorecard = hasMeaningfulScorecardData(full) || completedById.has(threadId);
         if (hasCompletedScorecard) {
           const existing = completedById.get(threadId);
-          const createdAt = new Date(session.timestamp || session.created || existing?.createdAt || Date.now()).getTime();
+          const serverTimestamp = parseHistoryTimestamp(session.timestamp || session.created || existing?.createdAt || Date.now());
+          const lastUsedAt = Math.max(serverTimestamp, Number(existing?.lastUsedAt || 0), Number(historyLastUsed[threadId] || 0));
           completedById.set(threadId, {
             id: threadId,
-            createdAt,
+            createdAt: serverTimestamp,
+            lastUsedAt,
             result: {
               ...(existing?.result || {}),
               ...full,
@@ -3115,7 +3145,11 @@ const [initialRestorePending, setInitialRestorePending] = useState(() => Boolean
 
         completedById.set(threadId, {
           id: threadId,
-          createdAt: new Date(session.timestamp || session.created).getTime(),
+          createdAt: parseHistoryTimestamp(session.timestamp || session.created),
+          lastUsedAt: Math.max(
+            parseHistoryTimestamp(session.timestamp || session.created),
+            Number(historyLastUsed[threadId] || 0)
+          ),
           result: {
             analysis_id: threadId,
             project_name: session.name ?? 'Untitled Idea',
@@ -3131,7 +3165,7 @@ const [initialRestorePending, setInitialRestorePending] = useState(() => Boolean
       }
 
       const apiSessions = Array.from(completedById.values());
-      apiSessions.sort((a, b) => b.createdAt - a.createdAt);
+      apiSessions.sort((a, b) => Number(b.lastUsedAt || b.createdAt || 0) - Number(a.lastUsedAt || a.createdAt || 0));
       setAnalysisHistory(apiSessions);
     } catch (error) {
       console.error('Error fetching sessions:', error);
@@ -3397,6 +3431,10 @@ useEffect(() => {
         return;
       }
       const sid = resolvedUrlSessionId;
+      const touchedAt = Date.now();
+      const historyLastUsed = readHistoryLastUsedMap();
+      historyLastUsed[sid] = touchedAt;
+      writeHistoryLastUsedMap(historyLastUsed);
 
       // prevent readiness “snap” edge cases during restore
       skipPingRef.current = true;
@@ -6337,6 +6375,25 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
   // Block the very first readiness ping after selecting history
   skipPingRef.current = true;
 
+  const touchedThreadId = String(
+    (selection && typeof selection === 'object' ? selection.id : '') ||
+    selection?.result?._owner_thread_id ||
+    selection?.result?.thread_id ||
+    selection?.result?.session_id ||
+    ''
+  ).trim();
+  if (touchedThreadId) {
+    const touchedAt = Date.now();
+    const lastUsed = readHistoryLastUsedMap();
+    lastUsed[touchedThreadId] = touchedAt;
+    writeHistoryLastUsedMap(lastUsed);
+    setAnalysisHistory((prev) =>
+      [...prev]
+        .map((item) => (String(item?.id || '').trim() === touchedThreadId ? { ...item, lastUsedAt: touchedAt } : item))
+        .sort((a, b) => Number(b.lastUsedAt || b.createdAt || 0) - Number(a.lastUsedAt || a.createdAt || 0))
+    );
+  }
+
   const result =
     selection && typeof selection === 'object' && selection.result && typeof selection.result === 'object'
       ? selection.result
@@ -7799,7 +7856,7 @@ onClick={async () => {
                         {title || `Analysis ${item.id?.slice(-8) || index + 1}`}
                       </div>
                       <div className="hi-meta">
-                        <span>{new Date(item.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+                        <span>{new Date(item.lastUsedAt || item.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
                         {item.result?.jaspen_score && (<span className="hi-score">Score: {item.result.jaspen_score}</span>)}
                       </div>
                       {matchSnippet ? (
