@@ -1532,7 +1532,10 @@ def analyze_project():
         session['analysis_history'] = history
         session['analyses'] = history
         session['adopted_analysis_id'] = analysis_id
-        session['baseline_inputs'] = _extract_baseline_inputs(analysis)
+        session_baseline_inputs = _extract_baseline_inputs(analysis)
+        session_baseline_inputs, session_lever_catalog = _build_scenario_lever_catalog(analysis, session_baseline_inputs)
+        session['baseline_inputs'] = session_baseline_inputs
+        session['lever_catalog'] = session_lever_catalog
         session['timestamp'] = generated_at
         session['completed_at'] = generated_at
         session['status'] = 'completed'
@@ -1555,11 +1558,14 @@ def analyze_project():
             td['scenarios'] = {}
         if not isinstance(td.get('baseline_inputs'), dict):
             td['baseline_inputs'] = {}
+        if not isinstance(td.get('lever_catalog'), list):
+            td['lever_catalog'] = []
         if 'adopted_scenario_id' not in td:
             td['adopted_scenario_id'] = None
         if td.get('baseline') is None or not td.get('scenarios'):
             td['baseline'] = analysis
-            td['baseline_inputs'] = _extract_baseline_inputs(analysis)
+            td['baseline_inputs'] = dict(session_baseline_inputs)
+            td['lever_catalog'] = list(session_lever_catalog)
             td['adopted_scenario_id'] = None
         if 'project_wbs' not in td:
             td['project_wbs'] = None
@@ -1891,6 +1897,7 @@ def _thread_entry():
     return {
         'baseline': None,
         'baseline_inputs': {},
+        'lever_catalog': [],
         'scenarios': {},
         'adopted_scenario_id': None,
         'project_wbs': None,
@@ -1900,11 +1907,11 @@ def _thread_entry():
 
 def _infer_lever_type(key):
     k = str(key).lower()
-    if any(p in k for p in ('budget', 'invest', 'cost', 'price', 'revenue', 'value')):
+    if any(p in k for p in ('budget', 'invest', 'cost', 'price', 'revenue', 'value', 'ebitda', 'npv')):
         return 'currency'
     if any(p in k for p in ('month', 'timeline', 'period', 'duration')):
         return 'months'
-    if any(p in k for p in ('percent', 'rate', 'margin', 'growth', 'penetrat')):
+    if any(p in k for p in ('percent', 'rate', 'margin', 'growth', 'penetrat', 'roi', 'irr', 'adoption')):
         return 'percentage'
     return 'number'
 
@@ -1930,6 +1937,7 @@ def _resolve_thread_baseline(user_id, thread_id):
 
     baseline = thread_data.get('baseline') if isinstance(thread_data.get('baseline'), dict) else None
     baseline_inputs = thread_data.get('baseline_inputs') if isinstance(thread_data.get('baseline_inputs'), dict) else {}
+    lever_catalog = thread_data.get('lever_catalog') if isinstance(thread_data.get('lever_catalog'), list) else []
 
     sessions = load_user_sessions(user_id) or {}
     _, session = _resolve_session_entry(sessions, thread_id)
@@ -1948,6 +1956,12 @@ def _resolve_thread_baseline(user_id, thread_id):
         else:
             baseline_inputs = {}
         thread_data['baseline_inputs'] = baseline_inputs
+
+    if isinstance(baseline, dict):
+        baseline_inputs, generated_catalog = _build_scenario_lever_catalog(baseline, baseline_inputs)
+        thread_data['baseline_inputs'] = baseline_inputs
+        if not lever_catalog:
+            thread_data['lever_catalog'] = generated_catalog
 
     session_objective = _normalize_strategy_objective(session.get('strategy_objective')) if isinstance(session, dict) else 'balanced'
     thread_objective = _normalize_strategy_objective(thread_data.get('strategy_objective'))
@@ -2008,10 +2022,133 @@ def _lever_bounds(current, lever_type):
     }
 
 
+def _coerce_positive(value, fallback):
+    parsed = _safe_float(value)
+    if parsed is None or parsed <= 0:
+        return float(fallback)
+    return float(parsed)
+
+
+def _baseline_financial_value(baseline, key):
+    if not isinstance(baseline, dict):
+        return None
+    return _metric_numeric_value(baseline.get('financial_impact') if isinstance(baseline.get('financial_impact'), dict) else {}, key)
+
+
+def _infer_standard_scenario_inputs(baseline, baseline_inputs):
+    observed = dict(baseline_inputs or {})
+    roi_percent = _baseline_financial_value(baseline, 'roi_opportunity')
+    projected_ebitda = _baseline_financial_value(baseline, 'projected_ebitda')
+    potential_loss = _baseline_financial_value(baseline, 'potential_loss')
+    annual_spend = _coerce_positive(
+        observed.get('annual_software_spend'),
+        (projected_ebitda / max((roi_percent or 25.0) / 100.0, 0.05))
+        if projected_ebitda
+        else (potential_loss * 0.9 if potential_loss else 180000.0),
+    )
+    migration_cost = _coerce_positive(
+        observed.get('migration_cost'),
+        _metric_numeric_value(
+            baseline.get('investment_analysis') if isinstance(baseline.get('investment_analysis'), dict) else {},
+            'total_investment_required',
+        ) or max(25000.0, annual_spend * 0.15),
+    )
+    implementation_timeline = _coerce_positive(
+        observed.get('implementation_timeline'),
+        6.0,
+    )
+    team_capacity_fte = _coerce_positive(observed.get('team_capacity_fte'), 2.5)
+    adoption_rate = _coerce_positive(observed.get('adoption_rate'), 70.0)
+    expected_annual_savings = _coerce_positive(
+        observed.get('expected_annual_savings'),
+        projected_ebitda or max(annual_spend * 0.25, 60000.0),
+    )
+    rollout_phases = _coerce_positive(observed.get('rollout_phases'), 2.0)
+    training_budget = _coerce_positive(
+        observed.get('training_budget'),
+        max(5000.0, migration_cost * 0.2),
+    )
+    inferred = {
+        'annual_software_spend': annual_spend,
+        'migration_cost': migration_cost,
+        'implementation_timeline': implementation_timeline,
+        'team_capacity_fte': team_capacity_fte,
+        'adoption_rate': adoption_rate,
+        'expected_annual_savings': expected_annual_savings,
+        'rollout_phases': rollout_phases,
+        'training_budget': training_budget,
+    }
+    observed_keys = {str(k) for k, v in observed.items() if _safe_float(v) is not None}
+    return inferred, observed_keys
+
+
+def _build_scenario_lever_catalog(baseline, baseline_inputs):
+    inferred_inputs, observed_keys = _infer_standard_scenario_inputs(baseline, baseline_inputs)
+    merged_inputs = dict(baseline_inputs or {})
+    merged_inputs.update(inferred_inputs)
+    catalog = []
+    seen = set()
+
+    for key, value in merged_inputs.items():
+        if key in SCENARIO_OUTPUT_FIELDS or key in _OUTPUT_FIELDS:
+            continue
+        numeric_value = _safe_float(value)
+        if numeric_value is None:
+            continue
+        seen.add(key)
+        meta = _STANDARD_SCENARIO_LEVERS.get(key, {})
+        lever_type = str(meta.get('type') or _infer_lever_type(key))
+        bounds = _lever_bounds(numeric_value, lever_type)
+        catalog.append({
+            'id': key,
+            'key': key,
+            'label': str(meta.get('label') or str(key).replace('_', ' ').title()),
+            'type': lever_type,
+            'value': round(float(numeric_value), 6),
+            'current': round(float(numeric_value), 6),
+            'min': bounds['min'],
+            'max': bounds['max'],
+            'step': bounds['step'],
+            'description': str(meta.get('description') or f"Scenario lever for {str(key).replace('_', ' ')}."),
+            'source': 'observed' if key in observed_keys else 'estimated',
+            'readonly': False,
+            'display_multiplier': 1,
+        })
+
+    for key, meta in _STANDARD_SCENARIO_LEVERS.items():
+        if key in seen:
+            continue
+        numeric_value = inferred_inputs.get(key)
+        if numeric_value is None:
+            continue
+        lever_type = str(meta.get('type') or _infer_lever_type(key))
+        bounds = _lever_bounds(numeric_value, lever_type)
+        catalog.append({
+            'id': key,
+            'key': key,
+            'label': str(meta.get('label') or str(key).replace('_', ' ').title()),
+            'type': lever_type,
+            'value': round(float(numeric_value), 6),
+            'current': round(float(numeric_value), 6),
+            'min': bounds['min'],
+            'max': bounds['max'],
+            'step': bounds['step'],
+            'description': str(meta.get('description') or f"Scenario lever for {str(key).replace('_', ' ')}."),
+            'source': 'estimated',
+            'readonly': False,
+            'display_multiplier': 1,
+        })
+
+    catalog.sort(key=lambda row: (0 if row['key'] in _STANDARD_SCENARIO_LEVERS else 1, row['label']))
+    return merged_inputs, catalog
+
+
 def _build_lever_context(baseline_inputs, suggested_deltas):
     context = []
     suggestions = suggested_deltas if isinstance(suggested_deltas, dict) else {}
     for key, raw_current in (baseline_inputs or {}).items():
+        if key in SCENARIO_OUTPUT_FIELDS or key in _OUTPUT_FIELDS:
+            continue
         current = _safe_float(raw_current)
         if current is None:
             continue
@@ -2060,6 +2197,8 @@ def _thread_levers_for_scenario_ai(user_id, thread_id, baseline_inputs, suggeste
             if not isinstance(row, dict) or not row.get('key'):
                 continue
             key = str(row.get('key'))
+            if key in SCENARIO_OUTPUT_FIELDS or key in _OUTPUT_FIELDS:
+                continue
             current = _safe_float(row.get('current'))
             if current is None:
                 current = _safe_float((baseline_inputs or {}).get(key))
@@ -2882,6 +3021,57 @@ _OUTPUT_FIELDS = {
     'overall_score', 'scores', 'name', 'status', 'framework_id',
 }
 
+SCENARIO_OUTPUT_FIELDS = {
+    'roi_opportunity', 'projected_ebitda', 'ebitda_at_risk',
+    'potential_loss', 'npv_3_year', 'irr', 'payback_period',
+    'break_even_month', 'enterprise_value', 'jaspen_score',
+    'time_to_market_impact', 'cost_of_inaction',
+    'expected_annual_return', 'score_category',
+}
+
+_STANDARD_SCENARIO_LEVERS = {
+    'annual_software_spend': {
+        'label': 'Annual Software Spend',
+        'type': 'currency',
+        'description': 'Current annual spend on SaaS tools being consolidated.',
+    },
+    'migration_cost': {
+        'label': 'Migration Cost',
+        'type': 'currency',
+        'description': 'One-time cost to migrate tools, data, and workflows.',
+    },
+    'implementation_timeline': {
+        'label': 'Implementation Timeline',
+        'type': 'months',
+        'description': 'Months required to complete consolidation and rollout.',
+    },
+    'team_capacity_fte': {
+        'label': 'Team Capacity (FTE)',
+        'type': 'number',
+        'description': 'Dedicated team capacity available to drive the initiative.',
+    },
+    'adoption_rate': {
+        'label': 'Adoption Rate',
+        'type': 'percentage',
+        'description': 'Share of target users expected to adopt the new workflow.',
+    },
+    'expected_annual_savings': {
+        'label': 'Expected Annual Savings',
+        'type': 'currency',
+        'description': 'Estimated recurring savings once consolidation is complete.',
+    },
+    'rollout_phases': {
+        'label': 'Rollout Phases',
+        'type': 'number',
+        'description': 'Number of rollout waves or phases planned for implementation.',
+    },
+    'training_budget': {
+        'label': 'Training Budget',
+        'type': 'currency',
+        'description': 'Budget allocated to training and change management.',
+    },
+}
+
 
 def _get_lever_sensitivities(key):
     """Map a lever key to component sensitivities via pattern matching."""
@@ -2955,7 +3145,7 @@ def _extract_baseline_inputs(baseline):
         if not isinstance(source, dict):
             continue
         for key, val in source.items():
-            if key in inputs or key in _OUTPUT_FIELDS or key.startswith('_'):
+            if key in inputs or key in _OUTPUT_FIELDS or key in SCENARIO_OUTPUT_FIELDS or key.startswith('_'):
                 continue
             if isinstance(val, (int, float)) and not isinstance(val, bool):
                 inputs[key] = val
@@ -2979,6 +3169,7 @@ def _compute_scenario_scorecard(baseline, deltas, baseline_inputs):
     components = {k: float(base_comps.get(k, _defaults[k])) for k in _defaults}
 
     financial_factor = 1.0   # cumulative multiplier for financial metrics
+    normalized_changes = {}
 
     for key, new_val in (deltas or {}).items():
         try:
@@ -3000,6 +3191,7 @@ def _compute_scenario_scorecard(baseline, deltas, baseline_inputs):
         else:
             pct_change = (new_val - base_val) / abs(base_val)
         pct_change = max(-1.0, min(1.0, pct_change))
+        normalized_changes[key.lower()] = pct_change
 
         # --- accumulate financial factor ---
         k = key.lower()
@@ -3014,6 +3206,26 @@ def _compute_scenario_scorecard(baseline, deltas, baseline_inputs):
         for comp, sensitivity in _get_lever_sensitivities(key).items():
             if comp in components:
                 components[comp] = max(0.0, min(100.0, components[comp] + pct_change * sensitivity * 15.0))
+
+    adoption_shift = next((v for k, v in normalized_changes.items() if 'adoption' in k), 0.0)
+    training_shift = next((v for k, v in normalized_changes.items() if 'training' in k), 0.0)
+    timeline_shift = next((v for k, v in normalized_changes.items() if any(p in k for p in ('timeline', 'month', 'duration', 'period'))), 0.0)
+    budget_shift = next((v for k, v in normalized_changes.items() if any(p in k for p in ('budget', 'invest'))), 0.0)
+
+    if adoption_shift:
+        financial_factor += adoption_shift * 0.18
+        components['market_position'] = max(0.0, min(100.0, components['market_position'] + adoption_shift * 10.0))
+    if training_shift:
+        financial_factor += training_shift * 0.08
+        components['execution_readiness'] = max(0.0, min(100.0, components['execution_readiness'] + training_shift * 8.0))
+    if timeline_shift < 0:
+        financial_factor += timeline_shift * 0.12
+        components['execution_readiness'] = max(0.0, min(100.0, components['execution_readiness'] + timeline_shift * 10.0))
+        components['operational_efficiency'] = max(0.0, min(100.0, components['operational_efficiency'] + timeline_shift * 6.0))
+    elif timeline_shift > 0:
+        financial_factor += timeline_shift * 0.05
+    if budget_shift > 0 and abs(timeline_shift) < 0.05:
+        financial_factor -= budget_shift * 0.08
 
     # Clamp financial factor to sane range
     financial_factor = max(0.5, min(2.0, financial_factor))
@@ -3192,6 +3404,12 @@ def create_ai_scenario(thread_id):
         if not instruction and not manual_deltas:
             return jsonify({'error': 'Provide instruction/message or deltas for scenario generation.'}), 400
 
+        baseline_inputs, lever_catalog = _build_scenario_lever_catalog(baseline, baseline_inputs)
+        thread_data['baseline_inputs'] = baseline_inputs
+        thread_data['lever_catalog'] = lever_catalog
+        all_data[thread_id] = thread_data
+        _save_scenarios(user_id, all_data)
+
         lever_context = _thread_levers_for_scenario_ai(user_id, thread_id, baseline_inputs, manual_deltas or None)
 
         if manual_deltas:
@@ -3257,6 +3475,8 @@ def create_ai_scenario(thread_id):
             },
             'preview_scorecard': preview,
             'lever_context': _thread_levers_for_scenario_ai(user_id, thread_id, baseline_inputs, deltas),
+            'lever_catalog': lever_catalog,
+            'output_metrics': sorted(SCENARIO_OUTPUT_FIELDS),
         }
 
         if 'commit' in payload:
@@ -3924,6 +4144,7 @@ def get_thread_bundle(thread_id):
         baseline_inputs = td.get('baseline_inputs') or (
             session.get('baseline_inputs') if isinstance(session, dict) and isinstance(session.get('baseline_inputs'), dict) else {}
         )
+        lever_catalog = td.get('lever_catalog') if isinstance(td.get('lever_catalog'), list) else []
         if snapshot_state:
             baseline = snapshot_state['baseline']
         elif baseline is None and session_result:
@@ -3932,6 +4153,14 @@ def get_thread_bundle(thread_id):
             scenarios_dict = {}
         if not isinstance(baseline_inputs, dict):
             baseline_inputs = {}
+        if isinstance(baseline, dict):
+            baseline_inputs, generated_catalog = _build_scenario_lever_catalog(baseline, baseline_inputs)
+            if not lever_catalog:
+                lever_catalog = generated_catalog
+            td['baseline_inputs'] = baseline_inputs
+            td['lever_catalog'] = lever_catalog
+            all_data[thread_id] = td
+            _save_scenarios(user_id, all_data)
 
         # Sorted scenario list
         scenarios_list = sorted(scenarios_dict.values(),
@@ -3944,24 +4173,7 @@ def get_thread_bundle(thread_id):
         if adopted_id and adopted_id in scenarios_dict:
             current_scorecard = scenarios_dict[adopted_id].get('result') or baseline
 
-        # Build scenario_levers from baseline inputs
-        scenario_levers = []
-        for key, val in baseline_inputs.items():
-            if not isinstance(val, (int, float)):
-                continue
-            k = key.lower()
-            ltype = ('currency'    if any(p in k for p in ('budget','invest','cost','price','revenue','value'))
-                     else 'months'     if any(p in k for p in ('month','timeline','period','duration'))
-                     else 'percentage' if any(p in k for p in ('percent','rate','margin','growth'))
-                     else 'number')
-            scenario_levers.append({
-                'key': key,
-                'label': key.replace('_', ' ').title(),
-                'current': val,
-                'value': val,
-                'type': ltype,
-                'display_multiplier': 1,
-            })
+        scenario_levers = [dict(row) for row in lever_catalog]
 
         return jsonify({
             'thread': {
@@ -3978,6 +4190,8 @@ def get_thread_bundle(thread_id):
             'selected_scorecard_id': snapshot_state['selected_id'] if snapshot_state else None,
             'scenarios': scenarios_list,
             'scenario_levers': scenario_levers,
+            'lever_catalog': lever_catalog,
+            'output_metrics': sorted(SCENARIO_OUTPUT_FIELDS),
             'adopted_scenario_id': adopted_id,
             'project_wbs': td.get('project_wbs'),
             'status': (session or {}).get('status') if isinstance(session, dict) else 'in_progress',

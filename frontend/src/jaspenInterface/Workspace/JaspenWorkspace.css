@@ -3776,6 +3776,26 @@
   padding: 16px;
 }
 
+.jas-scenario-body-rich {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.jas-scenario-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.jas-scenario-section-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--gray-500);
+}
+
 .jas-scenario-field {
   display: flex;
   justify-content: space-between;
@@ -3796,6 +3816,140 @@
 .jas-scenario-field-value {
   color: var(--gray-500);
   font-weight: 500;
+}
+
+.jas-scenario-empty {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  background: var(--gray-50);
+  color: var(--gray-600);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.jas-scenario-empty p {
+  margin: 0 0 8px;
+}
+
+.jas-scenario-empty p:last-child {
+  margin-bottom: 0;
+}
+
+.jas-scenario-lever-help {
+  font-size: 0.75rem;
+  color: var(--gray-500);
+  line-height: 1.4;
+  margin-bottom: 6px;
+}
+
+.input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.input-label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--navy);
+}
+
+.input-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.input-field {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: 0.875rem;
+  color: var(--navy);
+  background: var(--white);
+}
+
+.input-field:disabled {
+  background: var(--gray-50);
+  color: var(--gray-500);
+}
+
+.input-delta {
+  white-space: nowrap;
+  font-size: 0.75rem;
+  color: var(--gray-500);
+  font-weight: 600;
+}
+
+.input-delta.positive {
+  color: #0f7b43;
+}
+
+.input-delta.negative {
+  color: #b42318;
+}
+
+.results-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.result-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.result-row:last-child {
+  border-bottom: none;
+}
+
+.result-row-compare {
+  align-items: flex-start;
+}
+
+.result-label {
+  font-size: 0.8125rem;
+  color: var(--navy);
+  font-weight: 600;
+}
+
+.result-compare-values {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.result-arrow {
+  color: var(--gray-400);
+}
+
+.result-value {
+  color: var(--gray-600);
+  font-weight: 600;
+}
+
+.result-value-before {
+  color: var(--gray-500);
+  font-weight: 500;
+}
+
+.jas-scenario-rationale {
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  color: var(--gray-600);
+  font-size: 0.8125rem;
+  line-height: 1.5;
 }
 
 .jas-scenario-score-box {

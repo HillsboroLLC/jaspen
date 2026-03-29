@@ -13,7 +13,7 @@ import { ScenarioModelerSkeleton } from '../../shared/components/SkeletonLoader'
 // ============================================================================
 // HELPER: Extract editable levers from baseAnalysis
 // ============================================================================
-function extractLevers(baseAnalysis) {
+function extractLevers(baseAnalysis, outputMetrics = []) {
   if (!baseAnalysis) return [];
 
   const inputs = baseAnalysis.inputs || {};
@@ -30,12 +30,13 @@ function extractLevers(baseAnalysis) {
     'clv', 'payback_months', 'payback_period',
     'roi_opportunity', 'projected_ebitda', 'ebitda_at_risk'
   ];
+  const excluded = new Set([...EXCLUDED, ...(Array.isArray(outputMetrics) ? outputMetrics : [])]);
 
   const levers = [];
   const seen = new Set();
 
   for (const [key, value] of Object.entries(combined)) {
-    if (EXCLUDED.includes(key)) continue;
+    if (excluded.has(key)) continue;
     if (typeof value === 'number' && !isNaN(value)) {
       seen.add(key);
       levers.push({
@@ -45,38 +46,6 @@ function extractLevers(baseAnalysis) {
         type: inferType(key, value),
       });
     }
-  }
-
-  // Fallback: if backend inputs are sparse, allow editing of baseline metrics directly.
-  if (levers.length === 0) {
-    const baselineMetrics = buildMetricRows(baseAnalysis);
-    baselineMetrics.forEach((metric) => {
-      if (!metric?.key || seen.has(metric.key)) return;
-      const value = Number(metric.value);
-      if (!Number.isFinite(value)) return;
-
-      const spread = metric.type === 'percentage'
-        ? 10
-        : Math.max(Math.abs(value) * 0.5, 1);
-
-      const step = metric.type === 'currency'
-        ? Math.max(100, Math.round((Math.abs(value) * 0.02) / 100) * 100 || 100)
-        : metric.type === 'percentage'
-          ? 0.5
-          : metric.type === 'months'
-            ? 1
-            : Math.max(1, Math.round(Math.abs(value) * 0.05) || 1);
-
-      levers.push({
-        key: metric.key,
-        label: metric.label || formatLabel(metric.key),
-        value,
-        min: metric.type === 'percentage' ? Math.max(0, value - spread) : value - spread,
-        max: value + spread,
-        step,
-        type: metric.type || inferType(metric.key, value),
-      });
-    });
   }
 
   return levers;
@@ -148,7 +117,9 @@ function inferType(key) {
     lowerKey.includes('cost') ||
     lowerKey.includes('price') ||
     lowerKey.includes('revenue') ||
-    lowerKey.includes('value')
+    lowerKey.includes('value') ||
+    lowerKey.includes('ebitda') ||
+    lowerKey.includes('npv')
   ) return 'currency';
 
   if (
@@ -161,7 +132,10 @@ function inferType(key) {
   if (
     lowerKey.includes('percent') ||
     lowerKey.includes('rate') ||
-    lowerKey.includes('margin')
+    lowerKey.includes('margin') ||
+    lowerKey.includes('roi') ||
+    lowerKey.includes('irr') ||
+    lowerKey.includes('adoption')
   ) return 'percentage';
 
   return 'number';
@@ -183,11 +157,34 @@ function formatValue(value, type) {
     case 'months':
       return `${n} ${n === 1 ? 'month' : 'months'}`;
     case 'percentage':
-      return `${n.toFixed(1)}%`;
+      return `${Number.isInteger(n) ? n : n.toFixed(1)}%`;
     default:
       return n.toLocaleString();
   }
 }
+
+function formatDeltaValue(currentValue, baselineValue, type) {
+  if (baselineValue == null || currentValue == null) return '—';
+  const diff = Number(currentValue) - Number(baselineValue);
+  if (!Number.isFinite(diff)) return '—';
+  if (diff === 0) {
+    if (type === 'months') return '0 mo';
+    if (type === 'percentage') return '0pp';
+    return '0';
+  }
+  if (type === 'percentage') {
+    return `${diff > 0 ? '+' : ''}${Number.isInteger(diff) ? diff : diff.toFixed(1)}pp`;
+  }
+  const formatted = formatValue(Math.abs(diff), type);
+  return `${diff > 0 ? '+' : '-'}${formatted}`;
+}
+
+const SCENARIO_RESULT_METRICS = [
+  { key: 'roi_opportunity', label: 'ROI Opportunity', type: 'percentage' },
+  { key: 'projected_ebitda', label: 'Projected EBITDA', type: 'currency' },
+  { key: 'payback_period', label: 'Payback Period', type: 'months' },
+  { key: 'jaspen_score', label: 'Jaspen Score', type: 'number' },
+];
 
 function parseMetricNumber(value) {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -257,29 +254,26 @@ function buildMetricRows(result = {}) {
     .slice(0, 6);
 }
 
-function buildScenarioMetricRows(result = {}, baselineMetrics = []) {
+function buildScenarioMetricRows(result = {}) {
   if (!result) return [];
-  const keys = Array.isArray(baselineMetrics) ? baselineMetrics.map((m) => m.key) : [];
-  const fromBaseline = keys
-    .map((key) => {
-      const value = getMetricValue(result, key);
+  return SCENARIO_RESULT_METRICS
+    .map((metric) => {
+      const value = metric.key === 'jaspen_score'
+        ? (result?.overall_score ?? result?.jaspen_score ?? null)
+        : getMetricValue(result, metric.key);
       if (value == null) return null;
       return {
-        key,
-        label: formatLabel(key),
-        type: inferType(key),
+        ...metric,
         value,
       };
     })
     .filter(Boolean);
-  if (fromBaseline.length > 0) return fromBaseline;
-  return buildMetricRows(result);
 }
 
 // ============================================================================
 // BASELINE COLUMN (Read-only)
 // ============================================================================
-function BaselineColumn({ result, metrics }) {
+function BaselineColumn({ metrics }) {
   const rows = Array.isArray(metrics) ? metrics : [];
   return (
     <div className="jas-scenario-col">
@@ -291,16 +285,14 @@ function BaselineColumn({ result, metrics }) {
         {rows.length > 0 ? (
           rows.map((metric) => (
             <div key={metric.key} className="jas-scenario-field">
-              <span style={{ color: 'var(--jas-navy)' }}>{metric.label}</span>
-              <span style={{ color: 'var(--jas-gray-500)', fontWeight: 500 }}>
-                {formatValue(metric.value, metric.type)}
-              </span>
+              <span className="jas-scenario-field-label">{metric.label}</span>
+              <span className="jas-scenario-field-value">{formatValue(metric.value, metric.type)}</span>
             </div>
           ))
         ) : (
           <div className="jas-scenario-field">
-            <span style={{ color: 'var(--jas-gray-500)' }}>No baseline financial metrics available</span>
-            <span style={{ color: 'var(--jas-gray-500)', fontWeight: 500 }}>—</span>
+            <span className="jas-scenario-field-label">No baseline financial metrics available</span>
+            <span className="jas-scenario-field-value">—</span>
           </div>
         )}
       </div>
@@ -315,8 +307,9 @@ function ScenarioColumn({
   title,
   levers,
   values,
-  baselineValues,
-  baselineMetrics,
+  baselineResult,
+  insufficientLevers,
+  onRequestDeeperAnalysis,
   onChange,
   onRun,
   onAdopt,
@@ -325,94 +318,96 @@ function ScenarioColumn({
   running,
 }) {
   const scenarioMetricRows = useMemo(
-    () => buildScenarioMetricRows(result, baselineMetrics),
-    [result, baselineMetrics]
+    () => buildScenarioMetricRows(result),
+    [result]
   );
-
-  const calculateDelta = (currentValue, baselineValue, type) => {
-    if (baselineValue == null || currentValue == null) return '—';
-    const diff = Number(currentValue) - Number(baselineValue);
-    if (!isFinite(diff) || diff === 0) return type === 'months' ? '0 mo' : '$0';
-    const formatted = formatValue(Math.abs(diff), type);
-    return diff > 0 ? `+${formatted}` : `-${formatted}`;
-  };
-
-  const getDeltaClass = (delta) => {
-    if (delta.startsWith('+')) return 'positive';
-    if (delta.startsWith('-') && delta !== '—') return 'negative';
-    return '';
-  };
+  const baselineMetricMap = useMemo(
+    () => new Map(buildScenarioMetricRows(baselineResult).map((metric) => [metric.key, metric])),
+    [baselineResult]
+  );
 
   return (
     <div className="jas-scenario-col">
       <div className="jas-scenario-header">{title}</div>
 
-      <div className="jas-scenario-body" style={{ minHeight: '180px' }}>
-        {levers.length === 0 && (
-          <div className="jas-scenario-field">
-            <span style={{ color: 'var(--jas-gray-500)' }}>
-              No editable baseline levers are available for this scorecard yet.
-            </span>
-            <span style={{ color: 'var(--jas-gray-500)', fontWeight: 500 }}>—</span>
+      <div className="jas-scenario-body jas-scenario-body-rich">
+        {insufficientLevers ? (
+          <div className="jas-scenario-empty">
+            <p>Jaspen doesn't have enough financial detail to model scenarios yet.</p>
+            <p>Add budget, timeline, and cost estimates or ask Jaspen to run a deeper financial analysis.</p>
+            <Button variant="outline" size="sm" onClick={onRequestDeeperAnalysis} disabled={disabled}>
+              Run deeper financial analysis
+            </Button>
+          </div>
+        ) : (
+          <div className="jas-scenario-section">
+            <div className="jas-scenario-section-title">Adjustable Levers</div>
+            {levers.map((lever) => {
+              const currentValue = values[lever.key] ?? lever.value;
+              const delta = formatDeltaValue(currentValue, lever.value, lever.type);
+              const deltaClass = delta.startsWith('+')
+                ? 'positive'
+                : delta.startsWith('-') && delta !== '—'
+                  ? 'negative'
+                  : '';
+
+              return (
+                <div key={lever.key} className="input-group">
+                  <label className="input-label">{lever.label}</label>
+                  {lever.description ? (
+                    <div className="jas-scenario-lever-help">{lever.description}</div>
+                  ) : null}
+                  <div className="input-wrapper">
+                    <input
+                      type="number"
+                      className="input-field"
+                      value={currentValue}
+                      min={lever.min}
+                      max={lever.max}
+                      step={lever.step ?? (lever.type === 'currency' ? 1000 : lever.type === 'percentage' ? 1 : 1)}
+                      onChange={(e) => onChange({ ...values, [lever.key]: Number(e.target.value) })}
+                      disabled={disabled}
+                    />
+                    <span className={`input-delta ${deltaClass}`}>{delta}</span>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
 
-        {levers.map(lever => {
-          const currentValue = values[lever.key] ?? lever.value;
-          const delta = calculateDelta(currentValue, lever.value, lever.type);
-
-          return (
-            <div key={lever.key} className="input-group">
-              <label className="input-label">{lever.label}</label>
-              <div className="input-wrapper">
-                <input
-                  type="number"
-                  className="input-field"
-                  value={currentValue}
-                  min={lever.min}
-                  max={lever.max}
-                  step={lever.step ?? (lever.type === 'currency' ? 1000 : lever.type === 'percentage' ? 0.1 : 1)}
-                  onChange={(e) => onChange({ ...values, [lever.key]: Number(e.target.value) })}
-                  disabled={disabled}
-                />
-                <span className={`input-delta ${getDeltaClass(delta)}`}>{delta}</span>
-              </div>
+        <div className="jas-scenario-section">
+          <div className="jas-scenario-section-title">Projected Outcomes</div>
+          {result ? (
+            <div className="results-box">
+              {scenarioMetricRows.map((metric) => {
+                const baselineMetric = baselineMetricMap.get(metric.key);
+                return (
+                  <div key={metric.key} className="result-row result-row-compare">
+                    <span className="result-label">{metric.label}</span>
+                    <div className="result-compare-values">
+                      <span className="result-value result-value-before">
+                        {baselineMetric ? formatValue(baselineMetric.value, baselineMetric.type) : '—'}
+                      </span>
+                      <span className="result-arrow">→</span>
+                      <span className="result-value">{formatValue(metric.value, metric.type)}</span>
+                      <span className="input-delta">
+                        {baselineMetric ? formatDeltaValue(metric.value, baselineMetric.value, metric.type) : '—'}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+              {result?.rationale ? (
+                <div className="jas-scenario-rationale">{result.rationale}</div>
+              ) : null}
             </div>
-          );
-        })}
-
-        {result && (
-          <div className="results-box">
-            {scenarioMetricRows.map((metric) => (
-              <div key={metric.key} className="result-row">
-                <span className="result-label">{metric.label}</span>
-                <span className="result-value">{formatValue(metric.value, metric.type)}</span>
-              </div>
-            ))}
-
-            <div className="result-score">
-              <div className="result-score-label">Jaspen Score</div>
-              <div className="result-score-value">
-                {result?.overall_score ?? result?.jaspen_score ?? '—'}
-              </div>
-              <div className="result-score-change">
-                {typeof result?.overall_score === 'number' &&
-                 typeof baselineValues?.overall_score === 'number'
-                  ? (() => {
-                      const delta = result.overall_score - baselineValues.overall_score;
-                      return `${delta > 0 ? '+' : ''}${delta} points`;
-                    })()
-                  : typeof result?.jaspen_score === 'number' &&
-                    typeof baselineValues?.jaspen_score === 'number'
-                  ? (() => {
-                      const delta = result.jaspen_score - baselineValues.jaspen_score;
-                      return `${delta > 0 ? '+' : ''}${delta} points`;
-                    })()
-                  : 'New Score'}
-              </div>
+          ) : (
+            <div className="jas-scenario-empty">
+              <p>Run this scenario to see projected ROI, EBITDA, payback period, and score change.</p>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       <div className="jas-scenario-actions">
@@ -441,6 +436,8 @@ function ScenarioColumn({
 const ScenarioModeler = forwardRef(function ScenarioModeler({
   analysisId,
   baseAnalysis,
+  leverCatalog = [],
+  outputMetrics = [],
   scenarioLevers = [],
   refreshVersion = 0,
   onAdopt,
@@ -449,6 +446,7 @@ const ScenarioModeler = forwardRef(function ScenarioModeler({
   onResultA = () => {},
   onResultB = () => {},
   onCompare,
+  onRequestDeeperAnalysis = () => {},
   loading = false,
 }, ref) {
   // Determine threadId robustly (keep backward compatibility)
@@ -466,24 +464,26 @@ const ScenarioModeler = forwardRef(function ScenarioModeler({
   console.log('[ScenarioModeler] baseAnalysis.compat?', baseAnalysis?.compat);
   console.log('[ScenarioModeler] derived threadId:', threadId);
 
-  const [baselineLevers, setBaselineLevers] = useState([]);
   const baselineMetrics = useMemo(() => buildMetricRows(baseAnalysis), [baseAnalysis]);
 
   const levers = useMemo(() => {
-    if (baselineLevers.length > 0) {
-      console.log('[ScenarioModeler.levers] using baselineLevers from API:', baselineLevers.length, 'levers');
-      return baselineLevers;
+    const normalizedCatalog = normalizeScenarioLevers(leverCatalog);
+    if (normalizedCatalog.length > 0) {
+      console.log('[ScenarioModeler.levers] using leverCatalog prop:', normalizedCatalog.length, 'levers');
+      return normalizedCatalog;
     }
     const normalized = normalizeScenarioLevers(scenarioLevers);
     if (normalized.length > 0) {
       console.log('[ScenarioModeler.levers] using scenarioLevers prop:', normalized.length, 'levers');
       return normalized;
     }
-    const extracted = extractLevers(baseAnalysis);
+    const extracted = extractLevers(baseAnalysis, outputMetrics);
     console.log('[ScenarioModeler.levers] using extractLevers() fallback:', extracted.length, 'levers');
     console.log('[ScenarioModeler.levers] extractLevers found:', extracted.map(l => l.key));
     return extracted;
-  }, [baselineLevers, scenarioLevers, baseAnalysis]);
+  }, [leverCatalog, scenarioLevers, baseAnalysis, outputMetrics]);
+
+  const insufficientLevers = levers.length < 3;
 
   const initialValues = useMemo(() => {
     const vals = {};
@@ -498,31 +498,6 @@ const ScenarioModeler = forwardRef(function ScenarioModeler({
     setScenarioA(initialValues);
     setScenarioB(initialValues);
   }, [initialValues]);
-
-  // Fetch lever schema from backend
-  useEffect(() => {
-    if (!threadId) return;
-
-    async function fetchLevers() {
-      try {
-        console.log('[ScenarioModeler.fetchLevers] calling Jaspen.getLevers for threadId:', threadId);
-        const response = await Jaspen.getLevers(threadId);
-        console.log('[ScenarioModeler.fetchLevers] response:', response);
-        console.log('[ScenarioModeler.fetchLevers] response.levers?', response?.levers);
-        if (response?.levers && Array.isArray(response.levers)) {
-          const normalized = normalizeScenarioLevers(response.levers);
-          console.log('[ScenarioModeler.fetchLevers] normalized levers:', normalized);
-          setBaselineLevers(normalized);
-        } else {
-          console.warn('[ScenarioModeler.fetchLevers] No levers array in response, will fall back to extractLevers');
-        }
-      } catch (err) {
-        console.warn('[ScenarioModeler.fetchLevers] API call failed, using extracted levers:', err);
-      }
-    }
-
-    fetchLevers();
-  }, [threadId, refreshVersion]);
 
   const [resultA, setResultA] = useState(null);
   const [resultB, setResultB] = useState(null);
@@ -885,14 +860,15 @@ if (label === 'Scenario B') onResultB?.(snapshot);
       </div>
 
       <div className="jas-scenario-cols" style={{ marginBottom: '24px' }}>
-        <BaselineColumn result={baseAnalysis} metrics={baselineMetrics} />
+        <BaselineColumn metrics={baselineMetrics} />
 
         <ScenarioColumn
           title="Scenario A"
           levers={levers}
           values={scenarioA}
-          baselineValues={baseAnalysis}
-          baselineMetrics={baselineMetrics}
+          baselineResult={baseAnalysis}
+          insufficientLevers={insufficientLevers}
+          onRequestDeeperAnalysis={onRequestDeeperAnalysis}
           onChange={setScenarioA}
           onRun={() => runSingleScenario(scenarioA, setResultA, 'Scenario A')}
           onAdopt={() => adoptScenario(resultA, 'Scenario A')}
@@ -905,8 +881,9 @@ if (label === 'Scenario B') onResultB?.(snapshot);
           title="Scenario B"
           levers={levers}
           values={scenarioB}
-          baselineValues={baseAnalysis}
-          baselineMetrics={baselineMetrics}
+          baselineResult={baseAnalysis}
+          insufficientLevers={insufficientLevers}
+          onRequestDeeperAnalysis={onRequestDeeperAnalysis}
           onChange={setScenarioB}
           onRun={() => runSingleScenario(scenarioB, setResultB, 'Scenario B')}
           onAdopt={() => adoptScenario(resultB, 'Scenario B')}

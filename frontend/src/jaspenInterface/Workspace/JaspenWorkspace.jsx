@@ -946,6 +946,8 @@ const [activeScenarioId, setActiveScenarioId] = useState('baseline');
 const [scenarioDrawerView, setScenarioDrawerView] = useState('assistant');
 const [aiWbsBusy, setAiWbsBusy] = useState(false);
   const [scenarioLevers, setScenarioLevers] = useState([]);
+  const [leverCatalog, setLeverCatalog] = useState([]);
+  const [scenarioOutputMetrics, setScenarioOutputMetrics] = useState([]);
   const [threadEditOpen, setThreadEditOpen] = useState(false);
   const [bundleCurrentScorecard, setBundleCurrentScorecard] = useState(null);
   const [bundleBaselineScorecard, setBundleBaselineScorecard] = useState(null);
@@ -1073,43 +1075,12 @@ const refreshBundle = async (tid) => {
     setStrategyObjective(bundleObjective);
 
     setSavedScenarios(normalized);
+    const bundleLeverCatalog = Array.isArray(bundle?.lever_catalog) ? bundle.lever_catalog : [];
+    const bundleOutputMetrics = Array.isArray(bundle?.output_metrics) ? bundle.output_metrics : [];
     const bundleLevers = Array.isArray(bundle?.scenario_levers) ? bundle.scenario_levers : [];
-    if (bundleLevers.length > 0) {
-      setScenarioLevers(bundleLevers);
-    } else if (bundle?.current_scorecard?.compat) {
-      const fallbackLevers = Object.entries(bundle.current_scorecard.compat)
-        .filter(([, v]) => typeof v === 'number' && Number.isFinite(v))
-        .map(([key, value]) => ({
-          key,
-          label: key.replace(/_/g, ' '),
-          type: 'number',
-          current: value,
-        }));
-      setScenarioLevers(fallbackLevers);
-    } else if (bundle?.baseline_scorecard?.compat) {
-      const fallbackLevers = Object.entries(bundle.baseline_scorecard.compat)
-        .filter(([, v]) => typeof v === 'number' && Number.isFinite(v))
-        .map(([key, value]) => ({
-          key,
-          label: key.replace(/_/g, ' '),
-          type: 'number',
-          current: value,
-        }));
-      setScenarioLevers(fallbackLevers);
-    } else if (analysisResult?.compat || analysisResult?.inputs) {
-      const source = analysisResult?.compat || analysisResult?.inputs || {};
-      const fallbackLevers = Object.entries(source)
-        .filter(([, v]) => typeof v === 'number' && Number.isFinite(v))
-        .map(([key, value]) => ({
-          key,
-          label: key.replace(/_/g, ' '),
-          type: 'number',
-          current: value,
-        }));
-      setScenarioLevers(fallbackLevers);
-    } else {
-      setScenarioLevers([]);
-    }
+    setLeverCatalog(bundleLeverCatalog);
+    setScenarioOutputMetrics(bundleOutputMetrics);
+    setScenarioLevers(bundleLevers);
 
     const currentScorecard = bundle?.current_scorecard || null;
     const baselineScorecard = bundle?.baseline_scorecard || null;
@@ -7804,9 +7775,16 @@ onClick={async () => {
                       analysisId={sessionId}
                       loading={bundleLoading && !(bundleBaselineScorecard || baselineRef.current || analysisResult)}
                       baseAnalysis={bundleBaselineScorecard || baselineRef.current || analysisResult}
+                      leverCatalog={leverCatalog}
+                      outputMetrics={scenarioOutputMetrics}
                       scenarioLevers={scenarioLevers}
                       refreshVersion={scenarioMutationVersion}
                       savedScenarios={savedScenarios}
+                      onRequestDeeperAnalysis={() => {
+                        setAiDrawerOpen(true);
+                        setScenarioDrawerView('assistant');
+                        setHelpInput('Run a deeper financial analysis for this project');
+                      }}
                       onAdoptScenario={handleScenarioAdopt}
                       onAdoptScorecard={handleAdoptScorecard}
                       onBackToSummary={() => { setActiveTab('summary'); setView('summary'); }}
