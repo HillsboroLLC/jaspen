@@ -76,6 +76,7 @@ function normalizeScenarioLevers(scenarioLevers = []) {
         ui_scale: lever.ui_scale || null,
         display_multiplier: displayMultiplier,
         description: lever.description || '',
+        source: lever.source || 'estimated',
       };
     })
     .filter(Boolean);
@@ -273,8 +274,9 @@ function buildScenarioMetricRows(result = {}) {
 // ============================================================================
 // BASELINE COLUMN (Read-only)
 // ============================================================================
-function BaselineColumn({ metrics }) {
+function BaselineColumn({ metrics, assumptions }) {
   const rows = Array.isArray(metrics) ? metrics : [];
+  const assumptionRows = Array.isArray(assumptions) ? assumptions : [];
   return (
     <div className="jas-scenario-col">
       <div className="jas-scenario-header">
@@ -295,6 +297,37 @@ function BaselineColumn({ metrics }) {
             <span className="jas-scenario-field-value">—</span>
           </div>
         )}
+
+        <div className="jas-scenario-assumptions">
+          <div className="jas-scenario-section-title">Baseline Assumptions</div>
+          <p className="jas-scenario-assumptions-copy">
+            These assumptions are driving the current baseline projections. Adjust them in Scenario A or B to test more accurate or more ambitious outcomes.
+          </p>
+          {assumptionRows.length > 0 ? (
+            <div className="jas-scenario-assumption-list">
+              {assumptionRows.map((assumption) => (
+                <div key={assumption.key} className="jas-scenario-assumption-row">
+                  <div className="jas-scenario-assumption-main">
+                    <div className="jas-scenario-assumption-label-row">
+                      <span className="jas-scenario-assumption-label">{assumption.label}</span>
+                      <span className={`jas-scenario-assumption-source jas-scenario-assumption-source-${assumption.source || 'estimated'}`}>
+                        {assumption.source === 'observed' ? 'Provided' : 'Estimated'}
+                      </span>
+                    </div>
+                    {assumption.description ? (
+                      <div className="jas-scenario-assumption-description">{assumption.description}</div>
+                    ) : null}
+                  </div>
+                  <div className="jas-scenario-assumption-value">{formatValue(assumption.value, assumption.type)}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="jas-scenario-empty">
+              <p>Jaspen does not yet have enough structured assumptions to explain this baseline.</p>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -484,6 +517,17 @@ const ScenarioModeler = forwardRef(function ScenarioModeler({
   }, [leverCatalog, scenarioLevers, baseAnalysis, outputMetrics]);
 
   const insufficientLevers = levers.length < 3;
+  const baselineAssumptions = useMemo(
+    () => levers.map((lever) => ({
+      key: lever.key,
+      label: lever.label,
+      value: lever.value,
+      type: lever.type,
+      description: lever.description,
+      source: lever.source || 'estimated',
+    })),
+    [levers]
+  );
 
   const initialValues = useMemo(() => {
     const vals = {};
@@ -860,7 +904,7 @@ if (label === 'Scenario B') onResultB?.(snapshot);
       </div>
 
       <div className="jas-scenario-cols" style={{ marginBottom: '24px' }}>
-        <BaselineColumn metrics={baselineMetrics} />
+        <BaselineColumn metrics={baselineMetrics} assumptions={baselineAssumptions} />
 
         <ScenarioColumn
           title="Scenario A"
