@@ -68,20 +68,23 @@ export default function ScoreDashboard({
   onExportConversationPdf = null,
   onExportConversationMarkdown = null,
   loading = false,
+  drawerOpen = false,
 }) {
   const getGridColumns = useCallback(() => {
     if (typeof window === 'undefined') return 6;
     if (window.innerWidth <= 768) return 1;
-    if (window.innerWidth <= 1024) return 4;
-    if (window.innerWidth <= 1320) return 8;
+    if (window.innerWidth <= 1024) return drawerOpen ? 2 : 4;
+    if (window.innerWidth <= 1320) return drawerOpen ? 6 : 8;
+    if (drawerOpen) return 8;
     return 12;
-  }, []);
+  }, [drawerOpen]);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [expandedCategoryKeys, setExpandedCategoryKeys] = useState([]);
   const [cardOrder, setCardOrder] = useState([]);
   const [cardLayouts, setCardLayouts] = useState({});
   const [draggedCardKey, setDraggedCardKey] = useState(null);
   const [dragOverCardKey, setDragOverCardKey] = useState(null);
+  const [dragOverPlacement, setDragOverPlacement] = useState('before');
   const [resizeState, setResizeState] = useState(null);
   const [gridColumns, setGridColumns] = useState(() => getGridColumns());
   const exportMenuRef = useRef(null);
@@ -852,13 +855,14 @@ export default function ScoreDashboard({
     });
   }, [sectionCards, cardOrder]);
 
-  const moveCard = useCallback((sourceKey, targetKey) => {
+  const moveCard = useCallback((sourceKey, targetKey, placement = 'before') => {
     if (!sourceKey || !targetKey || sourceKey === targetKey) return;
     const orderedKeys = orderedSectionCards.map((section) => section.key);
     const next = orderedKeys.filter((key) => key !== sourceKey);
     const targetIndex = next.indexOf(targetKey);
     if (targetIndex === -1) return;
-    next.splice(targetIndex, 0, sourceKey);
+    const insertIndex = placement === 'after' ? targetIndex + 1 : targetIndex;
+    next.splice(insertIndex, 0, sourceKey);
     persistCardOrder(next);
   }, [orderedSectionCards, persistCardOrder]);
 
@@ -869,7 +873,7 @@ export default function ScoreDashboard({
   if (!selectedSnapshot && !analysisResult) return <div className="score-dashboard-container"><div className="empty-state"><p>No analysis result available</p></div></div>;
 
   return (
-    <div className="score-dashboard-container">
+    <div className={`score-dashboard-container ${drawerOpen ? 'drawer-open' : ''}`}>
         <div className="score-toolbar">
           <div className="score-toolbar-copy">
             <span className="score-toolbar-kicker">{selectedSnapshot ? 'Selected scorecard' : 'Current scorecard'}</span>
@@ -908,49 +912,63 @@ export default function ScoreDashboard({
             </div>
           )}
         </div>
-        <div className="score-body-grid unified-layout" ref={dashboardGridRef}>
+        <div className={`score-body-grid unified-layout ${drawerOpen ? 'drawer-open' : ''}`} ref={dashboardGridRef}>
           {orderedSectionCards.map((section) => (
             <section
               key={section.key}
-              className={`score-section-card ${dragOverCardKey === section.key ? 'is-drag-target' : ''}`}
+              className={`score-section-card ${dragOverCardKey === section.key ? 'is-drag-target' : ''} ${dragOverCardKey === section.key ? `drag-placement-${dragOverPlacement}` : ''}`}
               onDragOver={(event) => {
                 event.preventDefault();
                 event.dataTransfer.dropEffect = 'move';
+                const rect = event.currentTarget.getBoundingClientRect();
+                const horizontalPlacement = event.clientX < rect.left + rect.width / 2 ? 'before' : 'after';
+                if (dragOverPlacement !== horizontalPlacement) {
+                  setDragOverPlacement(horizontalPlacement);
+                }
                 if (draggedCardKey && draggedCardKey !== section.key && dragOverCardKey !== section.key) {
                   setDragOverCardKey(section.key);
                 }
               }}
               onDrop={(event) => {
                 const sourceKey = draggedCardKey || event.dataTransfer.getData('text/plain');
-                moveCard(sourceKey, section.key);
+                moveCard(sourceKey, section.key, dragOverPlacement);
                 setDraggedCardKey(null);
                 setDragOverCardKey(null);
+                setDragOverPlacement('before');
               }}
               onDragLeave={() => {
-                if (dragOverCardKey === section.key) setDragOverCardKey(null);
+                if (dragOverCardKey === section.key) {
+                  setDragOverCardKey(null);
+                  setDragOverPlacement('before');
+                }
               }}
               style={{
                 gridColumn: `span ${Math.max(1, Math.min(gridColumns, (cardLayouts[section.key] || DEFAULT_CARD_LAYOUT[section.key] || { colSpan: 4 }).colSpan || 4))}`,
                 gridRow: `span ${Math.max(1, Math.min(4, (cardLayouts[section.key] || DEFAULT_CARD_LAYOUT[section.key] || { rowSpan: 1 }).rowSpan || 1))}`,
               }}
             >
-              <div className="section-card-head">
+              <div
+                className={`section-card-head ${draggedCardKey === section.key ? 'is-dragging' : ''}`}
+                draggable
+                title="Drag card to reorder"
+                aria-label={`Drag ${section.title} card to reorder`}
+                onDragStart={(event) => {
+                  setDraggedCardKey(section.key);
+                  setDragOverCardKey(null);
+                  setDragOverPlacement('before');
+                  event.dataTransfer.effectAllowed = 'move';
+                  event.dataTransfer.setData('text/plain', section.key);
+                }}
+                onDragEnd={() => {
+                  setDraggedCardKey(null);
+                  setDragOverCardKey(null);
+                  setDragOverPlacement('before');
+                }}
+              >
                 <span className="section-card-title">{section.title}</span>
                 <div
                   className={`card-drag-handle ${draggedCardKey === section.key ? 'is-dragging' : ''}`}
-                  draggable
-                  title="Drag card to reorder"
-                  aria-label={`Drag ${section.title} card to reorder`}
-                  onDragStart={(event) => {
-                    setDraggedCardKey(section.key);
-                    setDragOverCardKey(null);
-                    event.dataTransfer.effectAllowed = 'move';
-                    event.dataTransfer.setData('text/plain', section.key);
-                  }}
-                  onDragEnd={() => {
-                    setDraggedCardKey(null);
-                    setDragOverCardKey(null);
-                  }}
+                  aria-hidden="true"
                 >
                   <FontAwesomeIcon icon={faGripVertical} />
                 </div>

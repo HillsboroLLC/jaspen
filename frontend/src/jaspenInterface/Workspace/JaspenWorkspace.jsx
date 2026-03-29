@@ -7634,6 +7634,7 @@ onClick={async () => {
       <ScoreDashboard
         analysisResult={activeScorecard}
         loading={bundleLoading && !activeScorecard}
+        drawerOpen={aiDrawerOpen}
 
         scoreVariants={scoreVariants}
         selectedVariantId={selectedVariantId}
