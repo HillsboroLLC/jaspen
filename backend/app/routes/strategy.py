@@ -940,6 +940,38 @@ def _load_thread_conversation(user_id, thread_id):
     return []
 
 
+def _persist_scorecard_assistant_turn(session, session_result, instruction, reply):
+    user_text = str(instruction or '').strip()
+    assistant_text = str(reply or '').strip()
+    if not user_text or not assistant_text:
+        return
+
+    timestamp = datetime.utcnow().isoformat()
+    chat_history = session.get('chat_history')
+    if not isinstance(chat_history, list):
+        chat_history = session_result.get('chat_history') if isinstance(session_result, dict) else None
+    if not isinstance(chat_history, list):
+        chat_history = []
+
+    chat_history = list(chat_history)
+    chat_history.append({
+        'role': 'user',
+        'text': user_text,
+        'content': user_text,
+        'timestamp': timestamp,
+    })
+    chat_history.append({
+        'role': 'assistant',
+        'text': assistant_text,
+        'content': assistant_text,
+        'timestamp': timestamp,
+    })
+
+    session['chat_history'] = chat_history
+    if isinstance(session_result, dict):
+        session_result['chat_history'] = chat_history
+
+
 def _load_thread_ai_insights(user_id, thread_id, limit=2):
     try:
         sessions = load_user_sessions(user_id) or {}
@@ -4288,6 +4320,8 @@ Rules:
         updated_scorecard = None
         selected_scorecard_id = snapshot_state['selected_id']
 
+        _persist_scorecard_assistant_turn(session, session_result, instruction, reply)
+
         if updated_patch:
             updated_scorecard = _merge_scorecard_patch(base_scorecard, updated_patch)
             current_selected = snapshot_state['selected_snapshot'] or snapshot_state['baseline']
@@ -4329,11 +4363,18 @@ Rules:
                 'selected_scorecard_id': edited_id,
             }
             session['result'] = session_result
-            session['timestamp'] = datetime.utcnow().isoformat()
-            sessions[session_key or thread_id] = session
-            save_user_sessions(user_id, sessions)
-
             selected_scorecard_id = edited_id
+        else:
+            session['result'] = session_result
+
+        session['timestamp'] = datetime.utcnow().isoformat()
+        sessions[session_key or thread_id] = session
+        persisted = save_user_sessions(user_id, sessions)
+        if not persisted:
+            current_app.logger.error(
+                "[scorecard_assistant] save_user_sessions failed for user=%s thread=%s",
+                user_id, thread_id,
+            )
 
         return jsonify({
             'success': True,
@@ -4341,6 +4382,7 @@ Rules:
             'updated_scorecard': updated_scorecard,
             'updated_sections': updated_sections,
             'selected_scorecard_id': selected_scorecard_id,
+            'persisted': persisted,
         }), 200
 
     except Exception as e:

@@ -226,6 +226,67 @@ const resolveScoreWorkspaceContext = ({
   };
 };
 
+const buildScorecardSnapshots = ({
+  threadId = '',
+  baselineScorecard = null,
+  currentScorecard = null,
+  scenarioScorecards = [],
+}) => {
+  const snapshots = [];
+  const normalizedThreadId = String(threadId || '').trim();
+
+  if (baselineScorecard && typeof baselineScorecard === 'object') {
+    snapshots.push({
+      ...baselineScorecard,
+      id:
+        baselineScorecard.analysis_id ||
+        baselineScorecard.id ||
+        baselineScorecard.analysisId ||
+        `baseline_${normalizedThreadId || Date.now()}`,
+      label: baselineScorecard.label || 'Baseline',
+      isBaseline: true,
+    });
+  }
+
+  if (currentScorecard && typeof currentScorecard === 'object') {
+    const currentId =
+      currentScorecard.analysis_id ||
+      currentScorecard.id ||
+      currentScorecard.analysisId ||
+      `current_${normalizedThreadId || Date.now()}`;
+    const baselineId =
+      baselineScorecard?.analysis_id ||
+      baselineScorecard?.id ||
+      baselineScorecard?.analysisId ||
+      null;
+
+    if (!baselineId || currentId !== baselineId) {
+      snapshots.push({
+        ...currentScorecard,
+        id: currentId,
+        label: currentScorecard.label || currentScorecard.project_name || 'Current',
+        isBaseline: Boolean(currentScorecard.isBaseline),
+      });
+    }
+  }
+
+  (Array.isArray(scenarioScorecards) ? scenarioScorecards : []).forEach((scorecard, idx) => {
+    if (!scorecard || typeof scorecard !== 'object') return;
+    snapshots.push({
+      ...scorecard,
+      id:
+        scorecard.analysis_id ||
+        scorecard.id ||
+        scorecard.analysisId ||
+        `scenario_${idx}_${normalizedThreadId || Date.now()}`,
+      label: scorecard.label || scorecard.project_name || `Scenario ${idx + 1}`,
+      isBaseline: false,
+    });
+  });
+
+  return snapshots;
+};
+
 const parseHistoryTimestamp = (value) => {
   const ts = new Date(value || 0).getTime();
   return Number.isFinite(ts) ? ts : 0;
@@ -1050,8 +1111,6 @@ const refreshBundle = async (tid) => {
       setScenarioLevers([]);
     }
 
-    // Hydrate scorecard snapshots from bundle (current + scenario scorecards)
-    const bundleSnapshots = [];
     const currentScorecard = bundle?.current_scorecard || null;
     const baselineScorecard = bundle?.baseline_scorecard || null;
     setBundleCurrentScorecard(currentScorecard);
@@ -1062,28 +1121,15 @@ const refreshBundle = async (tid) => {
         : (baselineScorecard && typeof baselineScorecard === 'object' && Object.keys(baselineScorecard).length > 0)
           ? baselineScorecard
           : null;
-    if (currentScorecard && typeof currentScorecard === 'object') {
-      bundleSnapshots.push({
-        ...currentScorecard,
-        id: currentScorecard.analysis_id || currentScorecard.id || currentScorecard.analysisId || `current_${tid}`,
-        label: currentScorecard.label || currentScorecard.project_name || 'Current',
-        isBaseline: Boolean(currentScorecard.isBaseline),
-        createdAt: Date.now(),
-      });
-    }
-
     const scenarioScorecards = serverScenarios
       .map((s) => s?.scorecard || s?.analysis_result || s?.result || null)
       .filter((s) => s && typeof s === 'object');
 
-    scenarioScorecards.forEach((sc, idx) => {
-      bundleSnapshots.push({
-        ...sc,
-        id: sc.analysis_id || sc.id || sc.analysisId || `scenario_${idx}_${tid}`,
-        label: sc.label || sc.project_name || `Scenario ${idx + 1}`,
-        isBaseline: false,
-        createdAt: Date.now(),
-      });
+    const bundleSnapshots = buildScorecardSnapshots({
+      threadId: tid,
+      baselineScorecard,
+      currentScorecard,
+      scenarioScorecards,
     });
 
     if (bundleSnapshots.length > 0) {
@@ -3614,25 +3660,67 @@ if (rawHistory.length > 0) {
       }
 
       // Restore scorecard (completed sessions)
-      const bundleScorecard =
-        (restoreBundle?.current_scorecard && typeof restoreBundle.current_scorecard === 'object' && Object.keys(restoreBundle.current_scorecard).length > 0)
-          ? restoreBundle.current_scorecard
-          : (restoreBundle?.baseline_scorecard && typeof restoreBundle.baseline_scorecard === 'object' && Object.keys(restoreBundle.baseline_scorecard).length > 0)
-            ? restoreBundle.baseline_scorecard
-            : null;
+      const currentScorecard = restoreBundle?.current_scorecard || null;
+      const baselineScorecard = restoreBundle?.baseline_scorecard || null;
+      const scenarioScorecards = Array.isArray(restoreBundle?.scenarios)
+        ? restoreBundle.scenarios
+            .map((entry) => entry?.scorecard || entry?.analysis_result || entry?.result || null)
+            .filter((entry) => entry && typeof entry === 'object')
+        : [];
+      const restoreSnapshots = buildScorecardSnapshots({
+        threadId: sid,
+        baselineScorecard,
+        currentScorecard,
+        scenarioScorecards,
+      });
+      const restoreBaselineId =
+        baselineScorecard?.analysis_id ||
+        baselineScorecard?.id ||
+        baselineScorecard?.analysisId ||
+        restoreSnapshots.find((snapshot) => snapshot?.isBaseline)?.id ||
+        null;
+      const restoreSelectedId =
+        currentScorecard?.analysis_id ||
+        currentScorecard?.id ||
+        currentScorecard?.analysisId ||
+        restoreBaselineId ||
+        '';
+      const restoreHistory = Array.isArray(session?.analysis_history) ? session.analysis_history : analysisHistory;
+      const restoreBaseResult =
+        hasMeaningfulScorecardData(session?.result) ? session.result : session?.result || null;
+      const restoreInitialView =
+        session?.status === 'completed' ||
+        session?.score != null ||
+        restoreSnapshots.length > 0 ||
+        hasMeaningfulScorecardData(restoreBaseResult)
+          ? 'summary'
+          : 'intake';
+      const restoreContext = resolveScoreWorkspaceContext({
+        analysisHistory: restoreHistory,
+        sessionId: sid,
+        currentSessionId: sid,
+        selectedScorecardId: restoreSelectedId,
+        scorecardSnapshots: restoreSnapshots,
+        selectedVariant: null,
+        analysisResult: restoreBaseResult,
+        bundleCurrentScorecard: currentScorecard,
+        bundleBaselineScorecard: baselineScorecard,
+        view: restoreInitialView,
+        activeTab: 'summary',
+      });
+      const restoredOwnerThreadId = restoreContext.ownerThreadId || sid;
 
-      const historyScorecard = extractMeaningfulHistoryResult(session?.analysis_history);
-      const fullScorecard =
-        hasMeaningfulScorecardData(bundleScorecard)
-          ? bundleScorecard
-          : hasMeaningfulScorecardData(session?.result)
-            ? session.result
-            : hasMeaningfulScorecardData(historyScorecard)
-              ? historyScorecard
-              : null;
+      setSessionId(restoredOwnerThreadId);
+      setCurrentSessionId(restoredOwnerThreadId);
+      setLastSessionId(restoredOwnerThreadId);
+      setBundleCurrentScorecard(currentScorecard);
+      setBundleBaselineScorecard(baselineScorecard);
+      setScorecardSnapshots(restoreSnapshots);
+      setBaselineScorecardId(restoreBaselineId);
+      setSelectedScorecardId(restoreSelectedId || restoreBaselineId || null);
 
-      if (((session.status === 'completed' || session.score != null) && fullScorecard) || bundleScorecard) {
-        const normalized = normalizeAnalysis(fullScorecard);
+      if (restoreContext.hasScorecard && hasMeaningfulScorecardData(restoreContext.scorecard)) {
+        const normalized = normalizeAnalysis(restoreContext.scorecard);
         baselineRef.current = normalized;
         setAnalysisResult(normalized);
         setView('summary');
@@ -3642,8 +3730,8 @@ if (rawHistory.length > 0) {
       }
 
       // Always refresh readiness + scenarios from backend truth
-      fetchReadinessFor(sid);
-      refreshBundle(sid);
+      fetchReadinessFor(restoredOwnerThreadId);
+      refreshBundle(restoredOwnerThreadId);
       setInitialRestorePending(false);
     })();
 
@@ -5010,7 +5098,7 @@ console.log('[Finish&Analyze] data.analysis_result.meta.extracted_levers?', data
     const text = (input || '').trim();
     if (busy) return;
     if (effectiveIsViewer) {
-      showToast('Viewers can review shared projects but cannot edit or rescore them.', 'info');
+      showToast('Viewers can review shared projects but cannot edit them.', 'info');
       return;
     }
     if (!text && (!pendingFiles || pendingFiles.length === 0)) return;
@@ -5932,6 +6020,18 @@ console.log('[Finish&Analyze] data.analysis_result.meta.extracted_levers?', data
     }
   };
 
+// Persist a user+assistant exchange to the thread so it survives logout/login.
+const persistSidebarExchange = async (threadId, userText, assistantText) => {
+  if (!threadId || !userText) return;
+  try {
+    const msgs = [{ role: 'user', content: userText }];
+    if (assistantText) msgs.push({ role: 'assistant', content: assistantText });
+    await Jaspen.appendMessages(threadId, msgs);
+  } catch (e) {
+    console.warn('[persistSidebarExchange] failed', e);
+  }
+};
+
 const sendAIMessage = async () => {
   const text = (aiInput || '').trim();
   if (!text || !sessionId || busy) return;
@@ -6013,10 +6113,12 @@ const sendAIMessage = async () => {
               : prev
           ));
 
+          const renameReplyText = `Updated the initiative title to "${nextTitle}".`;
           setMessages((prev) => [
             ...prev,
-            { role: 'ai', text: `Updated the initiative title to "${nextTitle}".` },
+            { role: 'ai', text: renameReplyText },
           ]);
+          await persistSidebarExchange(aiThreadId, text, renameReplyText);
           showToast('Initiative title updated', 'success');
           return;
         } catch (renameErr) {
@@ -6038,13 +6140,12 @@ const sendAIMessage = async () => {
         setStrategyObjective(normalizeStrategyObjective(aiScenario?.strategy_objective || strategyObjective));
         const proposal = buildAiScenarioProposal(aiScenario, text, aiThreadId, strategyObjective);
         setAiScenarioProposal(proposal);
+        const scenarioReplyText = `I drafted "${proposal.label}". Review, modify, then Accept or Reject.`;
         setMessages((prev) => [
           ...prev,
-          {
-            role: 'ai',
-            text: `I drafted "${proposal.label}". Review, modify, then Accept or Reject.`,
-          },
+          { role: 'ai', text: scenarioReplyText },
         ]);
+        await persistSidebarExchange(aiThreadId, text, scenarioReplyText);
         showToast('AI scenario draft ready', 'success');
         return;
       } catch (scenarioErr) {
@@ -6552,10 +6653,10 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
     hasMeaningfulScorecardData(bundleScorecard)
       ? bundleScorecard
       : hasMeaningfulScorecardData(merged?.result)
-      ? merged.result
-      : hasMeaningfulScorecardData(merged)
-        ? merged
-        : null;
+        ? merged.result
+        : hasMeaningfulScorecardData(merged)
+          ? merged
+          : null;
 
   const mergedObjective = normalizeStrategyObjective(
     merged?.strategy_objective || merged?.result?.strategy_objective || 'balanced'
@@ -6573,15 +6674,60 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
     baseId,
   ) || `restored_${Date.now()}`;
 
+  const currentScorecard = bundle?.current_scorecard || null;
+  const baselineScorecard = bundle?.baseline_scorecard || null;
+  const scenarioScorecards = Array.isArray(bundle?.scenarios)
+    ? bundle.scenarios
+        .map((entry) => entry?.scorecard || entry?.analysis_result || entry?.result || null)
+        .filter((entry) => entry && typeof entry === 'object')
+    : [];
+  const nextSnapshots = buildScorecardSnapshots({
+    threadId: resolvedOwnerThreadId,
+    baselineScorecard,
+    currentScorecard,
+    scenarioScorecards,
+  });
+  const nextBaselineId =
+    baselineScorecard?.analysis_id ||
+    baselineScorecard?.id ||
+    baselineScorecard?.analysisId ||
+    nextSnapshots.find((snapshot) => snapshot?.isBaseline)?.id ||
+    null;
+  const nextSelectedScorecardId =
+    currentScorecard?.analysis_id ||
+    currentScorecard?.id ||
+    currentScorecard?.analysisId ||
+    nextBaselineId ||
+    selectedScorecardId ||
+    '';
+  const selectionContext = resolveScoreWorkspaceContext({
+    analysisHistory,
+    sessionId: resolvedOwnerThreadId,
+    currentSessionId: resolvedOwnerThreadId,
+    selectedScorecardId: nextSelectedScorecardId,
+    scorecardSnapshots: nextSnapshots,
+    selectedVariant: null,
+    analysisResult: hasMeaningfulScorecardData(merged?.result) ? merged.result : merged,
+    bundleCurrentScorecard: currentScorecard,
+    bundleBaselineScorecard: baselineScorecard,
+    view: merged?.status === 'in_progress' && !hasMeaningfulScorecardData(mergedScorecard)
+      ? 'intake'
+      : 'summary',
+    activeTab: 'summary',
+  });
+  const resolvedScorecard = selectionContext.scorecard || mergedScorecard || merged || {};
+  const resolvedActiveThreadId = selectionContext.ownerThreadId || resolvedOwnerThreadId;
+
   // Readiness normalization handled by normalizeReadiness() helper
   // Readiness is ONLY fetched from backend via fetchReadinessFor - no session cache
 
   // Branch: in-progress sessions return to intake with chat restored only when
   // they do not already carry a meaningful saved scorecard.
-  if (!mergedScorecard && merged?.status === 'in_progress' && Array.isArray(merged.chat_history)) {
-    const sid = resolvedOwnerThreadId;
+  if (!selectionContext.hasScorecard && merged?.status === 'in_progress' && Array.isArray(merged.chat_history)) {
+    const sid = resolvedActiveThreadId;
     setSessionId(sid);
     setCurrentSessionId(sid);
+    setLastSessionId(sid);
 
     const restoredMessages = toUiMessages(merged.chat_history);
     setMessages(restoredMessages);
@@ -6597,9 +6743,10 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
 
 // Completed session -> workspace summary (prefer the persisted result blob)
 try {
-  const id = resolvedOwnerThreadId;
+  const id = resolvedActiveThreadId;
 
   setSessionId(id);
+  setLastSessionId(id);
   const bundleHistory = Array.isArray(bundle?.messages)
     ? bundle.messages.map((m) => ({
         role: m?.role || (m?.sender === 'user' ? 'user' : 'assistant'),
@@ -6618,42 +6765,16 @@ try {
   setCurrentSessionId(id);
 
   if (bundle) {
-    const currentScorecard = bundle.current_scorecard || null;
-    const baselineScorecard = bundle.baseline_scorecard || null;
     setBundleCurrentScorecard(currentScorecard);
     setBundleBaselineScorecard(baselineScorecard);
-
-    const nextSnapshots = [];
-    if (baselineScorecard && typeof baselineScorecard === 'object') {
-      nextSnapshots.push({
-        ...baselineScorecard,
-        id: baselineScorecard.analysis_id || baselineScorecard.id || `baseline_${id}`,
-        label: baselineScorecard.label || 'Baseline',
-        isBaseline: true,
-      });
-    }
-    if (
-      currentScorecard &&
-      typeof currentScorecard === 'object' &&
-      (currentScorecard.analysis_id || currentScorecard.id) !== (baselineScorecard?.analysis_id || baselineScorecard?.id)
-    ) {
-      nextSnapshots.push({
-        ...currentScorecard,
-        id: currentScorecard.analysis_id || currentScorecard.id || `current_${id}`,
-        label: currentScorecard.label || currentScorecard.project_name || 'Current',
-        isBaseline: false,
-      });
-    }
     if (nextSnapshots.length > 0) {
       setScorecardSnapshots(nextSnapshots);
-      const baselineId = baselineScorecard?.analysis_id || baselineScorecard?.id || nextSnapshots[0]?.id || null;
-      const currentId = currentScorecard?.analysis_id || currentScorecard?.id || baselineId;
-      setBaselineScorecardId(baselineId);
-      setSelectedScorecardId(currentId);
+      setBaselineScorecardId(nextBaselineId);
+      setSelectedScorecardId(nextSelectedScorecardId || nextBaselineId || null);
     }
   }
 
-const fullScorecard = mergedScorecard;
+const fullScorecard = resolvedScorecard;
 
 // GOAL B part 2: Check for missing detailed sections and hydrate if needed
 const missingSections =
@@ -7149,7 +7270,7 @@ onClick={async () => {
   >
     <div className="jas-ai-header">
       <div className="jas-ai-title">
-        <span>{isScenarioTab && scenarioDrawerView === 'scorecard' ? 'Score Summary' : 'Jaspen'}</span>
+        <span>Jaspen</span>
       </div>
       <button className="jas-close-btn" onClick={toggleAIDrawer}>
         <FontAwesomeIcon icon={faTimes} />
@@ -7170,7 +7291,7 @@ onClick={async () => {
           className={`jas-ai-toggle-btn ${scenarioDrawerView === 'scorecard' ? 'active' : ''}`}
           onClick={() => setScenarioDrawerView('scorecard')}
         >
-          Score Summary
+          Scorecard
         </button>
       </div>
     )}

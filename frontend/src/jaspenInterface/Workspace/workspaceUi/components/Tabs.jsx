@@ -9,7 +9,6 @@
  *   const tabs = [
  *     { id: 'score',     label: 'Score' },
  *     { id: 'scenarios', label: 'Scenarios' },
- *     { id: 'refine',    label: 'Refine & Rescore' },
  *   ];
  *   <Tabs tabs={tabs} activeId={activeTab} onTabChange={setActiveTab} />
  */

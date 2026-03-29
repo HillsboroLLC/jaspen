@@ -22,6 +22,7 @@ export const endpoints = {
   // Threads
   getThread:      (threadId) => `${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(threadId)}`,
   updateThread:   (threadId) => `${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(threadId)}`,
+  appendMessages: (threadId) => `${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(threadId)}/messages`,
   messageFeedback: (threadId, messageIndex) => `${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(threadId)}/messages/${encodeURIComponent(messageIndex)}/feedback`,
   regenerate: `${API_BASE}/api/v1/ai-agent/conversation/regenerate`,
   undoMutations: `${API_BASE}/api/v1/ai-agent/conversation/undo-mutations`,
@@ -1053,6 +1054,9 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
 
   scorecardAssistant: async (threadId, payload = {}) =>
     postJSON(endpoints.scorecardAssistant(threadId), payload, { withSid: true }),
+
+  appendMessages: async (threadId, messages = []) =>
+    postJSON(endpoints.appendMessages(threadId), { messages }, { withSid: true }),
 
   // Connector settings
   getConnectorStatus: async () =>
