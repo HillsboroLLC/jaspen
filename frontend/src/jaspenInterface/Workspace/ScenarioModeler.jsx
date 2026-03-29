@@ -271,12 +271,84 @@ function buildScenarioMetricRows(result = {}) {
     .filter(Boolean);
 }
 
+function splitNarrativeSentences(value = '') {
+  return String(value || '')
+    .split(/(?<=[.!?])\s+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function looksLikeFinancialContext(sentence = '') {
+  const lower = String(sentence || '').toLowerCase();
+  return (
+    /[%$]/.test(lower) ||
+    /\bq[1-4]\b/.test(lower) ||
+    /\b\d+\s*(month|months|week|weeks|fte|tool|tools|phase|phases|user|users)\b/.test(lower) ||
+    [
+      'roi',
+      'savings',
+      'cost',
+      'budget',
+      'timeline',
+      'migration',
+      'adoption',
+      'rollout',
+      'spend',
+      'ebitda',
+      'revenue',
+      'payback',
+      'implementation',
+      'platform',
+    ].some((token) => lower.includes(token))
+  );
+}
+
+function deriveBaselineContextSignals(baseAnalysis = {}) {
+  const signals = [];
+  const seen = new Set();
+  const pushSignal = (source, text) => {
+    const cleaned = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!cleaned) return;
+    const key = `${source}:${cleaned.toLowerCase()}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    signals.push({ key, source, text: cleaned });
+  };
+
+  const explicitAssumptions = Array.isArray(baseAnalysis?.assumptions) ? baseAnalysis.assumptions : [];
+  explicitAssumptions.forEach((item) => pushSignal('Assumption', item));
+
+  splitNarrativeSentences(baseAnalysis?.executive_summary)
+    .filter(looksLikeFinancialContext)
+    .slice(0, 3)
+    .forEach((sentence) => pushSignal('Executive summary', sentence));
+
+  const keyInsights = Array.isArray(baseAnalysis?.key_insights) ? baseAnalysis.key_insights : [];
+  keyInsights
+    .filter(looksLikeFinancialContext)
+    .slice(0, 3)
+    .forEach((item) => pushSignal('Key insight', item));
+
+  const componentRationale = baseAnalysis?.component_rationale && typeof baseAnalysis.component_rationale === 'object'
+    ? Object.values(baseAnalysis.component_rationale)
+    : [];
+  componentRationale
+    .filter(looksLikeFinancialContext)
+    .slice(0, 2)
+    .forEach((item) => pushSignal('Score rationale', item));
+
+  return signals.slice(0, 6);
+}
+
 // ============================================================================
 // BASELINE COLUMN (Read-only)
 // ============================================================================
-function BaselineColumn({ metrics, assumptions }) {
+function BaselineColumn({ metrics, assumptions, contextSignals }) {
   const rows = Array.isArray(metrics) ? metrics : [];
   const assumptionRows = Array.isArray(assumptions) ? assumptions : [];
+  const contextRows = Array.isArray(contextSignals) ? contextSignals : [];
+  const hasStructuredAssumptions = assumptionRows.length > 0;
+  const hasContextSignals = contextRows.length > 0;
   return (
     <div className="jas-scenario-col">
       <div className="jas-scenario-header">
@@ -285,12 +357,21 @@ function BaselineColumn({ metrics, assumptions }) {
       </div>
       <div className="jas-scenario-body">
         {rows.length > 0 ? (
-          rows.map((metric) => (
-            <div key={metric.key} className="jas-scenario-field">
-              <span className="jas-scenario-field-label">{metric.label}</span>
-              <span className="jas-scenario-field-value">{formatValue(metric.value, metric.type)}</span>
+          <>
+            {rows.map((metric) => (
+              <div key={metric.key} className="jas-scenario-field">
+                <span className="jas-scenario-field-label">{metric.label}</span>
+                <span className="jas-scenario-field-value">{formatValue(metric.value, metric.type)}</span>
+              </div>
+            ))}
+            <div className="jas-scenario-baseline-note">
+              {hasStructuredAssumptions
+                ? 'These baseline metrics are grounded in structured assumptions captured for this analysis.'
+                : hasContextSignals
+                  ? 'These baseline metrics are estimated from the current scorecard context shown below.'
+                  : 'These baseline metrics are directional estimates. Jaspen needs more financial detail to explain them rigorously.'}
             </div>
-          ))
+          </>
         ) : (
           <div className="jas-scenario-field">
             <span className="jas-scenario-field-label">No baseline financial metrics available</span>
@@ -303,7 +384,7 @@ function BaselineColumn({ metrics, assumptions }) {
           <p className="jas-scenario-assumptions-copy">
             These assumptions are driving the current baseline projections. Adjust them in Scenario A or B to test more accurate or more ambitious outcomes.
           </p>
-          {assumptionRows.length > 0 ? (
+          {hasStructuredAssumptions ? (
             <div className="jas-scenario-assumption-list">
               {assumptionRows.map((assumption) => (
                 <div key={assumption.key} className="jas-scenario-assumption-row">
@@ -322,9 +403,18 @@ function BaselineColumn({ metrics, assumptions }) {
                 </div>
               ))}
             </div>
+          ) : hasContextSignals ? (
+            <div className="jas-scenario-context-list">
+              {contextRows.map((signal) => (
+                <div key={signal.key} className="jas-scenario-context-row">
+                  <span className="jas-scenario-context-source">{signal.source}</span>
+                  <p className="jas-scenario-context-text">{signal.text}</p>
+                </div>
+              ))}
+            </div>
           ) : (
             <div className="jas-scenario-empty">
-              <p>Jaspen does not yet have enough structured assumptions to explain this baseline.</p>
+              <p>Jaspen does not yet have enough current-context signals to explain this baseline.</p>
             </div>
           )}
         </div>
@@ -527,6 +617,10 @@ const ScenarioModeler = forwardRef(function ScenarioModeler({
       source: lever.source || 'estimated',
     })),
     [levers]
+  );
+  const baselineContextSignals = useMemo(
+    () => deriveBaselineContextSignals(baseAnalysis),
+    [baseAnalysis]
   );
 
   const initialValues = useMemo(() => {
@@ -904,7 +998,11 @@ if (label === 'Scenario B') onResultB?.(snapshot);
       </div>
 
       <div className="jas-scenario-cols" style={{ marginBottom: '24px' }}>
-        <BaselineColumn metrics={baselineMetrics} assumptions={baselineAssumptions} />
+        <BaselineColumn
+          metrics={baselineMetrics}
+          assumptions={baselineAssumptions}
+          contextSignals={baselineContextSignals}
+        />
 
         <ScenarioColumn
           title="Scenario A"

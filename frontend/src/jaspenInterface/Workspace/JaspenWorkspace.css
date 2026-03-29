@@ -4039,6 +4039,50 @@
   color: var(--navy);
 }
 
+.jas-scenario-baseline-note {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  color: var(--gray-500);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.jas-scenario-context-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.jas-scenario-context-row {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.jas-scenario-context-row:last-child {
+  border-bottom: none;
+}
+
+.jas-scenario-context-source {
+  display: inline-flex;
+  align-items: center;
+  margin-bottom: 6px;
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: rgba(17, 36, 72, 0.08);
+  color: var(--navy);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.jas-scenario-context-text {
+  margin: 0;
+  color: var(--gray-700);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
 .jas-scenario-score-box {
   text-align: center;
   padding: 16px 0 8px;
