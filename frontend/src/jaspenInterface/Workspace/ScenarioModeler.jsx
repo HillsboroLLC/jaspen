@@ -183,7 +183,16 @@ function formatDeltaValue(currentValue, baselineValue, type) {
 const SCENARIO_RESULT_METRICS = [
   { key: 'roi_opportunity', label: 'ROI Opportunity', type: 'percentage' },
   { key: 'projected_ebitda', label: 'Projected EBITDA', type: 'currency' },
+  { key: 'expected_annual_return', label: 'Expected Annual Return', type: 'currency' },
+  { key: 'npv_3_year', label: '3-Year NPV', type: 'currency' },
+  { key: 'irr', label: 'IRR', type: 'percentage' },
   { key: 'payback_period', label: 'Payback Period', type: 'months' },
+  { key: 'break_even_month', label: 'Break-Even Month', type: 'months' },
+  { key: 'enterprise_value', label: 'Enterprise Value', type: 'currency' },
+  { key: 'ebitda_at_risk', label: 'EBITDA At Risk', type: 'percentage' },
+  { key: 'potential_loss', label: 'Potential Loss', type: 'currency' },
+  { key: 'cost_of_inaction', label: 'Cost of Inaction', type: 'currency' },
+  { key: 'time_to_market_impact', label: 'Time to Market Impact', type: 'months' },
   { key: 'jaspen_score', label: 'Jaspen Score', type: 'number' },
 ];
 
@@ -482,7 +491,7 @@ function ScenarioColumn({
             </div>
           ) : (
             <div className="jas-scenario-empty">
-              <p>Run this scenario to see projected ROI, EBITDA, payback period, and score change.</p>
+              <p>Run this scenario to see projected ROI, EBITDA, return, NPV, payback, and score change.</p>
             </div>
           )}
         </div>
