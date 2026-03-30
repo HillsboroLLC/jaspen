@@ -904,6 +904,360 @@ def _scorecard_snapshot_state(scorecard_result, thread_id):
     }
 
 
+def _upsert_snapshot_entry(snapshots, snapshot):
+    items = snapshots if isinstance(snapshots, list) else []
+    if not isinstance(snapshot, dict):
+        return items
+
+    snapshot_id = str(snapshot.get('id') or snapshot.get('analysis_id') or '').strip()
+    if not snapshot_id:
+        return items
+
+    next_items = []
+    replaced = False
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        item_id = str(item.get('id') or item.get('analysis_id') or '').strip()
+        if item_id == snapshot_id:
+            next_items.append(snapshot)
+            replaced = True
+        else:
+            next_items.append(item)
+
+    if not replaced:
+        next_items.append(snapshot)
+    return next_items
+
+
+def _remove_snapshot_entry(snapshots, snapshot_id):
+    target = str(snapshot_id or '').strip()
+    if not target:
+        return snapshots if isinstance(snapshots, list) else []
+    items = snapshots if isinstance(snapshots, list) else []
+    return [
+        item for item in items
+        if isinstance(item, dict) and str(item.get('id') or item.get('analysis_id') or '').strip() != target
+    ]
+
+
+def _scenario_snapshot_payload(result, scenario, thread_id):
+    scorecard = _normalize_scorecard_payload(result if isinstance(result, dict) else {})
+    scenario_obj = scenario if isinstance(scenario, dict) else {}
+    scenario_id = str(
+        scorecard.get('analysis_id')
+        or scorecard.get('id')
+        or scenario_obj.get('scenario_id')
+        or ''
+    ).strip()
+    if not scenario_id:
+        return None
+
+    created_at = (
+        scenario_obj.get('updated_at')
+        or scenario_obj.get('created_at')
+        or scorecard.get('createdAt')
+        or scorecard.get('timestamp')
+        or datetime.utcnow().isoformat()
+    )
+
+    snapshot = {
+        **scorecard,
+        'id': scenario_id,
+        'analysis_id': scenario_id,
+        'thread_id': thread_id,
+        'label': str(
+            scenario_obj.get('label')
+            or scorecard.get('label')
+            or 'Scenario'
+        ).strip() or 'Scenario',
+        'createdAt': created_at,
+        'timestamp': created_at,
+        'isBaseline': False,
+        'source_scenario_id': scenario_id,
+    }
+    return snapshot
+
+
+def _persist_scenario_snapshot_to_session(user_id, thread_id, scenario, result, *, select=False):
+    sessions = load_user_sessions(user_id) or {}
+    resolved_thread_id, session_key, session = _resolve_strategy_thread_state(sessions, _load_scenarios(user_id), thread_id)
+    resolved_thread_id = resolved_thread_id or thread_id
+    snapshot = _scenario_snapshot_payload(result, scenario, resolved_thread_id)
+    if not snapshot:
+        return None
+
+    if not isinstance(session, dict):
+        now_iso = datetime.utcnow().isoformat()
+        session = {
+            'session_id': resolved_thread_id,
+            'name': str(snapshot.get('project_name') or scenario.get('label') or 'Jaspen Analysis').strip() or 'Jaspen Analysis',
+            'document_type': 'strategy',
+            'created': now_iso,
+            'timestamp': now_iso,
+            'status': 'completed',
+            'chat_history': [],
+            'result': {},
+            'analysis_history': [],
+        }
+        session_key = resolved_thread_id
+
+    result_payload = session.get('result') if isinstance(session.get('result'), dict) else {}
+    snapshot_state = _scorecard_snapshot_state(result_payload, resolved_thread_id) if result_payload else None
+    baseline_snapshot = None
+    if snapshot_state and isinstance(snapshot_state.get('baseline'), dict):
+        baseline_snapshot = snapshot_state['baseline']
+    elif isinstance(result_payload, dict) and result_payload:
+        baseline_snapshot = _normalize_scorecard_payload(result_payload)
+        baseline_snapshot['id'] = str(baseline_snapshot.get('analysis_id') or resolved_thread_id)
+        baseline_snapshot['analysis_id'] = baseline_snapshot['id']
+        baseline_snapshot['isBaseline'] = True
+        baseline_snapshot['label'] = baseline_snapshot.get('label') or 'Baseline'
+
+    baseline_scorecard = (
+        result_payload.get('_baseline_scorecard') if isinstance(result_payload.get('_baseline_scorecard'), dict) else None
+    ) or baseline_snapshot or result_payload or None
+
+    existing_snapshots = snapshot_state['snapshots'] if snapshot_state else (
+        result_payload.get('scorecard_snapshots') if isinstance(result_payload.get('scorecard_snapshots'), list) else []
+    )
+    non_baseline_snapshots = [
+        item for item in existing_snapshots
+        if isinstance(item, dict) and not item.get('isBaseline')
+    ]
+    next_snapshots = _upsert_snapshot_entry(non_baseline_snapshots, snapshot)
+
+    next_result = {
+        **result_payload,
+        **snapshot,
+        '_baseline_scorecard': baseline_scorecard,
+        'scorecard_snapshots': next_snapshots,
+        'selected_scorecard_id': snapshot['id'] if select else (
+            result_payload.get('selected_scorecard_id') or snapshot['id']
+        ),
+        'project_name': snapshot.get('project_name') or result_payload.get('project_name'),
+    }
+    session['result'] = next_result
+    session['status'] = session.get('status') or 'completed'
+    session['timestamp'] = datetime.utcnow().isoformat()
+
+    analysis_history = session.get('analysis_history') if isinstance(session.get('analysis_history'), list) else []
+    history_entry = {
+        'analysis_id': snapshot['id'],
+        'result': snapshot,
+        'label': snapshot.get('label'),
+        'created_at': snapshot.get('createdAt'),
+    }
+    replaced = False
+    next_history = []
+    for entry in analysis_history:
+        if not isinstance(entry, dict):
+            continue
+        entry_id = str(entry.get('analysis_id') or entry.get('id') or '').strip()
+        if entry_id == snapshot['id']:
+            next_history.append(history_entry)
+            replaced = True
+        else:
+            next_history.append(entry)
+    if not replaced:
+        next_history.append(history_entry)
+    session['analysis_history'] = next_history
+
+    sessions[session_key or resolved_thread_id] = session
+    persisted = save_user_sessions(user_id, sessions)
+    if not persisted:
+        raise RuntimeError('Failed to persist scenario snapshot.')
+
+    return {
+        'snapshot': snapshot,
+        'selected_scorecard_id': next_result.get('selected_scorecard_id'),
+        'scorecard_snapshots': next_snapshots,
+    }
+
+
+def _rename_snapshot_in_session(user_id, thread_id, snapshot_id, label):
+    sessions = load_user_sessions(user_id) or {}
+    all_data = _load_scenarios(user_id)
+    resolved_thread_id, session_key, session = _resolve_strategy_thread_state(sessions, all_data, thread_id)
+    resolved_thread_id = resolved_thread_id or thread_id
+    if not isinstance(session, dict):
+        return None
+
+    next_label = str(label or '').strip()
+    if not next_label:
+        return None
+
+    result_payload = session.get('result') if isinstance(session.get('result'), dict) else {}
+    snapshot_state = _scorecard_snapshot_state(result_payload, resolved_thread_id) if result_payload else None
+    snapshots = snapshot_state['snapshots'] if snapshot_state else []
+    next_snapshots = []
+    renamed_snapshot = None
+
+    for snapshot in snapshots:
+        if not isinstance(snapshot, dict):
+            continue
+        candidate_id = str(snapshot.get('id') or snapshot.get('analysis_id') or '').strip()
+        if candidate_id == str(snapshot_id or '').strip():
+            updated = {**snapshot, 'label': next_label}
+            renamed_snapshot = updated
+            if not updated.get('isBaseline'):
+                next_snapshots.append(updated)
+        elif not snapshot.get('isBaseline'):
+            next_snapshots.append(snapshot)
+
+    if not renamed_snapshot:
+        return None
+
+    baseline_snapshot = snapshot_state.get('baseline') if snapshot_state and isinstance(snapshot_state.get('baseline'), dict) else None
+    baseline_scorecard = (
+        result_payload.get('_baseline_scorecard') if isinstance(result_payload.get('_baseline_scorecard'), dict) else None
+    ) or baseline_snapshot or result_payload or None
+
+    if renamed_snapshot.get('isBaseline') and isinstance(baseline_scorecard, dict):
+        baseline_scorecard = {**baseline_scorecard, 'label': next_label}
+
+    next_result = {
+        **result_payload,
+        '_baseline_scorecard': baseline_scorecard,
+        'scorecard_snapshots': next_snapshots,
+        'selected_scorecard_id': result_payload.get('selected_scorecard_id') or (
+            snapshot_state.get('selected_id') if snapshot_state else renamed_snapshot.get('id')
+        ),
+    }
+    session['result'] = next_result
+
+    analysis_history = session.get('analysis_history') if isinstance(session.get('analysis_history'), list) else []
+    next_history = []
+    for entry in analysis_history:
+        if not isinstance(entry, dict):
+            continue
+        entry_id = str(entry.get('analysis_id') or entry.get('id') or '').strip()
+        if entry_id == str(snapshot_id or '').strip():
+            next_history.append({
+                **entry,
+                'label': next_label,
+                'result': {**(entry.get('result') if isinstance(entry.get('result'), dict) else {}), 'label': next_label},
+            })
+        else:
+            next_history.append(entry)
+    session['analysis_history'] = next_history
+
+    sessions[session_key or resolved_thread_id] = session
+    persisted = save_user_sessions(user_id, sessions)
+    if not persisted:
+        raise RuntimeError('Failed to persist snapshot rename.')
+
+    return {
+        'snapshot': renamed_snapshot,
+        'scorecard_snapshots': next_snapshots,
+        'selected_scorecard_id': next_result.get('selected_scorecard_id'),
+    }
+
+
+def _delete_snapshot_from_session(user_id, thread_id, snapshot_id):
+    sessions = load_user_sessions(user_id) or {}
+    all_data = _load_scenarios(user_id)
+    resolved_thread_id, session_key, session = _resolve_strategy_thread_state(sessions, all_data, thread_id)
+    resolved_thread_id = resolved_thread_id or thread_id
+    if not isinstance(session, dict):
+        return None
+
+    result_payload = session.get('result') if isinstance(session.get('result'), dict) else {}
+    snapshot_state = _scorecard_snapshot_state(result_payload, resolved_thread_id) if result_payload else None
+    if not snapshot_state:
+        return None
+
+    target_id = str(snapshot_id or '').strip()
+    baseline_snapshot = snapshot_state.get('baseline') if isinstance(snapshot_state.get('baseline'), dict) else None
+    if baseline_snapshot and str(baseline_snapshot.get('id') or '').strip() == target_id:
+        raise ValueError('Baseline snapshot cannot be deleted.')
+
+    next_snapshots = _remove_snapshot_entry(
+        [item for item in snapshot_state.get('snapshots', []) if isinstance(item, dict) and not item.get('isBaseline')],
+        target_id,
+    )
+    baseline_scorecard = (
+        result_payload.get('_baseline_scorecard') if isinstance(result_payload.get('_baseline_scorecard'), dict) else None
+    ) or baseline_snapshot or result_payload or None
+
+    selected_id = result_payload.get('selected_scorecard_id') or snapshot_state.get('selected_id')
+    if str(selected_id or '').strip() == target_id:
+        selected_id = str((baseline_snapshot or {}).get('id') or resolved_thread_id)
+
+    next_result = {
+        **result_payload,
+        '_baseline_scorecard': baseline_scorecard,
+        'scorecard_snapshots': next_snapshots,
+        'selected_scorecard_id': selected_id,
+    }
+    session['result'] = next_result
+
+    analysis_history = session.get('analysis_history') if isinstance(session.get('analysis_history'), list) else []
+    session['analysis_history'] = [
+        entry for entry in analysis_history
+        if isinstance(entry, dict) and str(entry.get('analysis_id') or entry.get('id') or '').strip() != target_id
+    ]
+
+    sessions[session_key or resolved_thread_id] = session
+    persisted = save_user_sessions(user_id, sessions)
+    if not persisted:
+        raise RuntimeError('Failed to persist snapshot deletion.')
+
+    return {
+        'deleted_snapshot_id': target_id,
+        'scorecard_snapshots': next_snapshots,
+        'selected_scorecard_id': selected_id,
+    }
+
+
+def _set_selected_snapshot_in_session(user_id, thread_id, snapshot_id):
+    sessions = load_user_sessions(user_id) or {}
+    all_data = _load_scenarios(user_id)
+    resolved_thread_id, session_key, session = _resolve_strategy_thread_state(sessions, all_data, thread_id)
+    resolved_thread_id = resolved_thread_id or thread_id
+    if not isinstance(session, dict):
+        return None
+
+    result_payload = session.get('result') if isinstance(session.get('result'), dict) else {}
+    snapshot_state = _scorecard_snapshot_state(result_payload, resolved_thread_id) if result_payload else None
+    if not snapshot_state:
+        return None
+
+    target_id = str(snapshot_id or '').strip()
+    selected_snapshot = next(
+        (
+            item for item in snapshot_state.get('snapshots', [])
+            if isinstance(item, dict) and str(item.get('id') or item.get('analysis_id') or '').strip() == target_id
+        ),
+        None,
+    )
+    if not selected_snapshot:
+        return None
+
+    next_result = {
+        **result_payload,
+        '_baseline_scorecard': (
+            result_payload.get('_baseline_scorecard') if isinstance(result_payload.get('_baseline_scorecard'), dict) else None
+        ) or snapshot_state.get('baseline') or result_payload or None,
+        'scorecard_snapshots': [
+            item for item in snapshot_state.get('snapshots', [])
+            if isinstance(item, dict) and not item.get('isBaseline')
+        ],
+        'selected_scorecard_id': target_id,
+    }
+    session['result'] = next_result
+    sessions[session_key or resolved_thread_id] = session
+    persisted = save_user_sessions(user_id, sessions)
+    if not persisted:
+        raise RuntimeError('Failed to persist active snapshot selection.')
+
+    return {
+        'snapshot': selected_snapshot,
+        'scorecard_snapshots': next_result.get('scorecard_snapshots'),
+        'selected_scorecard_id': target_id,
+    }
+
+
 def _load_thread_conversation(user_id, thread_id):
     """
     Load stored conversation history for a thread from user session storage.
@@ -3843,6 +4197,11 @@ def update_scenario(scenario_id):
 
         scenario['updated_at'] = datetime.utcnow().isoformat()
         _save_scenarios(user_id, all_data)
+        if 'label' in data:
+            try:
+                _rename_snapshot_in_session(user_id, thread_id, scenario_id, scenario['label'])
+            except Exception as rename_error:
+                current_app.logger.warning("[update_scenario] snapshot label sync failed: %s", rename_error)
         return jsonify(scenario), 200
 
     except Exception as e:
@@ -3874,7 +4233,19 @@ def delete_scenario(scenario_id):
             td['adopted_scenario_id'] = None
 
         _save_scenarios(user_id, all_data)
-        return jsonify({'success': True}), 200
+        snapshot_meta = None
+        try:
+            snapshot_meta = _delete_snapshot_from_session(user_id, thread_id, scenario_id)
+        except ValueError as delete_error:
+            return jsonify({'error': str(delete_error)}), 400
+        except Exception as delete_error:
+            current_app.logger.warning("[delete_scenario] snapshot delete sync failed: %s", delete_error)
+        return jsonify({
+            'success': True,
+            'deleted_scenario_id': scenario_id,
+            'selected_scorecard_id': (snapshot_meta or {}).get('selected_scorecard_id'),
+            'scorecard_snapshots': (snapshot_meta or {}).get('scorecard_snapshots'),
+        }), 200
 
     except Exception as e:
         current_app.logger.error("[delete_scenario] %s", e)
@@ -3922,6 +4293,13 @@ def apply_scenario(scenario_id):
         scenario['result'] = result
         scenario['updated_at'] = datetime.utcnow().isoformat()
         _save_scenarios(user_id, all_data)
+        snapshot_meta = _persist_scenario_snapshot_to_session(
+            user_id,
+            thread_id,
+            scenario,
+            result,
+            select=False,
+        )
 
         # Return in the shape ScenarioModeler.normalizeApplied() expects
         return jsonify({
@@ -3935,6 +4313,9 @@ def apply_scenario(scenario_id):
             'component_scores': result['component_scores'],
             'financial_impact': result['financial_impact'],
             'analysis_id': scenario_id,
+            'snapshot': (snapshot_meta or {}).get('snapshot'),
+            'scorecard_snapshots': (snapshot_meta or {}).get('scorecard_snapshots'),
+            'selected_scorecard_id': (snapshot_meta or {}).get('selected_scorecard_id'),
         }), 200
 
     except Exception as e:
@@ -3952,37 +4333,69 @@ def adopt_scenario(scenario_id):
         if access_err:
             return access_err
 
-        data      = request.get_json() or {}
+        data = request.get_json() or {}
         thread_id = data.get('thread_id') or request.args.get('thread_id')
 
         all_data = _load_scenarios(user_id)
-
+        resolved_thread_id = None
+        td = None
+        scenario = None
         if thread_id:
-            td = all_data.get(thread_id, {})
-            if scenario_id not in td.get('scenarios', {}):
+            candidate = all_data.get(thread_id, {})
+            if scenario_id not in candidate.get('scenarios', {}):
                 return jsonify({'error': 'Scenario not found'}), 404
-            td['adopted_scenario_id'] = scenario_id
+            resolved_thread_id = thread_id
+            td = candidate
+            scenario = candidate.get('scenarios', {}).get(scenario_id)
         else:
-            # Search all threads
-            found = False
-            for tid, td in all_data.items():
-                if scenario_id in td.get('scenarios', {}):
-                    td['adopted_scenario_id'] = scenario_id
-                    found = True
+            for tid, candidate in all_data.items():
+                if scenario_id in candidate.get('scenarios', {}):
+                    resolved_thread_id = tid
+                    td = candidate
+                    scenario = candidate.get('scenarios', {}).get(scenario_id)
                     break
-            if not found:
+            if not resolved_thread_id or not isinstance(scenario, dict):
                 return jsonify({'error': 'Scenario not found in any thread'}), 404
 
+        baseline = td.get('baseline') if isinstance(td.get('baseline'), dict) else None
+        if not baseline:
+            return jsonify({'error': 'No baseline stored for this thread.'}), 400
+        baseline_inputs = td.get('baseline_inputs') if isinstance(td.get('baseline_inputs'), dict) else {}
+        result = scenario.get('result') if isinstance(scenario.get('result'), dict) else None
+        if not result:
+            result = _compute_scenario_scorecard(baseline, scenario.get('deltas') or {}, baseline_inputs)
+            result['analysis_id'] = scenario_id
+            result['scenario_id'] = scenario_id
+            result['thread_id'] = resolved_thread_id
+            result['label'] = scenario.get('label') or 'Scenario'
+            scenario['result'] = result
+
+        td['adopted_scenario_id'] = scenario_id
+        scenario['updated_at'] = datetime.utcnow().isoformat()
+
         _save_scenarios(user_id, all_data)
+        snapshot_meta = _persist_scenario_snapshot_to_session(
+            user_id,
+            resolved_thread_id,
+            scenario,
+            result,
+            select=True,
+        )
         _audit_strategy_event(
             'scenario.adopted',
             user_id=user_id,
             details={
-                'thread_id': thread_id,
+                'thread_id': resolved_thread_id,
                 'scenario_id': scenario_id,
             },
         )
-        return jsonify({'success': True, 'adopted_scenario_id': scenario_id}), 200
+        return jsonify({
+            'success': True,
+            'adopted_scenario_id': scenario_id,
+            'selected_scorecard_id': (snapshot_meta or {}).get('selected_scorecard_id'),
+            'snapshot': (snapshot_meta or {}).get('snapshot'),
+            'scorecard_snapshots': (snapshot_meta or {}).get('scorecard_snapshots'),
+        }), 200
 
     except Exception as e:
         current_app.logger.error("[adopt_scenario] %s", e)
@@ -4166,11 +4579,11 @@ def get_thread_bundle(thread_id):
         scenarios_list = sorted(scenarios_dict.values(),
                                 key=lambda s: s.get('created_at', ''), reverse=True)[:scn_limit]
 
-        # Current scorecard = adopted scenario result if set, else baseline
+        # Current scorecard prefers the explicitly selected snapshot, then adopted scenario, then baseline.
         current_scorecard = baseline
         if snapshot_state and isinstance(snapshot_state.get('selected_snapshot'), dict):
             current_scorecard = snapshot_state['selected_snapshot']
-        if adopted_id and adopted_id in scenarios_dict:
+        elif adopted_id and adopted_id in scenarios_dict:
             current_scorecard = scenarios_dict[adopted_id].get('result') or baseline
 
         scenario_levers = [dict(row) for row in lever_catalog]
@@ -4202,6 +4615,86 @@ def get_thread_bundle(thread_id):
 
     except Exception as e:
         current_app.logger.error("[get_thread_bundle] %s", e)
+        return jsonify({'error': str(e)}), 500
+
+
+@strategy_bp.route('/threads/<thread_id>/scorecard-snapshots/<snapshot_id>', methods=['PATCH'])
+@jwt_required()
+def update_scorecard_snapshot(thread_id, snapshot_id):
+    try:
+        user_id = get_jwt_identity()
+        payload = request.get_json() or {}
+        next_label = str(payload.get('label') or '').strip()
+        set_active = bool(payload.get('active'))
+
+        snapshot_meta = None
+        if next_label:
+            snapshot_meta = _rename_snapshot_in_session(user_id, thread_id, snapshot_id, next_label)
+            if not snapshot_meta:
+                return jsonify({'error': 'Snapshot not found'}), 404
+
+            all_data = _load_scenarios(user_id)
+            td = all_data.get(thread_id, {})
+            scenarios = td.get('scenarios') if isinstance(td.get('scenarios'), dict) else {}
+            scenario = scenarios.get(snapshot_id)
+            if isinstance(scenario, dict):
+                scenario['label'] = next_label
+                if isinstance(scenario.get('result'), dict):
+                    scenario['result']['label'] = next_label
+                scenario['updated_at'] = datetime.utcnow().isoformat()
+                _save_scenarios(user_id, all_data)
+
+        if set_active:
+            active_meta = _set_selected_snapshot_in_session(user_id, thread_id, snapshot_id)
+            if not active_meta:
+                return jsonify({'error': 'Snapshot not found'}), 404
+            snapshot_meta = {
+                **(snapshot_meta or {}),
+                **active_meta,
+            }
+
+        if not snapshot_meta:
+            return jsonify({'error': 'No changes requested'}), 400
+
+        return jsonify({
+            'success': True,
+            'snapshot': snapshot_meta.get('snapshot'),
+            'scorecard_snapshots': snapshot_meta.get('scorecard_snapshots'),
+            'selected_scorecard_id': snapshot_meta.get('selected_scorecard_id'),
+        }), 200
+    except Exception as e:
+        current_app.logger.error("[update_scorecard_snapshot] %s", e)
+        return jsonify({'error': str(e)}), 500
+
+
+@strategy_bp.route('/threads/<thread_id>/scorecard-snapshots/<snapshot_id>', methods=['DELETE'])
+@jwt_required()
+def delete_scorecard_snapshot(thread_id, snapshot_id):
+    try:
+        user_id = get_jwt_identity()
+        snapshot_meta = _delete_snapshot_from_session(user_id, thread_id, snapshot_id)
+        if not snapshot_meta:
+            return jsonify({'error': 'Snapshot not found'}), 404
+
+        all_data = _load_scenarios(user_id)
+        td = all_data.get(thread_id, {})
+        scenarios = td.get('scenarios') if isinstance(td.get('scenarios'), dict) else {}
+        if snapshot_id in scenarios:
+            del scenarios[snapshot_id]
+            if td.get('adopted_scenario_id') == snapshot_id:
+                td['adopted_scenario_id'] = None
+            _save_scenarios(user_id, all_data)
+
+        return jsonify({
+            'success': True,
+            'deleted_snapshot_id': snapshot_meta.get('deleted_snapshot_id'),
+            'scorecard_snapshots': snapshot_meta.get('scorecard_snapshots'),
+            'selected_scorecard_id': snapshot_meta.get('selected_scorecard_id'),
+        }), 200
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        current_app.logger.error("[delete_scorecard_snapshot] %s", e)
         return jsonify({'error': str(e)}), 500
 
 

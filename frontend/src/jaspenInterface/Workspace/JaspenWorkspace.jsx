@@ -4833,35 +4833,44 @@ const handleSaveStarter = async () => {
   }
 };
 
+  const applySnapshotMeta = useCallback((snapshotMeta = {}, { refresh = false } = {}) => {
+    const nextSnapshots = Array.isArray(snapshotMeta?.scorecard_snapshots)
+      ? snapshotMeta.scorecard_snapshots
+      : null;
+    const nextSelectedId = snapshotMeta?.selected_scorecard_id || null;
+    const nextSnapshot = snapshotMeta?.snapshot && typeof snapshotMeta.snapshot === 'object'
+      ? snapshotMeta.snapshot
+      : null;
 
-
-  // PROMPT ALIGNMENT: Handle adopted scenario scorecard snapshots
-  const handleAdoptScorecard = (adoptedSnapshot) => {
-    if (!adoptedSnapshot || !adoptedSnapshot.id) {
-      console.warn('[handleAdoptScorecard] Invalid snapshot:', adoptedSnapshot);
-      return;
+    if (nextSnapshots) {
+      setScorecardSnapshots(nextSnapshots);
+    } else if (nextSnapshot?.id) {
+      setScorecardSnapshots((prev) => {
+        const items = Array.isArray(prev) ? prev : [];
+        const otherSnapshots = items.filter((item) => {
+          const itemId = String(item?.id || item?.analysis_id || '').trim();
+          return itemId && itemId !== String(nextSnapshot.id);
+        });
+        return [...otherSnapshots, nextSnapshot];
+      });
     }
-    
-    setScorecardSnapshots(prev => {
-      // Dedupe by id
-      const existing = prev.find(s => s.id === adoptedSnapshot.id);
-      if (existing) return prev;
-      
-      return [...prev, {
-        ...adoptedSnapshot,
-        isBaseline: false,
-        createdAt: Date.now()
-      }];
-    });
-    
-    // Optionally auto-select the adopted scorecard
-    setSelectedScorecardId(adoptedSnapshot.id);
-  };
+
+    if (nextSelectedId) {
+      setSelectedScorecardId(nextSelectedId);
+    }
+
+    if (refresh) {
+      const tid = currentSessionId || sessionId;
+      if (tid) {
+        refreshBundle(tid).catch((err) => console.debug('[applySnapshotMeta] refreshBundle failed', err));
+      }
+    }
+  }, [currentSessionId, refreshBundle, sessionId]);
 
   const handleScenarioAdopt = async (adoptedScenario, label) => {
     if (!adoptedScenario || (!adoptedScenario.id && !adoptedScenario.analysis_id)) {
       console.warn('[handleScenarioAdopt] Invalid scenario:', adoptedScenario);
-      showToast('Invalid scenario - cannot adopt', 'error');
+      showToast('Invalid scenario - cannot set active', 'error');
       return;
     }
 
@@ -4873,49 +4882,14 @@ const handleSaveStarter = async () => {
 
     try {
       const scenarioId = adoptedScenario.id || adoptedScenario.analysis_id;
-      
-      // 1) Persist adoption to backend
-      await Jaspen.adoptScenario(scenarioId, tid);
-
-      // 2) Create snapshot for adopted scenario
-      const adoptedSnapshot = {
-        ...adoptedScenario,
-        id: scenarioId,
-        label: label || adoptedScenario.label || 'Adopted Scenario',
-        isBaseline: false,
-        adoptedAt: Date.now(),
-        jaspen_score: adoptedScenario.overall_score || adoptedScenario.jaspen_score || 0,
-      };
-
-      // 3) Update snapshots - PRESERVE BASELINE
-      setScorecardSnapshots(prev => {
-        // Keep baseline (isBaseline: true)
-        const baseline = prev.find(s => s.isBaseline === true);
-        
-        // Remove old version of this scenario if exists
-        const others = prev.filter(s => s.id !== scenarioId && !s.isBaseline);
-        
-        // Build new array: baseline first, then others, then adopted
-        const newSnapshots = [];
-        if (baseline) newSnapshots.push(baseline);
-        newSnapshots.push(...others, adoptedSnapshot);
-        
-        return newSnapshots;
-      });
-
-      // 4) Select the adopted scorecard
-      setSelectedScorecardId(scenarioId);
-
-      // 5) Update current analysis result
-      setAnalysisResult(adoptedScenario);
-
-      // 6) Refresh bundle to sync
-      await refreshBundle(tid);
-
-      showToast(`${label || 'Scenario'} adopted successfully`, 'success');
+      const response = await Jaspen.adoptScenario(scenarioId, tid);
+      applySnapshotMeta(response, { refresh: true });
+      setActiveTab('summary');
+      setView('summary');
+      showToast(`${label || 'Scenario'} set as active scorecard.`, 'success');
     } catch (err) {
       console.error('[handleScenarioAdopt] failed:', err);
-      showToast('Failed to adopt scenario', 'error');
+      showToast('Failed to set active scorecard', 'error');
     }
   };
 
@@ -6920,47 +6894,67 @@ const handleScenarioResultC = (result) => {
   ensureVariantOption('scenarioC', 'Scenario C', result);
 };
 
-  // === Scenario Handling ===
-const handleScenarioUpdate = async (newAnalysis) => {
-  if (!newAnalysis) return;
+const handleScenarioSaved = useCallback((payload = {}) => {
+  if (!payload || typeof payload !== 'object') return;
+  const response = payload.response;
+  if (response && typeof response === 'object') {
+    applySnapshotMeta(response, { refresh: false });
+  }
+}, [applySnapshotMeta]);
 
-  // Update UI immediately
-  setAnalysisResult(newAnalysis);
-  setActiveTab('summary');
-  setView('summary');
+const handleSnapshotSelect = useCallback(async (snapshotId) => {
+  const nextId = String(snapshotId || '').trim();
+  const tid = currentSessionId || sessionId;
+  if (!nextId || !tid) return;
 
-  // REMOVED - AI Agent backend handles persistence automatically
-  // try { await saveSessionToBackend({...}); } catch (e) { ... }
-
-  // Pull fresh bundle so Scenarios list & latest analysis stay in sync
   try {
-    await refreshBundle(currentSessionId || sessionId);
-  } catch (e) {
-    console.debug('[handleScenarioUpdate] refreshBundle failed', e);
+    const response = await Jaspen.setActiveSnapshot(tid, nextId);
+    applySnapshotMeta(response, { refresh: true });
+    setActiveTab('summary');
+    setView('summary');
+  } catch (err) {
+    console.error('[handleSnapshotSelect] failed', err);
+    showToast(err?.message || 'Failed to switch scorecard.', 'error');
   }
+}, [applySnapshotMeta, currentSessionId, sessionId]);
 
-  // Refresh server history as the source of truth
-  await fetchSessions();
-};
+const handleSnapshotRename = useCallback(async (snapshotId, currentLabel) => {
+  const nextId = String(snapshotId || '').trim();
+  const tid = currentSessionId || sessionId;
+  if (!nextId || !tid) return;
 
-const handleSaveScenario = async (scenario) => {
-  const label  = scenario?.label || 'Scenario';
-  const deltas = scenario?.values || scenario?.changes || {};
+  const proposed = window.prompt('Rename this scorecard variant', currentLabel || '');
+  if (proposed == null) return;
+  const nextLabel = proposed.trim();
+  if (!nextLabel || nextLabel === String(currentLabel || '').trim()) return;
 
-  // optimistic add
-  const tempId = `scenario_${Date.now()}`;
-  setSavedScenarios(prev => [...prev, { ...scenario, id: tempId }]);
-
-  // persist to backend + refresh bundle
-  const persistedId = await persistScenario(label, deltas);
-
-  // reconcile temp id with real id (if we got one)
-  if (persistedId) {
-    setSavedScenarios(prev =>
-      prev.map(s => (s.id === tempId ? { ...s, id: persistedId } : s))
-    );
+  try {
+    const response = await Jaspen.renameSnapshot(tid, nextId, nextLabel);
+    applySnapshotMeta(response, { refresh: false });
+    showToast('Scorecard variant renamed', 'success');
+  } catch (err) {
+    console.error('[handleSnapshotRename] failed', err);
+    showToast(err?.message || 'Failed to rename scorecard variant.', 'error');
   }
-};
+}, [applySnapshotMeta, currentSessionId, sessionId]);
+
+const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
+  const nextId = String(snapshotId || '').trim();
+  const tid = currentSessionId || sessionId;
+  if (!nextId || !tid) return;
+
+  const ok = window.confirm(`Delete "${label || 'this scorecard variant'}"? This cannot be undone.`);
+  if (!ok) return;
+
+  try {
+    const response = await Jaspen.deleteSnapshot(tid, nextId);
+    applySnapshotMeta(response, { refresh: true });
+    showToast('Scorecard variant deleted', 'success');
+  } catch (err) {
+    console.error('[handleSnapshotDelete] failed', err);
+    showToast(err?.message || 'Failed to delete scorecard variant.', 'error');
+  }
+}, [applySnapshotMeta, currentSessionId, sessionId]);
 
   const handleCompareScenarios = async () => {
     await refreshBundle(currentSessionId || sessionId);
@@ -7068,11 +7062,19 @@ const handleSaveScenario = async (scenario) => {
             if (Boolean(a?.isBaseline) !== Boolean(b?.isBaseline)) {
               return a?.isBaseline ? -1 : 1;
             }
-            return Number(a?.createdAt || 0) - Number(b?.createdAt || 0);
+            const aSelected = String(a?.id || '') === String(selectedScorecardId || '');
+            const bSelected = String(b?.id || '') === String(selectedScorecardId || '');
+            if (aSelected !== bSelected) return aSelected ? -1 : 1;
+            const aCreated = Date.parse(String(a?.createdAt || a?.timestamp || '')) || Number(a?.createdAt || 0) || 0;
+            const bCreated = Date.parse(String(b?.createdAt || b?.timestamp || '')) || Number(b?.createdAt || 0) || 0;
+            return bCreated - aCreated;
           })
           .map((snap, idx) => ({
             id: snap.id,
             label: snap.isBaseline ? 'Baseline' : (snap.label || `Scenario ${idx}`),
+            isBaseline: Boolean(snap?.isBaseline),
+            isSelected: String(snap?.id || '') === String(selectedScorecardId || ''),
+            canDelete: !Boolean(snap?.isBaseline),
           }))
       : [];
     const useSnapshotSelect = snapshotOptions.length > 0;
@@ -7581,24 +7583,75 @@ onClick={async () => {
                     {scoreShellMenu === 'scorecard' && (
                       <div className="jas-select-dropdown" role="menu" aria-label="Scorecard views">
                         {(useSnapshotSelect ? snapshotOptions : scoreVariants).map((option) => (
-                          <button
+                          <div
                             key={option.id}
-                            type="button"
-                            className={`jas-select-option ${scoreSelectValue === option.id ? 'selected' : ''}`}
-                            role="menuitemradio"
-                            aria-checked={scoreSelectValue === option.id}
-                            onClick={() => {
-                              if (useSnapshotSelect) {
-                                setSelectedScorecardId(option.id);
-                              } else {
-                                setSelectedVariantId(option.id);
-                              }
-                              setScoreShellMenu(null);
-                            }}
+                            className={`jas-select-option-row ${scoreSelectValue === option.id ? 'selected' : ''}`}
                           >
-                            {scoreSelectValue === option.id && <FontAwesomeIcon icon={faCheck} />}
-                            <span>{option.label}</span>
-                          </button>
+                            <button
+                              type="button"
+                              className={`jas-select-option ${scoreSelectValue === option.id ? 'selected' : ''}`}
+                              role="menuitemradio"
+                              aria-checked={scoreSelectValue === option.id}
+                              onClick={async () => {
+                                if (useSnapshotSelect) {
+                                  await handleSnapshotSelect(option.id);
+                                } else {
+                                  setSelectedVariantId(option.id);
+                                }
+                                setScoreShellMenu(null);
+                              }}
+                            >
+                              {scoreSelectValue === option.id && <FontAwesomeIcon icon={faCheck} />}
+                              <span>{option.label}{option.isBaseline ? ' (Baseline)' : option.isSelected ? ' (Active)' : ''}</span>
+                            </button>
+                            {useSnapshotSelect && (
+                              <div className="jas-select-option-actions">
+                                {!option.isBaseline && !option.isSelected && (
+                                  <button
+                                    type="button"
+                                    className="jas-select-option-action"
+                                    onClick={async (event) => {
+                                      event.stopPropagation();
+                                      await handleSnapshotSelect(option.id);
+                                      setScoreShellMenu(null);
+                                    }}
+                                    title="Set active"
+                                    aria-label={`Set ${option.label} active`}
+                                  >
+                                    <FontAwesomeIcon icon={faCheck} />
+                                  </button>
+                                )}
+                                {!option.isBaseline && (
+                                  <button
+                                    type="button"
+                                    className="jas-select-option-action"
+                                    onClick={async (event) => {
+                                      event.stopPropagation();
+                                      await handleSnapshotRename(option.id, option.label);
+                                    }}
+                                    title="Rename"
+                                    aria-label={`Rename ${option.label}`}
+                                  >
+                                    <FontAwesomeIcon icon={faPen} />
+                                  </button>
+                                )}
+                                {option.canDelete && (
+                                  <button
+                                    type="button"
+                                    className="jas-select-option-action danger"
+                                    onClick={async (event) => {
+                                      event.stopPropagation();
+                                      await handleSnapshotDelete(option.id, option.label);
+                                    }}
+                                    title="Delete"
+                                    aria-label={`Delete ${option.label}`}
+                                  >
+                                    <FontAwesomeIcon icon={faTrash} />
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         ))}
                       </div>
                     )}
@@ -7766,7 +7819,7 @@ onClick={async () => {
 	                    scenarios={savedScenarios}
 	                    onBackToScenario={() => { setView('scenario'); }}
 	                    onBackToSummary={() => { setActiveTab('summary'); setView('summary'); }}
-	                    onAdopt={handleScenarioUpdate}
+	                    onAdopt={handleScenarioAdopt}
 	                  />
 	                ) : (
 	                  <ErrorBoundary title="Scenario modeler unavailable" onRetry={() => sessionId && refreshBundle(sessionId)}>
@@ -7785,11 +7838,9 @@ onClick={async () => {
                         setScenarioDrawerView('assistant');
                         setHelpInput('Run a deeper financial analysis for this project');
                       }}
+                      onScenarioSaved={handleScenarioSaved}
                       onAdoptScenario={handleScenarioAdopt}
-                      onAdoptScorecard={handleAdoptScorecard}
                       onBackToSummary={() => { setActiveTab('summary'); setView('summary'); }}
-                      onAdopt={handleScenarioUpdate}
-                      onSaveScenario={handleSaveScenario}
                       onCompare={handleCompareScenarios}
                       onResultA={(res) => { setResultA(res); setSelectedVariantId('scenarioA'); }}
                       onResultB={(res) => { setResultB(res); setSelectedVariantId('scenarioB'); }}

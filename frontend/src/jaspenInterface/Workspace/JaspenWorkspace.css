@@ -3020,6 +3020,17 @@
   z-index: 40;
 }
 
+.jas-select-option-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 10px;
+}
+
+.jas-select-option-row.selected {
+  background: rgba(160, 3, 108, 0.08);
+}
+
 .jas-select-option,
 .jas-select-empty {
   width: 100%;
@@ -3037,6 +3048,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .jas-select-option:hover {
@@ -3049,6 +3062,43 @@
 
 .jas-select-empty {
   color: var(--gray-500);
+}
+
+.jas-select-option-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 6px;
+  flex-shrink: 0;
+}
+
+.jas-select-option-action {
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--gray-500);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background .15s ease, color .15s ease, border-color .15s ease;
+}
+
+.jas-select-option-action:hover,
+.jas-select-option-action:focus-visible {
+  background: var(--gray-50);
+  border-color: var(--gray-200);
+  color: var(--navy);
+  outline: none;
+}
+
+.jas-select-option-action.danger:hover,
+.jas-select-option-action.danger:focus-visible {
+  color: #b42318;
+  border-color: rgba(180, 35, 24, 0.16);
+  background: rgba(180, 35, 24, 0.08);
 }
 
 @media (max-width: 1420px) {

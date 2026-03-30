@@ -52,6 +52,8 @@ export const endpoints = {
   aiScenario:       (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/ai-scenario`,
   aiWbs:            (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/ai-wbs`,
   threadWbs:        (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/wbs`,
+  scorecardSnapshot: (threadId, snapshotId) =>
+    `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/scorecard-snapshots/${encodeURIComponent(snapshotId)}`,
   exportScorecardPdf: (threadId, scorecardId = '') =>
     `${API_BASE}/api/v1/export/threads/${encodeURIComponent(threadId)}/scorecard/pdf${scorecardId ? `?scorecard_id=${encodeURIComponent(scorecardId)}` : ''}`,
   exportScorecardPptx: (threadId, scorecardId = '') =>
@@ -918,6 +920,23 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
         withSid: true,
         retryable: true,
       }
+    ),
+
+  renameSnapshot: async (threadId, snapshotId, label) =>
+    patchJSON(
+      endpoints.scorecardSnapshot(threadId, snapshotId),
+      { label },
+      { withSid: true }
+    ),
+
+  deleteSnapshot: async (threadId, snapshotId) =>
+    del(endpoints.scorecardSnapshot(threadId, snapshotId), { withSid: true }),
+
+  setActiveSnapshot: async (threadId, snapshotId) =>
+    patchJSON(
+      endpoints.scorecardSnapshot(threadId, snapshotId),
+      { active: true },
+      { withSid: true }
     ),
 
   generateAiScenario: async (threadId, promptOrPayload = '') => {

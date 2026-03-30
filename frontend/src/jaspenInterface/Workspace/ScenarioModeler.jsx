@@ -555,7 +555,7 @@ function ScenarioColumn({
           )}
         </Button>
         <Button variant="outline" size="sm" onClick={onAdopt} disabled={!result || disabled}>
-          <FontAwesomeIcon icon={faCheck} /> Adopt
+          <FontAwesomeIcon icon={faCheck} /> Set Active
         </Button>
       </div>
     </div>
@@ -574,7 +574,7 @@ const ScenarioModeler = forwardRef(function ScenarioModeler({
   refreshVersion = 0,
   onAdopt,
   onAdoptScenario = () => {},
-  onAdoptScorecard = () => {},
+  onScenarioSaved = () => {},
   onResultA = () => {},
   onResultB = () => {},
   onCompare,
@@ -700,13 +700,11 @@ const ScenarioModeler = forwardRef(function ScenarioModeler({
       const res = which.includes('b') ? resultB : resultA;
       if (!res) return null;
 
-      // Prefer parent handlers
-      try { onAdopt?.(res, label); } catch {}
-      try { onAdoptScorecard?.(res); } catch {}
+      try { onAdoptScenario?.(res, label); } catch {}
 
       return res;
     },
-  }), [scenarioA, scenarioB, resultA, resultB, onAdopt, onAdoptScorecard]);
+  }), [scenarioA, scenarioB, resultA, resultB, onAdoptScenario]);
 
 
   function normalizeApplied(res) {
@@ -837,9 +835,17 @@ const ScenarioModeler = forwardRef(function ScenarioModeler({
 
 setter(snapshot);
 
+    try {
+      onScenarioSaved?.({
+        label,
+        snapshot,
+        response: applied,
+      });
+    } catch {}
+
 if (label === 'Scenario A') onResultA?.(snapshot);
 if (label === 'Scenario B') onResultB?.(snapshot);
-// DON'T auto-adopt - only adopt when user clicks "Adopt" button
+// Running a scenario saves a variant; "Set Active" chooses which variant drives the score dashboard.
     return snapshot;
   }
 
@@ -871,19 +877,9 @@ if (label === 'Scenario B') onResultB?.(snapshot);
   function adoptScenario(result, label) {
     if (!result) return;
 
-    // Call parent adoption handler (new)
     if (typeof onAdoptScenario === 'function') {
       onAdoptScenario(result, label);
     }
-
-    // Legacy handlers (keep for backward compat)
-    onAdopt?.(result);
-    onAdoptScorecard?.({
-      ...result,
-      id: result.id || result.analysis_id,
-      label: label || result.label || 'Scenario',
-      isBaseline: false,
-    });
   }
 
   function resetAllToBaseline() {
@@ -1072,7 +1068,7 @@ if (label === 'Scenario B') onResultB?.(snapshot);
       >
         Adjust values in Scenario A and B, then click "Run" to see projected impact.
         <br />
-        After running, click "Adopt" to apply that scenario as your current analysis.
+        Running saves the scenario to this project. Click "Set Active" to make that saved variant drive the score dashboard.
       </div>
 
       {aiSuggestOpen && (
