@@ -571,6 +571,7 @@ const ScenarioModeler = forwardRef(function ScenarioModeler({
   leverCatalog = [],
   outputMetrics = [],
   scenarioLevers = [],
+  savedScenarios = [],
   refreshVersion = 0,
   onAdopt,
   onAdoptScenario = () => {},
@@ -641,11 +642,6 @@ const ScenarioModeler = forwardRef(function ScenarioModeler({
   const [scenarioA, setScenarioA] = useState(initialValues);
   const [scenarioB, setScenarioB] = useState(initialValues);
 
-  useEffect(() => {
-    setScenarioA(initialValues);
-    setScenarioB(initialValues);
-  }, [initialValues]);
-
   const [resultA, setResultA] = useState(null);
   const [resultB, setResultB] = useState(null);
 
@@ -656,6 +652,46 @@ const ScenarioModeler = forwardRef(function ScenarioModeler({
   const [aiSuggestBusy, setAiSuggestBusy] = useState(false);
   const [aiSuggestDraft, setAiSuggestDraft] = useState(null);
   const [aiSuggestError, setAiSuggestError] = useState('');
+
+  const savedScenarioByLabel = useMemo(() => {
+    const entries = Array.isArray(savedScenarios) ? savedScenarios : [];
+    const pickLatest = (label) => {
+      const matches = entries
+        .filter((entry) => String(entry?.label || '').trim().toLowerCase() === label.toLowerCase())
+        .sort((a, b) => Number(b?.timestamp || 0) - Number(a?.timestamp || 0));
+      return matches[0] || null;
+    };
+    return {
+      a: pickLatest('Scenario A'),
+      b: pickLatest('Scenario B'),
+    };
+  }, [savedScenarios]);
+
+  const hydratedValues = useMemo(() => {
+    const toDisplayValues = (entry) => {
+      const nextValues = { ...initialValues };
+      const rawValues = entry?.values && typeof entry.values === 'object' ? entry.values : {};
+      Object.entries(rawValues).forEach(([key, rawValue]) => {
+        const lever = levers.find((item) => String(item?.key || '') === String(key));
+        const multiplier = Number(lever?.display_multiplier) || 1;
+        const numeric = Number(rawValue);
+        if (!Number.isFinite(numeric)) return;
+        nextValues[key] = numeric * multiplier;
+      });
+      return nextValues;
+    };
+    return {
+      a: savedScenarioByLabel.a ? toDisplayValues(savedScenarioByLabel.a) : initialValues,
+      b: savedScenarioByLabel.b ? toDisplayValues(savedScenarioByLabel.b) : initialValues,
+    };
+  }, [initialValues, levers, savedScenarioByLabel]);
+
+  useEffect(() => {
+    setScenarioA(hydratedValues.a);
+    setScenarioB(hydratedValues.b);
+    setResultA(savedScenarioByLabel.a?.result || null);
+    setResultB(savedScenarioByLabel.b?.result || null);
+  }, [hydratedValues, savedScenarioByLabel, refreshVersion]);
 
   // Expose imperative controls for interactive chat actions (Score → Scenarios)
   useImperativeHandle(ref, () => ({

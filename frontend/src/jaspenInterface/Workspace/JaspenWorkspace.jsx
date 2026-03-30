@@ -7895,9 +7895,9 @@ onClick={async () => {
                       onAdoptScenario={handleScenarioAdopt}
                       onBackToSummary={() => { setActiveTab('summary'); setView('summary'); }}
                       onCompare={handleCompareScenarios}
-                      onResultA={(res) => { setResultA(res); setSelectedVariantId('scenarioA'); }}
-                      onResultB={(res) => { setResultB(res); setSelectedVariantId('scenarioB'); }}
-                      onResultC={(res) => { setResultC(res); setSelectedVariantId('scenarioC'); }}
+                      onResultA={(res) => { setResultA(res); }}
+                      onResultB={(res) => { setResultB(res); }}
+                      onResultC={(res) => { setResultC(res); }}
                       onConvertToProject={() => {
                         storage.saveProject({
                           id: `proj_${Date.now()}`,
