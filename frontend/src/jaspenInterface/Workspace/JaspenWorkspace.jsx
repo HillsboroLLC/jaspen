@@ -178,11 +178,83 @@ const resolveHistoryOwnerId = (analysisHistory = [], ...candidateIds) => {
   return candidates[0];
 };
 
+const buildMergedScorecardSnapshots = ({
+  analysisResult = null,
+  bundleBaselineScorecard = null,
+  baselineScorecardId = '',
+  scorecardSnapshots = [],
+  sessionId = '',
+}) => {
+  const baselineSource =
+    (analysisResult?._baseline_scorecard && typeof analysisResult._baseline_scorecard === 'object'
+      ? analysisResult._baseline_scorecard
+      : null) ||
+    bundleBaselineScorecard ||
+    analysisResult ||
+    null;
+
+  const baselineId = String(
+    baselineScorecardId ||
+    baselineSource?.analysis_id ||
+    baselineSource?.id ||
+    baselineSource?.analysisId ||
+    sessionId ||
+    ''
+  ).trim();
+
+  const baselineSnapshot =
+    baselineSource && typeof baselineSource === 'object' && baselineId
+      ? {
+          ...baselineSource,
+          id: baselineId,
+          analysis_id: baselineSource.analysis_id || baselineId,
+          label: 'Baseline',
+          isBaseline: true,
+        }
+      : null;
+
+  const merged = [];
+  const seen = new Set();
+  const pushSnapshot = (snapshot) => {
+    if (!snapshot || typeof snapshot !== 'object') return;
+    const snapshotId = String(
+      snapshot.id || snapshot.analysis_id || snapshot.analysisId || ''
+    ).trim();
+    if (!snapshotId || seen.has(snapshotId)) return;
+    seen.add(snapshotId);
+    merged.push({
+      ...snapshot,
+      id: snapshotId,
+      analysis_id: snapshot.analysis_id || snapshotId,
+      isBaseline: Boolean(snapshot.isBaseline),
+    });
+  };
+
+  pushSnapshot(baselineSnapshot);
+  (Array.isArray(scorecardSnapshots) ? scorecardSnapshots : []).forEach((snapshot) => {
+    if (!snapshot || typeof snapshot !== 'object') return;
+    const snapshotId = String(snapshot.id || snapshot.analysis_id || '').trim();
+    if (baselineSnapshot && snapshotId === String(baselineSnapshot.id || '').trim()) {
+      pushSnapshot({
+        ...snapshot,
+        ...baselineSnapshot,
+        isBaseline: true,
+        label: 'Baseline',
+      });
+      return;
+    }
+    pushSnapshot(snapshot);
+  });
+
+  return merged;
+};
+
 const resolveScoreWorkspaceContext = ({
   analysisHistory = [],
   sessionId = '',
   currentSessionId = '',
   selectedScorecardId = '',
+  baselineScorecardId = '',
   scorecardSnapshots = [],
   selectedVariant = null,
   analysisResult = null,
@@ -191,7 +263,13 @@ const resolveScoreWorkspaceContext = ({
   view = 'intake',
   activeTab = 'summary',
 }) => {
-  const snapshots = Array.isArray(scorecardSnapshots) ? scorecardSnapshots : [];
+  const snapshots = buildMergedScorecardSnapshots({
+    analysisResult,
+    bundleBaselineScorecard,
+    baselineScorecardId,
+    scorecardSnapshots,
+    sessionId,
+  });
   const snapshotMatch = selectedScorecardId
     ? snapshots.find((snapshot) => snapshot?.id === selectedScorecardId)
     : null;
@@ -995,12 +1073,22 @@ const [aiWbsBusy, setAiWbsBusy] = useState(false);
   // PROMPT ALIGNMENT: Scorecard snapshots (baseline + adopted scenarios)
   const [scorecardSnapshots, setScorecardSnapshots] = useState([]);
   const [selectedScorecardId, setSelectedScorecardId] = useState(null);
+  const [activeSnapshotId, setActiveSnapshotId] = useState(null);
   const [baselineScorecardId, setBaselineScorecardId] = useState(null);
   // Ensure we always have a baseline scorecard id + snapshot once analysisResult exists
   useEffect(() => {
     if (!analysisResult) return;
 
-    const baseId = analysisResult.analysis_id || analysisResult.id || sessionId;
+    const baselineSource =
+      (analysisResult?._baseline_scorecard && typeof analysisResult._baseline_scorecard === 'object'
+        ? analysisResult._baseline_scorecard
+        : null) ||
+      analysisResult;
+    const baseId =
+      baselineSource?.analysis_id ||
+      baselineSource?.id ||
+      baselineSource?.analysisId ||
+      sessionId;
     if (!baseId) return;
 
     // If backend provided snapshots, hydrate them once
@@ -1011,15 +1099,15 @@ const [aiWbsBusy, setAiWbsBusy] = useState(false);
     setBaselineScorecardId(baseId);
 
     setScorecardSnapshots((prev) => {
-      if (Array.isArray(prev) && prev.length > 0) return prev;
-
       if (persistedSnaps && persistedSnaps.length > 0) {
         return persistedSnaps;
       }
 
+      if (Array.isArray(prev) && prev.length > 0) return prev;
+
       return [
         {
-          ...analysisResult,
+          ...baselineSource,
           id: baseId,
           label: 'Baseline',
           isBaseline: true,
@@ -1030,29 +1118,57 @@ const [aiWbsBusy, setAiWbsBusy] = useState(false);
 
     // Select something sensible on load:
     // - if backend has snapshots and previously selected is missing, select baseline
-    setSelectedScorecardId((prev) => {
-      if (prev) return prev;
-      if (persistedSnaps?.length) {
-        const baseline = persistedSnaps.find(s => s.isBaseline) || persistedSnaps[0];
-        return baseline?.id || baseId;
-      }
-      return baseId;
-    });
+    const persistedSelectedId = String(analysisResult?.selected_scorecard_id || '').trim();
+    if (persistedSelectedId) {
+      setActiveSnapshotId(persistedSelectedId);
+      setSelectedScorecardId((current) => String(current || '').trim() || persistedSelectedId);
+      return;
+    }
+    if (persistedSnaps?.length) {
+      const baseline = persistedSnaps.find((s) => s.isBaseline) || persistedSnaps[0];
+      const fallbackId = baseline?.id || baseId;
+      setSelectedScorecardId((current) => String(current || '').trim() || fallbackId);
+      return;
+    }
+    setSelectedScorecardId((current) => String(current || '').trim() || baseId);
   }, [analysisResult, sessionId]);
 
   // Restore selected scorecard on refresh (if backend provided it)
   useEffect(() => {
     if (!analysisResult) return;
-    if (analysisResult?.selected_scorecard_id && !selectedScorecardId) {
-      setSelectedScorecardId(analysisResult.selected_scorecard_id);
+    if (analysisResult?.selected_scorecard_id) {
+      setActiveSnapshotId(analysisResult.selected_scorecard_id);
     }
-  }, [analysisResult, selectedScorecardId]);
+  }, [analysisResult]);
+
+  const effectiveSelectedScorecardId = useMemo(() => {
+    const snapshotIds = new Set(
+      (Array.isArray(scorecardSnapshots) ? scorecardSnapshots : [])
+        .map((snapshot) => String(snapshot?.id || snapshot?.analysis_id || '').trim())
+        .filter(Boolean)
+    );
+    const selectedId = String(selectedScorecardId || '').trim();
+    const activeId = String(activeSnapshotId || '').trim();
+    const baselineId = String(baselineScorecardId || '').trim();
+
+    if (selectedId && (snapshotIds.size === 0 || snapshotIds.has(selectedId))) {
+      return selectedId;
+    }
+    if (activeId && (snapshotIds.size === 0 || snapshotIds.has(activeId))) {
+      return activeId;
+    }
+    if (baselineId && (snapshotIds.size === 0 || snapshotIds.has(baselineId))) {
+      return baselineId;
+    }
+    return selectedId || activeId || baselineId || '';
+  }, [activeSnapshotId, baselineScorecardId, scorecardSnapshots, selectedScorecardId]);
 
 const scoreWorkspace = useMemo(() => resolveScoreWorkspaceContext({
   analysisHistory,
   sessionId,
   currentSessionId,
-  selectedScorecardId,
+  selectedScorecardId: effectiveSelectedScorecardId,
+  baselineScorecardId,
   scorecardSnapshots,
   selectedVariant,
   analysisResult,
@@ -1064,7 +1180,7 @@ const scoreWorkspace = useMemo(() => resolveScoreWorkspaceContext({
   analysisHistory,
   sessionId,
   currentSessionId,
-  selectedScorecardId,
+  effectiveSelectedScorecardId,
   scorecardSnapshots,
   selectedVariant,
   analysisResult,
@@ -1117,86 +1233,88 @@ const refreshBundle = async (tid) => {
 
     const currentScorecard = bundle?.current_scorecard || null;
     const baselineScorecard = bundle?.baseline_scorecard || null;
+    const persistedSnapshots = Array.isArray(bundle?.scorecard_snapshots)
+      ? bundle.scorecard_snapshots
+      : [];
     setBundleCurrentScorecard(currentScorecard);
     setBundleBaselineScorecard(baselineScorecard);
-    const resolvedBaselineScorecard =
-      (baselineScorecard && typeof baselineScorecard === 'object' && Object.keys(baselineScorecard).length > 0)
-        ? baselineScorecard
-        : null;
-    const resolvedBundleScorecard =
-      (currentScorecard && typeof currentScorecard === 'object' && Object.keys(currentScorecard).length > 0)
-        ? currentScorecard
-        : resolvedBaselineScorecard;
-    const persistedBundleSnapshots = Array.isArray(bundle?.scorecard_snapshots)
-      ? bundle.scorecard_snapshots.filter((snap) => snap && typeof snap === 'object')
-      : [];
-    const bundleSnapshots = persistedBundleSnapshots.length > 0
-      ? persistedBundleSnapshots
+    const scenarioScorecards = persistedSnapshots.length > 0
+      ? []
+      : serverScenarios
+          .map((s) => s?.scorecard || s?.analysis_result || s?.result || null)
+          .filter((s) => s && typeof s === 'object');
+
+    const bundleSnapshots = persistedSnapshots.length > 0
+      ? persistedSnapshots
       : buildScorecardSnapshots({
           threadId: tid,
-          baselineScorecard: resolvedBaselineScorecard,
+          baselineScorecard,
           currentScorecard,
-          scenarioScorecards: [],
+          scenarioScorecards,
         });
+
     const baselineId =
-      resolvedBaselineScorecard?.analysis_id ||
-      resolvedBaselineScorecard?.id ||
-      resolvedBaselineScorecard?.analysisId ||
+      baselineScorecard?.analysis_id ||
+      baselineScorecard?.id ||
+      baselineScorecard?.analysisId ||
+      bundleSnapshots.find((snap) => snap?.isBaseline)?.id ||
       null;
-    const bundleSelectedId =
+    const bundleSelectedId = String(
       bundle?.selected_scorecard_id ||
       currentScorecard?.analysis_id ||
       currentScorecard?.id ||
       currentScorecard?.analysisId ||
       baselineId ||
-      null;
+      ''
+    ).trim();
 
     if (bundleSnapshots.length > 0) {
       setScorecardSnapshots(bundleSnapshots);
     }
-    if (baselineId) {
-      setBaselineScorecardId(baselineId);
-    }
+    if (baselineId) setBaselineScorecardId(baselineId);
     if (bundleSelectedId) {
-      setSelectedScorecardId(bundleSelectedId);
+      setActiveSnapshotId(bundleSelectedId);
+      setSelectedScorecardId((current) => String(current || '').trim() || bundleSelectedId);
     }
 
-    if (currentScorecard) {
-      const currentId = currentScorecard.analysis_id || currentScorecard.id || currentScorecard.analysisId;
-      const baselineId = baselineScorecard?.analysis_id || baselineScorecard?.id || baselineScorecard?.analysisId;
-      if (currentId) setSelectedScorecardId(currentId);
+    const resolvedBaselineScorecard =
+      (baselineScorecard && typeof baselineScorecard === 'object' && Object.keys(baselineScorecard).length > 0)
+        ? baselineScorecard
+        : bundleSnapshots.find((snap) => snap?.isBaseline) || null;
+    const selectedBundleSnapshot = bundleSelectedId
+      ? bundleSnapshots.find((snap) => String(snap?.id || snap?.analysis_id || '').trim() === bundleSelectedId)
+      : null;
+    const resolvedBundleScorecard =
+      (selectedBundleSnapshot && hasMeaningfulScorecardData(selectedBundleSnapshot))
+        ? selectedBundleSnapshot
+        : (resolvedBaselineScorecard && hasMeaningfulScorecardData(resolvedBaselineScorecard))
+        ? resolvedBaselineScorecard
+        : (currentScorecard && hasMeaningfulScorecardData(currentScorecard))
+          ? currentScorecard
+          : null;
 
-      if (currentId && baselineId && currentId !== baselineId) {
-        const adoptedSnapshot = {
-          ...currentScorecard,
-          id: currentId,
-          label: currentScorecard.label || 'Adopted Scenario',
-          isBaseline: false,
-          adoptedAt: Date.now(),
-        };
-
-        setScorecardSnapshots(prev => {
-          const exists = prev.find(s => s.id === currentId);
-          if (exists) return prev;
-          return [...prev, adoptedSnapshot];
-        });
-      }
-    }
-
-    if (hasMeaningfulScorecardData(resolvedBaselineScorecard || resolvedBundleScorecard)) {
-      const normalizedScorecard = normalizeAnalysis(resolvedBaselineScorecard || resolvedBundleScorecard);
+    if (hasMeaningfulScorecardData(resolvedBundleScorecard)) {
+      const normalizedScorecard = normalizeAnalysis(resolvedBundleScorecard);
       const normalizedBaselinePayload = {
         ...normalizedScorecard,
         _baseline_scorecard: resolvedBaselineScorecard || normalizedScorecard,
         scorecard_snapshots: bundleSnapshots,
-        selected_scorecard_id: bundleSelectedId,
+        selected_scorecard_id: bundleSelectedId || null,
       };
-      baselineRef.current = normalizedBaselinePayload;
+      baselineRef.current = normalizedScorecard;
       setAnalysisResult((prev) => {
         if (!prev) return normalizedBaselinePayload;
         const prevId = prev.analysis_id || prev.id || null;
-        const nextId = normalizedBaselinePayload.analysis_id || normalizedBaselinePayload.id || null;
-        if (prevId === nextId && view !== 'intake') return prev;
+        const nextId = normalizedScorecard.analysis_id || normalizedScorecard.id || null;
+        if (prevId === nextId && view !== 'intake') {
+          return {
+            ...prev,
+            ...normalizedBaselinePayload,
+            _baseline_scorecard: resolvedBaselineScorecard || normalizedScorecard,
+            scorecard_snapshots: bundleSnapshots,
+            selected_scorecard_id: bundleSelectedId || prev?.selected_scorecard_id || null,
+          };
+        }
         return normalizedBaselinePayload;
       });
       if (view === 'intake') {
@@ -3747,6 +3865,7 @@ if (rawHistory.length > 0) {
       setBundleBaselineScorecard(baselineScorecard);
       setScorecardSnapshots(restoreSnapshots);
       setBaselineScorecardId(restoreBaselineId);
+      setActiveSnapshotId(restoreSelectedId || restoreBaselineId || null);
       setSelectedScorecardId(restoreSelectedId || restoreBaselineId || null);
 
       if (restoreContext.hasScorecard && hasMeaningfulScorecardData(restoreContext.scorecard)) {
@@ -4796,7 +4915,7 @@ async function onBeginProject() {
         const body = {
             sid,
             project_name: suggestedName,
-            scorecard_id: selectedScorecardId || null,
+            scorecard_id: effectiveSelectedScorecardId || null,
             scorecard,                       // <--- this is the key fix
             dry_run: false,
             persist: true,
@@ -4892,7 +5011,7 @@ const handleSaveStarter = async () => {
   }
 };
 
-  const applySnapshotMeta = useCallback((snapshotMeta = {}, { refresh = false } = {}) => {
+  const applySnapshotMeta = useCallback((snapshotMeta = {}, { refresh = false, select = false } = {}) => {
     const nextSnapshots = Array.isArray(snapshotMeta?.scorecard_snapshots)
       ? snapshotMeta.scorecard_snapshots
       : null;
@@ -4915,7 +5034,18 @@ const handleSaveStarter = async () => {
     }
 
     if (nextSelectedId) {
-      setSelectedScorecardId(nextSelectedId);
+      setActiveSnapshotId(nextSelectedId);
+      setSelectedScorecardId((current) => {
+        const currentId = String(current || '').trim();
+        const nextId = String(nextSelectedId || '').trim();
+        const hasCurrentInNext = nextSnapshots
+          ? nextSnapshots.some((item) => String(item?.id || item?.analysis_id || '').trim() === currentId)
+          : Boolean(currentId);
+        if (select || !currentId || !hasCurrentInNext) {
+          return nextId;
+        }
+        return current;
+      });
     }
 
     if (refresh) {
@@ -5291,7 +5421,7 @@ console.log('[Finish&Analyze] data.analysis_result.meta.extracted_levers?', data
   } = {}) => {
     if (!nextScorecard || typeof nextScorecard !== 'object') return null;
 
-    const baseId = scorecardId || selectedScorecardId || baselineScorecardId || nextScorecard.id || nextScorecard.analysis_id || sessionId;
+    const baseId = scorecardId || effectiveSelectedScorecardId || baselineScorecardId || nextScorecard.id || nextScorecard.analysis_id || sessionId;
     if (!baseId) return null;
 
     const source =
@@ -5326,7 +5456,7 @@ console.log('[Finish&Analyze] data.analysis_result.meta.extracted_levers?', data
     });
     setSelectedScorecardId(editedId);
     return editedId;
-  }, [analysisResult, baselineScorecardId, scorecardSnapshots, selectedScorecardId, sessionId]);
+  }, [analysisResult, baselineScorecardId, effectiveSelectedScorecardId, scorecardSnapshots, sessionId]);
 
   // === Chat Command Handlers ===
   const chatCommandHandlers = {
@@ -5348,7 +5478,7 @@ console.log('[Finish&Analyze] data.analysis_result.meta.extracted_levers?', data
     updates           // e.g. { decision: "Maybe", notes: "Funding Needed" }
   } = payload || {};
 
-  const baseId = scorecardId || selectedScorecardId || baselineScorecardId;
+  const baseId = scorecardId || effectiveSelectedScorecardId || baselineScorecardId;
   if (!baseId) {
     showToast('No scorecard available to update', 'error');
     return;
@@ -5764,7 +5894,7 @@ console.log('[Finish&Analyze] data.analysis_result.meta.extracted_levers?', data
 
     
     [ChatActionTypes.PROJECT_BEGIN]: async (payload) => {
-      const scorecardId = payload.scorecardId || selectedScorecardId;
+      const scorecardId = payload.scorecardId || effectiveSelectedScorecardId;
       if (!scorecardId) {
         showToast('No scorecard selected', 'error');
         return;
@@ -6174,7 +6304,7 @@ const sendAIMessage = async () => {
 
         if (response?.updated_scorecard && typeof response.updated_scorecard === 'object') {
           upsertEditedScorecardSnapshot(response.updated_scorecard, {
-            scorecardId: response.selected_scorecard_id || selectedScorecardId || baselineScorecardId,
+            scorecardId: response.selected_scorecard_id || effectiveSelectedScorecardId || baselineScorecardId,
             label: response.updated_scorecard.label || undefined,
           });
           showToast('Updated scorecard wording', 'success');
@@ -6704,12 +6834,19 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
     nextBaselineId ||
     selectedScorecardId ||
     '';
+  const mergedSnapshots = buildMergedScorecardSnapshots({
+    analysisResult: hasMeaningfulScorecardData(merged?.result) ? merged.result : merged,
+    bundleBaselineScorecard: baselineScorecard,
+    baselineScorecardId: nextBaselineId,
+    scorecardSnapshots: nextSnapshots,
+    sessionId: resolvedOwnerThreadId,
+  });
   const selectionContext = resolveScoreWorkspaceContext({
     analysisHistory,
     sessionId: resolvedOwnerThreadId,
     currentSessionId: resolvedOwnerThreadId,
     selectedScorecardId: nextSelectedScorecardId,
-    scorecardSnapshots: nextSnapshots,
+    scorecardSnapshots: mergedSnapshots,
     selectedVariant: null,
     analysisResult: hasMeaningfulScorecardData(merged?.result) ? merged.result : merged,
     bundleCurrentScorecard: currentScorecard,
@@ -6771,14 +6908,30 @@ try {
   if (bundle) {
     setBundleCurrentScorecard(currentScorecard);
     setBundleBaselineScorecard(baselineScorecard);
-    if (nextSnapshots.length > 0) {
-      setScorecardSnapshots(nextSnapshots);
+    if (mergedSnapshots.length > 0) {
+      setScorecardSnapshots(mergedSnapshots);
       setBaselineScorecardId(nextBaselineId);
-      setSelectedScorecardId(nextSelectedScorecardId || nextBaselineId || null);
+      setActiveSnapshotId(nextSelectedScorecardId || null);
+      setSelectedScorecardId((current) => {
+        const currentId = String(current || '').trim();
+        const hasCurrent = mergedSnapshots.some((snapshot) => String(snapshot?.id || snapshot?.analysis_id || '').trim() === currentId);
+        if (currentId && hasCurrent) return current;
+        return nextSelectedScorecardId || nextBaselineId || null;
+      });
     }
   }
 
 const fullScorecard = resolvedScorecard;
+  const resolvedBaselineScorecard =
+    (baselineScorecard && typeof baselineScorecard === 'object' && Object.keys(baselineScorecard).length > 0)
+      ? baselineScorecard
+      : mergedSnapshots.find((snapshot) => snapshot?.isBaseline) || null;
+  const withScoreContext = (scorecard) => ({
+    ...normalizeAnalysis(scorecard || fullScorecard || merged || {}),
+    _baseline_scorecard: resolvedBaselineScorecard || normalizeAnalysis(scorecard || fullScorecard || merged || {}),
+    scorecard_snapshots: mergedSnapshots,
+    selected_scorecard_id: nextSelectedScorecardId || null,
+  });
 
 // GOAL B part 2: Check for missing detailed sections and hydrate if needed
 const missingSections =
@@ -6793,16 +6946,16 @@ if (missingSections) {
   const freshBundle = await Jaspen.getThreadBundle(id, { msg_limit: 50, scn_limit: 50 }).catch(() => null);
   const freshScorecard = getMeaningfulBundleScorecard(freshBundle) || fresh?.result || fresh;
   if (freshScorecard) {
-    const normalized = normalizeAnalysis(freshScorecard);
+    const normalized = withScoreContext(freshScorecard);
     setAnalysisResult(normalized);
     baselineRef.current = normalized;
   } else {
-    const normalized = normalizeAnalysis(fullScorecard || merged || {});
+    const normalized = withScoreContext(fullScorecard || merged || {});
     setAnalysisResult(normalized);
     baselineRef.current = normalized;
   }
 } else {
-  const normalized = normalizeAnalysis(fullScorecard);
+  const normalized = withScoreContext(fullScorecard);
   setAnalysisResult(normalized);
   baselineRef.current = normalized;
 }
@@ -6816,7 +6969,12 @@ if (missingSections) {
   } catch (e) {
   console.error('[handleSelectAnalysis] hydrate failed', e, { merged });
   // Safe fallback so the UI still renders something
-const normalizedFallback = normalizeAnalysis(merged || {});
+const normalizedFallback = {
+  ...normalizeAnalysis(merged || {}),
+  _baseline_scorecard: baselineScorecard || null,
+  scorecard_snapshots: mergedSnapshots,
+  selected_scorecard_id: nextSelectedScorecardId || null,
+};
 setAnalysisResult(normalizedFallback);
 if (!baselineRef.current) baselineRef.current = normalizedFallback; // only set if not set yet
 }
@@ -6981,17 +7139,26 @@ const handleScenarioSaved = useCallback((payload = {}) => {
 
 const handleSnapshotSelect = useCallback(async (snapshotId) => {
   const nextId = String(snapshotId || '').trim();
+  if (!nextId) return;
+  setSelectedScorecardId(nextId);
+  setActiveTab('summary');
+  setView('summary');
+}, []);
+
+const handleSnapshotSetActive = useCallback(async (snapshotId) => {
+  const nextId = String(snapshotId || '').trim();
   const tid = currentSessionId || sessionId;
   if (!nextId || !tid) return;
 
   try {
     const response = await Jaspen.setActiveSnapshot(tid, nextId);
-    applySnapshotMeta(response, { refresh: true });
+    applySnapshotMeta(response, { refresh: true, select: true });
     setActiveTab('summary');
     setView('summary');
+    showToast('Active scorecard updated.', 'success');
   } catch (err) {
-    console.error('[handleSnapshotSelect] failed', err);
-    showToast(err?.message || 'Failed to switch scorecard.', 'error');
+    console.error('[handleSnapshotSetActive] failed', err);
+    showToast(err?.message || 'Failed to set active scorecard.', 'error');
   }
 }, [applySnapshotMeta, currentSessionId, sessionId]);
 
@@ -7140,65 +7307,28 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       messages,
       fallback: 'Untitled Idea',
     });
-    const synthesizedBaselineSnapshot = (() => {
-      const baselineSource =
-        (analysisResult?._baseline_scorecard && typeof analysisResult._baseline_scorecard === 'object'
-          ? analysisResult._baseline_scorecard
-          : null) ||
-        bundleBaselineScorecard ||
-        analysisResult ||
-        null;
-      if (!baselineSource || typeof baselineSource !== 'object') return null;
-      const id =
-        baselineScorecardId ||
-        baselineSource.analysis_id ||
-        baselineSource.id ||
-        baselineSource.analysisId ||
-        null;
-      if (!id) return null;
-      return {
-        ...baselineSource,
-        id,
-        label: 'Baseline',
-        isBaseline: true,
-      };
-    })();
-    const snapshotOptions = (() => {
-      const merged = [];
-      const seen = new Set();
-      const pushSnapshot = (snap) => {
-        if (!snap || typeof snap !== 'object') return;
-        const id = String(snap.id || snap.analysis_id || snap.analysisId || '').trim();
-        if (!id || seen.has(id)) return;
-        seen.add(id);
-        merged.push({
-          ...snap,
-          id,
-          isBaseline: Boolean(snap?.isBaseline),
-        });
-      };
-      if (synthesizedBaselineSnapshot) {
-        pushSnapshot(synthesizedBaselineSnapshot);
-      }
-      (Array.isArray(scorecardSnapshots) ? scorecardSnapshots : []).forEach((snap) => {
-        if (String(snap?.id || snap?.analysis_id || '').trim() === String(synthesizedBaselineSnapshot?.id || '').trim()) {
-          pushSnapshot({
-            ...snap,
-            ...synthesizedBaselineSnapshot,
-            isBaseline: true,
-            label: 'Baseline',
-          });
-          return;
-        }
-        pushSnapshot(snap);
-      });
-      return merged
+    const baselineSnapshotId =
+      baselineScorecardId ||
+      analysisResult?._baseline_scorecard?.analysis_id ||
+      analysisResult?._baseline_scorecard?.id ||
+      analysisResult?.analysis_id ||
+      analysisResult?.id ||
+      sessionId;
+    const mergedSnapshots = buildMergedScorecardSnapshots({
+      analysisResult,
+      bundleBaselineScorecard,
+      baselineScorecardId: baselineSnapshotId,
+      scorecardSnapshots,
+      sessionId,
+    });
+    const snapshotOptions = mergedSnapshots.length > 0
+      ? [...mergedSnapshots]
           .sort((a, b) => {
             if (Boolean(a?.isBaseline) !== Boolean(b?.isBaseline)) {
               return a?.isBaseline ? -1 : 1;
             }
-            const aSelected = String(a?.id || '') === String(selectedScorecardId || '');
-            const bSelected = String(b?.id || '') === String(selectedScorecardId || '');
+            const aSelected = String(a?.id || '') === String(effectiveSelectedScorecardId || '');
+            const bSelected = String(b?.id || '') === String(effectiveSelectedScorecardId || '');
             if (aSelected !== bSelected) return aSelected ? -1 : 1;
             const aCreated = Date.parse(String(a?.createdAt || a?.timestamp || '')) || Number(a?.createdAt || 0) || 0;
             const bCreated = Date.parse(String(b?.createdAt || b?.timestamp || '')) || Number(b?.createdAt || 0) || 0;
@@ -7208,13 +7338,14 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
             id: snap.id,
             label: snap.isBaseline ? 'Baseline' : (snap.label || `Scenario ${idx}`),
             isBaseline: Boolean(snap?.isBaseline),
-            isSelected: String(snap?.id || '') === String(selectedScorecardId || ''),
+            isSelected: String(snap?.id || '') === String(effectiveSelectedScorecardId || ''),
+            isActive: String(snap?.id || '') === String(activeSnapshotId || ''),
             canDelete: !Boolean(snap?.isBaseline),
-          }));
-    })();
+          }))
+      : [];
     const useSnapshotSelect = snapshotOptions.length > 0;
     const scoreSelectValue = useSnapshotSelect
-      ? (selectedScorecardId || snapshotOptions[0]?.id || '')
+      ? (effectiveSelectedScorecardId || snapshotOptions[0]?.id || '')
       : selectedVariantId;
     const selectedScoreLabel = useSnapshotSelect
       ? (snapshotOptions.find((option) => option.id === scoreSelectValue)?.label || snapshotOptions[0]?.label || 'Baseline')
@@ -7729,7 +7860,7 @@ onClick={async () => {
                               aria-checked={scoreSelectValue === option.id}
                               onClick={async () => {
                                 if (useSnapshotSelect) {
-                                  await handleSnapshotSelect(option.id);
+                                  handleSnapshotSelect(option.id);
                                 } else {
                                   setSelectedVariantId(option.id);
                                 }
@@ -7737,17 +7868,20 @@ onClick={async () => {
                               }}
                             >
                               {scoreSelectValue === option.id && <FontAwesomeIcon icon={faCheck} />}
-                              <span>{option.label}{option.isBaseline ? ' (Baseline)' : option.isSelected ? ' (Active)' : ''}</span>
+                              <span>
+                                {option.label}
+                                {option.isBaseline ? ' (Baseline)' : option.isActive ? ' (Active)' : ''}
+                              </span>
                             </button>
                             {useSnapshotSelect && (
                               <div className="jas-select-option-actions">
-                                {!option.isBaseline && !option.isSelected && (
+                                {!option.isBaseline && !option.isActive && (
                                   <button
                                     type="button"
                                     className="jas-select-option-action"
                                     onClick={async (event) => {
                                       event.stopPropagation();
-                                      await handleSnapshotSelect(option.id);
+                                      await handleSnapshotSetActive(option.id);
                                       setScoreShellMenu(null);
                                     }}
                                     title="Set active"
@@ -7921,8 +8055,8 @@ onClick={async () => {
         onSelectVariant={setSelectedVariantId}
 
         scorecardSnapshots={scorecardSnapshots}
-        selectedScorecardId={selectedScorecardId}
-        onSelectScorecard={setSelectedScorecardId}
+        selectedScorecardId={effectiveSelectedScorecardId}
+        onSelectScorecard={handleSnapshotSelect}
         baselineScorecardId={baselineScorecardId}
         threadBundleId={sessionId}
         scoreCommentary={scoreCommentary}
