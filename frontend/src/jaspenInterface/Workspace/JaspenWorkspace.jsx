@@ -119,6 +119,35 @@ const getMeaningfulBundleScorecard = (bundle) => {
   return null;
 };
 
+const getDisplayScorecardResult = (result, threadId = '') => {
+  if (!result || typeof result !== 'object') return result;
+
+  const snapshots = Array.isArray(result.scorecard_snapshots) ? result.scorecard_snapshots : [];
+  const selectedId = String(result.selected_scorecard_id || '').trim();
+  const selectedSnapshot = selectedId
+    ? snapshots.find((snapshot) => String(snapshot?.id || snapshot?.analysis_id || '').trim() === selectedId)
+    : null;
+  const baselineScorecard = result._baseline_scorecard && typeof result._baseline_scorecard === 'object'
+    ? result._baseline_scorecard
+    : null;
+
+  const chosen = hasMeaningfulScorecardData(selectedSnapshot)
+    ? selectedSnapshot
+    : hasMeaningfulScorecardData(baselineScorecard)
+      ? baselineScorecard
+      : null;
+
+  if (!chosen) return result;
+
+  return {
+    ...result,
+    ...chosen,
+    _owner_thread_id: String(threadId || chosen._owner_thread_id || result._owner_thread_id || '').trim() || undefined,
+    project_name: chosen.project_name || result.project_name,
+    analysis_id: chosen.analysis_id || chosen.id || result.analysis_id,
+  };
+};
+
 const resolveHistoryOwnerId = (analysisHistory = [], ...candidateIds) => {
   const candidates = candidateIds
     .map((value) => String(value || '').trim())
@@ -3225,10 +3254,13 @@ const [initialRestorePending, setInitialRestorePending] = useState(() => Boolean
         const threadId = String(session?.session_id || '').trim();
         if (!threadId) continue;
 
-        const sessionResult = (session && typeof session.result === 'object') ? session.result : null;
-        const historyResult = extractMeaningfulHistoryResult(
-          Array.isArray(session.analysis_history) ? session.analysis_history : session.analyses
+        const sessionResult = getDisplayScorecardResult(
+          (session && typeof session.result === 'object') ? session.result : null,
+          threadId,
         );
+        const historyResult = getDisplayScorecardResult(extractMeaningfulHistoryResult(
+          Array.isArray(session.analysis_history) ? session.analysis_history : session.analyses
+        ), threadId);
         const full = hasMeaningfulScorecardData(sessionResult)
           ? sessionResult
           : (hasMeaningfulScorecardData(historyResult) ? historyResult : {});
@@ -3331,10 +3363,13 @@ async function loadSessionById(id) {
       const latestAnalysisResult = (latestAnalysis && typeof latestAnalysis.result === 'object')
         ? latestAnalysis.result
         : null;
-      const sessionResult = (data?.session?.result && typeof data.session.result === 'object')
-        ? data.session.result
-        : null;
-      const historyResult = extractMeaningfulHistoryResult(analyses);
+      const sessionResult = getDisplayScorecardResult(
+        (data?.session?.result && typeof data.session.result === 'object')
+          ? data.session.result
+          : null,
+        thread.id,
+      );
+      const historyResult = getDisplayScorecardResult(extractMeaningfulHistoryResult(analyses), thread.id);
       const resolvedResult = hasMeaningfulScorecardData(latestAnalysisResult)
         ? latestAnalysisResult
         : hasMeaningfulScorecardData(sessionResult)

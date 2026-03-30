@@ -141,6 +141,30 @@ def _scores_extract_numeric_score(result):
     return None
 
 
+def _scores_display_result(result, thread_id):
+    if not isinstance(result, dict):
+        return result if isinstance(result, dict) else {}
+
+    snapshot_state = _scorecard_snapshot_state(result, thread_id)
+    selected_snapshot = snapshot_state.get('selected_snapshot') if isinstance(snapshot_state, dict) else None
+    baseline_snapshot = snapshot_state.get('baseline') if isinstance(snapshot_state, dict) else None
+
+    chosen = selected_snapshot if isinstance(selected_snapshot, dict) else None
+    if not isinstance(chosen, dict):
+        chosen = baseline_snapshot if isinstance(baseline_snapshot, dict) else None
+    if not isinstance(chosen, dict):
+        return result
+
+    merged = {
+        **result,
+        **chosen,
+    }
+    merged.setdefault('_owner_thread_id', str(thread_id or '').strip() or None)
+    merged.setdefault('project_name', result.get('project_name') or chosen.get('project_name'))
+    merged.setdefault('analysis_id', chosen.get('analysis_id') or chosen.get('id') or result.get('analysis_id'))
+    return merged
+
+
 def _collect_completed_scores(
     user_id,
     *,
@@ -186,7 +210,8 @@ def _collect_completed_scores(
 
         analyses = _scores_analysis_entries(session, thread_id)
         for analysis in analyses:
-            result = analysis.get('result') if isinstance(analysis, dict) else None
+            raw_result = analysis.get('result') if isinstance(analysis, dict) else None
+            result = _scores_display_result(raw_result, thread_id)
             if not isinstance(result, dict):
                 continue
 
