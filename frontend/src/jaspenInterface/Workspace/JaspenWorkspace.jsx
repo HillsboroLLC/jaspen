@@ -6896,11 +6896,29 @@ const handleScenarioResultC = (result) => {
 
 const handleScenarioSaved = useCallback((payload = {}) => {
   if (!payload || typeof payload !== 'object') return;
-  const response = payload.response;
-  if (response && typeof response === 'object') {
-    applySnapshotMeta(response, { refresh: false });
-  }
-}, [applySnapshotMeta]);
+  const scenarioId = String(
+    payload?.response?.scenario_id ||
+    payload?.response?.scenario?.scenario_id ||
+    payload?.snapshot?.scenario_id ||
+    payload?.snapshot?.id ||
+    ''
+  ).trim();
+  if (!scenarioId) return;
+
+  const nextEntry = {
+    id: scenarioId,
+    label: String(payload?.label || payload?.snapshot?.label || 'Scenario').trim() || 'Scenario',
+    values: payload?.response?.scenario?.deltas || payload?.values || {},
+    result: payload?.snapshot && typeof payload.snapshot === 'object' ? payload.snapshot : null,
+    timestamp: Date.now(),
+  };
+
+  setSavedScenarios((prev) => {
+    const items = Array.isArray(prev) ? prev : [];
+    const others = items.filter((item) => String(item?.id || '').trim() !== scenarioId);
+    return [...others, nextEntry].sort((a, b) => Number(b?.timestamp || 0) - Number(a?.timestamp || 0));
+  });
+}, []);
 
 const handleSnapshotSelect = useCallback(async (snapshotId) => {
   const nextId = String(snapshotId || '').trim();

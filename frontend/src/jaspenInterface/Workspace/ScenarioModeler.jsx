@@ -845,7 +845,7 @@ setter(snapshot);
 
 if (label === 'Scenario A') onResultA?.(snapshot);
 if (label === 'Scenario B') onResultB?.(snapshot);
-// Running a scenario saves a variant; "Set Active" chooses which variant drives the score dashboard.
+// Running persists the scenario draft/result for this project; "Set Active" promotes it into the Score tab.
     return snapshot;
   }
 
@@ -1066,9 +1066,9 @@ if (label === 'Scenario B') onResultB?.(snapshot);
           lineHeight: 1.5,
         }}
       >
-        Adjust values in Scenario A and B, then click "Run" to see projected impact.
+        Adjust values in Scenario A and B, then click "Run" to save your scenario draft and see projected impact.
         <br />
-        Running saves the scenario to this project. Click "Set Active" to make that saved variant drive the score dashboard.
+        Scenario drafts are saved to this project automatically. Click "Set Active" only when you want a scenario to appear in the Score tab and drive the score dashboard.
       </div>
 
       {aiSuggestOpen && (

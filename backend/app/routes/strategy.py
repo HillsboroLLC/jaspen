@@ -4293,14 +4293,6 @@ def apply_scenario(scenario_id):
         scenario['result'] = result
         scenario['updated_at'] = datetime.utcnow().isoformat()
         _save_scenarios(user_id, all_data)
-        snapshot_meta = _persist_scenario_snapshot_to_session(
-            user_id,
-            thread_id,
-            scenario,
-            result,
-            select=False,
-        )
-
         # Return in the shape ScenarioModeler.normalizeApplied() expects
         return jsonify({
             'scenario_id': scenario_id,
@@ -4313,9 +4305,6 @@ def apply_scenario(scenario_id):
             'component_scores': result['component_scores'],
             'financial_impact': result['financial_impact'],
             'analysis_id': scenario_id,
-            'snapshot': (snapshot_meta or {}).get('snapshot'),
-            'scorecard_snapshots': (snapshot_meta or {}).get('scorecard_snapshots'),
-            'selected_scorecard_id': (snapshot_meta or {}).get('selected_scorecard_id'),
         }), 200
 
     except Exception as e:
