@@ -356,6 +356,8 @@ def _scores_analysis_entries(session, thread_id):
         result = item.get('result')
         if not isinstance(result, dict):
             continue
+        if result.get('source_scenario_id') or result.get('isBaseline') is False:
+            continue
         if not analysis_id:
             analysis_id = result.get('analysis_id') or result.get('id') or thread_id
         normalized.append({
@@ -1042,6 +1044,8 @@ def _persist_scenario_snapshot_to_session(user_id, thread_id, scenario, result, 
     baseline_scorecard = (
         result_payload.get('_baseline_scorecard') if isinstance(result_payload.get('_baseline_scorecard'), dict) else None
     ) or baseline_snapshot or result_payload or None
+    if isinstance(baseline_scorecard, dict):
+        baseline_scorecard = {**baseline_scorecard}
 
     existing_snapshots = snapshot_state['snapshots'] if snapshot_state else (
         result_payload.get('scorecard_snapshots') if isinstance(result_payload.get('scorecard_snapshots'), list) else []
@@ -1051,42 +1055,36 @@ def _persist_scenario_snapshot_to_session(user_id, thread_id, scenario, result, 
         if isinstance(item, dict) and not item.get('isBaseline')
     ]
     next_snapshots = _upsert_snapshot_entry(non_baseline_snapshots, snapshot)
+    baseline_id = (
+        baseline_scorecard.get('analysis_id')
+        or baseline_scorecard.get('id')
+        or resolved_thread_id
+    ) if isinstance(baseline_scorecard, dict) else resolved_thread_id
+    selected_scorecard_id = (
+        snapshot['id']
+        if select
+        else (
+            result_payload.get('selected_scorecard_id')
+            or baseline_id
+        )
+    )
+    project_name = (
+        result_payload.get('project_name')
+        or (baseline_scorecard.get('project_name') if isinstance(baseline_scorecard, dict) else None)
+        or session.get('name')
+        or snapshot.get('project_name')
+    )
 
     next_result = {
         **result_payload,
-        **snapshot,
         '_baseline_scorecard': baseline_scorecard,
         'scorecard_snapshots': next_snapshots,
-        'selected_scorecard_id': snapshot['id'] if select else (
-            result_payload.get('selected_scorecard_id') or snapshot['id']
-        ),
-        'project_name': snapshot.get('project_name') or result_payload.get('project_name'),
+        'selected_scorecard_id': selected_scorecard_id,
+        'project_name': project_name,
     }
     session['result'] = next_result
     session['status'] = session.get('status') or 'completed'
     session['timestamp'] = datetime.utcnow().isoformat()
-
-    analysis_history = session.get('analysis_history') if isinstance(session.get('analysis_history'), list) else []
-    history_entry = {
-        'analysis_id': snapshot['id'],
-        'result': snapshot,
-        'label': snapshot.get('label'),
-        'created_at': snapshot.get('createdAt'),
-    }
-    replaced = False
-    next_history = []
-    for entry in analysis_history:
-        if not isinstance(entry, dict):
-            continue
-        entry_id = str(entry.get('analysis_id') or entry.get('id') or '').strip()
-        if entry_id == snapshot['id']:
-            next_history.append(history_entry)
-            replaced = True
-        else:
-            next_history.append(entry)
-    if not replaced:
-        next_history.append(history_entry)
-    session['analysis_history'] = next_history
 
     sessions[session_key or resolved_thread_id] = session
     persisted = save_user_sessions(user_id, sessions)

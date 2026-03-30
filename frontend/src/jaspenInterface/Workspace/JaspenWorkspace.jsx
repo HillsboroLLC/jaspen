@@ -317,7 +317,11 @@ const buildScorecardSnapshots = ({
 };
 
 const parseHistoryTimestamp = (value) => {
-  const ts = new Date(value || 0).getTime();
+  const text = String(value || '').trim();
+  const normalized = text && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(text)
+    ? `${text}Z`
+    : value;
+  const ts = new Date(normalized || 0).getTime();
   return Number.isFinite(ts) ? ts : 0;
 };
 
@@ -1004,7 +1008,7 @@ const [aiWbsBusy, setAiWbsBusy] = useState(false);
       ? analysisResult.scorecard_snapshots
       : null;
 
-    setBaselineScorecardId((prev) => prev || baseId);
+    setBaselineScorecardId(baseId);
 
     setScorecardSnapshots((prev) => {
       if (Array.isArray(prev) && prev.length > 0) return prev;
@@ -1115,32 +1119,46 @@ const refreshBundle = async (tid) => {
     const baselineScorecard = bundle?.baseline_scorecard || null;
     setBundleCurrentScorecard(currentScorecard);
     setBundleBaselineScorecard(baselineScorecard);
+    const resolvedBaselineScorecard =
+      (baselineScorecard && typeof baselineScorecard === 'object' && Object.keys(baselineScorecard).length > 0)
+        ? baselineScorecard
+        : null;
     const resolvedBundleScorecard =
       (currentScorecard && typeof currentScorecard === 'object' && Object.keys(currentScorecard).length > 0)
         ? currentScorecard
-        : (baselineScorecard && typeof baselineScorecard === 'object' && Object.keys(baselineScorecard).length > 0)
-          ? baselineScorecard
-          : null;
-    const scenarioScorecards = serverScenarios
-      .map((s) => s?.scorecard || s?.analysis_result || s?.result || null)
-      .filter((s) => s && typeof s === 'object');
-
-    const bundleSnapshots = buildScorecardSnapshots({
-      threadId: tid,
-      baselineScorecard,
-      currentScorecard,
-      scenarioScorecards,
-    });
+        : resolvedBaselineScorecard;
+    const persistedBundleSnapshots = Array.isArray(bundle?.scorecard_snapshots)
+      ? bundle.scorecard_snapshots.filter((snap) => snap && typeof snap === 'object')
+      : [];
+    const bundleSnapshots = persistedBundleSnapshots.length > 0
+      ? persistedBundleSnapshots
+      : buildScorecardSnapshots({
+          threadId: tid,
+          baselineScorecard: resolvedBaselineScorecard,
+          currentScorecard,
+          scenarioScorecards: [],
+        });
+    const baselineId =
+      resolvedBaselineScorecard?.analysis_id ||
+      resolvedBaselineScorecard?.id ||
+      resolvedBaselineScorecard?.analysisId ||
+      null;
+    const bundleSelectedId =
+      bundle?.selected_scorecard_id ||
+      currentScorecard?.analysis_id ||
+      currentScorecard?.id ||
+      currentScorecard?.analysisId ||
+      baselineId ||
+      null;
 
     if (bundleSnapshots.length > 0) {
-      setScorecardSnapshots((prev) => {
-        const existing = Array.isArray(prev) ? prev : [];
-        const merged = [...existing];
-        bundleSnapshots.forEach((snap) => {
-          if (!merged.find((s) => s.id === snap.id)) merged.push(snap);
-        });
-        return merged;
-      });
+      setScorecardSnapshots(bundleSnapshots);
+    }
+    if (baselineId) {
+      setBaselineScorecardId(baselineId);
+    }
+    if (bundleSelectedId) {
+      setSelectedScorecardId(bundleSelectedId);
     }
 
     if (currentScorecard) {
@@ -1165,15 +1183,21 @@ const refreshBundle = async (tid) => {
       }
     }
 
-    if (hasMeaningfulScorecardData(resolvedBundleScorecard)) {
-      const normalizedScorecard = normalizeAnalysis(resolvedBundleScorecard);
-      baselineRef.current = normalizedScorecard;
+    if (hasMeaningfulScorecardData(resolvedBaselineScorecard || resolvedBundleScorecard)) {
+      const normalizedScorecard = normalizeAnalysis(resolvedBaselineScorecard || resolvedBundleScorecard);
+      const normalizedBaselinePayload = {
+        ...normalizedScorecard,
+        _baseline_scorecard: resolvedBaselineScorecard || normalizedScorecard,
+        scorecard_snapshots: bundleSnapshots,
+        selected_scorecard_id: bundleSelectedId,
+      };
+      baselineRef.current = normalizedBaselinePayload;
       setAnalysisResult((prev) => {
-        if (!prev) return normalizedScorecard;
+        if (!prev) return normalizedBaselinePayload;
         const prevId = prev.analysis_id || prev.id || null;
-        const nextId = normalizedScorecard.analysis_id || normalizedScorecard.id || null;
+        const nextId = normalizedBaselinePayload.analysis_id || normalizedBaselinePayload.id || null;
         if (prevId === nextId && view !== 'intake') return prev;
-        return normalizedScorecard;
+        return normalizedBaselinePayload;
       });
       if (view === 'intake') {
         setView('summary');
@@ -7104,13 +7128,71 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
     const sideTabBase = 128;
     const sideTabGap = 130;
     const sideTabSecond = sideTabBase + sideTabGap;
+    const baselineTitleSource =
+      (analysisResult?._baseline_scorecard && typeof analysisResult._baseline_scorecard === 'object'
+        ? analysisResult._baseline_scorecard
+        : null) ||
+      bundleBaselineScorecard ||
+      analysisResult ||
+      activeScorecard;
     const workspaceProjectTitle = deriveIdeaTitle({
-      result: activeScorecard || analysisResult,
+      result: baselineTitleSource,
       messages,
       fallback: 'Untitled Idea',
     });
-    const snapshotOptions = Array.isArray(scorecardSnapshots)
-      ? [...scorecardSnapshots]
+    const synthesizedBaselineSnapshot = (() => {
+      const baselineSource =
+        (analysisResult?._baseline_scorecard && typeof analysisResult._baseline_scorecard === 'object'
+          ? analysisResult._baseline_scorecard
+          : null) ||
+        bundleBaselineScorecard ||
+        analysisResult ||
+        null;
+      if (!baselineSource || typeof baselineSource !== 'object') return null;
+      const id =
+        baselineScorecardId ||
+        baselineSource.analysis_id ||
+        baselineSource.id ||
+        baselineSource.analysisId ||
+        null;
+      if (!id) return null;
+      return {
+        ...baselineSource,
+        id,
+        label: 'Baseline',
+        isBaseline: true,
+      };
+    })();
+    const snapshotOptions = (() => {
+      const merged = [];
+      const seen = new Set();
+      const pushSnapshot = (snap) => {
+        if (!snap || typeof snap !== 'object') return;
+        const id = String(snap.id || snap.analysis_id || snap.analysisId || '').trim();
+        if (!id || seen.has(id)) return;
+        seen.add(id);
+        merged.push({
+          ...snap,
+          id,
+          isBaseline: Boolean(snap?.isBaseline),
+        });
+      };
+      if (synthesizedBaselineSnapshot) {
+        pushSnapshot(synthesizedBaselineSnapshot);
+      }
+      (Array.isArray(scorecardSnapshots) ? scorecardSnapshots : []).forEach((snap) => {
+        if (String(snap?.id || snap?.analysis_id || '').trim() === String(synthesizedBaselineSnapshot?.id || '').trim()) {
+          pushSnapshot({
+            ...snap,
+            ...synthesizedBaselineSnapshot,
+            isBaseline: true,
+            label: 'Baseline',
+          });
+          return;
+        }
+        pushSnapshot(snap);
+      });
+      return merged
           .sort((a, b) => {
             if (Boolean(a?.isBaseline) !== Boolean(b?.isBaseline)) {
               return a?.isBaseline ? -1 : 1;
@@ -7128,15 +7210,15 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
             isBaseline: Boolean(snap?.isBaseline),
             isSelected: String(snap?.id || '') === String(selectedScorecardId || ''),
             canDelete: !Boolean(snap?.isBaseline),
-          }))
-      : [];
+          }));
+    })();
     const useSnapshotSelect = snapshotOptions.length > 0;
     const scoreSelectValue = useSnapshotSelect
       ? (selectedScorecardId || snapshotOptions[0]?.id || '')
       : selectedVariantId;
     const selectedScoreLabel = useSnapshotSelect
-      ? (snapshotOptions.find((option) => option.id === scoreSelectValue)?.label || snapshotOptions[0]?.label || 'Baseline Analysis')
-      : (scoreVariants.find((variant) => variant.id === scoreSelectValue)?.label || 'Baseline Analysis');
+      ? (snapshotOptions.find((option) => option.id === scoreSelectValue)?.label || snapshotOptions[0]?.label || 'Baseline')
+      : (scoreVariants.find((variant) => variant.id === scoreSelectValue)?.label || 'Baseline');
     const completedScoreOptions = analysisHistory
       .filter((item) => (item.result?.status || 'completed') === 'completed')
       .map((item) => ({

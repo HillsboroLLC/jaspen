@@ -23,7 +23,11 @@ function getScoreBadgeClass(category) {
 }
 
 function parseTimestamp(value) {
-  const ts = new Date(value || 0).getTime();
+  const text = String(value || '').trim();
+  const normalized = text && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(text)
+    ? `${text}Z`
+    : value;
+  const ts = new Date(normalized || 0).getTime();
   return Number.isFinite(ts) ? ts : 0;
 }
 
