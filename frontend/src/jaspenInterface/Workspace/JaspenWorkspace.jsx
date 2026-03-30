@@ -1141,9 +1141,17 @@ const [aiWbsBusy, setAiWbsBusy] = useState(false);
     }
   }, [analysisResult]);
 
+  const mergedScoreWorkspaceSnapshots = useMemo(() => buildMergedScorecardSnapshots({
+    analysisResult,
+    bundleBaselineScorecard,
+    baselineScorecardId,
+    scorecardSnapshots,
+    sessionId,
+  }), [analysisResult, baselineScorecardId, bundleBaselineScorecard, scorecardSnapshots, sessionId]);
+
   const effectiveSelectedScorecardId = useMemo(() => {
     const snapshotIds = new Set(
-      (Array.isArray(scorecardSnapshots) ? scorecardSnapshots : [])
+      mergedScoreWorkspaceSnapshots
         .map((snapshot) => String(snapshot?.id || snapshot?.analysis_id || '').trim())
         .filter(Boolean)
     );
@@ -1161,7 +1169,7 @@ const [aiWbsBusy, setAiWbsBusy] = useState(false);
       return baselineId;
     }
     return selectedId || activeId || baselineId || '';
-  }, [activeSnapshotId, baselineScorecardId, scorecardSnapshots, selectedScorecardId]);
+  }, [activeSnapshotId, baselineScorecardId, mergedScoreWorkspaceSnapshots, selectedScorecardId]);
 
 const scoreWorkspace = useMemo(() => resolveScoreWorkspaceContext({
   analysisHistory,
@@ -1170,7 +1178,7 @@ const scoreWorkspace = useMemo(() => resolveScoreWorkspaceContext({
   selectedScorecardId: effectiveSelectedScorecardId,
   baselineScorecardId,
   scorecardSnapshots,
-  selectedVariant,
+  selectedVariant: mergedScoreWorkspaceSnapshots.length > 0 ? null : selectedVariant,
   analysisResult,
   bundleCurrentScorecard,
   bundleBaselineScorecard,
@@ -1186,6 +1194,7 @@ const scoreWorkspace = useMemo(() => resolveScoreWorkspaceContext({
   analysisResult,
   bundleCurrentScorecard,
   bundleBaselineScorecard,
+  mergedScoreWorkspaceSnapshots.length,
   view,
   activeTab,
 ]);
@@ -7314,13 +7323,15 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       analysisResult?.analysis_id ||
       analysisResult?.id ||
       sessionId;
-    const mergedSnapshots = buildMergedScorecardSnapshots({
-      analysisResult,
-      bundleBaselineScorecard,
-      baselineScorecardId: baselineSnapshotId,
-      scorecardSnapshots,
-      sessionId,
-    });
+    const mergedSnapshots = mergedScoreWorkspaceSnapshots.length > 0
+      ? mergedScoreWorkspaceSnapshots
+      : buildMergedScorecardSnapshots({
+          analysisResult,
+          bundleBaselineScorecard,
+          baselineScorecardId: baselineSnapshotId,
+          scorecardSnapshots,
+          sessionId,
+        });
     const snapshotOptions = mergedSnapshots.length > 0
       ? [...mergedSnapshots]
           .sort((a, b) => {
@@ -7344,11 +7355,17 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
           }))
       : [];
     const useSnapshotSelect = snapshotOptions.length > 0;
+    const resolvedScoreSelectValue = String(
+      activeScorecardId ||
+      effectiveSelectedScorecardId ||
+      snapshotOptions[0]?.id ||
+      ''
+    ).trim();
     const scoreSelectValue = useSnapshotSelect
-      ? (effectiveSelectedScorecardId || snapshotOptions[0]?.id || '')
+      ? resolvedScoreSelectValue
       : selectedVariantId;
     const selectedScoreLabel = useSnapshotSelect
-      ? (snapshotOptions.find((option) => option.id === scoreSelectValue)?.label || snapshotOptions[0]?.label || 'Baseline')
+      ? (snapshotOptions.find((option) => option.id === resolvedScoreSelectValue)?.label || snapshotOptions[0]?.label || 'Baseline')
       : (scoreVariants.find((variant) => variant.id === scoreSelectValue)?.label || 'Baseline');
     const completedScoreOptions = analysisHistory
       .filter((item) => (item.result?.status || 'completed') === 'completed')
