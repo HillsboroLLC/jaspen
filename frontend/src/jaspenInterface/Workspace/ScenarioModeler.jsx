@@ -454,6 +454,39 @@ function ScenarioColumn({
       <div className="jas-scenario-header">{title}</div>
 
       <div className="jas-scenario-body jas-scenario-body-rich">
+        <div className="jas-scenario-section">
+          <div className="jas-scenario-section-title">Projected Outcomes</div>
+          {result ? (
+            <div className="results-box">
+              {scenarioMetricRows.map((metric) => {
+                const baselineMetric = baselineMetricMap.get(metric.key);
+                return (
+                  <div key={metric.key} className="result-row result-row-compare">
+                    <span className="result-label">{metric.label}</span>
+                    <div className="result-compare-values">
+                      <span className="result-value result-value-before">
+                        {baselineMetric ? formatValue(baselineMetric.value, baselineMetric.type) : '—'}
+                      </span>
+                      <span className="result-arrow">→</span>
+                      <span className="result-value">{formatValue(metric.value, metric.type)}</span>
+                      <span className="input-delta">
+                        {baselineMetric ? formatDeltaValue(metric.value, baselineMetric.value, metric.type) : '—'}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+              {result?.rationale ? (
+                <div className="jas-scenario-rationale">{result.rationale}</div>
+              ) : null}
+            </div>
+          ) : (
+            <div className="jas-scenario-empty">
+              <p>Run this scenario to see projected ROI, EBITDA, payback period, and score change.</p>
+            </div>
+          )}
+        </div>
+
         {insufficientLevers ? (
           <div className="jas-scenario-empty">
             <p>Jaspen doesn't have enough financial detail to model scenarios yet.</p>
@@ -498,39 +531,6 @@ function ScenarioColumn({
             })}
           </div>
         )}
-
-        <div className="jas-scenario-section">
-          <div className="jas-scenario-section-title">Projected Outcomes</div>
-          {result ? (
-            <div className="results-box">
-              {scenarioMetricRows.map((metric) => {
-                const baselineMetric = baselineMetricMap.get(metric.key);
-                return (
-                  <div key={metric.key} className="result-row result-row-compare">
-                    <span className="result-label">{metric.label}</span>
-                    <div className="result-compare-values">
-                      <span className="result-value result-value-before">
-                        {baselineMetric ? formatValue(baselineMetric.value, baselineMetric.type) : '—'}
-                      </span>
-                      <span className="result-arrow">→</span>
-                      <span className="result-value">{formatValue(metric.value, metric.type)}</span>
-                      <span className="input-delta">
-                        {baselineMetric ? formatDeltaValue(metric.value, baselineMetric.value, metric.type) : '—'}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
-              {result?.rationale ? (
-                <div className="jas-scenario-rationale">{result.rationale}</div>
-              ) : null}
-            </div>
-          ) : (
-            <div className="jas-scenario-empty">
-              <p>Run this scenario to see projected ROI, EBITDA, payback period, and score change.</p>
-            </div>
-          )}
-        </div>
       </div>
 
       <div className="jas-scenario-actions">
