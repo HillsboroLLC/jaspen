@@ -5,7 +5,7 @@
 // ============================================================================
 import React, { useState, useMemo, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faSpinner, faPlay, faCheck } from '@fortawesome/free-solid-svg-icons';
+import { faSpinner, faPlay, faCheck, faStar } from '@fortawesome/free-solid-svg-icons';
 import { Jaspen } from './JaspenClient';
 import Button from './workspaceUi/components/Button';
 import { ScenarioModelerSkeleton } from '../../shared/components/SkeletonLoader';
@@ -555,7 +555,7 @@ function ScenarioColumn({
           )}
         </Button>
         <Button variant="outline" size="sm" onClick={onAdopt} disabled={!result || disabled}>
-          <FontAwesomeIcon icon={faCheck} /> Set Active
+          <FontAwesomeIcon icon={faStar} /> Set Active
         </Button>
       </div>
     </div>
@@ -589,31 +589,14 @@ const ScenarioModeler = forwardRef(function ScenarioModeler({
     baseAnalysis?.meta?.thread_id ||
     analysisId;
 
-  // DEBUG: Log what baseAnalysis prop ScenarioModeler receives
-  console.log('[ScenarioModeler] baseAnalysis prop:', baseAnalysis);
-  console.log('[ScenarioModeler] baseAnalysis.meta?', baseAnalysis?.meta);
-  console.log('[ScenarioModeler] baseAnalysis.meta.extracted_levers?', baseAnalysis?.meta?.extracted_levers);
-  console.log('[ScenarioModeler] baseAnalysis.inputs?', baseAnalysis?.inputs);
-  console.log('[ScenarioModeler] baseAnalysis.compat?', baseAnalysis?.compat);
-  console.log('[ScenarioModeler] derived threadId:', threadId);
-
   const baselineMetrics = useMemo(() => buildMetricRows(baseAnalysis), [baseAnalysis]);
 
   const levers = useMemo(() => {
     const normalizedCatalog = normalizeScenarioLevers(leverCatalog);
-    if (normalizedCatalog.length > 0) {
-      console.log('[ScenarioModeler.levers] using leverCatalog prop:', normalizedCatalog.length, 'levers');
-      return normalizedCatalog;
-    }
+    if (normalizedCatalog.length > 0) return normalizedCatalog;
     const normalized = normalizeScenarioLevers(scenarioLevers);
-    if (normalized.length > 0) {
-      console.log('[ScenarioModeler.levers] using scenarioLevers prop:', normalized.length, 'levers');
-      return normalized;
-    }
-    const extracted = extractLevers(baseAnalysis, outputMetrics);
-    console.log('[ScenarioModeler.levers] using extractLevers() fallback:', extracted.length, 'levers');
-    console.log('[ScenarioModeler.levers] extractLevers found:', extracted.map(l => l.key));
-    return extracted;
+    if (normalized.length > 0) return normalized;
+    return extractLevers(baseAnalysis, outputMetrics);
   }, [leverCatalog, scenarioLevers, baseAnalysis, outputMetrics]);
 
   const insufficientLevers = levers.length < 3;
@@ -644,6 +627,9 @@ const ScenarioModeler = forwardRef(function ScenarioModeler({
 
   const [resultA, setResultA] = useState(null);
   const [resultB, setResultB] = useState(null);
+  // Track backend scenario IDs so subsequent Runs update instead of creating duplicates
+  const [scenarioIdA, setScenarioIdA] = useState(null);
+  const [scenarioIdB, setScenarioIdB] = useState(null);
 
   const [busy, setBusy] = useState(false);
   const [activeScenario, setActiveScenario] = useState(null);
@@ -691,6 +677,8 @@ const ScenarioModeler = forwardRef(function ScenarioModeler({
     setScenarioB(hydratedValues.b);
     setResultA(savedScenarioByLabel.a?.result || null);
     setResultB(savedScenarioByLabel.b?.result || null);
+    setScenarioIdA(savedScenarioByLabel.a?.id || null);
+    setScenarioIdB(savedScenarioByLabel.b?.id || null);
   }, [hydratedValues, savedScenarioByLabel, refreshVersion]);
 
   // Expose imperative controls for interactive chat actions (Score → Scenarios)
@@ -812,53 +800,58 @@ const ScenarioModeler = forwardRef(function ScenarioModeler({
   }
 
   async function runScenario(values, setter, label) {
-    console.log('[ScenarioModeler] runScenario called', { values, label, threadId });
     if (!threadId) throw new Error('ScenarioModeler: threadId is required');
 
     const deltas = buildDeltas(values);
-    console.log('[ScenarioModeler] Built deltas:', deltas);
-    console.log('[ScenarioModeler] baseAnalysis:', baseAnalysis);
 
     // If nothing changed, just return baseline (avoid wasting calls)
     if (!deltas || Object.keys(deltas).length === 0) {
-      console.log('[ScenarioModeler] No changes, returning baseline');
       const baseline = baseAnalysis || null;
       setter(baseline);
       return baseline;
     }
 
-    // 1) Create scenario (baseline sent so backend can store it for apply)
-    console.log('[ScenarioModeler] Creating scenario with:', { 
-      threadId, 
-      deltas, 
-      label,
-      baseline: baseAnalysis 
-    });
-    let created;
-    try {
-      created = await Jaspen.createScenario(threadId, {
+    // Resolve existing scenario_id for this slot so we UPDATE instead of creating a duplicate
+    const isSlotA = label === 'Scenario A';
+    const existingId = isSlotA ? scenarioIdA : scenarioIdB;
+    const setSlotId = isSlotA ? setScenarioIdA : setScenarioIdB;
+
+    let scenarioId = existingId;
+
+    if (existingId) {
+      // Update existing scenario with new deltas, then re-apply
+      try {
+        await Jaspen.updateScenario(existingId, {
+          thread_id: threadId,
+          deltas,
+          label,
+        });
+      } catch (err) {
+        console.warn('[ScenarioModeler] updateScenario failed, falling back to create:', err);
+        scenarioId = null; // fall through to create path
+      }
+    }
+
+    if (!scenarioId) {
+      // Create new scenario record
+      const created = await Jaspen.createScenario(threadId, {
         deltas,
         label,
         session_id: threadId,
         baseline: baseAnalysis,
       });
-      console.log('[ScenarioModeler] Created scenario:', created);
-    } catch (err) {
-      console.error('[ScenarioModeler] Failed:', err);
-      throw err;
+      scenarioId =
+        created?.scenario_id ||
+        created?.id ||
+        created?.scenario?.scenario_id ||
+        created?.scenario?.id;
+      if (!scenarioId) {
+        throw new Error('ScenarioModeler: createScenario returned no scenario_id');
+      }
+      setSlotId(scenarioId);
     }
 
-    const scenarioId =
-      created?.scenario_id ||
-      created?.id ||
-      created?.scenario?.scenario_id ||
-      created?.scenario?.id;
-
-    if (!scenarioId) {
-      throw new Error('ScenarioModeler: createScenario returned no scenario_id');
-    }
-
-    // 2) Apply scenario -> derived scorecard snapshot
+    // Apply scenario -> derived scorecard snapshot
     const applied = await Jaspen.applyScenario(scenarioId, threadId);
     const normalized = normalizeApplied(applied);
     const snapshot = normalized && typeof normalized === 'object'
@@ -869,19 +862,19 @@ const ScenarioModeler = forwardRef(function ScenarioModeler({
         }
       : normalized;
 
-setter(snapshot);
+    setter(snapshot);
 
     try {
       onScenarioSaved?.({
         label,
         snapshot,
-        response: applied,
+        response: { ...applied, scenario_id: scenarioId },
       });
     } catch {}
 
-if (label === 'Scenario A') onResultA?.(snapshot);
-if (label === 'Scenario B') onResultB?.(snapshot);
-// Running persists the scenario draft/result for this project; "Set Active" promotes it into the Score tab.
+    if (isSlotA) onResultA?.(snapshot);
+    else onResultB?.(snapshot);
+    // Running persists the scenario draft/result for this project; "Set Active" promotes it into the Score tab.
     return snapshot;
   }
 
@@ -923,6 +916,8 @@ if (label === 'Scenario B') onResultB?.(snapshot);
     setScenarioB(initialValues);
     setResultA(null);
     setResultB(null);
+    setScenarioIdA(null);
+    setScenarioIdB(null);
   }
 
   function aiScenarioSuggest() {
@@ -990,10 +985,19 @@ if (label === 'Scenario B') onResultB?.(snapshot);
         accept: true,
       });
       const createdScenario = resp?.scenario || null;
+      const newScenarioId = resp?.scenario_id || createdScenario?.scenario_id || null;
       const scorecard = normalizeApplied(createdScenario?.result || resp?.preview_scorecard || {});
       if (scorecard && typeof scorecard === 'object') {
         setResultA(scorecard);
+        if (newScenarioId) setScenarioIdA(newScenarioId);
         onResultA?.(scorecard);
+        try {
+          onScenarioSaved?.({
+            label: aiSuggestDraft.label || 'Scenario A',
+            snapshot: scorecard,
+            response: { ...resp, scenario_id: newScenarioId },
+          });
+        } catch {}
       }
       setAiSuggestOpen(false);
       setAiSuggestDraft(null);

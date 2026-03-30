@@ -274,13 +274,16 @@ const resolveScoreWorkspaceContext = ({
     ? snapshots.find((snapshot) => snapshot?.id === selectedScorecardId)
     : null;
 
+  const baselineSnapshot = snapshots.find((snapshot) => snapshot?.isBaseline) || snapshots[0] || null;
   const scorecard =
     snapshotMatch ||
+    (snapshots.length > 0
+      ? baselineSnapshot
+      : null) ||
     (hasMeaningfulScorecardData(selectedVariant) ? selectedVariant : null) ||
     (hasMeaningfulScorecardData(analysisResult) ? analysisResult : null) ||
     (hasMeaningfulScorecardData(bundleCurrentScorecard) ? bundleCurrentScorecard : null) ||
     (hasMeaningfulScorecardData(bundleBaselineScorecard) ? bundleBaselineScorecard : null) ||
-    snapshotMatch ||
     selectedVariant ||
     analysisResult ||
     bundleCurrentScorecard ||
@@ -844,6 +847,74 @@ return {
 };
 }
 
+function buildProjectScoreResult({
+  baselineScorecard = null,
+  snapshots = [],
+  selectedScorecardId = null,
+  ownerThreadId = '',
+  existingResult = null,
+  fallbackScorecard = null,
+}) {
+  const baselineSource =
+    (baselineScorecard && typeof baselineScorecard === 'object' && Object.keys(baselineScorecard).length > 0
+      ? baselineScorecard
+      : null) ||
+    (existingResult?._baseline_scorecard && typeof existingResult._baseline_scorecard === 'object'
+      ? existingResult._baseline_scorecard
+      : null) ||
+    existingResult ||
+    fallbackScorecard ||
+    {};
+
+  const normalizedBaseline = normalizeAnalysis(baselineSource);
+  const baselineId = String(
+    normalizedBaseline.analysis_id ||
+    normalizedBaseline.id ||
+    ownerThreadId ||
+    ''
+  ).trim();
+  const canonicalSnapshots = buildMergedScorecardSnapshots({
+    analysisResult: {
+      ...normalizedBaseline,
+      _baseline_scorecard: normalizedBaseline,
+    },
+    bundleBaselineScorecard: normalizedBaseline,
+    baselineScorecardId: baselineId,
+    scorecardSnapshots: snapshots,
+    sessionId: ownerThreadId,
+  });
+  const nextSelectedId = String(
+    selectedScorecardId ||
+    baselineId ||
+    ''
+  ).trim() || null;
+
+  return {
+    ...(existingResult && typeof existingResult === 'object' ? existingResult : {}),
+    ...normalizedBaseline,
+    project_name:
+      normalizedBaseline.project_name ||
+      existingResult?.project_name ||
+      fallbackScorecard?.project_name ||
+      'Untitled Idea',
+    _baseline_scorecard: normalizedBaseline,
+    scorecard_snapshots: canonicalSnapshots,
+    selected_scorecard_id: nextSelectedId,
+    _owner_thread_id: String(
+      ownerThreadId ||
+      existingResult?._owner_thread_id ||
+      normalizedBaseline._owner_thread_id ||
+      ''
+    ).trim() || undefined,
+    thread_id: String(
+      ownerThreadId ||
+      existingResult?.thread_id ||
+      normalizedBaseline.thread_id ||
+      ''
+    ).trim() || undefined,
+  };
+}
+
 function normalizePlanKey(plan) {
   return String(plan || '').trim().toLowerCase();
 }
@@ -1092,8 +1163,17 @@ const [aiWbsBusy, setAiWbsBusy] = useState(false);
     if (!baseId) return;
 
     // If backend provided snapshots, hydrate them once
-    const persistedSnaps = Array.isArray(analysisResult?.scorecard_snapshots)
+    const persistedRawSnaps = Array.isArray(analysisResult?.scorecard_snapshots)
       ? analysisResult.scorecard_snapshots
+      : null;
+    const persistedSnaps = persistedRawSnaps && persistedRawSnaps.length > 0
+      ? buildMergedScorecardSnapshots({
+          analysisResult,
+          bundleBaselineScorecard: null,
+          baselineScorecardId: baseId,
+          scorecardSnapshots: persistedRawSnaps,
+          sessionId: baseId,
+        })
       : null;
 
     setBaselineScorecardId(baseId);
@@ -1121,16 +1201,16 @@ const [aiWbsBusy, setAiWbsBusy] = useState(false);
     const persistedSelectedId = String(analysisResult?.selected_scorecard_id || '').trim();
     if (persistedSelectedId) {
       setActiveSnapshotId(persistedSelectedId);
-      setSelectedScorecardId((current) => String(current || '').trim() || persistedSelectedId);
+      setSelectedScorecardId(persistedSelectedId);
       return;
     }
     if (persistedSnaps?.length) {
       const baseline = persistedSnaps.find((s) => s.isBaseline) || persistedSnaps[0];
       const fallbackId = baseline?.id || baseId;
-      setSelectedScorecardId((current) => String(current || '').trim() || fallbackId);
+      setSelectedScorecardId(fallbackId);
       return;
     }
-    setSelectedScorecardId((current) => String(current || '').trim() || baseId);
+    setSelectedScorecardId(baseId);
   }, [analysisResult, sessionId]);
 
   // Restore selected scorecard on refresh (if backend provided it)
@@ -1253,8 +1333,18 @@ const refreshBundle = async (tid) => {
           .map((s) => s?.scorecard || s?.analysis_result || s?.result || null)
           .filter((s) => s && typeof s === 'object');
 
+    // Always merge baseline into the snapshot list. When the backend returns
+    // persistedSnapshots they may NOT include the baseline (it's stored
+    // separately as _baseline_scorecard). Without this merge the Score
+    // dropdown loses the Baseline option after a refresh.
     const bundleSnapshots = persistedSnapshots.length > 0
-      ? persistedSnapshots
+      ? buildMergedScorecardSnapshots({
+          analysisResult: null,
+          bundleBaselineScorecard: baselineScorecard,
+          baselineScorecardId: baselineScorecard?.analysis_id || baselineScorecard?.id || tid,
+          scorecardSnapshots: persistedSnapshots,
+          sessionId: tid,
+        })
       : buildScorecardSnapshots({
           threadId: tid,
           baselineScorecard,
@@ -1283,7 +1373,7 @@ const refreshBundle = async (tid) => {
     if (baselineId) setBaselineScorecardId(baselineId);
     if (bundleSelectedId) {
       setActiveSnapshotId(bundleSelectedId);
-      setSelectedScorecardId((current) => String(current || '').trim() || bundleSelectedId);
+      setSelectedScorecardId(bundleSelectedId);
     }
 
     const resolvedBaselineScorecard =
@@ -1303,28 +1393,23 @@ const refreshBundle = async (tid) => {
           : null;
 
     if (hasMeaningfulScorecardData(resolvedBundleScorecard)) {
-      const normalizedScorecard = normalizeAnalysis(resolvedBundleScorecard);
-      const normalizedBaselinePayload = {
-        ...normalizedScorecard,
-        _baseline_scorecard: resolvedBaselineScorecard || normalizedScorecard,
-        scorecard_snapshots: bundleSnapshots,
-        selected_scorecard_id: bundleSelectedId || null,
-      };
-      baselineRef.current = normalizedScorecard;
+      const rootedScoreResult = buildProjectScoreResult({
+        baselineScorecard: resolvedBaselineScorecard || resolvedBundleScorecard,
+        snapshots: bundleSnapshots,
+        selectedScorecardId: bundleSelectedId || baselineId || null,
+        ownerThreadId: tid,
+        existingResult: analysisResult,
+        fallbackScorecard: resolvedBundleScorecard,
+      });
+      baselineRef.current = rootedScoreResult._baseline_scorecard;
       setAnalysisResult((prev) => {
-        if (!prev) return normalizedBaselinePayload;
-        const prevId = prev.analysis_id || prev.id || null;
-        const nextId = normalizedScorecard.analysis_id || normalizedScorecard.id || null;
-        if (prevId === nextId && view !== 'intake') {
-          return {
-            ...prev,
-            ...normalizedBaselinePayload,
-            _baseline_scorecard: resolvedBaselineScorecard || normalizedScorecard,
-            scorecard_snapshots: bundleSnapshots,
-            selected_scorecard_id: bundleSelectedId || prev?.selected_scorecard_id || null,
-          };
-        }
-        return normalizedBaselinePayload;
+        return {
+          ...(prev && typeof prev === 'object' ? prev : {}),
+          ...rootedScoreResult,
+          _baseline_scorecard: rootedScoreResult._baseline_scorecard,
+          scorecard_snapshots: rootedScoreResult.scorecard_snapshots,
+          selected_scorecard_id: rootedScoreResult.selected_scorecard_id,
+        };
       });
       if (view === 'intake') {
         setView('summary');
@@ -3819,29 +3904,46 @@ if (rawHistory.length > 0) {
       // Restore scorecard (completed sessions)
       const currentScorecard = restoreBundle?.current_scorecard || null;
       const baselineScorecard = restoreBundle?.baseline_scorecard || null;
+      const persistedRestoreSnapshots = Array.isArray(restoreBundle?.scorecard_snapshots)
+        ? restoreBundle.scorecard_snapshots
+        : [];
       const scenarioScorecards = Array.isArray(restoreBundle?.scenarios)
         ? restoreBundle.scenarios
             .map((entry) => entry?.scorecard || entry?.analysis_result || entry?.result || null)
             .filter((entry) => entry && typeof entry === 'object')
         : [];
-      const restoreSnapshots = buildScorecardSnapshots({
-        threadId: sid,
-        baselineScorecard,
-        currentScorecard,
-        scenarioScorecards,
-      });
+      const restoreSnapshots = persistedRestoreSnapshots.length > 0
+        ? buildMergedScorecardSnapshots({
+            analysisResult: null,
+            bundleBaselineScorecard: baselineScorecard,
+            baselineScorecardId:
+              baselineScorecard?.analysis_id ||
+              baselineScorecard?.id ||
+              baselineScorecard?.analysisId ||
+              sid,
+            scorecardSnapshots: persistedRestoreSnapshots,
+            sessionId: sid,
+          })
+        : buildScorecardSnapshots({
+            threadId: sid,
+            baselineScorecard,
+            currentScorecard,
+            scenarioScorecards,
+          });
       const restoreBaselineId =
         baselineScorecard?.analysis_id ||
         baselineScorecard?.id ||
         baselineScorecard?.analysisId ||
         restoreSnapshots.find((snapshot) => snapshot?.isBaseline)?.id ||
         null;
-      const restoreSelectedId =
+      const restoreSelectedId = String(
+        restoreBundle?.selected_scorecard_id ||
         currentScorecard?.analysis_id ||
         currentScorecard?.id ||
         currentScorecard?.analysisId ||
         restoreBaselineId ||
-        '';
+        ''
+      ).trim();
       const restoreHistory = Array.isArray(session?.analysis_history) ? session.analysis_history : analysisHistory;
       const restoreBaseResult =
         hasMeaningfulScorecardData(session?.result) ? session.result : session?.result || null;
@@ -3878,9 +3980,16 @@ if (rawHistory.length > 0) {
       setSelectedScorecardId(restoreSelectedId || restoreBaselineId || null);
 
       if (restoreContext.hasScorecard && hasMeaningfulScorecardData(restoreContext.scorecard)) {
-        const normalized = normalizeAnalysis(restoreContext.scorecard);
-        baselineRef.current = normalized;
-        setAnalysisResult(normalized);
+        const rootedScoreResult = buildProjectScoreResult({
+          baselineScorecard: baselineScorecard || restoreSnapshots.find((snapshot) => snapshot?.isBaseline) || restoreContext.scorecard,
+          snapshots: restoreSnapshots,
+          selectedScorecardId: restoreSelectedId || restoreBaselineId || null,
+          ownerThreadId: restoredOwnerThreadId,
+          existingResult: restoreBaseResult,
+          fallbackScorecard: restoreContext.scorecard,
+        });
+        baselineRef.current = rootedScoreResult._baseline_scorecard;
+        setAnalysisResult(rootedScoreResult);
         setView('summary');
         setActiveTab('summary');
       } else {
@@ -5081,7 +5190,8 @@ const handleSaveStarter = async () => {
     try {
       const scenarioId = adoptedScenario.id || adoptedScenario.analysis_id;
       const response = await Jaspen.adoptScenario(scenarioId, tid);
-      applySnapshotMeta(response, { refresh: true });
+      // select: true forces the Score tab to switch to the adopted variant
+      applySnapshotMeta(response, { refresh: true, select: true });
       setActiveTab('summary');
       setView('summary');
       showToast(`${label || 'Scenario'} set as active scorecard.`, 'success');
@@ -6921,12 +7031,7 @@ try {
       setScorecardSnapshots(mergedSnapshots);
       setBaselineScorecardId(nextBaselineId);
       setActiveSnapshotId(nextSelectedScorecardId || null);
-      setSelectedScorecardId((current) => {
-        const currentId = String(current || '').trim();
-        const hasCurrent = mergedSnapshots.some((snapshot) => String(snapshot?.id || snapshot?.analysis_id || '').trim() === currentId);
-        if (currentId && hasCurrent) return current;
-        return nextSelectedScorecardId || nextBaselineId || null;
-      });
+      setSelectedScorecardId(nextSelectedScorecardId || nextBaselineId || null);
     }
   }
 
@@ -6935,11 +7040,13 @@ const fullScorecard = resolvedScorecard;
     (baselineScorecard && typeof baselineScorecard === 'object' && Object.keys(baselineScorecard).length > 0)
       ? baselineScorecard
       : mergedSnapshots.find((snapshot) => snapshot?.isBaseline) || null;
-  const withScoreContext = (scorecard) => ({
-    ...normalizeAnalysis(scorecard || fullScorecard || merged || {}),
-    _baseline_scorecard: resolvedBaselineScorecard || normalizeAnalysis(scorecard || fullScorecard || merged || {}),
-    scorecard_snapshots: mergedSnapshots,
-    selected_scorecard_id: nextSelectedScorecardId || null,
+  const withScoreContext = (scorecard) => buildProjectScoreResult({
+    baselineScorecard: resolvedBaselineScorecard || scorecard || fullScorecard || merged || {},
+    snapshots: mergedSnapshots,
+    selectedScorecardId: nextSelectedScorecardId || nextBaselineId || null,
+    ownerThreadId: id,
+    existingResult: merged?.result || analysisResult || merged,
+    fallbackScorecard: scorecard || fullScorecard || merged || {},
   });
 
 // GOAL B part 2: Check for missing detailed sections and hydrate if needed
@@ -6957,16 +7064,16 @@ if (missingSections) {
   if (freshScorecard) {
     const normalized = withScoreContext(freshScorecard);
     setAnalysisResult(normalized);
-    baselineRef.current = normalized;
+    baselineRef.current = normalized._baseline_scorecard || normalized;
   } else {
     const normalized = withScoreContext(fullScorecard || merged || {});
     setAnalysisResult(normalized);
-    baselineRef.current = normalized;
+    baselineRef.current = normalized._baseline_scorecard || normalized;
   }
 } else {
   const normalized = withScoreContext(fullScorecard);
   setAnalysisResult(normalized);
-  baselineRef.current = normalized;
+  baselineRef.current = normalized._baseline_scorecard || normalized;
 }
 
   dispatchSidebar({ type: 'CLOSE_HISTORY' });
@@ -6979,13 +7086,17 @@ if (missingSections) {
   console.error('[handleSelectAnalysis] hydrate failed', e, { merged });
   // Safe fallback so the UI still renders something
 const normalizedFallback = {
-  ...normalizeAnalysis(merged || {}),
-  _baseline_scorecard: baselineScorecard || null,
-  scorecard_snapshots: mergedSnapshots,
-  selected_scorecard_id: nextSelectedScorecardId || null,
+  ...buildProjectScoreResult({
+    baselineScorecard: baselineScorecard || mergedSnapshots.find((snapshot) => snapshot?.isBaseline) || merged || {},
+    snapshots: mergedSnapshots,
+    selectedScorecardId: nextSelectedScorecardId || nextBaselineId || null,
+    ownerThreadId: resolvedActiveThreadId,
+    existingResult: merged?.result || merged,
+    fallbackScorecard: merged || {},
+  }),
 };
 setAnalysisResult(normalizedFallback);
-if (!baselineRef.current) baselineRef.current = normalizedFallback; // only set if not set yet
+if (!baselineRef.current) baselineRef.current = normalizedFallback._baseline_scorecard || normalizedFallback; // only set if not set yet
 }
   }
 
@@ -7139,12 +7250,20 @@ const handleScenarioSaved = useCallback((payload = {}) => {
     timestamp: Date.now(),
   };
 
+  // Optimistic local update so the UI reflects the saved scenario immediately
   setSavedScenarios((prev) => {
     const items = Array.isArray(prev) ? prev : [];
     const others = items.filter((item) => String(item?.id || '').trim() !== scenarioId);
     return [...others, nextEntry].sort((a, b) => Number(b?.timestamp || 0) - Number(a?.timestamp || 0));
   });
-}, []);
+
+  // Re-fetch from backend so savedScenarios are authoritative and persist
+  // across refresh/logout. The optimistic update above keeps the UI snappy.
+  const tid = currentSessionId || sessionId;
+  if (tid) {
+    refreshBundle(tid).catch((err) => console.debug('[handleScenarioSaved] refreshBundle failed', err));
+  }
+}, [currentSessionId, refreshBundle, sessionId]);
 
 const handleSnapshotSelect = useCallback(async (snapshotId) => {
   const nextId = String(snapshotId || '').trim();

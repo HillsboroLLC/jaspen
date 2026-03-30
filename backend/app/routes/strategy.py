@@ -931,6 +931,23 @@ def _scorecard_snapshot_state(scorecard_result, thread_id):
     }
 
 
+def _snapshot_meta_from_result(result_payload, thread_id, snapshot=None, deleted_snapshot_id=None):
+    snapshot_state = _scorecard_snapshot_state(result_payload, thread_id) if isinstance(result_payload, dict) else None
+    if not snapshot_state:
+        return {
+            'snapshot': snapshot,
+            'deleted_snapshot_id': deleted_snapshot_id,
+            'scorecard_snapshots': [],
+            'selected_scorecard_id': None,
+        }
+    return {
+        'snapshot': snapshot,
+        'deleted_snapshot_id': deleted_snapshot_id,
+        'scorecard_snapshots': snapshot_state.get('snapshots') or [],
+        'selected_scorecard_id': snapshot_state.get('selected_id'),
+    }
+
+
 def _upsert_snapshot_entry(snapshots, snapshot):
     items = snapshots if isinstance(snapshots, list) else []
     if not isinstance(snapshot, dict):
@@ -1055,6 +1072,7 @@ def _persist_scenario_snapshot_to_session(user_id, thread_id, scenario, result, 
         if isinstance(item, dict) and not item.get('isBaseline')
     ]
     next_snapshots = _upsert_snapshot_entry(non_baseline_snapshots, snapshot)
+
     baseline_id = (
         baseline_scorecard.get('analysis_id')
         or baseline_scorecard.get('id')
@@ -1091,11 +1109,7 @@ def _persist_scenario_snapshot_to_session(user_id, thread_id, scenario, result, 
     if not persisted:
         raise RuntimeError('Failed to persist scenario snapshot.')
 
-    return {
-        'snapshot': snapshot,
-        'selected_scorecard_id': next_result.get('selected_scorecard_id'),
-        'scorecard_snapshots': next_snapshots,
-    }
+    return _snapshot_meta_from_result(next_result, resolved_thread_id, snapshot=snapshot)
 
 
 def _rename_snapshot_in_session(user_id, thread_id, snapshot_id, label):
@@ -1170,11 +1184,7 @@ def _rename_snapshot_in_session(user_id, thread_id, snapshot_id, label):
     if not persisted:
         raise RuntimeError('Failed to persist snapshot rename.')
 
-    return {
-        'snapshot': renamed_snapshot,
-        'scorecard_snapshots': next_snapshots,
-        'selected_scorecard_id': next_result.get('selected_scorecard_id'),
-    }
+    return _snapshot_meta_from_result(next_result, resolved_thread_id, snapshot=renamed_snapshot)
 
 
 def _delete_snapshot_from_session(user_id, thread_id, snapshot_id):
@@ -1226,11 +1236,7 @@ def _delete_snapshot_from_session(user_id, thread_id, snapshot_id):
     if not persisted:
         raise RuntimeError('Failed to persist snapshot deletion.')
 
-    return {
-        'deleted_snapshot_id': target_id,
-        'scorecard_snapshots': next_snapshots,
-        'selected_scorecard_id': selected_id,
-    }
+    return _snapshot_meta_from_result(next_result, resolved_thread_id, deleted_snapshot_id=target_id)
 
 
 def _set_selected_snapshot_in_session(user_id, thread_id, snapshot_id):
@@ -1274,11 +1280,7 @@ def _set_selected_snapshot_in_session(user_id, thread_id, snapshot_id):
     if not persisted:
         raise RuntimeError('Failed to persist active snapshot selection.')
 
-    return {
-        'snapshot': selected_snapshot,
-        'scorecard_snapshots': next_result.get('scorecard_snapshots'),
-        'selected_scorecard_id': target_id,
-    }
+    return _snapshot_meta_from_result(next_result, resolved_thread_id, snapshot=selected_snapshot)
 
 
 def _load_thread_conversation(user_id, thread_id):
@@ -4125,6 +4127,20 @@ def create_scenario(thread_id):
         deltas = data.get('deltas') if isinstance(data.get('deltas'), dict) else {}
         baseline = data.get('baseline') if isinstance(data.get('baseline'), dict) else None
 
+        # Pre-compute the scenario result so it's never saved with result=null.
+        # This prevents data loss if the user navigates away before applyScenario
+        # is called, and ensures savedScenarios always have results on restore.
+        computed_result = None
+        if deltas:
+            all_data = _load_scenarios(user_id)
+            td = all_data.get(thread_id, {})
+            stored_baseline = td.get('baseline') or baseline
+            stored_inputs = td.get('baseline_inputs') or (
+                _extract_baseline_inputs(stored_baseline) if isinstance(stored_baseline, dict) else {}
+            )
+            if isinstance(stored_baseline, dict) and stored_inputs:
+                computed_result = _compute_scenario_scorecard(stored_baseline, deltas, stored_inputs)
+
         try:
             created = _create_scenario_record(
                 user_id,
@@ -4133,6 +4149,7 @@ def create_scenario(thread_id):
                 label=label,
                 baseline=baseline,
                 plan_key=plan_key,
+                result=computed_result,
             )
         except PermissionError as limit_error:
             payload = {}
@@ -4157,6 +4174,7 @@ def create_scenario(thread_id):
             'thread_id': thread_id,
             'label': created.get('label'),
             'created_at': created.get('created_at'),
+            'result': computed_result,
         }), 201
 
     except Exception as e:
@@ -4216,7 +4234,18 @@ def update_scenario(scenario_id):
             scenario['label'] = data['label']
         if 'deltas' in data:
             scenario['deltas'] = data['deltas']
-            scenario['result'] = None   # must re-apply after delta change
+            # Re-compute result immediately so it's never null on disk.
+            baseline = td.get('baseline')
+            baseline_inputs = td.get('baseline_inputs') or {}
+            if isinstance(baseline, dict) and baseline_inputs:
+                result = _compute_scenario_scorecard(baseline, data['deltas'], baseline_inputs)
+                result['analysis_id'] = scenario_id
+                result['scenario_id'] = scenario_id
+                result['thread_id'] = thread_id
+                result['label'] = scenario.get('label', 'Scenario')
+                scenario['result'] = result
+            else:
+                scenario['result'] = None  # no baseline to compute against
 
         scenario['updated_at'] = datetime.utcnow().isoformat()
         _save_scenarios(user_id, all_data)
