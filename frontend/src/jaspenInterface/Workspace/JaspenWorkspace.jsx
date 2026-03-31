@@ -5130,7 +5130,7 @@ const handleSaveStarter = async () => {
 };
 
   const applySnapshotMeta = useCallback((snapshotMeta = {}, { refresh = false, select = false } = {}) => {
-    const nextSnapshots = Array.isArray(snapshotMeta?.scorecard_snapshots)
+    const rawSnapshots = Array.isArray(snapshotMeta?.scorecard_snapshots)
       ? snapshotMeta.scorecard_snapshots
       : null;
     const nextSelectedId = snapshotMeta?.selected_scorecard_id || null;
@@ -5138,7 +5138,19 @@ const handleSaveStarter = async () => {
       ? snapshotMeta.snapshot
       : null;
 
-    if (nextSnapshots) {
+    // Always merge baseline into the snapshot list so the dropdown never loses
+    // the Baseline option after adopt/set-active/rename/delete operations.
+    const nextSnapshots = rawSnapshots
+      ? buildMergedScorecardSnapshots({
+          analysisResult,
+          bundleBaselineScorecard,
+          baselineScorecardId,
+          scorecardSnapshots: rawSnapshots,
+          sessionId,
+        })
+      : null;
+
+    if (nextSnapshots && nextSnapshots.length > 0) {
       setScorecardSnapshots(nextSnapshots);
     } else if (nextSnapshot?.id) {
       setScorecardSnapshots((prev) => {
@@ -5172,7 +5184,7 @@ const handleSaveStarter = async () => {
         refreshBundle(tid).catch((err) => console.debug('[applySnapshotMeta] refreshBundle failed', err));
       }
     }
-  }, [currentSessionId, refreshBundle, sessionId]);
+  }, [analysisResult, baselineScorecardId, bundleBaselineScorecard, currentSessionId, refreshBundle, sessionId]);
 
   const handleScenarioAdopt = async (adoptedScenario, label) => {
     if (!adoptedScenario || (!adoptedScenario.id && !adoptedScenario.analysis_id)) {
@@ -5291,11 +5303,19 @@ if (data?.model_type) {
         throw new Error("No analysis_result returned");
       }
 
+      // Ensure _baseline_scorecard is always set on the analysis result so
+      // every downstream consumer (buildMergedScorecardSnapshots, Score tab
+      // dropdown, refreshBundle) can find the baseline without fallbacks.
+      if (!result._baseline_scorecard || typeof result._baseline_scorecard !== 'object') {
+        result._baseline_scorecard = { ...result };
+      }
+      result.selected_scorecard_id = result.analysis_id || sid;
+
       setAnalysisResult(result);
 
       // Mark baseline scorecard
       const baselineSnapshot = {
-        ...result,
+        ...result._baseline_scorecard,
         id: result.analysis_id || result.id || sessionId,
         label: 'Baseline',
         isBaseline: true,
@@ -5306,7 +5326,7 @@ if (data?.model_type) {
       setScorecardSnapshots([baselineSnapshot]);
       setSelectedScorecardId(baselineSnapshot.id);
       setBaselineScorecardId(baselineSnapshot.id);
-      baselineRef.current = result; // Store baseline reference
+      baselineRef.current = result._baseline_scorecard; // Store baseline reference
 
       setView('summary');
       setActiveTab('summary');
