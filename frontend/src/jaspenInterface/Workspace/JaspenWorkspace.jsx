@@ -5713,6 +5713,17 @@ console.log('[Finish&Analyze] data.analysis_result.meta.extracted_levers?', data
     }
   };
 
+const persistSidebarExchange = async (threadId, userText, assistantText) => {
+  if (!threadId || !userText) return;
+  try {
+    const msgs = [{ role: 'user', content: userText }];
+    if (assistantText) msgs.push({ role: 'assistant', content: assistantText });
+    await Jaspen.appendMessages(threadId, msgs);
+  } catch (e) {
+    console.warn('[persistSidebarExchange] failed', e);
+  }
+};
+
 const sendAIMessage = async () => {
   const text = (aiInput || '').trim();
   if (!text || !sessionId || busy) return;
@@ -5795,11 +5806,13 @@ const sendAIMessage = async () => {
               : prev
           ));
 
+          const renameReply = `Updated the initiative title to "${nextTitle}".`;
           setMessages((prev) => [
             ...prev,
-            { role: 'ai', text: `Updated the initiative title to "${nextTitle}".` },
+            { role: 'ai', text: renameReply },
           ]);
           showToast('Initiative title updated', 'success');
+          persistSidebarExchange(aiThreadId, text, renameReply);
           return;
         } catch (renameErr) {
           console.error('[sendAIMessage] title rename failed', renameErr);
@@ -5820,14 +5833,13 @@ const sendAIMessage = async () => {
         setStrategyObjective(normalizeStrategyObjective(aiScenario?.strategy_objective || strategyObjective));
         const proposal = buildAiScenarioProposal(aiScenario, text, aiThreadId, strategyObjective);
         setAiScenarioProposal(proposal);
+        const scenarioReply = `I drafted "${proposal.label}". Review, modify, then Accept or Reject.`;
         setMessages((prev) => [
           ...prev,
-          {
-            role: 'ai',
-            text: `I drafted "${proposal.label}". Review, modify, then Accept or Reject.`,
-          },
+          { role: 'ai', text: scenarioReply },
         ]);
         showToast('AI scenario draft ready', 'success');
+        persistSidebarExchange(aiThreadId, text, scenarioReply);
         return;
       } catch (scenarioErr) {
         console.error('[sendAIMessage] AI scenario generation failed', scenarioErr);
@@ -5878,14 +5890,13 @@ const sendAIMessage = async () => {
           model_type: selectedModelType,
         });
         const taskCount = Array.isArray(aiWbs?.project_wbs?.tasks) ? aiWbs.project_wbs.tasks.length : 0;
+        const wbsReply = `Generated an AI project WBS with ${taskCount} tasks. You can edit it now from your planning workflow.`;
         setMessages(prev => [
           ...prev,
-          {
-            role: 'ai',
-            text: `Generated an AI project WBS with ${taskCount} tasks. You can edit it now from your planning workflow.`,
-          },
+          { role: 'ai', text: wbsReply },
         ]);
         showToast('AI WBS generated', 'success');
+        persistSidebarExchange(aiThreadId, text, wbsReply);
         return;
       } catch (wbsErr) {
         console.error('[sendAIMessage] AI WBS generation failed', wbsErr);

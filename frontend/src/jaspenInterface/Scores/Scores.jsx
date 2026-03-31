@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faArrowUpRightFromSquare, faDownload, faChevronDown, faChevronUp, faTimes } from '@fortawesome/free-solid-svg-icons';
+import { faArrowUpRightFromSquare, faDownload, faChevronDown, faChevronUp, faTimes, faTrash } from '@fortawesome/free-solid-svg-icons';
 import { API_BASE } from '../../config/apiBase';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import './Scores.css';
@@ -196,7 +196,7 @@ export default function Scores() {
   const trendByProject = useMemo(() => {
     const map = new Map();
     scores.forEach((row) => {
-      const project = String(row?.project_name || '').trim() || 'Untitled';
+      const project = String(row?.base_project_name || row?.project_name || '').trim() || 'Untitled';
       const scoreValue = Number(row?.jaspen_score);
       const ts = parseTimestamp(row?.created_at || row?.updated_at);
       if (!Number.isFinite(scoreValue) || !ts) return;
@@ -239,9 +239,11 @@ export default function Scores() {
     const payload = {
       project_name: row?.project_name || '',
       thread_id: row?.thread_id || '',
+      snapshot_id: row?.snapshot_id || '',
+      variant_label: row?.variant_label || '',
+      is_baseline: row?.is_baseline || false,
       jaspen_score: row?.jaspen_score,
       score_category: row?.score_category || '',
-      adopted_scenario: row?.adopted_scenario || null,
       component_scores: row?.component_scores || {},
       financial_impact: row?.financial_impact || {},
       created_at: row?.created_at || null,
@@ -255,6 +257,28 @@ export default function Scores() {
     a.download = `${String(row?.project_name || 'analysis').replace(/\s+/g, '-').toLowerCase()}-report.json`;
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  async function deleteScoreEntry(row) {
+    const label = row?.project_name || 'this entry';
+    if (!window.confirm(`Delete "${label}"? This cannot be undone.`)) return;
+
+    try {
+      const threadId = encodeURIComponent(row?.thread_id || '');
+      const snapshotId = encodeURIComponent(row?.snapshot_id || '');
+      const response = await authFetch(`${API_BASE}/api/v1/strategy/scores/${threadId}/${snapshotId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+        headers: buildAuthHeaders({}, 'DELETE'),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data?.error || `Delete failed (${response.status})`);
+      }
+      loadScores();
+    } catch (err) {
+      setError(err?.message || 'Failed to delete score entry.');
+    }
   }
 
   async function exportCsv() {
@@ -284,12 +308,12 @@ export default function Scores() {
         nextOffset += batchLimit;
       }
 
-      const csvHeader = ['Project Name', 'Jaspen Score', 'Category', 'Adopted Scenario', 'Date'];
+      const csvHeader = ['Project Name', 'Jaspen Score', 'Category', 'Variant', 'Date'];
       const csvRows = rows.map((row) => [
         row?.project_name || '',
         row?.jaspen_score ?? '',
         row?.score_category || '',
-        row?.adopted_scenario?.label || '—',
+        row?.variant_label || (row?.is_baseline ? 'Baseline' : '—'),
         row?.created_at || row?.updated_at || '',
       ]);
 
@@ -525,7 +549,7 @@ export default function Scores() {
                     <th onClick={() => toggleSort('name')}>Project Name{sortIndicator('name')}</th>
                     <th onClick={() => toggleSort('score')}>Jaspen Score{sortIndicator('score')}</th>
                     <th onClick={() => toggleSort('category')}>Category{sortIndicator('category')}</th>
-                    <th>Adopted Scenario</th>
+                    <th>Variant</th>
                     <th>Component Scores</th>
                     <th onClick={() => toggleSort('date')}>Date{sortIndicator('date')}</th>
                     <th>Actions</th>
@@ -533,12 +557,13 @@ export default function Scores() {
                 </thead>
                 <tbody>
                   {scores.map((row, index) => {
-                    const rowKey = `${row?.thread_id || 'thread'}:${row?.created_at || row?.updated_at || index}`;
+                    const rowKey = `${row?.thread_id || 'thread'}:${row?.snapshot_id || index}`;
                     const expanded = Boolean(expandedRows[rowKey]);
                     const scoreValue = Number(row?.jaspen_score);
                     const projectName = row?.project_name || 'Untitled project';
-                    const adoptedLabel = row?.adopted_scenario?.label || '—';
-                    const trendPoints = trendByProject.get(projectName) || [];
+                    const variantLabel = row?.variant_label || (row?.is_baseline ? 'Baseline' : '—');
+                    const baseProject = row?.base_project_name || projectName;
+                    const trendPoints = trendByProject.get(baseProject) || [];
                     return (
                       <React.Fragment key={rowKey}>
                         <tr>
@@ -566,7 +591,7 @@ export default function Scores() {
                               {row?.score_category || 'At Risk'}
                             </span>
                           </td>
-                          <td>{adoptedLabel}</td>
+                          <td>{variantLabel}</td>
                           <td>
                             <button
                               type="button"
@@ -599,6 +624,14 @@ export default function Scores() {
                               >
                                 <FontAwesomeIcon icon={faDownload} />
                               </button>
+                              <button
+                                type="button"
+                                className="scores-icon-btn scores-delete-btn"
+                                title={row?.is_baseline ? 'Delete project and all variants' : 'Delete this variant'}
+                                onClick={() => deleteScoreEntry(row)}
+                              >
+                                <FontAwesomeIcon icon={faTrash} />
+                              </button>
                             </div>
                           </td>
                         </tr>
@@ -607,15 +640,8 @@ export default function Scores() {
                             <td colSpan={7}>
                               <div className="scores-expanded-grid">
                                 <div>
-                                  <h4>Adopted Scenario</h4>
-                                  <p>{adoptedLabel}</p>
-                                  {row?.adopted_scenario?.deltas && Object.keys(row.adopted_scenario.deltas).length > 0 && (
-                                    <ul>
-                                      {Object.entries(row.adopted_scenario.deltas).map(([key, value]) => (
-                                        <li key={`delta-${rowKey}-${key}`}>{key}: {String(value)}</li>
-                                      ))}
-                                    </ul>
-                                  )}
+                                  <h4>Variant</h4>
+                                  <p>{variantLabel}{row?.is_baseline ? ' (Baseline)' : ''}</p>
                                 </div>
                                 <div>
                                   <h4>Component Scores</h4>

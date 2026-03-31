@@ -141,6 +141,56 @@ def _scores_extract_numeric_score(result):
     return None
 
 
+_SCENARIO_LETTER = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+
+
+def _variant_display_name(base_project_name, snapshot, index):
+    """Build display name: 'Project Name' for baseline, 'Project Name A' for first scenario, etc."""
+    if snapshot.get('isBaseline'):
+        return base_project_name
+    if index < len(_SCENARIO_LETTER):
+        return f'{base_project_name} {_SCENARIO_LETTER[index]}'
+    return f'{base_project_name} Variant {index + 1}'
+
+
+def _row_from_snapshot(snapshot, thread_id, base_project_name, variant_index, session_created_at):
+    """Build a scores row dict from a single scorecard snapshot."""
+    jaspen_score = _scores_extract_numeric_score(snapshot)
+    score_category = _scores_category_from_values(
+        jaspen_score,
+        explicit_category=snapshot.get('score_category'),
+    )
+    component_scores = snapshot.get('component_scores')
+    if not isinstance(component_scores, dict):
+        component_scores = snapshot.get('scores') if isinstance(snapshot.get('scores'), dict) else {}
+    financial_impact = snapshot.get('financial_impact')
+    if not isinstance(financial_impact, dict):
+        financial_impact = {}
+
+    created_at = _scores_parse_iso(
+        snapshot.get('createdAt') or snapshot.get('timestamp') or session_created_at
+    )
+
+    snapshot_id = str(snapshot.get('id') or snapshot.get('analysis_id') or '')
+    display_name = _variant_display_name(base_project_name, snapshot, variant_index)
+    variant_label = snapshot.get('label') or ('Baseline' if snapshot.get('isBaseline') else f'Scenario {_SCENARIO_LETTER[variant_index] if variant_index < len(_SCENARIO_LETTER) else variant_index + 1}')
+
+    return {
+        'thread_id': thread_id,
+        'snapshot_id': snapshot_id,
+        'project_name': display_name,
+        'base_project_name': base_project_name,
+        'variant_label': variant_label,
+        'is_baseline': bool(snapshot.get('isBaseline')),
+        'jaspen_score': jaspen_score,
+        'score_category': score_category,
+        'component_scores': component_scores,
+        'financial_impact': financial_impact,
+        'created_at': created_at,
+        'updated_at': created_at,
+    }
+
+
 def _collect_completed_scores(
     user_id,
     *,
@@ -150,7 +200,6 @@ def _collect_completed_scores(
     search='',
 ):
     sessions = load_user_sessions(user_id) or {}
-    scenarios_by_thread = _load_scenarios(user_id) or {}
 
     scores = []
     for key, session in (sessions.items() if isinstance(sessions, dict) else []):
@@ -164,44 +213,63 @@ def _collect_completed_scores(
         session_status = str(session.get('status') or '').strip().lower()
         session_completed = session_status == 'completed'
 
-        thread_data = scenarios_by_thread.get(thread_id) if isinstance(scenarios_by_thread, dict) else None
-        thread_data = thread_data if isinstance(thread_data, dict) else {}
-        scenarios = thread_data.get('scenarios')
-        scenarios = scenarios if isinstance(scenarios, dict) else {}
-        adopted_scenario_id = thread_data.get('adopted_scenario_id')
-        adopted_raw = scenarios.get(adopted_scenario_id) if adopted_scenario_id else None
-        adopted_raw = adopted_raw if isinstance(adopted_raw, dict) else None
-
-        adopted_scenario = None
-        if adopted_raw:
-            adopted_scenario = {
-                'scenario_id': str(adopted_raw.get('scenario_id') or adopted_scenario_id),
-                'label': adopted_raw.get('label') or 'Adopted scenario',
-                'deltas': adopted_raw.get('deltas') if isinstance(adopted_raw.get('deltas'), dict) else {},
-                'result': adopted_raw.get('result') if isinstance(adopted_raw.get('result'), dict) else None,
-                'created_at': _scores_parse_iso(adopted_raw.get('created_at')),
-                'updated_at': _scores_parse_iso(adopted_raw.get('updated_at')),
-                'adopted': True,
-            }
-
+        # Get the session result which contains _baseline_scorecard and scorecard_snapshots
         analyses = _scores_analysis_entries(session, thread_id)
-        for analysis in analyses:
-            result = analysis.get('result') if isinstance(analysis, dict) else None
-            if not isinstance(result, dict):
-                continue
+        if not analyses:
+            continue
 
-            jaspen_score = _scores_extract_numeric_score(result)
-            if jaspen_score is None and not session_completed:
-                continue
+        # Use the most recent analysis result
+        analysis = analyses[0]
+        result = analysis.get('result') if isinstance(analysis, dict) else None
+        if not isinstance(result, dict):
+            continue
 
-            project_name = str(
-                result.get('project_name')
-                or result.get('name')
-                or result.get('title')
-                or session.get('name')
-                or f'Thread {thread_id}'
-            ).strip()
+        # Check that at least the baseline has a score
+        baseline_score = _scores_extract_numeric_score(result)
+        if baseline_score is None and not session_completed:
+            continue
 
+        base_project_name = str(
+            result.get('project_name')
+            or result.get('name')
+            or result.get('title')
+            or session.get('name')
+            or f'Thread {thread_id}'
+        ).strip()
+
+        session_created_at = (
+            analysis.get('created_at')
+            or result.get('timestamp')
+            or session.get('created')
+            or session.get('timestamp')
+        )
+
+        # Use _scorecard_snapshot_state to get all variants (baseline + scenarios)
+        snapshot_state = _scorecard_snapshot_state(result, thread_id)
+        all_snapshots = snapshot_state.get('snapshots') or []
+
+        if all_snapshots:
+            # We have structured snapshots — emit one row per variant
+            scenario_index = 0
+            for snapshot in all_snapshots:
+                if not isinstance(snapshot, dict):
+                    continue
+                is_baseline = bool(snapshot.get('isBaseline'))
+                idx = 0 if is_baseline else scenario_index
+                if not is_baseline:
+                    scenario_index += 1
+
+                row = _row_from_snapshot(snapshot, thread_id, base_project_name, idx, session_created_at)
+                if row['jaspen_score'] is None and not session_completed:
+                    continue
+                if category_filter and row['score_category'] != category_filter:
+                    continue
+                if search and search not in row['project_name'].lower():
+                    continue
+                scores.append(row)
+        else:
+            # Fallback: no snapshots, emit single baseline row
+            jaspen_score = baseline_score
             score_category = _scores_category_from_values(
                 jaspen_score,
                 explicit_category=result.get('score_category'),
@@ -213,29 +281,21 @@ def _collect_completed_scores(
             if not isinstance(financial_impact, dict):
                 financial_impact = {}
 
-            created_at = _scores_parse_iso(
-                analysis.get('created_at')
-                or result.get('timestamp')
-                or session.get('created')
-                or session.get('timestamp')
-            )
-            updated_at = _scores_parse_iso(
-                analysis.get('updated_at')
-                or session.get('timestamp')
-                or result.get('timestamp')
-                or created_at
-            )
+            created_at = _scores_parse_iso(session_created_at)
 
             row = {
                 'thread_id': thread_id,
-                'project_name': project_name,
+                'snapshot_id': str(result.get('analysis_id') or thread_id),
+                'project_name': base_project_name,
+                'base_project_name': base_project_name,
+                'variant_label': 'Baseline',
+                'is_baseline': True,
                 'jaspen_score': jaspen_score,
                 'score_category': score_category,
                 'component_scores': component_scores,
-                'adopted_scenario': adopted_scenario,
                 'financial_impact': financial_impact,
                 'created_at': created_at,
-                'updated_at': updated_at,
+                'updated_at': created_at,
             }
 
             if category_filter and row['score_category'] != category_filter:
@@ -1695,6 +1755,70 @@ def get_completed_scores():
     except Exception as e:
         current_app.logger.error("[get_completed_scores] %s", e)
         return jsonify({'error': 'Failed to load completed scores'}), 500
+
+
+@strategy_bp.route('/scores/<thread_id>/<snapshot_id>', methods=['DELETE'])
+@jwt_required()
+def delete_score_entry(thread_id, snapshot_id):
+    """Delete a single scorecard variant (snapshot) from a thread's score history."""
+    try:
+        current_user_id = get_jwt_identity()
+        sessions = load_user_sessions(current_user_id) or {}
+        if not isinstance(sessions, dict):
+            return jsonify({'error': 'No sessions found'}), 404
+
+        session = sessions.get(thread_id)
+        if not session:
+            for k, v in sessions.items():
+                if str((v or {}).get('session_id', '')) == str(thread_id):
+                    session = v
+                    thread_id = k
+                    break
+
+        if not isinstance(session, dict):
+            return jsonify({'error': 'Thread not found'}), 404
+
+        result = session.get('result')
+        if not isinstance(result, dict):
+            return jsonify({'error': 'No analysis result for this thread'}), 404
+
+        snapshot_state = _scorecard_snapshot_state(result, thread_id)
+        all_snapshots = snapshot_state.get('snapshots') or []
+
+        # Find the snapshot to delete
+        target = None
+        for s in all_snapshots:
+            if str(s.get('id') or s.get('analysis_id') or '') == str(snapshot_id):
+                target = s
+                break
+
+        if target is None:
+            return jsonify({'error': 'Snapshot not found'}), 404
+
+        is_baseline = bool(target.get('isBaseline'))
+
+        if is_baseline:
+            # Deleting baseline means removing the entire thread/session
+            del sessions[thread_id]
+            save_user_sessions(current_user_id, sessions)
+            return jsonify({'deleted': 'thread', 'thread_id': thread_id}), 200
+
+        # Deleting a non-baseline snapshot: remove it from scorecard_snapshots
+        existing_snapshots = result.get('scorecard_snapshots')
+        if isinstance(existing_snapshots, list):
+            result['scorecard_snapshots'] = [
+                s for s in existing_snapshots
+                if str(s.get('id') or s.get('analysis_id') or '') != str(snapshot_id)
+            ]
+        session['result'] = result
+        sessions[thread_id] = session
+        save_user_sessions(current_user_id, sessions)
+
+        return jsonify({'deleted': 'snapshot', 'thread_id': thread_id, 'snapshot_id': snapshot_id}), 200
+
+    except Exception as e:
+        current_app.logger.error("[delete_score_entry] %s", e)
+        return jsonify({'error': 'Failed to delete score entry'}), 500
 
 
 @strategy_bp.route('/scores/portfolio-agent', methods=['POST'])
@@ -4335,12 +4459,38 @@ Rules:
 
             selected_scorecard_id = edited_id
 
+        # Persist the user/assistant exchange into the session chat_history
+        chat_history = session.get('chat_history')
+        if not isinstance(chat_history, list):
+            result_blob = session.get('result')
+            chat_history = (
+                result_blob.get('chat_history')
+                if isinstance(result_blob, dict) and isinstance(result_blob.get('chat_history'), list)
+                else []
+            )
+        now_iso = datetime.utcnow().isoformat()
+        chat_history = list(chat_history)
+        chat_history.append({'role': 'user', 'content': instruction, 'text': instruction, 'timestamp': now_iso})
+        chat_history.append({'role': 'assistant', 'content': reply, 'text': reply, 'timestamp': now_iso})
+        session['chat_history'] = chat_history
+        if isinstance(session.get('result'), dict):
+            session['result']['chat_history'] = chat_history
+        session['timestamp'] = now_iso
+        sessions[session_key or thread_id] = session
+        persisted = save_user_sessions(user_id, sessions)
+        if not persisted:
+            current_app.logger.error(
+                "[scorecard_assistant] save_user_sessions failed for user=%s thread=%s",
+                user_id, thread_id,
+            )
+
         return jsonify({
             'success': True,
             'reply': reply,
             'updated_scorecard': updated_scorecard,
             'updated_sections': updated_sections,
             'selected_scorecard_id': selected_scorecard_id,
+            'persisted': persisted,
         }), 200
 
     except Exception as e:

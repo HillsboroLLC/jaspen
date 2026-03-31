@@ -419,6 +419,16 @@
   cursor: pointer;
 }
 
+.scores-delete-btn {
+  color: #b91c1c;
+  border-color: #fca5a5;
+}
+
+.scores-delete-btn:hover {
+  background: #fef2f2;
+  border-color: #f87171;
+}
+
 .scores-trend-row {
   display: flex;
   align-items: center;
