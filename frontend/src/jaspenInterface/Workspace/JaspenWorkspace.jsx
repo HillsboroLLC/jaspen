@@ -1325,6 +1325,10 @@ const refreshBundle = async (tid) => {
     const persistedSnapshots = Array.isArray(bundle?.scorecard_snapshots)
       ? bundle.scorecard_snapshots
       : [];
+    // DEBUG: trace what get_thread_bundle returned
+    console.log('[refreshBundle] baselineScorecard?', Boolean(baselineScorecard), 'id:', baselineScorecard?.analysis_id?.slice?.(0,8) || baselineScorecard?.id?.slice?.(0,8));
+    console.log('[refreshBundle] persistedSnapshots:', persistedSnapshots.length, persistedSnapshots.map(s => ({ id: String(s?.id||'').slice(0,8), label: s?.label, isBaseline: s?.isBaseline })));
+    console.log('[refreshBundle] bundle.selected_scorecard_id:', bundle?.selected_scorecard_id?.slice?.(0,8));
     setBundleCurrentScorecard(currentScorecard);
     setBundleBaselineScorecard(baselineScorecard);
     const scenarioScorecards = persistedSnapshots.length > 0
@@ -5138,6 +5142,11 @@ const handleSaveStarter = async () => {
       ? snapshotMeta.snapshot
       : null;
 
+    // DEBUG: trace what backend returned
+    console.log('[applySnapshotMeta] rawSnapshots:', rawSnapshots?.length, rawSnapshots?.map(s => ({ id: String(s?.id||'').slice(0,8), label: s?.label, isBaseline: s?.isBaseline })));
+    console.log('[applySnapshotMeta] nextSelectedId:', nextSelectedId?.slice?.(0,8), 'select:', select);
+    console.log('[applySnapshotMeta] baselineScorecardId:', baselineScorecardId?.slice?.(0,8), 'bundleBaselineScorecard?', Boolean(bundleBaselineScorecard), 'analysisResult._baseline_scorecard?', Boolean(analysisResult?._baseline_scorecard));
+
     // Always merge baseline into the snapshot list so the dropdown never loses
     // the Baseline option after adopt/set-active/rename/delete operations.
     const nextSnapshots = rawSnapshots
@@ -7459,6 +7468,12 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
           scorecardSnapshots,
           sessionId,
         });
+    // DEBUG: trace why baseline may be missing from dropdown
+    console.log('[ScoreDropdown] scorecardSnapshots:', scorecardSnapshots?.length, scorecardSnapshots?.map(s => ({ id: s?.id?.slice?.(0,8), label: s?.label, isBaseline: s?.isBaseline })));
+    console.log('[ScoreDropdown] mergedScoreWorkspaceSnapshots:', mergedScoreWorkspaceSnapshots?.length, mergedScoreWorkspaceSnapshots?.map(s => ({ id: s?.id?.slice?.(0,8), label: s?.label, isBaseline: s?.isBaseline })));
+    console.log('[ScoreDropdown] mergedSnapshots:', mergedSnapshots?.length, mergedSnapshots?.map(s => ({ id: s?.id?.slice?.(0,8), label: s?.label, isBaseline: s?.isBaseline })));
+    console.log('[ScoreDropdown] baselineScorecardId:', baselineScorecardId?.slice?.(0,8), 'effectiveSelectedScorecardId:', effectiveSelectedScorecardId?.slice?.(0,8));
+    console.log('[ScoreDropdown] analysisResult._baseline_scorecard?', Boolean(analysisResult?._baseline_scorecard), 'bundleBaselineScorecard?', Boolean(bundleBaselineScorecard));
     const snapshotOptions = mergedSnapshots.length > 0
       ? [...mergedSnapshots]
           .sort((a, b) => {
