@@ -5207,7 +5207,6 @@ const handleSaveStarter = async () => {
       console.warn('[Finish&Analyze] blocked', { sessionId, currentSessionId, busy, uiReadiness, canAnalyze, msgCount: messages?.length });
       return;
     }
-    console.log('[Finish&Analyze] starting', { sessionId, currentSessionId, uiReadiness, canAnalyze, msgCount: messages?.length });
     setBusy(true);
     setError(null);
 
@@ -5273,14 +5272,8 @@ const data = await Jaspen.analyzeFromConversation({
 if (data?.model_type) {
   setSelectedModelType(String(data.model_type).toLowerCase());
 }
-console.log('[Finish&Analyze] analyze response', { keys: data ? Object.keys(data) : null, has_analysis_result: Boolean(data?.analysis_result) });
-// DEBUG: Check if meta.extracted_levers survived
-console.log('[Finish&Analyze] data.analysis_result.meta?', data?.analysis_result?.meta);
-console.log('[Finish&Analyze] data.analysis_result.meta.extracted_levers?', data?.analysis_result?.meta?.extracted_levers);
 
       const raw = (data && data.analysis) ? data.analysis : (data && data.analysis_result) ? data.analysis_result : (data || {});
-      console.log('[Finish&Analyze] raw object keys:', Object.keys(raw));
-      console.log('[Finish&Analyze] raw.meta?', raw?.meta);
 
       // Map backend fields to frontend expectations
       const mapped = {
@@ -5298,11 +5291,6 @@ console.log('[Finish&Analyze] data.analysis_result.meta.extracted_levers?', data
         throw new Error("No analysis_result returned");
       }
 
-      // DEBUG: Log what setAnalysisResult receives
-      console.log('[Finish&Analyze] result passed to setAnalysisResult:', JSON.stringify(result, null, 2));
-      console.log('[Finish&Analyze] result.meta?', result?.meta);
-      console.log('[Finish&Analyze] result.inputs?', result?.inputs);
-      console.log('[Finish&Analyze] result.compat?', result?.compat);
       setAnalysisResult(result);
 
       // Mark baseline scorecard

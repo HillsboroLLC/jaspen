@@ -1907,6 +1907,14 @@ def analyze_project():
         session['strategy_objective'] = _normalize_strategy_objective(session.get('strategy_objective'))
         if 'objective_explicitly_set' not in session:
             session['objective_explicitly_set'] = False
+        # Persist the bare analysis as the session result AND embed the
+        # baseline scorecard so every downstream consumer (get_thread_bundle,
+        # _persist_scenario_snapshot_to_session, frontend refreshBundle) can
+        # find it without falling back through reconstruction heuristics.
+        normalized_baseline = _normalize_scorecard_payload(analysis)
+        analysis['_baseline_scorecard'] = normalized_baseline
+        analysis['scorecard_snapshots'] = []
+        analysis['selected_scorecard_id'] = analysis_id
         session['result'] = analysis
         session['analysis_history'] = history
         session['analyses'] = history

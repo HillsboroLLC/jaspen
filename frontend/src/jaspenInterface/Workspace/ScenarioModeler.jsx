@@ -5,7 +5,7 @@
 // ============================================================================
 import React, { useState, useMemo, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faSpinner, faPlay, faCheck, faStar } from '@fortawesome/free-solid-svg-icons';
+import { faSpinner, faPlay, faStar } from '@fortawesome/free-solid-svg-icons';
 import { Jaspen } from './JaspenClient';
 import Button from './workspaceUi/components/Button';
 import { ScenarioModelerSkeleton } from '../../shared/components/SkeletonLoader';
