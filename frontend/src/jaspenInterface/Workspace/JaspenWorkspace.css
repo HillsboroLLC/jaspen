@@ -2929,7 +2929,7 @@
   width: 100%;
   min-height: 42px;
   flex-wrap: nowrap;
-  overflow-x: auto;
+  overflow: visible;
 }
 
 .jas-top-tab {
