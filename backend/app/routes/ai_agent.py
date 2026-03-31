@@ -6001,6 +6001,59 @@ def set_thread_message_feedback(thread_id, message_index):
     }), 200
 
 
+@ai_agent_bp.route("/threads/<thread_id>/messages", methods=["POST"])
+@jwt_required()
+@limiter.limit("30 per minute")
+def append_thread_messages(thread_id):
+    """Append user/assistant message pairs to a thread's chat_history."""
+    data = request.get_json() or {}
+    messages_in = data.get("messages")
+    if not isinstance(messages_in, list) or not messages_in:
+        return jsonify({"error": "messages list is required"}), 400
+
+    user_id = get_jwt_identity()
+    sessions = load_user_sessions(user_id) or {}
+    session_key, session = _resolve_user_session(sessions, thread_id)
+    if not isinstance(session, dict):
+        return jsonify({"error": "Thread not found"}), 404
+
+    resolved_thread_id = str(session.get("session_id") or session_key or thread_id)
+    now_iso = _iso_now()
+    chat_history = list(_session_chat_history(session))
+
+    for msg in messages_in:
+        if not isinstance(msg, dict):
+            continue
+        role = str(msg.get("role") or "").strip().lower()
+        if role not in ("user", "assistant"):
+            continue
+        content = str(msg.get("content") or msg.get("text") or "").strip()
+        if not content:
+            continue
+        chat_history.append({
+            "role": role,
+            "content": content,
+            "text": content,
+            "timestamp": now_iso,
+        })
+
+    session["chat_history"] = chat_history
+    result_blob = session.get("result")
+    if isinstance(result_blob, dict):
+        result_blob["chat_history"] = chat_history
+    session["timestamp"] = now_iso
+    sessions[session_key or resolved_thread_id] = session
+
+    if not save_user_sessions(user_id, sessions):
+        return jsonify({"error": "Failed to persist messages"}), 500
+
+    return jsonify({
+        "success": True,
+        "thread_id": resolved_thread_id,
+        "message_count": len(chat_history),
+    }), 200
+
+
 @ai_agent_bp.route("/conversation/undo-mutations", methods=["POST"])
 @jwt_required()
 @limiter.limit("10 per minute")

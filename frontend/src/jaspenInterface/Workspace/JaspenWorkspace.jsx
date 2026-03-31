@@ -6476,14 +6476,13 @@ const sendAIMessage = async () => {
           model_type: selectedModelType,
         });
         const taskCount = Array.isArray(aiWbs?.project_wbs?.tasks) ? aiWbs.project_wbs.tasks.length : 0;
+        const wbsReply = `Generated an AI project WBS with ${taskCount} tasks. You can edit it now from your planning workflow.`;
         setMessages(prev => [
           ...prev,
-          {
-            role: 'ai',
-            text: `Generated an AI project WBS with ${taskCount} tasks. You can edit it now from your planning workflow.`,
-          },
+          { role: 'ai', text: wbsReply },
         ]);
         showToast('AI WBS generated', 'success');
+        persistSidebarExchange(aiThreadId, text, wbsReply);
         return;
       } catch (wbsErr) {
         console.error('[sendAIMessage] AI WBS generation failed', wbsErr);
