@@ -7496,6 +7496,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
             canDelete: !Boolean(snap?.isBaseline),
           }))
       : [];
+    console.log('[ScoreDropdown] snapshotOptions:', JSON.stringify(snapshotOptions));
     const useSnapshotSelect = snapshotOptions.length > 0;
     const resolvedScoreSelectValue = String(
       activeScorecardId ||
