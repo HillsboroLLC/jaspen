@@ -5,7 +5,7 @@
 // ============================================================================
 import React, { useState, useMemo, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faSpinner, faPlay, faStar } from '@fortawesome/free-solid-svg-icons';
+import { faSpinner, faPlay, faCheck } from '@fortawesome/free-solid-svg-icons';
 import { Jaspen } from './JaspenClient';
 import Button from './workspaceUi/components/Button';
 import { ScenarioModelerSkeleton } from '../../shared/components/SkeletonLoader';
@@ -555,7 +555,7 @@ function ScenarioColumn({
           )}
         </Button>
         <Button variant="outline" size="sm" onClick={onAdopt} disabled={!result || disabled}>
-          <FontAwesomeIcon icon={faStar} /> Set Active
+          <FontAwesomeIcon icon={faCheck} /> Set Active
         </Button>
       </div>
     </div>

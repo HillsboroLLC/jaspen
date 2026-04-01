@@ -504,9 +504,6 @@ export default function Scores() {
             <p>All completed analyses and adopted scenarios</p>
           </div>
           <div className="scores-toolbar-actions">
-            <button type="button" className="scores-secondary-btn" onClick={() => setPortfolioDrawerOpen(true)}>
-              Jaspen
-            </button>
             <button type="button" className="scores-secondary-btn" onClick={() => navigate('/new')}>
               Back to Jaspen
             </button>
@@ -607,8 +604,8 @@ export default function Scores() {
                               <FontAwesomeIcon icon={expanded ? faChevronUp : faChevronDown} />
                             </button>
                           </td>
-                          <td title={formatFullDate(row?.created_at || row?.updated_at)}>
-                            {formatRelativeTime(row?.created_at || row?.updated_at)}
+                          <td>
+                            {formatFullDate(row?.created_at || row?.updated_at)}
                           </td>
                           <td>
                             <div className="scores-actions">
@@ -646,14 +643,26 @@ export default function Scores() {
                                 <div>
                                   <h4>Variant</h4>
                                   <p>{variantLabel}{row?.is_baseline ? ' (Baseline)' : ''}</p>
+                                  <h4 style={{ marginTop: 12 }}>All Variants</h4>
+                                  <ul>
+                                    {scores
+                                      .filter((s) => s?.thread_id === row?.thread_id)
+                                      .map((s, si) => (
+                                        <li key={`sibling-${rowKey}-${si}`}>
+                                          {s?.project_name || 'Untitled'} — {s?.jaspen_score ?? '—'}
+                                        </li>
+                                      ))}
+                                  </ul>
                                 </div>
                                 <div>
                                   <h4>Component Scores</h4>
                                   {row?.component_scores && Object.keys(row.component_scores).length > 0 ? (
                                     <ul>
-                                      {Object.entries(row.component_scores).map(([key, value]) => (
-                                        <li key={`component-${rowKey}-${key}`}>{key}: {String(value)}</li>
-                                      ))}
+                                      {Object.entries(row.component_scores)
+                                        .filter(([, value]) => value != null && typeof value !== 'object')
+                                        .map(([key, value]) => (
+                                          <li key={`component-${rowKey}-${key}`}>{key}: {String(value)}</li>
+                                        ))}
                                     </ul>
                                   ) : (
                                     <p>No component scores available.</p>
@@ -663,9 +672,11 @@ export default function Scores() {
                                   <h4>Financial Impact</h4>
                                   {row?.financial_impact && Object.keys(row.financial_impact).length > 0 ? (
                                     <ul>
-                                      {Object.entries(row.financial_impact).map(([key, value]) => (
-                                        <li key={`financial-${rowKey}-${key}`}>{key}: {String(value)}</li>
-                                      ))}
+                                      {Object.entries(row.financial_impact)
+                                        .filter(([, value]) => value != null && typeof value !== 'object')
+                                        .map(([key, value]) => (
+                                          <li key={`financial-${rowKey}-${key}`}>{key}: {String(value)}</li>
+                                        ))}
                                     </ul>
                                   ) : (
                                     <p>No financial impact data.</p>
