@@ -6936,17 +6936,29 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
 
   const currentScorecard = bundle?.current_scorecard || null;
   const baselineScorecard = bundle?.baseline_scorecard || null;
-  const scenarioScorecards = Array.isArray(bundle?.scenarios)
-    ? bundle.scenarios
-        .map((entry) => entry?.scorecard || entry?.analysis_result || entry?.result || null)
-        .filter((entry) => entry && typeof entry === 'object')
+
+  // Use persisted snapshots from the bundle (only Set-Active scenarios) so
+  // the Score dropdown is consistent with what refreshBundle produces.
+  // Fall back to building from raw scenario scorecards only when no
+  // persisted snapshots exist (legacy sessions before snapshot persistence).
+  const persistedSnapshots = Array.isArray(bundle?.scorecard_snapshots)
+    ? bundle.scorecard_snapshots
     : [];
-  const nextSnapshots = buildScorecardSnapshots({
-    threadId: resolvedOwnerThreadId,
-    baselineScorecard,
-    currentScorecard,
-    scenarioScorecards,
-  });
+  const scenarioScorecards = persistedSnapshots.length > 0
+    ? []
+    : (Array.isArray(bundle?.scenarios)
+        ? bundle.scenarios
+            .map((entry) => entry?.scorecard || entry?.analysis_result || entry?.result || null)
+            .filter((entry) => entry && typeof entry === 'object')
+        : []);
+  const nextSnapshots = persistedSnapshots.length > 0
+    ? persistedSnapshots
+    : buildScorecardSnapshots({
+        threadId: resolvedOwnerThreadId,
+        baselineScorecard,
+        currentScorecard,
+        scenarioScorecards,
+      });
   const nextBaselineId =
     baselineScorecard?.analysis_id ||
     baselineScorecard?.id ||
@@ -6954,6 +6966,7 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
     nextSnapshots.find((snapshot) => snapshot?.isBaseline)?.id ||
     null;
   const nextSelectedScorecardId =
+    bundle?.selected_scorecard_id ||
     currentScorecard?.analysis_id ||
     currentScorecard?.id ||
     currentScorecard?.analysisId ||
