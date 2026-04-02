@@ -142,6 +142,12 @@ def _verify_mfa_code(user, code):
     return False
 
 
+def _has_mfa_secret(user):
+    if not user:
+        return False
+    return bool(_decrypt_mfa_secret(user.mfa_secret))
+
+
 def _frontend_base_url():
     return (current_app.config.get('FRONTEND_BASE_URL') or 'http://localhost:3000').rstrip('/')
 
@@ -680,6 +686,20 @@ def login():
     except Exception:
         active_org = Organization.query.filter_by(id=user.active_organization_id).first()
     if active_org and mfa_policy_for_org(active_org) == MFA_POLICY_REQUIRED and not user.mfa_enabled:
+        if _has_mfa_secret(user):
+            _audit_auth_event('auth.login.succeeded', actor=user, target_user=user, details={'mfa_required': True})
+            pending_token = _create_user_access_token(
+                user,
+                expires_delta=timedelta(minutes=5),
+                additional_claims={"mfa_pending": True},
+            )
+            return jsonify({
+                "mfa_required": True,
+                "mfa_setup_required": False,
+                "pending_token": pending_token,
+                "organization_id": str(active_org.id),
+                "organization_name": active_org.name,
+            }), 200
         return jsonify(
             message='MFA setup is required for your organization.',
             mfa_required=True,
@@ -882,6 +902,7 @@ def mfa_verify():
     backup_codes = [pyotp.random_base32()[:8] for _ in range(10)]
     user.mfa_backup_codes = [generate_password_hash(item.upper()) for item in backup_codes]
     user.mfa_enabled = True
+    user.mfa_secret = _encrypt_mfa_secret(secret)
     db.session.commit()
 
     return jsonify({
@@ -907,12 +928,16 @@ def mfa_challenge():
         return jsonify(message='Invalid or expired token.'), 401
 
     user = User.query.get(user_id)
-    if not user or not user.mfa_enabled:
+    if not user:
         return jsonify(message='MFA not enabled.'), 400
 
     secret = _decrypt_mfa_secret(user.mfa_secret)
     totp = pyotp.TOTP(secret or '')
     if secret and totp.verify(code, valid_window=1):
+        if not user.mfa_enabled:
+            user.mfa_enabled = True
+            user.mfa_secret = _encrypt_mfa_secret(secret)
+            db.session.commit()
         access_token = _create_user_access_token(user)
         resp = jsonify({"token": access_token, "user": _user_payload(user)})
         _audit_auth_event('auth.login.succeeded', actor=user, target_user=user, details={'mfa_method': 'totp'})
@@ -920,6 +945,10 @@ def mfa_challenge():
 
     if user.mfa_backup_codes:
         if _verify_mfa_code(user, code):
+            if not user.mfa_enabled:
+                user.mfa_enabled = True
+                user.mfa_secret = _encrypt_mfa_secret(secret)
+                db.session.commit()
             access_token = _create_user_access_token(user)
             resp = jsonify({"token": access_token, "user": _user_payload(user)})
             _audit_auth_event('auth.login.succeeded', actor=user, target_user=user, details={'mfa_method': 'backup_code'})
