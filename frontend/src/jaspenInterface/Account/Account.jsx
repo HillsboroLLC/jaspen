@@ -12,6 +12,7 @@ import {
   faGear,
   faLayerGroup,
   faPlug,
+  faShieldHalved,
   faTimes,
 } from '@fortawesome/free-solid-svg-icons';
 import './Account.css';
@@ -336,6 +337,21 @@ export default function Account() {
   const [message, setMessage] = useState('');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState('overview');
+  const [userProfile, setUserProfile] = useState(null);
+  const [mfaState, setMfaState] = useState({
+    loading: false,
+    verifying: false,
+    disabling: false,
+    secret: '',
+    qrCode: '',
+    provisioningUri: '',
+    code: '',
+    backupCodes: [],
+    disablePassword: '',
+    disableCode: '',
+    error: '',
+    success: '',
+  });
   const [adminState, setAdminState] = useState({
     checked: false,
     isAdmin: false,
@@ -352,7 +368,7 @@ export default function Account() {
 
     const load = async () => {
       try {
-        const [statusRes, catalogRes, connectorsRes, adminCapsRes] = await Promise.all([
+        const [statusRes, catalogRes, connectorsRes, adminCapsRes, userRes] = await Promise.all([
           authFetch(`${API_BASE}/api/v1/billing/status`, {
             headers: authHeaders({}, 'GET'),
             credentials: 'include',
@@ -366,12 +382,17 @@ export default function Account() {
             headers: authHeaders({}, 'GET'),
             credentials: 'include',
           }),
+          authFetch(`${API_BASE}/api/v1/auth/me`, {
+            headers: authHeaders({}, 'GET'),
+            credentials: 'include',
+          }),
         ]);
 
         const statusData = await statusRes.json();
         const catalogData = await catalogRes.json();
         const connectorsData = await connectorsRes.json().catch(() => ({}));
         const adminCapsData = await adminCapsRes.json().catch(() => ({}));
+        const userData = await userRes.json().catch(() => ({}));
 
         if (!statusRes.ok) {
           if (statusRes.status === 401) {
@@ -385,6 +406,10 @@ export default function Account() {
           return;
         }
         if (!adminCapsRes.ok && adminCapsRes.status === 401) {
+          navigate('/?auth=1', { replace: true });
+          return;
+        }
+        if (!userRes.ok && userRes.status === 401) {
           navigate('/?auth=1', { replace: true });
           return;
         }
@@ -410,6 +435,9 @@ export default function Account() {
             checked: true,
             isAdmin,
           }));
+          if (userRes.ok) {
+            setUserProfile(userData || null);
+          }
           if (isAdmin) {
             const usersRes = await authFetch(`${API_BASE}/api/v1/admin/users?limit=100`, {
               headers: authHeaders({}, 'GET'),
@@ -474,6 +502,122 @@ export default function Account() {
     });
     const data = await res.json();
     if (res.ok) setStatus(data);
+  };
+
+  const refreshUserProfile = async () => {
+    const res = await authFetch(`${API_BASE}/api/v1/auth/me`, {
+      headers: authHeaders({}, 'GET'),
+      credentials: 'include',
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) setUserProfile(data || null);
+    if (res.status === 401) {
+      navigate('/?auth=1', { replace: true });
+    }
+  };
+
+  const resetMfaState = () => {
+    setMfaState((prev) => ({
+      ...prev,
+      loading: false,
+      verifying: false,
+      disabling: false,
+      secret: '',
+      qrCode: '',
+      provisioningUri: '',
+      code: '',
+      backupCodes: [],
+      disablePassword: '',
+      disableCode: '',
+      error: '',
+      success: '',
+    }));
+  };
+
+  const startMfaSetup = async () => {
+    setMfaState((prev) => ({ ...prev, loading: true, error: '', success: '' }));
+    try {
+      const res = await authFetch(`${API_BASE}/api/v1/auth/mfa/setup`, {
+        method: 'POST',
+        headers: authHeaders({}, 'POST'),
+        credentials: 'include',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.message || 'Unable to start MFA setup.');
+      }
+      setMfaState((prev) => ({
+        ...prev,
+        loading: false,
+        secret: data?.secret || '',
+        qrCode: data?.qr_code || '',
+        provisioningUri: data?.provisioning_uri || '',
+      }));
+    } catch (error) {
+      setMfaState((prev) => ({ ...prev, loading: false, error: error.message || 'Unable to start MFA setup.' }));
+    }
+  };
+
+  const verifyMfaSetup = async () => {
+    if (!mfaState.code.trim()) {
+      setMfaState((prev) => ({ ...prev, error: 'Enter the MFA code from your authenticator app.' }));
+      return;
+    }
+    setMfaState((prev) => ({ ...prev, verifying: true, error: '', success: '' }));
+    try {
+      const res = await authFetch(`${API_BASE}/api/v1/auth/mfa/verify`, {
+        method: 'POST',
+        headers: authHeaders({ 'Content-Type': 'application/json' }, 'POST'),
+        credentials: 'include',
+        body: JSON.stringify({ code: mfaState.code.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.message || 'Unable to verify MFA.');
+      }
+      setMfaState((prev) => ({
+        ...prev,
+        verifying: false,
+        backupCodes: Array.isArray(data?.backup_codes) ? data.backup_codes : [],
+        success: data?.message || 'MFA enabled successfully.',
+      }));
+      refreshUserProfile();
+    } catch (error) {
+      setMfaState((prev) => ({ ...prev, verifying: false, error: error.message || 'Unable to verify MFA.' }));
+    }
+  };
+
+  const disableMfa = async () => {
+    if (!mfaState.disablePassword.trim() || !mfaState.disableCode.trim()) {
+      setMfaState((prev) => ({ ...prev, error: 'Enter your password and MFA code to disable.' }));
+      return;
+    }
+    setMfaState((prev) => ({ ...prev, disabling: true, error: '', success: '' }));
+    try {
+      const res = await authFetch(`${API_BASE}/api/v1/auth/mfa/disable`, {
+        method: 'POST',
+        headers: authHeaders({ 'Content-Type': 'application/json' }, 'POST'),
+        credentials: 'include',
+        body: JSON.stringify({
+          current_password: mfaState.disablePassword,
+          code: mfaState.disableCode.trim(),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.message || 'Unable to disable MFA.');
+      }
+      setMfaState((prev) => ({
+        ...prev,
+        disabling: false,
+        disablePassword: '',
+        disableCode: '',
+        success: data?.message || 'MFA disabled.',
+      }));
+      refreshUserProfile();
+    } catch (error) {
+      setMfaState((prev) => ({ ...prev, disabling: false, error: error.message || 'Unable to disable MFA.' }));
+    }
   };
 
   const refreshConnectors = async () => {
@@ -1357,6 +1501,7 @@ export default function Account() {
     { key: 'plans', label: 'Plans', icon: faLayerGroup },
     { key: 'connectors', label: 'Connectors', icon: faPlug },
     { key: 'packs', label: 'Credit packs', icon: faBolt },
+    { key: 'security', label: 'Security', icon: faShieldHalved },
     { key: 'models', label: 'Models', icon: faLayerGroup },
     ...(isAdminUser ? [{ key: 'admin', label: 'System admin', icon: faGear }] : []),
     { key: 'knowledge', label: 'Knowledge', icon: faBookOpen },
@@ -1373,6 +1518,10 @@ export default function Account() {
   const modalSaveLabel = jiraConfigModal.intentEnable
     ? `Save & enable ${modalConnectorLabel}`
     : `Save ${modalConnectorLabel} settings`;
+  const accountPlanKey = (status?.plan_key || status?.plan?.key || '').toString();
+  const mfaPolicy = userProfile?.active_organization_mfa_policy || null;
+  const mfaEnabled = Boolean(userProfile?.mfa_enabled);
+  const mfaPolicyLabel = mfaPolicy ? mfaPolicy.charAt(0).toUpperCase() + mfaPolicy.slice(1) : 'Optional';
 
   return (
     <div className="account-page">
@@ -2197,6 +2346,141 @@ export default function Account() {
                 ))}
               </tbody>
             </table>
+          </div>
+        </section>
+        )}
+
+        {activeTab === 'security' && (
+        <section className="account-section">
+          <h2 className="account-tab-title">Security</h2>
+          <div className="account-security-grid">
+            <article className="account-section-card account-security-card">
+              <div className="account-security-header">
+                <div>
+                  <h3>Multi-factor authentication</h3>
+                  <p>
+                    Protect your account with a one-time code from an authenticator app. This is optional on Free and
+                    Essential plans. Team and Enterprise orgs can enforce it.
+                  </p>
+                </div>
+                <span className={`account-pill ${mfaEnabled ? 'is-enabled' : ''}`}>
+                  {mfaEnabled ? 'Enabled' : 'Not enabled'}
+                </span>
+              </div>
+
+              <div className="account-security-meta">
+                <div>
+                  <span className="label">Organization policy</span>
+                  <strong>{mfaPolicyLabel}</strong>
+                </div>
+                <div>
+                  <span className="label">Plan</span>
+                  <strong>{accountPlanKey || 'free'}</strong>
+                </div>
+              </div>
+
+              {mfaState.error && <p className="account-security-error">{mfaState.error}</p>}
+              {mfaState.success && <p className="account-security-success">{mfaState.success}</p>}
+
+              {!mfaEnabled && (
+                <div className="account-security-actions">
+                  {!mfaState.secret && (
+                    <button
+                      type="button"
+                      className="account-primary-btn"
+                      onClick={startMfaSetup}
+                      disabled={mfaState.loading}
+                    >
+                      {mfaState.loading ? 'Starting...' : 'Set up MFA'}
+                    </button>
+                  )}
+                  {mfaState.secret && (
+                    <button type="button" className="account-secondary-btn" onClick={resetMfaState}>
+                      Cancel setup
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {!mfaEnabled && mfaState.secret && (
+                <div className="account-security-setup">
+                  <div className="account-security-qr">
+                    {mfaState.qrCode && <img src={mfaState.qrCode} alt="MFA QR code" />}
+                    <div>
+                      <p>Scan the QR code with Google Authenticator, Authy, or 1Password.</p>
+                      <p className="account-security-secret">
+                        Secret key: <strong>{mfaState.secret}</strong>
+                      </p>
+                      {mfaState.provisioningUri && (
+                        <p className="account-security-provisioning">
+                          If you can’t scan, paste this URI into your authenticator.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <label className="account-security-code">
+                    Enter the 6-digit code
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={mfaState.code}
+                      onChange={(e) => setMfaState((prev) => ({ ...prev, code: e.target.value }))}
+                      placeholder="123456"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="account-primary-btn"
+                    onClick={verifyMfaSetup}
+                    disabled={mfaState.verifying}
+                  >
+                    {mfaState.verifying ? 'Verifying...' : 'Verify & enable'}
+                  </button>
+                </div>
+              )}
+
+              {mfaEnabled && (
+                <div className="account-security-enabled">
+                  {mfaState.backupCodes.length > 0 && (
+                    <div className="account-security-backups">
+                      <p>Save these backup codes in a safe place.</p>
+                      <div className="account-security-code-grid">
+                        {mfaState.backupCodes.map((code) => (
+                          <span key={code}>{code}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="account-security-disable">
+                    <h4>Disable MFA</h4>
+                    <p>Require your password and a valid MFA code to disable.</p>
+                    <div className="account-security-disable-fields">
+                      <input
+                        type="password"
+                        placeholder="Current password"
+                        value={mfaState.disablePassword}
+                        onChange={(e) => setMfaState((prev) => ({ ...prev, disablePassword: e.target.value }))}
+                      />
+                      <input
+                        type="text"
+                        placeholder="MFA code"
+                        value={mfaState.disableCode}
+                        onChange={(e) => setMfaState((prev) => ({ ...prev, disableCode: e.target.value }))}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      className="account-danger-btn"
+                      onClick={disableMfa}
+                      disabled={mfaState.disabling}
+                    >
+                      {mfaState.disabling ? 'Disabling...' : 'Disable MFA'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </article>
           </div>
         </section>
         )}
