@@ -338,6 +338,20 @@ export function AuthProvider({ children }) {
       });
 
       const data = await res.json().catch(() => ({}));
+
+      // MFA required — return special result so the UI can show the challenge/setup form
+      if (data?.mfa_required) {
+        return {
+          success: false,
+          mfaRequired: true,
+          mfaSetupRequired: Boolean(data?.mfa_setup_required),
+          pendingToken: data?.pending_token || '',
+          organizationId: data?.organization_id || '',
+          organizationName: data?.organization_name || '',
+          error: data?.message || '',
+        };
+      }
+
       if (res.ok) {
         if (data?.approval_required || data?.verification_required) {
           return {

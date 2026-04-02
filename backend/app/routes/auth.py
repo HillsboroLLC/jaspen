@@ -700,13 +700,20 @@ def login():
                 "organization_id": str(active_org.id),
                 "organization_name": active_org.name,
             }), 200
+        # Issue a short-lived pending token so the frontend can call /mfa/setup
+        pending_token = _create_user_access_token(
+            user,
+            expires_delta=timedelta(minutes=5),
+            additional_claims={"mfa_pending": True},
+        )
         return jsonify(
             message='MFA setup is required for your organization.',
             mfa_required=True,
             mfa_setup_required=True,
+            pending_token=pending_token,
             organization_id=str(active_org.id),
             organization_name=active_org.name,
-        ), 403
+        ), 200
 
     if user.mfa_enabled:
         _audit_auth_event('auth.login.succeeded', actor=user, target_user=user, details={'mfa_required': True})
