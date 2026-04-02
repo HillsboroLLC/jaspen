@@ -59,6 +59,11 @@ DEFAULT_SEAT_POLICIES = {
     },
 }
 
+MFA_POLICY_OPTIONAL = "optional"
+MFA_POLICY_ENCOURAGED = "encouraged"
+MFA_POLICY_REQUIRED = "required"
+MFA_POLICY_SET = {MFA_POLICY_OPTIONAL, MFA_POLICY_ENCOURAGED, MFA_POLICY_REQUIRED}
+
 _ROLE_DISPLAY_LABEL = {
     ORG_ROLE_OWNER: "Owner",
     ORG_ROLE_ADMIN: "Admin",
@@ -103,6 +108,34 @@ def can_edit_projects(role):
 def seat_policy_for_plan(plan_key):
     canonical = normalize_plan_key(plan_key)
     return DEFAULT_SEAT_POLICIES.get(canonical, DEFAULT_SEAT_POLICIES["essential"])
+
+
+def default_mfa_policy_for_plan(plan_key):
+    canonical = normalize_plan_key(plan_key)
+    if canonical == "enterprise":
+        return MFA_POLICY_REQUIRED
+    if canonical == "team":
+        return MFA_POLICY_OPTIONAL
+    if canonical == "free":
+        return MFA_POLICY_OPTIONAL
+    return MFA_POLICY_OPTIONAL
+
+
+def normalize_mfa_policy(value, default=None):
+    token = str(value or "").strip().lower()
+    if token in MFA_POLICY_SET:
+        return token
+    return default
+
+
+def mfa_policy_for_org(org):
+    if not isinstance(org, Organization):
+        return MFA_POLICY_OPTIONAL
+    settings = org.settings if isinstance(org.settings, dict) else {}
+    configured = normalize_mfa_policy(settings.get("mfa_policy"))
+    if configured:
+        return configured
+    return default_mfa_policy_for_plan(org.plan_key)
 
 
 def normalize_seat_limit_value(value):
@@ -467,6 +500,7 @@ def organization_access_payload_for_user(user):
         "active_organization_name": active_org.name if active_org else None,
         "active_organization_role": active_membership.role if active_membership else None,
         "active_organization_plan_key": to_public_plan(active_org.plan_key) if active_org else None,
+        "active_organization_mfa_policy": mfa_policy_for_org(active_org) if active_org else None,
         "can_access_team": bool(normalized_plans.intersection({"team", "enterprise"})),
         "can_access_enterprise_admin": "enterprise" in normalized_plans,
     }
@@ -505,4 +539,5 @@ def org_payload(org):
         "seat_policy_overrides": seat_policy_overrides_for_org(org),
         "max_total_paid_seats": getattr(org, "max_total_paid_seats", None),
         "settings": org.settings if isinstance(org.settings, dict) else {},
+        "mfa_policy": mfa_policy_for_org(org),
     }

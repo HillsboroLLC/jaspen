@@ -10,6 +10,10 @@ from sqlalchemy import func
 from app import db, mail
 from app.billing_config import get_plan_catalog, normalize_plan_key, to_public_plan
 from app.models import Organization, OrganizationInvitation, OrganizationMember, User
+from app.orgs import (
+    mfa_policy_for_org,
+    normalize_mfa_policy,
+)
 
 
 teams_bp = Blueprint("teams", __name__)
@@ -44,6 +48,24 @@ def _deep_merge_dict(existing, incoming):
         else:
             base[key] = value
     return base
+
+
+def _normalize_org_mfa_settings(org, incoming_settings):
+    if not isinstance(incoming_settings, dict):
+        return incoming_settings, None
+    if "mfa_policy" not in incoming_settings:
+        return incoming_settings, None
+    policy = normalize_mfa_policy(incoming_settings.get("mfa_policy"))
+    if not policy:
+        return None, "mfa_policy must be one of: optional, encouraged, required"
+    plan = to_public_plan(org.plan_key)
+    if plan in {"free", "essential"} and policy == MFA_POLICY_REQUIRED:
+        return None, "MFA enforcement is only available on Team or Enterprise plans"
+    if plan == "enterprise":
+        policy = MFA_POLICY_REQUIRED
+    next_settings = dict(incoming_settings)
+    next_settings["mfa_policy"] = policy
+    return next_settings, None
 
 
 def _normalize_role(value, default=ROLE_COLLABORATOR):
@@ -207,6 +229,7 @@ def _org_payload(org, membership_role=None):
         "max_creator_seats": getattr(org, "max_creator_seats", None),
         "max_collaborator_seats": getattr(org, "max_collaborator_seats", None),
         "settings": org.settings if isinstance(org.settings, dict) else {},
+        "mfa_policy": mfa_policy_for_org(org),
         "created_at": org.created_at.isoformat() if org.created_at else None,
         "updated_at": org.updated_at.isoformat() if org.updated_at else None,
         "user_role": _normalize_role(membership_role, default=ROLE_VIEWER),
@@ -408,8 +431,11 @@ def update_team_org(org_id):
         incoming_settings = data.get("settings")
         if not isinstance(incoming_settings, dict):
             return jsonify({"error": "settings must be an object"}), 400
+        normalized_settings, error = _normalize_org_mfa_settings(org, incoming_settings)
+        if error:
+            return jsonify({"error": error}), 400
         current_settings = org.settings if isinstance(org.settings, dict) else {}
-        org.settings = _deep_merge_dict(current_settings, incoming_settings)
+        org.settings = _deep_merge_dict(current_settings, normalized_settings)
         touched = True
 
     if not touched:
@@ -438,8 +464,11 @@ def update_team_org_settings(org_id):
     if not isinstance(incoming_settings, dict):
         return jsonify({"error": "settings must be an object"}), 400
 
+    normalized_settings, error = _normalize_org_mfa_settings(org, incoming_settings)
+    if error:
+        return jsonify({"error": error}), 400
     current_settings = org.settings if isinstance(org.settings, dict) else {}
-    org.settings = _deep_merge_dict(current_settings, incoming_settings)
+    org.settings = _deep_merge_dict(current_settings, normalized_settings)
     org.updated_at = _now()
     db.session.commit()
 

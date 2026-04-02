@@ -31,7 +31,7 @@ from app.access_controls import (
 )
 from app.admin_audit import append_user_audit_event
 from app.admin_policy import is_global_admin
-from app.models import User
+from app.models import Organization, User
 from app.billing_config import (
     apply_plan_to_user,
     bootstrap_legacy_credits,
@@ -39,7 +39,14 @@ from app.billing_config import (
     normalize_plan_key,
     to_public_plan,
 )
-from app.orgs import ensure_default_organization_for_user, organization_access_payload_for_user
+from app.connector_store import decrypt_token, encrypt_token
+from app.orgs import (
+    MFA_POLICY_REQUIRED,
+    ensure_default_organization_for_user,
+    mfa_policy_for_org,
+    resolve_active_org_for_user,
+    organization_access_payload_for_user,
+)
 
 
 auth_bp = Blueprint('auth', __name__)
@@ -107,6 +114,32 @@ def _create_user_access_token(user, *, expires_delta=None, additional_claims=Non
         expires_delta=expires_delta,
         additional_claims=claims,
     )
+
+
+def _encrypt_mfa_secret(secret):
+    return encrypt_token(secret) if secret else ""
+
+
+def _decrypt_mfa_secret(value):
+    return decrypt_token(value) if value else ""
+
+
+def _verify_mfa_code(user, code):
+    secret = _decrypt_mfa_secret(user.mfa_secret)
+    if secret:
+        totp = pyotp.TOTP(secret)
+        if totp.verify(code, valid_window=1):
+            return True
+    if user.mfa_backup_codes:
+        normalized_code = code.upper()
+        for idx, hashed_code in enumerate(list(user.mfa_backup_codes)):
+            if check_password_hash(hashed_code, normalized_code):
+                remaining_codes = list(user.mfa_backup_codes)
+                remaining_codes.pop(idx)
+                user.mfa_backup_codes = remaining_codes
+                db.session.commit()
+                return True
+    return False
 
 
 def _frontend_base_url():
@@ -641,6 +674,20 @@ def login():
     if changed:
         db.session.commit()
 
+    active_org = None
+    try:
+        active_org, _membership = resolve_active_org_for_user(user)
+    except Exception:
+        active_org = Organization.query.filter_by(id=user.active_organization_id).first()
+    if active_org and mfa_policy_for_org(active_org) == MFA_POLICY_REQUIRED and not user.mfa_enabled:
+        return jsonify(
+            message='MFA setup is required for your organization.',
+            mfa_required=True,
+            mfa_setup_required=True,
+            organization_id=str(active_org.id),
+            organization_name=active_org.name,
+        ), 403
+
     if user.mfa_enabled:
         _audit_auth_event('auth.login.succeeded', actor=user, target_user=user, details={'mfa_required': True})
         pending_token = _create_user_access_token(
@@ -792,7 +839,7 @@ def mfa_setup():
         return jsonify(message='MFA is already enabled.'), 400
 
     secret = pyotp.random_base32()
-    user.mfa_secret = secret  # TODO: encrypt with Fernet before storing
+    user.mfa_secret = _encrypt_mfa_secret(secret)
     db.session.commit()
 
     totp = pyotp.TOTP(secret)
@@ -825,7 +872,10 @@ def mfa_verify():
     if not user.mfa_secret:
         return jsonify(message='MFA setup not initiated.'), 400
 
-    totp = pyotp.TOTP(user.mfa_secret)
+    secret = _decrypt_mfa_secret(user.mfa_secret)
+    if not secret:
+        return jsonify(message='MFA setup not initiated.'), 400
+    totp = pyotp.TOTP(secret)
     if not totp.verify(code, valid_window=1):
         return jsonify(message='Invalid code. Please try again.'), 400
 
@@ -860,28 +910,55 @@ def mfa_challenge():
     if not user or not user.mfa_enabled:
         return jsonify(message='MFA not enabled.'), 400
 
-    totp = pyotp.TOTP(user.mfa_secret or '')
-    if totp.verify(code, valid_window=1):
+    secret = _decrypt_mfa_secret(user.mfa_secret)
+    totp = pyotp.TOTP(secret or '')
+    if secret and totp.verify(code, valid_window=1):
         access_token = _create_user_access_token(user)
         resp = jsonify({"token": access_token, "user": _user_payload(user)})
         _audit_auth_event('auth.login.succeeded', actor=user, target_user=user, details={'mfa_method': 'totp'})
         return _attach_auth_cookie(resp, access_token), 200
 
     if user.mfa_backup_codes:
-        normalized_code = code.upper()
-        for idx, hashed_code in enumerate(list(user.mfa_backup_codes)):
-            if check_password_hash(hashed_code, normalized_code):
-                remaining_codes = list(user.mfa_backup_codes)
-                remaining_codes.pop(idx)
-                user.mfa_backup_codes = remaining_codes
-                db.session.commit()
-                access_token = _create_user_access_token(user)
-                resp = jsonify({"token": access_token, "user": _user_payload(user)})
-                _audit_auth_event('auth.login.succeeded', actor=user, target_user=user, details={'mfa_method': 'backup_code'})
-                return _attach_auth_cookie(resp, access_token), 200
+        if _verify_mfa_code(user, code):
+            access_token = _create_user_access_token(user)
+            resp = jsonify({"token": access_token, "user": _user_payload(user)})
+            _audit_auth_event('auth.login.succeeded', actor=user, target_user=user, details={'mfa_method': 'backup_code'})
+            return _attach_auth_cookie(resp, access_token), 200
 
     _audit_auth_event('auth.login.failed', target_user=user, details={'reason': 'invalid_mfa_code'})
     return jsonify(message='Invalid MFA code.'), 401
+
+
+@auth_bp.route('/mfa/disable', methods=['POST'])
+@jwt_required()
+@limiter.limit("3 per minute")
+def mfa_disable():
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify(message='User not found'), 404
+    if not user.mfa_enabled:
+        return jsonify(message='MFA is not enabled.'), 400
+
+    data = request.get_json(silent=True) or {}
+    current_password = str(data.get('current_password') or '')
+    code = str(data.get('code') or '').strip()
+
+    if not current_password or not code:
+        return jsonify(message='Current password and MFA code are required.'), 400
+    if not check_password_hash(user.password_hash, current_password):
+        return jsonify(message='Current password is incorrect.'), 401
+
+    if not _verify_mfa_code(user, code):
+        return jsonify(message='Invalid MFA code.'), 401
+
+    user.mfa_enabled = False
+    user.mfa_secret = None
+    user.mfa_backup_codes = []
+    db.session.commit()
+
+    _audit_auth_event('auth.mfa.disabled', actor=user, target_user=user)
+    return jsonify(message='MFA disabled.'), 200
 
 
 @auth_bp.route('/verify-email', methods=['GET', 'POST'])
@@ -1151,6 +1228,21 @@ def logout():
     if user:
         _audit_auth_event('auth.logout', actor=user, target_user=user)
     resp = jsonify(message='Logged out')
+    unset_jwt_cookies(resp)
+    return resp, 200
+
+
+@auth_bp.route('/logout/all', methods=['POST'])
+@jwt_required()
+def logout_all_sessions():
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify(message='User not found'), 404
+    user.auth_token_version = int(user.auth_token_version or 0) + 1
+    db.session.commit()
+    resp = jsonify(message='All sessions have been revoked.')
+    _audit_auth_event('auth.logout_all', actor=user, target_user=user)
     unset_jwt_cookies(resp)
     return resp, 200
 
