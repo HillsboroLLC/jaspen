@@ -755,6 +755,27 @@ def get_current_user():
     if changed:
         db.session.commit()
 
+    # Enforce MFA for existing sessions — if user's org requires MFA and
+    # they haven't set it up yet, force them through the setup flow.
+    active_org = None
+    try:
+        active_org = Organization.query.filter_by(id=user.active_organization_id).first()
+    except Exception:
+        pass
+    if active_org and mfa_policy_for_org(active_org) == MFA_POLICY_REQUIRED and not user.mfa_enabled:
+        pending_token = _create_user_access_token(
+            user,
+            expires_delta=timedelta(minutes=5),
+            additional_claims={"mfa_pending": True},
+        )
+        return jsonify(
+            mfa_required=True,
+            mfa_setup_required=not _has_mfa_secret(user),
+            pending_token=pending_token,
+            organization_id=str(active_org.id),
+            organization_name=active_org.name,
+        ), 403
+
     return jsonify(**_user_payload(user)), 200
 
 

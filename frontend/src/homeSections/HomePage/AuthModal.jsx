@@ -4,7 +4,7 @@ import { API_BASE } from '../../config/apiBase';
 import { authFetch } from '../../shared/auth/http';
 import { readAuthQueryNotice } from './authStatus';
 
-export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChange }) {
+export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChange, initialMfaData }) {
   const { login, signup, setUser } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -56,6 +56,19 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
   useEffect(() => {
     resetState();
   }, [mode]);
+
+  // Auto-trigger MFA flow when opened with initial MFA data
+  useEffect(() => {
+    if (!isOpen || !initialMfaData?.mfaRequired) return;
+    setMfaOrgName(initialMfaData.organizationName || '');
+    setMfaPendingToken(initialMfaData.pendingToken || '');
+    if (initialMfaData.mfaSetupRequired) {
+      startMfaSetup(initialMfaData.pendingToken);
+    } else {
+      setMfaStep('challenge');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, initialMfaData]);
 
   const statusMessage = useMemo(() => {
     if (status === 'sent') return 'Authenticated. Redirecting...';

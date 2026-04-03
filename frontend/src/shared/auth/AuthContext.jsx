@@ -209,6 +209,9 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // MFA enforcement state — set when /me returns 403 with mfa_required
+  const [mfaEnforcement, setMfaEnforcement] = useState(null);
+
   // Enhanced LSS state
   const [lssUsers, setLssUsers] = useState([]);
   const [currentUserRole, setCurrentUserRole] = useState(null);
@@ -283,11 +286,29 @@ export function AuthProvider({ children }) {
         localStorage.removeItem('token');
         localStorage.removeItem('refresh_token');
         syncSelfServeStorageOwnership(normalized);
+        setMfaEnforcement(null);
         setUser(normalized);
         return { authenticated: true, user: normalized };
       } else {
+        // Check if the session is valid but MFA is required
+        const data = await res.json().catch(() => ({}));
+        if (res.status === 403 && data?.mfa_required) {
+          // Session exists but org requires MFA — force MFA setup/challenge
+          clearAuthTokens();
+          setUser(null);
+          const enforcement = {
+            mfaRequired: true,
+            mfaSetupRequired: Boolean(data?.mfa_setup_required),
+            pendingToken: data?.pending_token || '',
+            organizationId: data?.organization_id || '',
+            organizationName: data?.organization_name || '',
+          };
+          setMfaEnforcement(enforcement);
+          return { authenticated: false, user: null, ...enforcement };
+        }
         // Clear any stale token if server says no
         clearAuthTokens();
+        setMfaEnforcement(null);
         setUser(null);
         return { authenticated: false, user: null };
       }
@@ -630,6 +651,10 @@ export function AuthProvider({ children }) {
     // Constants
     USER_ROLES,
     PERMISSIONS,
+
+    // MFA enforcement (set when /me returns mfa_required for existing session)
+    mfaEnforcement,
+    setMfaEnforcement,
 
     // helper for API calls elsewhere
     authFetch

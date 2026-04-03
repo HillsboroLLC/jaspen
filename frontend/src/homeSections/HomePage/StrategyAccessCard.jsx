@@ -2,12 +2,13 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../../shared/auth/AuthContext';
 import { API_BASE } from '../../config/apiBase';
 import { readAuthQueryNotice } from './authStatus';
+import AuthModal from './AuthModal';
 
 const TARGET_SCORE = 87;
 const ANIMATION_DURATION_MS = 1200;
 
 export default function StrategyAccessCard() {
-  const { login, signup } = useAuth();
+  const { login, signup, mfaEnforcement, setMfaEnforcement } = useAuth();
   const [score, setScore] = useState(0);
   const [status, setStatus] = useState('Pending');
   const [email, setEmail] = useState('');
@@ -16,6 +17,9 @@ export default function StrategyAccessCard() {
   const [authMode, setAuthMode] = useState('email');
   const [authError, setAuthError] = useState('');
   const [authErrorDetail, setAuthErrorDetail] = useState('');
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authModalMode, setAuthModalMode] = useState('email');
+  const [mfaData, setMfaData] = useState(null);
 
   useEffect(() => {
     const prefersReducedMotion =
@@ -50,6 +54,18 @@ export default function StrategyAccessCard() {
       cancelAnimationFrame(rafId);
     };
   }, []);
+
+  // If checkAuthStatus detected MFA enforcement (existing session, org requires MFA),
+  // auto-open the AuthModal with MFA data
+  useEffect(() => {
+    if (mfaEnforcement?.mfaRequired) {
+      setMfaData(mfaEnforcement);
+      setShowAuthModal(true);
+      setAuthModalMode('email');
+      // Clear so it doesn't re-trigger
+      if (typeof setMfaEnforcement === 'function') setMfaEnforcement(null);
+    }
+  }, [mfaEnforcement, setMfaEnforcement]);
 
   const helperText = useMemo(() => {
     if (authError) return authError;
@@ -153,6 +169,16 @@ export default function StrategyAccessCard() {
     setAuthError('');
     try {
       const loginAttempt = await login(normalizedEmail, password);
+
+      // MFA required — open the AuthModal which has full MFA flow
+      if (loginAttempt?.mfaRequired) {
+        setAuthStatus('idle');
+        setMfaData(loginAttempt);
+        setShowAuthModal(true);
+        setAuthModalMode('email');
+        return;
+      }
+
       if (loginAttempt?.success) {
         setAuthStatus('sent');
         window.location.href = '/new';
@@ -274,6 +300,14 @@ export default function StrategyAccessCard() {
         <strong>{helperText}</strong>
         {helperDetail && <span>{helperDetail}</span>}
       </div>
+
+      <AuthModal
+        isOpen={showAuthModal}
+        mode={authModalMode}
+        onClose={() => { setShowAuthModal(false); setMfaData(null); }}
+        onModeChange={setAuthModalMode}
+        initialMfaData={mfaData}
+      />
     </div>
   );
 }
