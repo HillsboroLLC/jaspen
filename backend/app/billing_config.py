@@ -1,4 +1,5 @@
 from copy import deepcopy
+from datetime import datetime
 
 PLAN_ALIASES = {
     'growth': 'team',
@@ -207,6 +208,7 @@ def apply_plan_to_user(user, plan_key, app_config, reset_credits=True):
     monthly_limit = get_monthly_credit_limit(canonical, app_config)
     if reset_credits:
         user.credits_remaining = monthly_limit
+        user.credits_reset_at = datetime.utcnow()
     elif monthly_limit is None and user.credits_remaining is not None:
         # Sales-led plans can be tracked outside of per-user credit counters.
         user.credits_remaining = None
@@ -235,6 +237,7 @@ def bootstrap_legacy_credits(user, app_config):
 
     if user.credits_remaining is None:
         user.credits_remaining = monthly_limit
+        user.credits_reset_at = datetime.utcnow()
         return True
 
     if user.credits_remaining != 0:
@@ -244,9 +247,31 @@ def bootstrap_legacy_credits(user, app_config):
     if user.created_at and user.updated_at:
         if abs((user.updated_at - user.created_at).total_seconds()) <= 1:
             user.credits_remaining = monthly_limit
+            user.credits_reset_at = datetime.utcnow()
             return True
 
     return False
+
+
+def is_credit_reset_due(user, now=None):
+    now = now or datetime.utcnow()
+    last_reset = user.credits_reset_at
+    if not last_reset:
+        return True
+    return last_reset.year != now.year or last_reset.month != now.month
+
+
+def reset_user_monthly_credits(user, app_config, now=None):
+    now = now or datetime.utcnow()
+    plan_key = normalize_plan_key(user.subscription_plan)
+    monthly_limit = get_monthly_credit_limit(plan_key, app_config)
+    if monthly_limit is None:
+        return False
+    if not is_credit_reset_due(user, now):
+        return False
+    user.credits_remaining = monthly_limit
+    user.credits_reset_at = now
+    return True
 
 
 def consume_credits(user, amount):

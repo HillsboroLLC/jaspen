@@ -63,6 +63,10 @@ class User(db.Model):
         nullable=True,
         default=300
     )
+    credits_reset_at = db.Column(
+        db.DateTime,
+        nullable=True,
+    )
     failed_login_attempts = db.Column(
         db.Integer,
         nullable=False,
@@ -198,6 +202,7 @@ class User(db.Model):
             'unlimited_analysis': self.unlimited_analysis,
             'max_concurrent_sessions': self.max_concurrent_sessions,
             'credits_remaining': self.credits_remaining,
+            'credits_reset_at': self.credits_reset_at.isoformat() if self.credits_reset_at else None,
             'auth_token_version': self.auth_token_version,
             'email_verified': bool(self.email_verified),
             'email_verified_at': self.email_verified_at.isoformat() if self.email_verified_at else None,
