@@ -2346,6 +2346,16 @@ def portfolio_scores_agent():
 
         from .ai_agent import _estimate_usage_credit_charge, _generate_routed_chat_reply
 
+        preflight_token_hint = int(current_app.config.get('AI_AGENT_PREFLIGHT_TOKEN_HINT') or 2500)
+        preflight_required_credits = _estimate_usage_credit_charge(preflight_token_hint, model_selection['model_type'])
+        if user.credits_remaining is not None and user.credits_remaining < preflight_required_credits:
+            return jsonify({
+                'error': 'Insufficient credits.',
+                'code': 'insufficient_credits',
+                'required_credits': preflight_required_credits,
+                'remaining_credits': int(user.credits_remaining or 0),
+            }), 402
+
         reply, usage = _generate_routed_chat_reply(
             routed_messages,
             model_selection,

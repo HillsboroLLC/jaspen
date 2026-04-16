@@ -1855,6 +1855,27 @@ def _estimate_usage_credit_charge(total_tokens, model_type):
     return max(min_charge, int(math.ceil(raw_credits)))
 
 
+def _preflight_credit_estimate(model_type, token_hint=None):
+    default_tokens = int(
+        current_app.config.get("AI_AGENT_PREFLIGHT_TOKEN_HINT")
+        or os.getenv("AI_AGENT_PREFLIGHT_TOKEN_HINT")
+        or 2500
+    )
+    hint = int(token_hint or default_tokens)
+    return _estimate_usage_credit_charge(max(1, hint), model_type)
+
+
+def _insufficient_credits_payload(user, required_credits):
+    return {
+        "error": "Insufficient credits",
+        "required_credits": int(required_credits or 0),
+        "credits_remaining": user.credits_remaining,
+        "plan_key": to_public_plan(user.subscription_plan),
+        "monthly_credit_limit": get_monthly_credit_limit(user.subscription_plan, current_app.config),
+        "suggestion": "Purchase an overage pack or upgrade your plan.",
+    }
+
+
 def _anthropic_messages_from_history(chat_history, max_turns=14):
     normalized = []
     for msg in (chat_history or []):
@@ -4845,6 +4866,9 @@ def conversation_start():
     chat_history.append(_user_chat_entry(user_message, attachments=attachments))
     readiness = _compute_readiness(chat_history, session.get("strategy_objective"))
     context_budget = get_context_budget(to_public_plan(user.subscription_plan))
+    preflight_required_credits = _preflight_credit_estimate(model_selection["model_type"])
+    if user.credits_remaining is not None and user.credits_remaining < preflight_required_credits:
+        return jsonify(_insufficient_credits_payload(user, preflight_required_credits)), 402
     stream_requested = str(request.args.get("stream") or "").strip().lower() in {"1", "true", "yes"}
 
     if stream_requested:
@@ -5177,6 +5201,9 @@ def conversation_continue():
     chat_history.append(_user_chat_entry(user_message, attachments=attachments))
     readiness = _compute_readiness(chat_history, session.get("strategy_objective"))
     context_budget = get_context_budget(to_public_plan(user.subscription_plan))
+    preflight_required_credits = _preflight_credit_estimate(model_selection["model_type"])
+    if user.credits_remaining is not None and user.credits_remaining < preflight_required_credits:
+        return jsonify(_insufficient_credits_payload(user, preflight_required_credits)), 402
     stream_requested = str(request.args.get("stream") or "").strip().lower() in {"1", "true", "yes"}
 
     if stream_requested:
@@ -6161,6 +6188,9 @@ def conversation_regenerate():
         "replaced_by": "regenerate",
         "replaced_at": _iso_now(),
     }
+    preflight_required_credits = _preflight_credit_estimate(model_selection["model_type"])
+    if user.credits_remaining is not None and user.credits_remaining < preflight_required_credits:
+        return jsonify(_insufficient_credits_payload(user, preflight_required_credits)), 402
     stream_requested = str(request.args.get("stream") or "").strip().lower() in {"1", "true", "yes"}
 
     if stream_requested:
