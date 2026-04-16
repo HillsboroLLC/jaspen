@@ -506,6 +506,18 @@
   background: var(--gray-50);
 }
 
+.jas-topbar-credits.is-warning {
+  border-color: #f59e0b;
+  color: #8a4b00;
+  background: #fff7e6;
+}
+
+.jas-topbar-credits.is-critical {
+  border-color: #dc2626;
+  color: #991b1b;
+  background: #fef2f2;
+}
+
 .jas-topbar-bell-count {
   position: absolute;
   top: -6px;

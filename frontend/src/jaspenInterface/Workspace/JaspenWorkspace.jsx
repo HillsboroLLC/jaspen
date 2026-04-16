@@ -1999,9 +1999,31 @@ useEffect(() => {
     ? '...'
     : (creditsRemaining == null && monthlyCreditLimit == null)
       ? '∞'
-      : intakeCreditsValue == null
-      ? '--'
-      : Number(intakeCreditsValue).toLocaleString();
+      : (() => {
+          if (intakeCreditsValue == null) return '--';
+          const remainingLabel = Number(intakeCreditsValue).toLocaleString();
+          const limitNum = Number(monthlyCreditLimit);
+          if (Number.isFinite(limitNum) && limitNum > 0) {
+            return `${remainingLabel}/${Math.round(limitNum).toLocaleString()}`;
+          }
+          return remainingLabel;
+        })();
+  const creditsTone = useMemo(() => {
+    const remainingNum = Number(creditsRemaining);
+    const limitNum = Number(monthlyCreditLimit);
+    if (!Number.isFinite(remainingNum) || !Number.isFinite(limitNum) || limitNum <= 0) {
+      return 'normal';
+    }
+    const ratio = Math.max(0, remainingNum / limitNum);
+    if (ratio <= 0.05) return 'critical';
+    if (ratio <= 0.2) return 'warning';
+    return 'normal';
+  }, [creditsRemaining, monthlyCreditLimit]);
+  const creditsTitle = creditsTone === 'critical'
+    ? 'Critical: credits are below 5%. Open billing.'
+    : creditsTone === 'warning'
+      ? 'Low credits: below 20%. Open billing.'
+      : 'View account credits';
   const creditsBadge = creditsRemaining == null ? 'Contracted' : Number(creditsRemaining || 0).toLocaleString();
   useEffect(() => {
     if (planCategory === 'individual' || !user) {
@@ -8614,9 +8636,9 @@ onClick={async () => {
               </button>
               <button
                 type="button"
-                className="jas-topbar-credits"
+                className={`jas-topbar-credits ${creditsTone === 'warning' ? 'is-warning' : ''} ${creditsTone === 'critical' ? 'is-critical' : ''}`.trim()}
                 onClick={() => setBillingModalOpen(true)}
-                title="View account credits"
+                title={creditsTitle}
                 aria-label="View credits"
               >
                 <FontAwesomeIcon icon={faBolt} />
