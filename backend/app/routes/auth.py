@@ -174,6 +174,18 @@ def _google_state_serializer():
     return URLSafeTimedSerializer(secret_key=secret, salt='google-oauth-state')
 
 
+def _enforce_login_session_limit(user):
+    """Stateless JWT enforcement currently supports strict single-session mode."""
+    try:
+        limit = int(user.max_concurrent_sessions) if user.max_concurrent_sessions is not None else None
+    except Exception:
+        limit = None
+    if limit == 1:
+        user.auth_token_version = int(user.auth_token_version or 0) + 1
+        return True
+    return False
+
+
 def _email_verification_serializer():
     secret = current_app.config.get('SECRET_KEY') or current_app.config.get('JWT_SECRET_KEY')
     if not secret:
@@ -676,6 +688,8 @@ def login():
     if _enforce_admin_account_profile(user):
         changed = True
     if _ensure_user_org(user):
+        changed = True
+    if _enforce_login_session_limit(user):
         changed = True
     if changed:
         db.session.commit()
