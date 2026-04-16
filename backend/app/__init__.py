@@ -165,7 +165,7 @@ def create_app():
         GOOGLE_CLIENT_SECRET           = os.getenv('GOOGLE_CLIENT_SECRET'),
         GOOGLE_REDIRECT_URI            = os.getenv('GOOGLE_REDIRECT_URI'),
         GOOGLE_OAUTH_STATE_TTL_SECONDS = int(os.getenv('GOOGLE_OAUTH_STATE_TTL_SECONDS', '900')),
-        REQUIRE_EMAIL_VERIFICATION     = _as_bool(os.getenv('REQUIRE_EMAIL_VERIFICATION'), default=False),
+        REQUIRE_EMAIL_VERIFICATION     = _as_bool(os.getenv('REQUIRE_EMAIL_VERIFICATION'), default=True),
         EMAIL_VERIFICATION_TOKEN_TTL_SECONDS = int(os.getenv('EMAIL_VERIFICATION_TOKEN_TTL_SECONDS', '86400')),
 
         # JWT
