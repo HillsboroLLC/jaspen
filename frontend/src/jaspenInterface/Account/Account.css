@@ -1121,6 +1121,31 @@
   color: #1f355c;
 }
 
+.account-security-info {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid #d8e2f1;
+  border-radius: 10px;
+  background: #f8fbff;
+  color: #3e567d;
+  font-size: 0.76rem;
+}
+
+.account-security-info summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #24407a;
+}
+
+.account-security-info p {
+  margin: 6px 0 0;
+  line-height: 1.45;
+}
+
+.account-security-provisioning {
+  color: rgba(31, 53, 92, 0.85);
+}
+
 .account-security-code input {
   margin-top: 6px;
   width: 180px;

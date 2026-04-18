@@ -326,7 +326,8 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
           {mfaOrgName
             ? `${mfaOrgName} requires two-factor authentication. `
             : 'Your organization requires two-factor authentication. '}
-          Scan the QR code below with your authenticator app (Google Authenticator, Authy, 1Password, etc.).
+          This QR code opens your browser or device default authenticator. If you prefer another authenticator app,
+          adjust browser settings or use the manual secret entry key below.
         </p>
       </div>
       {error && <div className="auth-modal-alert is-error"><strong>{error}</strong></div>}
@@ -340,6 +341,14 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
           Manual entry key: <code style={{ background: '#f1f5f9', padding: '2px 6px', borderRadius: 4, fontWeight: 600, letterSpacing: '0.05em' }}>{mfaSecret}</code>
         </div>
       )}
+      <details className="auth-modal-help">
+        <summary>Info: authenticator app options</summary>
+        <p>
+          QR scanning typically opens your default browser/device authenticator.
+          To use Microsoft Authenticator, Google Authenticator, Authy, or another app, add a new account in that app
+          and enter the manual key.
+        </p>
+      </details>
       <form className="auth-modal-form" onSubmit={handleMfaSetupVerify}>
         <label className="auth-modal-label" htmlFor="mfa-setup-code">Enter the 6-digit code from your app</label>
         <input

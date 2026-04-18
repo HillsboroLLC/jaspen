@@ -2407,15 +2407,26 @@ export default function Account() {
                   <div className="account-security-qr">
                     {mfaState.qrCode && <img src={mfaState.qrCode} alt="MFA QR code" />}
                     <div>
-                      <p>Scan the QR code with Google Authenticator, Authy, or 1Password.</p>
+                      <p>
+                        This QR code opens your browser or device default authenticator. If you prefer another
+                        authenticator app, adjust browser settings or use the manual secret entry key below.
+                      </p>
                       <p className="account-security-secret">
                         Secret key: <strong>{mfaState.secret}</strong>
                       </p>
-                      {mfaState.provisioningUri && (
-                        <p className="account-security-provisioning">
-                          If you can’t scan, paste this URI into your authenticator.
+                      <details className="account-security-info">
+                        <summary>Info: authenticator app options</summary>
+                        <p>
+                          QR scanning usually routes to the default authenticator configured by your browser/device.
+                          To use Microsoft Authenticator, Google Authenticator, Authy, or another app, create a new
+                          account in that app and enter the secret key manually.
                         </p>
-                      )}
+                        {mfaState.provisioningUri && (
+                          <p className="account-security-provisioning">
+                            Advanced: you can also paste the provisioning URI into supported authenticator apps.
+                          </p>
+                        )}
+                      </details>
                     </div>
                   </div>
                   <label className="account-security-code">
