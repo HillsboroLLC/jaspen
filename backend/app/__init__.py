@@ -278,7 +278,7 @@ def create_app():
 
     @jwt.token_in_blocklist_loader
     def _jwt_token_version_mismatch(jwt_header, jwt_payload):
-        from .models import User
+        from .models import User, UserAuthSession
 
         user_id = str(jwt_payload.get('sub') or '').strip()
         if not user_id:
@@ -288,7 +288,30 @@ def create_app():
             return True
         token_version = int(jwt_payload.get('token_version') or 0)
         current_version = int(getattr(user, 'auth_token_version', 0) or 0)
-        return token_version != current_version
+        if token_version != current_version:
+            return True
+
+        # Pending MFA tokens are short-lived and intentionally not tracked in
+        # user_auth_sessions. Validate only token_version for these.
+        if bool(jwt_payload.get('mfa_pending')):
+            return False
+
+        jti = str(jwt_payload.get('jti') or '').strip()
+        if not jti:
+            return False
+
+        auth_session = (
+            UserAuthSession.query
+            .filter(UserAuthSession.user_id == user_id, UserAuthSession.token_jti == jti)
+            .first()
+        )
+        if not auth_session:
+            # Backward-compatible: allow older tokens issued before auth-session
+            # tracking existed, as long as token_version still matches.
+            return False
+        if auth_session.revoked_at is not None:
+            return True
+        return False
 
     @jwt.revoked_token_loader
     def _revoked_token_response(jwt_header, jwt_payload):

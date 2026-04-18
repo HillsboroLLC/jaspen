@@ -77,7 +77,7 @@ class User(db.Model):
         nullable=True,
     )
     mfa_secret = db.Column(
-        db.String(64),
+        db.String(512),
         nullable=True,
     )
     mfa_enabled = db.Column(
@@ -506,6 +506,31 @@ class UserSession(db.Model):
     __table_args__ = (
         db.UniqueConstraint('user_id', 'session_id', name='uq_user_sessions_user_id_session_id'),
         db.Index('ix_user_sessions_user_id_updated_at', 'user_id', 'updated_at'),
+    )
+
+
+class UserAuthSession(db.Model):
+    __tablename__ = 'user_auth_sessions'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.String(36), db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    token_jti = db.Column(db.String(128), nullable=False, unique=True, index=True)
+    organization_id = db.Column(
+        db.String(36),
+        db.ForeignKey('organizations.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    issued_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    expires_at = db.Column(db.DateTime, nullable=True, index=True)
+    revoked_at = db.Column(db.DateTime, nullable=True, index=True)
+    ip_address = db.Column(db.String(128), nullable=True)
+    user_agent = db.Column(db.String(512), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        db.Index('ix_user_auth_sessions_user_revoked', 'user_id', 'revoked_at'),
     )
 
 

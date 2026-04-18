@@ -15,6 +15,7 @@ from flask_jwt_extended import (
     create_access_token,
     jwt_required,
     get_jwt_identity,
+    get_jwt,
     decode_token,
     set_access_cookies,
     unset_jwt_cookies,
@@ -31,7 +32,7 @@ from app.access_controls import (
 )
 from app.admin_audit import append_user_audit_event
 from app.admin_policy import is_global_admin
-from app.models import Organization, User
+from app.models import Organization, User, UserAuthSession
 from app.billing_config import (
     apply_plan_to_user,
     bootstrap_legacy_credits,
@@ -200,16 +201,128 @@ def _google_state_serializer():
     return URLSafeTimedSerializer(secret_key=secret, salt='google-oauth-state')
 
 
-def _enforce_login_session_limit(user):
-    """Stateless JWT enforcement currently supports strict single-session mode."""
+def _normalize_dt(value):
+    if not value:
+        return None
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _register_auth_session(user, token, active_org=None):
+    try:
+        decoded = decode_token(token)
+    except Exception:
+        return False
+
+    jti = str(decoded.get('jti') or '').strip()
+    if not jti:
+        return False
+
+    exp_ts = decoded.get('exp')
+    expires_at = None
+    if exp_ts:
+        try:
+            expires_at = datetime.fromtimestamp(int(exp_ts), tz=timezone.utc).replace(tzinfo=None)
+        except Exception:
+            expires_at = None
+
+    existing = UserAuthSession.query.filter_by(token_jti=jti).first()
+    row = existing or UserAuthSession(user_id=str(user.id), token_jti=jti)
+    row.organization_id = str(active_org.id) if active_org else (str(user.active_organization_id) if user.active_organization_id else None)
+    row.issued_at = _utc_now().replace(tzinfo=None)
+    row.expires_at = expires_at
+    row.revoked_at = None
+    row.ip_address = (request.headers.get('X-Forwarded-For') or request.remote_addr or '')[:128] or None
+    row.user_agent = (request.headers.get('User-Agent') or '')[:512] or None
+    db.session.add(row)
+    return True
+
+
+def _revoke_auth_session_by_jti(user_id, jti):
+    if not jti:
+        return False
+    row = (
+        UserAuthSession.query
+        .filter(
+            UserAuthSession.user_id == str(user_id),
+            UserAuthSession.token_jti == str(jti),
+            UserAuthSession.revoked_at.is_(None),
+        )
+        .first()
+    )
+    if not row:
+        return False
+    row.revoked_at = _utc_now().replace(tzinfo=None)
+    return True
+
+
+def _revoke_all_auth_sessions(user_id):
+    now = _utc_now().replace(tzinfo=None)
+    rows = (
+        UserAuthSession.query
+        .filter(
+            UserAuthSession.user_id == str(user_id),
+            UserAuthSession.revoked_at.is_(None),
+        )
+        .all()
+    )
+    changed = False
+    for row in rows:
+        row.revoked_at = now
+        changed = True
+    return changed
+
+
+def _enforce_login_session_limit(user, *, current_jti=None):
+    """
+    Enforce max_concurrent_sessions by revoking oldest active auth sessions.
+    Returns True when any session row was changed.
+    """
     try:
         limit = int(user.max_concurrent_sessions) if user.max_concurrent_sessions is not None else None
     except Exception:
         limit = None
-    if limit == 1:
-        user.auth_token_version = int(user.auth_token_version or 0) + 1
-        return True
-    return False
+
+    if not limit or limit < 1:
+        return False
+
+    now = _utc_now().replace(tzinfo=None)
+    active_rows = (
+        UserAuthSession.query
+        .filter(
+            UserAuthSession.user_id == str(user.id),
+            UserAuthSession.revoked_at.is_(None),
+        )
+        .order_by(UserAuthSession.issued_at.desc(), UserAuthSession.id.desc())
+        .all()
+    )
+    active_rows = [
+        row for row in active_rows
+        if row.expires_at is None or _normalize_dt(row.expires_at) > now
+    ]
+
+    if len(active_rows) <= limit:
+        return False
+
+    keep_ids = set()
+    if current_jti:
+        current = next((row for row in active_rows if str(row.token_jti) == str(current_jti)), None)
+        if current:
+            keep_ids.add(current.id)
+
+    for row in active_rows:
+        if len(keep_ids) >= limit:
+            break
+        keep_ids.add(row.id)
+
+    changed = False
+    for row in active_rows:
+        if row.id in keep_ids:
+            continue
+        row.revoked_at = now
+        changed = True
+    return changed
 
 
 def _email_verification_serializer():
@@ -589,6 +702,15 @@ def signup():
         ), 202
 
     access_token = _create_user_access_token(user)
+    session_changed = _register_auth_session(user, access_token)
+    try:
+        token_jti = str(decode_token(access_token).get('jti') or '').strip()
+    except Exception:
+        token_jti = ''
+    if _enforce_login_session_limit(user, current_jti=token_jti):
+        session_changed = True
+    if session_changed:
+        db.session.commit()
 
     # Free plan can complete sign-up with no payment flow.
     if requested_plan == 'free':
@@ -715,8 +837,6 @@ def login():
         changed = True
     if _ensure_user_org(user):
         changed = True
-    if _enforce_login_session_limit(user):
-        changed = True
     if changed:
         db.session.commit()
 
@@ -768,6 +888,15 @@ def login():
         }), 200
 
     token = _create_user_access_token(user)
+    session_changed = _register_auth_session(user, token, active_org=active_org)
+    try:
+        token_jti = str(decode_token(token).get('jti') or '').strip()
+    except Exception:
+        token_jti = ''
+    if _enforce_login_session_limit(user, current_jti=token_jti):
+        session_changed = True
+    if session_changed:
+        db.session.commit()
     resp = jsonify(
         token=token,
         user=_user_payload(user),
@@ -1007,6 +1136,15 @@ def mfa_challenge():
             user.mfa_secret = _encrypt_mfa_secret(secret)
             db.session.commit()
         access_token = _create_user_access_token(user)
+        session_changed = _register_auth_session(user, access_token)
+        try:
+            token_jti = str(decode_token(access_token).get('jti') or '').strip()
+        except Exception:
+            token_jti = ''
+        if _enforce_login_session_limit(user, current_jti=token_jti):
+            session_changed = True
+        if session_changed:
+            db.session.commit()
         resp = jsonify({"token": access_token, "user": _user_payload(user)})
         _audit_auth_event('auth.login.succeeded', actor=user, target_user=user, details={'mfa_method': 'totp'})
         return _attach_auth_cookie(resp, access_token), 200
@@ -1018,6 +1156,15 @@ def mfa_challenge():
                 user.mfa_secret = _encrypt_mfa_secret(secret)
                 db.session.commit()
             access_token = _create_user_access_token(user)
+            session_changed = _register_auth_session(user, access_token)
+            try:
+                token_jti = str(decode_token(access_token).get('jti') or '').strip()
+            except Exception:
+                token_jti = ''
+            if _enforce_login_session_limit(user, current_jti=token_jti):
+                session_changed = True
+            if session_changed:
+                db.session.commit()
             resp = jsonify({"token": access_token, "user": _user_payload(user)})
             _audit_auth_event('auth.login.succeeded', actor=user, target_user=user, details={'mfa_method': 'backup_code'})
             return _attach_auth_cookie(resp, access_token), 200
@@ -1285,6 +1432,15 @@ def google_callback():
         return redirect(_frontend_login_error_url('access_pending'), code=302)
 
     token = _create_user_access_token(user)
+    session_changed = _register_auth_session(user, token)
+    try:
+        token_jti = str(decode_token(token).get('jti') or '').strip()
+    except Exception:
+        token_jti = ''
+    if _enforce_login_session_limit(user, current_jti=token_jti):
+        session_changed = True
+    if session_changed:
+        db.session.commit()
     resp = redirect(_frontend_callback_url(next_path), code=302)
     return _attach_auth_cookie(resp, token)
 
@@ -1316,12 +1472,18 @@ def update_current_user():
 def logout():
     """Clear auth cookies for logout."""
     user = None
+    jti = ''
     try:
+        claims = get_jwt()
+        jti = str(claims.get('jti') or '').strip()
         user_id = get_jwt_identity()
         if user_id:
             user = User.query.get(user_id)
     except Exception:
         user = None
+        jti = ''
+    if user and _revoke_auth_session_by_jti(user.id, jti):
+        db.session.commit()
     if user:
         _audit_auth_event('auth.logout', actor=user, target_user=user)
     resp = jsonify(message='Logged out')
@@ -1337,6 +1499,7 @@ def logout_all_sessions():
     if not user:
         return jsonify(message='User not found'), 404
     user.auth_token_version = int(user.auth_token_version or 0) + 1
+    _revoke_all_auth_sessions(user.id)
     db.session.commit()
     resp = jsonify(message='All sessions have been revoked.')
     _audit_auth_event('auth.logout_all', actor=user, target_user=user)
