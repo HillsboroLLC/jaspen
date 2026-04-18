@@ -8,7 +8,7 @@ from app.models import User
 from app.billing_config import reset_user_monthly_credits
 
 
-def reset_monthly_credits():
+def reset_monthly_credits(*, dry_run=False):
     updated = 0
     skipped = 0
     now = datetime.utcnow()
@@ -18,6 +18,10 @@ def reset_monthly_credits():
             updated += 1
         else:
             skipped += 1
+    if dry_run:
+        db.session.rollback()
+    else:
+        db.session.commit()
     return updated, skipped
 
 
@@ -25,12 +29,13 @@ def main():
     app = create_app()
     with app.app_context():
         updated, skipped = reset_monthly_credits()
-        db.session.commit()
         print(
             json.dumps(
                 {
+                    "timestamp_utc": datetime.utcnow().isoformat() + "Z",
                     "credits_reset": updated,
                     "credits_skipped": skipped,
+                    "dry_run": False,
                 },
                 indent=2,
             )

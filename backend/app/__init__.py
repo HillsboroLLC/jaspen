@@ -1,6 +1,8 @@
 import logging
 import os
 from datetime import timedelta
+import json
+import click
 from flask import Flask, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -475,5 +477,22 @@ def create_app():
             "status": "ok" if db_status == "ok" else "degraded",
             "database": db_status,
         }), 200 if db_status == "ok" else 503
+
+    @app.cli.group("credits")
+    def credits_cli():
+        """Credit maintenance commands."""
+
+    @credits_cli.command("reset-monthly")
+    @click.option("--dry-run", is_flag=True, help="Calculate resets without committing.")
+    def reset_monthly_credits_cli(dry_run):
+        """Reset monthly credits for due free/essential/team users."""
+        from scripts.reset_monthly_credits import reset_monthly_credits
+
+        updated, skipped = reset_monthly_credits(dry_run=dry_run)
+        click.echo(json.dumps({
+            "dry_run": bool(dry_run),
+            "credits_reset": int(updated),
+            "credits_skipped": int(skipped),
+        }))
 
     return app
