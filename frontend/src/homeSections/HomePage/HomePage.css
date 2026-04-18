@@ -662,6 +662,110 @@
   color: #0f766e;
 }
 
+.auth-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1400;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: calc(96px + env(safe-area-inset-top, 0px)) 20px calc(24px + env(safe-area-inset-bottom, 0px));
+  background: rgba(15, 23, 42, 0.2);
+  overflow-y: auto;
+}
+
+.auth-modal {
+  width: min(520px, 100%);
+  max-height: calc(100dvh - 120px);
+  overflow-y: auto;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 20px;
+  box-shadow: var(--shadow-deep);
+  padding: 24px;
+  position: relative;
+}
+
+.auth-modal-close {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #64748b;
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+.auth-modal-close:hover {
+  background: #f1f5f9;
+  color: #1e293b;
+}
+
+.auth-modal-header {
+  margin: 0 0 16px;
+  padding-right: 32px;
+}
+
+.auth-modal-eyebrow {
+  font-size: 0.73rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #64748b;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.auth-modal-header h2 {
+  margin: 0 0 10px;
+  color: #1e293b;
+  font-size: clamp(1.65rem, 2.8vw, 3rem);
+  line-height: 1.08;
+  letter-spacing: -0.03em;
+}
+
+.auth-modal-header p {
+  margin: 0;
+  color: #475569;
+}
+
+.auth-modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.auth-modal-label {
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.auth-modal-input {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid #dbe2ed;
+  background: #fff;
+  font-size: 0.98rem;
+}
+
+.auth-modal-input:focus {
+  outline: none;
+  border-color: rgba(37, 99, 235, 0.4);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.auth-modal-submit {
+  width: 100%;
+  margin-top: 4px;
+}
+
 .auth-modal-alert {
   margin-bottom: 12px;
   padding: 12px 14px;
@@ -745,6 +849,23 @@
 
 .auth-modal-switch:hover {
   text-decoration: underline;
+}
+
+@media (max-width: 768px) {
+  .auth-modal-backdrop {
+    padding: calc(80px + env(safe-area-inset-top, 0px)) 12px calc(16px + env(safe-area-inset-bottom, 0px));
+    align-items: flex-start;
+  }
+
+  .auth-modal {
+    max-height: calc(100dvh - 96px);
+    border-radius: 16px;
+    padding: 18px;
+  }
+
+  .auth-modal-header h2 {
+    font-size: clamp(1.45rem, 6.4vw, 2.15rem);
+  }
 }
 
 @keyframes float-soft {

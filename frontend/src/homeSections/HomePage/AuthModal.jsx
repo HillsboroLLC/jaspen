@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useAuth } from '../../shared/auth/AuthContext';
 import { API_BASE } from '../../config/apiBase';
 import { authFetch } from '../../shared/auth/http';
@@ -511,7 +512,7 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
     </>
   );
 
-  return (
+  const modalContent = (
     <div className="auth-modal-backdrop" onMouseDown={handleBackdropClick}>
       <div className="auth-modal" role="dialog" aria-modal="true" aria-label="Authentication">
         <button type="button" className="auth-modal-close" onClick={() => { resetState(); onClose?.(); }} aria-label="Close">
@@ -524,4 +525,7 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
       </div>
     </div>
   );
+
+  if (typeof document === 'undefined') return modalContent;
+  return createPortal(modalContent, document.body);
 }
