@@ -6577,6 +6577,9 @@ def rank_batch_ideas(batch_id):
     )
     if model_error:
         return jsonify(model_error), 403
+    preflight_required_credits = _preflight_credit_estimate(model_selection["model_type"])
+    if user.credits_remaining is not None and user.credits_remaining < preflight_required_credits:
+        return jsonify(_insufficient_credits_payload(user, preflight_required_credits)), 402
 
     ideas = _load_batch_ideas(batch)
     if not ideas:
@@ -6702,6 +6705,9 @@ def clarify_batch_idea(batch_id, idea_id):
     )
     if model_error:
         return jsonify(model_error), 403
+    preflight_required_credits = _preflight_credit_estimate(model_selection["model_type"])
+    if user.credits_remaining is not None and user.credits_remaining < preflight_required_credits:
+        return jsonify(_insufficient_credits_payload(user, preflight_required_credits)), 402
 
     try:
         reevaluated, usage = _reevaluate_batch_idea_with_ai(batch, updated_idea, model_selection)
