@@ -2807,6 +2807,57 @@
   font-size: 0.92rem;
 }
 
+.jas-mfa-rollout-banner {
+  width: 100%;
+  border: 1px solid #f2d8ab;
+  background: linear-gradient(135deg, #fff6e8 0%, #fffaf1 100%);
+  color: #5a3d11;
+  border-radius: 12px;
+  padding: 10px 14px;
+  font-size: 0.92rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.jas-mfa-rollout-banner p {
+  margin: 0;
+  color: inherit;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.jas-mfa-rollout-link {
+  border: none;
+  background: none;
+  color: #1f4fa8;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  padding: 0;
+}
+
+.jas-mfa-rollout-dismiss {
+  border: none;
+  background: transparent;
+  color: #7b5b2a;
+  cursor: pointer;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.jas-mfa-rollout-dismiss:hover {
+  background: rgba(123, 91, 42, 0.12);
+}
+
 .jas-workspace-header-top {
   width: 100%;
   display: grid;

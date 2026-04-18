@@ -938,6 +938,10 @@ const SUPPORT_ROLE_SWITCH_OPTIONS = [
   { value: 'workspace:enterprise:creator', label: 'Enterprise · Creator', path: '/new?admin_preview=workspace&plan_key=enterprise&role=creator' },
   { value: 'enterprise:admin', label: 'Enterprise · Admin', path: '/enterprise-admin?admin_preview=enterprise&role=admin' },
 ];
+const MFA_ROLLOUT_TARGET_PLANS = new Set(['team', 'enterprise']);
+const MFA_ROLLOUT_DISMISS_KEY_PREFIX = 'jas_mfa_rollout_banner_dismissed_v1';
+const MFA_ROLLOUT_ENFORCE_AT = '2026-12-16T00:00:00Z';
+const MFA_ROLLOUT_NOTICE_DATE_LABEL = 'December 15, 2026';
 
 function highestPlanKey(...plans) {
   return plans
@@ -1803,6 +1807,7 @@ useEffect(() => {
   const [billingMessage, setBillingMessage] = useState('');
   const [billingActionLoading, setBillingActionLoading] = useState('');
   const [billingModalOpen, setBillingModalOpen] = useState(false);
+  const [mfaRolloutBannerDismissed, setMfaRolloutBannerDismissed] = useState(false);
   const [batchIdeasOpen, setBatchIdeasOpen] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [onboardingMode, setOnboardingMode] = useState('entry');
@@ -1854,6 +1859,21 @@ useEffect(() => {
     user?.active_organization_plan_key,
     user?.subscription_plan,
   );
+  const mfaRolloutPlanKey = highestPlanKey(
+    user?.active_organization_plan_key,
+    user?.subscription_plan,
+  );
+  const mfaRolloutEnforced = Date.now() >= Date.parse(MFA_ROLLOUT_ENFORCE_AT);
+  const mfaRolloutEligible = (
+    MFA_ROLLOUT_TARGET_PLANS.has(mfaRolloutPlanKey)
+    && !Boolean(user?.mfa_enabled)
+    && !mfaRolloutEnforced
+  );
+  const mfaRolloutDismissStorageKey = useMemo(() => {
+    const owner = String(user?.id || user?.email || '').trim().toLowerCase();
+    if (!owner) return '';
+    return `${MFA_ROLLOUT_DISMISS_KEY_PREFIX}:${owner}:2026-12-15`;
+  }, [user?.email, user?.id]);
   const previewPlanCategory = effectivePlanKey === 'enterprise'
     ? 'enterprise'
     : effectivePlanKey === 'team'
@@ -1874,6 +1894,31 @@ useEffect(() => {
   );
   const footerPlanLabel = plans[footerPlanKey]?.label || (footerPlanKey[0]?.toUpperCase() + footerPlanKey.slice(1));
   const adminWorkspacePreviewActive = Boolean(adminWorkspacePreviewPlan);
+
+  useEffect(() => {
+    if (!mfaRolloutDismissStorageKey || !mfaRolloutEligible) {
+      setMfaRolloutBannerDismissed(false);
+      return;
+    }
+    try {
+      setMfaRolloutBannerDismissed(localStorage.getItem(mfaRolloutDismissStorageKey) === '1');
+    } catch {
+      setMfaRolloutBannerDismissed(false);
+    }
+  }, [mfaRolloutDismissStorageKey, mfaRolloutEligible]);
+
+  const dismissMfaRolloutBanner = useCallback(() => {
+    if (!mfaRolloutDismissStorageKey) {
+      setMfaRolloutBannerDismissed(true);
+      return;
+    }
+    try {
+      localStorage.setItem(mfaRolloutDismissStorageKey, '1');
+    } catch {
+      // no-op
+    }
+    setMfaRolloutBannerDismissed(true);
+  }, [mfaRolloutDismissStorageKey]);
   const toolEntitlements = useMemo(
     () => (Array.isArray(billingStatus?.tool_entitlements) ? billingStatus.tool_entitlements : []),
     [billingStatus]
@@ -7962,6 +8007,28 @@ onClick={async () => {
             {adminWorkspacePreviewActive && (
               <div className="jas-admin-preview-banner">
                 Previewing Workspace as <strong>{supportRoleSwitchValue === 'actual' ? currentPlanLabel : (SUPPORT_ROLE_SWITCH_OPTIONS.find((option) => option.value === supportRoleSwitchValue)?.label || currentPlanLabel)}</strong> using your active organization data.
+              </div>
+            )}
+            {mfaRolloutEligible && !mfaRolloutBannerDismissed && (
+              <div className="jas-mfa-rollout-banner" role="status" aria-live="polite">
+                <p>
+                  Starting {MFA_ROLLOUT_NOTICE_DATE_LABEL}, MFA will be required for your account.
+                  <button
+                    type="button"
+                    className="jas-mfa-rollout-link"
+                    onClick={() => navigate('/account?tab=security')}
+                  >
+                    Set it up now
+                  </button>
+                </p>
+                <button
+                  type="button"
+                  className="jas-mfa-rollout-dismiss"
+                  onClick={dismissMfaRolloutBanner}
+                  aria-label="Dismiss MFA reminder"
+                >
+                  <FontAwesomeIcon icon={faTimes} />
+                </button>
               </div>
             )}
             {effectiveIsViewer && sessionId && (

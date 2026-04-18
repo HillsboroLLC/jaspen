@@ -55,6 +55,8 @@ GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 GOOGLE_USERINFO_URL = 'https://openidconnect.googleapis.com/v1/userinfo'
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_DURATION_MINUTES = 15
+MFA_ROLLOUT_ENFORCE_UTC = datetime(2026, 12, 16, 0, 0, 0, tzinfo=timezone.utc)
+MFA_ROLLOUT_ENFORCED_PLANS = {"team", "enterprise"}
 
 
 def _audit_auth_event(action, *, actor=None, target_user=None, target_email=None, details=None):
@@ -92,6 +94,30 @@ def _normalize_locked_until(value):
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def _effective_plan_for_mfa(user, active_org=None):
+    org_plan = normalize_plan_key(getattr(active_org, "plan_key", None))
+    if org_plan:
+        return org_plan
+    return normalize_plan_key(getattr(user, "subscription_plan", None))
+
+
+def _is_mfa_rollout_enforced_for_user(user, active_org=None):
+    if not user or bool(getattr(user, "mfa_enabled", False)):
+        return False
+    plan_key = _effective_plan_for_mfa(user, active_org=active_org)
+    if plan_key not in MFA_ROLLOUT_ENFORCED_PLANS:
+        return False
+    return _utc_now() >= MFA_ROLLOUT_ENFORCE_UTC
+
+
+def _is_mfa_required_for_user(user, active_org=None):
+    if not user or bool(getattr(user, "mfa_enabled", False)):
+        return False
+    if active_org and mfa_policy_for_org(active_org) == MFA_POLICY_REQUIRED:
+        return True
+    return _is_mfa_rollout_enforced_for_user(user, active_org=active_org)
 
 
 @auth_bp.before_app_request
@@ -699,7 +725,7 @@ def login():
         active_org, _membership = resolve_active_org_for_user(user)
     except Exception:
         active_org = Organization.query.filter_by(id=user.active_organization_id).first()
-    if active_org and mfa_policy_for_org(active_org) == MFA_POLICY_REQUIRED and not user.mfa_enabled:
+    if _is_mfa_required_for_user(user, active_org=active_org):
         if _has_mfa_secret(user):
             _audit_auth_event('auth.login.succeeded', actor=user, target_user=user, details={'mfa_required': True})
             pending_token = _create_user_access_token(
@@ -711,8 +737,8 @@ def login():
                 "mfa_required": True,
                 "mfa_setup_required": False,
                 "pending_token": pending_token,
-                "organization_id": str(active_org.id),
-                "organization_name": active_org.name,
+                "organization_id": str(active_org.id) if active_org else None,
+                "organization_name": active_org.name if active_org else None,
             }), 200
         # Issue a short-lived pending token so the frontend can call /mfa/setup
         pending_token = _create_user_access_token(
@@ -721,12 +747,12 @@ def login():
             additional_claims={"mfa_pending": True},
         )
         return jsonify(
-            message='MFA setup is required for your organization.',
+            message='MFA setup is required before you can continue.',
             mfa_required=True,
             mfa_setup_required=True,
             pending_token=pending_token,
-            organization_id=str(active_org.id),
-            organization_name=active_org.name,
+            organization_id=str(active_org.id) if active_org else None,
+            organization_name=active_org.name if active_org else None,
         ), 200
 
     if user.mfa_enabled:
@@ -776,7 +802,7 @@ def get_current_user():
         active_org = Organization.query.filter_by(id=user.active_organization_id).first()
     except Exception:
         pass
-    if active_org and mfa_policy_for_org(active_org) == MFA_POLICY_REQUIRED and not user.mfa_enabled:
+    if _is_mfa_required_for_user(user, active_org=active_org):
         pending_token = _create_user_access_token(
             user,
             expires_delta=timedelta(minutes=5),
@@ -786,8 +812,8 @@ def get_current_user():
             mfa_required=True,
             mfa_setup_required=not _has_mfa_secret(user),
             pending_token=pending_token,
-            organization_id=str(active_org.id),
-            organization_name=active_org.name,
+            organization_id=str(active_org.id) if active_org else None,
+            organization_name=active_org.name if active_org else None,
         ), 403
 
     return jsonify(**_user_payload(user)), 200

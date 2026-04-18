@@ -66,6 +66,16 @@ const FALLBACK_MODEL_TYPES = {
     min_plan: 'enterprise',
   },
 };
+const ACCOUNT_TAB_KEYS = new Set([
+  'overview',
+  'plans',
+  'connectors',
+  'packs',
+  'security',
+  'models',
+  'knowledge',
+  'admin',
+]);
 const DEFAULT_SYNC_MODES = ['import', 'push', 'two_way'];
 const DEFAULT_CONFLICT_POLICIES = ['latest_wins', 'prefer_external', 'prefer_jaspen', 'manual_review'];
 const SYNC_MODE_LABELS = {
@@ -476,6 +486,28 @@ export default function Account() {
       setActiveTab('overview');
     }
   }, [activeTab, adminState.checked, adminState.isAdmin]);
+
+  useEffect(() => {
+    const search = new URLSearchParams(window.location.search || '');
+    const requestedTab = String(search.get('tab') || '').trim().toLowerCase();
+    if (!requestedTab || !ACCOUNT_TAB_KEYS.has(requestedTab)) return;
+    if (requestedTab === 'admin' && !(adminState.checked && adminState.isAdmin)) return;
+    setActiveTab(requestedTab);
+  }, [adminState.checked, adminState.isAdmin]);
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (activeTab === 'overview') {
+      if (!url.searchParams.has('tab')) return;
+      url.searchParams.delete('tab');
+    } else if (url.searchParams.get('tab') === activeTab) {
+      return;
+    } else {
+      url.searchParams.set('tab', activeTab);
+    }
+    const nextUrl = `${url.pathname}${url.search}${url.hash || ''}`;
+    window.history.replaceState({}, document.title, nextUrl);
+  }, [activeTab]);
 
   useEffect(() => {
     const search = new URLSearchParams(window.location.search || '');
