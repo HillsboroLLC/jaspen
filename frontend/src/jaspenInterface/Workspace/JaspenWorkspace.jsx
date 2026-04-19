@@ -2033,6 +2033,12 @@ useEffect(() => {
     if (!Number.isFinite(limitNum) || limitNum <= 0 || resolvedMonthlyCreditsUsed == null) return null;
     return Math.max(0, Math.min(100, Math.round((resolvedMonthlyCreditsUsed / limitNum) * 100)));
   }, [monthlyCreditLimit, resolvedMonthlyCreditsUsed]);
+  const creditDisplayTier = useMemo(() => {
+    if (effectivePlanKey === 'enterprise') return 'enterprise';
+    if (effectivePlanKey === 'team') return 'team';
+    if (effectivePlanKey === 'essential') return 'essential';
+    return 'free';
+  }, [effectivePlanKey]);
   const intakeCreditsValue = useMemo(() => {
     const remaining = Number(creditsRemaining);
     if (Number.isFinite(remaining)) return Math.max(0, Math.round(remaining));
@@ -2040,20 +2046,24 @@ useEffect(() => {
     if (Number.isFinite(monthly)) return Math.max(0, Math.round(monthly));
     return null;
   }, [creditsRemaining, monthlyCreditLimit]);
-  const intakeCreditsLabel = billingLoading
-    ? '...'
-    : (creditsRemaining == null && monthlyCreditLimit == null)
-      ? '∞'
-      : (() => {
-          if (intakeCreditsValue == null) return '--';
-          const remainingLabel = Number(intakeCreditsValue).toLocaleString();
-          const limitNum = Number(monthlyCreditLimit);
-          if (Number.isFinite(limitNum) && limitNum > 0) {
-            return `${remainingLabel}/${Math.round(limitNum).toLocaleString()}`;
-          }
-          return remainingLabel;
-        })();
+  const intakeCreditsCompactLabel = useMemo(() => {
+    if (billingLoading) return '...';
+    if (creditDisplayTier === 'enterprise') return 'Contracted';
+    if (creditsRemaining == null && monthlyCreditLimit == null) return '∞';
+
+    const remainingNum = Number(intakeCreditsValue);
+    const limitNum = Number(monthlyCreditLimit);
+    const remainingLabel = Number.isFinite(remainingNum) ? Number(remainingNum).toLocaleString() : '--';
+    if (!Number.isFinite(limitNum) || limitNum <= 0) return remainingLabel;
+    const limitLabel = Math.round(limitNum).toLocaleString();
+
+    if (creditDisplayTier === 'team') {
+      return `Pool ${remainingLabel}/${limitLabel}`;
+    }
+    return `${remainingLabel}/${limitLabel}`;
+  }, [billingLoading, creditDisplayTier, creditsRemaining, monthlyCreditLimit, intakeCreditsValue]);
   const creditsTone = useMemo(() => {
+    if (creditDisplayTier === 'enterprise') return 'normal';
     const remainingNum = Number(creditsRemaining);
     const limitNum = Number(monthlyCreditLimit);
     if (!Number.isFinite(remainingNum) || !Number.isFinite(limitNum) || limitNum <= 0) {
@@ -2063,12 +2073,14 @@ useEffect(() => {
     if (ratio <= 0.05) return 'critical';
     if (ratio <= 0.2) return 'warning';
     return 'normal';
-  }, [creditsRemaining, monthlyCreditLimit]);
-  const creditsTitle = creditsTone === 'critical'
-    ? 'Critical: credits are below 5%. Open billing.'
-    : creditsTone === 'warning'
-      ? 'Low credits: below 20%. Open billing.'
-      : 'View account credits';
+  }, [creditDisplayTier, creditsRemaining, monthlyCreditLimit]);
+  const creditsTitle = creditDisplayTier === 'enterprise'
+    ? 'View contracted usage'
+    : creditsTone === 'critical'
+      ? 'Critical: credits are below 5%. Open billing.'
+      : creditsTone === 'warning'
+        ? 'Low credits: below 20%. Open billing.'
+        : 'View account credits';
   const creditsBadge = creditsRemaining == null ? 'Contracted' : Number(creditsRemaining || 0).toLocaleString();
   useEffect(() => {
     if (planCategory === 'individual' || !user) {
@@ -8709,7 +8721,7 @@ onClick={async () => {
                 aria-label="View credits"
               >
                 <FontAwesomeIcon icon={faBolt} />
-                <span>{intakeCreditsLabel}</span>
+                <span>{intakeCreditsCompactLabel}</span>
               </button>
             </>
           )}
