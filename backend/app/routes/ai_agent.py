@@ -2107,6 +2107,101 @@ def _preflight_credit_estimate(model_type, token_hint=None):
     return _estimate_usage_credit_charge(max(1, hint), model_type)
 
 
+def _rough_token_count_from_text(value):
+    text = str(value or "")
+    if not text:
+        return 0
+    # Conservative heuristic when provider tokenizers are not locally available.
+    return int(math.ceil(len(text) / 4.0))
+
+
+def _message_text_for_estimate(message):
+    if isinstance(message, str):
+        return message
+    if not isinstance(message, dict):
+        return str(message or "")
+
+    chunks = []
+    for key in ("content", "text", "message"):
+        val = message.get(key)
+        if isinstance(val, str) and val.strip():
+            chunks.append(val)
+    parts = message.get("parts")
+    if isinstance(parts, list):
+        for part in parts:
+            if isinstance(part, dict):
+                text = part.get("text")
+                if isinstance(text, str) and text.strip():
+                    chunks.append(text)
+            elif isinstance(part, str) and part.strip():
+                chunks.append(part)
+    return " ".join(chunks)
+
+
+def _preflight_token_hint_for_conversation(user_message, chat_history=None, attachments=None):
+    default_tokens = int(
+        current_app.config.get("AI_AGENT_PREFLIGHT_TOKEN_HINT")
+        or os.getenv("AI_AGENT_PREFLIGHT_TOKEN_HINT")
+        or 2500
+    )
+    output_tokens = int(
+        current_app.config.get("AI_AGENT_PREFLIGHT_OUTPUT_TOKEN_HINT")
+        or os.getenv("AI_AGENT_PREFLIGHT_OUTPUT_TOKEN_HINT")
+        or 1200
+    )
+    history_turns = int(
+        current_app.config.get("AI_AGENT_PREFLIGHT_HISTORY_TURNS")
+        or os.getenv("AI_AGENT_PREFLIGHT_HISTORY_TURNS")
+        or 12
+    )
+    attachment_tokens = int(
+        current_app.config.get("AI_AGENT_PREFLIGHT_ATTACHMENT_TOKEN_HINT")
+        or os.getenv("AI_AGENT_PREFLIGHT_ATTACHMENT_TOKEN_HINT")
+        or 180
+    )
+
+    prompt_tokens = _rough_token_count_from_text(user_message)
+    history_tokens = 0
+    if isinstance(chat_history, list) and chat_history:
+        for entry in chat_history[-history_turns:]:
+            history_tokens += _rough_token_count_from_text(_message_text_for_estimate(entry))
+    attach_count = len(attachments) if isinstance(attachments, list) else 0
+    hint = prompt_tokens + history_tokens + output_tokens + (attach_count * attachment_tokens)
+    return max(default_tokens, hint)
+
+
+def _preflight_token_hint_for_batch_ideas(ideas, *, include_metadata=False):
+    default_tokens = int(
+        current_app.config.get("AI_AGENT_PREFLIGHT_TOKEN_HINT")
+        or os.getenv("AI_AGENT_PREFLIGHT_TOKEN_HINT")
+        or 2500
+    )
+    output_tokens = int(
+        current_app.config.get("AI_AGENT_PREFLIGHT_BATCH_OUTPUT_TOKEN_HINT")
+        or os.getenv("AI_AGENT_PREFLIGHT_BATCH_OUTPUT_TOKEN_HINT")
+        or 2000
+    )
+    max_ideas = int(
+        current_app.config.get("AI_AGENT_PREFLIGHT_BATCH_SAMPLE_LIMIT")
+        or os.getenv("AI_AGENT_PREFLIGHT_BATCH_SAMPLE_LIMIT")
+        or 50
+    )
+
+    total_tokens = 0
+    if isinstance(ideas, list):
+        for idea in ideas[:max_ideas]:
+            if not isinstance(idea, dict):
+                total_tokens += _rough_token_count_from_text(idea)
+                continue
+            total_tokens += _rough_token_count_from_text(idea.get("title"))
+            total_tokens += _rough_token_count_from_text(idea.get("description"))
+            if include_metadata:
+                total_tokens += _rough_token_count_from_text(json.dumps(idea.get("metadata") or {}, ensure_ascii=False))
+                total_tokens += _rough_token_count_from_text(json.dumps(idea.get("clarifications") or [], ensure_ascii=False))
+
+    return max(default_tokens, total_tokens + output_tokens)
+
+
 def _insufficient_credits_payload(user, required_credits):
     return {
         "error": "Insufficient credits",
@@ -5175,7 +5270,16 @@ def conversation_start():
     chat_history.append(_user_chat_entry(user_message, attachments=attachments))
     readiness = _compute_readiness(chat_history, session.get("strategy_objective"))
     context_budget = get_context_budget(to_public_plan(user.subscription_plan))
-    credit_reservation = _reserve_preflight_credits(user, model_selection["model_type"])
+    preflight_token_hint = _preflight_token_hint_for_conversation(
+        user_message,
+        chat_history=chat_history,
+        attachments=attachments,
+    )
+    credit_reservation = _reserve_preflight_credits(
+        user,
+        model_selection["model_type"],
+        token_hint=preflight_token_hint,
+    )
     if not credit_reservation["ok"]:
         return jsonify(credit_reservation["payload"]), 402
     reserved_credits = int(credit_reservation["reserved"] or 0)
@@ -5536,7 +5640,16 @@ def conversation_continue():
     chat_history.append(_user_chat_entry(user_message, attachments=attachments))
     readiness = _compute_readiness(chat_history, session.get("strategy_objective"))
     context_budget = get_context_budget(to_public_plan(user.subscription_plan))
-    credit_reservation = _reserve_preflight_credits(user, model_selection["model_type"])
+    preflight_token_hint = _preflight_token_hint_for_conversation(
+        user_message,
+        chat_history=chat_history,
+        attachments=attachments,
+    )
+    credit_reservation = _reserve_preflight_credits(
+        user,
+        model_selection["model_type"],
+        token_hint=preflight_token_hint,
+    )
     if not credit_reservation["ok"]:
         return jsonify(credit_reservation["payload"]), 402
     reserved_credits = int(credit_reservation["reserved"] or 0)
@@ -6543,7 +6656,15 @@ def conversation_regenerate():
         "replaced_by": "regenerate",
         "replaced_at": _iso_now(),
     }
-    credit_reservation = _reserve_preflight_credits(user, model_selection["model_type"])
+    preflight_token_hint = _preflight_token_hint_for_conversation(
+        user_message,
+        chat_history=regen_history,
+    )
+    credit_reservation = _reserve_preflight_credits(
+        user,
+        model_selection["model_type"],
+        token_hint=preflight_token_hint,
+    )
     if not credit_reservation["ok"]:
         return jsonify(credit_reservation["payload"]), 402
     reserved_credits = int(credit_reservation["reserved"] or 0)
@@ -6952,14 +7073,18 @@ def rank_batch_ideas(batch_id):
     )
     if model_error:
         return jsonify(model_error), 403
-    credit_reservation = _reserve_preflight_credits(user, model_selection["model_type"])
-    if not credit_reservation["ok"]:
-        return jsonify(credit_reservation["payload"]), 402
-    reserved_credits = int(credit_reservation["reserved"] or 0)
-
     ideas = _load_batch_ideas(batch)
     if not ideas:
         return jsonify({"error": "Batch contains no ideas."}), 400
+    preflight_token_hint = _preflight_token_hint_for_batch_ideas(ideas, include_metadata=True)
+    credit_reservation = _reserve_preflight_credits(
+        user,
+        model_selection["model_type"],
+        token_hint=preflight_token_hint,
+    )
+    if not credit_reservation["ok"]:
+        return jsonify(credit_reservation["payload"]), 402
+    reserved_credits = int(credit_reservation["reserved"] or 0)
 
     try:
         ranking_payload, usage = _rank_batch_ideas_with_ai(batch, ideas, model_selection)
@@ -7081,7 +7206,12 @@ def clarify_batch_idea(batch_id, idea_id):
     )
     if model_error:
         return jsonify(model_error), 403
-    credit_reservation = _reserve_preflight_credits(user, model_selection["model_type"])
+    preflight_token_hint = _preflight_token_hint_for_batch_ideas([updated_idea], include_metadata=True)
+    credit_reservation = _reserve_preflight_credits(
+        user,
+        model_selection["model_type"],
+        token_hint=preflight_token_hint,
+    )
     if not credit_reservation["ok"]:
         return jsonify(credit_reservation["payload"]), 402
     reserved_credits = int(credit_reservation["reserved"] or 0)
