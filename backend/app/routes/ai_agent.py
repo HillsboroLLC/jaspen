@@ -181,6 +181,45 @@ OBJECTIVE_SHIFT_OFFTOPIC_TERMS = (
     "relationship",
 )
 
+SIMPLE_TURN_PHRASES = (
+    "yes",
+    "no",
+    "ok",
+    "okay",
+    "thanks",
+    "thank you",
+    "sounds good",
+    "got it",
+    "continue",
+    "proceed",
+    "looks good",
+)
+
+COMPLEX_TURN_TERMS = (
+    "analyze",
+    "analysis",
+    "compare",
+    "tradeoff",
+    "trade-off",
+    "forecast",
+    "projection",
+    "scenario",
+    "model",
+    "sensitivity",
+    "assumption",
+    "portfolio",
+    "roadmap",
+    "execution plan",
+    "work breakdown",
+    "wbs",
+    "financial impact",
+    "risk",
+    "mitigation",
+    "dependency",
+    "prioritize",
+    "strategy",
+)
+
 INTAKE_COMPANY_SIZE_ALIASES = {
     "startup": "startup",
     "start-up": "startup",
@@ -342,6 +381,63 @@ def _infer_strategy_objective_from_message(user_message):
     if len(top_matches) > 1:
         return None
     return best_objective
+
+
+def _classify_turn_complexity(user_message):
+    text = str(user_message or "").strip().lower()
+    if not text:
+        return "standard"
+
+    normalized = re.sub(r"\s+", " ", text)
+    if normalized in SIMPLE_TURN_PHRASES:
+        return "simple"
+    if len(normalized) <= 24 and any(normalized.startswith(f"{phrase} ") for phrase in SIMPLE_TURN_PHRASES):
+        return "simple"
+
+    complexity_score = 0
+    if len(normalized) >= 300:
+        complexity_score += 1
+    if normalized.count("?") >= 2:
+        complexity_score += 1
+    if normalized.count("\n") >= 2:
+        complexity_score += 1
+    if any(_message_contains_term(normalized, term) for term in COMPLEX_TURN_TERMS):
+        complexity_score += 1
+
+    if complexity_score >= 2:
+        return "complex"
+    return "standard"
+
+
+def _apply_turn_complexity_routing(user, model_selection, user_message, *, explicit_model_requested=False):
+    if not isinstance(model_selection, dict):
+        return model_selection, "standard"
+    if explicit_model_requested:
+        return model_selection, "explicit"
+
+    complexity = _classify_turn_complexity(user_message)
+    current_model_type = normalize_model_type(model_selection.get("model_type")) or "pluto"
+    allowed_model_types = set(model_selection.get("allowed_model_types") or [])
+    if not allowed_model_types:
+        return model_selection, complexity
+
+    target_model_type = current_model_type
+    if complexity == "simple" and "pluto" in allowed_model_types:
+        target_model_type = "pluto"
+    elif complexity == "complex" and current_model_type == "pluto" and "orbit" in allowed_model_types:
+        target_model_type = "orbit"
+
+    if target_model_type == current_model_type:
+        return model_selection, complexity
+
+    model_catalog = get_model_catalog(current_app.config)
+    model_meta = model_catalog.get(target_model_type, {}) if isinstance(model_catalog, dict) else {}
+    adjusted_selection = {
+        **model_selection,
+        "model_type": target_model_type,
+        "llm_model": model_meta.get("llm_model") or model_selection.get("llm_model"),
+    }
+    return adjusted_selection, complexity
 
 
 def _normalize_company_size(value):
@@ -5002,6 +5098,12 @@ def conversation_start():
     model_selection, model_error = _resolve_model_selection(user, requested_model_type=data.get("model_type"))
     if model_error:
         return jsonify(model_error), 403
+    model_selection, _turn_complexity = _apply_turn_complexity_routing(
+        user,
+        model_selection,
+        user_message,
+        explicit_model_requested=bool(str(data.get("model_type") or "").strip()),
+    )
 
     objective_supplied = any(key in data for key in ("strategy_objective", "objective"))
     requested_objective = normalize_strategy_objective(data.get("strategy_objective") or data.get("objective"))
@@ -5368,6 +5470,12 @@ def conversation_continue():
     )
     if model_error:
         return jsonify(model_error), 403
+    model_selection, _turn_complexity = _apply_turn_complexity_routing(
+        user,
+        model_selection,
+        user_message,
+        explicit_model_requested=bool(str(data.get("model_type") or "").strip()),
+    )
 
     objective_supplied = any(key in data for key in ("strategy_objective", "objective"))
     requested_objective = normalize_strategy_objective(data.get("strategy_objective") or data.get("objective"))
@@ -6418,6 +6526,12 @@ def conversation_regenerate():
     )
     if model_error:
         return jsonify(model_error), 403
+    model_selection, _turn_complexity = _apply_turn_complexity_routing(
+        user,
+        model_selection,
+        user_message,
+        explicit_model_requested=bool(str(data.get("model_type") or "").strip()),
+    )
 
     regen_history = list(chat_history[:-1])
     readiness = _compute_readiness(regen_history, session.get("strategy_objective"))
