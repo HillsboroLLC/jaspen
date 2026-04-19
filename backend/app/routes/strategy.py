@@ -2344,29 +2344,52 @@ def portfolio_scores_agent():
             {'role': 'user', 'content': f"{context_prompt}\n\nUser request: {message}"},
         ]
 
-        from .ai_agent import _estimate_usage_credit_charge, _generate_routed_chat_reply
+        from .ai_agent import (
+            _estimate_usage_credit_charge,
+            _generate_routed_chat_reply,
+            _release_reserved_credits,
+            _reserve_preflight_credits,
+            _settle_reserved_credits,
+        )
 
         preflight_token_hint = int(current_app.config.get('AI_AGENT_PREFLIGHT_TOKEN_HINT') or 2500)
-        preflight_required_credits = _estimate_usage_credit_charge(preflight_token_hint, model_selection['model_type'])
-        if user.credits_remaining is not None and user.credits_remaining < preflight_required_credits:
-            return jsonify({
-                'error': 'Insufficient credits.',
-                'code': 'insufficient_credits',
-                'required_credits': preflight_required_credits,
-                'remaining_credits': int(user.credits_remaining or 0),
-            }), 402
-
-        reply, usage = _generate_routed_chat_reply(
-            routed_messages,
-            model_selection,
-            system_prompt=system_prompt,
-            strategy_objective=strategy_objective,
-            max_tokens=900,
-            temperature=0.2,
+        credit_reservation = _reserve_preflight_credits(
+            user,
+            model_selection['model_type'],
+            token_hint=preflight_token_hint,
         )
+        if not credit_reservation.get('ok'):
+            payload = dict(credit_reservation.get('payload') or {})
+            payload['code'] = payload.get('code') or 'insufficient_credits'
+            payload['remaining_credits'] = int(user.credits_remaining or 0)
+            return jsonify(payload), 402
+        reserved_credits = int(
+            credit_reservation.get('reserved')
+            or credit_reservation.get('required')
+            or 0
+        )
+
+        try:
+            reply, usage = _generate_routed_chat_reply(
+                routed_messages,
+                model_selection,
+                system_prompt=system_prompt,
+                strategy_objective=strategy_objective,
+                max_tokens=900,
+                temperature=0.2,
+            )
+        except Exception:
+            _release_reserved_credits(user, reserved_credits)
+            db.session.commit()
+            raise
+
         credits_charged = _estimate_usage_credit_charge((usage or {}).get('total_tokens'), model_selection['model_type'])
-        charged, remaining = consume_credits(user, credits_charged)
-        if not charged:
+        credit_settlement = _settle_reserved_credits(
+            user,
+            reserved_credits=reserved_credits,
+            actual_credits=credits_charged,
+        )
+        if not credit_settlement.get('ok'):
             db.session.rollback()
             return jsonify({
                 'error': 'Insufficient credits.',
@@ -2374,6 +2397,8 @@ def portfolio_scores_agent():
                 'required_credits': credits_charged,
                 'remaining_credits': int(user.credits_remaining or 0),
             }), 402
+        remaining = credit_settlement.get('remaining')
+        credits_charged = int(credit_settlement.get('charged') or 0)
 
         _audit_strategy_event(
             'scores.portfolio_agent_used',
