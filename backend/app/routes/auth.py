@@ -2,6 +2,7 @@ from urllib.parse import urlencode, urlparse, parse_qs
 from datetime import datetime, timedelta, timezone
 import base64
 import io
+import os
 import re
 import secrets
 
@@ -54,10 +55,30 @@ auth_bp = Blueprint('auth', __name__)
 GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 GOOGLE_USERINFO_URL = 'https://openidconnect.googleapis.com/v1/userinfo'
-MAX_FAILED_ATTEMPTS = 5
+MAX_FAILED_ATTEMPTS = 10
 LOCKOUT_DURATION_MINUTES = 15
 MFA_ROLLOUT_ENFORCE_UTC = datetime(2026, 12, 16, 0, 0, 0, tzinfo=timezone.utc)
 MFA_ROLLOUT_ENFORCED_PLANS = {"team", "enterprise"}
+
+
+def _max_failed_attempts():
+    raw = current_app.config.get("AUTH_MAX_FAILED_ATTEMPTS")
+    if raw is None:
+        raw = os.getenv("AUTH_MAX_FAILED_ATTEMPTS")
+    try:
+        return max(1, int(raw))
+    except Exception:
+        return MAX_FAILED_ATTEMPTS
+
+
+def _lockout_duration_minutes():
+    raw = current_app.config.get("AUTH_LOCKOUT_DURATION_MINUTES")
+    if raw is None:
+        raw = os.getenv("AUTH_LOCKOUT_DURATION_MINUTES")
+    try:
+        return max(1, int(raw))
+    except Exception:
+        return LOCKOUT_DURATION_MINUTES
 
 
 def _audit_auth_event(action, *, actor=None, target_user=None, target_email=None, details=None):
@@ -802,22 +823,32 @@ def login():
             details={'reason': 'account_locked', 'minutes_remaining': remaining},
         )
         return jsonify(message=f'Account locked. Try again in {remaining} minute(s).'), 429
+    if locked_until and locked_until <= now and user.locked_until is not None:
+        # Lock window has expired; clear stale lock metadata.
+        user.locked_until = None
 
     if not check_password_hash(user.password_hash, password):
+        max_attempts = _max_failed_attempts()
+        lockout_minutes = _lockout_duration_minutes()
         user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
-        if user.failed_login_attempts >= MAX_FAILED_ATTEMPTS:
-            user.locked_until = (now + timedelta(minutes=LOCKOUT_DURATION_MINUTES)).replace(tzinfo=None)
-            user.failed_login_attempts = 0
+        lock_applied = False
+        remaining = None
+        if user.failed_login_attempts >= max_attempts:
+            user.locked_until = (now + timedelta(minutes=lockout_minutes)).replace(tzinfo=None)
+            lock_applied = True
+            remaining = lockout_minutes
         db.session.commit()
         _audit_auth_event(
             'auth.login.failed',
             target_user=user,
             details={
-                'reason': 'invalid_password',
+                'reason': 'account_locked' if lock_applied else 'invalid_password',
                 'failed_login_attempts': user.failed_login_attempts or 0,
                 'locked_until': user.locked_until.isoformat() if user.locked_until else None,
             },
         )
+        if lock_applied:
+            return jsonify(message=f'Account locked. Try again in {remaining} minute(s).'), 429
         return jsonify(message='Invalid credentials'), 401
 
     if _verification_required_enabled() and not bool(user.email_verified):
