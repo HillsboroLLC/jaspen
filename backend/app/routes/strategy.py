@@ -3138,9 +3138,41 @@ Rules:
     }
 
 
+def _infer_wbs_planning_mode(scorecard, instruction, scenario_payload=None):
+    text_parts = []
+    if isinstance(instruction, str):
+        text_parts.append(instruction)
+    if isinstance(scorecard, dict):
+        for key in ('project_name', 'executive_summary', 'what_drove_this_score', 'summary'):
+            value = scorecard.get(key)
+            if isinstance(value, str):
+                text_parts.append(value)
+    if isinstance(scenario_payload, dict):
+        for key in ('label', 'rationale'):
+            value = scenario_payload.get(key)
+            if isinstance(value, str):
+                text_parts.append(value)
+    haystack = " ".join(text_parts).lower()
+    program_markers = (
+        'program',
+        'portfolio',
+        'multi-workstream',
+        'cross-functional',
+        'transformation',
+        'enterprise-wide',
+        'enterprise wide',
+        'multi department',
+        'multi-team',
+        'multi team',
+    )
+    return 'program' if any(marker in haystack for marker in program_markers) else 'project'
+
+
 def _heuristic_wbs_suggestion(scorecard, instruction, scenario_payload=None):
     comps = (scorecard or {}).get('component_scores') if isinstance(scorecard, dict) else {}
     comps = comps if isinstance(comps, dict) else {}
+    planning_mode = _infer_wbs_planning_mode(scorecard, instruction, scenario_payload=scenario_payload)
+    is_program_mode = planning_mode == 'program'
     tasks = [
         {
             'id': 'kickoff_alignment',
@@ -3149,6 +3181,8 @@ def _heuristic_wbs_suggestion(scorecard, instruction, scenario_payload=None):
             'priority': 'high',
             'estimated_days': 5,
             'suggested_role': 'Project Manager',
+            'function': 'PMO',
+            'activity_type': 'governance',
             'depends_on': [],
             'risk_area': 'execution_readiness',
         },
@@ -3158,11 +3192,27 @@ def _heuristic_wbs_suggestion(scorecard, instruction, scenario_payload=None):
             'description': 'Map workstream dependencies and establish execution cadence.',
             'priority': 'high',
             'estimated_days': 7,
-            'suggested_role': 'Program Manager',
+            'suggested_role': 'Program Manager' if is_program_mode else 'Project Manager',
+            'function': 'PMO',
+            'activity_type': 'planning',
             'depends_on': ['kickoff_alignment'],
             'risk_area': 'execution_readiness',
         },
     ]
+
+    if is_program_mode:
+        tasks.append({
+            'id': 'governance_rhythm',
+            'title': 'Establish program governance rhythm',
+            'description': 'Set up steering committee cadence, workstream leads, and escalation paths.',
+            'priority': 'high',
+            'estimated_days': 6,
+            'suggested_role': 'Program Director',
+            'function': 'PMO',
+            'activity_type': 'governance',
+            'depends_on': ['kickoff_alignment'],
+            'risk_area': 'execution_readiness',
+        })
 
     if float(comps.get('financial_health') or 0) < 70:
         tasks.append({
@@ -3172,6 +3222,8 @@ def _heuristic_wbs_suggestion(scorecard, instruction, scenario_payload=None):
             'priority': 'high',
             'estimated_days': 7,
             'suggested_role': 'Finance Analyst',
+            'function': 'Finance',
+            'activity_type': 'financial_modeling',
             'depends_on': ['kickoff_alignment'],
             'risk_area': 'financial_health',
         })
@@ -3183,6 +3235,8 @@ def _heuristic_wbs_suggestion(scorecard, instruction, scenario_payload=None):
             'priority': 'medium',
             'estimated_days': 10,
             'suggested_role': 'Product Marketing',
+            'function': 'Marketing',
+            'activity_type': 'market_validation',
             'depends_on': ['kickoff_alignment'],
             'risk_area': 'market_position',
         })
@@ -3194,6 +3248,8 @@ def _heuristic_wbs_suggestion(scorecard, instruction, scenario_payload=None):
             'priority': 'medium',
             'estimated_days': 14,
             'suggested_role': 'Operations Lead',
+            'function': 'Operations',
+            'activity_type': 'process_optimization',
             'depends_on': ['dependency_map'],
             'risk_area': 'operational_efficiency',
         })
@@ -3205,6 +3261,8 @@ def _heuristic_wbs_suggestion(scorecard, instruction, scenario_payload=None):
             'priority': 'high',
             'estimated_days': 6,
             'suggested_role': 'Project Manager',
+            'function': 'HR',
+            'activity_type': 'staffing',
             'depends_on': ['dependency_map'],
             'risk_area': 'execution_readiness',
         })
@@ -3216,6 +3274,8 @@ def _heuristic_wbs_suggestion(scorecard, instruction, scenario_payload=None):
         'priority': 'medium',
         'estimated_days': 30,
         'suggested_role': 'PMO',
+        'function': 'PMO',
+        'activity_type': 'risk_management',
         'depends_on': ['dependency_map'],
         'risk_area': 'execution_readiness',
     })
@@ -3224,26 +3284,40 @@ def _heuristic_wbs_suggestion(scorecard, instruction, scenario_payload=None):
     if isinstance(scenario_payload, dict) and scenario_payload.get('label'):
         scenario_note = f" using scenario '{scenario_payload.get('label')}'"
 
+    phases = [
+        {
+            'name': 'Initiation',
+            'tasks': tasks[:2],
+        },
+        {
+            'name': 'Program Mobilization' if is_program_mode else 'Execution',
+            'tasks': tasks[2:3] if is_program_mode else tasks[2:],
+        },
+    ]
+    if is_program_mode:
+        phases.append({
+            'name': 'Execution',
+            'tasks': tasks[3:],
+        })
+
     return {
-        'name': 'AI Generated WBS',
+        'name': 'AI Generated Program Plan' if is_program_mode else 'AI Generated Project Plan',
         'description': str(instruction or '').strip() or 'Generated from scorecard drivers and risk profile.',
-        'summary': f"Generated{scenario_note} using component score priorities and risk hotspots.",
-        'phases': [
-            {
-                'name': 'Initiation',
-                'tasks': tasks[:2],
-            },
-            {
-                'name': 'Execution',
-                'tasks': tasks[2:],
-            },
-        ],
+        'summary': f"Generated{scenario_note} using {planning_mode} planning mode, component score priorities, and risk hotspots.",
+        'phases': phases,
+        'planning_mode': planning_mode,
     }
 
 
 def _generate_ai_wbs_suggestion(client, llm_model, scorecard, instruction, scenario_payload=None):
     scorecard_payload = scorecard if isinstance(scorecard, dict) else {}
     scenario_context = scenario_payload if isinstance(scenario_payload, dict) else {}
+    planning_mode = _infer_wbs_planning_mode(scorecard_payload, instruction, scenario_payload=scenario_context)
+    planning_brief = (
+        "Program mode: include governance, workstream coordination, dependency/risk controls, and cross-functional ownership."
+        if planning_mode == 'program'
+        else "Project mode: include focused linear execution from discovery to delivery with clear owners and dependencies."
+    )
     top_risks = scorecard_payload.get('top_risks') if isinstance(scorecard_payload.get('top_risks'), list) else scorecard_payload.get('risks')
     if not isinstance(top_risks, list):
         top_risks = []
@@ -3251,6 +3325,8 @@ def _generate_ai_wbs_suggestion(client, llm_model, scorecard, instruction, scena
 
     prompt = f"""
 You are generating a project WBS from a strategy scorecard.
+Planning mode: {planning_mode}
+Planning guidance: {planning_brief}
 
 Instruction:
 {instruction or "Generate an actionable WBS from this scorecard."}
@@ -3286,6 +3362,8 @@ Return JSON only:
           "priority": "high|medium|low",
           "estimated_days": 5,
           "suggested_role": "Project Manager|Developer|Analyst|etc",
+          "function": "PMO|Finance|Operations|HR|IT|Marketing|Sales|Product|Legal|Security|Other",
+          "activity_type": "governance|planning|delivery|risk_management|financial_modeling|change_management|training|integration|quality|reporting|other",
           "dependencies": ["other-task-id"],
           "risk_area": "which component score this addresses"
         }}
@@ -3298,6 +3376,7 @@ Rules:
 - Return 5-20 tasks total.
 - Ensure dependencies are realistic and avoid circular references.
 - Include at least one risk-mitigation task and one value-capture task.
+- Include function and activity_type for every task.
 """.strip()
 
     try:
@@ -3391,6 +3470,12 @@ def _materialize_ai_wbs(wbs_payload):
             risk_area = str(raw.get('risk_area') or '').strip()
             if risk_area:
                 task['risk_area'] = risk_area
+            function_name = str(raw.get('function') or raw.get('owner_function') or '').strip()
+            if function_name:
+                task['function'] = function_name
+            activity_type = str(raw.get('activity_type') or '').strip().lower()
+            if activity_type:
+                task['activity_type'] = activity_type
 
             created.append(task)
             phase_task_ids.append(task_id)
@@ -3432,6 +3517,7 @@ def _materialize_ai_wbs(wbs_payload):
         'name': str(wbs_payload.get('name') or 'AI Generated WBS').strip() or 'AI Generated WBS',
         'description': str(wbs_payload.get('description') or '').strip(),
         'summary': str(wbs_payload.get('summary') or '').strip(),
+        'planning_mode': str(wbs_payload.get('planning_mode') or '').strip() or None,
         'phases': phase_rows,
         'tasks': created,
     }
@@ -3479,6 +3565,8 @@ def _normalize_wbs_task(raw_task):
     description = str(raw_task.get('description') or '').strip() or None
     suggested_role = str(raw_task.get('suggested_role') or raw_task.get('owner_role') or owner or '').strip() or None
     risk_area = str(raw_task.get('risk_area') or '').strip() or None
+    function_name = str(raw_task.get('function') or raw_task.get('owner_function') or '').strip() or None
+    activity_type = str(raw_task.get('activity_type') or '').strip().lower() or None
     phase = str(raw_task.get('phase') or '').strip() or None
 
     depends_on = raw_task.get('depends_on')
@@ -3530,6 +3618,10 @@ def _normalize_wbs_task(raw_task):
         task['suggested_role'] = suggested_role
     if risk_area:
         task['risk_area'] = risk_area
+    if function_name:
+        task['function'] = function_name
+    if activity_type:
+        task['activity_type'] = activity_type
     if phase:
         task['phase'] = phase
     return task
