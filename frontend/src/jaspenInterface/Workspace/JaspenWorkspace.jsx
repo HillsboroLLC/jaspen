@@ -1135,6 +1135,7 @@ const [aiWbsBusy, setAiWbsBusy] = useState(false);
   const [leverCatalog, setLeverCatalog] = useState([]);
   const [scenarioOutputMetrics, setScenarioOutputMetrics] = useState([]);
   const [threadEditOpen, setThreadEditOpen] = useState(false);
+  const [postAdoptWbsPrompt, setPostAdoptWbsPrompt] = useState(null);
   const [bundleCurrentScorecard, setBundleCurrentScorecard] = useState(null);
   const [bundleBaselineScorecard, setBundleBaselineScorecard] = useState(null);
   const hasHistory = analysisHistory.length > 0;
@@ -5285,6 +5286,11 @@ const handleSaveStarter = async () => {
       applySnapshotMeta(response, { refresh: true, select: true });
       setActiveTab('summary');
       setView('summary');
+      setPostAdoptWbsPrompt({
+        threadBundleId: tid,
+        scorecardId: scenarioId,
+        label: label || 'Scenario',
+      });
       showToast(`${label || 'Scenario'} set as active scorecard.`, 'success');
     } catch (err) {
       console.error('[handleScenarioAdopt] failed:', err);
@@ -6648,6 +6654,64 @@ const handleGenerateAiWbsFromScorecard = useCallback(async ({ threadBundleId, sc
   }
 }, [aiWbsBusy, baselineScorecardId, currentSessionId, selectedModelType, sessionId, showToast]);
 
+const renderPostAdoptWbsPrompt = () => {
+  if (!postAdoptWbsPrompt) return null;
+  const scenarioLabel = postAdoptWbsPrompt?.label || 'Scenario';
+  return (
+    <div
+      className="jas-modal-backdrop"
+      role="presentation"
+      onClick={() => setPostAdoptWbsPrompt(null)}
+    >
+      <div
+        className="jas-account-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Generate execution plan"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="jas-account-modal-header">
+          <h3>Generate execution plan now?</h3>
+          <button
+            type="button"
+            className="jas-account-modal-close"
+            onClick={() => setPostAdoptWbsPrompt(null)}
+            aria-label="Close"
+          >
+            <FontAwesomeIcon icon={faTimes} />
+          </button>
+        </div>
+        <p style={{ margin: '0 0 16px', color: '#475569' }}>
+          {scenarioLabel} is active. Generate a project WBS from this scorecard now, or do it later from the Score tab.
+        </p>
+        <div className="jas-account-modal-actions">
+          <button
+            type="button"
+            className="jas-account-secondary-btn"
+            onClick={() => setPostAdoptWbsPrompt(null)}
+          >
+            Not now
+          </button>
+          <button
+            type="button"
+            className="jas-account-portal-btn"
+            onClick={async () => {
+              const payload = postAdoptWbsPrompt;
+              setPostAdoptWbsPrompt(null);
+              await handleGenerateAiWbsFromScorecard({
+                threadBundleId: payload?.threadBundleId,
+                scorecardId: payload?.scorecardId,
+              });
+            }}
+          >
+            Generate now
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const triggerDownload = useCallback((blob, filename) => {
   if (!(blob instanceof Blob)) return;
   const objectUrl = URL.createObjectURL(blob);
@@ -7724,6 +7788,7 @@ onClick={async () => {
 
       {renderNameModal()}
       {renderBillingModal()}
+      {renderPostAdoptWbsPrompt()}
 
 {/* Assistant Vertical Tab (Score + Scenarios only) */}
 {activeTab !== 'chat' && !aiDrawerOpen && (
@@ -8731,6 +8796,7 @@ onClick={async () => {
       {renderNotificationsModal()}
       {renderNameModal()}
       {renderBillingModal()}
+      {renderPostAdoptWbsPrompt()}
       <Onboarding
         open={showOnboarding}
         canGoBack={!displayName}
