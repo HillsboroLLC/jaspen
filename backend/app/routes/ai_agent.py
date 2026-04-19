@@ -16,6 +16,7 @@ from app import db, limiter
 from app.admin_audit import append_user_audit_event
 from app.models import BatchIdeaUpload, User
 from app.billing_config import (
+    add_credits,
     bootstrap_legacy_credits,
     consume_credits,
     get_allowed_model_types,
@@ -1874,6 +1875,61 @@ def _insufficient_credits_payload(user, required_credits):
         "monthly_credit_limit": get_monthly_credit_limit(user.subscription_plan, current_app.config),
         "suggestion": "Purchase an overage pack or upgrade your plan.",
     }
+
+
+def _reserve_preflight_credits(user, model_type, *, token_hint=None):
+    required = _preflight_credit_estimate(model_type, token_hint=token_hint)
+    charged, remaining = consume_credits(user, required)
+    if not charged:
+        return {
+            "ok": False,
+            "required": required,
+            "reserved": 0,
+            "remaining": user.credits_remaining,
+            "payload": _insufficient_credits_payload(user, required),
+        }
+    return {
+        "ok": True,
+        "required": required,
+        "reserved": required,
+        "remaining": remaining,
+        "payload": None,
+    }
+
+
+def _release_reserved_credits(user, reserved_credits):
+    reserved = int(reserved_credits or 0)
+    if reserved <= 0:
+        return user.credits_remaining
+    if user.credits_remaining is None:
+        return None
+    add_credits(user, reserved)
+    return user.credits_remaining
+
+
+def _settle_reserved_credits(user, *, reserved_credits, actual_credits):
+    reserved = max(0, int(reserved_credits or 0))
+    actual = max(0, int(actual_credits or 0))
+
+    if user.credits_remaining is None:
+        return {"ok": True, "charged": actual, "remaining": None, "payload": None}
+
+    if actual > reserved:
+        delta = actual - reserved
+        charged, remaining = consume_credits(user, delta)
+        if not charged:
+            return {
+                "ok": False,
+                "charged": reserved,
+                "remaining": user.credits_remaining,
+                "payload": _insufficient_credits_payload(user, actual),
+            }
+        return {"ok": True, "charged": actual, "remaining": remaining, "payload": None}
+
+    if actual < reserved:
+        add_credits(user, reserved - actual)
+
+    return {"ok": True, "charged": actual, "remaining": user.credits_remaining, "payload": None}
 
 
 def _anthropic_messages_from_history(chat_history, max_turns=14):
@@ -4866,128 +4922,139 @@ def conversation_start():
     chat_history.append(_user_chat_entry(user_message, attachments=attachments))
     readiness = _compute_readiness(chat_history, session.get("strategy_objective"))
     context_budget = get_context_budget(to_public_plan(user.subscription_plan))
-    preflight_required_credits = _preflight_credit_estimate(model_selection["model_type"])
-    if user.credits_remaining is not None and user.credits_remaining < preflight_required_credits:
-        return jsonify(_insufficient_credits_payload(user, preflight_required_credits)), 402
+    credit_reservation = _reserve_preflight_credits(user, model_selection["model_type"])
+    if not credit_reservation["ok"]:
+        return jsonify(credit_reservation["payload"]), 402
+    reserved_credits = int(credit_reservation["reserved"] or 0)
     stream_requested = str(request.args.get("stream") or "").strip().lower() in {"1", "true", "yes"}
 
     if stream_requested:
         @stream_with_context
         def event_stream():
             state = {}
-            for payload in _stream_assistant_reply_events(
-                user_message,
-                chat_history,
-                readiness,
-                model_selection,
-                context_budget=context_budget,
-                session=session,
-                user=user,
-                user_id=user_id,
-                thread_id=thread_id,
-                intake_context=session.get("intake_context"),
-                attachments=attachments,
-                state=state,
-            ):
-                yield _sse_payload(payload)
-
-            assistant_reply = str(state.get("reply") or "").strip() or _next_question(readiness)
-            usage = state.get("usage") if isinstance(state.get("usage"), dict) else {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
-            actions = state.get("actions") if isinstance(state.get("actions"), list) else []
-            mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
-            undo_snapshot = state.get("undo_snapshot") if isinstance(state.get("undo_snapshot"), dict) else None
-
-            credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"])
-            charged, remaining = consume_credits(user, credits_charged)
-            if not charged:
-                yield _sse_payload({
-                    "type": "error",
-                    "error": "Insufficient credits",
-                    "required_credits": credits_charged,
-                    "credits_remaining": user.credits_remaining,
-                    "plan_key": to_public_plan(user.subscription_plan),
-                    "monthly_credit_limit": get_monthly_credit_limit(user.subscription_plan, current_app.config),
-                    "suggestion": "Purchase an overage pack or upgrade your plan.",
-                })
-                return
-
-            undo_available = _has_successful_mutations(mutations) and isinstance(undo_snapshot, dict)
-            final_chat_history = list(chat_history)
-            final_chat_history.append(_assistant_chat_entry(
-                assistant_reply,
-                mutations=mutations,
-                undo={"available": True} if undo_available else None,
-            ))
-            assistant_message_index = len(final_chat_history) - 1
-            final_readiness = _compute_readiness(final_chat_history, session.get("strategy_objective"))
-
-            session["chat_history"] = final_chat_history
-            if undo_available:
-                session[PENDING_MUTATION_UNDO_KEY] = {
-                    "message_index": assistant_message_index,
-                    "snapshot": undo_snapshot,
-                }
-            else:
-                session.pop(PENDING_MUTATION_UNDO_KEY, None)
-            session["name"] = name
-            session["model_type"] = model_selection["model_type"]
-            session["timestamp"] = _iso_now()
-            session["status"] = "in_progress"
-            _record_usage(session, usage, credits_charged)
-            sessions[thread_id] = session
-            if not save_user_sessions(user_id, sessions):
-                yield _sse_payload({"type": "error", "error": "Failed to persist conversation state"})
-                return
-
-            if session_created:
-                _audit_ai_agent_event(
-                    "session.created",
+            credits_settled = False
+            try:
+                for payload in _stream_assistant_reply_events(
+                    user_message,
+                    chat_history,
+                    readiness,
+                    model_selection,
+                    context_budget=context_budget,
+                    session=session,
                     user=user,
-                    details={
-                        "thread_id": thread_id,
-                        "name": name,
-                        "model_type": model_selection["model_type"],
-                        "stream": True,
-                        "source": "conversation_start",
-                    },
-                )
+                    user_id=user_id,
+                    thread_id=thread_id,
+                    intake_context=session.get("intake_context"),
+                    attachments=attachments,
+                    state=state,
+                ):
+                    yield _sse_payload(payload)
 
-            done_payload = {
-                "type": "done",
-                "thread_id": thread_id,
-                "session_id": thread_id,
-                "reply": assistant_reply,
-                "message": assistant_reply,
-                "assistant_message_index": assistant_message_index,
-                "model_type": model_selection["model_type"],
-                "allowed_model_types": model_selection["allowed_model_types"],
-                "actions": actions,
-                "mutations": mutations,
-                "tool_results": mutations,
-                "undo_available": undo_available,
-                "usage": usage,
-                "context_budget": context_budget,
-                "credits": {
-                    "charged": credits_charged,
-                    "remaining": remaining,
-                },
-                "readiness": {
-                    "percent": final_readiness["overall"]["percent"],
-                    "categories": final_readiness["categories"],
-                    "items": final_readiness.get("items", []),
-                    "checklist_summary": final_readiness.get("checklist_summary", {}),
-                    "version": final_readiness.get("version"),
-                    "updated_at": _iso_now(),
-                },
-                "status": "gathering_info",
-                "strategy_objective": session.get("strategy_objective") or "balanced",
-                "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
-                "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
-                "organization_id": session.get("organization_id"),
-                "visibility": session.get("visibility") or "private",
-                "objective_options": list(STRATEGY_OBJECTIVE_OPTIONS),
-            }
-            yield _sse_payload(done_payload)
+                assistant_reply = str(state.get("reply") or "").strip() or _next_question(readiness)
+                usage = state.get("usage") if isinstance(state.get("usage"), dict) else {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+                actions = state.get("actions") if isinstance(state.get("actions"), list) else []
+                mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
+                undo_snapshot = state.get("undo_snapshot") if isinstance(state.get("undo_snapshot"), dict) else None
+
+                credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"])
+                credit_settlement = _settle_reserved_credits(
+                    user,
+                    reserved_credits=reserved_credits,
+                    actual_credits=credits_charged,
+                )
+                credits_settled = True
+                if not credit_settlement["ok"]:
+                    yield _sse_payload({
+                        "type": "error",
+                        **(credit_settlement["payload"] or _insufficient_credits_payload(user, credits_charged)),
+                    })
+                    return
+                remaining = credit_settlement["remaining"]
+                credits_charged = credit_settlement["charged"]
+
+                undo_available = _has_successful_mutations(mutations) and isinstance(undo_snapshot, dict)
+                final_chat_history = list(chat_history)
+                final_chat_history.append(_assistant_chat_entry(
+                    assistant_reply,
+                    mutations=mutations,
+                    undo={"available": True} if undo_available else None,
+                ))
+                assistant_message_index = len(final_chat_history) - 1
+                final_readiness = _compute_readiness(final_chat_history, session.get("strategy_objective"))
+
+                session["chat_history"] = final_chat_history
+                if undo_available:
+                    session[PENDING_MUTATION_UNDO_KEY] = {
+                        "message_index": assistant_message_index,
+                        "snapshot": undo_snapshot,
+                    }
+                else:
+                    session.pop(PENDING_MUTATION_UNDO_KEY, None)
+                session["name"] = name
+                session["model_type"] = model_selection["model_type"]
+                session["timestamp"] = _iso_now()
+                session["status"] = "in_progress"
+                _record_usage(session, usage, credits_charged)
+                sessions[thread_id] = session
+                if not save_user_sessions(user_id, sessions):
+                    yield _sse_payload({"type": "error", "error": "Failed to persist conversation state"})
+                    return
+
+                if session_created:
+                    _audit_ai_agent_event(
+                        "session.created",
+                        user=user,
+                        details={
+                            "thread_id": thread_id,
+                            "name": name,
+                            "model_type": model_selection["model_type"],
+                            "stream": True,
+                            "source": "conversation_start",
+                        },
+                    )
+
+                done_payload = {
+                    "type": "done",
+                    "thread_id": thread_id,
+                    "session_id": thread_id,
+                    "reply": assistant_reply,
+                    "message": assistant_reply,
+                    "assistant_message_index": assistant_message_index,
+                    "model_type": model_selection["model_type"],
+                    "allowed_model_types": model_selection["allowed_model_types"],
+                    "actions": actions,
+                    "mutations": mutations,
+                    "tool_results": mutations,
+                    "undo_available": undo_available,
+                    "usage": usage,
+                    "context_budget": context_budget,
+                    "credits": {
+                        "charged": credits_charged,
+                        "remaining": remaining,
+                    },
+                    "readiness": {
+                        "percent": final_readiness["overall"]["percent"],
+                        "categories": final_readiness["categories"],
+                        "items": final_readiness.get("items", []),
+                        "checklist_summary": final_readiness.get("checklist_summary", {}),
+                        "version": final_readiness.get("version"),
+                        "updated_at": _iso_now(),
+                    },
+                    "status": "gathering_info",
+                    "strategy_objective": session.get("strategy_objective") or "balanced",
+                    "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
+                    "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
+                    "organization_id": session.get("organization_id"),
+                    "visibility": session.get("visibility") or "private",
+                    "objective_options": list(STRATEGY_OBJECTIVE_OPTIONS),
+                }
+                yield _sse_payload(done_payload)
+            except Exception:
+                if not credits_settled:
+                    _release_reserved_credits(user, reserved_credits)
+                current_app.logger.exception("conversation_start stream failed")
+                yield _sse_payload({"type": "error", "error": "Streaming failed"})
+                return
 
         return Response(
             event_stream(),
@@ -4999,31 +5066,34 @@ def conversation_start():
             },
         )
 
-    assistant_reply, usage, actions, mutations, undo_snapshot = _generate_assistant_reply(
-        user_message,
-        chat_history,
-        readiness,
-        model_selection,
-        context_budget=context_budget,
-        session=session,
-        user=user,
-        user_id=user_id,
-        thread_id=thread_id,
-        intake_context=session.get("intake_context"),
-        attachments=attachments,
-    )
+    try:
+        assistant_reply, usage, actions, mutations, undo_snapshot = _generate_assistant_reply(
+            user_message,
+            chat_history,
+            readiness,
+            model_selection,
+            context_budget=context_budget,
+            session=session,
+            user=user,
+            user_id=user_id,
+            thread_id=thread_id,
+            intake_context=session.get("intake_context"),
+            attachments=attachments,
+        )
+    except Exception:
+        _release_reserved_credits(user, reserved_credits)
+        raise
 
     credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"])
-    charged, remaining = consume_credits(user, credits_charged)
-    if not charged:
-        return jsonify({
-            "error": "Insufficient credits",
-            "required_credits": credits_charged,
-            "credits_remaining": user.credits_remaining,
-            "plan_key": to_public_plan(user.subscription_plan),
-            "monthly_credit_limit": get_monthly_credit_limit(user.subscription_plan, current_app.config),
-            "suggestion": "Purchase an overage pack or upgrade your plan.",
-        }), 402
+    credit_settlement = _settle_reserved_credits(
+        user,
+        reserved_credits=reserved_credits,
+        actual_credits=credits_charged,
+    )
+    if not credit_settlement["ok"]:
+        return jsonify(credit_settlement["payload"] or _insufficient_credits_payload(user, credits_charged)), 402
+    remaining = credit_settlement["remaining"]
+    credits_charged = credit_settlement["charged"]
 
     undo_available = _has_successful_mutations(mutations) and isinstance(undo_snapshot, dict)
     chat_history.append(_assistant_chat_entry(
@@ -5201,127 +5271,138 @@ def conversation_continue():
     chat_history.append(_user_chat_entry(user_message, attachments=attachments))
     readiness = _compute_readiness(chat_history, session.get("strategy_objective"))
     context_budget = get_context_budget(to_public_plan(user.subscription_plan))
-    preflight_required_credits = _preflight_credit_estimate(model_selection["model_type"])
-    if user.credits_remaining is not None and user.credits_remaining < preflight_required_credits:
-        return jsonify(_insufficient_credits_payload(user, preflight_required_credits)), 402
+    credit_reservation = _reserve_preflight_credits(user, model_selection["model_type"])
+    if not credit_reservation["ok"]:
+        return jsonify(credit_reservation["payload"]), 402
+    reserved_credits = int(credit_reservation["reserved"] or 0)
     stream_requested = str(request.args.get("stream") or "").strip().lower() in {"1", "true", "yes"}
 
     if stream_requested:
         @stream_with_context
         def event_stream():
             state = {}
-            for payload in _stream_assistant_reply_events(
-                user_message,
-                chat_history,
-                readiness,
-                model_selection,
-                context_budget=context_budget,
-                session=session,
-                user=user,
-                user_id=user_id,
-                thread_id=thread_id,
-                intake_context=session.get("intake_context"),
-                attachments=attachments,
-                state=state,
-            ):
-                yield _sse_payload(payload)
-
-            assistant_reply = str(state.get("reply") or "").strip() or _next_question(readiness)
-            usage = state.get("usage") if isinstance(state.get("usage"), dict) else {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
-            actions = state.get("actions") if isinstance(state.get("actions"), list) else []
-            mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
-            undo_snapshot = state.get("undo_snapshot") if isinstance(state.get("undo_snapshot"), dict) else None
-
-            credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"])
-            charged, remaining = consume_credits(user, credits_charged)
-            if not charged:
-                yield _sse_payload({
-                    "type": "error",
-                    "error": "Insufficient credits",
-                    "required_credits": credits_charged,
-                    "credits_remaining": user.credits_remaining,
-                    "plan_key": to_public_plan(user.subscription_plan),
-                    "monthly_credit_limit": get_monthly_credit_limit(user.subscription_plan, current_app.config),
-                    "suggestion": "Purchase an overage pack or upgrade your plan.",
-                })
-                return
-
-            undo_available = _has_successful_mutations(mutations) and isinstance(undo_snapshot, dict)
-            final_chat_history = list(chat_history)
-            final_chat_history.append(_assistant_chat_entry(
-                assistant_reply,
-                mutations=mutations,
-                undo={"available": True} if undo_available else None,
-            ))
-            assistant_message_index = len(final_chat_history) - 1
-            final_readiness = _compute_readiness(final_chat_history, session.get("strategy_objective"))
-
-            session["chat_history"] = final_chat_history
-            if undo_available:
-                session[PENDING_MUTATION_UNDO_KEY] = {
-                    "message_index": assistant_message_index,
-                    "snapshot": undo_snapshot,
-                }
-            else:
-                session.pop(PENDING_MUTATION_UNDO_KEY, None)
-            session["model_type"] = model_selection["model_type"]
-            session["timestamp"] = _iso_now()
-            session["status"] = "ready_to_analyze" if final_readiness["overall"]["percent"] >= 85 else "in_progress"
-            _record_usage(session, usage, credits_charged)
-            sessions[thread_id] = session
-            if not save_user_sessions(user_id, sessions):
-                yield _sse_payload({"type": "error", "error": "Failed to persist conversation state"})
-                return
-
-            if session_created:
-                _audit_ai_agent_event(
-                    "session.created",
+            credits_settled = False
+            try:
+                for payload in _stream_assistant_reply_events(
+                    user_message,
+                    chat_history,
+                    readiness,
+                    model_selection,
+                    context_budget=context_budget,
+                    session=session,
                     user=user,
-                    details={
-                        "thread_id": thread_id,
-                        "name": session.get("name") or "Jaspen Intake",
-                        "model_type": model_selection["model_type"],
-                        "stream": True,
-                        "source": "conversation_continue",
-                    },
-                )
+                    user_id=user_id,
+                    thread_id=thread_id,
+                    intake_context=session.get("intake_context"),
+                    attachments=attachments,
+                    state=state,
+                ):
+                    yield _sse_payload(payload)
 
-            done_payload = {
-                "type": "done",
-                "thread_id": thread_id,
-                "session_id": thread_id,
-                "reply": assistant_reply,
-                "message": assistant_reply,
-                "assistant_message_index": assistant_message_index,
-                "model_type": model_selection["model_type"],
-                "allowed_model_types": model_selection["allowed_model_types"],
-                "actions": actions,
-                "mutations": mutations,
-                "tool_results": mutations,
-                "undo_available": undo_available,
-                "usage": usage,
-                "context_budget": context_budget,
-                "credits": {
-                    "charged": credits_charged,
-                    "remaining": remaining,
-                },
-                "readiness": {
-                    "percent": final_readiness["overall"]["percent"],
-                    "categories": final_readiness["categories"],
-                    "items": final_readiness.get("items", []),
-                    "checklist_summary": final_readiness.get("checklist_summary", {}),
-                    "version": final_readiness.get("version"),
-                    "updated_at": _iso_now(),
-                },
-                "status": "ready_to_analyze" if final_readiness["overall"]["percent"] >= 85 else "gathering_info",
-                "strategy_objective": session.get("strategy_objective") or "balanced",
-                "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
-                "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
-                "organization_id": session.get("organization_id"),
-                "visibility": session.get("visibility") or "private",
-                "objective_options": list(STRATEGY_OBJECTIVE_OPTIONS),
-            }
-            yield _sse_payload(done_payload)
+                assistant_reply = str(state.get("reply") or "").strip() or _next_question(readiness)
+                usage = state.get("usage") if isinstance(state.get("usage"), dict) else {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+                actions = state.get("actions") if isinstance(state.get("actions"), list) else []
+                mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
+                undo_snapshot = state.get("undo_snapshot") if isinstance(state.get("undo_snapshot"), dict) else None
+
+                credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"])
+                credit_settlement = _settle_reserved_credits(
+                    user,
+                    reserved_credits=reserved_credits,
+                    actual_credits=credits_charged,
+                )
+                credits_settled = True
+                if not credit_settlement["ok"]:
+                    yield _sse_payload({
+                        "type": "error",
+                        **(credit_settlement["payload"] or _insufficient_credits_payload(user, credits_charged)),
+                    })
+                    return
+                remaining = credit_settlement["remaining"]
+                credits_charged = credit_settlement["charged"]
+
+                undo_available = _has_successful_mutations(mutations) and isinstance(undo_snapshot, dict)
+                final_chat_history = list(chat_history)
+                final_chat_history.append(_assistant_chat_entry(
+                    assistant_reply,
+                    mutations=mutations,
+                    undo={"available": True} if undo_available else None,
+                ))
+                assistant_message_index = len(final_chat_history) - 1
+                final_readiness = _compute_readiness(final_chat_history, session.get("strategy_objective"))
+
+                session["chat_history"] = final_chat_history
+                if undo_available:
+                    session[PENDING_MUTATION_UNDO_KEY] = {
+                        "message_index": assistant_message_index,
+                        "snapshot": undo_snapshot,
+                    }
+                else:
+                    session.pop(PENDING_MUTATION_UNDO_KEY, None)
+                session["model_type"] = model_selection["model_type"]
+                session["timestamp"] = _iso_now()
+                session["status"] = "ready_to_analyze" if final_readiness["overall"]["percent"] >= 85 else "in_progress"
+                _record_usage(session, usage, credits_charged)
+                sessions[thread_id] = session
+                if not save_user_sessions(user_id, sessions):
+                    yield _sse_payload({"type": "error", "error": "Failed to persist conversation state"})
+                    return
+
+                if session_created:
+                    _audit_ai_agent_event(
+                        "session.created",
+                        user=user,
+                        details={
+                            "thread_id": thread_id,
+                            "name": session.get("name") or "Jaspen Intake",
+                            "model_type": model_selection["model_type"],
+                            "stream": True,
+                            "source": "conversation_continue",
+                        },
+                    )
+
+                done_payload = {
+                    "type": "done",
+                    "thread_id": thread_id,
+                    "session_id": thread_id,
+                    "reply": assistant_reply,
+                    "message": assistant_reply,
+                    "assistant_message_index": assistant_message_index,
+                    "model_type": model_selection["model_type"],
+                    "allowed_model_types": model_selection["allowed_model_types"],
+                    "actions": actions,
+                    "mutations": mutations,
+                    "tool_results": mutations,
+                    "undo_available": undo_available,
+                    "usage": usage,
+                    "context_budget": context_budget,
+                    "credits": {
+                        "charged": credits_charged,
+                        "remaining": remaining,
+                    },
+                    "readiness": {
+                        "percent": final_readiness["overall"]["percent"],
+                        "categories": final_readiness["categories"],
+                        "items": final_readiness.get("items", []),
+                        "checklist_summary": final_readiness.get("checklist_summary", {}),
+                        "version": final_readiness.get("version"),
+                        "updated_at": _iso_now(),
+                    },
+                    "status": "ready_to_analyze" if final_readiness["overall"]["percent"] >= 85 else "gathering_info",
+                    "strategy_objective": session.get("strategy_objective") or "balanced",
+                    "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
+                    "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
+                    "organization_id": session.get("organization_id"),
+                    "visibility": session.get("visibility") or "private",
+                    "objective_options": list(STRATEGY_OBJECTIVE_OPTIONS),
+                }
+                yield _sse_payload(done_payload)
+            except Exception:
+                if not credits_settled:
+                    _release_reserved_credits(user, reserved_credits)
+                current_app.logger.exception("conversation_continue stream failed")
+                yield _sse_payload({"type": "error", "error": "Streaming failed"})
+                return
 
         return Response(
             event_stream(),
@@ -5333,31 +5414,34 @@ def conversation_continue():
             },
         )
 
-    assistant_reply, usage, actions, mutations, undo_snapshot = _generate_assistant_reply(
-        user_message,
-        chat_history,
-        readiness,
-        model_selection,
-        context_budget=context_budget,
-        session=session,
-        user=user,
-        user_id=user_id,
-        thread_id=thread_id,
-        intake_context=session.get("intake_context"),
-        attachments=attachments,
-    )
+    try:
+        assistant_reply, usage, actions, mutations, undo_snapshot = _generate_assistant_reply(
+            user_message,
+            chat_history,
+            readiness,
+            model_selection,
+            context_budget=context_budget,
+            session=session,
+            user=user,
+            user_id=user_id,
+            thread_id=thread_id,
+            intake_context=session.get("intake_context"),
+            attachments=attachments,
+        )
+    except Exception:
+        _release_reserved_credits(user, reserved_credits)
+        raise
 
     credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"])
-    charged, remaining = consume_credits(user, credits_charged)
-    if not charged:
-        return jsonify({
-            "error": "Insufficient credits",
-            "required_credits": credits_charged,
-            "credits_remaining": user.credits_remaining,
-            "plan_key": to_public_plan(user.subscription_plan),
-            "monthly_credit_limit": get_monthly_credit_limit(user.subscription_plan, current_app.config),
-            "suggestion": "Purchase an overage pack or upgrade your plan.",
-        }), 402
+    credit_settlement = _settle_reserved_credits(
+        user,
+        reserved_credits=reserved_credits,
+        actual_credits=credits_charged,
+    )
+    if not credit_settlement["ok"]:
+        return jsonify(credit_settlement["payload"] or _insufficient_credits_payload(user, credits_charged)), 402
+    remaining = credit_settlement["remaining"]
+    credits_charged = credit_settlement["charged"]
 
     undo_available = _has_successful_mutations(mutations) and isinstance(undo_snapshot, dict)
     chat_history.append(_assistant_chat_entry(
@@ -6188,109 +6272,123 @@ def conversation_regenerate():
         "replaced_by": "regenerate",
         "replaced_at": _iso_now(),
     }
-    preflight_required_credits = _preflight_credit_estimate(model_selection["model_type"])
-    if user.credits_remaining is not None and user.credits_remaining < preflight_required_credits:
-        return jsonify(_insufficient_credits_payload(user, preflight_required_credits)), 402
+    credit_reservation = _reserve_preflight_credits(user, model_selection["model_type"])
+    if not credit_reservation["ok"]:
+        return jsonify(credit_reservation["payload"]), 402
+    reserved_credits = int(credit_reservation["reserved"] or 0)
     stream_requested = str(request.args.get("stream") or "").strip().lower() in {"1", "true", "yes"}
 
     if stream_requested:
         @stream_with_context
         def event_stream():
             state = {}
-            for payload in _stream_assistant_reply_events(
-                user_message,
-                regen_history,
-                readiness,
-                model_selection,
-                context_budget=context_budget,
-                session=session,
-                user=user,
-                user_id=user_id,
-                thread_id=thread_id,
-                intake_context=session.get("intake_context"),
-                state=state,
-                disable_mutations=True,
-            ):
-                yield _sse_payload(payload)
+            credits_settled = False
+            try:
+                for payload in _stream_assistant_reply_events(
+                    user_message,
+                    regen_history,
+                    readiness,
+                    model_selection,
+                    context_budget=context_budget,
+                    session=session,
+                    user=user,
+                    user_id=user_id,
+                    thread_id=thread_id,
+                    intake_context=session.get("intake_context"),
+                    state=state,
+                    disable_mutations=True,
+                ):
+                    yield _sse_payload(payload)
 
-            assistant_reply = str(state.get("reply") or "").strip() or _next_question(readiness)
-            usage = state.get("usage") if isinstance(state.get("usage"), dict) else {
-                "provider": "heuristic",
-                "model": None,
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "total_tokens": 0,
-            }
+                assistant_reply = str(state.get("reply") or "").strip() or _next_question(readiness)
+                usage = state.get("usage") if isinstance(state.get("usage"), dict) else {
+                    "provider": "heuristic",
+                    "model": None,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "total_tokens": 0,
+                }
 
-            credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"])
-            charged, remaining = consume_credits(user, credits_charged)
-            if not charged:
+                credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"])
+                credit_settlement = _settle_reserved_credits(
+                    user,
+                    reserved_credits=reserved_credits,
+                    actual_credits=credits_charged,
+                )
+                credits_settled = True
+                if not credit_settlement["ok"]:
+                    yield _sse_payload({
+                        "type": "error",
+                        **(credit_settlement["payload"] or _insufficient_credits_payload(user, credits_charged)),
+                    })
+                    return
+                remaining = credit_settlement["remaining"]
+                credits_charged = credit_settlement["charged"]
+
+                alternatives = [old_response, *((last_msg.get("alternatives") or []) if isinstance(last_msg.get("alternatives"), list) else [])]
+                new_msg = _assistant_chat_entry(
+                    assistant_reply,
+                    regenerated=True,
+                    alternatives=alternatives,
+                )
+                chat_history[-1] = new_msg
+                assistant_message_index = len(chat_history) - 1
+                final_readiness = _compute_readiness(chat_history, session.get("strategy_objective"))
+
+                session["chat_history"] = chat_history
+                session["timestamp"] = _iso_now()
+                _record_usage(session, usage, credits_charged)
+                sessions[session_key or thread_id] = session
+                if not save_user_sessions(user_id, sessions):
+                    yield _sse_payload({"type": "error", "error": "Failed to persist regenerated response"})
+                    return
+
+                _audit_ai_agent_event(
+                    "message.regenerated",
+                    user=user,
+                    details={
+                        "thread_id": str(session.get("session_id") or session_key or thread_id),
+                        "message_index": assistant_message_index,
+                        "alternatives_count": len(new_msg.get("alternatives") or []),
+                    },
+                )
+
                 yield _sse_payload({
-                    "type": "error",
-                    "error": "Insufficient credits",
-                    "required_credits": credits_charged,
-                    "credits_remaining": user.credits_remaining,
-                })
-                return
-
-            alternatives = [old_response, *((last_msg.get("alternatives") or []) if isinstance(last_msg.get("alternatives"), list) else [])]
-            new_msg = _assistant_chat_entry(
-                assistant_reply,
-                regenerated=True,
-                alternatives=alternatives,
-            )
-            chat_history[-1] = new_msg
-            assistant_message_index = len(chat_history) - 1
-            final_readiness = _compute_readiness(chat_history, session.get("strategy_objective"))
-
-            session["chat_history"] = chat_history
-            session["timestamp"] = _iso_now()
-            _record_usage(session, usage, credits_charged)
-            sessions[session_key or thread_id] = session
-            if not save_user_sessions(user_id, sessions):
-                yield _sse_payload({"type": "error", "error": "Failed to persist regenerated response"})
-                return
-
-            _audit_ai_agent_event(
-                "message.regenerated",
-                user=user,
-                details={
-                    "thread_id": str(session.get("session_id") or session_key or thread_id),
-                    "message_index": assistant_message_index,
+                    "type": "done",
+                    "thread_id": thread_id,
+                    "session_id": thread_id,
+                    "reply": assistant_reply,
+                    "message": assistant_reply,
+                    "assistant_message_index": assistant_message_index,
+                    "regenerated": True,
                     "alternatives_count": len(new_msg.get("alternatives") or []),
-                },
-            )
-
-            yield _sse_payload({
-                "type": "done",
-                "thread_id": thread_id,
-                "session_id": thread_id,
-                "reply": assistant_reply,
-                "message": assistant_reply,
-                "assistant_message_index": assistant_message_index,
-                "regenerated": True,
-                "alternatives_count": len(new_msg.get("alternatives") or []),
-                "model_type": model_selection["model_type"],
-                "allowed_model_types": model_selection["allowed_model_types"],
-                "mutations": [],
-                "tool_results": [],
-                "usage": usage,
-                "context_budget": context_budget,
-                "credits": {"charged": credits_charged, "remaining": remaining},
-                "readiness": {
-                    "percent": final_readiness["overall"]["percent"],
-                    "categories": final_readiness["categories"],
-                    "items": final_readiness.get("items", []),
-                    "checklist_summary": final_readiness.get("checklist_summary", {}),
-                    "version": final_readiness.get("version"),
-                    "updated_at": _iso_now(),
-                },
-                "strategy_objective": session.get("strategy_objective") or "balanced",
-                "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
-                "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
-                "organization_id": session.get("organization_id"),
-                "visibility": session.get("visibility") or "private",
-            })
+                    "model_type": model_selection["model_type"],
+                    "allowed_model_types": model_selection["allowed_model_types"],
+                    "mutations": [],
+                    "tool_results": [],
+                    "usage": usage,
+                    "context_budget": context_budget,
+                    "credits": {"charged": credits_charged, "remaining": remaining},
+                    "readiness": {
+                        "percent": final_readiness["overall"]["percent"],
+                        "categories": final_readiness["categories"],
+                        "items": final_readiness.get("items", []),
+                        "checklist_summary": final_readiness.get("checklist_summary", {}),
+                        "version": final_readiness.get("version"),
+                        "updated_at": _iso_now(),
+                    },
+                    "strategy_objective": session.get("strategy_objective") or "balanced",
+                    "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
+                    "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
+                    "organization_id": session.get("organization_id"),
+                    "visibility": session.get("visibility") or "private",
+                })
+            except Exception:
+                if not credits_settled:
+                    _release_reserved_credits(user, reserved_credits)
+                current_app.logger.exception("conversation_regenerate stream failed")
+                yield _sse_payload({"type": "error", "error": "Streaming failed"})
+                return
 
         return Response(
             event_stream(),
@@ -6302,28 +6400,34 @@ def conversation_regenerate():
             },
         )
 
-    assistant_reply, usage, _actions, _mutations, _undo_snapshot = _generate_assistant_reply(
-        user_message,
-        regen_history,
-        readiness,
-        model_selection,
-        context_budget=context_budget,
-        session=session,
-        user=user,
-        user_id=user_id,
-        thread_id=thread_id,
-        intake_context=session.get("intake_context"),
-        disable_mutations=True,
-    )
+    try:
+        assistant_reply, usage, _actions, _mutations, _undo_snapshot = _generate_assistant_reply(
+            user_message,
+            regen_history,
+            readiness,
+            model_selection,
+            context_budget=context_budget,
+            session=session,
+            user=user,
+            user_id=user_id,
+            thread_id=thread_id,
+            intake_context=session.get("intake_context"),
+            disable_mutations=True,
+        )
+    except Exception:
+        _release_reserved_credits(user, reserved_credits)
+        raise
 
     credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"])
-    charged, remaining = consume_credits(user, credits_charged)
-    if not charged:
-        return jsonify({
-            "error": "Insufficient credits",
-            "required_credits": credits_charged,
-            "credits_remaining": user.credits_remaining,
-        }), 402
+    credit_settlement = _settle_reserved_credits(
+        user,
+        reserved_credits=reserved_credits,
+        actual_credits=credits_charged,
+    )
+    if not credit_settlement["ok"]:
+        return jsonify(credit_settlement["payload"] or _insufficient_credits_payload(user, credits_charged)), 402
+    remaining = credit_settlement["remaining"]
+    credits_charged = credit_settlement["charged"]
 
     alternatives = [old_response, *((last_msg.get("alternatives") or []) if isinstance(last_msg.get("alternatives"), list) else [])]
     new_msg = _assistant_chat_entry(
@@ -6577,9 +6681,10 @@ def rank_batch_ideas(batch_id):
     )
     if model_error:
         return jsonify(model_error), 403
-    preflight_required_credits = _preflight_credit_estimate(model_selection["model_type"])
-    if user.credits_remaining is not None and user.credits_remaining < preflight_required_credits:
-        return jsonify(_insufficient_credits_payload(user, preflight_required_credits)), 402
+    credit_reservation = _reserve_preflight_credits(user, model_selection["model_type"])
+    if not credit_reservation["ok"]:
+        return jsonify(credit_reservation["payload"]), 402
+    reserved_credits = int(credit_reservation["reserved"] or 0)
 
     ideas = _load_batch_ideas(batch)
     if not ideas:
@@ -6588,20 +6693,20 @@ def rank_batch_ideas(batch_id):
     try:
         ranking_payload, usage = _rank_batch_ideas_with_ai(batch, ideas, model_selection)
     except Exception as exc:
+        _release_reserved_credits(user, reserved_credits)
         current_app.logger.exception("Failed ranking batch ideas")
         return jsonify({"error": f"Failed to rank ideas: {exc}"}), 500
 
     credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"])
-    charged, remaining = consume_credits(user, credits_charged)
-    if not charged:
-        return jsonify({
-            "error": "Insufficient credits",
-            "required_credits": credits_charged,
-            "credits_remaining": user.credits_remaining,
-            "plan_key": to_public_plan(user.subscription_plan),
-            "monthly_credit_limit": get_monthly_credit_limit(user.subscription_plan, current_app.config),
-            "suggestion": "Purchase an overage pack or upgrade your plan.",
-        }), 402
+    credit_settlement = _settle_reserved_credits(
+        user,
+        reserved_credits=reserved_credits,
+        actual_credits=credits_charged,
+    )
+    if not credit_settlement["ok"]:
+        return jsonify(credit_settlement["payload"] or _insufficient_credits_payload(user, credits_charged)), 402
+    remaining = credit_settlement["remaining"]
+    credits_charged = credit_settlement["charged"]
 
     ranked_ideas = ranking_payload.get("ranked_ideas") if isinstance(ranking_payload, dict) else []
     ranking_record = {
@@ -6705,27 +6810,28 @@ def clarify_batch_idea(batch_id, idea_id):
     )
     if model_error:
         return jsonify(model_error), 403
-    preflight_required_credits = _preflight_credit_estimate(model_selection["model_type"])
-    if user.credits_remaining is not None and user.credits_remaining < preflight_required_credits:
-        return jsonify(_insufficient_credits_payload(user, preflight_required_credits)), 402
+    credit_reservation = _reserve_preflight_credits(user, model_selection["model_type"])
+    if not credit_reservation["ok"]:
+        return jsonify(credit_reservation["payload"]), 402
+    reserved_credits = int(credit_reservation["reserved"] or 0)
 
     try:
         reevaluated, usage = _reevaluate_batch_idea_with_ai(batch, updated_idea, model_selection)
     except Exception as exc:
+        _release_reserved_credits(user, reserved_credits)
         current_app.logger.exception("Failed reevaluating clarified batch idea")
         return jsonify({"error": f"Failed to reevaluate idea: {exc}"}), 500
 
     credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"])
-    charged, remaining = consume_credits(user, credits_charged)
-    if not charged:
-        return jsonify({
-            "error": "Insufficient credits",
-            "required_credits": credits_charged,
-            "credits_remaining": user.credits_remaining,
-            "plan_key": to_public_plan(user.subscription_plan),
-            "monthly_credit_limit": get_monthly_credit_limit(user.subscription_plan, current_app.config),
-            "suggestion": "Purchase an overage pack or upgrade your plan.",
-        }), 402
+    credit_settlement = _settle_reserved_credits(
+        user,
+        reserved_credits=reserved_credits,
+        actual_credits=credits_charged,
+    )
+    if not credit_settlement["ok"]:
+        return jsonify(credit_settlement["payload"] or _insufficient_credits_payload(user, credits_charged)), 402
+    remaining = credit_settlement["remaining"]
+    credits_charged = credit_settlement["charged"]
 
     updated_idea.update({
         "preliminary_score": _coerce_score_int(reevaluated.get("preliminary_score")),
