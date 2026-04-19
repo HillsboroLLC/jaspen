@@ -5266,6 +5266,13 @@ const handleSaveStarter = async () => {
     }
   }, [analysisResult, baselineScorecardId, bundleBaselineScorecard, currentSessionId, refreshBundle, sessionId]);
 
+  const openPlanningReadyAssistant = useCallback((scorecardLabel = 'This scorecard') => {
+    const cleanedLabel = String(scorecardLabel || '').trim() || 'This scorecard';
+    setAiDrawerOpen(true);
+    setScenarioDrawerView('assistant');
+    setAiInput(`${cleanedLabel} is now active. Want me to draft the first execution phase?`);
+  }, []);
+
   const handleScenarioAdopt = async (adoptedScenario, label) => {
     if (!adoptedScenario || (!adoptedScenario.id && !adoptedScenario.analysis_id)) {
       console.warn('[handleScenarioAdopt] Invalid scenario:', adoptedScenario);
@@ -5286,6 +5293,7 @@ const handleSaveStarter = async () => {
       applySnapshotMeta(response, { refresh: true, select: true });
       setActiveTab('summary');
       setView('summary');
+      openPlanningReadyAssistant(label || 'Scenario');
       setPostAdoptWbsPrompt({
         threadBundleId: tid,
         scorecardId: scenarioId,
@@ -7436,7 +7444,7 @@ const handleSnapshotSelect = useCallback(async (snapshotId) => {
   setView('summary');
 }, []);
 
-const handleSnapshotSetActive = useCallback(async (snapshotId) => {
+const handleSnapshotSetActive = useCallback(async (snapshotId, snapshotLabel) => {
   const nextId = String(snapshotId || '').trim();
   const tid = currentSessionId || sessionId;
   if (!nextId || !tid) return;
@@ -7446,12 +7454,13 @@ const handleSnapshotSetActive = useCallback(async (snapshotId) => {
     applySnapshotMeta(response, { refresh: true, select: true });
     setActiveTab('summary');
     setView('summary');
+    openPlanningReadyAssistant(snapshotLabel || 'Active scorecard');
     showToast('Active scorecard updated.', 'success');
   } catch (err) {
     console.error('[handleSnapshotSetActive] failed', err);
     showToast(err?.message || 'Failed to set active scorecard.', 'error');
   }
-}, [applySnapshotMeta, currentSessionId, sessionId]);
+}, [applySnapshotMeta, currentSessionId, openPlanningReadyAssistant, sessionId, showToast]);
 
 const handleSnapshotRename = useCallback(async (snapshotId, currentLabel) => {
   const nextId = String(snapshotId || '').trim();
@@ -8210,7 +8219,7 @@ onClick={async () => {
                                     className="jas-select-option-action"
                                     onClick={async (event) => {
                                       event.stopPropagation();
-                                      await handleSnapshotSetActive(option.id);
+                                      await handleSnapshotSetActive(option.id, option.label);
                                       setScoreShellMenu(null);
                                     }}
                                     title="Set active"
