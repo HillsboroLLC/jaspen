@@ -96,6 +96,91 @@ STRATEGY_OBJECTIVE_ALIASES = {
     "pipeline": "growth",
 }
 
+OBJECTIVE_SHIFT_KEYWORDS = {
+    "balanced": (
+        "balanced",
+        "tradeoff",
+        "trade-off",
+        "holistic",
+        "transformation",
+        "modernization",
+    ),
+    "cost": (
+        "cost",
+        "budget",
+        "savings",
+        "spend",
+        "margin",
+        "roi",
+        "efficiency",
+        "profitability",
+    ),
+    "speed": (
+        "speed",
+        "timeline",
+        "deadline",
+        "launch",
+        "accelerate",
+        "fast track",
+        "delivery",
+        "time to market",
+    ),
+    "growth": (
+        "growth",
+        "revenue",
+        "retention",
+        "churn",
+        "acquisition",
+        "market share",
+        "pipeline",
+        "expansion",
+    ),
+}
+
+OBJECTIVE_SHIFT_CONTEXT_TERMS = (
+    "project",
+    "initiative",
+    "analysis",
+    "score",
+    "scorecard",
+    "scenario",
+    "execution",
+    "plan",
+    "roadmap",
+    "milestone",
+    "kpi",
+    "metric",
+    "budget",
+    "cost",
+    "revenue",
+    "roi",
+    "ebitda",
+    "cash flow",
+    "timeline",
+    "rollout",
+    "adoption",
+    "wbs",
+    "task",
+    "workflow",
+)
+
+OBJECTIVE_SHIFT_OFFTOPIC_TERMS = (
+    "boyfriend",
+    "girlfriend",
+    "husband",
+    "wife",
+    "dating",
+    "vacation",
+    "birthday",
+    "recipe",
+    "movie",
+    "weather",
+    "pet",
+    "family",
+    "doctor",
+    "relationship",
+)
+
 INTAKE_COMPANY_SIZE_ALIASES = {
     "startup": "startup",
     "start-up": "startup",
@@ -220,6 +305,43 @@ def normalize_strategy_objective(value, default="balanced"):
         return STRATEGY_OBJECTIVE_ALIASES[text]
     compact = text.replace("_", " ").replace("-", " ")
     return STRATEGY_OBJECTIVE_ALIASES.get(compact, default)
+
+
+def _message_contains_term(text, term):
+    if not text or not term:
+        return False
+    pattern = re.escape(str(term).strip().lower()).replace(r"\ ", r"[\s\-_]+")
+    return re.search(rf"(?<!\w){pattern}(?!\w)", text) is not None
+
+
+def _infer_strategy_objective_from_message(user_message):
+    text = str(user_message or "").strip().lower()
+    if not text:
+        return None
+
+    has_context_signal = any(_message_contains_term(text, term) for term in OBJECTIVE_SHIFT_CONTEXT_TERMS)
+    has_offtopic_signal = any(_message_contains_term(text, term) for term in OBJECTIVE_SHIFT_OFFTOPIC_TERMS)
+    if has_offtopic_signal and not has_context_signal:
+        return None
+
+    scores = {objective: 0 for objective in STRATEGY_OBJECTIVE_OPTIONS}
+    for objective, keywords in OBJECTIVE_SHIFT_KEYWORDS.items():
+        for keyword in keywords:
+            if _message_contains_term(text, keyword):
+                scores[objective] += 1
+
+    if not has_context_signal and sum(scores.values()) < 2:
+        return None
+
+    best_objective = max(scores, key=scores.get)
+    best_score = scores.get(best_objective, 0)
+    if best_score <= 0:
+        return None
+
+    top_matches = [objective for objective, value in scores.items() if value == best_score]
+    if len(top_matches) > 1:
+        return None
+    return best_objective
 
 
 def _normalize_company_size(value):
@@ -4891,6 +5013,11 @@ def conversation_start():
         if not objective_supplied:
             requested_objective = intake_objective
             objective_supplied = True
+    inferred_objective = None
+    if not objective_supplied:
+        inferred_objective = _infer_strategy_objective_from_message(user_message)
+        if inferred_objective:
+            requested_objective = inferred_objective
     starter_lever_defaults = _sanitize_lever_defaults(data.get("lever_defaults"))
 
     sessions = load_user_sessions(user_id)
@@ -4913,7 +5040,8 @@ def conversation_start():
     if not isinstance(session.get("shared_with_user_ids"), list):
         session["shared_with_user_ids"] = []
     existing_objective = normalize_strategy_objective(session.get("strategy_objective"))
-    session["strategy_objective"] = requested_objective if objective_supplied else existing_objective
+    should_shift_objective = bool(objective_supplied or inferred_objective)
+    session["strategy_objective"] = requested_objective if should_shift_objective else existing_objective
     if objective_supplied:
         session["objective_explicitly_set"] = True
     elif "objective_explicitly_set" not in session:
@@ -5251,6 +5379,11 @@ def conversation_continue():
         if not objective_supplied:
             requested_objective = intake_objective
             objective_supplied = True
+    inferred_objective = None
+    if not objective_supplied:
+        inferred_objective = _infer_strategy_objective_from_message(user_message)
+        if inferred_objective:
+            requested_objective = inferred_objective
     starter_lever_defaults = _sanitize_lever_defaults(data.get("lever_defaults"))
 
     if not isinstance(session, dict):
@@ -5263,7 +5396,8 @@ def conversation_continue():
     if not isinstance(session.get("shared_with_user_ids"), list):
         session["shared_with_user_ids"] = []
     existing_objective = normalize_strategy_objective(session.get("strategy_objective"))
-    session["strategy_objective"] = requested_objective if objective_supplied else existing_objective
+    should_shift_objective = bool(objective_supplied or inferred_objective)
+    session["strategy_objective"] = requested_objective if should_shift_objective else existing_objective
     if objective_supplied:
         session["objective_explicitly_set"] = True
     elif "objective_explicitly_set" not in session:
