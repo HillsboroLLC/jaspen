@@ -5294,6 +5294,9 @@ const handleSaveStarter = async () => {
       setActiveTab('summary');
       setView('summary');
       openPlanningReadyAssistant(label || 'Scenario');
+      const confirmPrompt = `${label || 'Scenario'} is active. Do you want me to generate a project WBS now?`;
+      setMessages((prev) => [...prev, { role: 'ai', text: confirmPrompt }]);
+      persistSidebarExchange(tid, null, confirmPrompt);
       setPostAdoptWbsPrompt({
         threadBundleId: tid,
         scorecardId: scenarioId,
@@ -6374,11 +6377,12 @@ if (data?.model_type) {
     }
   };
 
-// Persist a user+assistant exchange to the thread so it survives logout/login.
+// Persist a user+assistant exchange (or single-note entry) so it survives logout/login.
 const persistSidebarExchange = async (threadId, userText, assistantText) => {
-  if (!threadId || !userText) return;
+  if (!threadId || (!userText && !assistantText)) return;
   try {
-    const msgs = [{ role: 'user', content: userText }];
+    const msgs = [];
+    if (userText) msgs.push({ role: 'user', content: userText });
     if (assistantText) msgs.push({ role: 'assistant', content: assistantText });
     await Jaspen.appendMessages(threadId, msgs);
   } catch (e) {
@@ -6696,7 +6700,13 @@ const renderPostAdoptWbsPrompt = () => {
           <button
             type="button"
             className="jas-account-secondary-btn"
-            onClick={() => setPostAdoptWbsPrompt(null)}
+            onClick={() => {
+              const payload = postAdoptWbsPrompt;
+              const userReply = 'Not now - I will generate the project WBS later.';
+              setMessages((prev) => [...prev, { role: 'user', text: userReply }]);
+              persistSidebarExchange(payload?.threadBundleId, userReply, null);
+              setPostAdoptWbsPrompt(null);
+            }}
           >
             Not now
           </button>
@@ -6705,6 +6715,9 @@ const renderPostAdoptWbsPrompt = () => {
             className="jas-account-portal-btn"
             onClick={async () => {
               const payload = postAdoptWbsPrompt;
+              const userReply = 'Yes - generate the project WBS now.';
+              setMessages((prev) => [...prev, { role: 'user', text: userReply }]);
+              persistSidebarExchange(payload?.threadBundleId, userReply, null);
               setPostAdoptWbsPrompt(null);
               await handleGenerateAiWbsFromScorecard({
                 threadBundleId: payload?.threadBundleId,
