@@ -383,6 +383,30 @@ def _infer_strategy_objective_from_message(user_message):
     return best_objective
 
 
+def _is_objective_offtopic_turn(user_message):
+    text = str(user_message or "").strip().lower()
+    if not text:
+        return False
+    has_context_signal = any(_message_contains_term(text, term) for term in OBJECTIVE_SHIFT_CONTEXT_TERMS)
+    has_offtopic_signal = any(_message_contains_term(text, term) for term in OBJECTIVE_SHIFT_OFFTOPIC_TERMS)
+    return bool(has_offtopic_signal and not has_context_signal)
+
+
+def _objective_refocus_reply(strategy_objective):
+    objective = normalize_strategy_objective(strategy_objective)
+    next_questions = {
+        "cost": "What cost or ROI decision should we focus on next?",
+        "speed": "What timeline or delivery blocker should we tackle next?",
+        "growth": "What growth outcome should we optimize next?",
+        "balanced": "What project decision should we focus on next?",
+    }
+    next_question = next_questions.get(objective, next_questions["balanced"])
+    return (
+        "I can help best with your current initiative, scorecard, scenarios, and execution plan. "
+        f"{next_question}"
+    )
+
+
 def _classify_turn_complexity(user_message):
     text = str(user_message or "").strip().lower()
     if not text:
@@ -5269,6 +5293,83 @@ def conversation_start():
     session.pop(PENDING_MUTATION_UNDO_KEY, None)
     chat_history.append(_user_chat_entry(user_message, attachments=attachments))
     readiness = _compute_readiness(chat_history, session.get("strategy_objective"))
+    stream_requested = str(request.args.get("stream") or "").strip().lower() in {"1", "true", "yes"}
+    if _is_objective_offtopic_turn(user_message):
+        assistant_reply = _objective_refocus_reply(session.get("strategy_objective"))
+        chat_history.append(_assistant_chat_entry(assistant_reply))
+        assistant_message_index = len(chat_history) - 1
+        session["chat_history"] = chat_history
+        session["name"] = name
+        session["model_type"] = model_selection["model_type"]
+        session["timestamp"] = _iso_now()
+        session["status"] = "in_progress"
+        sessions[thread_id] = session
+        if not save_user_sessions(user_id, sessions):
+            return jsonify({"error": "Failed to persist conversation state"}), 500
+
+        if session_created:
+            _audit_ai_agent_event(
+                "session.created",
+                user=user,
+                details={
+                    "thread_id": thread_id,
+                    "name": name,
+                    "model_type": model_selection["model_type"],
+                    "stream": bool(stream_requested),
+                    "source": "conversation_start",
+                },
+            )
+
+        payload = {
+            "thread_id": thread_id,
+            "session_id": thread_id,
+            "reply": assistant_reply,
+            "message": assistant_reply,
+            "assistant_message_index": assistant_message_index,
+            "model_type": model_selection["model_type"],
+            "allowed_model_types": model_selection["allowed_model_types"],
+            "actions": [],
+            "mutations": [],
+            "tool_results": [],
+            "undo_available": False,
+            "usage": {"provider": "guardrail", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+            "context_budget": get_context_budget(to_public_plan(user.subscription_plan)),
+            "credits": {
+                "charged": 0,
+                "remaining": user.credits_remaining,
+            },
+            "readiness": {
+                "percent": readiness["overall"]["percent"],
+                "categories": readiness["categories"],
+                "items": readiness.get("items", []),
+                "checklist_summary": readiness.get("checklist_summary", {}),
+                "version": readiness.get("version"),
+                "updated_at": _iso_now(),
+            },
+            "status": "gathering_info",
+            "strategy_objective": session.get("strategy_objective") or "balanced",
+            "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
+            "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
+            "organization_id": session.get("organization_id"),
+            "visibility": session.get("visibility") or "private",
+            "objective_options": list(STRATEGY_OBJECTIVE_OPTIONS),
+        }
+        if stream_requested:
+            @stream_with_context
+            def event_stream():
+                yield _sse_payload({"type": "done", **payload})
+
+            return Response(
+                event_stream(),
+                mimetype="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                    "Connection": "keep-alive",
+                },
+            )
+        return jsonify(payload), 200
+
     context_budget = get_context_budget(to_public_plan(user.subscription_plan))
     preflight_token_hint = _preflight_token_hint_for_conversation(
         user_message,
@@ -5283,7 +5384,6 @@ def conversation_start():
     if not credit_reservation["ok"]:
         return jsonify(credit_reservation["payload"]), 402
     reserved_credits = int(credit_reservation["reserved"] or 0)
-    stream_requested = str(request.args.get("stream") or "").strip().lower() in {"1", "true", "yes"}
 
     if stream_requested:
         @stream_with_context
@@ -5639,6 +5739,69 @@ def conversation_continue():
     session.pop(PENDING_MUTATION_UNDO_KEY, None)
     chat_history.append(_user_chat_entry(user_message, attachments=attachments))
     readiness = _compute_readiness(chat_history, session.get("strategy_objective"))
+    stream_requested = str(request.args.get("stream") or "").strip().lower() in {"1", "true", "yes"}
+    if _is_objective_offtopic_turn(user_message):
+        assistant_reply = _objective_refocus_reply(session.get("strategy_objective"))
+        chat_history.append(_assistant_chat_entry(assistant_reply))
+        assistant_message_index = len(chat_history) - 1
+        session["chat_history"] = chat_history
+        session["model_type"] = model_selection["model_type"]
+        session["timestamp"] = _iso_now()
+        session["status"] = "in_progress"
+        sessions[thread_id] = session
+        if not save_user_sessions(user_id, sessions):
+            return jsonify({"error": "Failed to persist conversation state"}), 500
+
+        payload = {
+            "thread_id": thread_id,
+            "session_id": thread_id,
+            "reply": assistant_reply,
+            "message": assistant_reply,
+            "assistant_message_index": assistant_message_index,
+            "model_type": model_selection["model_type"],
+            "allowed_model_types": model_selection["allowed_model_types"],
+            "actions": [],
+            "mutations": [],
+            "tool_results": [],
+            "undo_available": False,
+            "usage": {"provider": "guardrail", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+            "context_budget": get_context_budget(to_public_plan(user.subscription_plan)),
+            "credits": {
+                "charged": 0,
+                "remaining": user.credits_remaining,
+            },
+            "readiness": {
+                "percent": readiness["overall"]["percent"],
+                "categories": readiness["categories"],
+                "items": readiness.get("items", []),
+                "checklist_summary": readiness.get("checklist_summary", {}),
+                "version": readiness.get("version"),
+                "updated_at": _iso_now(),
+            },
+            "status": "gathering_info",
+            "strategy_objective": session.get("strategy_objective") or "balanced",
+            "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
+            "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
+            "organization_id": session.get("organization_id"),
+            "visibility": session.get("visibility") or "private",
+            "objective_options": list(STRATEGY_OBJECTIVE_OPTIONS),
+        }
+        if stream_requested:
+            @stream_with_context
+            def event_stream():
+                yield _sse_payload({"type": "done", **payload})
+
+            return Response(
+                event_stream(),
+                mimetype="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                    "Connection": "keep-alive",
+                },
+            )
+        return jsonify(payload), 200
+
     context_budget = get_context_budget(to_public_plan(user.subscription_plan))
     preflight_token_hint = _preflight_token_hint_for_conversation(
         user_message,
@@ -5653,7 +5816,6 @@ def conversation_continue():
     if not credit_reservation["ok"]:
         return jsonify(credit_reservation["payload"]), 402
     reserved_credits = int(credit_reservation["reserved"] or 0)
-    stream_requested = str(request.args.get("stream") or "").strip().lower() in {"1", "true", "yes"}
 
     if stream_requested:
         @stream_with_context
