@@ -1131,6 +1131,7 @@ const [scenarioOptions, setScenarioOptions] = useState([]);
 const [activeScenarioId, setActiveScenarioId] = useState('baseline');
 const [scenarioDrawerView, setScenarioDrawerView] = useState('assistant');
 const [aiWbsBusy, setAiWbsBusy] = useState(false);
+const [pendingWbsConfirmation, setPendingWbsConfirmation] = useState(null);
   const [scenarioLevers, setScenarioLevers] = useState([]);
   const [leverCatalog, setLeverCatalog] = useState([]);
   const [scenarioOutputMetrics, setScenarioOutputMetrics] = useState([]);
@@ -1151,6 +1152,10 @@ const [aiWbsBusy, setAiWbsBusy] = useState(false);
   const [selectedScorecardId, setSelectedScorecardId] = useState(null);
   const [activeSnapshotId, setActiveSnapshotId] = useState(null);
   const [baselineScorecardId, setBaselineScorecardId] = useState(null);
+
+  useEffect(() => {
+    setPendingWbsConfirmation(null);
+  }, [currentSessionId, sessionId]);
   // Ensure we always have a baseline scorecard id + snapshot once analysisResult exists
   useEffect(() => {
     if (!analysisResult) return;
@@ -6427,6 +6432,8 @@ const sendAIMessage = async () => {
       hasScorecardContext &&
       /\b(wbs|work breakdown|project plan|task plan|task list)\b/.test(lower) &&
       /\b(generate|create|build|draft|recommend|suggest|regenerate|optimiz)\b/.test(lower);
+    const isAffirmativeConfirmation = /^(yes|yep|yeah|confirm|do it|go ahead|generate(?: now)?|create(?: it)?|build(?: it)?|please do|proceed)\b/i.test(text);
+    const isNegativeConfirmation = /^(no|not now|cancel|stop|skip|later|don't|do not)\b/i.test(text);
     const summaryAssistantIntent =
       isScoreWorkspace &&
       aiThreadId &&
@@ -6434,6 +6441,45 @@ const sendAIMessage = async () => {
       !scorecardEditIntent &&
       !scenarioIntent &&
       !wbsIntent;
+
+    if (pendingWbsConfirmation && aiThreadId && pendingWbsConfirmation.threadId === aiThreadId) {
+      if (isNegativeConfirmation) {
+        const notNowReply = 'No problem — I will not generate the project WBS yet. Say "generate execution plan" anytime when you are ready.';
+        setMessages((prev) => [...prev, { role: 'ai', text: notNowReply }]);
+        await persistSidebarExchange(aiThreadId, text, notNowReply);
+        setPendingWbsConfirmation(null);
+        return;
+      }
+      if (isAffirmativeConfirmation) {
+        try {
+          const aiWbs = await Jaspen.generateAiWbs(aiThreadId, {
+            instruction: pendingWbsConfirmation.instruction || 'Generate a recommended project WBS from this scorecard.',
+            commit: true,
+            model_type: selectedModelType,
+            scenario_id: pendingWbsConfirmation.scorecardId || null,
+          });
+          const taskCount = Array.isArray(aiWbs?.project_wbs?.tasks) ? aiWbs.project_wbs.tasks.length : 0;
+          const wbsReply = `Generated an AI project WBS with ${taskCount} tasks. You can now refine it in the project planning views.`;
+          setMessages((prev) => [...prev, { role: 'ai', text: wbsReply }]);
+          await persistSidebarExchange(aiThreadId, text, wbsReply);
+          showToast('AI WBS generated', 'success');
+        } catch (wbsErr) {
+          console.error('[sendAIMessage] confirmed AI WBS generation failed', wbsErr);
+          const failReply = 'I could not generate the project WBS right now. Please try again in a moment.';
+          setMessages((prev) => [...prev, { role: 'ai', text: failReply }]);
+          await persistSidebarExchange(aiThreadId, text, failReply);
+          showToast('Could not generate project WBS', 'error');
+        } finally {
+          setPendingWbsConfirmation(null);
+        }
+        return;
+      }
+
+      const clarificationReply = 'Please confirm with "yes" to generate the project WBS now, or "not now" to skip.';
+      setMessages((prev) => [...prev, { role: 'ai', text: clarificationReply }]);
+      await persistSidebarExchange(aiThreadId, text, clarificationReply);
+      return;
+    }
 
     if (renameMatch && aiThreadId) {
       const nextTitle = String(renameMatch[1] || '').trim().replace(/^["“']|["”']$/g, '');
@@ -6551,31 +6597,21 @@ const sendAIMessage = async () => {
       }
     }
 
-    if (isScoreWorkspace) {
+    if (isScoreWorkspace && !wbsIntent) {
       showToast('Jaspen could not route that scorecard request. Please try again.', 'error');
       return;
     }
 
     if (wbsIntent && aiThreadId) {
-      try {
-        const aiWbs = await Jaspen.generateAiWbs(aiThreadId, {
-          instruction: text,
-          commit: true,
-          model_type: selectedModelType,
-        });
-        const taskCount = Array.isArray(aiWbs?.project_wbs?.tasks) ? aiWbs.project_wbs.tasks.length : 0;
-        const wbsReply = `Generated an AI project WBS with ${taskCount} tasks. You can edit it now from your planning workflow.`;
-        setMessages(prev => [
-          ...prev,
-          { role: 'ai', text: wbsReply },
-        ]);
-        showToast('AI WBS generated', 'success');
-        persistSidebarExchange(aiThreadId, text, wbsReply);
-        return;
-      } catch (wbsErr) {
-        console.error('[sendAIMessage] AI WBS generation failed', wbsErr);
-        showToast('Could not auto-generate WBS from that prompt. Continuing in chat.', 'error');
-      }
+      const confirmPrompt = 'I can generate a full execution plan from this scorecard. Reply "yes" to generate now, or "not now" to skip.';
+      setPendingWbsConfirmation({
+        threadId: aiThreadId,
+        instruction: text,
+        scorecardId: effectiveSelectedScorecardId || null,
+      });
+      setMessages((prev) => [...prev, { role: 'ai', text: confirmPrompt }]);
+      await persistSidebarExchange(aiThreadId, text, confirmPrompt);
+      return;
     }
 
     // 2) Call the endpoint that can return Interactive actions
