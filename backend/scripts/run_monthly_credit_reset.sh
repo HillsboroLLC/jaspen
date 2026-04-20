@@ -2,7 +2,7 @@
 set -euo pipefail
 
 BACKEND_DIR="/home/sekki/sekki-platform/backend"
-LOG_DIR="/var/log/jaspen"
+LOG_DIR="/home/sekki/sekki-platform/backend/logs"
 LOG_FILE="${LOG_DIR}/monthly-credit-reset.log"
 LOCK_FILE="/tmp/jaspen-monthly-credit-reset.lock"
 
