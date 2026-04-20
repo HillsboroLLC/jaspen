@@ -11,10 +11,22 @@ mkdir -p "${LOG_DIR}"
 cd "${BACKEND_DIR}"
 
 if [[ -f ".env" ]]; then
-  # shellcheck disable=SC1091
-  set -a
-  source ".env"
-  set +a
+  # Load only valid KEY=VALUE lines so a malformed shell token in .env
+  # does not crash the scheduled credit reset.
+  while IFS= read -r raw_line || [[ -n "${raw_line}" ]]; do
+    line="${raw_line#"${raw_line%%[![:space:]]*}"}"
+    [[ -z "${line}" || "${line}" == \#* ]] && continue
+    line="${line#export }"
+    [[ "${line}" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] || continue
+    key="${line%%=*}"
+    value="${line#*=}"
+    if [[ "${value}" == \"*\" && "${value}" == *\" ]]; then
+      value="${value:1:${#value}-2}"
+    elif [[ "${value}" == \'*\' && "${value}" == *\' ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+    export "${key}=${value}"
+  done < ".env"
 fi
 
 export FLASK_APP="wsgi:app"
