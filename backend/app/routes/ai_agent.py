@@ -102,8 +102,11 @@ OBJECTIVE_SHIFT_KEYWORDS = {
         "tradeoff",
         "trade-off",
         "holistic",
+        "transform",
         "transformation",
         "modernization",
+        "cross-functional",
+        "cross functional",
     ),
     "cost": (
         "cost",
@@ -114,6 +117,10 @@ OBJECTIVE_SHIFT_KEYWORDS = {
         "roi",
         "efficiency",
         "profitability",
+        "optimize",
+        "optimization",
+        "working capital",
+        "cash conversion",
     ),
     "speed": (
         "speed",
@@ -121,9 +128,12 @@ OBJECTIVE_SHIFT_KEYWORDS = {
         "deadline",
         "launch",
         "accelerate",
+        "acceleration",
         "fast track",
+        "fast-track",
         "delivery",
         "time to market",
+        "time-to-market",
     ),
     "growth": (
         "growth",
@@ -132,8 +142,11 @@ OBJECTIVE_SHIFT_KEYWORDS = {
         "churn",
         "acquisition",
         "market share",
+        "market-share",
         "pipeline",
         "expansion",
+        "scale",
+        "scaling",
     ),
 }
 
@@ -152,13 +165,28 @@ OBJECTIVE_SHIFT_CONTEXT_TERMS = (
     "metric",
     "budget",
     "cost",
+    "margin",
+    "optimize",
+    "optimization",
     "revenue",
+    "retention",
+    "churn",
+    "acquisition",
+    "pipeline",
+    "market share",
+    "scale",
+    "scaling",
     "roi",
     "ebitda",
     "cash flow",
     "timeline",
+    "accelerate",
+    "fast track",
+    "launch",
     "rollout",
     "adoption",
+    "transformation",
+    "modernization",
     "wbs",
     "task",
     "workflow",
@@ -193,6 +221,14 @@ SIMPLE_TURN_PHRASES = (
     "continue",
     "proceed",
     "looks good",
+)
+
+OBJECTIVE_SHIFT_INTENT_PREFIXES = (
+    "focus on",
+    "prioritize",
+    "shift to",
+    "switch to",
+    "optimize for",
 )
 
 COMPLEX_TURN_TERMS = (
@@ -357,6 +393,12 @@ def _infer_strategy_objective_from_message(user_message):
     text = str(user_message or "").strip().lower()
     if not text:
         return None
+
+    for prefix in OBJECTIVE_SHIFT_INTENT_PREFIXES:
+        if prefix in text:
+            for alias, objective in STRATEGY_OBJECTIVE_ALIASES.items():
+                if _message_contains_term(text, alias):
+                    return objective
 
     has_context_signal = any(_message_contains_term(text, term) for term in OBJECTIVE_SHIFT_CONTEXT_TERMS)
     has_offtopic_signal = any(_message_contains_term(text, term) for term in OBJECTIVE_SHIFT_OFFTOPIC_TERMS)
