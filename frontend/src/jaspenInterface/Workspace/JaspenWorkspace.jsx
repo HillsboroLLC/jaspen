@@ -942,6 +942,7 @@ const MFA_ROLLOUT_TARGET_PLANS = new Set(['team', 'enterprise']);
 const MFA_ROLLOUT_DISMISS_KEY_PREFIX = 'jas_mfa_rollout_banner_dismissed_v1';
 const MFA_ROLLOUT_ENFORCE_AT = '2026-12-16T00:00:00Z';
 const MFA_ROLLOUT_NOTICE_DATE_LABEL = 'December 15, 2026';
+const LOW_CREDITS_DISMISS_KEY_PREFIX = 'jas_low_credits_banner_dismissed_v1';
 
 function highestPlanKey(...plans) {
   return plans
@@ -1814,6 +1815,7 @@ useEffect(() => {
   const [billingActionLoading, setBillingActionLoading] = useState('');
   const [billingModalOpen, setBillingModalOpen] = useState(false);
   const [mfaRolloutBannerDismissed, setMfaRolloutBannerDismissed] = useState(false);
+  const [lowCreditsBannerDismissed, setLowCreditsBannerDismissed] = useState(false);
   const [batchIdeasOpen, setBatchIdeasOpen] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [onboardingMode, setOnboardingMode] = useState('entry');
@@ -2088,6 +2090,53 @@ useEffect(() => {
         ? 'Low credits: below 20%. Open billing.'
         : 'View account credits';
   const creditsBadge = creditsRemaining == null ? 'Contracted' : Number(creditsRemaining || 0).toLocaleString();
+  const lowCreditsCycleKey = useMemo(() => {
+    const now = new Date();
+    const y = now.getUTCFullYear();
+    const m = String(now.getUTCMonth() + 1).padStart(2, '0');
+    return `${y}-${m}`;
+  }, []);
+  const lowCreditsDismissStorageKey = useMemo(() => {
+    const owner = String(user?.id || user?.email || '').trim().toLowerCase();
+    if (!owner) return '';
+    return `${LOW_CREDITS_DISMISS_KEY_PREFIX}:${owner}:${lowCreditsCycleKey}`;
+  }, [lowCreditsCycleKey, user?.email, user?.id]);
+  const lowCreditsBannerEligible = useMemo(() => (
+    Boolean(user)
+    && !billingLoading
+    && creditDisplayTier !== 'enterprise'
+    && (creditsTone === 'warning' || creditsTone === 'critical')
+  ), [billingLoading, creditDisplayTier, creditsTone, user]);
+  const lowCreditsBannerToneClass = creditsTone === 'critical' ? 'is-critical' : 'is-warning';
+  const lowCreditsHeadline = creditsTone === 'critical'
+    ? 'Credits are critically low'
+    : 'Credits are running low';
+  const lowCreditsBody = creditsTone === 'critical'
+    ? 'You have less than 5% of your monthly credits remaining. Open Billing to review usage and top up if needed.'
+    : 'You have less than 20% of your monthly credits remaining. Open Billing to review usage and avoid interruptions.';
+  useEffect(() => {
+    if (!lowCreditsDismissStorageKey || !lowCreditsBannerEligible) {
+      setLowCreditsBannerDismissed(false);
+      return;
+    }
+    try {
+      setLowCreditsBannerDismissed(localStorage.getItem(lowCreditsDismissStorageKey) === '1');
+    } catch {
+      setLowCreditsBannerDismissed(false);
+    }
+  }, [lowCreditsDismissStorageKey, lowCreditsBannerEligible]);
+  const dismissLowCreditsBanner = useCallback(() => {
+    if (!lowCreditsDismissStorageKey) {
+      setLowCreditsBannerDismissed(true);
+      return;
+    }
+    try {
+      localStorage.setItem(lowCreditsDismissStorageKey, '1');
+    } catch {
+      // no-op
+    }
+    setLowCreditsBannerDismissed(true);
+  }, [lowCreditsDismissStorageKey]);
   useEffect(() => {
     if (planCategory === 'individual' || !user) {
       setSharedProjects([]);
@@ -8164,6 +8213,34 @@ onClick={async () => {
                 >
                   <FontAwesomeIcon icon={faTimes} />
                 </button>
+              </div>
+            )}
+            {lowCreditsBannerEligible && !lowCreditsBannerDismissed && (
+              <div className={`jas-low-credits-banner ${lowCreditsBannerToneClass}`} role="status" aria-live="polite">
+                <div className="jas-low-credits-banner-copy">
+                  <p className="jas-low-credits-banner-title">
+                    <FontAwesomeIcon icon={faExclamationTriangle} />
+                    <span>{lowCreditsHeadline}</span>
+                  </p>
+                  <p>{lowCreditsBody}</p>
+                </div>
+                <div className="jas-low-credits-banner-actions">
+                  <button
+                    type="button"
+                    className="jas-low-credits-banner-link"
+                    onClick={() => setBillingModalOpen(true)}
+                  >
+                    Open Billing
+                  </button>
+                  <button
+                    type="button"
+                    className="jas-low-credits-banner-dismiss"
+                    onClick={dismissLowCreditsBanner}
+                    aria-label="Dismiss low credits reminder"
+                  >
+                    <FontAwesomeIcon icon={faTimes} />
+                  </button>
+                </div>
               </div>
             )}
             {effectiveIsViewer && sessionId && (
