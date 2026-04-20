@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Jaspen monthly credit reset
+
+[Timer]
+OnCalendar=*-*-01 00:10:00 UTC
+Persistent=true
+Unit=jaspen-credit-reset.service
+
+[Install]
+WantedBy=timers.target
