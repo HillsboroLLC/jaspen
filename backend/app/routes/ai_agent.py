@@ -4908,22 +4908,6 @@ def _promote_batch_idea_to_thread(user, batch, idea, model_selection):
     generated_at = datetime.utcnow().isoformat()
     project_description = _batch_idea_summary_text(idea)
     analysis_credit_cost = int(current_app.config.get("MARKET_IQ_ANALYSIS_CREDIT_COST", 25))
-    if user.credits_remaining is not None and user.credits_remaining < analysis_credit_cost:
-        return None, {
-            "error": "Insufficient credits",
-            "required_credits": analysis_credit_cost,
-            "credits_remaining": user.credits_remaining,
-            "plan_key": to_public_plan(user.subscription_plan),
-            "monthly_credit_limit": get_monthly_credit_limit(user.subscription_plan, current_app.config),
-            "suggestion": "Purchase an overage pack or upgrade your plan.",
-        }, 402
-
-    client = get_llm_client()
-    analysis_result = _generate_jaspen_scorecard(
-        client,
-        project_description,
-        llm_model=model_selection["llm_model"],
-    )
     charged, remaining = consume_credits(user, analysis_credit_cost)
     if not charged:
         return None, {
@@ -4934,6 +4918,18 @@ def _promote_batch_idea_to_thread(user, batch, idea, model_selection):
             "monthly_credit_limit": get_monthly_credit_limit(user.subscription_plan, current_app.config),
             "suggestion": "Purchase an overage pack or upgrade your plan.",
         }, 402
+
+    client = get_llm_client()
+    try:
+        analysis_result = _generate_jaspen_scorecard(
+            client,
+            project_description,
+            llm_model=model_selection["llm_model"],
+        )
+    except Exception:
+        # Refund preflight reservation when generation fails.
+        _release_reserved_credits(user, analysis_credit_cost)
+        raise
     analysis_id = str(uuid.uuid4())
     prior_meta = analysis_result.get("meta") if isinstance(analysis_result.get("meta"), dict) else {}
     analysis = {
