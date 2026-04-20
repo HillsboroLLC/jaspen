@@ -8546,6 +8546,7 @@ onClick={async () => {
   const intakeShellOpen = sidebarState.history || sidebarState.readiness || sidebarState.settings;
   const intakeHasReadinessTab = sessionId && messages.length > 0 && !sidebarState.readiness;
   const showIntakeTopbarUtilities = !sessionId && messages.length === 0;
+  const showTopbarCredits = Boolean(user);
   const showSharedProjectsLanding = !sessionId && messages.length === 0 && planCategory !== 'individual' && (effectiveIsCollaborator || effectiveIsViewer);
   const onboardingState = readOnboardingState(user);
   const shouldShowSetupPrompt = Boolean(
@@ -8836,17 +8837,19 @@ onClick={async () => {
                   <span className="jas-topbar-bell-count">{unreadNotificationCount}</span>
                 )}
               </button>
-              <button
-                type="button"
-                className={`jas-topbar-credits ${creditsTone === 'warning' ? 'is-warning' : ''} ${creditsTone === 'critical' ? 'is-critical' : ''}`.trim()}
-                onClick={() => setBillingModalOpen(true)}
-                title={creditsTitle}
-                aria-label="View credits"
-              >
-                <FontAwesomeIcon icon={faBolt} />
-                <span>{intakeCreditsCompactLabel}</span>
-              </button>
             </>
+          )}
+          {showTopbarCredits && (
+            <button
+              type="button"
+              className={`jas-topbar-credits ${creditsTone === 'warning' ? 'is-warning' : ''} ${creditsTone === 'critical' ? 'is-critical' : ''}`.trim()}
+              onClick={() => setBillingModalOpen(true)}
+              title={creditsTitle}
+              aria-label="View credits"
+            >
+              <FontAwesomeIcon icon={faBolt} />
+              <span>{intakeCreditsCompactLabel}</span>
+            </button>
           )}
         </div>
       </div>
