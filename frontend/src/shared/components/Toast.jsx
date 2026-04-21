@@ -38,7 +38,12 @@ export function ToastContainer({ toasts, onDismiss }) {
       flexDirection: 'column',
       gap: '8px',
       maxWidth: '400px'
-    }}>
+    }}
+      role="status"
+      aria-live="polite"
+      aria-atomic="false"
+      aria-label="Notifications"
+    >
       {toasts.map(toast => (
         <Toast key={toast.id} {...toast} onDismiss={() => onDismiss(toast.id)} />
       ))}

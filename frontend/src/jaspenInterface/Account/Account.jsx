@@ -1643,7 +1643,7 @@ export default function Account() {
           </span>
         </div>
 
-        {message && <p className="account-message">{message}</p>}
+        {message && <p className="account-message" role="status" aria-live="polite">{message}</p>}
 
         {activeTab === 'overview' && (
         <section className="account-section">
@@ -2307,7 +2307,7 @@ export default function Account() {
                   </>
                 )}
               </div>
-              {jiraConfigError && <p className="account-jira-modal-error">{jiraConfigError}</p>}
+              {jiraConfigError && <p className="account-jira-modal-error" role="status" aria-live="polite">{jiraConfigError}</p>}
               <div className="account-jira-modal-actions">
                 <button type="button" className="account-secondary-btn" onClick={() => closeJiraConfigModal(true)} disabled={jiraConfigSaving}>
                   Cancel
@@ -2412,8 +2412,8 @@ export default function Account() {
                 </div>
               </div>
 
-              {mfaState.error && <p className="account-security-error">{mfaState.error}</p>}
-              {mfaState.success && <p className="account-security-success">{mfaState.success}</p>}
+              {mfaState.error && <p className="account-security-error" role="status" aria-live="polite">{mfaState.error}</p>}
+              {mfaState.success && <p className="account-security-success" role="status" aria-live="polite">{mfaState.success}</p>}
 
               {!mfaEnabled && (
                 <div className="account-security-actions">

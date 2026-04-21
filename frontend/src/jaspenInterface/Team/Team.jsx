@@ -706,7 +706,7 @@ export default function Team({ mode = 'team' }) {
       </section>
 
       {(error || notice) && (
-        <div className={`team-state ${error ? 'error' : 'success'}`}>
+        <div className={`team-state ${error ? 'error' : 'success'}`} role="status" aria-live="polite">
           {error || notice}
         </div>
       )}

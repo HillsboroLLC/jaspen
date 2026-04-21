@@ -137,8 +137,8 @@ export default function Activity() {
         />
       </section>
 
-      {loading && <div className="activity-state">Loading activity...</div>}
-      {!loading && error && <div className="activity-state activity-state-error">{error}</div>}
+      {loading && <div className="activity-state" role="status" aria-live="polite">Loading activity...</div>}
+      {!loading && error && <div className="activity-state activity-state-error" role="status" aria-live="polite">{error}</div>}
       {!loading && !error && events.length === 0 && (
         <div className="activity-state">No matching activity events yet.</div>
       )}

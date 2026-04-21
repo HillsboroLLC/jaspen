@@ -692,7 +692,7 @@ export default function JaspenAdmin() {
           </button>
         </div>
 
-        {message && <p className="jas-admin-message">{message}</p>}
+        {message && <p className="jas-admin-message" role="status" aria-live="polite">{message}</p>}
 
         <section className="jas-admin-subsection">
           <div className="jas-admin-section-head">

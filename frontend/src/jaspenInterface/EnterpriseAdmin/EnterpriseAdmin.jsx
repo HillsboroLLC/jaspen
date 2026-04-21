@@ -357,8 +357,8 @@ export default function EnterpriseAdmin() {
         </div>
       </section>
 
-      {!!error && <section className="enterprise-admin-card enterprise-admin-error">{error}</section>}
-      {!!notice && <section className="enterprise-admin-card enterprise-admin-notice">{notice}</section>}
+      {!!error && <section className="enterprise-admin-card enterprise-admin-error" role="status" aria-live="polite">{error}</section>}
+      {!!notice && <section className="enterprise-admin-card enterprise-admin-notice" role="status" aria-live="polite">{notice}</section>}
 
       <section className="enterprise-admin-tabs">
         {TABS.map((tab) => (

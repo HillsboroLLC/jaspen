@@ -565,9 +565,9 @@ export default function ConnectorsManage() {
         <p>Centralized connector management with monitoring, health checks, and sync history.</p>
       </header>
 
-      {loading && <div className="connectors-manage-state">Loading connectors...</div>}
-      {!loading && error && <div className="connectors-manage-state is-error">{error}</div>}
-      {!loading && !error && message && <div className="connectors-manage-state is-success">{message}</div>}
+      {loading && <div className="connectors-manage-state" role="status" aria-live="polite">Loading connectors...</div>}
+      {!loading && error && <div className="connectors-manage-state is-error" role="status" aria-live="polite">{error}</div>}
+      {!loading && !error && message && <div className="connectors-manage-state is-success" role="status" aria-live="polite">{message}</div>}
 
       {!loading && !error && (
         <>

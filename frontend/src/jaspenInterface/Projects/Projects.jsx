@@ -343,8 +343,8 @@ export default function Projects() {
         </button>
       </section>
 
-      {loading && <div className="projects-state">Loading projects...</div>}
-      {!loading && error && <div className="projects-state projects-state-error">{error}</div>}
+      {loading && <div className="projects-state" role="status" aria-live="polite">Loading projects...</div>}
+      {!loading && error && <div className="projects-state projects-state-error" role="status" aria-live="polite">{error}</div>}
       {!loading && !error && filtered.length === 0 && (
         <div className="projects-state">No projects found for this filter.</div>
       )}

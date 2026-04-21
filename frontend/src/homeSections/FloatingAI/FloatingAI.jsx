@@ -456,7 +456,7 @@ const FloatingAI = ({
           </div>
 
           {/* Messages */}
-          <div className={styles.messagesContainer}>
+          <div className={styles.messagesContainer} aria-live="polite" aria-relevant="additions text">
             {messages.map((message) => (
               <div 
                 key={message.id} 
