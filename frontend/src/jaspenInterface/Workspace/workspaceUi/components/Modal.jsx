@@ -80,12 +80,15 @@ export default function Modal({
   onClose,
   title,
   subtitle,
+  ariaLabel,
   children,
   footer,
   className = '',
   ...props
 }) {
+  const modalTitleId = React.useId();
   if (!isOpen) return null;
+  const titleId = title ? modalTitleId : undefined;
 
   return (
     <div
@@ -96,14 +99,21 @@ export default function Modal({
       }}
       {...props}
     >
-      <div className="jas-modal" style={modalStyle}>
+      <div
+        className="jas-modal"
+        style={modalStyle}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-label={title ? undefined : (ariaLabel || 'Dialog')}
+      >
         {/* Header */}
         <div style={headerStyle}>
           <div>
-            {title && <h3 style={titleStyle}>{title}</h3>}
+            {title && <h3 id={titleId} style={titleStyle}>{title}</h3>}
             {subtitle && <div style={subtitleStyle}>{subtitle}</div>}
           </div>
-          <button style={closeStyle} onClick={onClose}>
+          <button type="button" style={closeStyle} onClick={onClose} aria-label="Close dialog">
             <i className="fa-solid fa-xmark" />
           </button>
         </div>

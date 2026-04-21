@@ -7715,10 +7715,12 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       const badgeLabel = id === 'scenario' && isLocked ? 'Essential+' : '';
       return (
       <button
+        type="button"
         className={`jas-top-tab ${activeTab === id ? 'active' : ''} ${isLocked ? 'disabled' : ''}`}
         role="tab"
         aria-selected={activeTab === id}
         aria-disabled={isLocked}
+        tabIndex={activeTab === id ? 0 : -1}
 onClick={async () => {
   if (isLocked) {
     if (id === 'scenario' && effectiveIsViewer) {
@@ -7838,11 +7840,14 @@ onClick={async () => {
     </div>
 
     {isScenarioTab && (
-      <div className="jas-ai-toggle">
+      <div className="jas-ai-toggle" role="tablist" aria-label="Assistant drawer views">
         <button
           type="button"
           className={`jas-ai-toggle-btn ${scenarioDrawerView === 'assistant' ? 'active' : ''}`}
           onClick={() => setScenarioDrawerView('assistant')}
+          role="tab"
+          aria-selected={scenarioDrawerView === 'assistant'}
+          tabIndex={scenarioDrawerView === 'assistant' ? 0 : -1}
         >
           Jaspen
         </button>
@@ -7850,6 +7855,9 @@ onClick={async () => {
           type="button"
           className={`jas-ai-toggle-btn ${scenarioDrawerView === 'scorecard' ? 'active' : ''}`}
           onClick={() => setScenarioDrawerView('scorecard')}
+          role="tab"
+          aria-selected={scenarioDrawerView === 'scorecard'}
+          tabIndex={scenarioDrawerView === 'scorecard' ? 0 : -1}
         >
           Scorecard
         </button>
@@ -8210,7 +8218,7 @@ onClick={async () => {
                     <button
                       type="button"
                       className="jas-select-trigger"
-                      aria-haspopup="menu"
+                      aria-haspopup="listbox"
                       aria-expanded={scoreShellMenu === 'scorecard'}
                       onClick={() => setScoreShellMenu((prev) => (prev === 'scorecard' ? null : 'scorecard'))}
                     >
@@ -8218,7 +8226,7 @@ onClick={async () => {
                       <FontAwesomeIcon icon={faChevronDown} />
                     </button>
                     {scoreShellMenu === 'scorecard' && (
-                      <div className="jas-select-dropdown" role="menu" aria-label="Scorecard views">
+                      <div className="jas-select-dropdown" role="listbox" aria-label="Scorecard views">
                         {(useSnapshotSelect ? snapshotOptions : scoreVariants).map((option) => (
                           <div
                             key={option.id}
@@ -8227,8 +8235,8 @@ onClick={async () => {
                             <button
                               type="button"
                               className={`jas-select-option ${scoreSelectValue === option.id ? 'selected' : ''}`}
-                              role="menuitemradio"
-                              aria-checked={scoreSelectValue === option.id}
+                              role="option"
+                              aria-selected={scoreSelectValue === option.id}
                               onClick={async () => {
                                 if (useSnapshotSelect) {
                                   handleSnapshotSelect(option.id);
@@ -8301,7 +8309,7 @@ onClick={async () => {
                     <button
                       type="button"
                       className="jas-select-trigger"
-                      aria-haspopup="menu"
+                      aria-haspopup="listbox"
                       aria-expanded={scoreShellMenu === 'history'}
                       onClick={() => setScoreShellMenu((prev) => (prev === 'history' ? null : 'history'))}
                     >
@@ -8309,7 +8317,7 @@ onClick={async () => {
                       <FontAwesomeIcon icon={faChevronDown} />
                     </button>
                     {scoreShellMenu === 'history' && (
-                      <div className="jas-select-dropdown" role="menu" aria-label="Completed scores">
+                      <div className="jas-select-dropdown" role="listbox" aria-label="Completed scores">
                         {completedScoreOptions.length === 0 ? (
                           <div className="jas-select-empty">No completed scores yet.</div>
                         ) : (
@@ -8318,7 +8326,8 @@ onClick={async () => {
                               key={option.id}
                               type="button"
                               className="jas-select-option"
-                              role="menuitem"
+                              role="option"
+                              aria-selected="false"
                               onClick={() => {
                                 if (option.result) {
                                   handleSelectAnalysis(option);

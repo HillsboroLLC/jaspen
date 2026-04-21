@@ -45,20 +45,31 @@ export default function Tabs({
   tabs = [],
   activeId,
   onTabChange,
+  tablistLabel = 'Tabs',
   className = '',
   style: customStyle = {},
   ...props
 }) {
   return (
-    <div className={`jas-tab-bar ${className}`} style={{ ...barStyle, ...customStyle }} {...props}>
+    <div
+      className={`jas-tab-bar ${className}`}
+      style={{ ...barStyle, ...customStyle }}
+      role="tablist"
+      aria-label={tablistLabel}
+      {...props}
+    >
       {tabs.map((tab) => {
         const isActive = tab.id === activeId;
         return (
           <button
             key={tab.id}
+            type="button"
             className={`jas-tab ${isActive ? 'active' : ''}`}
             style={{ ...tabBase, ...(isActive ? tabActive : {}) }}
             onClick={() => onTabChange?.(tab.id)}
+            role="tab"
+            aria-selected={isActive}
+            tabIndex={isActive ? 0 : -1}
           >
             {tab.icon && <i className={tab.icon} style={{ marginRight: '6px', fontSize: '0.75rem' }} />}
             {tab.label}

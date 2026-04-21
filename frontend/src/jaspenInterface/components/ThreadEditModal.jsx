@@ -29,6 +29,8 @@ export default function ThreadEditModal({
 
   const [name, setName] = React.useState(initialName || '');
   const [adoptedAnalysisId, setAdoptedAnalysisId] = React.useState(initialAdoptedAnalysisId || '');
+  const titleId = React.useId();
+  const descriptionId = React.useId();
   const nameRef = React.useRef(initialName || '');
   const adoptedAnalysisIdRef = React.useRef(initialAdoptedAnalysisId || '');
   const initialAdoptedAnalysisIdRef = React.useRef(initialAdoptedAnalysisId || '');
@@ -224,15 +226,22 @@ export default function ThreadEditModal({
 
   return (
     <div style={styles.backdrop} onMouseDown={onClose}>
-      <div style={styles.modal} onMouseDown={(e) => e.stopPropagation()}>
+      <div
+        style={styles.modal}
+        onMouseDown={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+      >
         <div style={styles.header}>
           <div>
-            <div style={styles.title}>Edit Analysis</div>
-            <div style={styles.sub}>
+            <div id={titleId} style={styles.title}>Edit Analysis</div>
+            <div id={descriptionId} style={styles.sub}>
               {sessionId ? `Session: ${sessionId}` : ''}
             </div>
           </div>
-          <button style={styles.close} onClick={onClose}>✕</button>
+          <button type="button" style={styles.close} onClick={onClose} aria-label="Close edit analysis dialog">✕</button>
         </div>
 
         {error && <div style={styles.error}>{error}</div>}
@@ -275,10 +284,10 @@ export default function ThreadEditModal({
         </div>
 
         <div style={styles.footer}>
-          <button style={styles.btnSecondary} onClick={onClose} disabled={saving}>
+          <button type="button" style={styles.btnSecondary} onClick={onClose} disabled={saving}>
             Cancel
           </button>
-          <button style={styles.btnPrimary} onClick={doSave} disabled={saving || (!threadId && !sessionId)}>
+          <button type="button" style={styles.btnPrimary} onClick={doSave} disabled={saving || (!threadId && !sessionId)}>
             {saving ? 'Saving…' : 'Save changes'}
           </button>
         </div>
