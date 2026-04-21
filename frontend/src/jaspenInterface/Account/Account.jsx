@@ -1554,6 +1554,10 @@ export default function Account() {
   const mfaPolicy = userProfile?.active_organization_mfa_policy || null;
   const mfaEnabled = Boolean(userProfile?.mfa_enabled);
   const mfaPolicyLabel = mfaPolicy ? mfaPolicy.charAt(0).toUpperCase() + mfaPolicy.slice(1) : 'Optional';
+  const mfaFeedbackDescribedBy = [
+    mfaState.error ? 'account-security-error' : null,
+    mfaState.success ? 'account-security-success' : null,
+  ].filter(Boolean).join(' ') || undefined;
 
   return (
     <div className="account-page">
@@ -1780,7 +1784,8 @@ export default function Account() {
                           data: { ...prev.data, jira_base_url: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                     <label>
                       Jira project key
@@ -1793,7 +1798,8 @@ export default function Account() {
                           data: { ...prev.data, jira_project_key: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                     <label>
                       Jira email
@@ -1806,7 +1812,8 @@ export default function Account() {
                           data: { ...prev.data, jira_email: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                     <label>
                       Jira issue type
@@ -1819,7 +1826,8 @@ export default function Account() {
                           data: { ...prev.data, jira_issue_type: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                     <label className="account-jira-modal-token-field">
                       Jira API token
@@ -1832,7 +1840,8 @@ export default function Account() {
                           data: { ...prev.data, jira_api_token: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                   </>
                 )}
@@ -1849,7 +1858,8 @@ export default function Account() {
                           data: { ...prev.data, workfront_base_url: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                     <label>
                       Project ID
@@ -1862,7 +1872,8 @@ export default function Account() {
                           data: { ...prev.data, workfront_project_id: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                     <label className="account-jira-modal-token-field">
                       Workfront API token
@@ -1875,7 +1886,8 @@ export default function Account() {
                           data: { ...prev.data, workfront_api_token: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                   </>
                 )}
@@ -1892,7 +1904,8 @@ export default function Account() {
                           data: { ...prev.data, smartsheet_base_url: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                     <label>
                       Sheet ID
@@ -1905,7 +1918,8 @@ export default function Account() {
                           data: { ...prev.data, smartsheet_sheet_id: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                     <label className="account-jira-modal-token-field">
                       Smartsheet API token
@@ -1918,7 +1932,8 @@ export default function Account() {
                           data: { ...prev.data, smartsheet_api_token: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                   </>
                 )}
@@ -1935,7 +1950,8 @@ export default function Account() {
                           data: { ...prev.data, salesforce_auth_base_url: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                     <label>
                       Instance URL
@@ -1948,7 +1964,8 @@ export default function Account() {
                           data: { ...prev.data, salesforce_instance_url: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                     <label>
                       Client ID
@@ -1961,7 +1978,8 @@ export default function Account() {
                           data: { ...prev.data, salesforce_client_id: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                     <label className="account-jira-modal-token-field">
                       Client secret
@@ -1974,7 +1992,8 @@ export default function Account() {
                           data: { ...prev.data, salesforce_client_secret: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                     <label className="account-jira-modal-token-field">
                       Refresh token
@@ -1987,7 +2006,8 @@ export default function Account() {
                           data: { ...prev.data, salesforce_refresh_token: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                   </>
                 )}
@@ -2004,7 +2024,8 @@ export default function Account() {
                           data: { ...prev.data, snowflake_account: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                     <label>
                       Warehouse
@@ -2017,7 +2038,8 @@ export default function Account() {
                           data: { ...prev.data, snowflake_warehouse: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                     <label>
                       Database
@@ -2030,7 +2052,8 @@ export default function Account() {
                           data: { ...prev.data, snowflake_database: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                     <label>
                       Schema
@@ -2043,7 +2066,8 @@ export default function Account() {
                           data: { ...prev.data, snowflake_schema: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                     <label>
                       Role
@@ -2056,7 +2080,8 @@ export default function Account() {
                           data: { ...prev.data, snowflake_role: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                     <label>
                       User
@@ -2069,7 +2094,8 @@ export default function Account() {
                           data: { ...prev.data, snowflake_user: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                     <label className="account-jira-modal-token-field">
                       Password
@@ -2082,7 +2108,8 @@ export default function Account() {
                           data: { ...prev.data, snowflake_password: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                     <label className="account-jira-modal-token-field">
                       Private key
@@ -2095,7 +2122,8 @@ export default function Account() {
                           data: { ...prev.data, snowflake_private_key: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                     <label className="account-jira-modal-token-field">
                       Table allowlist
@@ -2108,7 +2136,8 @@ export default function Account() {
                           data: { ...prev.data, snowflake_table_allowlist: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                   </>
                 )}
@@ -2125,7 +2154,8 @@ export default function Account() {
                           data: { ...prev.data, oracle_fusion_base_url: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                     <label>
                       Username
@@ -2138,7 +2168,8 @@ export default function Account() {
                           data: { ...prev.data, oracle_fusion_username: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                     <label className="account-jira-modal-token-field">
                       Password
@@ -2151,7 +2182,8 @@ export default function Account() {
                           data: { ...prev.data, oracle_fusion_password: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                     <label>
                       Business unit
@@ -2164,7 +2196,8 @@ export default function Account() {
                           data: { ...prev.data, oracle_fusion_business_unit: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                   </>
                 )}
@@ -2181,7 +2214,8 @@ export default function Account() {
                           data: { ...prev.data, servicenow_instance_url: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                     <label>
                       Username
@@ -2194,7 +2228,8 @@ export default function Account() {
                           data: { ...prev.data, servicenow_username: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                     <label className="account-jira-modal-token-field">
                       Password
@@ -2207,7 +2242,8 @@ export default function Account() {
                           data: { ...prev.data, servicenow_password: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                     <label className="account-jira-modal-token-field">
                       Table allowlist
@@ -2220,7 +2256,8 @@ export default function Account() {
                           data: { ...prev.data, servicenow_table_allowlist: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                   </>
                 )}
@@ -2237,7 +2274,8 @@ export default function Account() {
                           data: { ...prev.data, netsuite_account_id: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                     <label>
                       Consumer key
@@ -2250,7 +2288,8 @@ export default function Account() {
                           data: { ...prev.data, netsuite_consumer_key: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                     <label className="account-jira-modal-token-field">
                       Consumer secret
@@ -2263,7 +2302,8 @@ export default function Account() {
                           data: { ...prev.data, netsuite_consumer_secret: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                     <label>
                       Token ID
@@ -2276,7 +2316,8 @@ export default function Account() {
                           data: { ...prev.data, netsuite_token_id: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                     <label className="account-jira-modal-token-field">
                       Token secret
@@ -2289,7 +2330,8 @@ export default function Account() {
                           data: { ...prev.data, netsuite_token_secret: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                     <label>
                       REST base URL
@@ -2302,12 +2344,13 @@ export default function Account() {
                           data: { ...prev.data, netsuite_rest_base_url: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                   </>
                 )}
               </div>
-              {jiraConfigError && <p className="account-jira-modal-error" role="status" aria-live="polite">{jiraConfigError}</p>}
+              {jiraConfigError && <p id="account-jira-modal-error" className="account-jira-modal-error" role="status" aria-live="polite">{jiraConfigError}</p>}
               <div className="account-jira-modal-actions">
                 <button type="button" className="account-secondary-btn" onClick={() => closeJiraConfigModal(true)} disabled={jiraConfigSaving}>
                   Cancel
@@ -2412,8 +2455,8 @@ export default function Account() {
                 </div>
               </div>
 
-              {mfaState.error && <p className="account-security-error" role="status" aria-live="polite">{mfaState.error}</p>}
-              {mfaState.success && <p className="account-security-success" role="status" aria-live="polite">{mfaState.success}</p>}
+              {mfaState.error && <p id="account-security-error" className="account-security-error" role="status" aria-live="polite">{mfaState.error}</p>}
+              {mfaState.success && <p id="account-security-success" className="account-security-success" role="status" aria-live="polite">{mfaState.success}</p>}
 
               {!mfaEnabled && (
                 <div className="account-security-actions">
@@ -2470,6 +2513,7 @@ export default function Account() {
                       value={mfaState.code}
                       onChange={(e) => setMfaState((prev) => ({ ...prev, code: e.target.value }))}
                       placeholder="123456"
+                      aria-describedby={mfaFeedbackDescribedBy}
                     />
                   </label>
                   <button
@@ -2505,12 +2549,14 @@ export default function Account() {
                         placeholder="Current password"
                         value={mfaState.disablePassword}
                         onChange={(e) => setMfaState((prev) => ({ ...prev, disablePassword: e.target.value }))}
+                        aria-describedby={mfaFeedbackDescribedBy}
                       />
                       <input
                         type="text"
                         placeholder="MFA code"
                         value={mfaState.disableCode}
                         onChange={(e) => setMfaState((prev) => ({ ...prev, disableCode: e.target.value }))}
+                        aria-describedby={mfaFeedbackDescribedBy}
                       />
                     </div>
                     <button
