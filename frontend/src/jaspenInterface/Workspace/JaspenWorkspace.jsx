@@ -1438,7 +1438,6 @@ const refreshBundle = async (tid) => {
       setMessages(bundleMessages);
     }
   } catch (e) {
-    console.debug('[refreshBundle] skipped', e);
     showToast(e?.message || 'Unable to refresh thread bundle.', 'error');
   } finally {
     setBundleLoading(false);
@@ -1456,7 +1455,6 @@ const refreshThreadWbs = useCallback(async (tid) => {
     setThreadWbs(nextWbs);
     return nextWbs;
   } catch (e) {
-    console.debug('[refreshThreadWbs] skipped', e);
     showToast(e?.message || 'Unable to refresh execution plan.', 'error');
     return null;
   } finally {
@@ -3814,7 +3812,6 @@ async function loadSessionById(id) {
       readiness: raw.readiness ? normalizeReadiness(raw.readiness) : normalizeReadiness(null),
     };
   } catch (e) {
-    console.debug('[loadSessionById] failed', e);
     return null;
   }
 }
@@ -3991,7 +3988,6 @@ useEffect(() => {
             objective_explicitly_set: false,
           };
         } catch (e) {
-          console.debug('[auto-restore] bundle fallback failed', e);
         }
       }
 
@@ -3999,7 +3995,6 @@ useEffect(() => {
         try {
           restoreBundle = await Jaspen.getThreadBundle(sid, { msg_limit: 50, scn_limit: 50 });
         } catch (e) {
-          console.debug('[auto-restore] bundle hydrate skipped', e);
         }
       }
 
@@ -4202,8 +4197,6 @@ if (rawHistory.length > 0) {
   // Fetch readiness snapshot (percent + categories) for a given session id
   // RETURNS the audit payload for immediate use in persistence
 async function fetchReadinessFor(sid) {
-  console.log('[fetchReadinessFor] ENTRY', { sid, currentSessionId, sessionId });
-
   if (!sid) {
     console.warn('[fetchReadinessFor] ABORT - no sid provided');
     return null;
@@ -4212,7 +4205,6 @@ async function fetchReadinessFor(sid) {
   try {
     const apiBase = API_BASE;
     const url = `${apiBase}/api/v1/ai-agent/readiness/audit?thread_id=${encodeURIComponent(sid)}`;
-    console.log('[fetchReadinessFor] fetching URL:', url);
 
     const res = await fetch(url, {
       method: 'GET',
@@ -4223,11 +4215,9 @@ async function fetchReadinessFor(sid) {
       },
     });
 
-    console.log('[fetchReadinessFor] response status:', res.status);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
     const auditPayload = await res.json();
-    console.log('[fetchReadinessFor] RAW auditPayload:', JSON.stringify(auditPayload, null, 2));
 
     const overall = {
       percent: Number(auditPayload?.overall?.percent ?? auditPayload?.percent ?? 0),
@@ -4235,13 +4225,6 @@ async function fetchReadinessFor(sid) {
       heur_overall: Number(auditPayload?.overall?.heur_overall ?? auditPayload?.heur_overall ?? 0),
     };
     const pct = Math.max(0, Math.min(100, Math.round(overall.percent || 0)));
-
-    console.log('[fetchReadinessFor] PARSED', {
-      raw_overall_percent: auditPayload?.overall?.percent,
-      raw_percent: auditPayload?.percent,
-      computed_pct: pct,
-      categories_count: auditPayload?.categories?.length,
-    });
 
     const categories = Array.isArray(auditPayload?.categories) ? auditPayload.categories : [];
     const items = Array.isArray(auditPayload?.items) ? auditPayload.items : [];
@@ -4251,7 +4234,6 @@ async function fetchReadinessFor(sid) {
     const version = auditPayload?.version || null;
 
     const newAudit = { overall: { ...overall, percent: pct }, categories, items, checklist_summary, version };
-    console.log('[fetchReadinessFor] calling setReadinessAudit with:', newAudit);
     setReadinessAudit(newAudit);
     setReadinessSource(overall.source);
     setReadinessVersion(version);
@@ -4321,16 +4303,6 @@ const hasConversationMessages = Array.isArray(messages)
 const uiReadiness = hasConversationMessages && readinessAudit?.overall?.percent != null
   ? clampPercent(readinessAudit.overall.percent)
   : 0;
-
-// DEBUG: Track readinessAudit state changes
-useEffect(() => {
-  console.log('[DEBUG] readinessAudit STATE CHANGED:', {
-    readinessAudit,
-    uiReadiness,
-    overall_percent: readinessAudit?.overall?.percent,
-    categories_count: readinessAudit?.categories?.length,
-  });
-}, [readinessAudit, uiReadiness]);
 
 // Readiness gate (use backend overall.percent via uiReadiness)
 const canAnalyze = React.useMemo(() => {
@@ -4811,7 +4783,6 @@ useEffect(() => {
   // === Conversation Start ===
   // Flow: Call Jaspen.convoStart → set session → await audit → append message → save
   async function startConversation(description, options = {}) {
-    console.log('[startConversation] ENTRY', { description: description?.substring(0, 50) });
     setBusy(true); setError(null);
 
     // Clear old readiness immediately to show 0% for new conversation
@@ -4847,24 +4818,16 @@ useEffect(() => {
       setBusy(false);
       const data = await dataPromise;
 
-      console.log('[startConversation] convoStart returned:', {
-        thread_id: data.thread_id,
-        session_id: data.session_id,
-        readiness: data.readiness,
-      });
-
       // Step 2: Set sessionId (must use real thread_id/session_id from backend)
       const sid = data.thread_id || data.session_id;
       if (!sid) {
         throw new Error('Missing thread_id from convoStart response');
       }
-      console.log('[startConversation] setting sessionId to:', sid);
       setSessionId(sid);
       setCurrentSessionId(sid);
       dispatchSidebar({ type: "OPEN_READINESS" });
 
       // Step 3: await GET /api/v1/readiness/audit (authoritative)
-      console.log('[startConversation] calling fetchReadinessFor with sid:', sid);
       await fetchReadinessFor(sid);
       
       if (data?.model_type) {
@@ -4898,13 +4861,6 @@ useEffect(() => {
   // === Conversation Continue ===
   // Flow: Call Jaspen.convoContinue → append message → await audit → persist using returned payload
 async function continueConversation(userText, options = {}) {
-  console.log('[continueConversation] ENTRY', {
-    sessionId,
-    currentSessionId,
-    userText: userText?.substring(0, 50),
-    messagesCount: messages?.length,
-  });
-
   if (!sessionId) {
     console.warn('[continueConversation] ABORT - no sessionId');
     return null;
@@ -4913,20 +4869,12 @@ async function continueConversation(userText, options = {}) {
   setError(null);
 
   try {
-    console.log('[continueConversation] calling Jaspen.streamConversation with session_id:', sessionId);
-
     const data = await streamConversationReply({
       threadId: sessionId,
       userText,
       modelType: selectedModelType,
       objective: strategyObjective,
       attachments: Array.isArray(options.attachments) ? options.attachments : [],
-    });
-
-    console.log('[continueConversation] convoContinue returned:', {
-      hasReply: Boolean(data?.reply || data?.message),
-      readinessFromConvo: data?.readiness,
-      thread_id_in_response: data?.thread_id,
     });
 
     if (data?.model_type) {
@@ -4936,16 +4884,8 @@ async function continueConversation(userText, options = {}) {
     setObjectiveExplicitlySet(Boolean(data?.objective_explicitly_set) || objectiveExplicitlySet);
     await applyMutationRefreshes(data, sessionId);
 
-    console.log('[continueConversation] about to call fetchReadinessFor with sessionId:', sessionId);
-
     // Step 3: await GET /api/v1/readiness/audit
     const auditPayload = await fetchReadinessFor(sessionId);
-
-    console.log('[continueConversation] fetchReadinessFor returned auditPayload:', {
-      hasAudit: Boolean(auditPayload),
-      overall_percent: auditPayload?.overall?.percent,
-      categories_count: auditPayload?.categories?.length,
-    });
 
     const updatedCollected = data?.collected_data || collectedData;
     setCollectedData(updatedCollected);
@@ -4959,8 +4899,6 @@ async function continueConversation(userText, options = {}) {
         ? auditPayload.checklist_summary
         : null;
       const version = auditPayload?.version || null;
-
-      console.log('[continueConversation] setting readinessAudit with pct:', pct);
 
       setReadinessAudit({
         overall: { ...auditPayload.overall, percent: pct },
@@ -5315,7 +5253,7 @@ const handleSaveStarter = async () => {
     if (refresh) {
       const tid = currentSessionId || sessionId;
       if (tid) {
-        refreshBundle(tid).catch((err) => console.debug('[applySnapshotMeta] refreshBundle failed', err));
+        refreshBundle(tid).catch(() => {});
       }
     }
   }, [analysisResult, baselineScorecardId, bundleBaselineScorecard, currentSessionId, refreshBundle, sessionId]);
@@ -7530,7 +7468,7 @@ const handleScenarioSaved = useCallback((payload = {}) => {
   // across refresh/logout. The optimistic update above keeps the UI snappy.
   const tid = currentSessionId || sessionId;
   if (tid) {
-    refreshBundle(tid).catch((err) => console.debug('[handleScenarioSaved] refreshBundle failed', err));
+    refreshBundle(tid).catch(() => {});
   }
 }, [currentSessionId, refreshBundle, sessionId]);
 
@@ -7640,16 +7578,6 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
     }
   };
 
-  // Debug readiness state
-  useEffect(() => {
-    console.log('[JAS readiness debug]', {
-      sessionId,
-      uiReadiness,
-      audit_percent: readinessAudit?.overall?.percent,
-    });
-  }, [sessionId, uiReadiness, readinessAudit]);
-
-
   // =========================
   // ====== WORKSPACE TABS ===
   // =========================
@@ -7721,12 +7649,6 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
           scorecardSnapshots,
           sessionId,
         });
-    // DEBUG: trace why baseline may be missing from dropdown
-    console.log('[ScoreDropdown] scorecardSnapshots:', scorecardSnapshots?.length, scorecardSnapshots?.map(s => ({ id: s?.id?.slice?.(0,8), label: s?.label, isBaseline: s?.isBaseline })));
-    console.log('[ScoreDropdown] mergedScoreWorkspaceSnapshots:', mergedScoreWorkspaceSnapshots?.length, mergedScoreWorkspaceSnapshots?.map(s => ({ id: s?.id?.slice?.(0,8), label: s?.label, isBaseline: s?.isBaseline })));
-    console.log('[ScoreDropdown] mergedSnapshots:', mergedSnapshots?.length, mergedSnapshots?.map(s => ({ id: s?.id?.slice?.(0,8), label: s?.label, isBaseline: s?.isBaseline })));
-    console.log('[ScoreDropdown] baselineScorecardId:', baselineScorecardId?.slice?.(0,8), 'effectiveSelectedScorecardId:', effectiveSelectedScorecardId?.slice?.(0,8));
-    console.log('[ScoreDropdown] analysisResult._baseline_scorecard?', Boolean(analysisResult?._baseline_scorecard), 'bundleBaselineScorecard?', Boolean(bundleBaselineScorecard));
     const snapshotOptions = mergedSnapshots.length > 0
       ? [...mergedSnapshots]
           .sort((a, b) => {
@@ -7749,7 +7671,6 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
             canDelete: !Boolean(snap?.isBaseline),
           }))
       : [];
-    console.log('[ScoreDropdown] snapshotOptions:', JSON.stringify(snapshotOptions));
     const useSnapshotSelect = snapshotOptions.length > 0;
     const resolvedScoreSelectValue = String(
       activeScorecardId ||
@@ -7825,24 +7746,6 @@ onClick={async () => {
       </button>
       );
     };
-
-    if (process.env.NODE_ENV === "development" && scoreWorkspaceMode === 'summary') {
-      const activeAnalysis = activeScorecard;
-      console.log('[ScoreDashboard activeAnalysis]', {
-        activeAnalysisName: 'activeScorecard',
-        activeAnalysisKeys: Object.keys(activeAnalysis || {}),
-        scoresKeys: Object.keys(activeAnalysis?.scores || {}),
-        financialImpactKeys: Object.keys(activeAnalysis?.financial_impact || {}),
-        sections: {
-          decision_framework: Boolean(activeAnalysis?.decision_framework),
-          investment_analysis: Boolean(activeAnalysis?.investment_analysis),
-          npv_irr_analysis: Boolean(activeAnalysis?.npv_irr_analysis),
-          valuation: Boolean(activeAnalysis?.valuation),
-          before_after_financials: Boolean(activeAnalysis?.before_after_financials),
-          metrics: Boolean(activeAnalysis?.metrics),
-        },
-      });
-    }
 
     return (
       <div className={`jas jas-shell ${shellOpen ? 'drawer-open' : ''}`}>

@@ -28,6 +28,7 @@ import TutorialsPage from './pages/Resources/TutorialsPage';
 import IntegrationsPage from './pages/Resources/IntegrationsPage';
 import ConnectorsPage from './pages/Resources/ConnectorsPage';
 import PluginsPage from './pages/Resources/PluginsPage';
+import NotFoundPage from './pages/NotFound/NotFound';
 
 // Jaspen
 import PricingResult from './jaspenInterface/PricingResult/PricingResult';
@@ -47,7 +48,6 @@ import EnterpriseAdmin from './jaspenInterface/EnterpriseAdmin/EnterpriseAdmin';
 
 // Jaspen.ai Workspace
 import JaspenWorkspace from './jaspenInterface/Workspace/JaspenWorkspace';
-console.log("[BOOT] App.js loaded", window.location.href);
 export default function App() {
   const getDisplayName = (node) =>
     node?.type?.displayName || node?.type?.name || 'Page';
@@ -224,7 +224,7 @@ export default function App() {
         />
         <Route path="/payment"   element={<ProtectedRoute>{withShell(<PaymentPage />)}</ProtectedRoute>} />
 
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={withShell(<NotFoundPage />, { title: 'Page not found', showHeader: false, fullBleed: true, noPadding: true })} />
       </Routes>
     </BrowserRouter>
   );
