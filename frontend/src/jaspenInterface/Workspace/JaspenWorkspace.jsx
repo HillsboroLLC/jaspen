@@ -7762,7 +7762,11 @@ onClick={async () => {
       >
         <div className="jas-sidebar-header">
           <h3 id="jas-workspace-settings-title">User Settings</h3>
-          <button className="jas-sidebar-close" onClick={() => dispatchSidebar({ type: 'CLOSE_SETTINGS' })}>
+          <button
+            className="jas-sidebar-close"
+            onClick={() => dispatchSidebar({ type: 'CLOSE_SETTINGS' })}
+            aria-label="Close user settings"
+          >
             <FontAwesomeIcon icon={faTimes} />
           </button>
         </div>
@@ -7828,7 +7832,7 @@ onClick={async () => {
       <div className="jas-ai-title">
         <span>Jaspen</span>
       </div>
-      <button className="jas-close-btn" onClick={toggleAIDrawer}>
+      <button className="jas-close-btn" onClick={toggleAIDrawer} aria-label="Close assistant drawer">
         <FontAwesomeIcon icon={faTimes} />
       </button>
     </div>
@@ -8020,7 +8024,7 @@ onClick={async () => {
                 }
               }}
             />
-            <button className="jas-ai-send-btn" onClick={sendAIMessage}>
+            <button className="jas-ai-send-btn" onClick={sendAIMessage} aria-label="Send assistant message">
               <FontAwesomeIcon icon={faPaperPlane} />
             </button>
           </div>
@@ -8620,7 +8624,11 @@ onClick={async () => {
       >
         <div className="jas-sidebar-header">
           <h3 id="jas-intake-readiness-title">Analysis Readiness</h3>
-          <button className="jas-sidebar-close" onClick={() => dispatchSidebar({ type: 'CLOSE_READINESS' })}>
+          <button
+            className="jas-sidebar-close"
+            onClick={() => dispatchSidebar({ type: 'CLOSE_READINESS' })}
+            aria-label="Close analysis readiness"
+          >
             <FontAwesomeIcon icon={faTimes} />
           </button>
         </div>
@@ -8699,7 +8707,11 @@ onClick={async () => {
               {clearingHistory ? 'Clearing…' : 'Clear'}
             </button>
             <h3 id="jas-intake-history-title">Analysis History</h3>
-            <button className="jas-sidebar-close" onClick={() => dispatchSidebar({ type: 'CLOSE_HISTORY' })}>
+            <button
+              className="jas-sidebar-close"
+              onClick={() => dispatchSidebar({ type: 'CLOSE_HISTORY' })}
+              aria-label="Close analysis history"
+            >
               <FontAwesomeIcon icon={faTimes} />
             </button>
           </div>
@@ -8767,7 +8779,11 @@ onClick={async () => {
       >
         <div className="jas-sidebar-header">
           <h3 id="jas-intake-settings-title">User Settings</h3>
-          <button className="jas-sidebar-close" onClick={() => dispatchSidebar({ type: 'CLOSE_SETTINGS' })}>
+          <button
+            className="jas-sidebar-close"
+            onClick={() => dispatchSidebar({ type: 'CLOSE_SETTINGS' })}
+            aria-label="Close user settings"
+          >
             <FontAwesomeIcon icon={faTimes} />
           </button>
         </div>
@@ -9160,7 +9176,7 @@ onClick={async () => {
           <div className="jas-help-content">
             <div className="jas-help-header">
               <h3>Help & Support</h3>
-              <button className="jas-help-close" onClick={() => setHelpOpen(false)}>
+              <button className="jas-help-close" onClick={() => setHelpOpen(false)} aria-label="Close help">
                 <FontAwesomeIcon icon={faTimes} />
               </button>
             </div>
@@ -9212,7 +9228,7 @@ onClick={async () => {
                 placeholder="Ask a question..."
                 disabled={helpLoading}
               />
-              <button onClick={sendHelpMessage} disabled={helpLoading || !helpInput.trim()}>
+              <button onClick={sendHelpMessage} disabled={helpLoading || !helpInput.trim()} aria-label="Send help message">
                 <FontAwesomeIcon icon={faPaperPlane} />
               </button>
             </div>

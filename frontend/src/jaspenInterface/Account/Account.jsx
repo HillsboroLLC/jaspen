@@ -1579,6 +1579,7 @@ export default function Account() {
                   type="button"
                   className={`account-sidebar-item ${activeTab === item.key ? 'is-active' : ''}`}
                   onClick={() => setActiveTab(item.key)}
+                  aria-label={item.label}
                   title={sidebarCollapsed ? item.label : undefined}
                 >
                   <span className="account-sidebar-icon">
