@@ -13,6 +13,24 @@ body {
   background-color: #FFFFFF;
 }
 
+.app-skip-link {
+  position: absolute;
+  left: 16px;
+  top: -48px;
+  z-index: 2000;
+  padding: 10px 14px;
+  border-radius: 8px;
+  text-decoration: none;
+  font-weight: 600;
+  color: #161f3b;
+  background: #ffffff;
+  border: 2px solid #161f3b;
+}
+
+.app-skip-link:focus {
+  top: 16px;
+}
+
 .container {
   max-width: 1200px;
   margin: 0 auto;
