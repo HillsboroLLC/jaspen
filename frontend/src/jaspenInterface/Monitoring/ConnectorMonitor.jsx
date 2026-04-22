@@ -244,7 +244,7 @@ export default function ConnectorMonitor({ selectedThreadId = '', onResynced = n
                   <div className="connector-monitor-actions">
                     <button
                       type="button"
-                      disabled={!canResync || busyConnectorId === connector.id}
+                      disabled={!canResync || busyConnectorId === connector.id} aria-disabled={!canResync || busyConnectorId === connector.id}
                       onClick={() => triggerResync(connector)}
                     >
                       {busyConnectorId === connector.id ? 'Re-syncing...' : 'Re-sync Now'}

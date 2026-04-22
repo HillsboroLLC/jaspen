@@ -440,10 +440,10 @@ export default function EnterpriseAdmin() {
           {!!ssoTestMessage && <div className="enterprise-helper">{ssoTestMessage}</div>}
 
           <div className="enterprise-actions">
-            <button type="button" className="secondary" onClick={testSsoConnection} disabled={busy}>
+            <button type="button" className="secondary" onClick={testSsoConnection} disabled={busy} aria-disabled={busy}>
               Test Connection
             </button>
-            <button type="button" className="primary" onClick={saveSsoSettings} disabled={busy}>
+            <button type="button" className="primary" onClick={saveSsoSettings} disabled={busy} aria-disabled={busy}>
               Save Configuration
             </button>
           </div>
@@ -517,7 +517,7 @@ export default function EnterpriseAdmin() {
           </div>
 
           <div className="enterprise-actions">
-            <button type="button" className="primary" onClick={saveGovernanceSettings} disabled={busy}>
+            <button type="button" className="primary" onClick={saveGovernanceSettings} disabled={busy} aria-disabled={busy}>
               Save Settings
             </button>
           </div>
@@ -528,7 +528,7 @@ export default function EnterpriseAdmin() {
         <section className="enterprise-admin-panel enterprise-admin-card">
           <header className="enterprise-panel-head">
             <h2>Audit Log</h2>
-            <button type="button" className="secondary" onClick={onRefreshAudit} disabled={auditLoading}>
+            <button type="button" className="secondary" onClick={onRefreshAudit} disabled={auditLoading} aria-disabled={auditLoading}>
               {auditLoading ? 'Refreshing…' : 'Refresh'}
             </button>
           </header>
@@ -564,7 +564,7 @@ export default function EnterpriseAdmin() {
           </div>
 
           <div className="enterprise-actions">
-            <button type="button" className="secondary" onClick={onRefreshAudit} disabled={auditLoading}>
+            <button type="button" className="secondary" onClick={onRefreshAudit} disabled={auditLoading} aria-disabled={auditLoading}>
               Apply Filters
             </button>
           </div>

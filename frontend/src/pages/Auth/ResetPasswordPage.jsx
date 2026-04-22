@@ -101,7 +101,7 @@ export default function ResetPasswordPage() {
             placeholder="Confirm your new password"
           />
 
-          <button type="submit" className="reset-password-submit" disabled={submitDisabled || !token}>
+          <button type="submit" className="reset-password-submit" disabled={submitDisabled || !token} aria-disabled={submitDisabled || !token}>
             {status === 'sending' ? 'Updating password…' : 'Update password'}
           </button>
         </form>

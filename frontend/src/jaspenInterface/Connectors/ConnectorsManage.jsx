@@ -648,9 +648,9 @@ export default function ConnectorsManage() {
                       <p>{selectedConnector.description}</p>
                     </div>
                     <div className="connector-detail-actions">
-                      <button type="button" onClick={testConnection} disabled={busy}><FontAwesomeIcon icon={faFlask} /> Test Connection</button>
-                      <button type="button" onClick={syncNow} disabled={busy}><FontAwesomeIcon icon={faRotate} /> Sync Now</button>
-                      <button type="button" onClick={saveConnector} disabled={busy}><FontAwesomeIcon icon={faServer} /> Save Settings</button>
+                      <button type="button" onClick={testConnection} disabled={busy} aria-disabled={busy}><FontAwesomeIcon icon={faFlask} /> Test Connection</button>
+                      <button type="button" onClick={syncNow} disabled={busy} aria-disabled={busy}><FontAwesomeIcon icon={faRotate} /> Sync Now</button>
+                      <button type="button" onClick={saveConnector} disabled={busy} aria-disabled={busy}><FontAwesomeIcon icon={faServer} /> Save Settings</button>
                     </div>
                   </header>
 

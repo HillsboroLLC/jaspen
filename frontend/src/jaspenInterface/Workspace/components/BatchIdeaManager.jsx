@@ -277,12 +277,12 @@ export default function BatchIdeaManager({
                 <span><FontAwesomeIcon icon={faCloudArrowUp} /> Choose CSV or XLSX</span>
               </label>
               <span className="jas-batch-file-name">{selectedFile?.name || batch?.filename || 'No file selected'}</span>
-              <button type="button" className="jas-ai-mini-btn primary" onClick={handleUpload} disabled={uploading || !selectedFile}>
+              <button type="button" className="jas-ai-mini-btn primary" onClick={handleUpload} disabled={uploading || !selectedFile} aria-disabled={uploading || !selectedFile}>
                 <FontAwesomeIcon icon={uploading ? faSpinner : faCloudArrowUp} spin={uploading} />
                 <span>{uploading ? 'Uploading…' : 'Upload Ideas'}</span>
               </button>
               {batch?.batch_id && (
-                <button type="button" className="jas-ai-mini-btn secondary" onClick={handleRank} disabled={ranking}>
+                <button type="button" className="jas-ai-mini-btn secondary" onClick={handleRank} disabled={ranking} aria-disabled={ranking}>
                   <FontAwesomeIcon icon={ranking ? faSpinner : faWandMagicSparkles} spin={ranking} />
                   <span>{ranking ? 'Ranking…' : 'Rank Ideas'}</span>
                 </button>
@@ -292,7 +292,7 @@ export default function BatchIdeaManager({
                   type="button"
                   className="jas-ai-mini-btn secondary"
                   onClick={handlePromoteAll}
-                  disabled={promotingAll || !canPromoteBatchIdeas}
+                  disabled={promotingAll || !canPromoteBatchIdeas} aria-disabled={promotingAll || !canPromoteBatchIdeas}
                   title={canPromoteBatchIdeas ? 'Promote the next 10 ready ideas' : 'Only creators and admins can promote ideas into projects'}
                 >
                   <FontAwesomeIcon icon={promotingAll ? faSpinner : faArrowUpRightFromSquare} spin={promotingAll} />
@@ -346,7 +346,7 @@ export default function BatchIdeaManager({
                                 type="button"
                                 className="jas-ai-mini-btn primary"
                                 onClick={() => handlePromoteIdea(idea)}
-                                disabled={!idea.scoreable || isBusy || !canPromoteBatchIdeas}
+                                disabled={!idea.scoreable || isBusy || !canPromoteBatchIdeas} aria-disabled={!idea.scoreable || isBusy || !canPromoteBatchIdeas}
                                 title={canPromoteBatchIdeas ? 'Promote this idea into its own project thread' : 'Only creators and admins can promote ideas into projects'}
                               >
                                 <FontAwesomeIcon icon={isBusy ? faSpinner : faArrowUpRightFromSquare} spin={isBusy} />
@@ -380,7 +380,7 @@ export default function BatchIdeaManager({
                                 />
                               </label>
                             ))}
-                            <button type="button" className="jas-ai-mini-btn secondary" onClick={() => handleClarify(idea)} disabled={isBusy}>
+                            <button type="button" className="jas-ai-mini-btn secondary" onClick={() => handleClarify(idea)} disabled={isBusy} aria-disabled={isBusy}>
                               <FontAwesomeIcon icon={isBusy ? faSpinner : faWandMagicSparkles} spin={isBusy} />
                               <span>Save Clarifications</span>
                             </button>

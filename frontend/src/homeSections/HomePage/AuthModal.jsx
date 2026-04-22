@@ -305,7 +305,7 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
         <button
           type="submit"
           className="jaspen-btn jaspen-btn-primary auth-modal-submit"
-          disabled={status === 'sending' || status === 'sent' || !mfaCode.trim()}
+          disabled={status === 'sending' || status === 'sent' || !mfaCode.trim()} aria-disabled={status === 'sending' || status === 'sent' || !mfaCode.trim()}
         >
           {status === 'sending' ? 'Verifying...' : 'Verify'}
         </button>
@@ -368,7 +368,7 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
         <button
           type="submit"
           className="jaspen-btn jaspen-btn-primary auth-modal-submit"
-          disabled={status === 'sending' || mfaCode.trim().length < 6}
+          disabled={status === 'sending' || mfaCode.trim().length < 6} aria-disabled={status === 'sending' || mfaCode.trim().length < 6}
         >
           {status === 'sending' ? 'Verifying...' : 'Verify and enable MFA'}
         </button>
@@ -476,7 +476,7 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
           <button
             type="submit"
             className="jaspen-btn jaspen-btn-primary auth-modal-submit"
-            disabled={status === 'sending' || status === 'sent'}
+            disabled={status === 'sending' || status === 'sent'} aria-disabled={status === 'sending' || status === 'sent'}
           >
             {status === 'sending'
               ? (isForgotMode ? 'Sending reset link...' : 'Signing in...')

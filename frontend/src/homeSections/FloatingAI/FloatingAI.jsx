@@ -540,7 +540,7 @@ const FloatingAI = ({
             />
             <button 
               onClick={handleSendMessage}
-              disabled={!inputMessage.trim() || isTyping}
+              disabled={!inputMessage.trim() || isTyping} aria-disabled={!inputMessage.trim() || isTyping}
               className={styles.sendBtn}
               aria-label="Send message"
             >

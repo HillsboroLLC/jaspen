@@ -885,7 +885,7 @@ export default function ScoreDashboard({
                 type="button"
                 className="sc-btn sc-btn-secondary sc-btn-sm"
                 onClick={() => setExportMenuOpen((open) => !open)}
-                disabled={Boolean(exportBusyType)}
+                disabled={Boolean(exportBusyType)} aria-disabled={Boolean(exportBusyType)}
               >
                 <FontAwesomeIcon icon={Boolean(exportBusyType) ? faSpinner : faDownload} spin={Boolean(exportBusyType)} />
                 {Boolean(exportBusyType) ? 'Exporting…' : 'Export'}
@@ -898,7 +898,7 @@ export default function ScoreDashboard({
                       key={option.key}
                       type="button"
                       className="sc-export-option"
-                      disabled={Boolean(exportBusyType)}
+                      disabled={Boolean(exportBusyType)} aria-disabled={Boolean(exportBusyType)}
                       onClick={() => {
                         setExportMenuOpen(false);
                         option.onClick();

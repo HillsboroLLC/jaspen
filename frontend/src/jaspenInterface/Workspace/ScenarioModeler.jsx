@@ -1120,7 +1120,7 @@ const ScenarioModeler = forwardRef(function ScenarioModeler({
                 type="button"
                 className="jas-ai-mini-btn secondary"
                 onClick={() => setAiSuggestOpen(false)}
-                disabled={aiSuggestBusy}
+                disabled={aiSuggestBusy} aria-disabled={aiSuggestBusy}
               >
                 Close
               </button>

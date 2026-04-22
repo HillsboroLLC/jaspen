@@ -1676,7 +1676,7 @@ const renderMessageActions = (message, messageKey, idx, total) => {
         }}
         aria-label="Thumbs up"
         title="Thumbs up"
-        disabled={!canFeedback || isFeedbackBusy}
+        disabled={!canFeedback || isFeedbackBusy} aria-disabled={!canFeedback || isFeedbackBusy}
       >
         <FontAwesomeIcon icon={faThumbsUp} />
       </button>
@@ -1700,7 +1700,7 @@ const renderMessageActions = (message, messageKey, idx, total) => {
         }}
         aria-label="Thumbs down"
         title="Thumbs down"
-        disabled={!canFeedback || isFeedbackBusy}
+        disabled={!canFeedback || isFeedbackBusy} aria-disabled={!canFeedback || isFeedbackBusy}
       >
         <FontAwesomeIcon icon={faThumbsDown} />
       </button>
@@ -1711,7 +1711,7 @@ const renderMessageActions = (message, messageKey, idx, total) => {
           onClick={regenerateLastResponse}
           aria-label="Regenerate response"
           title="Regenerate"
-          disabled={regenerating}
+          disabled={regenerating} aria-disabled={regenerating}
         >
           <FontAwesomeIcon icon={faRotate} />
         </button>
@@ -1723,7 +1723,7 @@ const renderMessageActions = (message, messageKey, idx, total) => {
           onClick={undoLastMutationTurn}
           aria-label="Undo changes"
           title="Undo changes"
-          disabled={undoingMutation}
+          disabled={undoingMutation} aria-disabled={undoingMutation}
         >
           <FontAwesomeIcon icon={faClockRotateLeft} />
         </button>
@@ -2717,7 +2717,7 @@ useEffect(() => {
                   }
                 }
               }}
-              disabled={!nameInput.trim() || nameSaving}
+              disabled={!nameInput.trim() || nameSaving} aria-disabled={!nameInput.trim() || nameSaving}
             >
               {nameSaving ? 'Saving...' : 'Save'}
             </button>
@@ -2787,7 +2787,7 @@ useEffect(() => {
                       type="button"
                       className="jas-account-action-btn"
                       onClick={() => startPlanChange(key)}
-                      disabled={billingActionLoading === key}
+                      disabled={billingActionLoading === key} aria-disabled={billingActionLoading === key}
                     >
                       {billingActionLoading === key ? 'Redirecting...' : 'Select plan'}
                     </button>
@@ -2804,7 +2804,7 @@ useEffect(() => {
               type="button"
               className="jas-account-portal-btn"
               onClick={openBillingPortal}
-              disabled={billingActionLoading === 'portal'}
+              disabled={billingActionLoading === 'portal'} aria-disabled={billingActionLoading === 'portal'}
             >
               {billingActionLoading === 'portal' ? 'Opening...' : 'Manage billing'}
             </button>
@@ -2843,7 +2843,7 @@ useEffect(() => {
                 type="button"
                 className="jas-notifications-clear"
                 onClick={clearNotificationBadge}
-                disabled={unreadNotificationCount === 0}
+                disabled={unreadNotificationCount === 0} aria-disabled={unreadNotificationCount === 0}
               >
                 Clear
               </button>
@@ -3140,7 +3140,7 @@ useEffect(() => {
                 type="button"
                 className="jas-ud-invite-btn"
                 onClick={handleCopyInviteLink}
-                disabled={!inviteLink}
+                disabled={!inviteLink} aria-disabled={!inviteLink}
               >
                 Copy link
               </button>
@@ -4437,7 +4437,7 @@ const renderModelTypeInlinePicker = (className = '') => (
       aria-label="Select model"
       title="Select model"
       onClick={() => setModelMenuOpen((prev) => !prev)}
-      disabled={busy}
+      disabled={busy} aria-disabled={busy}
     >
       <span className="jas-model-picker-trigger-text">{selectedModelOption?.withVersion || 'Model'}</span>
       <FontAwesomeIcon icon={faChevronDown} className={`jas-model-picker-caret ${modelMenuOpen ? 'is-open' : ''}`} />
@@ -4451,7 +4451,7 @@ const renderModelTypeInlinePicker = (className = '') => (
             role="option"
             aria-selected={selectedModelType === option.key}
             className={`jas-model-picker-option ${selectedModelType === option.key ? 'is-selected' : ''}`}
-            disabled={!option.isAllowed}
+            disabled={!option.isAllowed} aria-disabled={!option.isAllowed}
             onClick={() => {
               if (!option.isAllowed) return;
               setSelectedModelType(option.key);
@@ -4503,7 +4503,7 @@ const renderSelectedObjectivePill = (className = '') => {
           onClick={() => applyStrategyObjective('balanced', { persist: true, explicit: false, silent: true })}
           aria-label="Remove selected intention"
           title="Remove intention"
-          disabled={busy}
+          disabled={busy} aria-disabled={busy}
         >
           <FontAwesomeIcon icon={faTimes} />
         </button>
@@ -4539,7 +4539,7 @@ const renderStarterSelector = (className = '') => {
             type="button"
             className="jas-starter-clear-btn"
             onClick={() => setSelectedStarterId('')}
-            disabled={busy}
+            disabled={busy} aria-disabled={busy}
           >
             Clear
           </button>
@@ -7954,7 +7954,7 @@ onClick={async () => {
                       type="button"
                       className="jas-ai-mini-btn"
                       onClick={() => removeProposalLever(row.key)}
-                      disabled={aiScenarioBusy}
+                      disabled={aiScenarioBusy} aria-disabled={aiScenarioBusy}
                       title="Remove lever"
                     >
                       Remove
@@ -7979,23 +7979,23 @@ onClick={async () => {
                       <option key={lever.key} value={lever.key}>{lever.label}</option>
                     ))}
                 </select>
-                <button type="button" className="jas-ai-mini-btn" onClick={addProposalLever} disabled={aiScenarioBusy || !aiScenarioProposal.addLeverKey}>
+                <button type="button" className="jas-ai-mini-btn" onClick={addProposalLever} disabled={aiScenarioBusy || !aiScenarioProposal.addLeverKey} aria-disabled={aiScenarioBusy || !aiScenarioProposal.addLeverKey}>
                   Add
                 </button>
               </div>
             )}
 
             <div className="jas-ai-scenario-actions">
-              <button type="button" className="jas-ai-mini-btn secondary" onClick={regenerateAiScenarioProposal} disabled={aiScenarioBusy}>
+              <button type="button" className="jas-ai-mini-btn secondary" onClick={regenerateAiScenarioProposal} disabled={aiScenarioBusy} aria-disabled={aiScenarioBusy}>
                 Modify (Regenerate)
               </button>
-              <button type="button" className="jas-ai-mini-btn secondary" onClick={previewAiScenarioProposal} disabled={aiScenarioBusy}>
+              <button type="button" className="jas-ai-mini-btn secondary" onClick={previewAiScenarioProposal} disabled={aiScenarioBusy} aria-disabled={aiScenarioBusy}>
                 Update Preview
               </button>
-              <button type="button" className="jas-ai-mini-btn danger" onClick={rejectAiScenarioProposal} disabled={aiScenarioBusy}>
+              <button type="button" className="jas-ai-mini-btn danger" onClick={rejectAiScenarioProposal} disabled={aiScenarioBusy} aria-disabled={aiScenarioBusy}>
                 Reject
               </button>
-              <button type="button" className="jas-ai-mini-btn primary" onClick={acceptAiScenarioProposal} disabled={aiScenarioBusy || aiScenarioProposal.rows.length === 0}>
+              <button type="button" className="jas-ai-mini-btn primary" onClick={acceptAiScenarioProposal} disabled={aiScenarioBusy || aiScenarioProposal.rows.length === 0} aria-disabled={aiScenarioBusy || aiScenarioProposal.rows.length === 0}>
                 {aiScenarioBusy ? 'Applying…' : 'Accept'}
               </button>
             </div>
@@ -8347,7 +8347,7 @@ onClick={async () => {
                       type="button"
                       className="begin-project-btn"
                       onClick={onBeginProject}
-                      disabled={beginBusy || !canBeginProject}
+                      disabled={beginBusy || !canBeginProject} aria-disabled={beginBusy || !canBeginProject}
                       title={projectActionTitle}
                     >
                       <FontAwesomeIcon icon={beginBusy ? faSpinner : faPlay} spin={beginBusy} />
@@ -8357,7 +8357,7 @@ onClick={async () => {
                     type="button"
                     className="save-starter-btn"
                     onClick={openSaveStarterModal}
-                    disabled={savingStarter || beginBusy || !(currentSessionId || sessionId)}
+                    disabled={savingStarter || beginBusy || !(currentSessionId || sessionId)} aria-disabled={savingStarter || beginBusy || !(currentSessionId || sessionId)}
                   >
                     <span>{savingStarter ? 'Saving…' : 'Save as Starter'}</span>
                   </button>
@@ -8710,7 +8710,7 @@ onClick={async () => {
             <button
               className="jas-sidebar-clear jas-sidebar-clear-left"
               onClick={handleClearHistory}
-              disabled={clearingHistory || analysisHistory.length === 0}
+              disabled={clearingHistory || analysisHistory.length === 0} aria-disabled={clearingHistory || analysisHistory.length === 0}
               title="Clear all history"
             >
               {clearingHistory ? 'Clearing…' : 'Clear'}
@@ -8910,7 +8910,7 @@ onClick={async () => {
                 type="button"
                 className="jas-ai-mini-btn"
                 onClick={() => setSaveStarterModalOpen(false)}
-                disabled={savingStarter}
+                disabled={savingStarter} aria-disabled={savingStarter}
               >
                 Close
               </button>
@@ -8943,7 +8943,7 @@ onClick={async () => {
                     type="button"
                     className="jas-ai-mini-btn secondary"
                     onClick={() => setSaveStarterModalOpen(false)}
-                    disabled={savingStarter}
+                    disabled={savingStarter} aria-disabled={savingStarter}
                   >
                     Cancel
                   </button>
@@ -8951,7 +8951,7 @@ onClick={async () => {
                     type="button"
                     className="jas-ai-mini-btn primary"
                     onClick={handleSaveStarter}
-                    disabled={savingStarter || !String(newStarterName || '').trim()}
+                    disabled={savingStarter || !String(newStarterName || '').trim()} aria-disabled={savingStarter || !String(newStarterName || '').trim()}
                   >
                     {savingStarter ? 'Saving…' : 'Save Starter'}
                   </button>
@@ -9123,7 +9123,7 @@ onClick={async () => {
                   className="jas-ci-btn"
                   aria-label="Attach files"
                   title="Attach"
-                  disabled={busy || effectiveIsViewer}
+                  disabled={busy || effectiveIsViewer} aria-disabled={busy || effectiveIsViewer}
                   onClick={() => fileInputRef.current?.click()}
                 >
                   <FontAwesomeIcon icon={faPaperclip} />
@@ -9137,7 +9137,7 @@ onClick={async () => {
                   className={`jas-ci-btn ${isRecording ? 'recording' : ''}`}
                   aria-label={isRecording ? 'Stop recording' : 'Start recording'}
                   title="Voice"
-                  disabled={busy || effectiveIsViewer}
+                  disabled={busy || effectiveIsViewer} aria-disabled={busy || effectiveIsViewer}
                   onClick={() => setIsRecording(prev => !prev)}
                 >
                   <FontAwesomeIcon icon={faMicrophone} />
@@ -9145,7 +9145,7 @@ onClick={async () => {
                 <button
                   className="jas-ci-btn send"
                   onClick={onSubmit}
-                  disabled={busy || effectiveIsViewer || (!input.trim() && pendingFiles.length === 0)}
+                  disabled={busy || effectiveIsViewer || (!input.trim() && pendingFiles.length === 0)} aria-disabled={busy || effectiveIsViewer || (!input.trim() && pendingFiles.length === 0)}
                   title="Send"
                 >
                   {busy ? <FontAwesomeIcon icon={faSpinner} spin /> : <FontAwesomeIcon icon={faArrowUp} />}
@@ -9167,7 +9167,7 @@ onClick={async () => {
               <button
                 className="finish-analyze-btn"
                 onClick={onFinishAnalyze}
-                disabled={!canAnalyze || busy || effectiveIsViewer}
+                disabled={!canAnalyze || busy || effectiveIsViewer} aria-disabled={!canAnalyze || busy || effectiveIsViewer}
                 title={effectiveIsViewer ? 'Viewers cannot generate new scorecards' : (canAnalyze ? "Generate your Jaspen score" : "Keep chatting to gather more information")}
               >
                 <FontAwesomeIcon icon={faCheck} />
@@ -9237,7 +9237,7 @@ onClick={async () => {
                 placeholder="Ask a question..."
                 disabled={helpLoading}
               />
-              <button onClick={sendHelpMessage} disabled={helpLoading || !helpInput.trim()} aria-label="Send help message">
+              <button onClick={sendHelpMessage} disabled={helpLoading || !helpInput.trim()} aria-disabled={helpLoading || !helpInput.trim()} aria-label="Send help message">
                 <FontAwesomeIcon icon={faPaperPlane} />
               </button>
             </div>

@@ -260,7 +260,7 @@ export default function Insights() {
                         type="button"
                         className="insights-btn"
                         onClick={() => onAnalyze(row.id)}
-                        disabled={analyzing || Boolean(deletingDatasetId)}
+                        disabled={analyzing || Boolean(deletingDatasetId)} aria-disabled={analyzing || Boolean(deletingDatasetId)}
                       >
                         {analyzing && String(activeDatasetId) === String(row.id) ? 'Analyzing…' : 'Analyze'}
                       </button>
@@ -268,7 +268,7 @@ export default function Insights() {
                         type="button"
                         className="insights-btn danger"
                         onClick={() => onDeleteDataset(row.id)}
-                        disabled={analyzing || deletingDatasetId === String(row.id)}
+                        disabled={analyzing || deletingDatasetId === String(row.id)} aria-disabled={analyzing || deletingDatasetId === String(row.id)}
                       >
                         {deletingDatasetId === String(row.id) ? 'Deleting…' : 'Delete'}
                       </button>
@@ -298,7 +298,7 @@ export default function Insights() {
             type="button"
             className="insights-btn primary"
             onClick={() => onAnalyze(activeDatasetId)}
-            disabled={!activeDatasetId || analyzing}
+            disabled={!activeDatasetId || analyzing} aria-disabled={!activeDatasetId || analyzing}
           >
             {analyzing ? 'Analyzing…' : 'Analyze'}
           </button>

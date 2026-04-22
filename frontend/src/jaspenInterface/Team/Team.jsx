@@ -659,7 +659,7 @@ export default function Team({ mode = 'team' }) {
                 type="button"
                 className="team-btn ghost"
                 onClick={onSaveOrganizationName}
-                disabled={busy || !showOrgNameSave || !activeOrgId}
+                disabled={busy || !showOrgNameSave || !activeOrgId} aria-disabled={busy || !showOrgNameSave || !activeOrgId}
               >
                 Save
               </button>
@@ -746,7 +746,7 @@ export default function Team({ mode = 'team' }) {
               type="button"
               className="team-btn ghost"
               onClick={onDiscardSeatPolicy}
-              disabled={busy || !seatDraftDirty || !canEditSeatPolicy}
+              disabled={busy || !seatDraftDirty || !canEditSeatPolicy} aria-disabled={busy || !seatDraftDirty || !canEditSeatPolicy}
             >
               Discard changes
             </button>
@@ -754,7 +754,7 @@ export default function Team({ mode = 'team' }) {
               type="button"
               className="team-btn"
               onClick={onSaveSeatPolicy}
-              disabled={busy || !seatDraftDirty || !canEditSeatPolicy}
+              disabled={busy || !seatDraftDirty || !canEditSeatPolicy} aria-disabled={busy || !seatDraftDirty || !canEditSeatPolicy}
             >
               {busy ? 'Saving…' : 'Save seat policy'}
             </button>
@@ -762,7 +762,7 @@ export default function Team({ mode = 'team' }) {
               type="button"
               className="team-btn ghost"
               onClick={onResetSeatPolicy}
-              disabled={busy || !canEditSeatPolicy}
+              disabled={busy || !canEditSeatPolicy} aria-disabled={busy || !canEditSeatPolicy}
             >
               Reset to plan defaults
             </button>
@@ -918,7 +918,7 @@ export default function Team({ mode = 'team' }) {
                             type="button"
                             className="team-btn tiny danger"
                             onClick={() => onRemoveMember(member)}
-                            disabled={busy || previewModeActive}
+                            disabled={busy || previewModeActive} aria-disabled={busy || previewModeActive}
                           >
                             Remove
                           </button>
@@ -956,7 +956,7 @@ export default function Team({ mode = 'team' }) {
                     <option key={role} value={role}>{role}</option>
                   ))}
                 </select>
-                <button type="submit" className="team-btn" disabled={!canManageMembers || busy || previewModeActive}>
+                <button type="submit" className="team-btn" disabled={!canManageMembers || busy || previewModeActive} aria-disabled={!canManageMembers || busy || previewModeActive}>
                   Send invite
                 </button>
               </form>
@@ -993,7 +993,7 @@ export default function Team({ mode = 'team' }) {
                               type="button"
                               className="team-btn tiny ghost"
                               onClick={() => onResendInvitation(row.id)}
-                              disabled={!canManageMembers || busy || previewModeActive}
+                              disabled={!canManageMembers || busy || previewModeActive} aria-disabled={!canManageMembers || busy || previewModeActive}
                             >
                               Resend
                             </button>
@@ -1001,7 +1001,7 @@ export default function Team({ mode = 'team' }) {
                               type="button"
                               className="team-btn tiny danger"
                               onClick={() => onCancelInvitation(row.id)}
-                              disabled={!canManageMembers || busy || previewModeActive}
+                              disabled={!canManageMembers || busy || previewModeActive} aria-disabled={!canManageMembers || busy || previewModeActive}
                             >
                               Cancel
                             </button>
@@ -1110,7 +1110,7 @@ export default function Team({ mode = 'team' }) {
                         type="button"
                         className="team-btn tiny"
                         onClick={() => onSaveSharing(project.session_id)}
-                        disabled={busy || previewModeActive || !canSaveSharing}
+                        disabled={busy || previewModeActive || !canSaveSharing} aria-disabled={busy || previewModeActive || !canSaveSharing}
                       >
                         Save
                       </button>

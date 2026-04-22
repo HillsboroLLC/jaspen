@@ -284,10 +284,10 @@ export default function ThreadEditModal({
         </div>
 
         <div style={styles.footer}>
-          <button type="button" style={styles.btnSecondary} onClick={onClose} disabled={saving}>
+          <button type="button" style={styles.btnSecondary} onClick={onClose} disabled={saving} aria-disabled={saving}>
             Cancel
           </button>
-          <button type="button" style={styles.btnPrimary} onClick={doSave} disabled={saving || (!threadId && !sessionId)}>
+          <button type="button" style={styles.btnPrimary} onClick={doSave} disabled={saving || (!threadId && !sessionId)} aria-disabled={saving || (!threadId && !sessionId)}>
             {saving ? 'Saving…' : 'Save changes'}
           </button>
         </div>

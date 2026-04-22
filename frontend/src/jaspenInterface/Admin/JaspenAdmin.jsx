@@ -687,7 +687,7 @@ export default function JaspenAdmin() {
               </option>
             ))}
           </select>
-          <button type="button" className="jas-admin-secondary" onClick={() => loadUsers(query, userStatusFilter)} disabled={pending}>
+          <button type="button" className="jas-admin-secondary" onClick={() => loadUsers(query, userStatusFilter)} disabled={pending} aria-disabled={pending}>
             Search
           </button>
         </div>
@@ -703,10 +703,10 @@ export default function JaspenAdmin() {
               </p>
             </div>
             <div className="jas-admin-actions">
-              <button type="button" className="jas-admin-secondary" onClick={loadAccessControls} disabled={accessLoading || accessPending}>
+              <button type="button" className="jas-admin-secondary" onClick={loadAccessControls} disabled={accessLoading || accessPending} aria-disabled={accessLoading || accessPending}>
                 {accessLoading ? 'Refreshing...' : 'Refresh'}
               </button>
-              <button type="button" className="jas-admin-primary" onClick={saveAccessControls} disabled={accessLoading || accessPending || !accessControls}>
+              <button type="button" className="jas-admin-primary" onClick={saveAccessControls} disabled={accessLoading || accessPending || !accessControls} aria-disabled={accessLoading || accessPending || !accessControls}>
                 {accessPending ? 'Saving...' : 'Save Access Controls'}
               </button>
             </div>
@@ -766,7 +766,7 @@ export default function JaspenAdmin() {
                       type="button"
                       className="jas-admin-primary"
                       onClick={() => reviewUserAccess(item.id, 'approved')}
-                      disabled={accessPending}
+                      disabled={accessPending} aria-disabled={accessPending}
                     >
                       Approve
                     </button>
@@ -776,7 +776,7 @@ export default function JaspenAdmin() {
                       type="button"
                       className="jas-admin-secondary"
                       onClick={() => reviewUserAccess(item.id, 'pending')}
-                      disabled={accessPending}
+                      disabled={accessPending} aria-disabled={accessPending}
                     >
                       Move to list
                     </button>
@@ -786,7 +786,7 @@ export default function JaspenAdmin() {
                       type="button"
                       className="jas-admin-secondary"
                       onClick={() => reviewUserAccess(item.id, 'rejected')}
-                      disabled={accessPending}
+                      disabled={accessPending} aria-disabled={accessPending}
                     >
                       Reject
                     </button>
@@ -927,13 +927,13 @@ export default function JaspenAdmin() {
                 </div>
 
                 <div className="jas-admin-actions">
-                  <button type="button" className="jas-admin-primary" onClick={handleSave} disabled={pending}>
+                  <button type="button" className="jas-admin-primary" onClick={handleSave} disabled={pending} aria-disabled={pending}>
                     {pending ? 'Saving...' : 'Save user'}
                   </button>
-                  <button type="button" className="jas-admin-secondary" onClick={() => forcePlan('essential', true)} disabled={pending}>
+                  <button type="button" className="jas-admin-secondary" onClick={() => forcePlan('essential', true)} disabled={pending} aria-disabled={pending}>
                     Force Essential
                   </button>
-                  <button type="button" className="jas-admin-secondary" onClick={() => forcePlan('enterprise', true)} disabled={pending}>
+                  <button type="button" className="jas-admin-secondary" onClick={() => forcePlan('enterprise', true)} disabled={pending} aria-disabled={pending}>
                     Force Enterprise
                   </button>
                 </div>
@@ -985,7 +985,7 @@ export default function JaspenAdmin() {
                     </label>
                   </div>
                   <div className="jas-admin-actions">
-                    <button type="button" className="jas-admin-primary" onClick={runCreditAction} disabled={pending}>
+                    <button type="button" className="jas-admin-primary" onClick={runCreditAction} disabled={pending} aria-disabled={pending}>
                       Apply Credit Action
                     </button>
                   </div>
@@ -1043,7 +1043,7 @@ export default function JaspenAdmin() {
                                 <button
                                   type="button"
                                   className="jas-admin-connector-save"
-                                  disabled={connectorPendingId === connectorId}
+                                  disabled={connectorPendingId === connectorId} aria-disabled={connectorPendingId === connectorId}
                                   onClick={() => saveConnector(connectorId)}
                                 >
                                   {connectorPendingId === connectorId ? 'Saving…' : 'Save'}
@@ -1076,25 +1076,25 @@ export default function JaspenAdmin() {
                     </p>
                   )}
                   <div className="jas-admin-actions">
-                    <button type="button" className="jas-admin-secondary" disabled={pending} onClick={() => runRecoveryAction('clear_sessions', 'Clear sessions')}>
+                    <button type="button" className="jas-admin-secondary" disabled={pending} aria-disabled={pending} onClick={() => runRecoveryAction('clear_sessions', 'Clear sessions')}>
                       Clear Sessions
                     </button>
-                    <button type="button" className="jas-admin-secondary" disabled={pending} onClick={() => runRecoveryAction('clear_connectors', 'Clear connectors')}>
+                    <button type="button" className="jas-admin-secondary" disabled={pending} aria-disabled={pending} onClick={() => runRecoveryAction('clear_connectors', 'Clear connectors')}>
                       Clear Connectors
                     </button>
-                    <button type="button" className="jas-admin-secondary" disabled={pending} onClick={() => runRecoveryAction('reset_plan_defaults', 'Reset plan defaults')}>
+                    <button type="button" className="jas-admin-secondary" disabled={pending} aria-disabled={pending} onClick={() => runRecoveryAction('reset_plan_defaults', 'Reset plan defaults')}>
                       Reset Plan Defaults
                     </button>
-                    <button type="button" className="jas-admin-secondary" disabled={pending} onClick={() => runRecoveryAction('clear_billing_links', 'Clear billing links')}>
+                    <button type="button" className="jas-admin-secondary" disabled={pending} aria-disabled={pending} onClick={() => runRecoveryAction('clear_billing_links', 'Clear billing links')}>
                       Clear Billing Links
                     </button>
                     {!draft.deactivated_at && (
-                      <button type="button" className="jas-admin-secondary jas-admin-danger" disabled={pending} onClick={deactivateUser}>
+                      <button type="button" className="jas-admin-secondary jas-admin-danger" disabled={pending} aria-disabled={pending} onClick={deactivateUser}>
                         Deactivate User
                       </button>
                     )}
                     {draft.deactivated_at && (
-                      <button type="button" className="jas-admin-primary" disabled={pending} onClick={restoreUser}>
+                      <button type="button" className="jas-admin-primary" disabled={pending} aria-disabled={pending} onClick={restoreUser}>
                         Restore User
                       </button>
                     )}

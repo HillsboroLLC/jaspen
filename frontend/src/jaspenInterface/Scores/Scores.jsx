@@ -449,7 +449,7 @@ export default function Scores() {
                     type="button"
                     className="scores-agent-starter"
                     onClick={() => submitPortfolioPrompt(prompt)}
-                    disabled={portfolioBusy || loading || total === 0}
+                    disabled={portfolioBusy || loading || total === 0} aria-disabled={portfolioBusy || loading || total === 0}
                   >
                     {prompt}
                   </button>
@@ -489,7 +489,7 @@ export default function Scores() {
               type="button"
               className="scores-primary-btn scores-agent-send"
               onClick={() => submitPortfolioPrompt(portfolioInput)}
-              disabled={portfolioBusy || loading || total === 0 || !portfolioInput.trim()}
+              disabled={portfolioBusy || loading || total === 0 || !portfolioInput.trim()} aria-disabled={portfolioBusy || loading || total === 0 || !portfolioInput.trim()}
             >
               {portfolioBusy ? 'Thinking…' : 'Send'}
             </button>
@@ -507,7 +507,7 @@ export default function Scores() {
             <button type="button" className="scores-secondary-btn" onClick={() => navigate('/new')}>
               Back to Jaspen
             </button>
-            <button type="button" className="scores-primary-btn" onClick={exportCsv} disabled={exportingCsv || loading || total === 0}>
+            <button type="button" className="scores-primary-btn" onClick={exportCsv} disabled={exportingCsv || loading || total === 0} aria-disabled={exportingCsv || loading || total === 0}>
               {exportingCsv ? 'Exporting...' : 'Export CSV'}
             </button>
           </div>
@@ -700,7 +700,7 @@ export default function Scores() {
                   type="button"
                   className="scores-secondary-btn"
                   onClick={() => setOffset((prev) => Math.max(0, prev - PAGE_LIMIT))}
-                  disabled={!hasPrevious}
+                  disabled={!hasPrevious} aria-disabled={!hasPrevious}
                 >
                   Previous
                 </button>
@@ -708,7 +708,7 @@ export default function Scores() {
                   type="button"
                   className="scores-secondary-btn"
                   onClick={() => setOffset((prev) => prev + PAGE_LIMIT)}
-                  disabled={!hasNext}
+                  disabled={!hasNext} aria-disabled={!hasNext}
                 >
                   Next
                 </button>

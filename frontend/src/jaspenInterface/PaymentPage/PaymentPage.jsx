@@ -61,7 +61,7 @@ export default function PaymentPage() {
 
       {error && <p className="error">{error}</p>}
 
-      <button className="checkout-button" onClick={handleCheckout} disabled={loading}>
+      <button className="checkout-button" onClick={handleCheckout} disabled={loading} aria-disabled={loading}>
         {loading ? 'Redirecting...' : planKey === 'team' || planKey === 'enterprise' ? 'Contact Sales' : `Continue with ${plan.label}`}
       </button>
     </div>

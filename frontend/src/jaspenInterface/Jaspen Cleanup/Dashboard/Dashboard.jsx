@@ -190,7 +190,7 @@ export default function Dashboard() {
           type="button"
           className="dash-refresh"
           onClick={() => fetchDashboard({ silent: true })}
-          disabled={refreshing}
+          disabled={refreshing} aria-disabled={refreshing}
         >
           {refreshing ? 'Refreshing...' : 'Refresh'}
         </button>

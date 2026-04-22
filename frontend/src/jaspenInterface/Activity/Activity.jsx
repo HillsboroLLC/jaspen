@@ -168,8 +168,8 @@ export default function Activity() {
         <footer className="activity-pagination">
           <p>Showing {start}-{end} of {total}</p>
           <div>
-            <button type="button" onClick={() => setOffset((prev) => Math.max(0, prev - PAGE_SIZE))} disabled={!hasPrev}>Previous</button>
-            <button type="button" onClick={() => setOffset((prev) => prev + PAGE_SIZE)} disabled={!hasNext}>Next</button>
+            <button type="button" onClick={() => setOffset((prev) => Math.max(0, prev - PAGE_SIZE))} disabled={!hasPrev} aria-disabled={!hasPrev}>Previous</button>
+            <button type="button" onClick={() => setOffset((prev) => prev + PAGE_SIZE)} disabled={!hasNext} aria-disabled={!hasNext}>Next</button>
           </div>
         </footer>
       )}

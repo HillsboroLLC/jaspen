@@ -335,10 +335,10 @@ export default function Projects() {
           />
           Select visible
         </label>
-        <button type="button" onClick={archiveSelected} disabled={!selectedIds.size || bulkBusy}>
+        <button type="button" onClick={archiveSelected} disabled={!selectedIds.size || bulkBusy} aria-disabled={!selectedIds.size || bulkBusy}>
           <FontAwesomeIcon icon={faBoxArchive} /> Archive
         </button>
-        <button type="button" onClick={exportSelected} disabled={!selectedIds.size}>
+        <button type="button" onClick={exportSelected} disabled={!selectedIds.size} aria-disabled={!selectedIds.size}>
           <FontAwesomeIcon icon={faDownload} /> Export
         </button>
       </section>
@@ -382,7 +382,7 @@ export default function Projects() {
                     <button
                       type="button"
                       onClick={() => archiveSingle(row.threadId)}
-                      disabled={bulkBusy}
+                      disabled={bulkBusy} aria-disabled={bulkBusy}
                     >
                       <FontAwesomeIcon icon={faBoxArchive} /> Archive
                     </button>

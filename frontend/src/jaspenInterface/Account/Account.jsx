@@ -1714,7 +1714,7 @@ export default function Account() {
                         type="button"
                         className="account-primary-btn"
                         onClick={() => startPlanChange(key)}
-                        disabled={isPending}
+                        disabled={isPending} aria-disabled={isPending}
                       >
                         {isPending ? 'Redirecting...' : key === 'essential' ? 'Upgrade' : 'Switch'}
                       </button>
@@ -2394,10 +2394,10 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
               </div>
               {jiraConfigError && <p id="account-jira-modal-error" className="account-jira-modal-error" role="status" aria-live="polite">{jiraConfigError}</p>}
               <div className="account-jira-modal-actions">
-                <button type="button" className="account-secondary-btn" onClick={() => closeJiraConfigModal(true)} disabled={jiraConfigSaving}>
+                <button type="button" className="account-secondary-btn" onClick={() => closeJiraConfigModal(true)} disabled={jiraConfigSaving} aria-disabled={jiraConfigSaving}>
                   Cancel
                 </button>
-                <button type="button" className="account-primary-btn" onClick={saveJiraConfigAndEnable} disabled={jiraConfigSaving}>
+                <button type="button" className="account-primary-btn" onClick={saveJiraConfigAndEnable} disabled={jiraConfigSaving} aria-disabled={jiraConfigSaving}>
                   {jiraConfigSaving ? 'Saving...' : modalSaveLabel}
                 </button>
               </div>
@@ -2421,7 +2421,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                     type="button"
                     className="account-primary-btn"
                     onClick={() => buyPack(key)}
-                    disabled={isPending}
+                    disabled={isPending} aria-disabled={isPending}
                   >
                     {isPending ? 'Redirecting...' : `Purchase for $${pack.price_usd}`}
                   </button>
@@ -2507,7 +2507,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                       type="button"
                       className="account-primary-btn"
                       onClick={startMfaSetup}
-                      disabled={mfaState.loading}
+                      disabled={mfaState.loading} aria-disabled={mfaState.loading}
                     >
                       {mfaState.loading ? 'Starting...' : 'Set up MFA'}
                     </button>
@@ -2563,7 +2563,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                     type="button"
                     className="account-primary-btn"
                     onClick={verifyMfaSetup}
-                    disabled={mfaState.verifying}
+                    disabled={mfaState.verifying} aria-disabled={mfaState.verifying}
                   >
                     {mfaState.verifying ? 'Verifying...' : 'Verify & enable'}
                   </button>
@@ -2608,7 +2608,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                       type="button"
                       className="account-danger-btn"
                       onClick={disableMfa}
-                      disabled={mfaState.disabling}
+                      disabled={mfaState.disabling} aria-disabled={mfaState.disabling}
                     >
                       {mfaState.disabling ? 'Disabling...' : 'Disable MFA'}
                     </button>
@@ -2626,7 +2626,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
             type="button"
             className="account-secondary-btn"
             onClick={openBillingPortal}
-            disabled={pendingAction === 'portal'}
+            disabled={pendingAction === 'portal'} aria-disabled={pendingAction === 'portal'}
           >
             {pendingAction === 'portal' ? 'Opening...' : 'Manage billing'}
           </button>
@@ -2634,7 +2634,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
             type="button"
             className="account-danger-btn"
             onClick={cancelAtPeriodEnd}
-            disabled={pendingAction === 'cancel' || !status?.stripe_subscription_id}
+            disabled={pendingAction === 'cancel' || !status?.stripe_subscription_id} aria-disabled={pendingAction === 'cancel' || !status?.stripe_subscription_id}
           >
             {pendingAction === 'cancel' ? 'Canceling...' : 'Cancel at period end'}
           </button>
@@ -2658,7 +2658,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                 type="button"
                 className="account-secondary-btn"
                 onClick={() => refreshAdminUsers(adminState.query)}
-                disabled={adminState.loading}
+                disabled={adminState.loading} aria-disabled={adminState.loading}
               >
                 {adminState.loading ? 'Searching...' : 'Search'}
               </button>
@@ -2808,7 +2808,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                         type="button"
                         className="account-primary-btn"
                         onClick={saveAdminUser}
-                        disabled={adminState.pending}
+                        disabled={adminState.pending} aria-disabled={adminState.pending}
                       >
                         {adminState.pending ? 'Saving...' : 'Save user settings'}
                       </button>
@@ -2816,7 +2816,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                         type="button"
                         className="account-secondary-btn"
                         onClick={forceEssential}
-                        disabled={adminState.pending}
+                        disabled={adminState.pending} aria-disabled={adminState.pending}
                       >
                         Force Essential + reset credits
                       </button>

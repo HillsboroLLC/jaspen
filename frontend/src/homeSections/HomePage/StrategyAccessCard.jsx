@@ -258,7 +258,7 @@ export default function StrategyAccessCard() {
           <button
             type="submit"
             className="jaspen-btn jaspen-btn-primary strategy-email-btn"
-            disabled={authStatus === 'sending' || authStatus === 'sent'}
+            disabled={authStatus === 'sending' || authStatus === 'sent'} aria-disabled={authStatus === 'sending' || authStatus === 'sent'}
           >
             {authStatus === 'sending'
               ? (authMode === 'forgot' ? 'Sending reset link…' : 'Sending...')

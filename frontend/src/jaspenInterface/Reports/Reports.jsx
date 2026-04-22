@@ -180,7 +180,7 @@ export default function Reports() {
               <option key={item.value} value={item.value}>{item.label}</option>
             ))}
           </select>
-          <button type="button" onClick={generateReport} disabled={busy || !selectedThreadId}>
+          <button type="button" onClick={generateReport} disabled={busy || !selectedThreadId} aria-disabled={busy || !selectedThreadId}>
             <FontAwesomeIcon icon={faWandMagicSparkles} /> {busy ? 'Generating...' : 'Generate'}
           </button>
         </div>
@@ -232,7 +232,7 @@ export default function Reports() {
                           type="button"
                           className="reports-action reports-action-danger"
                           onClick={() => deleteReport(report.report_id)}
-                          disabled={busy}
+                          disabled={busy} aria-disabled={busy}
                         >
                           <FontAwesomeIcon icon={faTrashCan} /> Delete
                         </button>
