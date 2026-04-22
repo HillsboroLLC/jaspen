@@ -2523,7 +2523,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
               {!mfaEnabled && mfaState.secret && (
                 <div className="account-security-setup">
                   <div className="account-security-qr">
-                    {mfaState.qrCode && <img src={mfaState.qrCode} alt="MFA QR code" />}
+                    {mfaState.qrCode && <img src={mfaState.qrCode} alt="QR code for MFA setup" />}
                     <div>
                       <p>
                         This QR code opens your browser or device default authenticator. If you prefer another

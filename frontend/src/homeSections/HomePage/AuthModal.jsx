@@ -334,7 +334,7 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
       {error && <div className="auth-modal-alert is-error"><strong>{error}</strong></div>}
       {mfaQrCode && (
         <div style={{ textAlign: 'center', margin: '16px 0' }}>
-          <img src={mfaQrCode} alt="MFA QR Code" style={{ width: 180, height: 180, borderRadius: 8 }} />
+          <img src={mfaQrCode} alt="QR code for MFA setup" style={{ width: 180, height: 180, borderRadius: 8 }} />
         </div>
       )}
       {mfaSecret && (

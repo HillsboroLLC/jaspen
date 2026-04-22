@@ -1554,7 +1554,7 @@ const renderMessageAttachments = (message) => {
               <img
                 className="attachment-thumb"
                 src={attachment.preview}
-                alt={attachment.name}
+                alt={attachment?.name ? `Attachment preview: ${attachment.name}` : 'Attachment preview'}
                 onLoad={() => {
                   try { if (attachment.preview?.startsWith?.('blob:')) URL.revokeObjectURL(attachment.preview); } catch {}
                 }}
@@ -9015,7 +9015,7 @@ onClick={async () => {
               <img
                 className="jas-chat-welcome-unicorn"
                 src="/android-chrome-192x192.png"
-                alt="Jaspen unicorn"
+                alt="Jaspen mascot logo"
               />
               <span>{welcomeHeading}</span>
             </h2>
