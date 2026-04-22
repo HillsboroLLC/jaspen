@@ -1558,6 +1558,9 @@ export default function Account() {
     mfaState.error ? 'account-security-error' : null,
     mfaState.success ? 'account-security-success' : null,
   ].filter(Boolean).join(' ') || undefined;
+  const accountMfaSetupCodeId = 'account-mfa-setup-code';
+  const accountMfaDisablePasswordId = 'account-mfa-disable-password';
+  const accountMfaDisableCodeId = 'account-mfa-disable-code';
 
   return (
     <div className="account-page">
@@ -1773,11 +1776,12 @@ export default function Account() {
               <div className="account-jira-modal-grid">
                 {isJiraModal && (
                   <>
-                    <label>
+                    <label htmlFor={"account-connector-jira_base_url"}>
                       Jira URL
                       <input
                         type="text"
                         value={jiraConfigModal.data.jira_base_url}
+                        id={"account-connector-jira_base_url"}
                         placeholder="https://your-company.atlassian.net"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -1787,11 +1791,12 @@ export default function Account() {
 aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
-                    <label>
+                    <label htmlFor={"account-connector-jira_project_key"}>
                       Jira project key
                       <input
                         type="text"
                         value={jiraConfigModal.data.jira_project_key}
+                        id={"account-connector-jira_project_key"}
                         placeholder="PROJ"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -1801,11 +1806,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
-                    <label>
+                    <label htmlFor={"account-connector-jira_email"}>
                       Jira email
                       <input
                         type="email"
                         value={jiraConfigModal.data.jira_email}
+                        id={"account-connector-jira_email"}
                         placeholder="service-account@company.com"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -1815,11 +1821,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
-                    <label>
+                    <label htmlFor={"account-connector-jira_issue_type"}>
                       Jira issue type
                       <input
                         type="text"
                         value={jiraConfigModal.data.jira_issue_type}
+                        id={"account-connector-jira_issue_type"}
                         placeholder="Task"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -1829,11 +1836,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
-                    <label className="account-jira-modal-token-field">
+                    <label className="account-jira-modal-token-field" htmlFor={"account-connector-jira_api_token"}>
                       Jira API token
                       <input
                         type="password"
                         value={jiraConfigModal.data.jira_api_token}
+                        id={"account-connector-jira_api_token"}
                         placeholder={jiraConfigModal.storedFlags?.jira_api_token ? 'Token exists. Enter to rotate token.' : 'Enter Jira API token'}
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -1847,11 +1855,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                 )}
                 {isWorkfrontModal && (
                   <>
-                    <label>
+                    <label htmlFor={"account-connector-workfront_base_url"}>
                       Workfront URL
                       <input
                         type="text"
                         value={jiraConfigModal.data.workfront_base_url}
+                        id={"account-connector-workfront_base_url"}
                         placeholder={DEFAULT_WORKFRONT_BASE_URL}
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -1861,11 +1870,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
-                    <label>
+                    <label htmlFor={"account-connector-workfront_project_id"}>
                       Project ID
                       <input
                         type="text"
                         value={jiraConfigModal.data.workfront_project_id}
+                        id={"account-connector-workfront_project_id"}
                         placeholder="Project or portfolio id"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -1875,11 +1885,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
-                    <label className="account-jira-modal-token-field">
+                    <label className="account-jira-modal-token-field" htmlFor={"account-connector-workfront_api_token"}>
                       Workfront API token
                       <input
                         type="password"
                         value={jiraConfigModal.data.workfront_api_token}
+                        id={"account-connector-workfront_api_token"}
                         placeholder={jiraConfigModal.storedFlags?.workfront_api_token ? 'Token exists. Enter to rotate token.' : 'Enter Workfront API token'}
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -1893,11 +1904,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                 )}
                 {isSmartsheetModal && (
                   <>
-                    <label>
+                    <label htmlFor={"account-connector-smartsheet_base_url"}>
                       Smartsheet URL
                       <input
                         type="text"
                         value={jiraConfigModal.data.smartsheet_base_url}
+                        id={"account-connector-smartsheet_base_url"}
                         placeholder={DEFAULT_SMARTSHEET_BASE_URL}
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -1907,11 +1919,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
-                    <label>
+                    <label htmlFor={"account-connector-smartsheet_sheet_id"}>
                       Sheet ID
                       <input
                         type="text"
                         value={jiraConfigModal.data.smartsheet_sheet_id}
+                        id={"account-connector-smartsheet_sheet_id"}
                         placeholder="Sheet id"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -1921,11 +1934,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
-                    <label className="account-jira-modal-token-field">
+                    <label className="account-jira-modal-token-field" htmlFor={"account-connector-smartsheet_api_token"}>
                       Smartsheet API token
                       <input
                         type="password"
                         value={jiraConfigModal.data.smartsheet_api_token}
+                        id={"account-connector-smartsheet_api_token"}
                         placeholder={jiraConfigModal.storedFlags?.smartsheet_api_token ? 'Token exists. Enter to rotate token.' : 'Enter Smartsheet API token'}
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -1939,11 +1953,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                 )}
                 {isSalesforceModal && (
                   <>
-                    <label>
+                    <label htmlFor={"account-connector-salesforce_auth_base_url"}>
                       Auth Base URL
                       <input
                         type="text"
                         value={jiraConfigModal.data.salesforce_auth_base_url}
+                        id={"account-connector-salesforce_auth_base_url"}
                         placeholder="https://login.salesforce.com"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -1953,11 +1968,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
-                    <label>
+                    <label htmlFor={"account-connector-salesforce_instance_url"}>
                       Instance URL
                       <input
                         type="text"
                         value={jiraConfigModal.data.salesforce_instance_url}
+                        id={"account-connector-salesforce_instance_url"}
                         placeholder="https://your-instance.salesforce.com"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -1967,11 +1983,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
-                    <label>
+                    <label htmlFor={"account-connector-salesforce_client_id"}>
                       Client ID
                       <input
                         type="text"
                         value={jiraConfigModal.data.salesforce_client_id}
+                        id={"account-connector-salesforce_client_id"}
                         placeholder="Connected app client id"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -1981,11 +1998,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
-                    <label className="account-jira-modal-token-field">
+                    <label className="account-jira-modal-token-field" htmlFor={"account-connector-salesforce_client_secret"}>
                       Client secret
                       <input
                         type="password"
                         value={jiraConfigModal.data.salesforce_client_secret}
+                        id={"account-connector-salesforce_client_secret"}
                         placeholder={jiraConfigModal.storedFlags?.salesforce_client_secret ? 'Secret exists. Enter to rotate.' : 'Enter client secret'}
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -1995,11 +2013,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
-                    <label className="account-jira-modal-token-field">
+                    <label className="account-jira-modal-token-field" htmlFor={"account-connector-salesforce_refresh_token"}>
                       Refresh token
                       <input
                         type="password"
                         value={jiraConfigModal.data.salesforce_refresh_token}
+                        id={"account-connector-salesforce_refresh_token"}
                         placeholder={jiraConfigModal.storedFlags?.salesforce_refresh_token ? 'Token exists. Enter to rotate.' : 'Enter refresh token'}
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -2013,11 +2032,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                 )}
                 {isSnowflakeModal && (
                   <>
-                    <label>
+                    <label htmlFor={"account-connector-snowflake_account"}>
                       Account
                       <input
                         type="text"
                         value={jiraConfigModal.data.snowflake_account}
+                        id={"account-connector-snowflake_account"}
                         placeholder="org-account.region.cloud"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -2027,11 +2047,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
-                    <label>
+                    <label htmlFor={"account-connector-snowflake_warehouse"}>
                       Warehouse
                       <input
                         type="text"
                         value={jiraConfigModal.data.snowflake_warehouse}
+                        id={"account-connector-snowflake_warehouse"}
                         placeholder="ANALYTICS_WH"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -2041,11 +2062,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
-                    <label>
+                    <label htmlFor={"account-connector-snowflake_database"}>
                       Database
                       <input
                         type="text"
                         value={jiraConfigModal.data.snowflake_database}
+                        id={"account-connector-snowflake_database"}
                         placeholder="ANALYTICS"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -2055,11 +2077,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
-                    <label>
+                    <label htmlFor={"account-connector-snowflake_schema"}>
                       Schema
                       <input
                         type="text"
                         value={jiraConfigModal.data.snowflake_schema}
+                        id={"account-connector-snowflake_schema"}
                         placeholder="PUBLIC"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -2069,11 +2092,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
-                    <label>
+                    <label htmlFor={"account-connector-snowflake_role"}>
                       Role
                       <input
                         type="text"
                         value={jiraConfigModal.data.snowflake_role}
+                        id={"account-connector-snowflake_role"}
                         placeholder="ANALYST_ROLE"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -2083,11 +2107,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
-                    <label>
+                    <label htmlFor={"account-connector-snowflake_user"}>
                       User
                       <input
                         type="text"
                         value={jiraConfigModal.data.snowflake_user}
+                        id={"account-connector-snowflake_user"}
                         placeholder="service_user"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -2097,11 +2122,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
-                    <label className="account-jira-modal-token-field">
+                    <label className="account-jira-modal-token-field" htmlFor={"account-connector-snowflake_password"}>
                       Password
                       <input
                         type="password"
                         value={jiraConfigModal.data.snowflake_password}
+                        id={"account-connector-snowflake_password"}
                         placeholder={jiraConfigModal.storedFlags?.snowflake_password ? 'Password exists. Enter to rotate.' : 'Optional if key is provided'}
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -2111,11 +2137,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
-                    <label className="account-jira-modal-token-field">
+                    <label className="account-jira-modal-token-field" htmlFor={"account-connector-snowflake_private_key"}>
                       Private key
                       <input
                         type="password"
                         value={jiraConfigModal.data.snowflake_private_key}
+                        id={"account-connector-snowflake_private_key"}
                         placeholder={jiraConfigModal.storedFlags?.snowflake_private_key ? 'Key exists. Enter to rotate.' : 'Optional if password is provided'}
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -2125,11 +2152,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
-                    <label className="account-jira-modal-token-field">
+                    <label className="account-jira-modal-token-field" htmlFor={"account-connector-snowflake_table_allowlist"}>
                       Table allowlist
                       <input
                         type="text"
                         value={jiraConfigModal.data.snowflake_table_allowlist}
+                        id={"account-connector-snowflake_table_allowlist"}
                         placeholder="schema.table_a, schema.table_b"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -2143,11 +2171,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                 )}
                 {isOracleFusionModal && (
                   <>
-                    <label>
+                    <label htmlFor={"account-connector-oracle_fusion_base_url"}>
                       Base URL
                       <input
                         type="text"
                         value={jiraConfigModal.data.oracle_fusion_base_url}
+                        id={"account-connector-oracle_fusion_base_url"}
                         placeholder={DEFAULT_ORACLE_FUSION_BASE_URL}
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -2157,11 +2186,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
-                    <label>
+                    <label htmlFor={"account-connector-oracle_fusion_username"}>
                       Username
                       <input
                         type="text"
                         value={jiraConfigModal.data.oracle_fusion_username}
+                        id={"account-connector-oracle_fusion_username"}
                         placeholder="integration.user@company.com"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -2171,11 +2201,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
-                    <label className="account-jira-modal-token-field">
+                    <label className="account-jira-modal-token-field" htmlFor={"account-connector-oracle_fusion_password"}>
                       Password
                       <input
                         type="password"
                         value={jiraConfigModal.data.oracle_fusion_password}
+                        id={"account-connector-oracle_fusion_password"}
                         placeholder={jiraConfigModal.storedFlags?.oracle_fusion_password ? 'Password exists. Enter to rotate.' : 'Enter password'}
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -2185,11 +2216,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
-                    <label>
+                    <label htmlFor={"account-connector-oracle_fusion_business_unit"}>
                       Business unit
                       <input
                         type="text"
                         value={jiraConfigModal.data.oracle_fusion_business_unit}
+                        id={"account-connector-oracle_fusion_business_unit"}
                         placeholder="US Operations"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -2203,11 +2235,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                 )}
                 {isServiceNowModal && (
                   <>
-                    <label>
+                    <label htmlFor={"account-connector-servicenow_instance_url"}>
                       Instance URL
                       <input
                         type="text"
                         value={jiraConfigModal.data.servicenow_instance_url}
+                        id={"account-connector-servicenow_instance_url"}
                         placeholder={DEFAULT_SERVICENOW_INSTANCE_URL}
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -2217,11 +2250,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
-                    <label>
+                    <label htmlFor={"account-connector-servicenow_username"}>
                       Username
                       <input
                         type="text"
                         value={jiraConfigModal.data.servicenow_username}
+                        id={"account-connector-servicenow_username"}
                         placeholder="integration.user"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -2231,11 +2265,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
-                    <label className="account-jira-modal-token-field">
+                    <label className="account-jira-modal-token-field" htmlFor={"account-connector-servicenow_password"}>
                       Password
                       <input
                         type="password"
                         value={jiraConfigModal.data.servicenow_password}
+                        id={"account-connector-servicenow_password"}
                         placeholder={jiraConfigModal.storedFlags?.servicenow_password ? 'Password exists. Enter to rotate.' : 'Enter password'}
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -2245,11 +2280,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
-                    <label className="account-jira-modal-token-field">
+                    <label className="account-jira-modal-token-field" htmlFor={"account-connector-servicenow_table_allowlist"}>
                       Table allowlist
                       <input
                         type="text"
                         value={jiraConfigModal.data.servicenow_table_allowlist}
+                        id={"account-connector-servicenow_table_allowlist"}
                         placeholder="incident,change_request"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -2263,11 +2299,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                 )}
                 {isNetSuiteModal && (
                   <>
-                    <label>
+                    <label htmlFor={"account-connector-netsuite_account_id"}>
                       Account ID
                       <input
                         type="text"
                         value={jiraConfigModal.data.netsuite_account_id}
+                        id={"account-connector-netsuite_account_id"}
                         placeholder="123456_SB1"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -2277,11 +2314,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
-                    <label>
+                    <label htmlFor={"account-connector-netsuite_consumer_key"}>
                       Consumer key
                       <input
                         type="text"
                         value={jiraConfigModal.data.netsuite_consumer_key}
+                        id={"account-connector-netsuite_consumer_key"}
                         placeholder="Integration consumer key"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -2291,11 +2329,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
-                    <label className="account-jira-modal-token-field">
+                    <label className="account-jira-modal-token-field" htmlFor={"account-connector-netsuite_consumer_secret"}>
                       Consumer secret
                       <input
                         type="password"
                         value={jiraConfigModal.data.netsuite_consumer_secret}
+                        id={"account-connector-netsuite_consumer_secret"}
                         placeholder={jiraConfigModal.storedFlags?.netsuite_consumer_secret ? 'Secret exists. Enter to rotate.' : 'Enter consumer secret'}
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -2305,11 +2344,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
-                    <label>
+                    <label htmlFor={"account-connector-netsuite_token_id"}>
                       Token ID
                       <input
                         type="text"
                         value={jiraConfigModal.data.netsuite_token_id}
+                        id={"account-connector-netsuite_token_id"}
                         placeholder="Token id"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -2319,11 +2359,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
-                    <label className="account-jira-modal-token-field">
+                    <label className="account-jira-modal-token-field" htmlFor={"account-connector-netsuite_token_secret"}>
                       Token secret
                       <input
                         type="password"
                         value={jiraConfigModal.data.netsuite_token_secret}
+                        id={"account-connector-netsuite_token_secret"}
                         placeholder={jiraConfigModal.storedFlags?.netsuite_token_secret ? 'Secret exists. Enter to rotate.' : 'Enter token secret'}
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -2333,11 +2374,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
-                    <label>
+                    <label htmlFor={"account-connector-netsuite_rest_base_url"}>
                       REST base URL
                       <input
                         type="text"
                         value={jiraConfigModal.data.netsuite_rest_base_url}
+                        id={"account-connector-netsuite_rest_base_url"}
                         placeholder={DEFAULT_NETSUITE_REST_BASE_URL}
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
@@ -2505,9 +2547,10 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                       </details>
                     </div>
                   </div>
-                  <label className="account-security-code">
+                  <label className="account-security-code" htmlFor={accountMfaSetupCodeId}>
                     Enter the 6-digit code
                     <input
+                      id={accountMfaSetupCodeId}
                       type="text"
                       inputMode="numeric"
                       value={mfaState.code}
@@ -2545,6 +2588,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                     <p>Require your password and a valid MFA code to disable.</p>
                     <div className="account-security-disable-fields">
                       <input
+                        id={accountMfaDisablePasswordId}
                         type="password"
                         placeholder="Current password"
                         value={mfaState.disablePassword}
@@ -2552,6 +2596,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                         aria-describedby={mfaFeedbackDescribedBy}
                       />
                       <input
+                        id={accountMfaDisableCodeId}
                         type="text"
                         placeholder="MFA code"
                         value={mfaState.disableCode}
@@ -2644,13 +2689,14 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                 {adminState.draft ? (
                   <>
                     <div className="account-admin-grid">
-                      <label>
+                      <label htmlFor="account-admin-email">
                         Email
-                        <input type="text" value={adminState.draft.email} disabled />
+                        <input id="account-admin-email" type="text" value={adminState.draft.email} disabled />
                       </label>
-                      <label>
+                      <label htmlFor="account-admin-name">
                         Name
                         <input
+                          id="account-admin-name"
                           type="text"
                           value={adminState.draft.name}
                           onChange={(e) => setAdminState((prev) => ({
@@ -2659,9 +2705,10 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           }))}
                         />
                       </label>
-                      <label>
+                      <label htmlFor="account-admin-plan">
                         Plan
                         <select
+                          id="account-admin-plan"
                           value={adminState.draft.subscription_plan}
                           onChange={(e) => setAdminState((prev) => ({
                             ...prev,
@@ -2671,9 +2718,10 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           {PLAN_ORDER.map((key) => <option key={key} value={key}>{key}</option>)}
                         </select>
                       </label>
-                      <label>
+                      <label htmlFor="account-admin-credits">
                         Credits
                         <input
+                          id="account-admin-credits"
                           type="number"
                           value={adminState.draft.credits_remaining}
                           onChange={(e) => setAdminState((prev) => ({
@@ -2682,9 +2730,10 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           }))}
                         />
                       </label>
-                      <label>
+                      <label htmlFor="account-admin-seat-limit">
                         Seat limit
                         <input
+                          id="account-admin-seat-limit"
                           type="number"
                           value={adminState.draft.seat_limit}
                           onChange={(e) => setAdminState((prev) => ({
@@ -2693,9 +2742,10 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           }))}
                         />
                       </label>
-                      <label>
+                      <label htmlFor="account-admin-max-seats">
                         Max seats
                         <input
+                          id="account-admin-max-seats"
                           type="number"
                           value={adminState.draft.max_seats}
                           onChange={(e) => setAdminState((prev) => ({
@@ -2704,9 +2754,10 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           }))}
                         />
                       </label>
-                      <label>
+                      <label htmlFor="account-admin-max-concurrent-sessions">
                         Max concurrent sessions
                         <input
+                          id="account-admin-max-concurrent-sessions"
                           type="number"
                           value={adminState.draft.max_concurrent_sessions}
                           onChange={(e) => setAdminState((prev) => ({
@@ -2715,9 +2766,10 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           }))}
                         />
                       </label>
-                      <label>
+                      <label htmlFor="account-admin-stripe-customer-id">
                         Stripe customer id
                         <input
+                          id="account-admin-stripe-customer-id"
                           type="text"
                           value={adminState.draft.stripe_customer_id}
                           onChange={(e) => setAdminState((prev) => ({
@@ -2726,9 +2778,10 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           }))}
                         />
                       </label>
-                      <label>
+                      <label htmlFor="account-admin-stripe-subscription-id">
                         Stripe subscription id
                         <input
+                          id="account-admin-stripe-subscription-id"
                           type="text"
                           value={adminState.draft.stripe_subscription_id}
                           onChange={(e) => setAdminState((prev) => ({
@@ -2737,8 +2790,9 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           }))}
                         />
                       </label>
-                      <label className="account-admin-checkbox">
+                      <label className="account-admin-checkbox" htmlFor="account-admin-unlimited-analysis">
                         <input
+                          id="account-admin-unlimited-analysis"
                           type="checkbox"
                           checked={Boolean(adminState.draft.unlimited_analysis)}
                           onChange={(e) => setAdminState((prev) => ({
