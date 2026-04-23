@@ -1,7 +1,7 @@
 // =====================================================
 // File: src/App.js
 // =====================================================
-import React from 'react';
+import React, { useEffect } from 'react';
 import '@fortawesome/fontawesome-free/css/all.min.css';
 import './App.css';
 
@@ -9,6 +9,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import ProtectedRoute from './homeSections/ProtectedRoute';
 import RequireTeamAccess from './shared/auth/RequireTeamAccess';
 import RequireDashboardAccess from './shared/auth/RequireDashboardAccess';
+import { useAuth } from './shared/auth/AuthContext';
 import { AppShell } from './jaspenInterface/layout';
 
 // Shared
@@ -49,6 +50,38 @@ import EnterpriseAdmin from './jaspenInterface/EnterpriseAdmin/EnterpriseAdmin';
 // Jaspen.ai Workspace
 import JaspenWorkspace from './jaspenInterface/Workspace/JaspenWorkspace';
 export default function App() {
+  const { user } = useAuth();
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const preference = String(user?.ui_preferences?.theme || 'system').trim().toLowerCase();
+    const themePreference = ['light', 'dark', 'system'].includes(preference) ? preference : 'system';
+
+    const applyResolvedTheme = () => {
+      if (themePreference === 'dark') {
+        root.setAttribute('data-theme', 'dark');
+        return;
+      }
+      if (themePreference === 'light') {
+        root.setAttribute('data-theme', 'light');
+        return;
+      }
+      root.removeAttribute('data-theme');
+    };
+
+    applyResolvedTheme();
+
+    if (themePreference !== 'system') return undefined;
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = () => applyResolvedTheme();
+    if (typeof media.addEventListener === 'function') {
+      media.addEventListener('change', onChange);
+      return () => media.removeEventListener('change', onChange);
+    }
+    media.addListener(onChange);
+    return () => media.removeListener(onChange);
+  }, [user?.ui_preferences?.theme]);
+
   const getDisplayName = (node) =>
     node?.type?.displayName || node?.type?.name || 'Page';
 

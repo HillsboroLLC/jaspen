@@ -624,10 +624,12 @@ def _ensure_user_org(user):
 
 
 def _user_payload(user):
+    ui_preferences = user.ui_preferences if isinstance(user.ui_preferences, dict) else {}
     return {
         'id': user.id,
         'email': user.email,
         'name': user.name,
+        'ui_preferences': ui_preferences,
         'is_admin': is_global_admin(user, app_config=current_app.config),
         'subscription_plan': to_public_plan(user.subscription_plan),
         'credits_remaining': user.credits_remaining,
@@ -1484,14 +1486,42 @@ def update_current_user():
     if not user:
         return jsonify(error='User not found'), 404
 
-    data = request.get_json() or {}
-    name = str(data.get('name') or '').strip()
-    if not name:
-        return jsonify(error='name is required'), 400
-    if len(name) > 255:
-        return jsonify(error='name is too long'), 400
+    data = request.get_json(silent=True) or {}
+    has_name = 'name' in data
+    has_ui_preferences = 'ui_preferences' in data
+    if not has_name and not has_ui_preferences:
+        return jsonify(error='At least one updatable field is required.'), 400
 
-    user.name = name
+    if has_name:
+        name = str(data.get('name') or '').strip()
+        if not name:
+            return jsonify(error='name is required'), 400
+        if len(name) > 255:
+            return jsonify(error='name is too long'), 400
+        user.name = name
+
+    if has_ui_preferences:
+        incoming = data.get('ui_preferences')
+        if incoming is None:
+            incoming = {}
+        if not isinstance(incoming, dict):
+            return jsonify(error='ui_preferences must be an object'), 400
+
+        current_prefs = user.ui_preferences if isinstance(user.ui_preferences, dict) else {}
+        next_prefs = dict(current_prefs)
+
+        if 'theme' in incoming:
+            raw_theme = incoming.get('theme')
+            if raw_theme is None or str(raw_theme).strip() == '':
+                next_prefs.pop('theme', None)
+            else:
+                theme = str(raw_theme).strip().lower()
+                if theme not in ('light', 'dark', 'system'):
+                    return jsonify(error="ui_preferences.theme must be 'light', 'dark', or 'system'"), 400
+                next_prefs['theme'] = theme
+
+        user.ui_preferences = next_prefs
+
     db.session.commit()
 
     if _ensure_user_org(user):
