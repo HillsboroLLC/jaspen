@@ -32,3 +32,26 @@
   --color-accent-primary: var(--color-brand-gold);
   --color-accent-energetic: var(--color-brand-orange);
 }
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    /* Dark surfaces/backgrounds */
+    --color-surface-default: #0f172a;
+    --color-surface-subtle: #111827;
+    --color-surface-tint: #1b2745;
+
+    /* Dark text/border */
+    --color-text-primary: #f8fafc;
+    --color-text-secondary: #e2e8f0;
+    --color-text-muted: #94a3b8;
+    --color-text-inverse: #0f172a;
+    --color-border-default: #334155;
+    --color-border-strong: #475569;
+
+    /* Preserve semantic mappings in dark */
+    --color-bg-page: var(--color-surface-default);
+    --color-bg-subtle: var(--color-surface-subtle);
+  }
+}
