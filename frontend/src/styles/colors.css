@@ -1,0 +1,34 @@
+:root {
+  /* Brand palette (locked) */
+  --color-brand-navy: #161f3b;
+  --color-brand-magenta: #a0036c;
+  --color-brand-gold: #e9b57b;
+  --color-brand-orange: #fd6b02;
+  --color-brand-white: #ffffff;
+
+  /* Surfaces/backgrounds */
+  --color-surface-subtle: #f8fafc;
+  --color-surface-tint: #eff9fc;
+  --color-surface-default: #ffffff;
+
+  /* Neutral text/border */
+  --color-text-primary: #161f3b;
+  --color-text-secondary: #4b5563;
+  --color-text-muted: #6b7280;
+  --color-text-inverse: #ffffff;
+  --color-border-default: #dbe3ee;
+  --color-border-strong: #b8c4d6;
+
+  /* Status/supporting colors */
+  --color-status-success: #0d7a3e;
+  --color-status-warning: #fd6b02;
+  --color-status-danger: #c0392b;
+  --color-status-info: #2b6cb0;
+
+  /* Semantic mappings */
+  --color-bg-page: var(--color-surface-default);
+  --color-bg-subtle: var(--color-surface-subtle);
+  --color-highlight: var(--color-brand-magenta);
+  --color-accent-primary: var(--color-brand-gold);
+  --color-accent-energetic: var(--color-brand-orange);
+}
