@@ -592,10 +592,8 @@ export default function Team({ mode = 'team' }) {
 
   if (loading) {
     return (
-      <div className="team-page">
-        <div className="team-panel">
-          <div className="team-state">Loading team data…</div>
-        </div>
+      <div className="team-page jas-internal-page jas-internal-page-shell">
+        <div className="team-state">Loading team data…</div>
       </div>
     );
   }
@@ -624,8 +622,7 @@ export default function Team({ mode = 'team' }) {
     : `${routePlanForCopy.charAt(0).toUpperCase() + routePlanForCopy.slice(1)} defaults: ${planSeatSummary(routePlanForCopy)}.`;
 
   return (
-    <div className="team-page">
-      <div className="team-panel">
+    <div className="team-page jas-internal-page jas-internal-page-shell">
       <header className="team-head">
         <div>
           <p className="team-eyebrow">{isEnterpriseMode ? 'Jaspen Enterprise' : 'Jaspen Team'}</p>
@@ -1131,7 +1128,6 @@ export default function Team({ mode = 'team' }) {
           </table>
         </div>
       </section>
-      </div>
     </div>
   );
 }

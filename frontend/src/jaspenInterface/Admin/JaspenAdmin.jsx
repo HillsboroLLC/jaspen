@@ -639,26 +639,23 @@ export default function JaspenAdmin() {
 
   if (isLoading) {
     return (
-      <div className="jas-admin-page">
-        <div className="jas-admin-panel">Loading Jaspen Admin...</div>
+      <div className="jas-admin-page jas-internal-page jas-internal-page-shell">
+        <p className="jas-admin-empty">Loading Jaspen Admin...</p>
       </div>
     );
   }
 
   if (!isAdmin) {
     return (
-      <div className="jas-admin-page">
-        <div className="jas-admin-panel">
-          <h1>Jaspen Admin</h1>
-          <p>You do not have global admin access on this environment.</p>
-        </div>
+      <div className="jas-admin-page jas-internal-page jas-internal-page-shell">
+        <h1>Jaspen Admin</h1>
+        <p>You do not have global admin access on this environment.</p>
       </div>
     );
   }
 
   return (
-    <div className="jas-admin-page">
-      <div className="jas-admin-panel">
+    <div className="jas-admin-page jas-internal-page jas-internal-page-shell">
         <div className="jas-admin-head">
           <div>
             <p className="jas-admin-eyebrow">Jaspen Internal</p>
@@ -1149,7 +1146,6 @@ export default function JaspenAdmin() {
             Editing: <strong>{selectedUser.email}</strong> ({selectedUser.subscription_plan})
           </p>
         )}
-      </div>
     </div>
   );
 }
