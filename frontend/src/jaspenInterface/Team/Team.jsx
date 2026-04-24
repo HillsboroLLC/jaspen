@@ -640,11 +640,11 @@ export default function Team({ mode = 'team' }) {
     : `${routePlanForCopy.charAt(0).toUpperCase() + routePlanForCopy.slice(1)} defaults: ${planSeatSummary(routePlanForCopy)}.`;
 
   return (
-    <div className="team-page jas-internal-page jas-internal-page-shell">
-      <div className="team-inner">
-      <header className="team-head">
+    <div className="team-page jas-internal-page jas-internal-page-shell int-page">
+      <div className="team-inner int-page-inner">
+      <header className="team-head int-page-head">
         <div>
-          <p className="team-eyebrow">{isEnterpriseMode ? 'Jaspen Enterprise' : 'Jaspen Team'}</p>
+          <p className="team-eyebrow int-eyebrow">{isEnterpriseMode ? 'Jaspen Enterprise' : 'Jaspen Team'}</p>
           <h1>{isEnterpriseMode ? 'Enterprise Admin' : 'Team'}</h1>
           <p className="team-sub">
             {isEnterpriseMode
@@ -654,7 +654,7 @@ export default function Team({ mode = 'team' }) {
         </div>
         <button
           type="button"
-          className="team-btn ghost team-back-btn"
+          className="team-btn ghost team-back-btn int-btn int-btn-ghost"
           onClick={() => navigate(routePreviewRole ? '/jaspen-admin' : '/new')}
         >
           {routePreviewRole ? 'Back to Jaspen Admin' : 'Back to Jaspen'}
@@ -675,7 +675,7 @@ export default function Team({ mode = 'team' }) {
               />
               <button
                 type="button"
-                className="team-btn ghost"
+                className="team-btn ghost int-btn int-btn-ghost"
                 onClick={onSaveOrganizationName}
                 disabled={busy || !showOrgNameSave || !activeOrgId} aria-disabled={busy || !showOrgNameSave || !activeOrgId}
               >
@@ -762,7 +762,7 @@ export default function Team({ mode = 'team' }) {
           <div className="team-seat-policy-actions">
             <button
               type="button"
-              className="team-btn ghost"
+              className="team-btn ghost int-btn int-btn-ghost"
               onClick={onDiscardSeatPolicy}
               disabled={busy || !seatDraftDirty || !canEditSeatPolicy} aria-disabled={busy || !seatDraftDirty || !canEditSeatPolicy}
             >
@@ -778,7 +778,7 @@ export default function Team({ mode = 'team' }) {
             </button>
             <button
               type="button"
-              className="team-btn ghost"
+              className="team-btn ghost int-btn int-btn-ghost"
               onClick={onResetSeatPolicy}
               disabled={busy || !canEditSeatPolicy} aria-disabled={busy || !canEditSeatPolicy}
             >

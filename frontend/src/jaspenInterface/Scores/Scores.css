@@ -2,7 +2,7 @@
   min-height: 100vh;
   padding: 24px;
   color: var(--jas-navy);
-  background: var(--jas-bg, #f2f5fb);
+  background: var(--jas-bg, var(--int-bg));
   transition: padding-left 0.3s ease;
 }
 
@@ -15,7 +15,7 @@
   margin: 0 auto;
   background: #fff;
   border: 1px solid var(--jas-border, #d9e0ed);
-  border-radius: 18px;
+  border-radius: var(--int-radius-lg);
   padding: 24px;
 }
 
@@ -113,7 +113,7 @@
 .scores-agent-starter {
   border: 1px solid #d7dfef;
   background: #f8faff;
-  border-radius: 12px;
+  border-radius: var(--int-radius-md);
   padding: 12px 14px;
   text-align: left;
   color: #1c2c54;
@@ -139,7 +139,7 @@
   display: inline-block;
   max-width: 88%;
   padding: 10px 14px;
-  border-radius: 12px;
+  border-radius: var(--int-radius-md);
   font-size: 13px;
   line-height: 1.55;
   text-align: left;
@@ -160,7 +160,7 @@
   margin-top: 14px;
   border: 1px solid #e7c0c7;
   background: #fff6f7;
-  border-radius: 12px;
+  border-radius: var(--int-radius-md);
   padding: 12px 14px;
   color: #9b1e35;
   font-size: 13px;
@@ -189,7 +189,7 @@
 .scores-agent-input {
   width: 100%;
   border: 1px solid #c7d1e3;
-  border-radius: 12px;
+  border-radius: var(--int-radius-md);
   padding: 12px 14px;
   font: inherit;
   color: #1a2748;
@@ -281,7 +281,7 @@
 .scores-filters select {
   width: 100%;
   border: 1px solid #c7d1e3;
-  border-radius: 10px;
+  border-radius: var(--int-radius-sm);
   padding: 10px 12px;
   font-size: 14px;
   color: #1a2748;
@@ -290,7 +290,7 @@
 
 .scores-state {
   border: 1px solid #dce3f0;
-  border-radius: 12px;
+  border-radius: var(--int-radius-md);
   background: #f8faff;
   padding: 16px;
   color: #34446a;
@@ -304,7 +304,7 @@
 
 .scores-table-wrap {
   border: 1px solid #d7dfef;
-  border-radius: 14px;
+  border-radius: var(--int-radius-md);
   overflow: auto;
   background: #fff;
 }
@@ -328,7 +328,7 @@
   position: sticky;
   top: 0;
   z-index: 1;
-  background: #f2f5fb;
+  background: var(--int-bg);
   font-size: 13px;
   letter-spacing: 0.01em;
   text-transform: uppercase;
@@ -413,7 +413,7 @@
   width: 30px;
   height: 30px;
   border: 1px solid #ccd6e7;
-  border-radius: 8px;
+  border-radius: var(--int-radius-sm);
   background: #fff;
   color: #1b2d55;
   cursor: pointer;
@@ -505,7 +505,7 @@
 
   .scores-card {
     padding: 16px;
-    border-radius: 14px;
+    border-radius: var(--int-radius-md);
   }
 
   .scores-toolbar {

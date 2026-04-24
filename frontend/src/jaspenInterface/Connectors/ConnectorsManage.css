@@ -1,8 +1,5 @@
 .connectors-manage-page {
-  min-height: 100vh;
   padding: 24px;
-  background: #f6f8fc;
-  color: #182543;
 }
 
 .connectors-manage-inner {
@@ -17,13 +14,13 @@
 
 .connectors-manage-header p {
   margin: 8px 0 0;
-  color: #5c6c92;
+  color: var(--int-text-sub);
 }
 
 .connectors-manage-state {
   margin-top: 14px;
-  border: 1px solid #ccd8ec;
-  border-radius: 12px;
+  border: 1px solid var(--int-border);
+  border-radius: var(--int-radius-md);
   background: #fff;
   padding: 14px;
   color: #41537d;
@@ -42,9 +39,9 @@
 .connectors-plan-note,
 .connectors-plan-gate {
   margin-top: 14px;
-  border: 1px solid #ccd8ec;
-  border-radius: 16px;
-  background: linear-gradient(135deg, #ffffff 0%, #f5f8ff 100%);
+  border: 1px solid var(--int-border);
+  border-radius: var(--int-radius-lg);
+  background: linear-gradient(135deg, var(--int-surface) 0%, #f5f8ff 100%);
   padding: 18px 20px;
   color: #30456f;
 }
@@ -71,7 +68,7 @@
 .connectors-plan-gate h2 {
   margin: 0;
   font-size: 28px;
-  color: #182543;
+  color: var(--int-text);
 }
 
 .connectors-plan-gate > p {
@@ -89,7 +86,7 @@
 
 .connectors-plan-gate-grid article {
   border: 1px solid #d8e1f2;
-  border-radius: 12px;
+  border-radius: var(--int-radius-md);
   background: rgba(255, 255, 255, 0.82);
   padding: 12px 14px;
   display: grid;
@@ -132,8 +129,8 @@
 
 .connector-card {
   text-align: left;
-  border: 1px solid #cad5ea;
-  border-radius: 12px;
+  border: 1px solid var(--int-border);
+  border-radius: var(--int-radius-md);
   background: #fff;
   padding: 12px;
   color: #1e2f58;
@@ -185,7 +182,7 @@
 
 .connector-card p {
   margin: 0;
-  color: #5f7094;
+  color: var(--int-text-sub);
   font-size: 13px;
 }
 
@@ -199,8 +196,8 @@
 }
 
 .connector-detail-panel {
-  border: 1px solid #cad5ea;
-  border-radius: 12px;
+  border: 1px solid var(--int-border);
+  border-radius: var(--int-radius-md);
   background: #fff;
   padding: 14px;
 }
@@ -219,7 +216,7 @@
 
 .connector-detail-header p {
   margin: 6px 0 0;
-  color: #5f7094;
+  color: var(--int-text-sub);
 }
 
 .connector-unsaved-note {
@@ -232,7 +229,7 @@
 .connector-required-legend {
   margin: 8px 0 0;
   font-size: 0.78rem;
-  color: #5f7094;
+  color: var(--int-text-sub);
 }
 
 .connector-required-marker {
@@ -248,8 +245,8 @@
 
 .connector-detail-actions button {
   height: 36px;
-  border-radius: 9px;
-  border: 1px solid #bac8e1;
+  border-radius: var(--int-radius-sm);
+  border: 1px solid var(--int-border-md);
   background: #fff;
   color: #203a6c;
   padding: 0 10px;
@@ -274,7 +271,7 @@
   display: grid;
   gap: 6px;
   font-size: 12px;
-  color: #43557f;
+  color: var(--int-eyebrow);
 }
 
 .connector-core-controls input,
@@ -283,8 +280,8 @@
 .connector-field-grid select,
 .connector-field-grid textarea {
   height: 38px;
-  border: 1px solid #c3cfe5;
-  border-radius: 8px;
+  border: 1px solid var(--int-border-md);
+  border-radius: var(--int-radius-sm);
   padding: 0 10px;
   background: #fff;
   color: #1d2f5a;
@@ -338,7 +335,7 @@
 
 .connector-audit-table-wrap {
   border: 1px solid #d3dced;
-  border-radius: 10px;
+  border-radius: var(--int-radius-sm);
   overflow-x: auto;
 }
 
@@ -358,7 +355,7 @@
 .connector-audit-table-wrap th {
   background: #f8fafd;
   font-size: 12px;
-  color: #465982;
+  color: var(--int-eyebrow);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }

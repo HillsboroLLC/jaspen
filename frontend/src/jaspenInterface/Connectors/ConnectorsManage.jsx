@@ -755,11 +755,14 @@ export default function ConnectorsManage() {
   }
 
   return (
-    <div className="connectors-manage-page">
-      <div className="connectors-manage-inner">
-      <header className="connectors-manage-header">
-        <h1>Data Sources</h1>
-        <p>Centralized connector management with monitoring, health checks, and sync history.</p>
+    <div className="connectors-manage-page int-page">
+      <div className="connectors-manage-inner int-page-inner">
+      <header className="connectors-manage-header int-page-head">
+        <div>
+          <p className="int-eyebrow">Data Sources</p>
+          <h1>Connectors</h1>
+          <p>Centralized connector management with monitoring, health checks, and sync history.</p>
+        </div>
       </header>
 
       {loading && <div className="connectors-manage-state" role="status" aria-live="polite">Loading connectors...</div>}
@@ -830,7 +833,7 @@ export default function ConnectorsManage() {
                 >
                   <div className="connector-card-head">
                     <span className="connector-card-icon"><FontAwesomeIcon icon={connectorIcon(connector.id)} /></span>
-                    <span className={`connector-card-status ${connector.connected ? 'is-on' : 'is-off'}`}>
+                    <span className={`connector-card-status int-badge ${connector.connected ? 'is-on int-badge-success' : 'is-off int-badge-danger'}`}>
                       {connector.connected ? 'Connected' : 'Disconnected'}
                     </span>
                   </div>

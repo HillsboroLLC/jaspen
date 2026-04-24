@@ -415,7 +415,7 @@ export default function Scores() {
   }, [portfolioMeta, total, category, search]);
 
   return (
-    <div className={`scores-container ${portfolioDrawerOpen ? 'drawer-open' : ''}`}>
+    <div className={`scores-container int-page int-page-inner ${portfolioDrawerOpen ? 'drawer-open' : ''}`}>
       {!portfolioDrawerOpen && (
         <button
           type="button"
@@ -501,7 +501,7 @@ export default function Scores() {
             />
             <button
               type="button"
-              className="scores-primary-btn scores-agent-send"
+              className="scores-primary-btn scores-agent-send int-btn int-btn-primary"
               onClick={() => submitPortfolioPrompt(portfolioInput)}
               disabled={portfolioBusy || loading || total === 0 || !portfolioInput.trim()} aria-disabled={portfolioBusy || loading || total === 0 || !portfolioInput.trim()}
             >
@@ -512,16 +512,17 @@ export default function Scores() {
       </aside>
 
       <div className="scores-card">
-        <div className="scores-toolbar">
+        <div className="scores-toolbar int-page-head">
           <div>
+            <p className="int-eyebrow">Scores</p>
             <h1>Completed Scores</h1>
             <p>All completed analyses and adopted scenarios</p>
           </div>
           <div className="scores-toolbar-actions">
-            <button type="button" className="scores-secondary-btn" onClick={() => navigate('/new')}>
+            <button type="button" className="scores-secondary-btn int-btn int-btn-ghost" onClick={() => navigate('/new')}>
               Back to Jaspen
             </button>
-            <button type="button" className="scores-primary-btn" onClick={exportCsv} disabled={exportingCsv || loading || total === 0} aria-disabled={exportingCsv || loading || total === 0}>
+            <button type="button" className="scores-primary-btn int-btn int-btn-primary" onClick={exportCsv} disabled={exportingCsv || loading || total === 0} aria-disabled={exportingCsv || loading || total === 0}>
               {exportingCsv ? 'Exporting...' : 'Export CSV'}
             </button>
           </div>
@@ -714,7 +715,7 @@ export default function Scores() {
               <div className="scores-pagination-actions">
                 <button
                   type="button"
-                  className="scores-secondary-btn"
+                  className="scores-secondary-btn int-btn int-btn-ghost"
                   onClick={() => setOffset((prev) => Math.max(0, prev - PAGE_LIMIT))}
                   disabled={!hasPrevious} aria-disabled={!hasPrevious}
                 >
@@ -722,7 +723,7 @@ export default function Scores() {
                 </button>
                 <button
                   type="button"
-                  className="scores-secondary-btn"
+                  className="scores-secondary-btn int-btn int-btn-ghost"
                   onClick={() => setOffset((prev) => prev + PAGE_LIMIT)}
                   disabled={!hasNext} aria-disabled={!hasNext}
                 >

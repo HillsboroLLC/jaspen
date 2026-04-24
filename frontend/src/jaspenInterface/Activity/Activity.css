@@ -1,7 +1,7 @@
 .activity-page {
   min-height: 100vh;
   padding: 28px;
-  background: #f6f8fc;
+  background: var(--int-bg);
   color: #17233f;
 }
 
@@ -32,7 +32,7 @@
 .activity-controls input[type='date'] {
   height: 42px;
   min-width: 180px;
-  border-radius: 10px;
+  border-radius: var(--int-radius-sm);
   border: 1px solid #c0cce2;
   background: #fff;
   color: #24355f;
@@ -45,7 +45,7 @@
 
 .activity-state {
   margin-top: 14px;
-  border-radius: 12px;
+  border-radius: var(--int-radius-md);
   border: 1px solid #d1daec;
   background: #fff;
   color: #3f517b;
@@ -81,8 +81,8 @@
 }
 
 .activity-content {
-  border: 1px solid #cad5ea;
-  border-radius: 12px;
+  border: 1px solid var(--int-border);
+  border-radius: var(--int-radius-md);
   background: #fff;
   padding: 12px;
 }
@@ -135,7 +135,7 @@
 
 .activity-pagination button {
   height: 34px;
-  border-radius: 8px;
+  border-radius: var(--int-radius-sm);
   border: 1px solid #bccae2;
   background: #fff;
   color: #1f3a70;

@@ -344,10 +344,10 @@ export default function EnterpriseAdmin() {
   }
 
   return (
-    <div className="enterprise-admin-page">
-      <section className="enterprise-admin-card enterprise-admin-header">
+    <div className="enterprise-admin-page int-page int-page-inner">
+      <section className="enterprise-admin-card enterprise-admin-header int-page-head">
         <div>
-          <p className="enterprise-admin-eyebrow">Jaspen Enterprise</p>
+          <p className="enterprise-admin-eyebrow int-eyebrow">Jaspen Enterprise</p>
           <h1>Enterprise Admin</h1>
           <p>Manage enterprise controls for team operations, security, data governance, and audit readiness.</p>
         </div>

@@ -165,11 +165,14 @@ export default function Reports() {
   }
 
   return (
-    <div className="reports-page">
-      <div className="reports-inner">
-      <header className="reports-header">
-        <h1>Reports</h1>
-        <p>Generate executive and detailed PDFs from completed analyses.</p>
+    <div className="reports-page int-page">
+      <div className="reports-inner int-page-inner">
+      <header className="reports-header int-page-head">
+        <div>
+          <p className="int-eyebrow">Reports</p>
+          <h1>Reports</h1>
+          <p>Generate executive and detailed PDFs from completed analyses.</p>
+        </div>
       </header>
 
       <section className="reports-generate-card">

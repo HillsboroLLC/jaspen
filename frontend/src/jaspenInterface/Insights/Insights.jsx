@@ -239,10 +239,13 @@ export default function Insights() {
   }, [activeDatasetId, datasets, loadDatasets]);
 
   return (
-    <div className="insights-page">
-      <header className="insights-header">
-        <h1>Insights</h1>
-        <p>Upload company datasets, run AI analysis, and review trends, anomalies, opportunities, and risks.</p>
+    <div className="insights-page int-page">
+      <header className="insights-header int-page-head">
+        <div>
+          <p className="int-eyebrow">Insights</p>
+          <h1>Insights</h1>
+          <p>Upload company datasets, run AI analysis, and review trends, anomalies, opportunities, and risks.</p>
+        </div>
       </header>
 
       <section className="insights-panel">
