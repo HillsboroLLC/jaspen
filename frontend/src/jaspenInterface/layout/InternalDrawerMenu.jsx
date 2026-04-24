@@ -8,7 +8,6 @@ import {
   faGear,
   faLayerGroup,
   faListCheck,
-  faPlus,
   faPlug,
   faShieldHalved,
   faTimes,
@@ -29,7 +28,6 @@ export default function InternalDrawerMenu() {
   const items = useMemo(() => {
     const base = [
       { to: '/dashboard', label: 'Dashboard', icon: faListCheck },
-      { to: '/new', label: 'New Project', icon: faPlus },
       { to: '/projects', label: 'Projects', icon: faLayerGroup },
       { to: '/scores', label: 'Scores', icon: faChartLine },
       { to: '/insights', label: 'Insights', icon: faLayerGroup },
@@ -82,7 +80,7 @@ export default function InternalDrawerMenu() {
           />
           <aside className="jas-main-drawer" aria-label="Main menu">
             <div className="jas-main-drawer-head">
-              <p>Main menu</p>
+              <p>User Settings</p>
               <button
                 type="button"
                 className="jas-main-drawer-close"
@@ -92,6 +90,7 @@ export default function InternalDrawerMenu() {
                 <FontAwesomeIcon icon={faTimes} />
               </button>
             </div>
+            <div className="jas-main-drawer-section-label">Navigate</div>
             <nav className="jas-main-drawer-nav">
               {items.map((item) => (
                 <NavLink
