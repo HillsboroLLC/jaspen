@@ -36,9 +36,10 @@ export default function AppShell({
   const useInternalDrawer = INTERNAL_ROUTE_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
   const containerClass = fullBleed ? '' : 'container';
   const contentStyle = noPadding ? {} : { padding: '24px 0 40px' };
+  const shellClassName = `${className} ${useInternalDrawer ? 'jas-internal-route' : ''}`.trim();
 
   return (
-    <div className={className}>
+    <div className={shellClassName}>
       {useInternalDrawer && <InternalDrawerMenu />}
       <a href="#app-main-content" className="app-skip-link">Skip to main content</a>
       {showHeader && header !== null && (
