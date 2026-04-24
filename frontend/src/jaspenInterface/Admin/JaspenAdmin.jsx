@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { API_BASE } from '../../config/apiBase';
 import { buildAuthHeaders } from '../../shared/auth/http';
+import ConfirmDialog from '../../shared/components/ConfirmDialog';
 import Feedback from './Feedback';
 import './JaspenAdmin.css';
 
@@ -167,6 +168,7 @@ export default function JaspenAdmin() {
     reason: '',
   });
   const [recoveryReason, setRecoveryReason] = useState('');
+  const [confirmDialog, setConfirmDialog] = useState(null);
 
   const openPreview = (path) => {
     navigate(path);
@@ -508,27 +510,34 @@ export default function JaspenAdmin() {
       setMessage('Recovery reason is required.');
       return;
     }
-    if (!window.confirm(`Run "${label}" for ${draft.email}?`)) return;
-
-    setPending(true);
-    setMessage('');
-    try {
-      const response = await fetch(`${API_BASE}/api/v1/admin/users/${encodeURIComponent(draft.id)}/recovery`, {
-        method: 'POST',
-        headers: authHeaders({ 'Content-Type': 'application/json' }, 'POST'),
-        credentials: 'include',
-        body: JSON.stringify({ action, reason }),
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data?.error || `Unable to run ${label}.`);
-      applySavedUser(data?.user);
-      setMessage(`Recovery action completed: ${label}.`);
-      await loadUserOps(draft.id);
-    } catch (error) {
-      setMessage(error.message || `Unable to run ${label}.`);
-    } finally {
-      setPending(false);
-    }
+    setConfirmDialog({
+      title: 'Run recovery action',
+      message: `Run "${label}" for ${draft.email}?`,
+      confirmLabel: label,
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        setPending(true);
+        setMessage('');
+        try {
+          const response = await fetch(`${API_BASE}/api/v1/admin/users/${encodeURIComponent(draft.id)}/recovery`, {
+            method: 'POST',
+            headers: authHeaders({ 'Content-Type': 'application/json' }, 'POST'),
+            credentials: 'include',
+            body: JSON.stringify({ action, reason }),
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data?.error || `Unable to run ${label}.`);
+          applySavedUser(data?.user);
+          setMessage(`Recovery action completed: ${label}.`);
+          await loadUserOps(draft.id);
+        } catch (error) {
+          setMessage(error.message || `Unable to run ${label}.`);
+        } finally {
+          setPending(false);
+        }
+      },
+    });
   };
 
   const deactivateUser = async () => {
@@ -538,56 +547,66 @@ export default function JaspenAdmin() {
       setMessage('A reason is required before deactivating a user.');
       return;
     }
-    if (!window.confirm(`Deactivate ${draft.email}? Their sessions will be invalidated, but their data will stay recoverable for 30 days.`)) {
-      return;
-    }
-
-    setPending(true);
-    setMessage('');
-    try {
-      const response = await fetch(`${API_BASE}/api/v1/admin/users/${encodeURIComponent(draft.id)}/deactivate`, {
-        method: 'POST',
-        headers: authHeaders({ 'Content-Type': 'application/json' }, 'POST'),
-        credentials: 'include',
-        body: JSON.stringify({ reason, recovery_days: 30 }),
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data?.error || 'Unable to deactivate user.');
-      applySavedUser(data?.user);
-      await loadUsers(query);
-      setMessage(`Deactivated ${data?.user?.email || 'user'}.`);
-    } catch (error) {
-      setMessage(error.message || 'Unable to deactivate user.');
-    } finally {
-      setPending(false);
-    }
+    setConfirmDialog({
+      title: 'Deactivate user',
+      message: `Deactivate ${draft.email}? Their sessions will be invalidated, but their data will stay recoverable for 30 days.`,
+      confirmLabel: 'Deactivate user',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        setPending(true);
+        setMessage('');
+        try {
+          const response = await fetch(`${API_BASE}/api/v1/admin/users/${encodeURIComponent(draft.id)}/deactivate`, {
+            method: 'POST',
+            headers: authHeaders({ 'Content-Type': 'application/json' }, 'POST'),
+            credentials: 'include',
+            body: JSON.stringify({ reason, recovery_days: 30 }),
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data?.error || 'Unable to deactivate user.');
+          applySavedUser(data?.user);
+          await loadUsers(query);
+          setMessage(`Deactivated ${data?.user?.email || 'user'}.`);
+        } catch (error) {
+          setMessage(error.message || 'Unable to deactivate user.');
+        } finally {
+          setPending(false);
+        }
+      },
+    });
   };
 
   const restoreUser = async () => {
     if (!draft?.id) return;
-    if (!window.confirm(`Restore ${draft.email}? This will reopen account access.`)) {
-      return;
-    }
-
-    setPending(true);
-    setMessage('');
-    try {
-      const response = await fetch(`${API_BASE}/api/v1/admin/users/${encodeURIComponent(draft.id)}/restore`, {
-        method: 'POST',
-        headers: authHeaders({ 'Content-Type': 'application/json' }, 'POST'),
-        credentials: 'include',
-        body: JSON.stringify({ reason: String(recoveryReason || '').trim() || undefined }),
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data?.error || 'Unable to restore user.');
-      applySavedUser(data?.user);
-      await loadUsers(query);
-      setMessage(`Restored ${data?.user?.email || 'user'}.`);
-    } catch (error) {
-      setMessage(error.message || 'Unable to restore user.');
-    } finally {
-      setPending(false);
-    }
+    setConfirmDialog({
+      title: 'Restore user',
+      message: `Restore ${draft.email}? This will reopen account access.`,
+      confirmLabel: 'Restore user',
+      confirmVariant: 'primary',
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        setPending(true);
+        setMessage('');
+        try {
+          const response = await fetch(`${API_BASE}/api/v1/admin/users/${encodeURIComponent(draft.id)}/restore`, {
+            method: 'POST',
+            headers: authHeaders({ 'Content-Type': 'application/json' }, 'POST'),
+            credentials: 'include',
+            body: JSON.stringify({ reason: String(recoveryReason || '').trim() || undefined }),
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data?.error || 'Unable to restore user.');
+          applySavedUser(data?.user);
+          await loadUsers(query);
+          setMessage(`Restored ${data?.user?.email || 'user'}.`);
+        } catch (error) {
+          setMessage(error.message || 'Unable to restore user.');
+        } finally {
+          setPending(false);
+        }
+      },
+    });
   };
 
   const saveAccessControls = async () => {
@@ -1146,6 +1165,16 @@ export default function JaspenAdmin() {
             Editing: <strong>{selectedUser.email}</strong> ({selectedUser.subscription_plan})
           </p>
         )}
+        <ConfirmDialog
+          isOpen={Boolean(confirmDialog)}
+          title={confirmDialog?.title}
+          message={confirmDialog?.message}
+          confirmLabel={confirmDialog?.confirmLabel}
+          confirmVariant={confirmDialog?.confirmVariant}
+          pending={pending}
+          onCancel={() => setConfirmDialog(null)}
+          onConfirm={() => confirmDialog?.onConfirm?.()}
+        />
     </div>
   );
 }

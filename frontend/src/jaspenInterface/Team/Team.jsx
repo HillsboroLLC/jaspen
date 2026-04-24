@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { API_BASE } from '../../config/apiBase';
 import { useAuth } from '../../shared/auth/AuthContext';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
+import ConfirmDialog from '../../shared/components/ConfirmDialog';
 import './Team.css';
 
 const ROLE_OPTIONS = ['owner', 'admin', 'creator', 'collaborator', 'viewer'];
@@ -155,6 +156,7 @@ export default function Team({ mode = 'team' }) {
   const [previewRole, setPreviewRole] = useState(PREVIEW_ROLE_ACTUAL);
   const [seatDraft, setSeatDraft] = useState({});
   const [savedSeatDraft, setSavedSeatDraft] = useState({});
+  const [confirmDialog, setConfirmDialog] = useState(null);
 
   const isEnterpriseMode = String(mode || '').toLowerCase() === 'enterprise';
   const routePlanForCopy = isEnterpriseMode ? 'enterprise' : 'team';
@@ -379,19 +381,27 @@ export default function Team({ mode = 'team' }) {
   const onRemoveMember = async (member) => {
     if (!canManageMembers || previewModeActive || !activeOrgId) return;
     const label = member?.user?.name || member?.user?.email || member?.user_id;
-    if (!window.confirm(`Remove ${label} from this team?`)) return;
-    setBusy(true);
-    setNotice('');
-    setError('');
-    try {
-      await teamFetch(`/api/v1/teams/${encodeURIComponent(activeOrgId)}/members/${encodeURIComponent(member.id)}`, { method: 'DELETE' });
-      await loadAll();
-      setNotice('Member removed.');
-    } catch (err) {
-      setError(err?.message || 'Failed to remove member');
-    } finally {
-      setBusy(false);
-    }
+    setConfirmDialog({
+      title: 'Remove team member',
+      message: `Remove ${label} from this team?`,
+      confirmLabel: 'Remove member',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        setBusy(true);
+        setNotice('');
+        setError('');
+        try {
+          await teamFetch(`/api/v1/teams/${encodeURIComponent(activeOrgId)}/members/${encodeURIComponent(member.id)}`, { method: 'DELETE' });
+          await loadAll();
+          setNotice('Member removed.');
+        } catch (err) {
+          setError(err?.message || 'Failed to remove member');
+        } finally {
+          setBusy(false);
+        }
+      },
+    });
   };
 
   const onResendInvitation = async (invitationId) => {
@@ -415,22 +425,30 @@ export default function Team({ mode = 'team' }) {
 
   const onCancelInvitation = async (invitationId) => {
     if (!canManageMembers || previewModeActive || !activeOrgId) return;
-    if (!window.confirm('Cancel this invitation?')) return;
-    setBusy(true);
-    setNotice('');
-    setError('');
-    try {
-      await teamFetch(
-        `/api/v1/teams/${encodeURIComponent(activeOrgId)}/invitations/${encodeURIComponent(invitationId)}`,
-        { method: 'DELETE' }
-      );
-      await loadAll();
-      setNotice('Invitation cancelled.');
-    } catch (err) {
-      setError(err?.message || 'Failed to cancel invitation');
-    } finally {
-      setBusy(false);
-    }
+    setConfirmDialog({
+      title: 'Cancel invitation',
+      message: 'Cancel this invitation?',
+      confirmLabel: 'Cancel invitation',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        setBusy(true);
+        setNotice('');
+        setError('');
+        try {
+          await teamFetch(
+            `/api/v1/teams/${encodeURIComponent(activeOrgId)}/invitations/${encodeURIComponent(invitationId)}`,
+            { method: 'DELETE' }
+          );
+          await loadAll();
+          setNotice('Invitation cancelled.');
+        } catch (err) {
+          setError(err?.message || 'Failed to cancel invitation');
+        } finally {
+          setBusy(false);
+        }
+      },
+    });
   };
 
   const onSharingDraftChange = (sessionId, patch) => {
@@ -1129,6 +1147,16 @@ export default function Team({ mode = 'team' }) {
           </table>
         </div>
       </section>
+      <ConfirmDialog
+        isOpen={Boolean(confirmDialog)}
+        title={confirmDialog?.title}
+        message={confirmDialog?.message}
+        confirmLabel={confirmDialog?.confirmLabel}
+        confirmVariant={confirmDialog?.confirmVariant}
+        pending={busy}
+        onCancel={() => setConfirmDialog(null)}
+        onConfirm={() => confirmDialog?.onConfirm?.()}
+      />
       </div>
     </div>
   );
