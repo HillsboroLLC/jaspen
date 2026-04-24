@@ -382,4 +382,18 @@
   .connector-detail-header {
     flex-direction: column;
   }
+
+  .connector-detail-actions {
+    width: 100%;
+  }
+
+  .connector-core-controls,
+  .connector-field-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .connector-auto-sync {
+    grid-auto-flow: row;
+    justify-content: flex-start;
+  }
 }
