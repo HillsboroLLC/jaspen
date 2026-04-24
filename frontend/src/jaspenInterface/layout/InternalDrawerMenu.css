@@ -1,0 +1,118 @@
+.jas-main-drawer-tab {
+  appearance: none;
+  -webkit-appearance: none;
+  position: fixed;
+  left: 0;
+  top: 340px;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  border: 1px solid #dfe5ef;
+  border-left: 0;
+  border-radius: 0 8px 8px 0;
+  background: #f7f9fc;
+  color: #161f3b;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  font-size: 0.75rem;
+  padding: 12px 8px;
+  cursor: pointer;
+  z-index: 1300;
+}
+
+.jas-main-drawer-tab:hover {
+  background: #eef2f8;
+}
+
+.jas-main-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  border: 0;
+  background: rgba(10, 16, 35, 0.15);
+  cursor: default;
+  z-index: 1308;
+}
+
+.jas-main-drawer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 320px;
+  height: 100vh;
+  background: #f7f9fb;
+  border-right: 1px solid #e1e6ef;
+  z-index: 1310;
+  display: flex;
+  flex-direction: column;
+}
+
+.jas-main-drawer-head {
+  height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  border-bottom: 1px solid #e3e8f1;
+}
+
+.jas-main-drawer-head p {
+  margin: 0;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(22, 31, 59, 0.64);
+  font-weight: 700;
+}
+
+.jas-main-drawer-close {
+  border: 0;
+  background: transparent;
+  color: rgba(22, 31, 59, 0.66);
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+}
+
+.jas-main-drawer-close:hover {
+  color: #161f3b;
+}
+
+.jas-main-drawer-nav {
+  display: grid;
+  gap: 2px;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.jas-main-drawer-link {
+  text-decoration: none;
+  color: rgba(22, 31, 59, 0.9);
+  border-left: 2px solid transparent;
+  padding: 10px 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1rem;
+}
+
+.jas-main-drawer-link:hover {
+  color: #161f3b;
+}
+
+.jas-main-drawer-link.is-active {
+  border-left-color: #161f3b;
+  color: #161f3b;
+  font-weight: 600;
+}
+
+.jas-main-drawer-icon {
+  width: 14px;
+  display: inline-flex;
+  justify-content: center;
+  font-size: 0.85rem;
+}
+
+@media (max-width: 900px) {
+  .jas-main-drawer {
+    width: min(320px, 88vw);
+  }
+}

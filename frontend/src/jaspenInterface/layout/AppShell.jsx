@@ -1,5 +1,23 @@
 import React from 'react';
+import { useLocation } from 'react-router-dom';
 import { SectionHeader } from '../../homeSections/homeUi';
+import InternalDrawerMenu from './InternalDrawerMenu';
+
+const INTERNAL_ROUTE_PREFIXES = [
+  '/dashboard',
+  '/projects',
+  '/scores',
+  '/insights',
+  '/reports',
+  '/activity',
+  '/connectors-manage',
+  '/account',
+  '/team',
+  '/enterprise-admin',
+  '/knowledge',
+  '/jaspen-admin',
+  '/payment',
+];
 
 export default function AppShell({
   title,
@@ -13,11 +31,15 @@ export default function AppShell({
   contentClassName = '',
   children,
 }) {
+  const location = useLocation();
+  const pathname = location?.pathname || '';
+  const useInternalDrawer = INTERNAL_ROUTE_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
   const containerClass = fullBleed ? '' : 'container';
   const contentStyle = noPadding ? {} : { padding: '24px 0 40px' };
 
   return (
     <div className={className}>
+      {useInternalDrawer && <InternalDrawerMenu />}
       <a href="#app-main-content" className="app-skip-link">Skip to main content</a>
       {showHeader && header !== null && (
         <div style={{ padding: '24px 0 8px' }}>
