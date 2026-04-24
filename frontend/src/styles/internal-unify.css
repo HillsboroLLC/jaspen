@@ -6,6 +6,10 @@
   --jas-ui-bg: #f8fafc;
   --jas-ui-radius-control: 9px;
   --jas-ui-radius-card: 12px;
+  --jas-ui-heading-size: 1.9rem;
+  --jas-ui-heading-tracking: -0.01em;
+  --jas-ui-section-gap: 14px;
+  --jas-ui-page-pad: 20px 26px 28px;
 }
 
 .jas-internal-route :is(
@@ -20,6 +24,17 @@
 ) {
   background: var(--jas-ui-bg);
   color: var(--jas-ui-ink);
+}
+
+.jas-internal-route :is(
+  .jas-admin-page,
+  .team-page,
+  .connectors-manage-page,
+  .activity-page,
+  .reports-page,
+  .scores-container
+) {
+  padding: var(--jas-ui-page-pad);
 }
 
 .jas-internal-route :is(
@@ -44,6 +59,32 @@
 ) {
   border-radius: var(--jas-ui-radius-control);
   font-weight: 700;
+}
+
+.jas-internal-route :is(
+  .account-primary-btn,
+  .jas-admin-primary,
+  .team-btn:not(.ghost):not(.danger),
+  .reports-generate-form button,
+  .scores-primary-btn
+) {
+  background: #161f3b;
+  border-color: #161f3b;
+  color: #ffffff;
+}
+
+.jas-internal-route :is(
+  .account-secondary-btn,
+  .jas-admin-secondary,
+  .team-btn.ghost,
+  .connector-detail-actions button,
+  .activity-pagination button,
+  .reports-action,
+  .scores-secondary-btn
+) {
+  background: #ffffff;
+  border-color: var(--jas-ui-border);
+  color: #161f3b;
 }
 
 .jas-internal-route :is(
@@ -75,6 +116,33 @@
 }
 
 .jas-internal-route :is(
+  .account-main-content,
+  .knowledge-main
+) {
+  gap: var(--jas-ui-section-gap);
+}
+
+.jas-internal-route :is(
+  .team-panel,
+  .connectors-manage-inner,
+  .activity-inner,
+  .reports-inner,
+  .scores-card
+) {
+  max-width: 1320px;
+  margin: 0 auto;
+}
+
+.jas-internal-route :is(
+  .scores-card
+) {
+  border: 0;
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+}
+
+.jas-internal-route :is(
   .account-sidebar-item,
   .account-sidebar-label,
   .team-head h1,
@@ -85,6 +153,18 @@
   .jas-admin-head h1
 ) {
   color: var(--jas-ui-ink);
+  letter-spacing: var(--jas-ui-heading-tracking);
+}
+
+.jas-internal-route :is(
+  .team-head h1,
+  .activity-header h1,
+  .reports-header h1,
+  .connectors-manage-header h1,
+  .scores-toolbar h1,
+  .jas-admin-head h1
+) {
+  font-size: var(--jas-ui-heading-size);
 }
 
 .jas-internal-route :is(
@@ -116,6 +196,7 @@
   .activity-controls select,
   .activity-controls input[type='date'],
   .reports-generate-form select,
+  .reports-generate-form input,
   .scores-filters input,
   .scores-filters select
 ) {
@@ -123,4 +204,45 @@
   border-color: var(--jas-ui-border);
   color: var(--jas-ui-ink);
   background: var(--jas-ui-surface);
+}
+
+.jas-internal-route :is(
+  .team-table-wrap,
+  .scores-table-wrap,
+  .connector-audit-table-wrap
+) {
+  border-radius: var(--jas-ui-radius-card);
+  border-color: var(--jas-ui-border);
+}
+
+.jas-internal-route :is(
+  .team-table th,
+  .scores-table th,
+  .reports-table th,
+  .connector-audit-table-wrap th
+) {
+  background: #f6f8fc;
+  color: #44557d;
+}
+
+.jas-internal-route :is(
+  .reports-generate-card h2,
+  .reports-list-card h2,
+  .team-card h2
+) {
+  font-size: 1.08rem;
+  color: #162246;
+}
+
+@media (max-width: 1080px) {
+  .jas-internal-route :is(
+    .jas-admin-page,
+    .team-page,
+    .connectors-manage-page,
+    .activity-page,
+    .reports-page,
+    .scores-container
+  ) {
+    padding: 16px 12px 22px;
+  }
 }

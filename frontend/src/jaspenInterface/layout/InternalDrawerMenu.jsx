@@ -3,9 +3,12 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faBookOpen,
+  faClockRotateLeft,
   faChartLine,
   faGear,
   faLayerGroup,
+  faListCheck,
+  faPlus,
   faPlug,
   faShieldHalved,
   faTimes,
@@ -25,16 +28,17 @@ export default function InternalDrawerMenu() {
 
   const items = useMemo(() => {
     const base = [
-      { to: '/new', label: 'Jaspen', icon: faChartLine },
+      { to: '/dashboard', label: 'Dashboard', icon: faListCheck },
+      { to: '/new', label: 'New Project', icon: faPlus },
+      { to: '/projects', label: 'Projects', icon: faLayerGroup },
       { to: '/scores', label: 'Scores', icon: faChartLine },
       { to: '/insights', label: 'Insights', icon: faLayerGroup },
-      { to: '/projects', label: 'Projects', icon: faLayerGroup },
       { to: '/reports', label: 'Reports', icon: faChartLine },
-      { to: '/activity', label: 'Activity', icon: faChartLine },
-      { to: '/connectors-manage', label: 'Connectors', icon: faPlug },
+      { to: '/activity', label: 'Activity', icon: faClockRotateLeft },
+      { to: '/connectors-manage', label: 'Data Sources', icon: faPlug },
       { to: '/team', label: 'Team', icon: faLayerGroup },
-      { to: '/account', label: 'Account', icon: faShieldHalved },
       { to: '/knowledge', label: 'Knowledge', icon: faBookOpen },
+      { to: '/account', label: 'Account', icon: faShieldHalved },
     ];
     if (user?.is_platform_admin || user?.can_access_enterprise_admin) {
       base.push({ to: '/jaspen-admin', label: 'Jaspen Admin', icon: faGear });
