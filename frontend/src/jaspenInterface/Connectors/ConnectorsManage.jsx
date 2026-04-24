@@ -559,6 +559,7 @@ export default function ConnectorsManage() {
 
   return (
     <div className="connectors-manage-page">
+      <div className="connectors-manage-inner">
       <header className="connectors-manage-header">
         <h1>Data Sources</h1>
         <p>Centralized connector management with monitoring, health checks, and sync history.</p>
@@ -740,6 +741,7 @@ export default function ConnectorsManage() {
           )}
         </>
       )}
+      </div>
     </div>
   );
 }

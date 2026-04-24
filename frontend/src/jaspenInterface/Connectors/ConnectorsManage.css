@@ -1,9 +1,13 @@
 .connectors-manage-page {
-  width: min(1450px, 96vw);
-  margin: 0 auto;
+  min-height: 100vh;
   padding: 24px;
   background: #f6f8fc;
   color: #182543;
+}
+
+.connectors-manage-inner {
+  max-width: 1450px;
+  margin: 0 auto;
 }
 
 .connectors-manage-header h1 {

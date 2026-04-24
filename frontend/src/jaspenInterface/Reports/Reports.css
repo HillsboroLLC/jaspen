@@ -1,9 +1,13 @@
 .reports-page {
-  width: min(1280px, 94vw);
-  margin: 0 auto;
+  min-height: 100vh;
   padding: 28px;
   background: #f6f8fc;
   color: #182441;
+}
+
+.reports-inner {
+  max-width: 1280px;
+  margin: 0 auto;
 }
 
 .reports-header h1 {

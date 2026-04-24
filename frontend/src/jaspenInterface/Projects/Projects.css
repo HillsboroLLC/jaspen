@@ -1,9 +1,13 @@
 .projects-page {
-  width: min(1320px, 95vw);
-  margin: 0 auto;
+  min-height: 100vh;
   padding: 28px 28px 40px;
   background: #f6f8fc;
   color: #1a2443;
+}
+
+.projects-inner {
+  max-width: 1320px;
+  margin: 0 auto;
 }
 
 .projects-header {

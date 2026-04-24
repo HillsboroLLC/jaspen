@@ -99,6 +99,7 @@ export default function Activity() {
 
   return (
     <div className="activity-page">
+      <div className="activity-inner">
       <header className="activity-header">
         <h1>Activity</h1>
         <p>Unified timeline of scorecards, scenarios, WBS updates, connectors, team, and data events.</p>
@@ -172,6 +173,7 @@ export default function Activity() {
           </div>
         </footer>
       )}
+      </div>
     </div>
   );
 }

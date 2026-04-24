@@ -623,6 +623,7 @@ export default function Team({ mode = 'team' }) {
 
   return (
     <div className="team-page jas-internal-page jas-internal-page-shell">
+      <div className="team-inner">
       <header className="team-head">
         <div>
           <p className="team-eyebrow">{isEnterpriseMode ? 'Jaspen Enterprise' : 'Jaspen Team'}</p>
@@ -1128,6 +1129,7 @@ export default function Team({ mode = 'team' }) {
           </table>
         </div>
       </section>
+      </div>
     </div>
   );
 }

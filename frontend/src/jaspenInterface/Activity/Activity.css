@@ -1,9 +1,13 @@
 .activity-page {
-  width: min(1220px, 94vw);
-  margin: 0 auto;
+  min-height: 100vh;
   padding: 28px;
   background: #f6f8fc;
   color: #17233f;
+}
+
+.activity-inner {
+  max-width: 1220px;
+  margin: 0 auto;
 }
 
 .activity-header h1 {

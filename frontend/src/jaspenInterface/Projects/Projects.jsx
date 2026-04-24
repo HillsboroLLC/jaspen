@@ -285,6 +285,7 @@ export default function Projects() {
 
   return (
     <div className="projects-page">
+      <div className="projects-inner">
       <header className="projects-header">
         <div>
           <h1>Projects</h1>
@@ -433,6 +434,7 @@ export default function Projects() {
           )}
         </section>
       ))}
+      </div>
     </div>
   );
 }

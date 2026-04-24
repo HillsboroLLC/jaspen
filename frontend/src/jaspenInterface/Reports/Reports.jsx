@@ -158,6 +158,7 @@ export default function Reports() {
 
   return (
     <div className="reports-page">
+      <div className="reports-inner">
       <header className="reports-header">
         <h1>Reports</h1>
         <p>Generate executive and detailed PDFs from completed analyses.</p>
@@ -244,6 +245,7 @@ export default function Reports() {
           )}
         </section>
       )}
+      </div>
     </div>
   );
 }

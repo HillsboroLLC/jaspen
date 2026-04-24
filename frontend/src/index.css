@@ -18,3 +18,9 @@ code {
   margin: 0 auto;
   padding: 0 20px;
 }
+
+/* Full-bleed background for all internal app pages */
+.jas-internal-page-shell {
+  min-height: 100vh;
+  background: #f6f8fc;
+}
