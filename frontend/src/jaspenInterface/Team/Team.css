@@ -273,6 +273,7 @@
   border: 1px solid #d8e1f0;
   border-radius: 10px;
   background: #fff;
+  -webkit-overflow-scrolling: touch;
 }
 
 .team-table {
@@ -360,6 +361,22 @@
 .team-empty {
   margin: 0;
   color: #4f628a;
+}
+
+@media (max-width: 768px) {
+  .team-table-wrap {
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .team-table {
+    min-width: 760px;
+  }
+
+  .team-table th,
+  .team-table td {
+    white-space: nowrap;
+  }
 }
 
 .team-btn {

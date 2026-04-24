@@ -120,6 +120,11 @@
   font-size: 13px;
 }
 
+.activity-meta span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .activity-pagination {
   margin-top: 16px;
   display: flex;
@@ -153,9 +158,28 @@
     align-items: flex-start;
   }
 
+  .activity-controls {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    padding-bottom: 4px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .activity-controls select,
+  .activity-controls input[type='date'] {
+    min-width: 170px;
+    flex: 0 0 auto;
+  }
+
   .activity-pagination {
     flex-direction: column;
     align-items: flex-start;
     gap: 8px;
+  }
+
+  .activity-pagination > div {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
   }
 }

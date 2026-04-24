@@ -292,6 +292,7 @@
   border: 1px solid #d3def6;
   border-radius: 12px;
   background: #ffffff;
+  -webkit-overflow-scrolling: touch;
 }
 
 .enterprise-audit-table {
@@ -392,5 +393,14 @@
 
   .enterprise-actions {
     flex-wrap: wrap;
+  }
+
+  .enterprise-audit-table {
+    min-width: 720px;
+  }
+
+  .enterprise-audit-table th,
+  .enterprise-audit-table td {
+    white-space: nowrap;
   }
 }
