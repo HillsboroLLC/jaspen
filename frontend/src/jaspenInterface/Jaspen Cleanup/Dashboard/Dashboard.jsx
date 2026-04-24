@@ -93,17 +93,6 @@ function chartDataFor(chart = {}, idx = 0) {
   };
 }
 
-const CHART_OPTIONS = {
-  responsive: true,
-  maintainAspectRatio: false,
-  plugins: {
-    legend: {
-      display: true,
-      position: 'bottom',
-    },
-  },
-};
-
 export default function Dashboard() {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -111,6 +100,58 @@ export default function Dashboard() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [data, setData] = useState(null);
+  const [themeVersion, setThemeVersion] = useState(0);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const bump = () => setThemeVersion((prev) => prev + 1);
+    const observer = new MutationObserver(bump);
+    observer.observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+    if (typeof media.addEventListener === 'function') media.addEventListener('change', bump);
+    else media.addListener(bump);
+    return () => {
+      observer.disconnect();
+      if (typeof media.removeEventListener === 'function') media.removeEventListener('change', bump);
+      else media.removeListener(bump);
+    };
+  }, []);
+
+  const chartOptions = (() => {
+    const styles = getComputedStyle(document.documentElement);
+    const textColor = styles.getPropertyValue('--color-text-secondary').trim() || '#475569';
+    const gridColor = styles.getPropertyValue('--color-border-default').trim() || '#dbe3ee';
+    const tooltipBg = styles.getPropertyValue('--color-surface-default').trim() || '#ffffff';
+    const tooltipText = styles.getPropertyValue('--color-text-primary').trim() || '#161f3b';
+    return {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: {
+          ticks: { color: textColor },
+          grid: { color: gridColor },
+        },
+        y: {
+          ticks: { color: textColor },
+          grid: { color: gridColor },
+        },
+      },
+      plugins: {
+        legend: {
+          display: true,
+          position: 'bottom',
+          labels: { color: textColor },
+        },
+        tooltip: {
+          backgroundColor: tooltipBg,
+          titleColor: tooltipText,
+          bodyColor: tooltipText,
+          borderColor: gridColor,
+          borderWidth: 1,
+        },
+      },
+    };
+  })();
 
   const fetchDashboard = useCallback(async ({ silent = false } = {}) => {
     if (silent) {
@@ -241,12 +282,12 @@ export default function Dashboard() {
                   const dataPayload = chartDataFor(chart, idx);
                   const valid = safeList(dataPayload.labels).length > 0 && safeList(dataPayload.datasets?.[0]?.data).length > 0;
                   return (
-                    <article className="dash-chart-card" key={`dash_chart_${idx}`}>
+                    <article className="dash-chart-card" key={`dash_chart_${idx}_${themeVersion}`}>
                       <h3>{chart?.title || `Chart ${idx + 1}`}</h3>
                       {!valid && <p className="dash-empty">No chart data available.</p>}
-                      {valid && chartType === 'bar' && <Bar data={dataPayload} options={CHART_OPTIONS} />}
-                      {valid && chartType === 'line' && <Line data={dataPayload} options={CHART_OPTIONS} />}
-                      {valid && chartType === 'pie' && <Pie data={dataPayload} options={CHART_OPTIONS} />}
+                      {valid && chartType === 'bar' && <Bar data={dataPayload} options={chartOptions} />}
+                      {valid && chartType === 'line' && <Line data={dataPayload} options={chartOptions} />}
+                      {valid && chartType === 'pie' && <Pie data={dataPayload} options={chartOptions} />}
                       {valid && !['bar', 'line', 'pie'].includes(chartType) && (
                         <p className="dash-empty">Unsupported chart type: {chartType || 'unknown'}.</p>
                       )}

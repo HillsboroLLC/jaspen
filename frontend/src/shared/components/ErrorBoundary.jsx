@@ -35,8 +35,8 @@ export default class ErrorBoundary extends React.Component {
     return (
       <div
         style={{
-          border: '1px solid rgba(239, 68, 68, 0.2)',
-          background: '#fff5f5',
+          border: '1px solid color-mix(in srgb, var(--color-status-danger) 35%, transparent)',
+          background: 'color-mix(in srgb, var(--color-status-danger) 10%, var(--color-surface-default))',
           borderRadius: 18,
           padding: '18px 20px',
           display: 'grid',
@@ -44,8 +44,8 @@ export default class ErrorBoundary extends React.Component {
         }}
         role="alert"
       >
-        <strong style={{ color: '#7f1d1d', fontSize: 18 }}>{title}</strong>
-        <span style={{ color: '#991b1b' }}>{message}</span>
+        <strong style={{ color: 'var(--color-status-danger)', fontSize: 18 }}>{title}</strong>
+        <span style={{ color: 'var(--color-status-danger)' }}>{message}</span>
         <div style={{ display: 'flex', gap: 10 }}>
           <button
             type="button"
@@ -53,8 +53,8 @@ export default class ErrorBoundary extends React.Component {
             style={{
               border: 0,
               borderRadius: 999,
-              background: '#161f3b',
-              color: '#fff',
+              background: 'var(--color-brand-navy)',
+              color: 'var(--color-text-inverse)',
               fontWeight: 600,
               padding: '10px 16px',
               cursor: 'pointer',

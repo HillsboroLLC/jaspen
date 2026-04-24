@@ -4369,7 +4369,7 @@ const renderReadinessChecklistGroup = (title, items, helper = '') => {
     <div className="jas-collected-section">
       <h4>{title}</h4>
       {helper ? (
-        <p style={{ color: '#64748b', fontSize: '12px', margin: '0 0 10px' }}>{helper}</p>
+        <p style={{ color: 'var(--color-text-muted)', fontSize: '12px', margin: '0 0 10px' }}>{helper}</p>
       ) : null}
       <div className="jas-checklist">
         {items.map((item) => (
@@ -4401,7 +4401,7 @@ const renderReadinessChecklist = () => {
     <>
       <div className="jas-collected-section">
         <h4>Progress Checklist</h4>
-        <p style={{ color: '#64748b', fontSize: '12px', margin: '0 0 10px' }}>
+        <p style={{ color: 'var(--color-text-muted)', fontSize: '12px', margin: '0 0 10px' }}>
           {readinessChecklistSummary.done}/{readinessChecklistSummary.total} captured
           {readinessChecklistSummary.inProgress > 0 ? ` • ${readinessChecklistSummary.inProgress} in progress` : ''}
         </p>
@@ -4418,7 +4418,7 @@ const renderReadinessChecklist = () => {
         </>
       ) : (
         <div className="jas-collected-section">
-          <p style={{ color: '#64748b', fontSize: '13px', lineHeight: 1.5, margin: '6px 0 0' }}>
+          <p style={{ color: 'var(--color-text-muted)', fontSize: '13px', lineHeight: 1.5, margin: '6px 0 0' }}>
             Ask one more question to start checklist tracking.
           </p>
         </div>
@@ -6716,7 +6716,7 @@ const renderPostAdoptWbsPrompt = () => {
             <FontAwesomeIcon icon={faTimes} />
           </button>
         </div>
-        <p style={{ margin: '0 0 16px', color: '#475569' }}>
+        <p style={{ margin: '0 0 16px', color: 'var(--color-text-secondary)' }}>
           {scenarioLabel} is active. Generate a project WBS from this scorecard now, or do it later from the Score tab.
         </p>
         <div className="jas-account-modal-actions">
@@ -8389,10 +8389,10 @@ onClick={async () => {
         textAlign: "center",
       }}
     >
-      <div style={{ fontSize: 22, marginBottom: 10, fontWeight: 600, color: "#0f172a" }}>
+      <div style={{ fontSize: 22, marginBottom: 10, fontWeight: 600, color: 'var(--color-text-primary)' }}>
         Getting Things Ready
       </div>
-      <div style={{ marginBottom: 14, color: "#334155" }}>{beginMsg}</div>
+      <div style={{ marginBottom: 14, color: 'var(--color-text-secondary)' }}>{beginMsg}</div>
       <div style={{ display: "flex", gap: 6, justifyContent: "center" }}>
         {[0,1,2].map((i) => (
           <span
@@ -8401,7 +8401,7 @@ onClick={async () => {
               width: 8,
               height: 8,
               borderRadius: "50%",
-              background: "#8b5cf6",
+              background: 'var(--color-brand-magenta)',
               display: "inline-block",
               animation: `jas-dot 1s ease-in-out ${i * 0.12}s infinite`,
             }}
@@ -8645,10 +8645,10 @@ onClick={async () => {
           <div className="jas-readiness-display">
             <div className="jas-readiness-circle">
               <svg className="jas-progress-ring" width="120" height="120">
-                <circle className="jas-progress-ring-bg" stroke="#e2e8f0" strokeWidth="8" fill="transparent" r="52" cx="60" cy="60" />
+                <circle className="jas-progress-ring-bg" stroke="var(--color-border-default)" strokeWidth="8" fill="transparent" r="52" cx="60" cy="60" />
                 <circle
                   className="jas-progress-ring-fill"
-                  stroke="#10b981"
+                  stroke="var(--color-status-success)"
                   strokeWidth="8"
                   fill="transparent"
                   r="52"
@@ -8665,11 +8665,11 @@ onClick={async () => {
 </div>
 
 {(readinessSource || readinessVersion) && (
-  <div className="jas-readiness-meta" style={{ marginTop: '6px', fontSize: '12px', color: '#64748b' }}>
+  <div className="jas-readiness-meta" style={{ marginTop: '6px', fontSize: '12px', color: 'var(--color-text-muted)' }}>
     {readinessSource && (
       <span className="jas-chip" style={{
         display: 'inline-block', padding: '2px 6px', borderRadius: '8px',
-        border: '1px solid #cbd5e1', marginRight: '6px'
+        border: '1px solid var(--color-border-default)', marginRight: '6px'
       }}>
         Source: {readinessSource.toUpperCase()}
       </span>
@@ -8677,7 +8677,7 @@ onClick={async () => {
     {readinessVersion && (
       <span className="jas-chip" style={{
         display: 'inline-block', padding: '2px 6px', borderRadius: '8px',
-        border: '1px solid #cbd5e1'
+        border: '1px solid var(--color-border-default)'
       }}>
         {readinessVersion}
       </span>
@@ -9091,11 +9091,11 @@ onClick={async () => {
           {pendingFiles?.length > 0 && (
             <div className="jas-file-chips" style={{ maxWidth: '800px', margin: '0 auto 8px', display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
               {pendingFiles.map((f, i) => (
-                <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 8px', background: '#f1f3f5', borderRadius: '4px', fontSize: '0.75rem' }}>
+                <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 8px', background: 'var(--color-bg-subtle)', borderRadius: '4px', fontSize: '0.75rem' }}>
                   {f.name}
                   <button
                     type="button"
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0', fontSize: '0.875rem', color: '#868e96' }}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0', fontSize: '0.875rem', color: 'var(--color-text-muted)' }}
                     title="Remove"
                     onClick={() => setPendingFiles(prev => prev.filter((_, idx) => idx !== i))}
                   >

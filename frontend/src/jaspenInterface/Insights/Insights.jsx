@@ -81,17 +81,6 @@ function chartDataFor(chart = {}, idx = 0) {
   };
 }
 
-const CHART_OPTIONS = {
-  responsive: true,
-  maintainAspectRatio: false,
-  plugins: {
-    legend: {
-      display: true,
-      position: 'bottom',
-    },
-  },
-};
-
 export default function Insights() {
   const fileInputRef = useRef(null);
   const [datasets, setDatasets] = useState([]);
@@ -103,6 +92,58 @@ export default function Insights() {
   const [question, setQuestion] = useState('');
   const [analysis, setAnalysis] = useState(null);
   const [activeDatasetId, setActiveDatasetId] = useState('');
+  const [themeVersion, setThemeVersion] = useState(0);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const bump = () => setThemeVersion((prev) => prev + 1);
+    const observer = new MutationObserver(bump);
+    observer.observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+    if (typeof media.addEventListener === 'function') media.addEventListener('change', bump);
+    else media.addListener(bump);
+    return () => {
+      observer.disconnect();
+      if (typeof media.removeEventListener === 'function') media.removeEventListener('change', bump);
+      else media.removeListener(bump);
+    };
+  }, []);
+
+  const chartOptions = (() => {
+    const styles = getComputedStyle(document.documentElement);
+    const textColor = styles.getPropertyValue('--color-text-secondary').trim() || '#475569';
+    const gridColor = styles.getPropertyValue('--color-border-default').trim() || '#dbe3ee';
+    const tooltipBg = styles.getPropertyValue('--color-surface-default').trim() || '#ffffff';
+    const tooltipText = styles.getPropertyValue('--color-text-primary').trim() || '#161f3b';
+    return {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: {
+          ticks: { color: textColor },
+          grid: { color: gridColor },
+        },
+        y: {
+          ticks: { color: textColor },
+          grid: { color: gridColor },
+        },
+      },
+      plugins: {
+        legend: {
+          display: true,
+          position: 'bottom',
+          labels: { color: textColor },
+        },
+        tooltip: {
+          backgroundColor: tooltipBg,
+          titleColor: tooltipText,
+          bodyColor: tooltipText,
+          borderColor: gridColor,
+          borderWidth: 1,
+        },
+      },
+    };
+  })();
 
   const loadDatasets = useCallback(async () => {
     setLoading(true);
@@ -342,12 +383,12 @@ export default function Insights() {
                     const data = chartDataFor(chart, idx);
                     const canRender = safeList(data.labels).length > 0 && safeList(data.datasets?.[0]?.data).length > 0;
                     return (
-                      <div key={`chart_${idx}`} className="insights-chart-card">
+                      <div key={`chart_${idx}_${themeVersion}`} className="insights-chart-card">
                         <h4>{chart?.title || `Chart ${idx + 1}`}</h4>
                         {!canRender && <div className="insights-chart-empty">No chart data available.</div>}
-                        {canRender && chartType === 'bar' && <Bar data={data} options={CHART_OPTIONS} />}
-                        {canRender && chartType === 'line' && <Line data={data} options={CHART_OPTIONS} />}
-                        {canRender && chartType === 'pie' && <Pie data={data} options={CHART_OPTIONS} />}
+                        {canRender && chartType === 'bar' && <Bar data={data} options={chartOptions} />}
+                        {canRender && chartType === 'line' && <Line data={data} options={chartOptions} />}
+                        {canRender && chartType === 'pie' && <Pie data={data} options={chartOptions} />}
                         {canRender && !['bar', 'line', 'pie'].includes(chartType) && (
                           <div className="insights-chart-empty">Unsupported chart type: {chartType || 'unknown'}.</div>
                         )}

@@ -63,10 +63,10 @@ function Toast({ message, type, onDismiss }) {
   }, [onDismiss]);
 
   const bgColors = {
-    success: '#10b981',
-    error: '#ef4444',
-    info: '#161f3b',
-    warning: '#f59e0b'
+    success: 'var(--color-status-success)',
+    error: 'var(--color-status-danger)',
+    info: 'var(--color-brand-navy)',
+    warning: 'var(--color-status-warning)'
   };
 
   return (
@@ -74,7 +74,7 @@ function Toast({ message, type, onDismiss }) {
       onClick={onDismiss}
       style={{
         background: bgColors[type] || bgColors.info,
-        color: '#fff',
+        color: 'var(--color-text-inverse)',
         padding: '12px 16px',
         borderRadius: '8px',
         boxShadow: '0 4px 12px rgba(0,0,0,0.15)',

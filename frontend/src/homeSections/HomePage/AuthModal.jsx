@@ -338,8 +338,8 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
         </div>
       )}
       {mfaSecret && (
-        <div style={{ textAlign: 'center', margin: '0 0 16px', fontSize: '0.85rem', color: '#64748b' }}>
-          Manual entry key: <code style={{ background: '#f1f5f9', padding: '2px 6px', borderRadius: 4, fontWeight: 600, letterSpacing: '0.05em' }}>{mfaSecret}</code>
+        <div style={{ textAlign: 'center', margin: '0 0 16px', fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
+          Manual entry key: <code style={{ background: 'var(--color-bg-subtle)', padding: '2px 6px', borderRadius: 4, fontWeight: 600, letterSpacing: '0.05em' }}>{mfaSecret}</code>
         </div>
       )}
       <details className="auth-modal-help">
@@ -397,21 +397,21 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
         gap: '8px',
         margin: '16px 0',
         padding: '16px',
-        background: '#f8fafc',
+        background: 'var(--color-surface-subtle)',
         borderRadius: 8,
-        border: '1px solid #e2e8f0',
+        border: '1px solid var(--color-border-default)',
       }}>
         {mfaBackupCodes.map((code, idx) => (
           <code key={idx} style={{
             display: 'block',
             textAlign: 'center',
             padding: '6px',
-            background: '#fff',
+            background: 'var(--color-surface-default)',
             borderRadius: 4,
             fontWeight: 600,
             fontSize: '0.9rem',
             letterSpacing: '0.1em',
-            border: '1px solid #e2e8f0',
+            border: '1px solid var(--color-border-default)',
           }}>{code}</code>
         ))}
       </div>
