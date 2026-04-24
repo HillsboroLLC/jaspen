@@ -136,6 +136,7 @@ function emptyJiraModalState() {
     revertStatus: 'disconnected',
     hasStoredToken: false,
     storedFlags: {},
+    initialData: {},
     data: {
       jira_base_url: '',
       jira_project_key: '',
@@ -337,6 +338,22 @@ function requiredFieldLabel(text, required = false) {
   );
 }
 
+function recordsEqual(left = {}, right = {}) {
+  const leftKeys = Object.keys(left || {}).sort();
+  const rightKeys = Object.keys(right || {}).sort();
+  if (leftKeys.length !== rightKeys.length) return false;
+  for (let i = 0; i < leftKeys.length; i += 1) {
+    if (leftKeys[i] !== rightKeys[i]) return false;
+    if (left[leftKeys[i]] !== right[rightKeys[i]]) return false;
+  }
+  return true;
+}
+
+function hasJiraModalUnsavedChanges(modalState) {
+  if (!modalState?.open) return false;
+  return !recordsEqual(modalState.initialData || {}, modalState.data || {});
+}
+
 export default function Account() {
   const navigate = useNavigate();
   const [status, setStatus] = useState(null);
@@ -381,6 +398,25 @@ export default function Account() {
     draft: null,
     pending: false,
   });
+
+  const hasAdminDraftUnsavedChanges = () => {
+    if (!adminState.isAdmin || !adminState.draft?.id) return false;
+    const selected = (adminState.users || []).find((item) => item.id === adminState.selectedUserId);
+    if (!selected) return false;
+    const baseline = toAdminDraft(selected);
+    return !recordsEqual(adminState.draft, baseline);
+  };
+
+  const hasUnsavedChanges = () => hasJiraModalUnsavedChanges(jiraConfigModal) || hasAdminDraftUnsavedChanges();
+
+  const confirmDiscardUnsavedChanges = (
+    prompt = 'You have unsaved changes. Leave this page and discard them?'
+  ) => window.confirm(prompt);
+
+  const guardUnsavedChanges = (onProceed, prompt) => {
+    if (hasUnsavedChanges() && !confirmDiscardUnsavedChanges(prompt)) return;
+    onProceed();
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -535,6 +571,16 @@ export default function Account() {
     const nextUrl = `${window.location.pathname}${search.toString() ? `?${search.toString()}` : ''}${window.location.hash || ''}`;
     window.history.replaceState({}, document.title, nextUrl);
   }, []);
+
+  useEffect(() => {
+    const onBeforeUnload = (event) => {
+      if (!hasUnsavedChanges()) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  });
 
   const refreshStatus = async () => {
     const res = await authFetch(`${API_BASE}/api/v1/billing/status`, {
@@ -1136,17 +1182,20 @@ export default function Account() {
       revertStatus,
       hasStoredToken: Object.values(storedFlags).some(Boolean),
       storedFlags,
+      initialData: { ...baseData, ...modalData },
       data: { ...baseData, ...modalData },
     });
   };
 
-  const closeJiraConfigModal = (revertToPrevious = true) => {
-    setJiraConfigModal((prev) => {
-      if (revertToPrevious && prev?.open && prev.intentEnable && prev.connectorId) {
-        updateConnectorDraft(prev.connectorId, { connection_status: prev.revertStatus || 'disconnected' });
-      }
-      return emptyJiraModalState();
-    });
+  const closeJiraConfigModal = (revertToPrevious = true, forceClose = false) => {
+    if (!forceClose && hasJiraModalUnsavedChanges(jiraConfigModal)) {
+      const confirmed = confirmDiscardUnsavedChanges('You have unsaved connector changes. Discard them?');
+      if (!confirmed) return;
+    }
+    if (revertToPrevious && jiraConfigModal?.open && jiraConfigModal.intentEnable && jiraConfigModal.connectorId) {
+      updateConnectorDraft(jiraConfigModal.connectorId, { connection_status: jiraConfigModal.revertStatus || 'disconnected' });
+    }
+    setJiraConfigModal(emptyJiraModalState());
     setJiraConfigSaving(false);
     setJiraConfigError('');
   };
@@ -1361,8 +1410,7 @@ export default function Account() {
     const success = await saveConnectorDraft(connector, nextDraft);
     setJiraConfigSaving(false);
     if (success) {
-      setJiraConfigModal(emptyJiraModalState());
-      setJiraConfigError('');
+      closeJiraConfigModal(false, true);
     }
   };
 
@@ -1594,7 +1642,7 @@ export default function Account() {
                   key={item.key}
                   type="button"
                   className={`account-sidebar-item ${activeTab === item.key ? 'is-active' : ''}`}
-                  onClick={() => setActiveTab(item.key)}
+                  onClick={() => guardUnsavedChanges(() => setActiveTab(item.key))}
                   aria-label={item.label}
                   title={sidebarCollapsed ? item.label : undefined}
                 >
@@ -1634,11 +1682,19 @@ export default function Account() {
           </div>
           <div className="account-header-actions">
             {isAdminUser && (
-              <button type="button" onClick={() => navigate('/jaspen-admin')} className="account-secondary-btn">
+              <button
+                type="button"
+                onClick={() => guardUnsavedChanges(() => navigate('/jaspen-admin'))}
+                className="account-secondary-btn"
+              >
                 Jaspen Admin
               </button>
             )}
-            <button type="button" onClick={() => navigate('/new')} className="account-secondary-btn">
+            <button
+              type="button"
+              onClick={() => guardUnsavedChanges(() => navigate('/new'))}
+              className="account-secondary-btn"
+            >
               Back to Jaspen
             </button>
           </div>
@@ -2682,11 +2738,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                       type="button"
                       key={user.id}
                       className={`account-admin-user ${selected ? 'is-selected' : ''}`}
-                      onClick={() => setAdminState((prev) => ({
+                      onClick={() => guardUnsavedChanges(() => setAdminState((prev) => ({
                         ...prev,
                         selectedUserId: user.id,
                         draft: toAdminDraft(user),
-                      }))}
+                      })))}
                     >
                       <strong>{user.email}</strong>
                       <span>{user.name}</span>
@@ -2821,6 +2877,20 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                         disabled={adminState.pending} aria-disabled={adminState.pending}
                       >
                         {adminState.pending ? 'Saving...' : 'Save user settings'}
+                      </button>
+                      <button
+                        type="button"
+                        className="account-secondary-btn"
+                        onClick={() => {
+                          const selected = (adminState.users || []).find((item) => item.id === adminState.selectedUserId);
+                          if (!selected) return;
+                          setAdminState((prev) => ({ ...prev, draft: toAdminDraft(selected) }));
+                          setMessage('Reverted unsaved admin edits.');
+                        }}
+                        disabled={adminState.pending || !hasAdminDraftUnsavedChanges()}
+                        aria-disabled={adminState.pending || !hasAdminDraftUnsavedChanges()}
+                      >
+                        Revert edits
                       </button>
                       <button
                         type="button"

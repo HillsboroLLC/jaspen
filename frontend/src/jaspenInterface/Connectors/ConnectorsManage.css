@@ -109,10 +109,12 @@
   min-height: 42px;
   padding: 0 16px;
   border-radius: 999px;
+  border: 0;
   background: #1f3f78;
   color: #fff;
   text-decoration: none;
   font-weight: 700;
+  cursor: pointer;
 }
 
 .connectors-manage-layout {
@@ -218,6 +220,13 @@
 .connector-detail-header p {
   margin: 6px 0 0;
   color: #5f7094;
+}
+
+.connector-unsaved-note {
+  margin: 8px 0 0;
+  font-size: 0.8rem;
+  color: #8f1d37;
+  font-weight: 600;
 }
 
 .connector-required-legend {

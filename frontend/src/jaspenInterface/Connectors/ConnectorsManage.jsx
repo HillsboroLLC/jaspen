@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faArrowRightArrowLeft,
@@ -138,6 +138,64 @@ function parseList(text) {
     .filter(Boolean);
 }
 
+function connectorDraftChanged(connector, draft) {
+  if (!connector || !draft) return false;
+  const base = normalizeDraft(connector);
+  const fields = [
+    'connection_status',
+    'sync_mode',
+    'conflict_policy',
+    'auto_sync',
+    'external_workspace',
+    'jira_base_url',
+    'jira_project_key',
+    'jira_email',
+    'jira_issue_type',
+    'jira_field_mapping',
+    'workfront_base_url',
+    'workfront_project_id',
+    'workfront_field_mapping',
+    'smartsheet_base_url',
+    'smartsheet_sheet_id',
+    'smartsheet_field_mapping',
+    'salesforce_auth_base_url',
+    'salesforce_instance_url',
+    'salesforce_client_id',
+    'snowflake_account',
+    'snowflake_warehouse',
+    'snowflake_database',
+    'snowflake_schema',
+    'snowflake_role',
+    'snowflake_user',
+    'snowflake_table_allowlist',
+    'oracle_fusion_base_url',
+    'oracle_fusion_username',
+    'oracle_fusion_business_unit',
+    'servicenow_instance_url',
+    'servicenow_username',
+    'servicenow_table_allowlist',
+    'netsuite_account_id',
+    'netsuite_consumer_key',
+    'netsuite_token_id',
+    'netsuite_rest_base_url',
+  ];
+  const differs = fields.some((field) => String(base[field] ?? '') !== String(draft[field] ?? ''));
+  const hasSecretUpdates = [
+    'jira_api_token',
+    'workfront_api_token',
+    'smartsheet_api_token',
+    'salesforce_client_secret',
+    'salesforce_refresh_token',
+    'snowflake_password',
+    'snowflake_private_key',
+    'oracle_fusion_password',
+    'servicenow_password',
+    'netsuite_consumer_secret',
+    'netsuite_token_secret',
+  ].some((field) => String(draft[field] || '').trim().length > 0);
+  return differs || hasSecretUpdates;
+}
+
 function fieldLabel(text, required = false) {
   return (
     <>
@@ -212,6 +270,7 @@ function buildUpdatePayload(connectorId, draft) {
 }
 
 export default function ConnectorsManage() {
+  const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
   const [connectors, setConnectors] = useState([]);
@@ -346,6 +405,14 @@ export default function ConnectorsManage() {
   );
 
   const selectedDraft = selectedConnector ? drafts[selectedConnector.id] || normalizeDraft(selectedConnector) : null;
+  const selectedConnectorDirty = useMemo(
+    () => connectorDraftChanged(selectedConnector, selectedDraft),
+    [selectedConnector, selectedDraft]
+  );
+  const hasUnsavedChanges = useMemo(
+    () => connectors.some((connector) => connectorDraftChanged(connector, drafts[connector.id] || normalizeDraft(connector))),
+    [connectors, drafts]
+  );
 
   useEffect(() => {
     if (!visibleConnectors.length) {
@@ -356,6 +423,16 @@ export default function ConnectorsManage() {
       setSelectedConnectorId(visibleConnectors[0].id);
     }
   }, [selectedConnectorId, visibleConnectors]);
+
+  useEffect(() => {
+    const onBeforeUnload = (event) => {
+      if (!hasUnsavedChanges) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [hasUnsavedChanges]);
 
   function updateDraft(field, value) {
     if (!selectedConnector) return;
@@ -392,6 +469,16 @@ export default function ConnectorsManage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  function revertSelectedDraft() {
+    if (!selectedConnector) return;
+    setDrafts((prev) => ({
+      ...prev,
+      [selectedConnector.id]: normalizeDraft(selectedConnector),
+    }));
+    setMessage(`Reverted unsaved changes for ${selectedConnector.label}.`);
+    setError('');
   }
 
   async function testConnection() {
@@ -602,7 +689,16 @@ export default function ConnectorsManage() {
                   <span>{getPlanConnectors('enterprise').join(', ')}</span>
                 </article>
               </div>
-              <a className="connectors-plan-gate-btn" href="/account">Upgrade in Account</a>
+              <button
+                type="button"
+                className="connectors-plan-gate-btn"
+                onClick={() => {
+                  if (hasUnsavedChanges && !window.confirm('You have unsaved changes. Leave this page and discard them?')) return;
+                  navigate('/account');
+                }}
+              >
+                Upgrade in Account
+              </button>
             </section>
           ) : (
             <>
@@ -655,11 +751,24 @@ export default function ConnectorsManage() {
                     <div>
                       <h2>{selectedConnector.label}</h2>
                       <p>{selectedConnector.description}</p>
+                      {selectedConnectorDirty && (
+                        <p className="connector-unsaved-note" role="status" aria-live="polite">
+                          You have unsaved changes for this connector.
+                        </p>
+                      )}
                     </div>
                     <div className="connector-detail-actions">
                       <button type="button" onClick={testConnection} disabled={busy} aria-disabled={busy}><FontAwesomeIcon icon={faFlask} /> Test Connection</button>
                       <button type="button" onClick={syncNow} disabled={busy} aria-disabled={busy}><FontAwesomeIcon icon={faRotate} /> Sync Now</button>
                       <button type="button" onClick={saveConnector} disabled={busy} aria-disabled={busy}><FontAwesomeIcon icon={faServer} /> Save Settings</button>
+                      <button
+                        type="button"
+                        onClick={revertSelectedDraft}
+                        disabled={busy || !selectedConnectorDirty}
+                        aria-disabled={busy || !selectedConnectorDirty}
+                      >
+                        Revert Draft
+                      </button>
                     </div>
                   </header>
                   <p className="connector-required-legend"><span aria-hidden="true">*</span> Required</p>
