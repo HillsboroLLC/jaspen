@@ -297,6 +297,12 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
 }
 
+.connector-field-grid .connector-input-invalid,
+.connector-core-controls .connector-input-invalid {
+  border-color: var(--color-status-danger, #c0392b);
+  box-shadow: 0 0 0 2px rgba(192, 57, 43, 0.12);
+}
+
 .connector-auto-sync {
   align-items: center;
   grid-auto-flow: column;

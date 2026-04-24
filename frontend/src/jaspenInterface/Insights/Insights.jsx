@@ -21,6 +21,7 @@ import {
 } from 'chart.js';
 import { Bar, Line, Pie } from 'react-chartjs-2';
 import { Jaspen } from '../Workspace/JaspenClient';
+import ConfirmDialog from '../../shared/components/ConfirmDialog';
 import './Insights.css';
 
 ChartJS.register(
@@ -93,6 +94,7 @@ export default function Insights() {
   const [analysis, setAnalysis] = useState(null);
   const [activeDatasetId, setActiveDatasetId] = useState('');
   const [themeVersion, setThemeVersion] = useState(0);
+  const [confirmDialog, setConfirmDialog] = useState(null);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -211,23 +213,29 @@ export default function Insights() {
     if (!id) return;
     const target = datasets.find((row) => String(row?.id || '') === id);
     const targetName = target?.filename || 'this dataset';
-    const confirmed = window.confirm(`Delete ${targetName}? This cannot be undone.`);
-    if (!confirmed) return;
-
-    setDeletingDatasetId(id);
-    setError('');
-    try {
-      await Jaspen.deleteInsightsDataset(id);
-      if (String(activeDatasetId || '') === id) {
-        setActiveDatasetId('');
-        setAnalysis(null);
-      }
-      await loadDatasets();
-    } catch (err) {
-      setError(err?.message || 'Delete failed');
-    } finally {
-      setDeletingDatasetId('');
-    }
+    setConfirmDialog({
+      title: 'Delete dataset',
+      message: `Delete ${targetName}? This cannot be undone.`,
+      confirmLabel: 'Delete dataset',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        setDeletingDatasetId(id);
+        setError('');
+        try {
+          await Jaspen.deleteInsightsDataset(id);
+          if (String(activeDatasetId || '') === id) {
+            setActiveDatasetId('');
+            setAnalysis(null);
+          }
+          await loadDatasets();
+        } catch (err) {
+          setError(err?.message || 'Delete failed');
+        } finally {
+          setDeletingDatasetId('');
+        }
+      },
+    });
   }, [activeDatasetId, datasets, loadDatasets]);
 
   return (
@@ -401,6 +409,16 @@ export default function Insights() {
           </div>
         )}
       </section>
+      <ConfirmDialog
+        isOpen={Boolean(confirmDialog)}
+        title={confirmDialog?.title}
+        message={confirmDialog?.message}
+        confirmLabel={confirmDialog?.confirmLabel}
+        confirmVariant={confirmDialog?.confirmVariant}
+        pending={Boolean(deletingDatasetId)}
+        onCancel={() => setConfirmDialog(null)}
+        onConfirm={() => confirmDialog?.onConfirm?.()}
+      />
     </div>
   );
 }

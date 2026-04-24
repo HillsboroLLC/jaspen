@@ -2458,7 +2458,12 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                   </>
                 )}
               </div>
-              {jiraConfigError && <p id="account-jira-modal-error" className="account-jira-modal-error" role="status" aria-live="polite">{jiraConfigError}</p>}
+              {jiraConfigError && (
+                <p id="account-jira-modal-error" className="account-jira-modal-error" role="status" aria-live="polite">
+                  <span className="account-jira-modal-error-icon" aria-hidden="true">!</span>
+                  <span>{jiraConfigError}</span>
+                </p>
+              )}
               <div className="account-jira-modal-actions">
                 <button type="button" className="account-secondary-btn" onClick={() => closeJiraConfigModal(true)} disabled={jiraConfigSaving} aria-disabled={jiraConfigSaving}>
                   Cancel

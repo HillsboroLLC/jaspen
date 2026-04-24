@@ -4,6 +4,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faArrowUpRightFromSquare, faDownload, faChevronDown, faChevronUp, faTimes, faTrash } from '@fortawesome/free-solid-svg-icons';
 import { API_BASE } from '../../config/apiBase';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
+import ConfirmDialog from '../../shared/components/ConfirmDialog';
 import './Scores.css';
 
 const CATEGORY_OPTIONS = ['All', 'Excellent', 'Good', 'Fair', 'At Risk'];
@@ -157,6 +158,8 @@ export default function Scores() {
   const [portfolioBusy, setPortfolioBusy] = useState(false);
   const [portfolioError, setPortfolioError] = useState('');
   const [portfolioMeta, setPortfolioMeta] = useState(null);
+  const [deletingRowKey, setDeletingRowKey] = useState('');
+  const [confirmDialog, setConfirmDialog] = useState(null);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -265,24 +268,35 @@ export default function Scores() {
 
   async function deleteScoreEntry(row) {
     const label = row?.project_name || 'this entry';
-    if (!window.confirm(`Delete "${label}"? This cannot be undone.`)) return;
-
-    try {
-      const threadId = encodeURIComponent(row?.thread_id || '');
-      const snapshotId = encodeURIComponent(row?.snapshot_id || '');
-      const response = await authFetch(`${API_BASE}/api/v1/strategy/scores/${threadId}/${snapshotId}`, {
-        method: 'DELETE',
-        credentials: 'include',
-        headers: buildAuthHeaders({}, 'DELETE'),
-      });
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data?.error || `Delete failed (${response.status})`);
-      }
-      loadScores();
-    } catch (err) {
-      setError(err?.message || 'Failed to delete score entry.');
-    }
+    const rowKey = `${row?.thread_id || ''}:${row?.snapshot_id || ''}`;
+    setConfirmDialog({
+      title: 'Delete score entry',
+      message: `Delete "${label}"? This cannot be undone.`,
+      confirmLabel: 'Delete score',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        setDeletingRowKey(rowKey);
+        try {
+          const threadId = encodeURIComponent(row?.thread_id || '');
+          const snapshotId = encodeURIComponent(row?.snapshot_id || '');
+          const response = await authFetch(`${API_BASE}/api/v1/strategy/scores/${threadId}/${snapshotId}`, {
+            method: 'DELETE',
+            credentials: 'include',
+            headers: buildAuthHeaders({}, 'DELETE'),
+          });
+          if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            throw new Error(data?.error || `Delete failed (${response.status})`);
+          }
+          loadScores();
+        } catch (err) {
+          setError(err?.message || 'Failed to delete score entry.');
+        } finally {
+          setDeletingRowKey('');
+        }
+      },
+    });
   }
 
   async function exportCsv() {
@@ -630,6 +644,8 @@ export default function Scores() {
                                 className="scores-icon-btn scores-delete-btn"
                                 title={row?.is_baseline ? 'Delete project and all variants' : 'Delete this variant'}
                                 onClick={() => deleteScoreEntry(row)}
+                                disabled={Boolean(deletingRowKey)}
+                                aria-disabled={Boolean(deletingRowKey)}
                               >
                                 <FontAwesomeIcon icon={faTrash} />
                               </button>
@@ -717,6 +733,16 @@ export default function Scores() {
           </>
         )}
       </div>
+      <ConfirmDialog
+        isOpen={Boolean(confirmDialog)}
+        title={confirmDialog?.title}
+        message={confirmDialog?.message}
+        confirmLabel={confirmDialog?.confirmLabel}
+        confirmVariant={confirmDialog?.confirmVariant}
+        pending={Boolean(deletingRowKey)}
+        onCancel={() => setConfirmDialog(null)}
+        onConfirm={() => confirmDialog?.onConfirm?.()}
+      />
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faFilePdf, faTrashCan, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons';
 import { API_BASE } from '../../config/apiBase';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
+import ConfirmDialog from '../../shared/components/ConfirmDialog';
 import './Reports.css';
 
 const REPORT_TYPES = [
@@ -39,6 +40,7 @@ export default function Reports() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [confirmDialog, setConfirmDialog] = useState(null);
 
   const loadThreads = useCallback(async () => {
     const res = await authFetch(`${API_BASE}/api/v1/ai-agent/threads`, {
@@ -132,28 +134,34 @@ export default function Reports() {
 
   async function deleteReport(reportId) {
     if (!reportId) return;
-    const confirmed = window.confirm('Delete this report?');
-    if (!confirmed) return;
-
-    setBusy(true);
-    setError('');
-    setMessage('');
-    try {
-      const res = await authFetch(`${API_BASE}/api/v1/reports/${encodeURIComponent(reportId)}`, {
-        method: 'DELETE',
-        credentials: 'include',
-        headers: authHeaders('DELETE'),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data?.error || `Delete failed (${res.status})`);
-      }
-      await loadReports();
-    } catch (err) {
-      setError(err?.message || 'Failed to delete report.');
-    } finally {
-      setBusy(false);
-    }
+    setConfirmDialog({
+      title: 'Delete report',
+      message: 'Delete this report? This cannot be undone.',
+      confirmLabel: 'Delete report',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        setBusy(true);
+        setError('');
+        setMessage('');
+        try {
+          const res = await authFetch(`${API_BASE}/api/v1/reports/${encodeURIComponent(reportId)}`, {
+            method: 'DELETE',
+            credentials: 'include',
+            headers: authHeaders('DELETE'),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            throw new Error(data?.error || `Delete failed (${res.status})`);
+          }
+          await loadReports();
+        } catch (err) {
+          setError(err?.message || 'Failed to delete report.');
+        } finally {
+          setBusy(false);
+        }
+      },
+    });
   }
 
   return (
@@ -246,6 +254,16 @@ export default function Reports() {
         </section>
       )}
       </div>
+      <ConfirmDialog
+        isOpen={Boolean(confirmDialog)}
+        title={confirmDialog?.title}
+        message={confirmDialog?.message}
+        confirmLabel={confirmDialog?.confirmLabel}
+        confirmVariant={confirmDialog?.confirmVariant}
+        pending={busy}
+        onCancel={() => setConfirmDialog(null)}
+        onConfirm={() => confirmDialog?.onConfirm?.()}
+      />
     </div>
   );
 }

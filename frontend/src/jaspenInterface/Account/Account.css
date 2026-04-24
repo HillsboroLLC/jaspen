@@ -851,6 +851,11 @@
   color: #1f355c;
 }
 
+.account-jira-modal-grid input[aria-describedby="account-jira-modal-error"] {
+  border-color: var(--color-status-danger, #c0392b);
+  box-shadow: 0 0 0 2px rgba(192, 57, 43, 0.12);
+}
+
 .account-jira-modal-token-field {
   grid-column: 1 / -1;
 }
@@ -859,6 +864,22 @@
   margin: 0;
   color: #9c2455;
   font-size: 0.78rem;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.account-jira-modal-error-icon {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--color-status-danger, #c0392b) 12%, transparent);
+  color: var(--color-status-danger, #c0392b);
+  font-weight: 700;
+  line-height: 1;
 }
 
 .account-jira-modal-actions {
