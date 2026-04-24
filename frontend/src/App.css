@@ -16,7 +16,7 @@ body {
 .app-skip-link {
   position: absolute;
   left: 16px;
-  top: -48px;
+  top: 12px;
   z-index: 2000;
   padding: 10px 14px;
   border-radius: 8px;
@@ -25,10 +25,22 @@ body {
   color: var(--color-text-primary);
   background: var(--color-surface-default);
   border: 2px solid var(--color-brand-navy);
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
-.app-skip-link:focus {
-  top: 16px;
+.app-skip-link:focus,
+.app-skip-link:focus-visible {
+  width: auto;
+  height: auto;
+  overflow: visible;
+  clip: auto;
+  clip-path: none;
+  white-space: normal;
 }
 
 .container {
