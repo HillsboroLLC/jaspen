@@ -1,0 +1,70 @@
+.jas-main-menu {
+  width: 214px;
+  min-width: 214px;
+  border-right: 1px solid #e1e6ef;
+  background: #f7f9fb;
+  padding: 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.jas-main-menu-head p {
+  margin: 0;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(22, 31, 59, 0.6);
+  font-weight: 700;
+}
+
+.jas-main-menu-nav {
+  display: grid;
+  gap: 4px;
+  align-content: start;
+}
+
+.jas-main-menu-link {
+  text-decoration: none;
+  color: rgba(22, 31, 59, 0.9);
+  border-left: 2px solid transparent;
+  padding: 9px 8px 9px 10px;
+  font-size: 0.92rem;
+  font-weight: 500;
+}
+
+.jas-main-menu-link:hover {
+  color: #161f3b;
+}
+
+.jas-main-menu-link.is-active {
+  border-left-color: #161f3b;
+  color: #161f3b;
+  font-weight: 600;
+}
+
+@media (max-width: 980px) {
+  .jas-main-menu {
+    width: 100%;
+    min-width: 0;
+    border-right: 0;
+    border-bottom: 1px solid #e1e6ef;
+    background: #f8fafc;
+  }
+
+  .jas-main-menu-nav {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .jas-main-menu-link {
+    border-left: 0;
+    border: 1px solid #d9deea;
+    border-radius: 10px;
+    padding: 8px 10px;
+  }
+
+  .jas-main-menu-link.is-active {
+    border-color: #161f3b;
+    background: #ffffff;
+  }
+}
