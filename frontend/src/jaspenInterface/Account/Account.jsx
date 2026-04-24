@@ -6,12 +6,14 @@ import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faBookOpen,
+  faBars,
   faBolt,
   faChartLine,
   faGear,
   faLayerGroup,
   faPlug,
   faShieldHalved,
+  faTimes,
 } from '@fortawesome/free-solid-svg-icons';
 import './Account.css';
 
@@ -369,6 +371,7 @@ export default function Account() {
   const [jiraConfigError, setJiraConfigError] = useState('');
   const [jiraConfigSaving, setJiraConfigSaving] = useState(false);
   const [message, setMessage] = useState('');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState('overview');
   const [userProfile, setUserProfile] = useState(null);
   const [mfaState, setMfaState] = useState({
@@ -1619,10 +1622,19 @@ export default function Account() {
   return (
     <div className="account-page">
       <div className="account-panel">
-        <div className="account-content-layout">
-          <aside className="account-sidebar">
+        <div className={`account-content-layout ${sidebarCollapsed ? 'is-sidebar-collapsed' : ''}`}>
+          <aside className={`account-sidebar ${sidebarCollapsed ? 'is-collapsed' : ''}`}>
             <div className="account-sidebar-head">
-              <p className="account-sidebar-title">Billing menu</p>
+              {!sidebarCollapsed && <p className="account-sidebar-title">Billing menu</p>}
+              <button
+                type="button"
+                className="account-sidebar-toggle"
+                onClick={() => setSidebarCollapsed((prev) => !prev)}
+                aria-expanded={!sidebarCollapsed}
+                aria-label={sidebarCollapsed ? 'Expand billing menu' : 'Collapse billing menu'}
+              >
+                <FontAwesomeIcon icon={sidebarCollapsed ? faBars : faTimes} />
+              </button>
             </div>
             <nav className="account-sidebar-nav" aria-label="Billing sections">
               {sidebarItems.map((item) => (
@@ -1632,28 +1644,31 @@ export default function Account() {
                   className={`account-sidebar-item ${activeTab === item.key ? 'is-active' : ''}`}
                   onClick={() => guardUnsavedChanges(() => setActiveTab(item.key))}
                   aria-label={item.label}
+                  title={sidebarCollapsed ? item.label : undefined}
                 >
                   <span className="account-sidebar-icon">
                     <FontAwesomeIcon icon={item.icon} />
                   </span>
-                  <span className="account-sidebar-label">{item.label}</span>
+                  {!sidebarCollapsed && <span className="account-sidebar-label">{item.label}</span>}
                 </button>
               ))}
             </nav>
-            <div className="account-sidebar-footer">
-              <section className="account-sidebar-footer-group">
-                <p className="account-sidebar-footer-label">Account usage (this month)</p>
-                <p className="account-sidebar-footer-value">
-                  {status?.monthly_credit_limit == null
-                    ? 'Contracted pooled credits'
-                    : `${Number(status.monthly_credit_limit || 0).toLocaleString()} credit limit`}
-                </p>
-              </section>
-              <section className="account-sidebar-footer-group">
-                <p className="account-sidebar-footer-label">Current thread usage</p>
-                <p className="account-sidebar-footer-value">Open a thread to see usage details.</p>
-              </section>
-            </div>
+            {!sidebarCollapsed && (
+              <div className="account-sidebar-footer">
+                <section className="account-sidebar-footer-group">
+                  <p className="account-sidebar-footer-label">Account usage (this month)</p>
+                  <p className="account-sidebar-footer-value">
+                    {status?.monthly_credit_limit == null
+                      ? 'Contracted pooled credits'
+                      : `${Number(status.monthly_credit_limit || 0).toLocaleString()} credit limit`}
+                  </p>
+                </section>
+                <section className="account-sidebar-footer-group">
+                  <p className="account-sidebar-footer-label">Current thread usage</p>
+                  <p className="account-sidebar-footer-value">Open a thread to see usage details.</p>
+                </section>
+              </div>
+            )}
           </aside>
 
           <div className="account-main-content">

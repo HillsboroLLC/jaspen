@@ -677,6 +677,7 @@ export default function JaspenAdmin() {
     <div className="jas-admin-page jas-internal-page jas-internal-page-shell">
         <div className="jas-admin-head">
           <div>
+            <p className="jas-admin-eyebrow">Jaspen Internal</p>
             <h1>Jaspen Admin</h1>
             <p className="jas-admin-sub">
               Search users and manage tier, credits, connectors, and recovery actions from one control plane.
