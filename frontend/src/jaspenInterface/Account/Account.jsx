@@ -328,6 +328,15 @@ function connectorToggleMeaning(connector) {
   return 'On enables insight ingestion. Off excludes this system from analysis context.';
 }
 
+function requiredFieldLabel(text, required = false) {
+  return (
+    <>
+      {text}
+      {required && <span className="account-required-marker" aria-hidden="true"> *</span>}
+    </>
+  );
+}
+
 export default function Account() {
   const navigate = useNavigate();
   const [status, setStatus] = useState(null);
@@ -1773,11 +1782,12 @@ export default function Account() {
                 {isServiceNowModal && 'Enter ServiceNow credentials and mapping details, then save. Required: instance URL, username, password.'}
                 {isNetSuiteModal && 'Enter NetSuite token-based integration details, then save. Required: account id, consumer key/secret, token id/secret.'}
               </p>
+              <p className="account-required-legend"><span aria-hidden="true">*</span> Required</p>
               <div className="account-jira-modal-grid">
                 {isJiraModal && (
                   <>
                     <label htmlFor={"account-connector-jira_base_url"}>
-                      Jira URL
+                      {requiredFieldLabel('Jira URL', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.jira_base_url}
@@ -1792,7 +1802,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
                     <label htmlFor={"account-connector-jira_project_key"}>
-                      Jira project key
+                      {requiredFieldLabel('Jira project key', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.jira_project_key}
@@ -1807,7 +1817,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
                     <label htmlFor={"account-connector-jira_email"}>
-                      Jira email
+                      {requiredFieldLabel('Jira email', true)}
                       <input
                         type="email"
                         value={jiraConfigModal.data.jira_email}
@@ -1837,7 +1847,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
                     <label className="account-jira-modal-token-field" htmlFor={"account-connector-jira_api_token"}>
-                      Jira API token
+                      {requiredFieldLabel('Jira API token', true)}
                       <input
                         type="password"
                         value={jiraConfigModal.data.jira_api_token}
@@ -1856,7 +1866,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                 {isWorkfrontModal && (
                   <>
                     <label htmlFor={"account-connector-workfront_base_url"}>
-                      Workfront URL
+                      {requiredFieldLabel('Workfront URL', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.workfront_base_url}
@@ -1871,7 +1881,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
                     <label htmlFor={"account-connector-workfront_project_id"}>
-                      Project ID
+                      {requiredFieldLabel('Project ID', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.workfront_project_id}
@@ -1886,7 +1896,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
                     <label className="account-jira-modal-token-field" htmlFor={"account-connector-workfront_api_token"}>
-                      Workfront API token
+                      {requiredFieldLabel('Workfront API token', true)}
                       <input
                         type="password"
                         value={jiraConfigModal.data.workfront_api_token}
@@ -1905,7 +1915,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                 {isSmartsheetModal && (
                   <>
                     <label htmlFor={"account-connector-smartsheet_base_url"}>
-                      Smartsheet URL
+                      {requiredFieldLabel('Smartsheet URL', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.smartsheet_base_url}
@@ -1920,7 +1930,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
                     <label htmlFor={"account-connector-smartsheet_sheet_id"}>
-                      Sheet ID
+                      {requiredFieldLabel('Sheet ID', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.smartsheet_sheet_id}
@@ -1935,7 +1945,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
                     <label className="account-jira-modal-token-field" htmlFor={"account-connector-smartsheet_api_token"}>
-                      Smartsheet API token
+                      {requiredFieldLabel('Smartsheet API token', true)}
                       <input
                         type="password"
                         value={jiraConfigModal.data.smartsheet_api_token}
@@ -1954,7 +1964,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                 {isSalesforceModal && (
                   <>
                     <label htmlFor={"account-connector-salesforce_auth_base_url"}>
-                      Auth Base URL
+                      {requiredFieldLabel('Auth Base URL', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.salesforce_auth_base_url}
@@ -1969,7 +1979,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
                     <label htmlFor={"account-connector-salesforce_instance_url"}>
-                      Instance URL
+                      {requiredFieldLabel('Instance URL', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.salesforce_instance_url}
@@ -1984,7 +1994,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
                     <label htmlFor={"account-connector-salesforce_client_id"}>
-                      Client ID
+                      {requiredFieldLabel('Client ID', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.salesforce_client_id}
@@ -1999,7 +2009,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
                     <label className="account-jira-modal-token-field" htmlFor={"account-connector-salesforce_client_secret"}>
-                      Client secret
+                      {requiredFieldLabel('Client secret', true)}
                       <input
                         type="password"
                         value={jiraConfigModal.data.salesforce_client_secret}
@@ -2014,7 +2024,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
                     <label className="account-jira-modal-token-field" htmlFor={"account-connector-salesforce_refresh_token"}>
-                      Refresh token
+                      {requiredFieldLabel('Refresh token', true)}
                       <input
                         type="password"
                         value={jiraConfigModal.data.salesforce_refresh_token}
@@ -2033,7 +2043,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                 {isSnowflakeModal && (
                   <>
                     <label htmlFor={"account-connector-snowflake_account"}>
-                      Account
+                      {requiredFieldLabel('Account', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.snowflake_account}
@@ -2048,7 +2058,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
                     <label htmlFor={"account-connector-snowflake_warehouse"}>
-                      Warehouse
+                      {requiredFieldLabel('Warehouse', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.snowflake_warehouse}
@@ -2063,7 +2073,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
                     <label htmlFor={"account-connector-snowflake_database"}>
-                      Database
+                      {requiredFieldLabel('Database', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.snowflake_database}
@@ -2078,7 +2088,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
                     <label htmlFor={"account-connector-snowflake_schema"}>
-                      Schema
+                      {requiredFieldLabel('Schema', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.snowflake_schema}
@@ -2108,7 +2118,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
                     <label htmlFor={"account-connector-snowflake_user"}>
-                      User
+                      {requiredFieldLabel('User', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.snowflake_user}
@@ -2123,7 +2133,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
                     <label className="account-jira-modal-token-field" htmlFor={"account-connector-snowflake_password"}>
-                      Password
+                      {requiredFieldLabel('Password', true)}
                       <input
                         type="password"
                         value={jiraConfigModal.data.snowflake_password}
@@ -2172,7 +2182,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                 {isOracleFusionModal && (
                   <>
                     <label htmlFor={"account-connector-oracle_fusion_base_url"}>
-                      Base URL
+                      {requiredFieldLabel('Base URL', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.oracle_fusion_base_url}
@@ -2187,7 +2197,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
                     <label htmlFor={"account-connector-oracle_fusion_username"}>
-                      Username
+                      {requiredFieldLabel('Username', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.oracle_fusion_username}
@@ -2202,7 +2212,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
                     <label className="account-jira-modal-token-field" htmlFor={"account-connector-oracle_fusion_password"}>
-                      Password
+                      {requiredFieldLabel('Password', true)}
                       <input
                         type="password"
                         value={jiraConfigModal.data.oracle_fusion_password}
@@ -2236,7 +2246,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                 {isServiceNowModal && (
                   <>
                     <label htmlFor={"account-connector-servicenow_instance_url"}>
-                      Instance URL
+                      {requiredFieldLabel('Instance URL', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.servicenow_instance_url}
@@ -2251,7 +2261,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
                     <label htmlFor={"account-connector-servicenow_username"}>
-                      Username
+                      {requiredFieldLabel('Username', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.servicenow_username}
@@ -2266,7 +2276,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
                     <label className="account-jira-modal-token-field" htmlFor={"account-connector-servicenow_password"}>
-                      Password
+                      {requiredFieldLabel('Password', true)}
                       <input
                         type="password"
                         value={jiraConfigModal.data.servicenow_password}
@@ -2300,7 +2310,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                 {isNetSuiteModal && (
                   <>
                     <label htmlFor={"account-connector-netsuite_account_id"}>
-                      Account ID
+                      {requiredFieldLabel('Account ID', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.netsuite_account_id}
@@ -2315,7 +2325,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
                     <label htmlFor={"account-connector-netsuite_consumer_key"}>
-                      Consumer key
+                      {requiredFieldLabel('Consumer key', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.netsuite_consumer_key}
@@ -2330,7 +2340,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
                     <label className="account-jira-modal-token-field" htmlFor={"account-connector-netsuite_consumer_secret"}>
-                      Consumer secret
+                      {requiredFieldLabel('Consumer secret', true)}
                       <input
                         type="password"
                         value={jiraConfigModal.data.netsuite_consumer_secret}
@@ -2345,7 +2355,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
                     <label htmlFor={"account-connector-netsuite_token_id"}>
-                      Token ID
+                      {requiredFieldLabel('Token ID', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.netsuite_token_id}
@@ -2360,7 +2370,7 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
 />
                     </label>
                     <label className="account-jira-modal-token-field" htmlFor={"account-connector-netsuite_token_secret"}>
-                      Token secret
+                      {requiredFieldLabel('Token secret', true)}
                       <input
                         type="password"
                         value={jiraConfigModal.data.netsuite_token_secret}

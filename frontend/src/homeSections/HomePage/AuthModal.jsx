@@ -25,6 +25,11 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
 
   const isEmailMode = mode === 'email';
   const isForgotMode = mode === 'forgot';
+  const requiredLabel = (text) => (
+    <>
+      {text} <span className="auth-required-marker" aria-hidden="true">*</span>
+    </>
+  );
 
   const resetState = () => {
     setStatus('idle');
@@ -314,7 +319,8 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
       {error && <div className="auth-modal-alert is-error"><strong>{error}</strong></div>}
       {statusMessage && <div className="auth-modal-success">{statusMessage}</div>}
       <form className="auth-modal-form" onSubmit={handleMfaChallenge}>
-        <label className="auth-modal-label" htmlFor="mfa-code">Authentication code</label>
+        <p className="auth-required-legend"><span aria-hidden="true">*</span> Required</p>
+        <label className="auth-modal-label" htmlFor="mfa-code">{requiredLabel('Authentication code')}</label>
         <input
           id="mfa-code"
           type="text"
@@ -387,7 +393,8 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
         </p>
       </details>
       <form className="auth-modal-form" onSubmit={handleMfaSetupVerify}>
-        <label className="auth-modal-label" htmlFor="mfa-setup-code">Enter the 6-digit code from your app</label>
+        <p className="auth-required-legend"><span aria-hidden="true">*</span> Required</p>
+        <label className="auth-modal-label" htmlFor="mfa-setup-code">{requiredLabel('Enter the 6-digit code from your app')}</label>
         <input
           id="mfa-setup-code"
           type="text"
@@ -495,7 +502,8 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
 
       {isEmailMode || isForgotMode ? (
         <form className="auth-modal-form" onSubmit={isForgotMode ? handleForgotSubmit : handleEmailSubmit}>
-          <label className="auth-modal-label" htmlFor="auth-email">Email</label>
+          <p className="auth-required-legend"><span aria-hidden="true">*</span> Required</p>
+          <label className="auth-modal-label" htmlFor="auth-email">{requiredLabel('Email')}</label>
           <input
             id="auth-email"
             type="email"
@@ -522,7 +530,7 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
           <FieldError id="auth-email-error" message={fieldErrors.email} />
           {!isForgotMode && (
             <>
-              <label className="auth-modal-label" htmlFor="auth-password">Password</label>
+              <label className="auth-modal-label" htmlFor="auth-password">{requiredLabel('Password')}</label>
               <input
                 id="auth-password"
                 type="password"

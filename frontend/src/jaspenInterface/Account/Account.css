@@ -818,6 +818,17 @@
   font-size: 0.8rem;
 }
 
+.account-required-legend {
+  margin: -2px 0 0;
+  color: #5a6f92;
+  font-size: 0.76rem;
+}
+
+.account-required-marker {
+  color: var(--color-status-danger, #c0392b);
+  font-weight: 700;
+}
+
 .account-jira-modal-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

@@ -138,6 +138,15 @@ function parseList(text) {
     .filter(Boolean);
 }
 
+function fieldLabel(text, required = false) {
+  return (
+    <>
+      {text}
+      {required && <span className="connector-required-marker" aria-hidden="true"> *</span>}
+    </>
+  );
+}
+
 function buildUpdatePayload(connectorId, draft) {
   const payload = {
     connection_status: draft.connection_status,
@@ -459,11 +468,11 @@ export default function ConnectorsManage() {
     if (connectorId === 'jira_sync') {
       return (
         <>
-          <label>Jira Base URL<input value={draft.jira_base_url} onChange={(event) => updateDraft('jira_base_url', event.target.value)} /></label>
-          <label>Project Key<input value={draft.jira_project_key} onChange={(event) => updateDraft('jira_project_key', event.target.value)} /></label>
-          <label>Email<input value={draft.jira_email} onChange={(event) => updateDraft('jira_email', event.target.value)} /></label>
+          <label>{fieldLabel('Jira Base URL', true)}<input value={draft.jira_base_url} onChange={(event) => updateDraft('jira_base_url', event.target.value)} /></label>
+          <label>{fieldLabel('Project Key', true)}<input value={draft.jira_project_key} onChange={(event) => updateDraft('jira_project_key', event.target.value)} /></label>
+          <label>{fieldLabel('Email', true)}<input value={draft.jira_email} onChange={(event) => updateDraft('jira_email', event.target.value)} /></label>
           <label>Issue Type<input value={draft.jira_issue_type} onChange={(event) => updateDraft('jira_issue_type', event.target.value)} /></label>
-          <label>API Token<input type="password" value={draft.jira_api_token} onChange={(event) => updateDraft('jira_api_token', event.target.value)} placeholder="Enter token to set or rotate" /></label>
+          <label>{fieldLabel('API Token', true)}<input type="password" value={draft.jira_api_token} onChange={(event) => updateDraft('jira_api_token', event.target.value)} placeholder="Enter token to set or rotate" /></label>
           <label>Field Mapping JSON<textarea value={draft.jira_field_mapping} onChange={(event) => updateDraft('jira_field_mapping', event.target.value)} /></label>
         </>
       );
@@ -472,9 +481,9 @@ export default function ConnectorsManage() {
     if (connectorId === 'workfront_sync') {
       return (
         <>
-          <label>Workfront URL<input value={draft.workfront_base_url} onChange={(event) => updateDraft('workfront_base_url', event.target.value)} /></label>
-          <label>Project ID<input value={draft.workfront_project_id} onChange={(event) => updateDraft('workfront_project_id', event.target.value)} /></label>
-          <label>API Token<input type="password" value={draft.workfront_api_token} onChange={(event) => updateDraft('workfront_api_token', event.target.value)} placeholder="Enter token to set or rotate" /></label>
+          <label>{fieldLabel('Workfront URL', true)}<input value={draft.workfront_base_url} onChange={(event) => updateDraft('workfront_base_url', event.target.value)} /></label>
+          <label>{fieldLabel('Project ID', true)}<input value={draft.workfront_project_id} onChange={(event) => updateDraft('workfront_project_id', event.target.value)} /></label>
+          <label>{fieldLabel('API Token', true)}<input type="password" value={draft.workfront_api_token} onChange={(event) => updateDraft('workfront_api_token', event.target.value)} placeholder="Enter token to set or rotate" /></label>
           <label>Field Mapping JSON<textarea value={draft.workfront_field_mapping} onChange={(event) => updateDraft('workfront_field_mapping', event.target.value)} /></label>
         </>
       );
@@ -483,9 +492,9 @@ export default function ConnectorsManage() {
     if (connectorId === 'smartsheet_sync') {
       return (
         <>
-          <label>Smartsheet Base URL<input value={draft.smartsheet_base_url} onChange={(event) => updateDraft('smartsheet_base_url', event.target.value)} /></label>
-          <label>Sheet ID<input value={draft.smartsheet_sheet_id} onChange={(event) => updateDraft('smartsheet_sheet_id', event.target.value)} /></label>
-          <label>API Token<input type="password" value={draft.smartsheet_api_token} onChange={(event) => updateDraft('smartsheet_api_token', event.target.value)} placeholder="Enter token to set or rotate" /></label>
+          <label>{fieldLabel('Smartsheet Base URL', true)}<input value={draft.smartsheet_base_url} onChange={(event) => updateDraft('smartsheet_base_url', event.target.value)} /></label>
+          <label>{fieldLabel('Sheet ID', true)}<input value={draft.smartsheet_sheet_id} onChange={(event) => updateDraft('smartsheet_sheet_id', event.target.value)} /></label>
+          <label>{fieldLabel('API Token', true)}<input type="password" value={draft.smartsheet_api_token} onChange={(event) => updateDraft('smartsheet_api_token', event.target.value)} placeholder="Enter token to set or rotate" /></label>
           <label>Field Mapping JSON<textarea value={draft.smartsheet_field_mapping} onChange={(event) => updateDraft('smartsheet_field_mapping', event.target.value)} /></label>
         </>
       );
@@ -494,11 +503,11 @@ export default function ConnectorsManage() {
     if (connectorId === 'salesforce_insights') {
       return (
         <>
-          <label>Auth Base URL<input value={draft.salesforce_auth_base_url} onChange={(event) => updateDraft('salesforce_auth_base_url', event.target.value)} /></label>
-          <label>Instance URL<input value={draft.salesforce_instance_url} onChange={(event) => updateDraft('salesforce_instance_url', event.target.value)} /></label>
-          <label>Client ID<input value={draft.salesforce_client_id} onChange={(event) => updateDraft('salesforce_client_id', event.target.value)} /></label>
-          <label>Client Secret<input type="password" value={draft.salesforce_client_secret} onChange={(event) => updateDraft('salesforce_client_secret', event.target.value)} placeholder="Enter secret to set or rotate" /></label>
-          <label>Refresh Token<input type="password" value={draft.salesforce_refresh_token} onChange={(event) => updateDraft('salesforce_refresh_token', event.target.value)} placeholder="Enter token to set or rotate" /></label>
+          <label>{fieldLabel('Auth Base URL', true)}<input value={draft.salesforce_auth_base_url} onChange={(event) => updateDraft('salesforce_auth_base_url', event.target.value)} /></label>
+          <label>{fieldLabel('Instance URL', true)}<input value={draft.salesforce_instance_url} onChange={(event) => updateDraft('salesforce_instance_url', event.target.value)} /></label>
+          <label>{fieldLabel('Client ID', true)}<input value={draft.salesforce_client_id} onChange={(event) => updateDraft('salesforce_client_id', event.target.value)} /></label>
+          <label>{fieldLabel('Client Secret', true)}<input type="password" value={draft.salesforce_client_secret} onChange={(event) => updateDraft('salesforce_client_secret', event.target.value)} placeholder="Enter secret to set or rotate" /></label>
+          <label>{fieldLabel('Refresh Token', true)}<input type="password" value={draft.salesforce_refresh_token} onChange={(event) => updateDraft('salesforce_refresh_token', event.target.value)} placeholder="Enter token to set or rotate" /></label>
         </>
       );
     }
@@ -506,13 +515,13 @@ export default function ConnectorsManage() {
     if (connectorId === 'snowflake_insights') {
       return (
         <>
-          <label>Account<input value={draft.snowflake_account} onChange={(event) => updateDraft('snowflake_account', event.target.value)} /></label>
-          <label>Warehouse<input value={draft.snowflake_warehouse} onChange={(event) => updateDraft('snowflake_warehouse', event.target.value)} /></label>
-          <label>Database<input value={draft.snowflake_database} onChange={(event) => updateDraft('snowflake_database', event.target.value)} /></label>
-          <label>Schema<input value={draft.snowflake_schema} onChange={(event) => updateDraft('snowflake_schema', event.target.value)} /></label>
+          <label>{fieldLabel('Account', true)}<input value={draft.snowflake_account} onChange={(event) => updateDraft('snowflake_account', event.target.value)} /></label>
+          <label>{fieldLabel('Warehouse', true)}<input value={draft.snowflake_warehouse} onChange={(event) => updateDraft('snowflake_warehouse', event.target.value)} /></label>
+          <label>{fieldLabel('Database', true)}<input value={draft.snowflake_database} onChange={(event) => updateDraft('snowflake_database', event.target.value)} /></label>
+          <label>{fieldLabel('Schema', true)}<input value={draft.snowflake_schema} onChange={(event) => updateDraft('snowflake_schema', event.target.value)} /></label>
           <label>Role<input value={draft.snowflake_role} onChange={(event) => updateDraft('snowflake_role', event.target.value)} /></label>
-          <label>User<input value={draft.snowflake_user} onChange={(event) => updateDraft('snowflake_user', event.target.value)} /></label>
-          <label>Password<input type="password" value={draft.snowflake_password} onChange={(event) => updateDraft('snowflake_password', event.target.value)} placeholder="Enter password to set or rotate" /></label>
+          <label>{fieldLabel('User', true)}<input value={draft.snowflake_user} onChange={(event) => updateDraft('snowflake_user', event.target.value)} /></label>
+          <label>{fieldLabel('Password', true)}<input type="password" value={draft.snowflake_password} onChange={(event) => updateDraft('snowflake_password', event.target.value)} placeholder="Enter password to set or rotate" /></label>
           <label>Private Key<input type="password" value={draft.snowflake_private_key} onChange={(event) => updateDraft('snowflake_private_key', event.target.value)} placeholder="Enter key to set or rotate" /></label>
           <label>Table Allowlist (comma-separated)<input value={draft.snowflake_table_allowlist} onChange={(event) => updateDraft('snowflake_table_allowlist', event.target.value)} /></label>
         </>
@@ -522,9 +531,9 @@ export default function ConnectorsManage() {
     if (connectorId === 'oracle_fusion_insights') {
       return (
         <>
-          <label>Oracle Fusion URL<input value={draft.oracle_fusion_base_url} onChange={(event) => updateDraft('oracle_fusion_base_url', event.target.value)} /></label>
-          <label>Username<input value={draft.oracle_fusion_username} onChange={(event) => updateDraft('oracle_fusion_username', event.target.value)} /></label>
-          <label>Password<input type="password" value={draft.oracle_fusion_password} onChange={(event) => updateDraft('oracle_fusion_password', event.target.value)} placeholder="Enter password to set or rotate" /></label>
+          <label>{fieldLabel('Oracle Fusion URL', true)}<input value={draft.oracle_fusion_base_url} onChange={(event) => updateDraft('oracle_fusion_base_url', event.target.value)} /></label>
+          <label>{fieldLabel('Username', true)}<input value={draft.oracle_fusion_username} onChange={(event) => updateDraft('oracle_fusion_username', event.target.value)} /></label>
+          <label>{fieldLabel('Password', true)}<input type="password" value={draft.oracle_fusion_password} onChange={(event) => updateDraft('oracle_fusion_password', event.target.value)} placeholder="Enter password to set or rotate" /></label>
           <label>Business Unit<input value={draft.oracle_fusion_business_unit} onChange={(event) => updateDraft('oracle_fusion_business_unit', event.target.value)} /></label>
         </>
       );
@@ -533,9 +542,9 @@ export default function ConnectorsManage() {
     if (connectorId === 'servicenow_insights') {
       return (
         <>
-          <label>Instance URL<input value={draft.servicenow_instance_url} onChange={(event) => updateDraft('servicenow_instance_url', event.target.value)} /></label>
-          <label>Username<input value={draft.servicenow_username} onChange={(event) => updateDraft('servicenow_username', event.target.value)} /></label>
-          <label>Password<input type="password" value={draft.servicenow_password} onChange={(event) => updateDraft('servicenow_password', event.target.value)} placeholder="Enter password to set or rotate" /></label>
+          <label>{fieldLabel('Instance URL', true)}<input value={draft.servicenow_instance_url} onChange={(event) => updateDraft('servicenow_instance_url', event.target.value)} /></label>
+          <label>{fieldLabel('Username', true)}<input value={draft.servicenow_username} onChange={(event) => updateDraft('servicenow_username', event.target.value)} /></label>
+          <label>{fieldLabel('Password', true)}<input type="password" value={draft.servicenow_password} onChange={(event) => updateDraft('servicenow_password', event.target.value)} placeholder="Enter password to set or rotate" /></label>
           <label>Table Allowlist (comma-separated)<input value={draft.servicenow_table_allowlist} onChange={(event) => updateDraft('servicenow_table_allowlist', event.target.value)} /></label>
         </>
       );
@@ -544,11 +553,11 @@ export default function ConnectorsManage() {
     if (connectorId === 'netsuite_insights') {
       return (
         <>
-          <label>Account ID<input value={draft.netsuite_account_id} onChange={(event) => updateDraft('netsuite_account_id', event.target.value)} /></label>
-          <label>Consumer Key<input value={draft.netsuite_consumer_key} onChange={(event) => updateDraft('netsuite_consumer_key', event.target.value)} /></label>
-          <label>Consumer Secret<input type="password" value={draft.netsuite_consumer_secret} onChange={(event) => updateDraft('netsuite_consumer_secret', event.target.value)} placeholder="Enter secret to set or rotate" /></label>
-          <label>Token ID<input value={draft.netsuite_token_id} onChange={(event) => updateDraft('netsuite_token_id', event.target.value)} /></label>
-          <label>Token Secret<input type="password" value={draft.netsuite_token_secret} onChange={(event) => updateDraft('netsuite_token_secret', event.target.value)} placeholder="Enter secret to set or rotate" /></label>
+          <label>{fieldLabel('Account ID', true)}<input value={draft.netsuite_account_id} onChange={(event) => updateDraft('netsuite_account_id', event.target.value)} /></label>
+          <label>{fieldLabel('Consumer Key', true)}<input value={draft.netsuite_consumer_key} onChange={(event) => updateDraft('netsuite_consumer_key', event.target.value)} /></label>
+          <label>{fieldLabel('Consumer Secret', true)}<input type="password" value={draft.netsuite_consumer_secret} onChange={(event) => updateDraft('netsuite_consumer_secret', event.target.value)} placeholder="Enter secret to set or rotate" /></label>
+          <label>{fieldLabel('Token ID', true)}<input value={draft.netsuite_token_id} onChange={(event) => updateDraft('netsuite_token_id', event.target.value)} /></label>
+          <label>{fieldLabel('Token Secret', true)}<input type="password" value={draft.netsuite_token_secret} onChange={(event) => updateDraft('netsuite_token_secret', event.target.value)} placeholder="Enter secret to set or rotate" /></label>
           <label>REST Base URL<input value={draft.netsuite_rest_base_url} onChange={(event) => updateDraft('netsuite_rest_base_url', event.target.value)} /></label>
         </>
       );
@@ -653,6 +662,7 @@ export default function ConnectorsManage() {
                       <button type="button" onClick={saveConnector} disabled={busy} aria-disabled={busy}><FontAwesomeIcon icon={faServer} /> Save Settings</button>
                     </div>
                   </header>
+                  <p className="connector-required-legend"><span aria-hidden="true">*</span> Required</p>
 
                   <div className="connector-core-controls">
                     <label>

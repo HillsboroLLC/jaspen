@@ -220,6 +220,17 @@
   color: #5f7094;
 }
 
+.connector-required-legend {
+  margin: 8px 0 0;
+  font-size: 0.78rem;
+  color: #5f7094;
+}
+
+.connector-required-marker {
+  color: var(--color-status-danger, #c0392b);
+  font-weight: 700;
+}
+
 .connector-detail-actions {
   display: inline-flex;
   flex-wrap: wrap;

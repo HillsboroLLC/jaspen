@@ -746,6 +746,17 @@
   color: #64748b;
 }
 
+.auth-required-marker {
+  color: var(--color-status-danger, #c0392b);
+  margin-left: 2px;
+}
+
+.auth-required-legend {
+  margin: 0 0 2px;
+  font-size: 0.76rem;
+  color: #64748b;
+}
+
 .auth-modal-input {
   width: 100%;
   padding: 12px 14px;
