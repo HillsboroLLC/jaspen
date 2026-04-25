@@ -27,6 +27,22 @@
   --transition:   0.2s ease;
 }
 
+/* ---- Sidebar push / breathing room ---- */
+/*
+  When the tab is collapsed: add left padding equal to tab width (44px) so
+  content doesn't sit flush against the fixed tab button.
+  When the sidebar is open: push content right by sidebar width (320px).
+  Targets pages that use .int-page (the majority of internal pages).
+*/
+.int-page {
+  padding-left: calc(var(--int-page-pad, 28px) + 44px);
+  transition: padding-left 0.3s ease;
+}
+
+body.jaspen-sidebar-open .int-page {
+  padding-left: calc(var(--int-page-pad, 28px) + 320px);
+}
+
 /* ---- Tab button ---- */
 .app-menu-host .jas-drawer-tab {
   appearance: none;

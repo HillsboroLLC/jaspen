@@ -144,6 +144,12 @@ export default function AppMenu() {
     loadBilling();
   }, [loadBilling, user?.id, user?.email]);
 
+  // Toggle body class so CSS can push page content when sidebar is open/closed
+  useEffect(() => {
+    document.body.classList.toggle('jaspen-sidebar-open', open);
+    return () => document.body.classList.remove('jaspen-sidebar-open');
+  }, [open]);
+
   // ---------------------------------------------------------------------------
   // Plan flags (mirrors JaspenWorkspace)
   // ---------------------------------------------------------------------------
@@ -877,7 +883,7 @@ export default function AppMenu() {
   // Render
   // ---------------------------------------------------------------------------
   return (
-    <div className="app-menu-host">
+    <div className={`app-menu-host${open ? ' is-open' : ''}`}>
       {/* Tab button — visible when sidebar is closed */}
       {!open && (
         <button

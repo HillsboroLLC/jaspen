@@ -1,11 +1,13 @@
-.connector-monitor-panel {
+/* Former .connector-monitor-panel — now a transparent wrapper, no box */
+.connector-monitor {
   margin: 18px 0 22px;
-  border: 1px solid #cad5ea;
-  border-radius: 16px;
-  background:
-    radial-gradient(circle at top right, rgba(79, 144, 255, 0.14), transparent 32%),
-    linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-  padding: 18px;
+}
+
+.connector-monitor-healthy {
+  margin: 12px 0;
+  color: #2a6b45;
+  font-size: 0.875rem;
+  font-weight: 500;
 }
 
 .connector-monitor-header {

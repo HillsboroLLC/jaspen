@@ -180,7 +180,7 @@ export default function ConnectorMonitor({ selectedThreadId = '', onResynced = n
   ), [allowedSet, report.alerts]);
 
   return (
-    <section className="connector-monitor-panel">
+    <div className="connector-monitor">
       <header className="connector-monitor-header">
         <div>
           <p className="connector-monitor-kicker">Data Sources</p>
@@ -198,22 +198,19 @@ export default function ConnectorMonitor({ selectedThreadId = '', onResynced = n
 
       {!loading && !error && (
         <>
-          <div className="connector-alert-grid">
-            {visibleAlerts.length === 0 ? (
-              <article className="connector-alert-card is-healthy">
-                <strong>No active connector alerts.</strong>
-                <span>Connected systems look healthy right now.</span>
-              </article>
-            ) : (
-              visibleAlerts.map((alert, index) => (
+          {visibleAlerts.length === 0 ? (
+            <p className="connector-monitor-healthy">&#10003; No active connector alerts — connected systems look healthy.</p>
+          ) : (
+            <div className="connector-alert-grid">
+              {visibleAlerts.map((alert, index) => (
                 <article key={`${alert.connector_id}-${alert.type}-${index}`} className={`connector-alert-card ${severityClass(alert.severity)}`}>
                   <strong>{alert.connector_id}</strong>
                   <p>{alert.message}</p>
                   <span>{alert.action}</span>
                 </article>
-              ))
-            )}
-          </div>
+              ))}
+            </div>
+          )}
 
           <div className="connector-monitor-grid">
             {visibleConnectors.map((connector) => {
@@ -289,6 +286,6 @@ export default function ConnectorMonitor({ selectedThreadId = '', onResynced = n
           </div>
         </>
       )}
-    </section>
+    </div>
   );
 }

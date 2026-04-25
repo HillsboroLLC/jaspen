@@ -36,7 +36,7 @@
   color: #1d7b42;
 }
 
-.connectors-plan-note,
+/* .connectors-plan-gate keeps its box styling (it's a full upgrade prompt) */
 .connectors-plan-gate {
   margin-top: 14px;
   border: 1px solid var(--int-border);
@@ -46,12 +46,20 @@
   color: #30456f;
 }
 
+/* .connectors-plan-note is plain text — no box, no border, no background */
 .connectors-plan-note {
-  display: grid;
-  gap: 4px;
+  margin-top: 12px;
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  color: #475569;
+  font-size: 0.875rem;
 }
 
-.connectors-plan-note strong,
+.connectors-plan-note strong {
+  color: #1b2d58;
+}
+
 .connectors-plan-gate strong {
   color: #1b2d58;
 }
