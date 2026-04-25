@@ -942,11 +942,14 @@ def _scorecard_snapshot_state(scorecard_result, thread_id):
         if not isinstance(snapshot, dict):
             continue
         normalized_snapshot = _normalize_scorecard_payload(snapshot)
-        normalized_snapshot['id'] = str(
+        snap_id = str(
             normalized_snapshot.get('id')
             or normalized_snapshot.get('analysis_id')
-            or uuid.uuid4()
-        )
+            or ''
+        ).strip()
+        if not snap_id:
+            continue
+        normalized_snapshot['id'] = snap_id
         normalized_snapshot['label'] = normalized_snapshot.get('label') or (
             'Baseline' if normalized_snapshot.get('isBaseline') else 'Edited scorecard'
         )
@@ -1079,6 +1082,11 @@ def _scenario_snapshot_payload(result, scenario, thread_id):
         'isBaseline': False,
         'source_scenario_id': scenario_id,
     }
+    # Guarantee stable identifiers before persisting snapshot entries.
+    if not str(snapshot.get('id') or '').strip():
+        snapshot['id'] = scenario_id
+    if not str(snapshot.get('analysis_id') or '').strip():
+        snapshot['analysis_id'] = scenario_id
     return snapshot
 
 
@@ -1312,13 +1320,31 @@ def _set_selected_snapshot_in_session(user_id, thread_id, snapshot_id):
         return None
 
     target_id = str(snapshot_id or '').strip()
+    def _match_snapshot_id(item, target_value):
+        if not isinstance(item, dict):
+            return False
+        for key in ('id', 'analysis_id', 'analysisId'):
+            value = str(item.get(key) or '').strip()
+            if value and value == target_value:
+                return True
+        return False
+
     selected_snapshot = next(
         (
             item for item in snapshot_state.get('snapshots', [])
-            if isinstance(item, dict) and str(item.get('id') or item.get('analysis_id') or '').strip() == target_id
+            if _match_snapshot_id(item, target_id)
         ),
         None,
     )
+    if not selected_snapshot:
+        baseline = snapshot_state.get('baseline')
+        baseline_candidates = {
+            str((baseline or {}).get('id') or '').strip(),
+            str((baseline or {}).get('analysis_id') or '').strip(),
+            str(resolved_thread_id or '').strip(),
+        }
+        if isinstance(baseline, dict) and target_id in baseline_candidates:
+            selected_snapshot = baseline
     if not selected_snapshot:
         return None
 
