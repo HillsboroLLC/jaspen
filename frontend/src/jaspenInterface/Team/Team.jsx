@@ -4,6 +4,7 @@ import { API_BASE } from '../../config/apiBase';
 import { useAuth } from '../../shared/auth/AuthContext';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import './Team.css';
+import AppMenu from '../shared/AppMenu';
 
 const ROLE_OPTIONS = ['owner', 'admin', 'creator', 'collaborator', 'viewer'];
 const INVITE_ROLE_OPTIONS = ['admin', 'creator', 'collaborator', 'viewer'];
@@ -623,6 +624,7 @@ export default function Team({ mode = 'team' }) {
 
   return (
     <div className="team-page jas-internal-page jas-internal-page-shell">
+      <AppMenu />
       <div className="team-inner">
       <header className="team-head">
         <div>

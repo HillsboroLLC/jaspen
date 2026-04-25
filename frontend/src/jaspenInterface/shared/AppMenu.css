@@ -1,0 +1,868 @@
+/* =============================================================================
+   AppMenu.css
+   Shared menu — tab button + left sidebar + modals.
+   Scoped under .app-menu-host so CSS vars resolve correctly without requiring
+   the full .jas-shell wrapper on every page.
+   ============================================================================= */
+
+/* --- CSS variables (mirrors .jas-shell in JaspenWorkspace.css) --- */
+.app-menu-host {
+  --navy:         #161f3b;
+  --magenta:      #a0036c;
+  --light-bg:     #f8fafc;
+  --white:        #ffffff;
+  --sidebar-width: 320px;
+  --gray-50:      #f8f9fa;
+  --gray-100:     #f1f3f5;
+  --gray-200:     #e9ecef;
+  --gray-300:     #dee2e6;
+  --gray-400:     #ced4da;
+  --gray-500:     #adb5bd;
+  --gray-600:     #868e96;
+  --gray-700:     #495057;
+  --border:       #e9ecef;
+  --radius-sm:    4px;
+  --radius-md:    8px;
+  --font:         'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --transition:   0.2s ease;
+}
+
+/* ---- Tab button ---- */
+.app-menu-host .jas-drawer-tab {
+  appearance: none;
+  -webkit-appearance: none;
+  position: fixed;
+  left: 0;
+  top: 128px;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  background: var(--light-bg);
+  border: 1px solid var(--border);
+  border-left: none;
+  padding: 14px 8px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--navy);
+  cursor: pointer;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  transition: background var(--transition);
+  font-family: var(--font);
+}
+
+.app-menu-host .jas-drawer-tab:hover {
+  background: var(--gray-200);
+}
+
+.app-menu-host .jas-drawer-tab svg {
+  writing-mode: horizontal-tb;
+  font-size: 0.75rem;
+  width: 12px;
+  height: 12px;
+}
+
+/* ---- Left sidebar ---- */
+.app-menu-host .jas-left-sidebar {
+  position: fixed;
+  left: calc(var(--sidebar-width) * -1);
+  top: 0;
+  bottom: 0;
+  width: var(--sidebar-width);
+  background: var(--light-bg);
+  border-right: 1px solid var(--border);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  transition: left 0.3s ease;
+  box-shadow: 4px 0 12px rgba(22, 31, 59, 0.08);
+  overflow: visible;
+  font-family: var(--font);
+  box-sizing: border-box;
+}
+
+.app-menu-host .jas-left-sidebar.sidebar-open {
+  left: 0;
+}
+
+.app-menu-host .jas-left-sidebar.jas-settings-sidebar {
+  background: var(--white);
+}
+
+.app-menu-host .jas-sidebar-header {
+  padding: 18px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  background: var(--white);
+  flex-shrink: 0;
+}
+
+.app-menu-host .jas-sidebar-header h3 {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: var(--navy);
+  margin: 0;
+}
+
+.app-menu-host .jas-sidebar-close {
+  background: none;
+  border: none;
+  color: var(--gray-600);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.app-menu-host .jas-sidebar-close:hover {
+  color: var(--navy);
+}
+
+.app-menu-host .jas-sidebar-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* ---- User-details layout ---- */
+.app-menu-host .jas-ud-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.app-menu-host .jas-ud-scroll {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.app-menu-host .jas-ud-section {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.app-menu-host .jas-ud-section:last-child {
+  border-bottom: none;
+}
+
+.app-menu-host .jas-ud-section-label {
+  padding: 6px 18px 4px;
+  font-size: 0.5625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--gray-500);
+}
+
+.app-menu-host .jas-ud-role-switcher {
+  margin: 0 18px 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--gray-200);
+  border-radius: 12px;
+  background: #fbfcfe;
+  display: grid;
+  gap: 8px;
+}
+
+.app-menu-host .jas-ud-role-switcher-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--navy);
+}
+
+.app-menu-host .jas-ud-role-switcher-note {
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: var(--gray-600);
+}
+
+.app-menu-host .jas-ud-invite-card code {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 9px;
+  background: var(--white);
+  border: 1px solid var(--gray-200);
+  color: var(--navy);
+  font-size: 0.75rem;
+}
+
+.app-menu-host .jas-ud-invite-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-menu-host .jas-ud-invite-btn {
+  min-height: 34px;
+  border-radius: 9px;
+  border: 1px solid var(--gray-300);
+  background: var(--white);
+  color: var(--navy);
+  padding: 0 10px;
+  font-family: var(--font);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.app-menu-host .jas-ud-invite-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.app-menu-host .jas-ud-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 18px;
+  font-size: 0.8125rem;
+  color: var(--gray-700);
+  cursor: pointer;
+  transition: background var(--transition);
+  border: none;
+  background: none;
+  width: 100%;
+  text-align: left;
+  font-family: var(--font);
+}
+
+.app-menu-host .jas-ud-item:hover {
+  background: var(--gray-50);
+  color: var(--navy);
+}
+
+.app-menu-host .jas-ud-item.is-locked {
+  opacity: 0.72;
+}
+
+.app-menu-host .jas-ud-item.is-locked:hover {
+  opacity: 0.92;
+}
+
+.app-menu-host .jas-ud-item svg {
+  width: 16px;
+  height: 16px;
+  color: var(--gray-500);
+  flex-shrink: 0;
+}
+
+.app-menu-host .jas-ud-item:hover svg {
+  color: var(--navy);
+}
+
+.app-menu-host .jas-ud-item-label {
+  flex: 1;
+}
+
+.app-menu-host .jas-ud-item-badge {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--gray-500);
+}
+
+.app-menu-host .jas-ud-item-ext {
+  font-size: 0.625rem;
+  color: var(--gray-400);
+}
+
+.app-menu-host .jas-ud-item-ext svg {
+  width: 10px;
+  height: 10px;
+}
+
+/* Usage stats */
+.app-menu-host .jas-ud-usage-empty,
+.app-menu-host .jas-ud-usage-error {
+  margin: 2px 18px 10px;
+  font-size: 0.75rem;
+  color: var(--gray-500);
+}
+
+.app-menu-host .jas-ud-usage-note {
+  margin: 2px 18px 10px;
+  font-size: 0.72rem;
+  color: var(--gray-600);
+  line-height: 1.4;
+}
+
+.app-menu-host .jas-ud-usage-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 0 18px 10px;
+}
+
+.app-menu-host .jas-ud-usage-grid-compact {
+  margin-bottom: 8px;
+}
+
+.app-menu-host .jas-ud-usage-stat {
+  border: 1px solid var(--gray-200);
+  border-radius: 10px;
+  background: #fbfcfe;
+  padding: 7px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.app-menu-host .jas-ud-usage-stat span {
+  font-size: 0.625rem;
+  color: var(--gray-500);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.app-menu-host .jas-ud-usage-stat strong {
+  font-size: 0.75rem;
+  color: var(--navy);
+}
+
+/* Footer (SidebarIdentityFooter) */
+.app-menu-host .jas-ud-footer {
+  border-top: 1px solid var(--border);
+  padding: 10px 12px 12px;
+  position: relative;
+  background: #f7f9fb;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: visible;
+  flex-shrink: 0;
+}
+
+.app-menu-host .jas-ud-footer-profile {
+  width: auto;
+  flex: 1;
+  border: 1px solid var(--gray-300);
+  border-radius: 12px;
+  background: var(--white);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  cursor: pointer;
+  transition: border-color var(--transition), background var(--transition);
+}
+
+.app-menu-host .jas-ud-footer-profile:hover {
+  border-color: var(--navy);
+  background: #fdfdff;
+}
+
+.app-menu-host .jas-ud-footer-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--magenta);
+  color: var(--white);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.app-menu-host .jas-ud-footer-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  text-align: left;
+}
+
+.app-menu-host .jas-ud-footer-name {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--navy);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-menu-host .jas-ud-footer-org {
+  font-size: 0.6875rem;
+  color: var(--gray-700);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-menu-host .jas-ud-footer-plan {
+  font-size: 0.6875rem;
+  color: var(--gray-600);
+}
+
+.app-menu-host .jas-ud-footer-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.app-menu-host .jas-ud-footer-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--gray-300);
+  background: var(--white);
+  color: var(--gray-600);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.app-menu-host .jas-ud-footer-icon:hover {
+  color: var(--navy);
+  border-color: var(--navy);
+}
+
+.app-menu-host .jas-ud-footer-menu {
+  position: absolute;
+  right: 12px;
+  bottom: 56px;
+  width: 250px;
+  border: 1px solid var(--gray-300);
+  border-radius: 12px;
+  background: var(--white);
+  box-shadow: 0 16px 28px rgba(22, 31, 59, 0.16);
+  overflow: visible;
+  z-index: 30;
+}
+
+.app-menu-host .jas-ud-footer-email {
+  font-size: 0.75rem;
+  color: var(--gray-600);
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--gray-100);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-menu-host .jas-ud-footer-menu button {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--gray-100);
+  background: var(--white);
+  color: var(--gray-700);
+  text-align: left;
+  font-size: 0.8125rem;
+  padding: 10px 12px;
+  cursor: pointer;
+  font-family: var(--font);
+}
+
+.app-menu-host .jas-ud-footer-menu button:last-child {
+  border-bottom: 0;
+}
+
+.app-menu-host .jas-ud-footer-menu button:hover {
+  background: var(--gray-50);
+  color: var(--navy);
+}
+
+.app-menu-host .jas-ud-footer-menu .danger {
+  color: var(--magenta);
+}
+
+.app-menu-host .jas-ud-footer-menu .danger:hover {
+  background: #fdf0f7;
+}
+
+.app-menu-host .jas-ud-submenu-wrap {
+  position: relative;
+}
+
+.app-menu-host .jas-ud-submenu-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.app-menu-host .jas-ud-submenu-caret {
+  font-size: 0.875rem;
+  color: var(--gray-500);
+}
+
+.app-menu-host .jas-ud-submenu {
+  position: absolute;
+  top: 0;
+  left: calc(100% + 8px);
+  width: 260px;
+  border: 1px solid var(--gray-300);
+  border-radius: 12px;
+  background: var(--white);
+  box-shadow: 0 16px 28px rgba(22, 31, 59, 0.16);
+  overflow: hidden;
+  z-index: 260;
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0;
+}
+
+.app-menu-host .jas-ud-submenu.jas-ud-submenu-portal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 2200;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.app-menu-host .jas-ud-submenu button {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--gray-100);
+  background: var(--white);
+  color: var(--gray-700);
+  text-align: left;
+  padding: 11px 12px;
+  cursor: pointer;
+  line-height: 1.3;
+  font-size: 0.8125rem;
+  font-family: var(--font);
+}
+
+.app-menu-host .jas-ud-submenu button:last-child {
+  border-bottom: 0;
+}
+
+.app-menu-host .jas-ud-submenu button:hover {
+  background: var(--gray-50);
+  color: var(--navy);
+}
+
+/* Name input (display name editor) */
+.app-menu-host .jas-ud-name-input {
+  width: 100%;
+  border: 1px solid var(--gray-300);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 0.8125rem;
+  font-family: var(--font);
+  color: var(--navy);
+  box-sizing: border-box;
+}
+
+.app-menu-host .jas-ud-name-input:focus {
+  outline: none;
+  border-color: var(--navy);
+}
+
+.app-menu-host .jas-ud-name-save,
+.app-menu-host .jas-ud-name-cancel {
+  border: 1px solid var(--gray-300);
+  background: var(--white);
+  color: var(--gray-600);
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font-size: 0.8125rem;
+  cursor: pointer;
+  font-family: var(--font);
+  transition: all var(--transition);
+}
+
+.app-menu-host .jas-ud-name-save:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.app-menu-host .jas-ud-name-save:hover:not(:disabled) {
+  border-color: var(--navy);
+  color: var(--navy);
+}
+
+.app-menu-host .jas-ud-name-cancel:hover {
+  border-color: var(--magenta);
+  color: var(--magenta);
+}
+
+/* ---- Modals ---- */
+.app-menu-host .jas-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(11, 16, 30, 0.45);
+  z-index: 1300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+}
+
+.app-menu-host .jas-account-modal {
+  width: min(900px, 95vw);
+  max-height: 90vh;
+  overflow-y: auto;
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  box-shadow: 0 24px 60px rgba(22, 31, 59, 0.28);
+  padding: 22px;
+  font-family: var(--font);
+  box-sizing: border-box;
+}
+
+.app-menu-host .jas-account-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.app-menu-host .jas-account-modal-header h3 {
+  font-size: 1.1rem;
+  color: var(--navy);
+  font-weight: 600;
+  margin: 0;
+}
+
+.app-menu-host .jas-account-modal-close {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--gray-300);
+  background: var(--white);
+  color: var(--gray-600);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.app-menu-host .jas-account-modal-close:hover {
+  color: var(--navy);
+  border-color: var(--navy);
+}
+
+.app-menu-host .jas-account-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.app-menu-host .jas-account-summary-card {
+  border: 1px solid var(--gray-200);
+  border-radius: 12px;
+  padding: 12px;
+  background: #f8fbff;
+}
+
+.app-menu-host .jas-account-summary-card .label {
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--gray-600);
+  margin: 0;
+}
+
+.app-menu-host .jas-account-summary-card .value {
+  margin-top: 4px;
+  font-size: 1.1rem;
+  color: var(--navy);
+  font-weight: 700;
+  margin-bottom: 0;
+}
+
+.app-menu-host .jas-account-plan-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.app-menu-host .jas-account-plan-card {
+  border: 1px solid var(--gray-200);
+  border-radius: 14px;
+  padding: 14px;
+  background: var(--white);
+}
+
+.app-menu-host .jas-account-plan-card.is-current {
+  border-color: #d78cbf;
+  box-shadow: inset 0 0 0 1px #f2d6e6;
+}
+
+.app-menu-host .jas-account-plan-card h4 {
+  font-size: 1rem;
+  margin: 0 0 6px;
+  color: var(--navy);
+  font-weight: 600;
+}
+
+.app-menu-host .jas-account-plan-card .price {
+  font-size: 0.9375rem;
+  font-weight: 700;
+  color: var(--navy);
+  margin: 0;
+}
+
+.app-menu-host .jas-account-plan-card .detail {
+  font-size: 0.8125rem;
+  color: var(--gray-600);
+  margin: 6px 0 10px;
+}
+
+.app-menu-host .jas-account-plan-connectors {
+  margin-top: -4px;
+  margin-bottom: 10px;
+  line-height: 1.4;
+}
+
+.app-menu-host .jas-account-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  background: #f5e4ef;
+  color: #821657;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  padding: 4px 10px;
+}
+
+.app-menu-host .jas-account-action-btn,
+.app-menu-host .jas-account-action-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  border: 1px solid var(--gray-300);
+  background: var(--white);
+  color: var(--navy);
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 7px 10px;
+  cursor: pointer;
+  text-decoration: none;
+  font-family: var(--font);
+}
+
+.app-menu-host .jas-account-action-btn:hover,
+.app-menu-host .jas-account-action-link:hover {
+  border-color: var(--navy);
+}
+
+.app-menu-host .jas-account-modal-actions {
+  margin-top: 16px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.app-menu-host .jas-account-portal-btn,
+.app-menu-host .jas-account-secondary-btn {
+  border-radius: 10px;
+  border: 1px solid var(--gray-300);
+  background: var(--white);
+  color: var(--navy);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  padding: 9px 12px;
+  cursor: pointer;
+  font-family: var(--font);
+}
+
+.app-menu-host .jas-account-portal-btn:hover,
+.app-menu-host .jas-account-secondary-btn:hover {
+  border-color: var(--navy);
+}
+
+.app-menu-host .jas-account-message {
+  margin-top: 10px;
+  font-size: 0.8125rem;
+  color: #ac1754;
+}
+
+/* ---- Notifications modal ---- */
+.app-menu-host .jas-notifications-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1400;
+  background: rgba(11, 16, 30, 0.3);
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding: 66px 20px 20px;
+}
+
+.app-menu-host .jas-notifications-modal {
+  width: min(360px, calc(100vw - 24px));
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.2);
+  overflow: hidden;
+  font-family: var(--font);
+}
+
+.app-menu-host .jas-notifications-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.app-menu-host .jas-notifications-header h3 {
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--navy);
+  margin: 0;
+}
+
+.app-menu-host .jas-notifications-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.app-menu-host .jas-notifications-close {
+  border: none;
+  background: transparent;
+  color: var(--gray-600);
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.app-menu-host .jas-notifications-close:hover {
+  color: var(--navy);
+  background: var(--gray-100);
+}
+
+.app-menu-host .jas-notifications-list {
+  max-height: min(420px, calc(100vh - 160px));
+  overflow-y: auto;
+  padding: 8px 0;
+}
+
+.app-menu-host .jas-notification-empty {
+  padding: 26px 16px;
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--gray-600);
+}

@@ -11,6 +11,7 @@ import {
 import { API_BASE } from '../../config/apiBase';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import './Projects.css';
+import AppMenu from '../shared/AppMenu';
 
 const STATUS_OPTIONS = ['All', 'Active', 'Completed', 'Archived'];
 const GROUP_OPTIONS = ['None', 'Category', 'Status'];
@@ -285,6 +286,7 @@ export default function Projects() {
 
   return (
     <div className="projects-page">
+      <AppMenu />
       <div className="projects-inner">
       <header className="projects-header">
         <div>

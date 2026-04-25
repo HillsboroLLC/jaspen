@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import './Knowledge.css';
+import AppMenu from '../shared/AppMenu';
 
 const TOPICS = {
   gettingStarted: {
@@ -500,6 +501,7 @@ export default function Knowledge() {
 
   return (
     <div className="knowledge-page">
+      <AppMenu />
       <div className={`knowledge-layout ${sidebarCollapsed ? 'is-sidebar-collapsed' : ''}`}>
         <aside className={`knowledge-sidebar ${sidebarCollapsed ? 'is-collapsed' : ''}`}>
           <div className="knowledge-sidebar-head">

@@ -4,6 +4,7 @@ import { API_BASE } from '../../config/apiBase';
 import { buildAuthHeaders } from '../../shared/auth/http';
 import Feedback from './Feedback';
 import './JaspenAdmin.css';
+import AppMenu from '../shared/AppMenu';
 
 
 const PLAN_OPTIONS = ['free', 'essential', 'team', 'enterprise'];
@@ -640,6 +641,7 @@ export default function JaspenAdmin() {
   if (isLoading) {
     return (
       <div className="jas-admin-page jas-internal-page jas-internal-page-shell">
+        <AppMenu />
         <p className="jas-admin-empty">Loading Jaspen Admin...</p>
       </div>
     );
@@ -648,6 +650,7 @@ export default function JaspenAdmin() {
   if (!isAdmin) {
     return (
       <div className="jas-admin-page jas-internal-page jas-internal-page-shell">
+        <AppMenu />
         <h1>Jaspen Admin</h1>
         <p>You do not have global admin access on this environment.</p>
       </div>
@@ -656,6 +659,7 @@ export default function JaspenAdmin() {
 
   return (
     <div className="jas-admin-page jas-internal-page jas-internal-page-shell">
+      <AppMenu />
         <div className="jas-admin-head">
           <div>
             <p className="jas-admin-eyebrow">Jaspen Internal</p>

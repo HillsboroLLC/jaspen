@@ -4,6 +4,7 @@ import { faFilePdf, faTrashCan, faWandMagicSparkles } from '@fortawesome/free-so
 import { API_BASE } from '../../config/apiBase';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import './Reports.css';
+import AppMenu from '../shared/AppMenu';
 
 const REPORT_TYPES = [
   { value: 'executive_summary', label: 'Executive Summary' },
@@ -158,6 +159,7 @@ export default function Reports() {
 
   return (
     <div className="reports-page">
+      <AppMenu />
       <div className="reports-inner">
       <header className="reports-header">
         <h1>Reports</h1>

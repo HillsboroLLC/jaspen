@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { API_BASE } from '../../config/apiBase';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import './Activity.css';
+import AppMenu from '../shared/AppMenu';
 
 const TYPE_OPTIONS = [
   { value: '', label: 'All activity' },
@@ -99,6 +100,7 @@ export default function Activity() {
 
   return (
     <div className="activity-page">
+      <AppMenu />
       <div className="activity-inner">
       <header className="activity-header">
         <h1>Activity</h1>

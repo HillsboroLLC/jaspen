@@ -3,6 +3,7 @@ import { API_BASE } from '../../config/apiBase';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import Team from '../Team/Team';
 import './EnterpriseAdmin.css';
+import AppMenu from '../shared/AppMenu';
 
 const TAB_TEAM = 'team';
 const TAB_SSO = 'sso';
@@ -338,6 +339,7 @@ export default function EnterpriseAdmin() {
   if (loading) {
     return (
       <div className="enterprise-admin-page">
+        <AppMenu />
         <div className="enterprise-admin-card">Loading enterprise admin...</div>
       </div>
     );
@@ -345,6 +347,7 @@ export default function EnterpriseAdmin() {
 
   return (
     <div className="enterprise-admin-page">
+      <AppMenu />
       <section className="enterprise-admin-card enterprise-admin-header">
         <div>
           <p className="enterprise-admin-eyebrow">Jaspen Enterprise</p>

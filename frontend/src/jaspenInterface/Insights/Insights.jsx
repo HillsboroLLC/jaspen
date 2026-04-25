@@ -22,6 +22,7 @@ import {
 import { Bar, Line, Pie } from 'react-chartjs-2';
 import { Jaspen } from '../Workspace/JaspenClient';
 import './Insights.css';
+import AppMenu from '../shared/AppMenu';
 
 ChartJS.register(
   CategoryScale,
@@ -191,6 +192,7 @@ export default function Insights() {
 
   return (
     <div className="insights-page">
+      <AppMenu />
       <header className="insights-header">
         <h1>Insights</h1>
         <p>Upload company datasets, run AI analysis, and review trends, anomalies, opportunities, and risks.</p>

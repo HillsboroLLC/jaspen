@@ -16,6 +16,7 @@ import {
   faTimes,
 } from '@fortawesome/free-solid-svg-icons';
 import './Account.css';
+import AppMenu from '../shared/AppMenu';
 
 function authHeaders(extra = {}, method = 'GET') {
   return buildAuthHeaders(extra, method);
@@ -1501,6 +1502,7 @@ export default function Account() {
   if (loading) {
     return (
       <div className="account-page">
+        <AppMenu />
         <div className="account-panel">Loading account details...</div>
       </div>
     );
@@ -1557,6 +1559,7 @@ export default function Account() {
 
   return (
     <div className="account-page">
+      <AppMenu />
       <div className="account-panel">
         <div className={`account-content-layout ${sidebarCollapsed ? 'is-sidebar-collapsed' : ''}`}>
           <aside className={`account-sidebar ${sidebarCollapsed ? 'is-collapsed' : ''}`}>

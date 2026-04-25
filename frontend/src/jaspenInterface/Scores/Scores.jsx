@@ -5,6 +5,7 @@ import { faArrowUpRightFromSquare, faDownload, faChevronDown, faChevronUp, faTim
 import { API_BASE } from '../../config/apiBase';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import './Scores.css';
+import AppMenu from '../shared/AppMenu';
 
 const CATEGORY_OPTIONS = ['All', 'Excellent', 'Good', 'Fair', 'At Risk'];
 const PAGE_LIMIT = 50;
@@ -402,6 +403,7 @@ export default function Scores() {
 
   return (
     <div className={`scores-container ${portfolioDrawerOpen ? 'drawer-open' : ''}`}>
+      <AppMenu />
       {!portfolioDrawerOpen && (
         <button
           type="button"

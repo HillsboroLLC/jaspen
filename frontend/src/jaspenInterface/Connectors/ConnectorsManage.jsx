@@ -15,6 +15,7 @@ import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import { getPlanConnectors } from '../../shared/billing/planConnectors';
 import ConnectorMonitor from '../Monitoring/ConnectorMonitor';
 import './ConnectorsManage.css';
+import AppMenu from '../shared/AppMenu';
 
 const CONNECTOR_ORDER = [
   'jira_sync',
@@ -559,6 +560,7 @@ export default function ConnectorsManage() {
 
   return (
     <div className="connectors-manage-page">
+      <AppMenu />
       <div className="connectors-manage-inner">
       <header className="connectors-manage-header">
         <h1>Data Sources</h1>
