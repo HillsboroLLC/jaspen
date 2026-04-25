@@ -2664,46 +2664,49 @@ def _baseline_financial_value(baseline, key):
 
 def _infer_standard_scenario_inputs(baseline, baseline_inputs):
     observed = dict(baseline_inputs or {})
-    roi_percent = _baseline_financial_value(baseline, 'roi_opportunity')
     projected_ebitda = _baseline_financial_value(baseline, 'projected_ebitda')
+    roi_percent = _baseline_financial_value(baseline, 'roi_opportunity')
     potential_loss = _baseline_financial_value(baseline, 'potential_loss')
-    annual_spend = _coerce_positive(
-        observed.get('annual_software_spend'),
-        (projected_ebitda / max((roi_percent or 25.0) / 100.0, 0.05))
-        if projected_ebitda
-        else (potential_loss * 0.9 if potential_loss else 180000.0),
-    )
-    migration_cost = _coerce_positive(
-        observed.get('migration_cost'),
+
+    initial_investment = _coerce_positive(
+        observed.get('initial_investment') or observed.get('total_investment') or observed.get('capex'),
         _metric_numeric_value(
             baseline.get('investment_analysis') if isinstance(baseline.get('investment_analysis'), dict) else {},
             'total_investment_required',
-        ) or max(25000.0, annual_spend * 0.15),
+        ) or (
+            projected_ebitda / max((roi_percent or 25.0) / 100.0, 0.05) * 0.3
+            if projected_ebitda
+            else (potential_loss * 0.2 if potential_loss else 150000.0)
+        ),
     )
     implementation_timeline = _coerce_positive(
-        observed.get('implementation_timeline'),
+        observed.get('implementation_timeline') or observed.get('timeline_months'),
         6.0,
     )
-    team_capacity_fte = _coerce_positive(observed.get('team_capacity_fte'), 2.5)
-    adoption_rate = _coerce_positive(observed.get('adoption_rate'), 70.0)
-    expected_annual_savings = _coerce_positive(
-        observed.get('expected_annual_savings'),
-        projected_ebitda or max(annual_spend * 0.25, 60000.0),
+    team_size = _coerce_positive(
+        observed.get('team_size') or observed.get('team_capacity_fte') or observed.get('headcount'),
+        3.0,
     )
-    rollout_phases = _coerce_positive(observed.get('rollout_phases'), 2.0)
-    training_budget = _coerce_positive(
-        observed.get('training_budget'),
-        max(5000.0, migration_cost * 0.2),
+    target_adoption_rate = _coerce_positive(
+        observed.get('target_adoption_rate') or observed.get('adoption_rate'),
+        70.0,
     )
+    expected_annual_return = _coerce_positive(
+        observed.get('expected_annual_return') or observed.get('expected_annual_savings') or observed.get('annual_revenue'),
+        projected_ebitda or max(initial_investment * 0.3, 50000.0),
+    )
+    annual_operational_cost = _coerce_positive(
+        observed.get('annual_operational_cost') or observed.get('opex') or observed.get('annual_cost'),
+        max(initial_investment * 0.15, 25000.0),
+    )
+
     inferred = {
-        'annual_software_spend': annual_spend,
-        'migration_cost': migration_cost,
+        'initial_investment': initial_investment,
         'implementation_timeline': implementation_timeline,
-        'team_capacity_fte': team_capacity_fte,
-        'adoption_rate': adoption_rate,
-        'expected_annual_savings': expected_annual_savings,
-        'rollout_phases': rollout_phases,
-        'training_budget': training_budget,
+        'team_size': team_size,
+        'target_adoption_rate': target_adoption_rate,
+        'expected_annual_return': expected_annual_return,
+        'annual_operational_cost': annual_operational_cost,
     }
     observed_keys = {str(k) for k, v in observed.items() if _safe_float(v) is not None}
     return inferred, observed_keys
@@ -2765,6 +2768,18 @@ def _build_scenario_lever_catalog(baseline, baseline_inputs):
             'readonly': False,
             'display_multiplier': 1,
         })
+
+    # If catalog is sparse, supplement with assumption-derived levers.
+    if len(catalog) < 4:
+        assumption_levers = _extract_assumption_levers(baseline)
+        existing_keys = {row['key'] for row in catalog}
+        for lever in assumption_levers:
+            if lever['key'] in existing_keys:
+                continue
+            catalog.append(lever)
+            existing_keys.add(lever['key'])
+            if len(catalog) >= 8:
+                break
 
     catalog.sort(key=lambda row: (0 if row['key'] in _STANDARD_SCENARIO_LEVERS else 1, row['label']))
     return merged_inputs, catalog
@@ -3745,49 +3760,39 @@ SCENARIO_OUTPUT_FIELDS = {
     'potential_loss', 'npv_3_year', 'irr', 'payback_period',
     'break_even_month', 'enterprise_value', 'jaspen_score',
     'time_to_market_impact', 'cost_of_inaction',
-    'expected_annual_return', 'score_category',
+    'score_category',
 }
 
 _STANDARD_SCENARIO_LEVERS = {
-    'annual_software_spend': {
-        'label': 'Annual Software Spend',
+    'initial_investment': {
+        'label': 'Initial Investment',
         'type': 'currency',
-        'description': 'Current annual spend on SaaS tools being consolidated.',
-    },
-    'migration_cost': {
-        'label': 'Migration Cost',
-        'type': 'currency',
-        'description': 'One-time cost to migrate tools, data, and workflows.',
+        'description': 'Estimated upfront capital required to launch or implement this initiative.',
     },
     'implementation_timeline': {
-        'label': 'Implementation Timeline',
+        'label': 'Implementation Timeline (Months)',
         'type': 'months',
-        'description': 'Months required to complete consolidation and rollout.',
+        'description': 'Estimated months to complete implementation and reach full operation.',
     },
-    'team_capacity_fte': {
-        'label': 'Team Capacity (FTE)',
+    'team_size': {
+        'label': 'Team Size',
         'type': 'number',
-        'description': 'Dedicated team capacity available to drive the initiative.',
+        'description': 'Number of dedicated people needed to execute this initiative.',
     },
-    'adoption_rate': {
-        'label': 'Adoption Rate',
+    'target_adoption_rate': {
+        'label': 'Target Adoption Rate',
         'type': 'percentage',
-        'description': 'Share of target users expected to adopt the new workflow.',
+        'description': 'Expected share of target users or customers who will adopt this.',
     },
-    'expected_annual_savings': {
-        'label': 'Expected Annual Savings',
+    'expected_annual_return': {
+        'label': 'Expected Annual Return',
         'type': 'currency',
-        'description': 'Estimated recurring savings once consolidation is complete.',
+        'description': 'Estimated recurring financial return generated annually by this initiative.',
     },
-    'rollout_phases': {
-        'label': 'Rollout Phases',
-        'type': 'number',
-        'description': 'Number of rollout waves or phases planned for implementation.',
-    },
-    'training_budget': {
-        'label': 'Training Budget',
+    'annual_operational_cost': {
+        'label': 'Annual Operational Cost',
         'type': 'currency',
-        'description': 'Budget allocated to training and change management.',
+        'description': 'Ongoing annual cost to operate and maintain this initiative.',
     },
 }
 
@@ -3869,6 +3874,86 @@ def _extract_baseline_inputs(baseline):
             if isinstance(val, (int, float)) and not isinstance(val, bool):
                 inputs[key] = val
     return inputs
+
+
+def _extract_assumption_levers(baseline):
+    """Parse assumptions text for numeric candidate levers."""
+    assumptions = baseline.get('assumptions') if isinstance(baseline, dict) else None
+    if not isinstance(assumptions, list):
+        return []
+
+    levers = []
+    seen_keys = set()
+
+    currency_re = re.compile(r'\$\s*([\d,]+(?:\.\d+)?)\s*([KkMmBb]?)', re.I)
+    pct_re = re.compile(r'([\d,]+(?:\.\d+)?)\s*(?:%|percent)', re.I)
+    dur_re = re.compile(r'([\d,]+(?:\.\d+)?)\s*(?:months?|weeks?)', re.I)
+    count_re = re.compile(r'([\d,]+(?:\.\d+)?)\s*(?:FTEs?|engineers?|developers?|people|members?|users?|customers?|licenses?|seats?|units?)', re.I)
+
+    for entry in assumptions:
+        if not isinstance(entry, str):
+            continue
+        text = entry.strip()
+        value = None
+        lever_type = 'number'
+
+        matched = currency_re.search(text)
+        if matched:
+            value = float(matched.group(1).replace(',', ''))
+            suffix = matched.group(2).upper()
+            if suffix == 'K':
+                value *= 1e3
+            elif suffix == 'M':
+                value *= 1e6
+            elif suffix == 'B':
+                value *= 1e9
+            lever_type = 'currency'
+
+        if value is None:
+            matched = pct_re.search(text)
+            if matched:
+                value = float(matched.group(1).replace(',', ''))
+                lever_type = 'percentage'
+
+        if value is None:
+            matched = dur_re.search(text)
+            if matched:
+                value = float(matched.group(1).replace(',', ''))
+                lever_type = 'months'
+
+        if value is None:
+            matched = count_re.search(text)
+            if matched:
+                value = float(matched.group(1).replace(',', ''))
+                lever_type = 'number'
+
+        if value is None or not (0 < value < 1e12):
+            continue
+
+        key = 'assump_' + re.sub(r'[^a-z0-9]+', '_', text.lower())[:35].strip('_')
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+
+        label = (text[:55] + '...') if len(text) > 55 else text.rstrip('.,;:')
+        bounds = _lever_bounds(value, lever_type)
+        levers.append({
+            'id': key,
+            'key': key,
+            'label': label,
+            'type': lever_type,
+            'value': round(float(value), 6),
+            'current': round(float(value), 6),
+            'min': bounds['min'],
+            'max': bounds['max'],
+            'step': bounds['step'],
+            'description': text,
+            'source': 'observed',
+            'readonly': False,
+            'display_multiplier': 1,
+        })
+
+    return levers[:8]
 
 
 def _compute_scenario_scorecard(baseline, deltas, baseline_inputs):

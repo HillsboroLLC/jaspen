@@ -13,6 +13,53 @@ import { ScenarioModelerSkeleton } from '../../shared/components/SkeletonLoader'
 // ============================================================================
 // HELPER: Extract editable levers from baseAnalysis
 // ============================================================================
+function parseAssumptionToLever(text) {
+  if (!text || typeof text !== 'string') return null;
+  const s = text.trim();
+  let value = null;
+  let type = 'number';
+
+  const currMatch = s.match(/\$\s*([\d,]+(?:\.\d+)?)\s*([KkMmBb]?)/);
+  if (currMatch) {
+    value = parseFloat(currMatch[1].replace(/,/g, ''));
+    const suf = currMatch[2].toUpperCase();
+    if (suf === 'K') value *= 1e3;
+    else if (suf === 'M') value *= 1e6;
+    else if (suf === 'B') value *= 1e9;
+    type = 'currency';
+  }
+
+  if (value === null) {
+    const m = s.match(/([\d,]+(?:\.\d+)?)\s*(?:%|percent)/i);
+    if (m) {
+      value = parseFloat(m[1].replace(/,/g, ''));
+      type = 'percentage';
+    }
+  }
+
+  if (value === null) {
+    const m = s.match(/([\d,]+(?:\.\d+)?)\s*(?:months?|weeks?)/i);
+    if (m) {
+      value = parseFloat(m[1].replace(/,/g, ''));
+      type = 'months';
+    }
+  }
+
+  if (value === null) {
+    const m = s.match(/([\d,]+(?:\.\d+)?)\s*(?:FTEs?|engineers?|developers?|people|members?|users?|customers?|licenses?|seats?|units?)/i);
+    if (m) {
+      value = parseFloat(m[1].replace(/,/g, ''));
+      type = 'number';
+    }
+  }
+
+  if (value === null || !isFinite(value) || value <= 0) return null;
+
+  const key = `assump_${s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').substring(0, 35)}`;
+  const label = s.length > 55 ? `${s.substring(0, 55).replace(/[,.:;]$/, '')}...` : s.replace(/[,.:;]$/, '');
+  return { key, label, value, type, source: 'observed', description: s };
+}
+
 function extractLevers(baseAnalysis, outputMetrics = []) {
   if (!baseAnalysis) return [];
 
@@ -45,6 +92,18 @@ function extractLevers(baseAnalysis, outputMetrics = []) {
         value,
         type: inferType(key, value),
       });
+    }
+  }
+
+  if (levers.length < 4) {
+    const assumptionTexts = Array.isArray(baseAnalysis.assumptions) ? baseAnalysis.assumptions : [];
+    for (const text of assumptionTexts) {
+      const lever = parseAssumptionToLever(String(text || ''));
+      if (lever && !seen.has(lever.key)) {
+        seen.add(lever.key);
+        levers.push(lever);
+        if (levers.length >= 8) break;
+      }
     }
   }
 
@@ -498,8 +557,8 @@ function ScenarioColumn({
 
         {insufficientLevers ? (
           <div className="jas-scenario-empty">
-            <p>Jaspen doesn't have enough financial detail to model scenarios yet.</p>
-            <p>Add budget, timeline, and cost estimates or ask Jaspen to run a deeper financial analysis.</p>
+            <p>No adjustable levers found for this idea yet.</p>
+            <p>Add specific numbers to your assumptions (budget, timeline, team size) in the conversation, then re-run the scorecard to enable scenario modeling.</p>
             <Button variant="outline" size="sm" onClick={onRequestDeeperAnalysis} disabled={disabled}>
               Run deeper financial analysis
             </Button>
@@ -599,7 +658,7 @@ const ScenarioModeler = forwardRef(function ScenarioModeler({
     return extractLevers(baseAnalysis, outputMetrics);
   }, [leverCatalog, scenarioLevers, baseAnalysis, outputMetrics]);
 
-  const insufficientLevers = levers.length < 3;
+  const insufficientLevers = levers.length === 0;
   const baselineAssumptions = useMemo(
     () => levers.map((lever) => ({
       key: lever.key,

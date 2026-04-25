@@ -5103,7 +5103,7 @@ async function onBeginProject() {
 
   const ok = window.confirm(
     `Build an execution plan from this scorecard?\n\n` +
-    `Jaspen will generate a project WBS and open it in the Execution tab.`
+    `Jaspen will generate a project WBS and open it on the Execution page.`
   );
   if (!ok) return;
 
@@ -5131,9 +5131,6 @@ async function onBeginProject() {
     }
 
     setBeginMsg('Plan ready — opening Execution page…');
-    // Refresh before navigation so execution page has fresh thread data.
-    void refreshThreadWbs(tid);
-    void refreshBundle(tid);
     setTimeout(() => {
       setBeginBusy(false);
       const nextParams = new URLSearchParams();
