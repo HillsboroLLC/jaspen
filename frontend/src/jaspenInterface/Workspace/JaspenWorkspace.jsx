@@ -3016,23 +3016,6 @@ useEffect(() => {
               <span className="jas-ud-item-label">New Project</span>
             </button>
           )}
-          <button
-            className={`jas-ud-item ${batchIdeasLocked ? 'is-locked' : ''}`}
-            onClick={() => { onClose?.(); openBatchIdeasManager(); }}
-            title={
-              batchIdeasLockReason === 'plan'
-                ? 'Upgrade to Team to unlock batch idea upload'
-                : batchIdeasLockReason === 'role'
-                ? 'Only creators and admins can upload and promote batch ideas'
-                : 'Upload and rank a portfolio of ideas'
-            }
-          >
-            <FontAwesomeIcon icon={faLayerGroup} />
-            <span className="jas-ud-item-label">Batch Ideas</span>
-            {batchIdeasLocked && (
-              <span className="jas-ud-item-ext"><FontAwesomeIcon icon={faLock} /></span>
-            )}
-          </button>
           <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/projects'); }}>
             <FontAwesomeIcon icon={faLayerGroup} />
             <span className="jas-ud-item-label">Projects</span>
@@ -5189,10 +5172,6 @@ async function onBeginProject() {
         setBeginMsg('Something went wrong. Please try again.');
         setTimeout(() => setBeginBusy(false), 1200);
     }
-}
-
-function openBatchIdeasManager() {
-  setBatchIdeasOpen(true);
 }
 
 function handleOpenBatchIdeaThread(threadId) {

@@ -22,20 +22,26 @@
 .scores-agent-tab {
   position: fixed;
   left: 0;
-  top: 168px;
+  top: 228px;
   writing-mode: vertical-rl;
   text-orientation: mixed;
-  background: #eef3fb;
+  background: var(--int-bg);
   border: 1px solid var(--int-border);
   border-left: none;
-  border-radius: 0 10px 10px 0;
+  border-radius: 0 4px 4px 0;
   color: var(--int-text);
   padding: 14px 8px;
-  font-size: 12px;
-  font-weight: 700;
+  font-size: 0.6875rem;
+  font-weight: 600;
   letter-spacing: 0.08em;
+  text-transform: uppercase;
   cursor: pointer;
-  z-index: 100;
+  z-index: 99;
+  transition: background 0.2s ease;
+}
+
+.scores-agent-tab:hover {
+  background: var(--gray-200, #e9ecef);
 }
 
 .scores-agent-drawer {

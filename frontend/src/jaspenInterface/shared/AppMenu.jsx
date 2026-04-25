@@ -207,18 +207,6 @@ export default function AppMenu() {
     isPlatformAdmin || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.essential;
   const showLockedConnectors = !showRealConnectors;
 
-  const batchIdeasPlanUnlocked =
-    isPlatformAdmin || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.team;
-  const batchIdeasRoleUnlocked =
-    previewPlanCategory !== 'individual' &&
-    (effectiveIsCreator || isPlatformAdmin);
-  const canUseBatchIdeas = batchIdeasPlanUnlocked && batchIdeasRoleUnlocked;
-  const batchIdeasLocked = !canUseBatchIdeas;
-  const batchIdeasLockReason = !batchIdeasPlanUnlocked
-    ? 'plan'
-    : !batchIdeasRoleUnlocked
-    ? 'role'
-    : null;
 
   const monthlyCreditLimit = billingStatus?.monthly_credit_limit;
   const creditsRemaining = billingStatus?.credits_remaining;
@@ -406,24 +394,6 @@ export default function AppMenu() {
               <span className="jas-ud-item-label">New Project</span>
             </button>
           )}
-
-          <button
-            className={menuItemClass('/new', batchIdeasLocked ? 'is-locked' : '')}
-            onClick={() => { close(); navigate('/new'); }}
-            title={
-              batchIdeasLockReason === 'plan'
-                ? 'Upgrade to Team to unlock batch idea upload'
-                : batchIdeasLockReason === 'role'
-                ? 'Only creators and admins can upload and promote batch ideas'
-                : 'Upload and rank a portfolio of ideas'
-            }
-          >
-            <FontAwesomeIcon icon={faLayerGroup} />
-            <span className="jas-ud-item-label">Batch Ideas</span>
-            {batchIdeasLocked && (
-              <span className="jas-ud-item-ext"><FontAwesomeIcon icon={faLock} /></span>
-            )}
-          </button>
 
           <button className={menuItemClass('/projects')} onClick={() => { close(); navigate('/projects'); }}>
             <FontAwesomeIcon icon={faLayerGroup} />
