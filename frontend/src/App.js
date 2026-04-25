@@ -50,6 +50,7 @@ const Knowledge = lazy(() => import('./jaspenInterface/Knowledge/Knowledge'));
 const Team = lazy(() => import('./jaspenInterface/Team/Team'));
 const EnterpriseAdmin = lazy(() => import('./jaspenInterface/EnterpriseAdmin/EnterpriseAdmin'));
 const JaspenWorkspace = lazy(() => import('./jaspenInterface/Workspace/JaspenWorkspace'));
+const ExecutionPlan = lazy(() => import('./jaspenInterface/ExecutionPlan/ExecutionPlan'));
 
 function AnimatedAppRoutes({ withShell }) {
   const location = useLocation();
@@ -104,7 +105,7 @@ function AnimatedAppRoutes({ withShell }) {
             />
             <Route
               path="/execution-plan"
-              element={withShell(<JaspenWorkspace />, { title: 'Execution', showHeader: false, fullBleed: true, noPadding: true })}
+              element={withShell(<ExecutionPlan />, { title: 'Execution', showHeader: false, fullBleed: true, noPadding: true })}
             />
             <Route path="/strategy" element={<Navigate to="/new" replace />} />
             <Route path="/projects"  element={<ProtectedRoute>{withShell(<Projects />, { title: 'Projects', showHeader: false, fullBleed: true, noPadding: true })}</ProtectedRoute>} />

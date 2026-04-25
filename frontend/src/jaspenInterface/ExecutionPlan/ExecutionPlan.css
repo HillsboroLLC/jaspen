@@ -1,0 +1,212 @@
+.execution-plan-page {
+  min-height: 100vh;
+  position: relative;
+}
+
+.execution-plan-main {
+  max-width: var(--int-max-w-lg, 1450px);
+}
+
+.execution-plan-head {
+  margin-bottom: 16px;
+}
+
+.execution-plan-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.execution-plan-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.execution-plan-empty h2 {
+  margin: 0;
+  color: var(--int-text, #161f3b);
+}
+
+.execution-plan-empty p {
+  margin: 0;
+  color: var(--int-text-sub, #475569);
+}
+
+.execution-plan-chat-tab {
+  position: fixed;
+  left: 44px;
+  top: 258px;
+  z-index: 104;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--int-border, #e2e8f0);
+  border-left: none;
+  border-radius: 0 6px 6px 0;
+  background: var(--int-bg, #f8fafc);
+  color: var(--int-text, #161f3b);
+  padding: 14px 8px;
+  font: inherit;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.execution-plan-chat-tab svg {
+  writing-mode: horizontal-tb;
+}
+
+body.jaspen-sidebar-open .execution-plan-chat-tab {
+  left: 320px;
+}
+
+.execution-plan-chat-drawer {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: -420px;
+  width: 420px;
+  z-index: 205;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--int-border, #e2e8f0);
+  background: #fff;
+  box-shadow: 4px 0 16px rgba(22, 31, 59, 0.08);
+  transition: left 0.28s ease;
+}
+
+.execution-plan-chat-drawer.is-open {
+  left: 44px;
+}
+
+body.jaspen-sidebar-open .execution-plan-chat-drawer.is-open {
+  left: 320px;
+}
+
+.execution-plan-chat-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--int-border, #e2e8f0);
+}
+
+.execution-plan-chat-head h3 {
+  margin: 0;
+  color: var(--int-text, #161f3b);
+}
+
+.execution-plan-chat-head button {
+  border: 0;
+  background: transparent;
+  color: var(--int-text-sub, #475569);
+  cursor: pointer;
+  font-size: 0.95rem;
+}
+
+.execution-plan-chat-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--int-border, #e2e8f0);
+}
+
+.execution-plan-chat-suggestions button {
+  border: 1px solid var(--int-border-md, #cbd5e1);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--int-text, #161f3b);
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.execution-plan-chat-messages {
+  flex: 1;
+  overflow: auto;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.execution-plan-chat-message {
+  max-width: 95%;
+  border-radius: 12px;
+  padding: 10px 12px;
+  line-height: 1.45;
+}
+
+.execution-plan-chat-message.user {
+  align-self: flex-end;
+  background: var(--int-navy, #161f3b);
+  color: #fff;
+}
+
+.execution-plan-chat-message.assistant {
+  align-self: flex-start;
+  background: #f8fafc;
+  color: var(--int-text, #161f3b);
+  border: 1px solid var(--int-border, #e2e8f0);
+}
+
+.execution-plan-chat-input {
+  border-top: 1px solid var(--int-border, #e2e8f0);
+  padding: 12px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+}
+
+.execution-plan-chat-input textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 72px;
+  max-height: 180px;
+  border: 1px solid var(--int-border-md, #cbd5e1);
+  border-radius: 10px;
+  padding: 10px;
+  font: inherit;
+  color: var(--int-text, #161f3b);
+}
+
+.execution-plan-chat-input button {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  border: 1px solid var(--int-navy, #161f3b);
+  background: var(--int-navy, #161f3b);
+  color: #fff;
+  cursor: pointer;
+}
+
+.execution-plan-chat-input button[disabled],
+.execution-plan-chat-input button[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+@media (max-width: 980px) {
+  .execution-plan-actions {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .execution-plan-chat-tab {
+    top: auto;
+    bottom: 120px;
+  }
+
+  .execution-plan-chat-drawer {
+    width: min(92vw, 420px);
+    left: -100vw;
+  }
+}

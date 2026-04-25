@@ -5141,14 +5141,20 @@ async function onBeginProject() {
       return;
     }
 
-    setBeginMsg('Plan ready — opening Execution tab…');
-    // Refresh before tab switch so execution has data when it opens.
+    setBeginMsg('Plan ready — opening Execution page…');
+    // Refresh before navigation so execution page has fresh thread data.
     void refreshThreadWbs(tid);
     void refreshBundle(tid);
     setTimeout(() => {
       setBeginBusy(false);
-      setActiveTab('execution');
-      setView('execution');
+      const nextParams = new URLSearchParams();
+      nextParams.set('sid', String(tid));
+      const currentParams = new URLSearchParams(location.search);
+      ['admin_preview', 'plan_key', 'role'].forEach((key) => {
+        const value = String(currentParams.get(key) || '').trim();
+        if (value) nextParams.set(key, value);
+      });
+      navigate(`/execution-plan?${nextParams.toString()}`);
     }, 700);
   } catch (e) {
     console.error('[Begin Project] failed', e);
