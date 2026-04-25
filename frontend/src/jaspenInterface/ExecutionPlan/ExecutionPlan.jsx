@@ -24,6 +24,69 @@ const promptSuggestions = [
   'Reprioritize tasks for fastest delivery',
 ];
 
+const getAssistantStorageKey = (threadId) => `jaspen_execution_assistant_${String(threadId || '').trim()}`;
+
+const buildContextInstructionPrefix = ({ bundle, scorecard, wbs }) => {
+  const parts = [];
+  const projectName = String(
+    scorecard?.project_name ||
+    scorecard?.projectName ||
+    bundle?.thread?.title ||
+    ''
+  ).trim();
+  if (projectName) parts.push(`Project: ${projectName}`);
+
+  const score = Number(scorecard?.jaspen_score);
+  if (Number.isFinite(score) && score > 0) parts.push(`Current scorecard score: ${Math.round(score)}`);
+
+  const activeScenario = String(
+    bundle?.active_snapshot?.label ||
+    bundle?.active_scenario?.label ||
+    ''
+  ).trim();
+  if (activeScenario) parts.push(`Active scenario: ${activeScenario}`);
+
+  const wbsTasks = Array.isArray(wbs?.tasks) ? wbs.tasks.length : 0;
+  if (wbsTasks > 0) parts.push(`Current execution plan tasks: ${wbsTasks}`);
+
+  const historyLines = (Array.isArray(bundle?.messages) ? bundle.messages : [])
+    .slice(-8)
+    .map((msg) => {
+      const role = String(msg?.role || msg?.sender || '').toLowerCase().includes('user') ? 'User' : 'Assistant';
+      const text = String(msg?.content || msg?.text || msg?.message || '').replace(/\s+/g, ' ').trim();
+      if (!text) return '';
+      return `${role}: ${text}`;
+    })
+    .filter(Boolean);
+
+  if (historyLines.length > 0) {
+    parts.push(`Recent conversation:\n${historyLines.join('\n')}`);
+  }
+
+  if (parts.length === 0) return '';
+  return `Use this thread context when responding and applying edits.\n${parts.join('\n')}`;
+};
+
+const buildInitialAssistantMessages = (bundle) => {
+  const history = (Array.isArray(bundle?.messages) ? bundle.messages : [])
+    .slice(-10)
+    .map((msg) => {
+      const role = String(msg?.role || msg?.sender || '').toLowerCase().includes('user') ? 'user' : 'assistant';
+      const text = String(msg?.content || msg?.text || msg?.message || '').trim();
+      if (!text) return null;
+      return { role, text };
+    })
+    .filter(Boolean);
+
+  if (history.length > 0) return history;
+  return [
+    {
+      role: 'assistant',
+      text: 'I can help you refine this execution plan. Ask me to add tasks, update owners, or rebuild the timeline.',
+    },
+  ];
+};
+
 export default function ExecutionPlan() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -49,6 +112,10 @@ export default function ExecutionPlan() {
     if (!threadBundle || typeof threadBundle !== 'object') return null;
     return threadBundle.current_scorecard || threadBundle.baseline_scorecard || null;
   }, [threadBundle]);
+  const hasExistingPlan = useMemo(
+    () => Array.isArray(threadWbs?.tasks) && threadWbs.tasks.length > 0,
+    [threadWbs]
+  );
 
   const loadThreadBundle = useCallback(async (targetThreadId) => {
     const tid = String(targetThreadId || '').trim();
@@ -97,15 +164,43 @@ export default function ExecutionPlan() {
       setAssistantMessages([]);
       return;
     }
-    void loadThreadBundle(threadId);
-    void refreshThreadWbs(threadId);
-    setAssistantMessages([
-      {
-        role: 'assistant',
-        text: 'I can help you refine this execution plan. Ask me to add tasks, update owners, or rebuild the timeline.',
-      },
-    ]);
+    const stored = (() => {
+      try {
+        const raw = localStorage.getItem(getAssistantStorageKey(threadId));
+        const parsed = raw ? JSON.parse(raw) : null;
+        if (!Array.isArray(parsed)) return null;
+        const normalized = parsed
+          .map((entry) => ({
+            role: entry?.role === 'user' ? 'user' : 'assistant',
+            text: String(entry?.text || '').trim(),
+          }))
+          .filter((entry) => entry.text);
+        return normalized.length > 0 ? normalized : null;
+      } catch {
+        return null;
+      }
+    })();
+    if (stored) {
+      setAssistantMessages(stored);
+    } else {
+      setAssistantMessages([]);
+    }
+    void (async () => {
+      const bundle = await loadThreadBundle(threadId);
+      await refreshThreadWbs(threadId);
+      if (!stored) {
+        setAssistantMessages(buildInitialAssistantMessages(bundle));
+      }
+    })();
   }, [threadId, loadThreadBundle, refreshThreadWbs]);
+
+  useEffect(() => {
+    const tid = String(threadId || '').trim();
+    if (!tid) return;
+    try {
+      localStorage.setItem(getAssistantStorageKey(tid), JSON.stringify(assistantMessages.slice(-80)));
+    } catch {}
+  }, [assistantMessages, threadId]);
 
   const resolveThreadWbsState = useCallback(async (targetThreadId) => {
     const response = await Jaspen.getThreadWbs(targetThreadId);
@@ -217,21 +312,32 @@ export default function ExecutionPlan() {
     threadId,
   ]);
 
-  const handleGeneratePlan = useCallback(async (instruction = 'Generate execution plan from current scorecard.') => {
+  const handleGeneratePlan = useCallback(async (
+    instruction = 'Generate execution plan from current scorecard.',
+    { confirmRegenerate = false } = {}
+  ) => {
     const tid = String(threadId || '').trim();
-    if (!tid || planBusy) return;
+    if (!tid || planBusy) return 'failed';
+    if (confirmRegenerate && hasExistingPlan) {
+      const ok = window.confirm(
+        'Regenerate the execution plan?\n\nThis will replace your current plan and overwrite task edits.'
+      );
+      if (!ok) return 'cancelled';
+    }
     setPlanBusy(true);
     try {
       const response = await Jaspen.generateAiWbs(tid, { commit: true, prompt: instruction });
       const count = Array.isArray(response?.project_wbs?.tasks) ? response.project_wbs.tasks.length : null;
       await refreshThreadWbs(tid);
       showToast(count != null ? `Execution plan generated (${count} tasks)` : 'Execution plan generated', 'success');
+      return 'success';
     } catch (error) {
       showToast(error?.message || 'Could not generate execution plan.', 'error');
+      return 'failed';
     } finally {
       setPlanBusy(false);
     }
-  }, [planBusy, refreshThreadWbs, showToast, threadId]);
+  }, [hasExistingPlan, planBusy, refreshThreadWbs, showToast, threadId]);
 
   const sendAssistantMessage = useCallback(async () => {
     const text = String(assistantInput || '').trim();
@@ -244,10 +350,17 @@ export default function ExecutionPlan() {
 
     try {
       if (GENERATE_PLAN_REGEX.test(text)) {
-        await handleGeneratePlan(text);
+        const generated = await handleGeneratePlan(text, { confirmRegenerate: hasExistingPlan });
         setAssistantMessages((prev) => [
           ...prev,
-          { role: 'assistant', text: 'Execution plan generated. I refreshed the board so you can keep editing.' },
+          {
+            role: 'assistant',
+            text: generated === 'success'
+              ? 'Execution plan generated. I refreshed the board so you can keep editing.'
+              : generated === 'cancelled'
+              ? 'Plan regeneration canceled.'
+              : 'I could not generate the plan right now.',
+          },
         ]);
         return;
       }
@@ -257,9 +370,14 @@ export default function ExecutionPlan() {
         bundle = await loadThreadBundle(tid);
       }
       const scorecard = bundle?.current_scorecard || bundle?.baseline_scorecard || scorecardContext || null;
+      const contextPrefix = buildContextInstructionPrefix({
+        bundle,
+        scorecard,
+        wbs: threadWbs,
+      });
 
       const response = await Jaspen.scorecardAssistant(tid, {
-        instruction: text,
+        instruction: contextPrefix ? `${contextPrefix}\n\nUser request: ${text}` : text,
         scorecard,
         scorecard_id: scorecard?.analysis_id || scorecard?.id || null,
       });
@@ -294,11 +412,13 @@ export default function ExecutionPlan() {
     assistantBusy,
     assistantInput,
     applyUiAction,
+    hasExistingPlan,
     handleGeneratePlan,
     loadThreadBundle,
     refreshThreadWbs,
     scorecardContext,
     threadBundle,
+    threadWbs,
     threadId,
   ]);
 
@@ -319,12 +439,12 @@ export default function ExecutionPlan() {
       <button
         type="button"
         className="int-btn int-btn-primary"
-        onClick={() => { void handleGeneratePlan(); }}
+        onClick={() => { void handleGeneratePlan('Generate execution plan from current scorecard.', { confirmRegenerate: true }); }}
         disabled={!threadId || planBusy}
         aria-disabled={!threadId || planBusy}
       >
         <FontAwesomeIcon icon={planBusy ? faSpinner : faWandMagicSparkles} spin={planBusy} />
-        <span>{planBusy ? 'Building…' : 'Build Plan'}</span>
+        <span>{planBusy ? 'Building…' : (hasExistingPlan ? 'Regenerate Plan' : 'Build Plan')}</span>
       </button>
     </div>
   );

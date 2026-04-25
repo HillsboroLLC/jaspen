@@ -331,6 +331,7 @@ function buildScenarioMetricRows(result = {}) {
         ? (result?.overall_score ?? result?.jaspen_score ?? null)
         : getMetricValue(result, metric.key);
       if (value == null) return null;
+      if (Number.isFinite(value) && Number(value) === 0) return null;
       return {
         ...metric,
         value,

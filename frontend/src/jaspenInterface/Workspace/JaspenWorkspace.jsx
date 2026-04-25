@@ -1799,12 +1799,49 @@ useEffect(() => {
 
   const navigate = useNavigate();
   const location = useLocation();
+  const requestedTab = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    const tab = String(params.get('tab') || '').trim().toLowerCase();
+    if (['summary', 'scenario', 'comparison', 'execution'].includes(tab)) return tab;
+    return '';
+  }, [location.search]);
   const handleUnauthorized = useCallback(async () => {
     const status = await checkAuthStatus({ silent: true });
     if (!status?.authenticated) {
       navigate('/?auth=1', { replace: true });
     }
   }, [checkAuthStatus, navigate]);
+
+  useEffect(() => {
+    if (!requestedTab) return;
+    if (requestedTab === 'execution') {
+      const params = new URLSearchParams(location.search);
+      const sid = String(params.get('sid') || params.get('session_id') || '').trim();
+      if (!sid) return;
+      const nextParams = new URLSearchParams();
+      nextParams.set('sid', sid);
+      ['admin_preview', 'plan_key', 'role'].forEach((key) => {
+        const value = String(params.get(key) || '').trim();
+        if (value) nextParams.set(key, value);
+      });
+      navigate(`/execution-plan?${nextParams.toString()}`, { replace: true });
+      return;
+    }
+    if (requestedTab === 'summary') {
+      setActiveTab('summary');
+      setView('summary');
+      return;
+    }
+    if (requestedTab === 'scenario') {
+      setActiveTab('scenario');
+      setView('scenario');
+      return;
+    }
+    if (requestedTab === 'comparison') {
+      setActiveTab('scenario');
+      setView('comparison');
+    }
+  }, [requestedTab, location.search, navigate]);
 
   const authFetch = useCallback((url, options = {}) => {
     const apiBase = API_BASE;
@@ -5074,6 +5111,37 @@ async function undoLastMutationTurn() {
 // === Begin Project (confirm + backend create + spinner + navigate) ===
 const [beginBusy, setBeginBusy] = useState(false);
 const [beginMsg, setBeginMsg] = useState("Generating your project plan…");
+const hasProjectPlan = useMemo(
+  () => Array.isArray(threadWbs?.tasks) && threadWbs.tasks.length > 0,
+  [threadWbs]
+);
+const activeScenarioForProject = useMemo(() => {
+  const activeId = String(activeSnapshotId || '').trim();
+  if (!activeId) return null;
+  const snapshots = Array.isArray(scorecardSnapshots) ? scorecardSnapshots : [];
+  return snapshots.find((snapshot) => {
+    if (!snapshot || typeof snapshot !== 'object') return false;
+    const snapshotId = String(snapshot.id || snapshot.analysis_id || '').trim();
+    return snapshotId === activeId && !Boolean(snapshot.isBaseline);
+  }) || null;
+}, [activeSnapshotId, scorecardSnapshots]);
+const activeScenarioProjectLabel = useMemo(
+  () => String(activeScenarioForProject?.label || '').trim(),
+  [activeScenarioForProject]
+);
+
+const openExecutionPage = useCallback((threadIdValue) => {
+  const tid = String(threadIdValue || '').trim();
+  if (!tid) return;
+  const nextParams = new URLSearchParams();
+  nextParams.set('sid', tid);
+  const currentParams = new URLSearchParams(location.search);
+  ['admin_preview', 'plan_key', 'role'].forEach((key) => {
+    const value = String(currentParams.get(key) || '').trim();
+    if (value) nextParams.set(key, value);
+  });
+  navigate(`/execution-plan?${nextParams.toString()}`);
+}, [location.search, navigate]);
 
 const liveStatusMessage = useMemo(() => {
   if (beginBusy) return 'Project setup is in progress.';
@@ -5101,9 +5169,13 @@ async function onBeginProject() {
     return;
   }
 
+  const activeScenarioName = activeScenarioProjectLabel;
+  const sourceLabel = activeScenarioName
+    ? `${activeScenarioName} (Active)`
+    : 'Baseline';
   const ok = window.confirm(
-    `Build an execution plan from this scorecard?\n\n` +
-    `Jaspen will generate a project WBS and open it on the Execution page.`
+    `Build an execution plan based on: ${sourceLabel}?\n\n` +
+    `Jaspen will generate a full project WBS from this scorecard context and open it on the Execution page.`
   );
   if (!ok) return;
 
@@ -5133,14 +5205,7 @@ async function onBeginProject() {
     setBeginMsg('Plan ready — opening Execution page…');
     setTimeout(() => {
       setBeginBusy(false);
-      const nextParams = new URLSearchParams();
-      nextParams.set('sid', String(tid));
-      const currentParams = new URLSearchParams(location.search);
-      ['admin_preview', 'plan_key', 'role'].forEach((key) => {
-        const value = String(currentParams.get(key) || '').trim();
-        if (value) nextParams.set(key, value);
-      });
-      navigate(`/execution-plan?${nextParams.toString()}`);
+      openExecutionPage(tid);
     }, 700);
   } catch (e) {
     console.error('[Begin Project] failed', e);
@@ -5240,6 +5305,15 @@ const openExecutionAssistant = useCallback(() => {
   setScenarioDrawerView('assistant');
   setAiInput('Edit this execution plan: update phases, owners, due dates, dependencies, and priorities.');
 }, []);
+
+useEffect(() => {
+  const tid = String(currentSessionId || sessionId || '').trim();
+  if (!tid) {
+    setThreadWbs(null);
+    return;
+  }
+  void refreshThreadWbs(tid);
+}, [currentSessionId, refreshThreadWbs, sessionId]);
 
 useEffect(() => {
   if (activeTab !== 'execution') return;
@@ -7835,7 +7909,12 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
     const selectedCompletedScoreLabel = 'Completed Scores';
     const scenarioTabLocked = !canUseScenarios || effectiveIsViewer;
     const canBeginProject = canAccessExecutionTab && canStartOrgProjects;
-    const projectActionTitle = !canAccessExecutionTab
+    const canOpenProject = canAccessExecutionTab;
+    const projectActionTitle = hasProjectPlan
+      ? (!canOpenProject
+          ? 'Upgrade to open project plan'
+          : 'Go to project plan')
+      : !canAccessExecutionTab
       ? 'Upgrade to begin project'
       : !canStartOrgProjects
       ? 'Only creators and admins can begin a project in a shared workspace.'
@@ -8693,14 +8772,47 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
 
                     <button
                       type="button"
-                      className="begin-project-btn"
-                      onClick={onBeginProject}
-                      disabled={beginBusy || !canBeginProject} aria-disabled={beginBusy || !canBeginProject}
+                      className={`begin-project-btn ${hasProjectPlan ? 'is-project-ready' : ''}`}
+                      onClick={() => {
+                        if (hasProjectPlan) {
+                          const tid = String(currentSessionId || sessionId || '').trim();
+                          if (!tid) {
+                            showToast('No active session. Open a scored thread first.', 'error');
+                            return;
+                          }
+                          openExecutionPage(tid);
+                          return;
+                        }
+                        void onBeginProject();
+                      }}
+                      disabled={beginBusy || (hasProjectPlan ? !canOpenProject : !canBeginProject)} aria-disabled={beginBusy || (hasProjectPlan ? !canOpenProject : !canBeginProject)}
                       title={projectActionTitle}
                     >
-                      <FontAwesomeIcon icon={beginBusy ? faSpinner : faPlay} spin={beginBusy} />
-                      <span>{beginBusy ? "Working…" : "Project"}</span>
+                      <FontAwesomeIcon
+                        icon={beginBusy ? faSpinner : (hasProjectPlan ? faArrowUpRightFromSquare : faPlay)}
+                        spin={beginBusy}
+                      />
+                      <span>{beginBusy ? 'Working…' : (hasProjectPlan ? 'Go to Project' : 'Project')}</span>
                     </button>
+                  {hasProjectPlan && (
+                    <div className="jas-project-ready-badge" aria-live="polite">
+                      <span>Project plan created</span>
+                      {activeScenarioProjectLabel && (
+                        <strong>from {activeScenarioProjectLabel}</strong>
+                      )}
+                      <button
+                        type="button"
+                        className="jas-project-ready-link"
+                        onClick={() => {
+                          const tid = String(currentSessionId || sessionId || '').trim();
+                          if (!tid) return;
+                          openExecutionPage(tid);
+                        }}
+                      >
+                        View →
+                      </button>
+                    </div>
+                  )}
                   <button
                     type="button"
                     className="save-starter-btn"
@@ -8772,6 +8884,28 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
           <div className="jas-workspace-body">
 {activeTab === 'summary' && (
   <div className={!sidebarState.settings || !aiDrawerOpen ? 'score-with-rail' : ''}>
+    {!hasProjectPlan && canUseScenarios && !effectiveIsViewer && (
+      <aside className="jas-summary-guidance-callout" aria-live="polite">
+        <div className="jas-summary-guidance-copy">
+          <strong>Before creating your plan:</strong>
+          <span>Model scenarios to optimize your approach, then set one active for project generation.</span>
+        </div>
+        <button
+          type="button"
+          className="save-starter-btn"
+          onClick={() => {
+            setActiveTab('scenario');
+            setView('scenario');
+            if (sessionId || analysisResult?.analysis_id) {
+              const tid = sessionId || analysisResult?.analysis_id;
+              void refreshBundle(tid);
+            }
+          }}
+        >
+          Open Scenarios
+        </button>
+      </aside>
+    )}
     <ErrorBoundary title="Scorecard unavailable" onRetry={() => sessionId && refreshBundle(sessionId)}>
       <ScoreDashboard
         analysisResult={activeScorecard}

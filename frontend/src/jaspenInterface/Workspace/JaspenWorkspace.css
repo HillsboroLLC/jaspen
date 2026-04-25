@@ -5200,6 +5200,69 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+.begin-project-btn.is-project-ready {
+  background: var(--navy);
+}
+.begin-project-btn.is-project-ready:hover {
+  background: #0f162f;
+}
+
+.jas-project-ready-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid #c7f0d6;
+  border-radius: var(--radius-sm);
+  background: #ecfdf3;
+  color: #166534;
+  font-size: 0.75rem;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.jas-project-ready-badge strong {
+  color: #14532d;
+  font-weight: 700;
+}
+
+.jas-project-ready-link {
+  border: none;
+  background: transparent;
+  color: #166534;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.jas-summary-guidance-callout {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #eff9fc;
+}
+
+.jas-summary-guidance-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.jas-summary-guidance-copy strong {
+  color: var(--navy);
+  font-size: 0.8rem;
+}
+
+.jas-summary-guidance-copy span {
+  color: var(--gray-700);
+  font-size: 0.78rem;
+}
 
 .save-starter-btn {
   background: var(--white);
@@ -5228,6 +5291,13 @@
 .save-starter-btn:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+@media (max-width: 900px) {
+  .jas-summary-guidance-callout {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
 
 .jas-save-starter-modal {
