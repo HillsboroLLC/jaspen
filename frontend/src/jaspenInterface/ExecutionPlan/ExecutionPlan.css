@@ -35,30 +35,31 @@
 
 .execution-plan-chat-tab {
   position: fixed;
-  left: 44px;
-  top: 258px;
+  left: 0;
+  top: 308px;
   z-index: 104;
   writing-mode: vertical-rl;
   text-orientation: mixed;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
   border: 1px solid var(--int-border, #e2e8f0);
   border-left: none;
-  border-radius: 0 6px 6px 0;
+  border-radius: 0 4px 4px 0;
   background: var(--int-bg, #f8fafc);
-  color: var(--int-text, #161f3b);
+  color: var(--int-navy, #161f3b);
   padding: 14px 8px;
   font: inherit;
   font-size: 0.6875rem;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   cursor: pointer;
+  transition: background 0.2s ease;
 }
 
-.execution-plan-chat-tab svg {
-  writing-mode: horizontal-tb;
+.execution-plan-chat-tab:hover {
+  background: #e9ecef;
 }
 
 body.jaspen-sidebar-open .execution-plan-chat-tab {

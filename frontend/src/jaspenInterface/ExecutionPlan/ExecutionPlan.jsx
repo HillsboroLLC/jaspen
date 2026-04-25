@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faBars, faPaperPlane, faSpinner, faTimes, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons';
+import { faPaperPlane, faSpinner, faTimes, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons';
 import AppMenu from '../shared/AppMenu';
 import { Jaspen } from '../Workspace/JaspenClient';
 import ExecutionPanel from '../Workspace/components/ExecutionPanel';
@@ -381,8 +381,7 @@ export default function ExecutionPlan() {
           onClick={() => openAssistant('Edit this execution plan using the current context.')}
           aria-label="Open Jaspen assistant"
         >
-          <FontAwesomeIcon icon={faBars} />
-          <span>Jaspen</span>
+          JASPEN
         </button>
       )}
 
