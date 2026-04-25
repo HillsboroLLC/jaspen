@@ -6,6 +6,7 @@ import * as Sentry from '@sentry/react';
 import { HelmetProvider } from 'react-helmet-async';
 import './index.css';
 import './styles/colors.css';
+import './styles/tokens.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
 import { AuthProvider } from './shared/auth/AuthContext'; // keep auth here only

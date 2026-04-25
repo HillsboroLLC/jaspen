@@ -1,15 +1,15 @@
 .jas-internal-route {
-  --jas-ui-ink: #161f3b;
-  --jas-ui-muted: #5e6a84;
-  --jas-ui-border: #d9deea;
-  --jas-ui-surface: #ffffff;
-  --jas-ui-bg: #f8fafc;
-  --jas-ui-radius-control: 9px;
-  --jas-ui-radius-card: 12px;
-  --jas-ui-heading-size: 1.9rem;
-  --jas-ui-heading-tracking: -0.01em;
-  --jas-ui-section-gap: 14px;
-  --jas-ui-page-pad: 20px 26px 28px;
+  --jas-ui-ink: var(--color-text-primary);
+  --jas-ui-muted: var(--color-text-secondary);
+  --jas-ui-border: var(--color-border-default);
+  --jas-ui-surface: var(--color-surface-default);
+  --jas-ui-bg: var(--color-surface-subtle);
+  --jas-ui-radius-control: var(--radius-sm);
+  --jas-ui-radius-card: var(--radius-lg);
+  --jas-ui-heading-size: var(--font-size-2xl);
+  --jas-ui-heading-tracking: var(--letter-spacing-tight);
+  --jas-ui-section-gap: var(--space-3);
+  --jas-ui-page-pad: var(--space-5) 26px 28px;
 }
 
 .jas-internal-route :is(
@@ -68,9 +68,9 @@
   .reports-generate-form button,
   .scores-primary-btn
 ) {
-  background: #161f3b;
-  border-color: #161f3b;
-  color: #ffffff;
+  background: var(--color-brand-navy);
+  border-color: var(--color-brand-navy);
+  color: var(--color-text-inverse);
 }
 
 .jas-internal-route :is(
@@ -82,9 +82,9 @@
   .reports-action,
   .scores-secondary-btn
 ) {
-  background: #ffffff;
+  background: var(--color-surface-default);
   border-color: var(--jas-ui-border);
-  color: #161f3b;
+  color: var(--jas-ui-ink);
 }
 
 .jas-internal-route :is(
@@ -221,8 +221,8 @@
   .reports-table th,
   .connector-audit-table-wrap th
 ) {
-  background: #f6f8fc;
-  color: #44557d;
+  background: var(--color-surface-subtle);
+  color: var(--jas-ui-muted);
 }
 
 .jas-internal-route :is(
@@ -230,8 +230,8 @@
   .reports-list-card h2,
   .team-card h2
 ) {
-  font-size: 1.08rem;
-  color: #162246;
+  font-size: var(--font-size-lg);
+  color: var(--jas-ui-ink);
 }
 
 @media (max-width: 1080px) {
