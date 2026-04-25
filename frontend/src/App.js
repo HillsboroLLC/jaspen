@@ -102,6 +102,10 @@ function AnimatedAppRoutes({ withShell }) {
               path="/new"
               element={withShell(<JaspenWorkspace />, { title: 'Jaspen', showHeader: false, fullBleed: true, noPadding: true })}
             />
+            <Route
+              path="/execution-plan"
+              element={withShell(<JaspenWorkspace />, { title: 'Execution', showHeader: false, fullBleed: true, noPadding: true })}
+            />
             <Route path="/strategy" element={<Navigate to="/new" replace />} />
             <Route path="/projects"  element={<ProtectedRoute>{withShell(<Projects />, { title: 'Projects', showHeader: false, fullBleed: true, noPadding: true })}</ProtectedRoute>} />
             <Route

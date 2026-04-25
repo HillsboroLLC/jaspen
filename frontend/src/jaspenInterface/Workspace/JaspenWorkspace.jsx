@@ -38,6 +38,7 @@ import ScoreDashboard   from './ScoreDashboard';
 import ScenarioModeler  from './ScenarioModeler';
 import ComparisonView   from './ComparisonView';
 import BatchIdeaManager from './components/BatchIdeaManager';
+import ExecutionPanel from './components/ExecutionPanel';
 import Onboarding from './components/Onboarding';
 import SidebarIdentityFooter from './components/SidebarIdentityFooter';
 import ThreadEditModal from '../components/ThreadEditModal';
@@ -2480,11 +2481,12 @@ useEffect(() => {
   }, [canUseScenarios, activeTab]);
 
   useEffect(() => {
-    if (activeTab === 'execution') {
-      setActiveTab('summary');
-      setView('summary');
+    const path = String(location.pathname || '').trim().replace(/\/+$/, '');
+    if (path === '/execution-plan') {
+      setActiveTab('execution');
+      setView('execution');
     }
-  }, [activeTab]);
+  }, [location.pathname]);
 
   const loadThreadUsage = useCallback(async (targetThreadId = activeThreadId) => {
     if (!targetThreadId) {
@@ -5142,7 +5144,16 @@ async function onBeginProject() {
     setBeginMsg('Plan ready — opening Execution tab…');
     setTimeout(() => {
       setBeginBusy(false);
+      const nextParams = new URLSearchParams();
+      nextParams.set('sid', String(tid));
+      const currentParams = new URLSearchParams(location.search);
+      ['admin_preview', 'plan_key', 'role'].forEach((key) => {
+        const value = String(currentParams.get(key) || '').trim();
+        if (value) nextParams.set(key, value);
+      });
       setActiveTab('execution');
+      setView('execution');
+      navigate(`/execution-plan?${nextParams.toString()}`);
     }, 700);
   } catch (e) {
     console.error('[Begin Project] failed', e);
@@ -5150,6 +5161,108 @@ async function onBeginProject() {
     setTimeout(() => setBeginBusy(false), 2000);
   }
 }
+
+const handleExecutionRefresh = useCallback(async () => {
+  const tid = String(currentSessionId || sessionId || '').trim();
+  if (!tid) return;
+  await Promise.all([refreshThreadWbs(tid), refreshBundle(tid)]);
+}, [currentSessionId, refreshBundle, refreshThreadWbs, sessionId]);
+
+const resolveThreadWbsState = useCallback(async (tid) => {
+  const response = await Jaspen.getThreadWbs(tid);
+  const currentWbs = (response?.project_wbs && typeof response.project_wbs === 'object')
+    ? response.project_wbs
+    : { name: 'Execution Plan', tasks: [] };
+  const tasks = Array.isArray(currentWbs.tasks) ? [...currentWbs.tasks] : [];
+  return { currentWbs, tasks };
+}, []);
+
+const handleExecutionTaskUpdate = useCallback(async (taskId, patch = {}) => {
+  const tid = String(currentSessionId || sessionId || '').trim();
+  if (!tid) throw new Error('No active thread.');
+  const nextPatch = patch && typeof patch === 'object' ? patch : {};
+  const { currentWbs, tasks } = await resolveThreadWbsState(tid);
+  const idx = tasks.findIndex((task) => String(task?.id || '') === String(taskId || ''));
+  if (idx < 0) throw new Error('Task not found.');
+  tasks[idx] = { ...tasks[idx], ...nextPatch };
+  await Jaspen.upsertThreadWbs(tid, { ...currentWbs, tasks });
+  await refreshThreadWbs(tid);
+}, [currentSessionId, refreshThreadWbs, resolveThreadWbsState, sessionId]);
+
+const handleExecutionTaskAdd = useCallback(async (payload = {}) => {
+  const tid = String(currentSessionId || sessionId || '').trim();
+  if (!tid) throw new Error('No active thread.');
+  const { currentWbs, tasks } = await resolveThreadWbsState(tid);
+  const title = String(payload?.title || '').trim();
+  if (!title) throw new Error('Task title is required.');
+  const task = {
+    id: String(payload?.id || `task_${Date.now()}`),
+    title,
+    status: String(payload?.status || 'todo').toLowerCase(),
+    owner: String(payload?.owner || ''),
+    due_date: payload?.due_date || payload?.dueDate || null,
+    phase: String(payload?.phase || payload?.phase_name || 'Execution'),
+    description: String(payload?.description || ''),
+    priority: String(payload?.priority || 'medium').toLowerCase(),
+    estimated_days: Number(payload?.estimated_days || payload?.timeline_days || 1),
+    timeline_days: Number(payload?.timeline_days || payload?.estimated_days || 1),
+    depends_on: Array.isArray(payload?.depends_on) ? payload.depends_on : [],
+  };
+  tasks.push(task);
+  await Jaspen.upsertThreadWbs(tid, { ...currentWbs, tasks });
+  await refreshThreadWbs(tid);
+}, [currentSessionId, refreshThreadWbs, resolveThreadWbsState, sessionId]);
+
+const handleExecutionTaskRemove = useCallback(async (taskId) => {
+  const tid = String(currentSessionId || sessionId || '').trim();
+  if (!tid) throw new Error('No active thread.');
+  const { currentWbs, tasks } = await resolveThreadWbsState(tid);
+  const removeId = String(taskId || '').trim();
+  if (!removeId) throw new Error('Task id is required.');
+  const filtered = tasks.filter((task) => String(task?.id || '') !== removeId);
+  if (filtered.length === tasks.length) throw new Error('Task not found.');
+  const normalized = filtered.map((task) => ({
+    ...task,
+    depends_on: Array.isArray(task?.depends_on)
+      ? task.depends_on.filter((depId) => String(depId || '') !== removeId)
+      : [],
+  }));
+  await Jaspen.upsertThreadWbs(tid, { ...currentWbs, tasks: normalized });
+  await refreshThreadWbs(tid);
+}, [currentSessionId, refreshThreadWbs, resolveThreadWbsState, sessionId]);
+
+const handleExecutionDependencyAdd = useCallback(async (taskId, dependsOnId) => {
+  const tid = String(currentSessionId || sessionId || '').trim();
+  if (!tid) throw new Error('No active thread.');
+  const sourceTaskId = String(taskId || '').trim();
+  const depId = String(dependsOnId || '').trim();
+  if (!sourceTaskId || !depId) throw new Error('Task dependency is invalid.');
+  if (sourceTaskId === depId) return;
+  const { currentWbs, tasks } = await resolveThreadWbsState(tid);
+  const idx = tasks.findIndex((task) => String(task?.id || '') === sourceTaskId);
+  if (idx < 0) throw new Error('Task not found.');
+  const deps = Array.isArray(tasks[idx]?.depends_on) ? [...tasks[idx].depends_on] : [];
+  if (!deps.includes(depId)) deps.push(depId);
+  tasks[idx] = { ...tasks[idx], depends_on: deps };
+  await Jaspen.upsertThreadWbs(tid, { ...currentWbs, tasks });
+  await refreshThreadWbs(tid);
+}, [currentSessionId, refreshThreadWbs, resolveThreadWbsState, sessionId]);
+
+const openExecutionAssistant = useCallback(() => {
+  setAiDrawerOpen(true);
+  setScenarioDrawerView('assistant');
+  setAiInput('Edit this execution plan: update phases, owners, due dates, dependencies, and priorities.');
+}, []);
+
+useEffect(() => {
+  if (activeTab !== 'execution') return;
+  const tid = String(currentSessionId || sessionId || '').trim();
+  if (!tid) {
+    setThreadWbs(null);
+    return;
+  }
+  refreshThreadWbs(tid);
+}, [activeTab, currentSessionId, refreshThreadWbs, sessionId]);
 
 function handleOpenBatchIdeaThread(threadId) {
   if (!threadId) return;
@@ -7752,12 +7865,17 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       ? 'Ask about this scorecard, its risks, or how to sharpen the wording...'
       : 'Ask about tasks, timeline, resources...';
     const openWorkspaceTab = async (id) => {
-      const isLocked = id === 'scenario' && scenarioTabLocked;
+      const isLocked = (id === 'scenario' && scenarioTabLocked) || (id === 'execution' && executionTabLocked);
       if (isLocked) {
         if (id === 'scenario' && effectiveIsViewer) {
           showToast('Viewers can review shared project results but cannot use scenario tools.', 'info');
         } else if (id === 'scenario') {
           showToast('Scenarios are available on Essential, Team, and Enterprise plans.', 'info');
+          setBillingModalOpen(true);
+        } else if (id === 'execution' && effectiveIsViewer) {
+          showToast('Viewers can review execution plans but cannot edit them.', 'info');
+        } else if (id === 'execution') {
+          showToast('Execution is available on Essential, Team, and Enterprise plans.', 'info');
           setBillingModalOpen(true);
         }
         return;
@@ -7771,10 +7889,10 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
         } catch {}
       }
     };
-    const topTabIds = ['summary', 'scenario'];
+    const topTabIds = ['summary', 'scenario', 'execution'];
     const TabButton = ({ id, label }) => {
-      const isLocked = id === 'scenario' && scenarioTabLocked;
-      const badgeLabel = id === 'scenario' && isLocked ? 'Essential+' : '';
+      const isLocked = (id === 'scenario' && scenarioTabLocked) || (id === 'execution' && executionTabLocked);
+      const badgeLabel = (id === 'scenario' || id === 'execution') && isLocked ? 'Essential+' : '';
       return (
       <button
         type="button"
@@ -7792,7 +7910,11 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
         onKeyDown={(event) => {
           if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return;
           event.preventDefault();
-          const enabledTabs = topTabIds.filter((tabId) => !(tabId === 'scenario' && scenarioTabLocked));
+          const enabledTabs = topTabIds.filter((tabId) => {
+            if (tabId === 'scenario' && scenarioTabLocked) return false;
+            if (tabId === 'execution' && executionTabLocked) return false;
+            return true;
+          });
           if (!enabledTabs.length) return;
           const currentIndex = Math.max(enabledTabs.indexOf(id), 0);
           let nextIndex = currentIndex;
@@ -8455,6 +8577,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
             <nav className="jas-top-tabs" role="tablist" aria-label="Jaspen views">
               <TabButton id="summary"  label="Score" />
               <TabButton id="scenario" label="Scenarios" />
+              <TabButton id="execution" label="Execution" />
 
               {/* Only show dropdowns and Begin Project on Score tab */}
               {activeTab === 'summary' && (
@@ -8717,7 +8840,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
 	                  />
 	                ) : (
 	                  <ErrorBoundary title="Scenario modeler unavailable" onRetry={() => sessionId && refreshBundle(sessionId)}>
-	                    <ScenarioModeler
+                    <ScenarioModeler
                       ref={scenarioModelerRef}
                       analysisId={sessionId}
                       loading={bundleLoading && !(bundleBaselineScorecard || baselineRef.current || analysisResult)}
@@ -8747,12 +8870,46 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                           title: deriveIdeaTitle({ result: analysisResult, messages, fallback: 'Untitled Idea' }),
                           payload: analysisResult,
                         });
-                        window.location.href = `https://www.jaspen.ai/ops/project-planning?from=jas&analysis=${encodeURIComponent(sessionId)}`;
+                        const nextParams = new URLSearchParams();
+                        if (sessionId) nextParams.set('sid', String(sessionId));
+                        const currentParams = new URLSearchParams(location.search);
+                        ['admin_preview', 'plan_key', 'role'].forEach((key) => {
+                          const value = String(currentParams.get(key) || '').trim();
+                          if (value) nextParams.set(key, value);
+                        });
+                        navigate(`/execution-plan${nextParams.toString() ? `?${nextParams.toString()}` : ''}`);
                       }}
                     />
                   </ErrorBoundary>
                 )}
               </>
+            )}
+            {activeTab === 'execution' && (
+              <ErrorBoundary title="Execution plan unavailable" onRetry={() => {
+                const tid = String(currentSessionId || sessionId || '').trim();
+                if (tid) {
+                  void handleExecutionRefresh();
+                }
+              }}>
+                <ExecutionPanel
+                  threadId={String(currentSessionId || sessionId || '').trim()}
+                  wbs={threadWbs}
+                  authFetch={authFetch}
+                  onRefresh={handleExecutionRefresh}
+                  onUpdateTask={handleExecutionTaskUpdate}
+                  onAddTask={handleExecutionTaskAdd}
+                  onRemoveTask={handleExecutionTaskRemove}
+                  onAddDependency={handleExecutionDependencyAdd}
+                  canEditFields={canEditExecutionFields}
+                  canEditStructure={canEditExecutionStructure}
+                  canEditDependencies={canEditExecutionDependencies}
+                  isViewer={executionReadOnly}
+                  isLocked={executionTabLocked}
+                  onOpenChat={openExecutionAssistant}
+                  onOpenBilling={() => setBillingModalOpen(true)}
+                  loading={wbsLoading}
+                />
+              </ErrorBoundary>
             )}
           </div>
         </div>
