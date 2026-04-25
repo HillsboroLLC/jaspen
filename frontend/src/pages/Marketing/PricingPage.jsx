@@ -3,6 +3,7 @@ import MarketingPageLayout from './MarketingPageLayout';
 import { API_BASE } from '../../config/apiBase';
 import { useAuth } from '../../shared/auth/AuthContext';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
+import Seo from '../../shared/components/Seo';
 
 const FALLBACK_PLANS = [
   {
@@ -240,6 +241,11 @@ export default function PricingPage() {
 
   return (
     <MarketingPageLayout pageClass="page-pricing">
+      <Seo
+        title="Pricing"
+        description="Explore Jaspen pricing from Free and Essential to Team and Enterprise plans."
+        canonicalPath="/pages/pricing"
+      />
       <section className="page-hero page-hero-pricing">
         <div className="hero-copy">
           <p className="hero-kicker">Pricing</p>

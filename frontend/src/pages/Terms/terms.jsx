@@ -1,9 +1,15 @@
 import React from 'react';
+import Seo from '../../shared/components/Seo';
 import './terms.css';
 
 const Terms = () => {
   return (
     <div className="terms-container">
+      <Seo
+        title="Terms of Service"
+        description="Review the Jaspen Terms of Service for platform access, billing, and acceptable use."
+        canonicalPath="/pages/terms"
+      />
       <div className="terms-content">
         <h1>Terms of Service for Jaspen</h1>
 

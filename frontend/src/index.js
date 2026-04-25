@@ -3,6 +3,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import * as Sentry from '@sentry/react';
+import { HelmetProvider } from 'react-helmet-async';
 import './index.css';
 import './styles/colors.css';
 import App from './App';
@@ -28,9 +29,11 @@ if (sentryDsn) {
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
   <React.StrictMode>
-    <AuthProvider>
-      <App /> {/* App.js already provides BrowserRouter + other Providers */}
-    </AuthProvider>
+    <HelmetProvider>
+      <AuthProvider>
+        <App /> {/* App.js already provides BrowserRouter + other Providers */}
+      </AuthProvider>
+    </HelmetProvider>
   </React.StrictMode>
 );
 

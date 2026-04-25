@@ -1,10 +1,16 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
+import Seo from '../../shared/components/Seo';
 import './GetInTouch.css';
 
 export default function GetInTouch() {
   return (
     <div className="login-page get-in-touch-page">
+      <Seo
+        title="Login"
+        description="Contact Jaspen for account access, partnerships, and support."
+        canonicalPath="/login"
+      />
       <div className="get-in-touch-card">
         <div className="get-in-touch-eyebrow">JASPEN</div>
         <h1 className="get-in-touch-title">Get in touch</h1>

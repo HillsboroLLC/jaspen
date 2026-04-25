@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../../shared/auth/AuthContext';
 import { API_BASE } from '../../../config/apiBase';
 import { authFetch, buildAuthHeaders } from '../../../shared/auth/http';
+import Seo from '../../../shared/components/Seo';
 import {
   ArcElement,
   BarElement,
@@ -217,6 +218,11 @@ export default function Dashboard() {
 
   return (
     <div className="dash-page">
+      <Seo
+        title="Dashboard"
+        description="Track project health, score trends, team activity, and execution progress in your Jaspen dashboard."
+        canonicalPath="/dashboard"
+      />
       <section className="dash-hero dash-card">
         <div>
           <p className="dash-eyebrow">Team Workspace</p>

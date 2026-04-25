@@ -1,9 +1,15 @@
 import React from 'react';
+import Seo from '../../shared/components/Seo';
 import './privacy.css';
 
 const Privacy = () => {
   return (
     <div className="privacy-container">
+      <Seo
+        title="Privacy Policy"
+        description="Read how Jaspen collects, uses, and protects account and workspace data."
+        canonicalPath="/pages/privacy"
+      />
       <div className="privacy-content">
         <h1>Privacy Policy for Jaspen</h1>
 
