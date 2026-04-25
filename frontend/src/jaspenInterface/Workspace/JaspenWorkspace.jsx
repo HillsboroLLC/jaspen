@@ -47,6 +47,11 @@ import { PLAN_ORDER, PLAN_RANK } from '../../shared/constants/appConstants';
 // Styles - Single source of truth
 import "./JaspenWorkspace.css";
 
+const IS_DEV = process.env.NODE_ENV !== 'production';
+const devWarn = (...args) => {
+  if (IS_DEV) console.warn(...args);
+};
+
 const getRestorableSessionIdFromLocation = () => {
   try {
     const params = new URLSearchParams(window.location.search);
@@ -602,7 +607,7 @@ function readOnboardingState(user) {
     if (typeof entry === 'boolean') return { completed: entry, deferred: false, selection: null };
     return entry && typeof entry === 'object' ? entry : null;
   } catch (error) {
-    console.warn('[onboarding] Failed to read onboarding completion state', error);
+    devWarn('[onboarding] Failed to read onboarding completion state', error);
     return null;
   }
 }
@@ -627,7 +632,7 @@ function writeOnboardingState(user, payload = {}) {
     };
     localStorage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify(next));
   } catch (error) {
-    console.warn('[onboarding] Failed to persist onboarding completion state', error);
+    devWarn('[onboarding] Failed to persist onboarding completion state', error);
   }
 }
 
@@ -640,7 +645,7 @@ function readNamePromptDeferred(user) {
     const parsed = JSON.parse(raw);
     return Boolean(parsed?.[ownerKey]?.deferred);
   } catch (error) {
-    console.warn('[onboarding] Failed to read name prompt state', error);
+    devWarn('[onboarding] Failed to read name prompt state', error);
     return false;
   }
 }
@@ -655,7 +660,7 @@ function writeNamePromptDeferred(user, deferred) {
     next[ownerKey] = { deferred: Boolean(deferred) };
     localStorage.setItem(NAME_PROMPT_STORAGE_KEY, JSON.stringify(next));
   } catch (error) {
-    console.warn('[onboarding] Failed to persist name prompt state', error);
+    devWarn('[onboarding] Failed to persist name prompt state', error);
   }
 }
 
@@ -3296,7 +3301,7 @@ useEffect(() => {
     // Check for browser support
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      console.warn('Speech recognition not supported in this browser');
+      devWarn('Speech recognition not supported in this browser');
       return;
     }
 
@@ -4224,7 +4229,7 @@ if (rawHistory.length > 0) {
   // RETURNS the audit payload for immediate use in persistence
 async function fetchReadinessFor(sid) {
   if (!sid) {
-    console.warn('[fetchReadinessFor] ABORT - no sid provided');
+    devWarn('[fetchReadinessFor] ABORT - no sid provided');
     return null;
   }
 
@@ -4888,7 +4893,7 @@ useEffect(() => {
   // Flow: Call Jaspen.convoContinue → append message → await audit → persist using returned payload
 async function continueConversation(userText, options = {}) {
   if (!sessionId) {
-    console.warn('[continueConversation] ABORT - no sessionId');
+    devWarn('[continueConversation] ABORT - no sessionId');
     return null;
   }
   setBusy(true);
@@ -4934,7 +4939,7 @@ async function continueConversation(userText, options = {}) {
         version
       });
     } else {
-      console.warn('[continueConversation] auditPayload is null/undefined - readiness NOT updated');
+      devWarn('[continueConversation] auditPayload is null/undefined - readiness NOT updated');
     }
 
     await fetchSessions();
@@ -5303,7 +5308,7 @@ const handleSaveStarter = async () => {
 
   const handleScenarioAdopt = async (adoptedScenario, label) => {
     if (!adoptedScenario || (!adoptedScenario.id && !adoptedScenario.analysis_id)) {
-      console.warn('[handleScenarioAdopt] Invalid scenario:', adoptedScenario);
+      devWarn('[handleScenarioAdopt] Invalid scenario:', adoptedScenario);
       showToast('Invalid scenario - cannot set active', 'error');
       return;
     }
@@ -5340,7 +5345,7 @@ const handleSaveStarter = async () => {
   // === Finish & Analyze ===
   async function onFinishAnalyze() {
     if (!sessionId || busy) {
-      console.warn('[Finish&Analyze] blocked', { sessionId, currentSessionId, busy, uiReadiness, canAnalyze, msgCount: messages?.length });
+      devWarn('[Finish&Analyze] blocked', { sessionId, currentSessionId, busy, uiReadiness, canAnalyze, msgCount: messages?.length });
       return;
     }
     setBusy(true);
@@ -6421,7 +6426,7 @@ const persistSidebarExchange = async (threadId, userText, assistantText) => {
     if (assistantText) msgs.push({ role: 'assistant', content: assistantText });
     await Jaspen.appendMessages(threadId, msgs);
   } catch (e) {
-    console.warn('[persistSidebarExchange] failed', e);
+    devWarn('[persistSidebarExchange] failed', e);
   }
 };
 

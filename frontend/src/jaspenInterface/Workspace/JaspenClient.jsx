@@ -445,11 +445,6 @@ export const Jaspen = {
 
   // ---------- Conversational intake (Claude via /api/v1/chat) ----------
 async convoStart({ description, project_id, model_type, strategy_objective, intake_context, lever_defaults, starter_id, attachments }) {
-    console.log('[JaspenClient.convoStart] ENTRY', {
-      description: description?.substring(0, 50),
-      project_id,
-    });
-
     // Default project_id for testing - replace with real project selection later
     const pid = project_id || 'default-jas-project';
 
@@ -484,13 +479,6 @@ async convoStart({ description, project_id, model_type, strategy_objective, inta
         { withSid: true }
       );
 
-    console.log('[JaspenClient.convoStart] RESPONSE', {
-      thread_id: data.thread_id,
-      session_id: data.session_id,
-      readiness: data.readiness,
-      has_message: Boolean(data.message || data.reply),
-    });
-
     return {
       session_id: data.thread_id || data.session_id,
       thread_id: data.thread_id || null,
@@ -504,12 +492,6 @@ async convoStart({ description, project_id, model_type, strategy_objective, inta
     };
   },
 async convoContinue({ session_id, user_message, conversation_history, model_type, strategy_objective, attachments }) {
-    console.log('[JaspenClient.convoContinue] ENTRY', {
-      session_id,
-      user_message: user_message?.substring(0, 50),
-      hasHistory: Boolean(conversation_history?.length),
-    });
-
     const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
     const data = hasAttachments
       ? await postForm(
@@ -532,14 +514,6 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
         },
         { withSid: true }
       );
-
-    console.log('[JaspenClient.convoContinue] RESPONSE', {
-      thread_id_sent: session_id,
-      response_thread_id: data?.thread_id,
-      response_session_id: data?.session_id,
-      readiness_in_response: data?.readiness,
-      has_message: Boolean(data?.message || data?.reply),
-    });
 
     return {
       ...data,
@@ -794,11 +768,6 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
       },
       { withSid: true, sidOverride: session_id }
     );
-
-    // DEBUG: Log full /analyze response to trace meta.extracted_levers
-    console.log('[JaspenClient.analyzeFromConversation] raw response:', JSON.stringify(data, null, 2));
-    console.log('[JaspenClient.analyzeFromConversation] has meta?', Boolean(data?.analysis?.meta || data?.meta));
-    console.log('[JaspenClient.analyzeFromConversation] extracted_levers?', data?.analysis?.meta?.extracted_levers || data?.meta?.extracted_levers || null);
 
     return {
       analysis_result: data.analysis || data,
