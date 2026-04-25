@@ -91,6 +91,12 @@
   background: var(--int-surface);
 }
 
+.team-inline-field input.is-invalid,
+.team-inline-field input[aria-invalid="true"] {
+  border-color: var(--color-status-danger, #c0392b);
+  box-shadow: 0 0 0 2px rgba(192, 57, 43, 0.12);
+}
+
 .team-state {
   background: #fff;
   border: 1px solid var(--int-border);
@@ -256,6 +262,27 @@
   color: #25386a;
 }
 
+.team-required-legend {
+  margin: 0 0 8px;
+  font-size: 0.8rem;
+  color: var(--int-text-sub);
+}
+
+.team-field-label {
+  display: block;
+  margin: 0 0 6px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--int-eyebrow);
+}
+
+.team-required-mark {
+  color: var(--color-status-danger, #c0392b);
+  font-weight: 700;
+}
+
 .team-subcopy {
   margin: -4px 0 12px;
   color: var(--int-text-sub);
@@ -317,6 +344,20 @@
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(140px, 1fr) auto;
   gap: 8px;
+  align-items: start;
+}
+
+.team-invite-field {
+  display: grid;
+  gap: 4px;
+}
+
+.team-invite-form input.is-invalid,
+.team-invite-form select.is-invalid,
+.team-invite-form input[aria-invalid="true"],
+.team-invite-form select[aria-invalid="true"] {
+  border-color: var(--color-status-danger, #c0392b);
+  box-shadow: 0 0 0 2px rgba(192, 57, 43, 0.12);
 }
 
 .team-list {

@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { API_BASE } from '../../config/apiBase';
+import FieldError from '../../shared/components/FieldError';
 import './ResetPasswordPage.css';
 
 export default function ResetPasswordPage() {
@@ -9,10 +10,28 @@ export default function ResetPasswordPage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
 
   const token = useMemo(() => String(searchParams.get('token') || '').trim(), [searchParams]);
 
   const submitDisabled = status === 'sending' || status === 'sent';
+  const requiredLabel = (text) => (
+    <>
+      {text} <span className="reset-required-marker" aria-hidden="true">*</span>
+    </>
+  );
+
+  const validatePassword = (value) => {
+    if (!String(value || '').trim()) return 'Please enter a new password.';
+    if (String(value || '').length < 8) return 'Password must be at least 8 characters.';
+    return '';
+  };
+
+  const validateConfirmPassword = (value, basePassword) => {
+    if (!String(value || '').trim()) return 'Please confirm your password.';
+    if (value !== basePassword) return 'Passwords do not match.';
+    return '';
+  };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -20,17 +39,20 @@ export default function ResetPasswordPage() {
       setError('That reset link could not be verified. Request a new one and try again.');
       return;
     }
-    if (!password || password.length < 8) {
-      setError('Password must be at least 8 characters.');
-      return;
-    }
-    if (password !== confirmPassword) {
-      setError('Passwords do not match.');
+    const nextFieldErrors = {};
+    const passwordError = validatePassword(password);
+    if (passwordError) nextFieldErrors.password = passwordError;
+    const confirmPasswordError = validateConfirmPassword(confirmPassword, password);
+    if (confirmPasswordError) nextFieldErrors.confirmPassword = confirmPasswordError;
+    if (Object.keys(nextFieldErrors).length > 0) {
+      setFieldErrors(nextFieldErrors);
+      setError('Please fix the highlighted fields.');
       return;
     }
 
     setStatus('sending');
     setError('');
+    setFieldErrors({});
     try {
       const response = await fetch(`${API_BASE}/api/v1/auth/reset-password`, {
         method: 'POST',
@@ -45,6 +67,7 @@ export default function ResetPasswordPage() {
       setStatus('sent');
       setPassword('');
       setConfirmPassword('');
+      setFieldErrors({});
     } catch (requestError) {
       setError(requestError?.message || 'Unable to reset your password right now.');
       setStatus('idle');
@@ -81,25 +104,56 @@ export default function ResetPasswordPage() {
         )}
 
         <form className="reset-password-form" onSubmit={handleSubmit}>
-          <label htmlFor="reset-password-new">New password</label>
+          <p className="reset-required-legend"><span aria-hidden="true">*</span> Required</p>
+          <label htmlFor="reset-password-new">{requiredLabel('New password')}</label>
           <input
             id="reset-password-new"
             type="password"
             value={password}
-            onChange={(event) => setPassword(event.target.value)}
+            onChange={(event) => {
+              const value = event.target.value;
+              setPassword(value);
+              setFieldErrors((prev) => ({ ...prev, password: '' }));
+              if (String(confirmPassword || '').trim()) {
+                const confirmErr = validateConfirmPassword(confirmPassword, value);
+                setFieldErrors((prev) => ({ ...prev, confirmPassword: confirmErr }));
+              }
+            }}
+            onBlur={() => {
+              const passwordError = validatePassword(password);
+              setFieldErrors((prev) => ({ ...prev, password: passwordError }));
+            }}
             disabled={submitDisabled || !token}
+            aria-required="true"
             placeholder="Enter a new password"
+            className={fieldErrors.password ? 'is-invalid' : ''}
+            aria-invalid={Boolean(fieldErrors.password)}
+            aria-describedby={fieldErrors.password ? 'reset-password-new-error' : undefined}
           />
+          <FieldError id="reset-password-new-error" message={fieldErrors.password} />
 
-          <label htmlFor="reset-password-confirm">Confirm password</label>
+          <label htmlFor="reset-password-confirm">{requiredLabel('Confirm password')}</label>
           <input
             id="reset-password-confirm"
             type="password"
             value={confirmPassword}
-            onChange={(event) => setConfirmPassword(event.target.value)}
+            onChange={(event) => {
+              const value = event.target.value;
+              setConfirmPassword(value);
+              setFieldErrors((prev) => ({ ...prev, confirmPassword: '' }));
+            }}
+            onBlur={() => {
+              const confirmError = validateConfirmPassword(confirmPassword, password);
+              setFieldErrors((prev) => ({ ...prev, confirmPassword: confirmError }));
+            }}
             disabled={submitDisabled || !token}
+            aria-required="true"
             placeholder="Confirm your new password"
+            className={fieldErrors.confirmPassword ? 'is-invalid' : ''}
+            aria-invalid={Boolean(fieldErrors.confirmPassword)}
+            aria-describedby={fieldErrors.confirmPassword ? 'reset-password-confirm-error' : undefined}
           />
+          <FieldError id="reset-password-confirm-error" message={fieldErrors.confirmPassword} />
 
           <button type="submit" className="reset-password-submit" disabled={submitDisabled || !token} aria-disabled={submitDisabled || !token}>
             {status === 'sending' ? 'Updating password…' : 'Update password'}

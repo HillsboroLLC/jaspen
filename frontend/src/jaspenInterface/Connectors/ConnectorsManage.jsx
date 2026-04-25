@@ -12,7 +12,9 @@ import {
 import { API_BASE } from '../../config/apiBase';
 import { useAuth } from '../../shared/auth/AuthContext';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
+import ConfirmDialog from '../../shared/components/ConfirmDialog';
 import FieldError from '../../shared/components/FieldError';
+import SkeletonBlock from '../../shared/components/SkeletonLoader';
 import { getPlanConnectors } from '../../shared/billing/planConnectors';
 import ConnectorMonitor from '../Monitoring/ConnectorMonitor';
 import './ConnectorsManage.css';
@@ -334,6 +336,7 @@ export default function ConnectorsManage() {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [draftErrors, setDraftErrors] = useState({});
+  const [discardDialog, setDiscardDialog] = useState(null);
 
   const adminPreviewPlan = useMemo(() => {
     if (!Boolean(user?.is_admin)) return '';
@@ -465,6 +468,23 @@ export default function ConnectorsManage() {
     () => connectors.some((connector) => connectorDraftChanged(connector, drafts[connector.id] || normalizeDraft(connector))),
     [connectors, drafts]
   );
+
+  const guardUnsavedChanges = useCallback((onProceed, prompt = 'You have unsaved changes. Leave this page and discard them?') => {
+    if (!hasUnsavedChanges) {
+      onProceed?.();
+      return;
+    }
+    setDiscardDialog({
+      title: 'Discard unsaved changes?',
+      message: prompt,
+      confirmLabel: 'Discard changes',
+      confirmVariant: 'danger',
+      onConfirm: () => {
+        setDiscardDialog(null);
+        onProceed?.();
+      },
+    });
+  }, [hasUnsavedChanges]);
 
   useEffect(() => {
     if (!visibleConnectors.length) {
@@ -767,7 +787,42 @@ export default function ConnectorsManage() {
         </div>
       </header>
 
-      {loading && <div className="connectors-manage-state" role="status" aria-live="polite">Loading connectors...</div>}
+      {loading && (
+        <section className="connectors-skeleton" role="status" aria-live="polite" aria-label="Loading connectors">
+          <SkeletonBlock width="26%" height={14} />
+          <SkeletonBlock width="68%" height={52} />
+          <div className="connectors-skeleton-layout">
+            <div className="connectors-skeleton-list">
+              {Array.from({ length: 6 }).map((_, idx) => (
+                <div key={`connectors-skeleton-list-${idx}`} className="connectors-skeleton-card">
+                  <div className="connectors-skeleton-card-top">
+                    <SkeletonBlock width={34} height={34} />
+                    <SkeletonBlock width={92} height={20} />
+                  </div>
+                  <SkeletonBlock width="58%" height={20} />
+                  <SkeletonBlock width="88%" height={12} />
+                  <SkeletonBlock width="44%" height={12} />
+                </div>
+              ))}
+            </div>
+            <div className="connectors-skeleton-detail">
+              <div className="connectors-skeleton-detail-head">
+                <SkeletonBlock width="34%" height={30} />
+                <div className="connectors-skeleton-detail-actions">
+                  <SkeletonBlock width={118} height={36} />
+                  <SkeletonBlock width={108} height={36} />
+                  <SkeletonBlock width={122} height={36} />
+                </div>
+              </div>
+              <div className="connectors-skeleton-form">
+                {Array.from({ length: 8 }).map((__, formIdx) => (
+                  <SkeletonBlock key={`connectors-skeleton-field-${formIdx}`} width="100%" height={40} />
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
       {!loading && error && <div className="connectors-manage-state is-error" role="status" aria-live="polite">{error}</div>}
       {!loading && !error && message && <div className="connectors-manage-state is-success" role="status" aria-live="polite">{message}</div>}
 
@@ -798,10 +853,7 @@ export default function ConnectorsManage() {
               <button
                 type="button"
                 className="connectors-plan-gate-btn"
-                onClick={() => {
-                  if (hasUnsavedChanges && !window.confirm('You have unsaved changes. Leave this page and discard them?')) return;
-                  navigate('/account');
-                }}
+                onClick={() => guardUnsavedChanges(() => navigate('/account'))}
               >
                 Upgrade in Account
               </button>
@@ -966,6 +1018,15 @@ export default function ConnectorsManage() {
           )}
         </>
       )}
+      <ConfirmDialog
+        isOpen={Boolean(discardDialog)}
+        title={discardDialog?.title || 'Discard unsaved changes?'}
+        message={discardDialog?.message || 'You have unsaved changes. Leave this page and discard them?'}
+        confirmLabel={discardDialog?.confirmLabel || 'Discard changes'}
+        confirmVariant={discardDialog?.confirmVariant || 'danger'}
+        onConfirm={discardDialog?.onConfirm}
+        onCancel={() => setDiscardDialog(null)}
+      />
       </div>
     </div>
   );

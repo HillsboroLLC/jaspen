@@ -47,6 +47,11 @@
   font-family: 'Inter', -apple-system, sans-serif;
 }
 
+.int-page :focus-visible {
+  outline: 2px solid rgba(22, 31, 59, 0.38);
+  outline-offset: 2px;
+}
+
 .int-page-inner {
   max-width: var(--int-max-w-md);
   margin: 0 auto;

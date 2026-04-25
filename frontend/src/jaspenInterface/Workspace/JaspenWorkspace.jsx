@@ -11,6 +11,7 @@ import remarkGfm from 'remark-gfm';
 import { API_BASE } from '../../config/apiBase';
 import { useChatCommands, parseUIActions, ChatActionTypes } from "../../shared/hooks/useChatCommands"
 import ErrorBoundary from '../../shared/components/ErrorBoundary';
+import ConfirmDialog from '../../shared/components/ConfirmDialog';
 import { useToast, ToastContainer } from '../../shared/components/Toast';
 import { useAuth } from 'shared/auth/AuthContext';
 import { authFetch as cookieAuthFetch, buildAuthHeaders } from '../../shared/auth/http';
@@ -1127,6 +1128,12 @@ const [savedScenarios, setSavedScenarios] = useState([]);
   const [helpMessages, setHelpMessages] = useState([]);
 const [helpInput, setHelpInput] = useState('');
 const [helpLoading, setHelpLoading] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState(null);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [commandQuery, setCommandQuery] = useState('');
+  const commandPaletteInputRef = useRef(null);
+  const workspaceTabRefs = useRef({});
+  const aiToggleTabRefs = useRef({});
 // Score view dropdown state (baseline + up to 3 scenarios)
 const [scenarioOptions, setScenarioOptions] = useState([]);
 const [activeScenarioId, setActiveScenarioId] = useState('baseline');
@@ -3365,6 +3372,14 @@ const aiMessagesEndRef = useRef(null);
 const aiDrawerPanelRef = useRef(null);
 const [initialRestorePending, setInitialRestorePending] = useState(() => Boolean(getRestorableSessionIdFromLocation()));
   const closeShortcutSurface = useCallback(() => {
+    if (commandPaletteOpen) {
+      setCommandPaletteOpen(false);
+      return true;
+    }
+    if (confirmDialog) {
+      setConfirmDialog(null);
+      return true;
+    }
     if (modelMenuOpen) {
       setModelMenuOpen(false);
       return true;
@@ -3407,6 +3422,8 @@ const [initialRestorePending, setInitialRestorePending] = useState(() => Boolean
     anySidebarOpen,
     batchIdeasOpen,
     billingModalOpen,
+    commandPaletteOpen,
+    confirmDialog,
     dismissSidebars,
     helpOpen,
     modelMenuOpen,
@@ -6961,6 +6978,11 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
   }, [analysisResult, activeTab]);
 
   useEffect(() => {
+    if (!commandPaletteOpen) return;
+    window.setTimeout(() => commandPaletteInputRef.current?.focus(), 0);
+  }, [commandPaletteOpen]);
+
+  useEffect(() => {
     if (!scoreShellMenu) return undefined;
     const handlePointerDown = (event) => {
       if (scoreShellMenuRef.current?.contains(event.target)) return;
@@ -6994,10 +7016,20 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
 
       if (editableTarget) return;
 
+      if (
+        event.key === '?' &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey
+      ) {
+        setHelpOpen(true);
+        event.preventDefault();
+        return;
+      }
+
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
-        if (openHistorySearch()) {
-          event.preventDefault();
-        }
+        setCommandPaletteOpen(true);
+        event.preventDefault();
         return;
       }
 
@@ -7339,38 +7371,55 @@ await authFetch(`${API_BASE}/api/v1/ai-agent/threads/${itemId}`, {
   };
 
   const handleDeleteAnalysis = async (itemId) => {
-    await deleteAnalysisById(itemId);
-    await fetchSessions();
+    if (!itemId) return;
+    const entry = analysisHistory.find((item) => String(item?.id || '').trim() === String(itemId).trim());
+    const label = (entry?.name || entry?.title || entry?.result?.project_name || 'this analysis').trim();
+
+    setConfirmDialog({
+      title: 'Delete analysis',
+      message: `Delete "${label}"? This cannot be undone.`,
+      confirmLabel: 'Delete analysis',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        await deleteAnalysisById(itemId);
+        await fetchSessions();
+      },
+    });
   };
 
   const handleClearHistory = async () => {
     if (!analysisHistory.length || clearingHistory) return;
-    const ok = window.confirm(`Delete all ${analysisHistory.length} history sessions? This cannot be undone.`);
-    if (!ok) return;
+    setConfirmDialog({
+      title: 'Clear history',
+      message: `Delete all ${analysisHistory.length} history sessions? This cannot be undone.`,
+      confirmLabel: 'Clear history',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        setClearingHistory(true);
+        try {
+          const ids = analysisHistory.map((h) => h.id).filter(Boolean);
+          await Promise.allSettled(ids.map((id) => deleteAnalysisById(id)));
 
-    setClearingHistory(true);
-    try {
-      const ids = analysisHistory.map((h) => h.id).filter(Boolean);
-      await Promise.allSettled(ids.map((id) => deleteAnalysisById(id)));
+          const currentGone = ids.includes(currentSessionId) || ids.includes(sessionId);
+          if (currentGone) {
+            clearLastSessionId();
+            setSessionId(null);
+            setCurrentSessionId(null);
+            setAnalysisResult(null);
+            setMessages([]);
+            setView('intake');
+          }
 
-      const currentGone = ids.includes(currentSessionId) || ids.includes(sessionId);
-      if (currentGone) {
-        clearLastSessionId();
-        setSessionId(null);
-        setCurrentSessionId(null);
-        setAnalysisResult(null);
-        setMessages([]);
-        setView('intake');
-      }
-
-      await fetchSessions();
-      showToast('History cleared', 'success');
-    } catch (error) {
-      console.error('[handleClearHistory] failed', error);
-      showToast('Failed to clear history', 'error');
-    } finally {
-      setClearingHistory(false);
-    }
+          await fetchSessions();
+          showToast('History cleared', 'success');
+        } catch (error) {
+          console.error('[handleClearHistory] failed', error);
+          showToast('Failed to clear history', 'error');
+        } finally {
+          setClearingHistory(false);
+        }
+      },
+    });
   };
 
   // Persist a scenario row to the backend, then refresh bundle
@@ -7523,17 +7572,22 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
   const tid = currentSessionId || sessionId;
   if (!nextId || !tid) return;
 
-  const ok = window.confirm(`Delete "${label || 'this scorecard variant'}"? This cannot be undone.`);
-  if (!ok) return;
-
-  try {
-    const response = await Jaspen.deleteSnapshot(tid, nextId);
-    applySnapshotMeta(response, { refresh: true });
-    showToast('Scorecard variant deleted', 'success');
-  } catch (err) {
-    console.error('[handleSnapshotDelete] failed', err);
-    showToast(err?.message || 'Failed to delete scorecard variant.', 'error');
-  }
+  setConfirmDialog({
+    title: 'Delete scorecard variant',
+    message: `Delete "${label || 'this scorecard variant'}"? This cannot be undone.`,
+    confirmLabel: 'Delete scorecard',
+    confirmVariant: 'danger',
+    onConfirm: async () => {
+      try {
+        const response = await Jaspen.deleteSnapshot(tid, nextId);
+        applySnapshotMeta(response, { refresh: true });
+        showToast('Scorecard variant deleted', 'success');
+      } catch (err) {
+        console.error('[handleSnapshotDelete] failed', err);
+        showToast(err?.message || 'Failed to delete scorecard variant.', 'error');
+      }
+    },
+  });
 }, [applySnapshotMeta, currentSessionId, sessionId]);
 
   const handleCompareScenarios = async () => {
@@ -7710,43 +7764,134 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
     const aiDrawerPlaceholder = scoreWorkspaceMode === 'summary'
       ? 'Ask about this scorecard, its risks, or how to sharpen the wording...'
       : 'Ask about tasks, timeline, resources...';
+    const openWorkspaceTab = async (id) => {
+      const isLocked = id === 'scenario' && scenarioTabLocked;
+      if (isLocked) {
+        if (id === 'scenario' && effectiveIsViewer) {
+          showToast('Viewers can review shared project results but cannot use scenario tools.', 'info');
+        } else if (id === 'scenario') {
+          showToast('Scenarios are available on Essential, Team, and Enterprise plans.', 'info');
+          setBillingModalOpen(true);
+        }
+        return;
+      }
+      setActiveTab(id);
+      setView(id);
+      if (id === 'scenario' && (sessionId || analysisResult?.analysis_id)) {
+        try {
+          const tid = sessionId || analysisResult?.analysis_id;
+          await refreshBundle(tid);
+        } catch {}
+      }
+    };
+    const topTabIds = ['summary', 'scenario'];
     const TabButton = ({ id, label }) => {
       const isLocked = id === 'scenario' && scenarioTabLocked;
       const badgeLabel = id === 'scenario' && isLocked ? 'Essential+' : '';
       return (
       <button
         type="button"
+        ref={(node) => {
+          if (node) workspaceTabRefs.current[id] = node;
+        }}
         className={`jas-top-tab ${activeTab === id ? 'active' : ''} ${isLocked ? 'disabled' : ''}`}
         role="tab"
         aria-selected={activeTab === id}
         aria-disabled={isLocked}
         tabIndex={activeTab === id ? 0 : -1}
-onClick={async () => {
-  if (isLocked) {
-    if (id === 'scenario' && effectiveIsViewer) {
-      showToast('Viewers can review shared project results but cannot use scenario tools.', 'info');
-    } else if (id === 'scenario') {
-      showToast('Scenarios are available on Essential, Team, and Enterprise plans.', 'info');
-      setBillingModalOpen(true);
-    }
-    return;
-  }
-  setActiveTab(id);
-  setView(id);
-
-  // If the user opens the Scenarios tab, pull the latest bundle from the backend
-  if (id === 'scenario' && (sessionId || analysisResult?.analysis_id)) {
-    try {
-      const tid = sessionId || analysisResult?.analysis_id;
-      await refreshBundle(tid);
-    } catch {}
-  }
-}}
+        onClick={() => {
+          void openWorkspaceTab(id);
+        }}
+        onKeyDown={(event) => {
+          if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return;
+          event.preventDefault();
+          const enabledTabs = topTabIds.filter((tabId) => !(tabId === 'scenario' && scenarioTabLocked));
+          if (!enabledTabs.length) return;
+          const currentIndex = Math.max(enabledTabs.indexOf(id), 0);
+          let nextIndex = currentIndex;
+          if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % enabledTabs.length;
+          if (event.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + enabledTabs.length) % enabledTabs.length;
+          if (event.key === 'Home') nextIndex = 0;
+          if (event.key === 'End') nextIndex = enabledTabs.length - 1;
+          const nextId = enabledTabs[nextIndex];
+          workspaceTabRefs.current[nextId]?.focus();
+          void openWorkspaceTab(nextId);
+        }}
       >
         {label}
         {badgeLabel && <span className="jas-ud-item-badge" style={{ marginLeft: 8 }}>{badgeLabel}</span>}
       </button>
       );
+    };
+
+    const commandOptions = [
+      {
+        id: 'new-analysis',
+        label: 'New analysis',
+        hint: 'Start a fresh workspace thread',
+        keywords: 'new analysis thread start',
+        run: () => handleNewAnalysis(true),
+      },
+      {
+        id: 'go-score',
+        label: 'Go to Score view',
+        hint: 'Open score summary tab',
+        keywords: 'score summary tab',
+        run: () => { void openWorkspaceTab('summary'); },
+      },
+      {
+        id: 'go-scenarios',
+        label: 'Go to Scenarios view',
+        hint: 'Open scenario modeling tab',
+        keywords: 'scenario scenarios modeling',
+        run: () => { void openWorkspaceTab('scenario'); },
+      },
+      {
+        id: 'focus-composer',
+        label: 'Focus composer',
+        hint: 'Jump to chat input',
+        keywords: 'composer input prompt chat',
+        run: () => { focusVisibleComposer(); },
+      },
+      {
+        id: 'focus-history',
+        label: 'Focus history search',
+        hint: 'Open history rail and focus search',
+        keywords: 'history search sessions',
+        run: () => { openHistorySearch(); },
+      },
+      {
+        id: 'open-help',
+        label: 'Open help',
+        hint: 'Show keyboard help and support',
+        keywords: 'help support shortcuts',
+        run: () => { setHelpOpen(true); },
+      },
+      {
+        id: 'open-account',
+        label: 'Open account settings',
+        hint: 'Go to account page',
+        keywords: 'account settings profile',
+        run: () => { navigate('/account'); },
+      },
+      {
+        id: 'open-projects',
+        label: 'Open projects',
+        hint: 'Go to project portfolio',
+        keywords: 'projects portfolio',
+        run: () => { navigate('/projects'); },
+      },
+    ];
+    const filteredCommandOptions = commandOptions.filter((option) => {
+      const query = String(commandQuery || '').trim().toLowerCase();
+      if (!query) return true;
+      return `${option.label} ${option.hint} ${option.keywords}`.toLowerCase().includes(query);
+    });
+    const runCommandOption = (option) => {
+      if (!option || typeof option.run !== 'function') return;
+      setCommandPaletteOpen(false);
+      setCommandQuery('');
+      option.run();
     };
 
     return (
@@ -7805,6 +7950,77 @@ onClick={async () => {
       {renderNameModal()}
       {renderBillingModal()}
       {renderPostAdoptWbsPrompt()}
+      <ConfirmDialog
+        isOpen={Boolean(confirmDialog)}
+        title={confirmDialog?.title || 'Confirm action'}
+        message={confirmDialog?.message || 'Are you sure you want to continue?'}
+        confirmLabel={confirmDialog?.confirmLabel || 'Confirm'}
+        confirmVariant={confirmDialog?.confirmVariant || 'danger'}
+        onConfirm={async () => {
+          const action = confirmDialog?.onConfirm;
+          setConfirmDialog(null);
+          if (typeof action === 'function') await action();
+        }}
+        onCancel={() => setConfirmDialog(null)}
+      />
+      {commandPaletteOpen && (
+        <div className="jas-command-overlay" role="dialog" aria-modal="true" aria-label="Command palette">
+          <div className="jas-command-card">
+            <div className="jas-command-head">
+              <h3>Command Palette</h3>
+              <button
+                type="button"
+                className="jas-command-close"
+                onClick={() => {
+                  setCommandPaletteOpen(false);
+                  setCommandQuery('');
+                }}
+                aria-label="Close command palette"
+              >
+                <FontAwesomeIcon icon={faTimes} />
+              </button>
+            </div>
+            <input
+              ref={commandPaletteInputRef}
+              className="jas-command-input"
+              type="text"
+              value={commandQuery}
+              onChange={(event) => setCommandQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  event.preventDefault();
+                  setCommandPaletteOpen(false);
+                  setCommandQuery('');
+                  return;
+                }
+                if (event.key === 'Enter' && filteredCommandOptions.length > 0) {
+                  event.preventDefault();
+                  runCommandOption(filteredCommandOptions[0]);
+                }
+              }}
+              placeholder="Type a command..."
+              aria-label="Filter commands"
+            />
+            <div className="jas-command-list" role="listbox" aria-label="Available commands">
+              {filteredCommandOptions.length === 0 ? (
+                <p className="jas-command-empty">No matching commands.</p>
+              ) : (
+                filteredCommandOptions.map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    className="jas-command-item"
+                    onClick={() => runCommandOption(option)}
+                  >
+                    <strong>{option.label}</strong>
+                    <span>{option.hint}</span>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
 {/* Assistant Vertical Tab (Score + Scenarios only) */}
 {activeTab !== 'chat' && !aiDrawerOpen && (
@@ -7843,21 +8059,55 @@ onClick={async () => {
       <div className="jas-ai-toggle" role="tablist" aria-label="Assistant drawer views">
         <button
           type="button"
+          ref={(node) => {
+            if (node) aiToggleTabRefs.current.assistant = node;
+          }}
           className={`jas-ai-toggle-btn ${scenarioDrawerView === 'assistant' ? 'active' : ''}`}
           onClick={() => setScenarioDrawerView('assistant')}
           role="tab"
           aria-selected={scenarioDrawerView === 'assistant'}
           tabIndex={scenarioDrawerView === 'assistant' ? 0 : -1}
+          onKeyDown={(event) => {
+            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+            event.preventDefault();
+            const order = ['assistant', 'scorecard'];
+            const current = order.indexOf('assistant');
+            let next = current;
+            if (event.key === 'ArrowRight') next = (current + 1) % order.length;
+            if (event.key === 'ArrowLeft') next = (current - 1 + order.length) % order.length;
+            if (event.key === 'Home') next = 0;
+            if (event.key === 'End') next = order.length - 1;
+            const nextKey = order[next];
+            setScenarioDrawerView(nextKey);
+            aiToggleTabRefs.current[nextKey]?.focus();
+          }}
         >
           Jaspen
         </button>
         <button
           type="button"
+          ref={(node) => {
+            if (node) aiToggleTabRefs.current.scorecard = node;
+          }}
           className={`jas-ai-toggle-btn ${scenarioDrawerView === 'scorecard' ? 'active' : ''}`}
           onClick={() => setScenarioDrawerView('scorecard')}
           role="tab"
           aria-selected={scenarioDrawerView === 'scorecard'}
           tabIndex={scenarioDrawerView === 'scorecard' ? 0 : -1}
+          onKeyDown={(event) => {
+            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+            event.preventDefault();
+            const order = ['assistant', 'scorecard'];
+            const current = order.indexOf('scorecard');
+            let next = current;
+            if (event.key === 'ArrowRight') next = (current + 1) % order.length;
+            if (event.key === 'ArrowLeft') next = (current - 1 + order.length) % order.length;
+            if (event.key === 'Home') next = 0;
+            if (event.key === 'End') next = order.length - 1;
+            const nextKey = order[next];
+            setScenarioDrawerView(nextKey);
+            aiToggleTabRefs.current[nextKey]?.focus();
+          }}
         >
           Scorecard
         </button>
@@ -8102,6 +8352,14 @@ onClick={async () => {
         id="jas-main-content"
         className={`jas-workspace ${aiDrawerOpen ? 'jas-ai-open' : ''} ${isReadinessOpen ? 'jas-readiness-open' : ''} ${isSettingsOpen ? 'jas-settings-open' : ''}`}
       >
+          {(beginBusy || (busy && !isStreamingReply) || (busy && isStreamingReply)) && (
+            <div className="jas-global-progress" role="status" aria-live="polite">
+              <div className="jas-global-progress-track">
+                <div className="jas-global-progress-bar" />
+              </div>
+              <span>{beginBusy ? beginMsg : (streamToolStatus || 'Jaspen is working...')}</span>
+            </div>
+          )}
           <div className="jas-workspace-header">
             {adminWorkspacePreviewActive && (
               <div className="jas-admin-preview-banner">
@@ -9199,6 +9457,14 @@ onClick={async () => {
                     <li>Navigating the platform</li>
                     <li>Project management tools</li>
                     <li>Lean Six Sigma resources</li>
+                  </ul>
+                  <p>Keyboard shortcuts:</p>
+                  <ul>
+                    <li><strong>?</strong> Open help</li>
+                    <li><strong>Ctrl/Cmd + K</strong> Open command palette</li>
+                    <li><strong>/</strong> Focus composer</li>
+                    <li><strong>Esc</strong> Close drawers, modals, and dialogs</li>
+                    <li><strong>Alt + Shift + N</strong> Start a new session</li>
                   </ul>
                   <p>What can I help you with?</p>
                 </div>

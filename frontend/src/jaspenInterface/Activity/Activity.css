@@ -57,6 +57,29 @@
   color: #962739;
 }
 
+.activity-skeleton {
+  margin-top: 14px;
+  border-radius: var(--int-radius-md);
+  border: 1px solid var(--int-border);
+  background: #fff;
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+}
+
+.activity-skeleton-list {
+  display: grid;
+  gap: 10px;
+}
+
+.activity-skeleton-item {
+  border: 1px solid var(--int-border);
+  border-radius: var(--int-radius-md);
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
 .activity-timeline {
   margin-top: 16px;
   border-left: 2px solid #d0dbef;

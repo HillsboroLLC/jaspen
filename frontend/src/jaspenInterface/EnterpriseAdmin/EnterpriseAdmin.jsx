@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { API_BASE } from '../../config/apiBase';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
+import FieldError from '../../shared/components/FieldError';
 import Team from '../Team/Team';
 import './EnterpriseAdmin.css';
 import AppMenu from '../shared/AppMenu';
@@ -121,6 +122,7 @@ export default function EnterpriseAdmin() {
     certificate: '',
     require_sso: false,
   });
+  const [ssoFieldErrors, setSsoFieldErrors] = useState({});
   const [ssoTestMessage, setSsoTestMessage] = useState('');
 
   const [governanceForm, setGovernanceForm] = useState({
@@ -262,6 +264,17 @@ export default function EnterpriseAdmin() {
 
   const saveSsoSettings = useCallback(async () => {
     if (!org?.id) return;
+    const nextFieldErrors = {};
+    if (!String(ssoForm.identity_provider_url || '').trim()) nextFieldErrors.identity_provider_url = 'Identity Provider URL is required.';
+    if (!String(ssoForm.entity_id || '').trim()) nextFieldErrors.entity_id = 'Entity ID is required.';
+    if (!String(ssoForm.certificate || '').trim()) nextFieldErrors.certificate = 'Certificate is required.';
+    if (Object.keys(nextFieldErrors).length > 0) {
+      setSsoFieldErrors(nextFieldErrors);
+      setError('Please fix the highlighted SSO fields.');
+      setNotice('');
+      return;
+    }
+
     setBusy(true);
     setError('');
     setNotice('');
@@ -281,6 +294,7 @@ export default function EnterpriseAdmin() {
         }),
       });
       setNotice('SSO configuration saved.');
+      setSsoFieldErrors({});
       await loadEnterpriseAdmin();
     } catch (err) {
       setError(err?.message || 'Failed to save SSO configuration.');
@@ -290,11 +304,16 @@ export default function EnterpriseAdmin() {
   }, [loadEnterpriseAdmin, org?.id, redirectUri, ssoForm]);
 
   const testSsoConnection = useCallback(() => {
+    const nextFieldErrors = {};
     const requiredReady = Boolean(
       String(ssoForm.identity_provider_url || '').trim()
       && String(ssoForm.entity_id || '').trim()
       && String(ssoForm.certificate || '').trim()
     );
+    if (!String(ssoForm.identity_provider_url || '').trim()) nextFieldErrors.identity_provider_url = 'Identity Provider URL is required.';
+    if (!String(ssoForm.entity_id || '').trim()) nextFieldErrors.entity_id = 'Entity ID is required.';
+    if (!String(ssoForm.certificate || '').trim()) nextFieldErrors.certificate = 'Certificate is required.';
+    setSsoFieldErrors(nextFieldErrors);
     if (!requiredReady) {
       setSsoTestMessage('Missing required SSO fields. Add IdP URL, Entity ID, and certificate first.');
       return;
@@ -390,36 +409,70 @@ export default function EnterpriseAdmin() {
               {ssoConfigured ? 'Configured' : 'Not Configured'}
             </span>
           </header>
+          <p className="enterprise-required-legend"><span aria-hidden="true">*</span> Required fields</p>
 
           <div className="enterprise-grid-two">
             <label>
-              Identity Provider URL
+              Identity Provider URL <span className="enterprise-required-marker" aria-hidden="true">*</span>
               <input
                 type="text"
                 value={ssoForm.identity_provider_url}
-                onChange={(event) => setSsoForm((prev) => ({ ...prev, identity_provider_url: event.target.value }))}
+                onChange={(event) => {
+                  setSsoForm((prev) => ({ ...prev, identity_provider_url: event.target.value }));
+                  setSsoFieldErrors((prev) => ({ ...prev, identity_provider_url: '' }));
+                }}
+                onBlur={() => {
+                  const value = String(ssoForm.identity_provider_url || '').trim();
+                  setSsoFieldErrors((prev) => ({ ...prev, identity_provider_url: value ? '' : 'Identity Provider URL is required.' }));
+                }}
                 placeholder="https://idp.example.com/saml"
+                className={ssoFieldErrors.identity_provider_url ? 'enterprise-input-invalid' : ''}
+                aria-invalid={Boolean(ssoFieldErrors.identity_provider_url)}
+                aria-describedby={ssoFieldErrors.identity_provider_url ? 'enterprise-sso-idp-url-error' : undefined}
               />
+              <FieldError id="enterprise-sso-idp-url-error" message={ssoFieldErrors.identity_provider_url} />
             </label>
             <label>
-              Entity ID
+              Entity ID <span className="enterprise-required-marker" aria-hidden="true">*</span>
               <input
                 type="text"
                 value={ssoForm.entity_id}
-                onChange={(event) => setSsoForm((prev) => ({ ...prev, entity_id: event.target.value }))}
+                onChange={(event) => {
+                  setSsoForm((prev) => ({ ...prev, entity_id: event.target.value }));
+                  setSsoFieldErrors((prev) => ({ ...prev, entity_id: '' }));
+                }}
+                onBlur={() => {
+                  const value = String(ssoForm.entity_id || '').trim();
+                  setSsoFieldErrors((prev) => ({ ...prev, entity_id: value ? '' : 'Entity ID is required.' }));
+                }}
                 placeholder="urn:jaspen:enterprise"
+                className={ssoFieldErrors.entity_id ? 'enterprise-input-invalid' : ''}
+                aria-invalid={Boolean(ssoFieldErrors.entity_id)}
+                aria-describedby={ssoFieldErrors.entity_id ? 'enterprise-sso-entity-id-error' : undefined}
               />
+              <FieldError id="enterprise-sso-entity-id-error" message={ssoFieldErrors.entity_id} />
             </label>
           </div>
 
           <label className="enterprise-full">
-            Certificate
+            Certificate <span className="enterprise-required-marker" aria-hidden="true">*</span>
             <textarea
               rows={8}
               value={ssoForm.certificate}
-              onChange={(event) => setSsoForm((prev) => ({ ...prev, certificate: event.target.value }))}
+              onChange={(event) => {
+                setSsoForm((prev) => ({ ...prev, certificate: event.target.value }));
+                setSsoFieldErrors((prev) => ({ ...prev, certificate: '' }));
+              }}
+              onBlur={() => {
+                const value = String(ssoForm.certificate || '').trim();
+                setSsoFieldErrors((prev) => ({ ...prev, certificate: value ? '' : 'Certificate is required.' }));
+              }}
               placeholder="-----BEGIN CERTIFICATE-----"
+              className={ssoFieldErrors.certificate ? 'enterprise-input-invalid' : ''}
+              aria-invalid={Boolean(ssoFieldErrors.certificate)}
+              aria-describedby={ssoFieldErrors.certificate ? 'enterprise-sso-certificate-error' : undefined}
             />
+            <FieldError id="enterprise-sso-certificate-error" message={ssoFieldErrors.certificate} />
           </label>
 
           <label className="enterprise-full">

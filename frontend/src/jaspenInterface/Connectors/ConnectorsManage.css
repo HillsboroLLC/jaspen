@@ -36,7 +36,68 @@
   color: #1d7b42;
 }
 
-/* .connectors-plan-gate keeps its box styling (it's a full upgrade prompt) */
+.connectors-skeleton {
+  margin-top: 14px;
+  border: 1px solid var(--int-border);
+  border-radius: var(--int-radius-lg);
+  background: #fff;
+  padding: 16px;
+  display: grid;
+  gap: 14px;
+}
+
+.connectors-skeleton-layout {
+  display: grid;
+  grid-template-columns: 360px 1fr;
+  gap: 14px;
+}
+
+.connectors-skeleton-list {
+  display: grid;
+  gap: 10px;
+}
+
+.connectors-skeleton-card {
+  border: 1px solid var(--int-border);
+  border-radius: var(--int-radius-md);
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.connectors-skeleton-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.connectors-skeleton-detail {
+  border: 1px solid var(--int-border);
+  border-radius: var(--int-radius-md);
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+}
+
+.connectors-skeleton-detail-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.connectors-skeleton-detail-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.connectors-skeleton-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
 .connectors-plan-gate {
   margin-top: 14px;
   border: 1px solid var(--int-border);
@@ -373,6 +434,10 @@
     grid-template-columns: 1fr;
   }
 
+  .connectors-skeleton-layout {
+    grid-template-columns: 1fr;
+  }
+
   .connectors-plan-gate-grid {
     grid-template-columns: 1fr;
   }
@@ -393,7 +458,8 @@
   }
 
   .connector-core-controls,
-  .connector-field-grid {
+  .connector-field-grid,
+  .connectors-skeleton-form {
     grid-template-columns: 1fr;
   }
 

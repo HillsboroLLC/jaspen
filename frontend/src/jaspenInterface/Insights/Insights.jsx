@@ -22,6 +22,7 @@ import {
 import { Bar, Line, Pie } from 'react-chartjs-2';
 import { Jaspen } from '../Workspace/JaspenClient';
 import ConfirmDialog from '../../shared/components/ConfirmDialog';
+import SkeletonBlock from '../../shared/components/SkeletonLoader';
 import './Insights.css';
 import AppMenu from '../shared/AppMenu';
 
@@ -279,60 +280,82 @@ export default function Insights() {
           </div>
           <small>Max 10MB</small>
         </div>
+        {uploading && (
+          <div className="insights-progress" role="status" aria-live="polite" aria-label="Uploading dataset">
+            <div className="insights-progress-track">
+              <div className="insights-progress-bar insights-progress-bar-indeterminate" />
+            </div>
+            <span>Uploading dataset...</span>
+          </div>
+        )}
       </section>
 
       <section className="insights-panel">
         <div className="insights-row-head">
           <h2>Datasets</h2>
-          {loading && <span className="insights-muted">Refreshing…</span>}
         </div>
-        <div className="insights-table-wrap">
-          <table className="insights-table">
-            <thead>
-              <tr>
-                <th>Filename</th>
-                <th>Rows</th>
-                <th>Columns</th>
-                <th>Date</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {datasets.length === 0 ? (
+        {loading ? (
+          <div className="insights-datasets-skeleton" role="status" aria-live="polite" aria-label="Loading datasets">
+            <SkeletonBlock width="26%" height={12} />
+            {Array.from({ length: 5 }).map((_, idx) => (
+              <div key={`insights-skeleton-${idx}`} className="insights-datasets-skeleton-row">
+                <SkeletonBlock width="32%" height={14} />
+                <SkeletonBlock width="12%" height={14} />
+                <SkeletonBlock width="28%" height={14} />
+                <SkeletonBlock width="20%" height={14} />
+                <SkeletonBlock width="16%" height={30} />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="insights-table-wrap">
+            <table className="insights-table">
+              <thead>
                 <tr>
-                  <td colSpan={5} className="insights-empty">No datasets yet.</td>
+                  <th>Filename</th>
+                  <th>Rows</th>
+                  <th>Columns</th>
+                  <th>Date</th>
+                  <th>Actions</th>
                 </tr>
-              ) : datasets.map((row) => (
-                <tr key={row.id} className={String(activeDatasetId) === String(row.id) ? 'active' : ''}>
-                  <td>{row.filename || 'dataset'}</td>
-                  <td>{row.row_count ?? '—'}</td>
-                  <td>{safeList(row.column_names).join(', ') || '—'}</td>
-                  <td>{formatDate(row.created_at)}</td>
-                  <td>
-                    <div className="insights-actions">
-                      <button
-                        type="button"
-                        className="insights-btn"
-                        onClick={() => onAnalyze(row.id)}
-                        disabled={analyzing || Boolean(deletingDatasetId)} aria-disabled={analyzing || Boolean(deletingDatasetId)}
-                      >
-                        {analyzing && String(activeDatasetId) === String(row.id) ? 'Analyzing…' : 'Analyze'}
-                      </button>
-                      <button
-                        type="button"
-                        className="insights-btn danger"
-                        onClick={() => onDeleteDataset(row.id)}
-                        disabled={analyzing || deletingDatasetId === String(row.id)} aria-disabled={analyzing || deletingDatasetId === String(row.id)}
-                      >
-                        {deletingDatasetId === String(row.id) ? 'Deleting…' : 'Delete'}
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {datasets.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="insights-empty">No datasets yet.</td>
+                  </tr>
+                ) : datasets.map((row) => (
+                  <tr key={row.id} className={String(activeDatasetId) === String(row.id) ? 'active' : ''}>
+                    <td>{row.filename || 'dataset'}</td>
+                    <td>{row.row_count ?? '—'}</td>
+                    <td>{safeList(row.column_names).join(', ') || '—'}</td>
+                    <td>{formatDate(row.created_at)}</td>
+                    <td>
+                      <div className="insights-actions">
+                        <button
+                          type="button"
+                          className="insights-btn"
+                          onClick={() => onAnalyze(row.id)}
+                          disabled={analyzing || Boolean(deletingDatasetId)} aria-disabled={analyzing || Boolean(deletingDatasetId)}
+                        >
+                          {analyzing && String(activeDatasetId) === String(row.id) ? 'Analyzing…' : 'Analyze'}
+                        </button>
+                        <button
+                          type="button"
+                          className="insights-btn danger"
+                          onClick={() => onDeleteDataset(row.id)}
+                          disabled={analyzing || deletingDatasetId === String(row.id)} aria-disabled={analyzing || deletingDatasetId === String(row.id)}
+                        >
+                          {deletingDatasetId === String(row.id) ? 'Deleting…' : 'Delete'}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
       <section className="insights-panel">
@@ -357,6 +380,14 @@ export default function Insights() {
             {analyzing ? 'Analyzing…' : 'Analyze'}
           </button>
         </div>
+        {analyzing && (
+          <div className="insights-progress" role="status" aria-live="polite" aria-label="Analyzing dataset">
+            <div className="insights-progress-track">
+              <div className="insights-progress-bar insights-progress-bar-indeterminate" />
+            </div>
+            <span>Analyzing dataset...</span>
+          </div>
+        )}
 
         {error && <div className="insights-error">{error}</div>}
 

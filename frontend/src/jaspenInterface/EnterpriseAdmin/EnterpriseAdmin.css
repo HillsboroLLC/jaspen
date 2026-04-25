@@ -197,6 +197,24 @@
   box-shadow: 0 0 0 3px rgba(78, 105, 167, 0.15);
 }
 
+.enterprise-required-legend {
+  margin: -2px 0 10px;
+  font-size: 12px;
+  color: #4a6297;
+}
+
+.enterprise-required-marker {
+  color: var(--color-status-danger, #c0392b);
+  font-weight: 700;
+}
+
+.enterprise-input-invalid,
+.enterprise-grid-two input.enterprise-input-invalid,
+.enterprise-full textarea.enterprise-input-invalid {
+  border-color: var(--color-status-danger, #c0392b);
+  box-shadow: 0 0 0 2px rgba(192, 57, 43, 0.12);
+}
+
 .enterprise-checkbox {
   margin-top: 12px;
   display: flex;

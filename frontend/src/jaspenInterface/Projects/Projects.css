@@ -109,6 +109,42 @@
   color: #8a2534;
 }
 
+.projects-skeleton {
+  margin-top: 16px;
+  border: 1px solid var(--int-border);
+  border-radius: var(--int-radius-lg);
+  background: #fff;
+  padding: 16px;
+  display: grid;
+  gap: 14px;
+}
+
+.projects-skeleton-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.projects-skeleton-card {
+  border: 1px solid var(--int-border);
+  border-radius: var(--int-radius-lg);
+  background: #fff;
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.projects-skeleton-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.projects-skeleton-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .projects-group {
   margin-top: 18px;
 }

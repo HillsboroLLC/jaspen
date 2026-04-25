@@ -4,6 +4,7 @@ import { API_BASE } from '../../config/apiBase';
 import { getPlanConnectorSentence } from '../../shared/billing/planConnectors';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import ConfirmDialog from '../../shared/components/ConfirmDialog';
 import {
   faBookOpen,
   faBars,
@@ -15,6 +16,7 @@ import {
   faShieldHalved,
   faTimes,
 } from '@fortawesome/free-solid-svg-icons';
+import FieldError from '../../shared/components/FieldError';
 import './Account.css';
 import AppMenu from '../shared/AppMenu';
 
@@ -370,11 +372,13 @@ export default function Account() {
   const [connectorPendingId, setConnectorPendingId] = useState('');
   const [jiraConfigModal, setJiraConfigModal] = useState(() => emptyJiraModalState());
   const [jiraConfigError, setJiraConfigError] = useState('');
+  const [jiraConfigFieldErrors, setJiraConfigFieldErrors] = useState({});
   const [jiraConfigSaving, setJiraConfigSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState('overview');
   const [userProfile, setUserProfile] = useState(null);
+  const [discardDialog, setDiscardDialog] = useState(null);
   const [mfaState, setMfaState] = useState({
     loading: false,
     verifying: false,
@@ -388,6 +392,11 @@ export default function Account() {
     disableCode: '',
     error: '',
     success: '',
+  });
+  const [mfaFieldErrors, setMfaFieldErrors] = useState({
+    setupCode: '',
+    disablePassword: '',
+    disableCode: '',
   });
   const [adminState, setAdminState] = useState({
     checked: false,
@@ -409,13 +418,63 @@ export default function Account() {
   };
 
   const hasUnsavedChanges = () => hasJiraModalUnsavedChanges(jiraConfigModal) || hasAdminDraftUnsavedChanges();
+  const jiraFieldDescribedBy = (fieldName) => {
+    const ids = [];
+    if (jiraConfigFieldErrors[fieldName]) ids.push(`account-connector-${fieldName}-error`);
+    if (jiraConfigError) ids.push('account-jira-modal-error');
+    return ids.length ? ids.join(' ') : undefined;
+  };
 
-  const confirmDiscardUnsavedChanges = (
+  useEffect(() => {
+    if (!jiraConfigModal?.open || !Object.keys(jiraConfigFieldErrors || {}).length) return;
+    const data = jiraConfigModal?.data || {};
+    const storedFlags = jiraConfigModal?.storedFlags || {};
+    const hasValue = (key) => String(data[key] || '').trim().length > 0;
+    const hasStoredOrValue = (key) => Boolean(storedFlags[key]) || hasValue(key);
+    const hasSnowflakeCredential = hasStoredOrValue('snowflake_password') || hasStoredOrValue('snowflake_private_key');
+    const next = {};
+    Object.entries(jiraConfigFieldErrors).forEach(([field, message]) => {
+      let resolved = false;
+      if (field === 'snowflake_password' || field === 'snowflake_private_key') {
+        resolved = hasSnowflakeCredential;
+      } else if (
+        field.endsWith('_api_token')
+        || field.endsWith('_password')
+        || field.endsWith('_secret')
+        || field === 'salesforce_refresh_token'
+      ) {
+        resolved = hasStoredOrValue(field);
+      } else {
+        resolved = hasValue(field);
+      }
+      if (!resolved) next[field] = message;
+    });
+    if (Object.keys(next).length !== Object.keys(jiraConfigFieldErrors).length) {
+      setJiraConfigFieldErrors(next);
+    }
+  }, [jiraConfigModal, jiraConfigFieldErrors]);
+
+  const promptDiscardUnsavedChanges = (
+    onProceed,
     prompt = 'You have unsaved changes. Leave this page and discard them?'
-  ) => window.confirm(prompt);
+  ) => {
+    setDiscardDialog({
+      title: 'Discard unsaved changes?',
+      message: prompt,
+      confirmLabel: 'Discard changes',
+      confirmVariant: 'danger',
+      onConfirm: () => {
+        setDiscardDialog(null);
+        onProceed?.();
+      },
+    });
+  };
 
   const guardUnsavedChanges = (onProceed, prompt) => {
-    if (hasUnsavedChanges() && !confirmDiscardUnsavedChanges(prompt)) return;
+    if (hasUnsavedChanges()) {
+      promptDiscardUnsavedChanges(onProceed, prompt);
+      return;
+    }
     onProceed();
   };
 
@@ -605,6 +664,11 @@ export default function Account() {
   };
 
   const resetMfaState = () => {
+    setMfaFieldErrors({
+      setupCode: '',
+      disablePassword: '',
+      disableCode: '',
+    });
     setMfaState((prev) => ({
       ...prev,
       loading: false,
@@ -647,17 +711,25 @@ export default function Account() {
   };
 
   const verifyMfaSetup = async () => {
-    if (!mfaState.code.trim()) {
+    const trimmedCode = String(mfaState.code || '').trim();
+    if (!trimmedCode) {
+      setMfaFieldErrors((prev) => ({ ...prev, setupCode: 'Enter the MFA code from your authenticator app.' }));
       setMfaState((prev) => ({ ...prev, error: 'Enter the MFA code from your authenticator app.' }));
       return;
     }
+    if (trimmedCode.length < 6) {
+      setMfaFieldErrors((prev) => ({ ...prev, setupCode: 'Code must be at least 6 digits.' }));
+      setMfaState((prev) => ({ ...prev, error: 'Please fix the highlighted MFA field.' }));
+      return;
+    }
+    setMfaFieldErrors((prev) => ({ ...prev, setupCode: '' }));
     setMfaState((prev) => ({ ...prev, verifying: true, error: '', success: '' }));
     try {
       const res = await authFetch(`${API_BASE}/api/v1/auth/mfa/verify`, {
         method: 'POST',
         headers: authHeaders({ 'Content-Type': 'application/json' }, 'POST'),
         credentials: 'include',
-        body: JSON.stringify({ code: mfaState.code.trim() }),
+        body: JSON.stringify({ code: trimmedCode }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -676,10 +748,18 @@ export default function Account() {
   };
 
   const disableMfa = async () => {
-    if (!mfaState.disablePassword.trim() || !mfaState.disableCode.trim()) {
+    const password = String(mfaState.disablePassword || '').trim();
+    const code = String(mfaState.disableCode || '').trim();
+    const nextFieldErrors = {
+      disablePassword: password ? '' : 'Current password is required.',
+      disableCode: code ? '' : 'MFA code is required.',
+    };
+    if (Object.values(nextFieldErrors).some(Boolean)) {
+      setMfaFieldErrors((prev) => ({ ...prev, ...nextFieldErrors }));
       setMfaState((prev) => ({ ...prev, error: 'Enter your password and MFA code to disable.' }));
       return;
     }
+    setMfaFieldErrors((prev) => ({ ...prev, disablePassword: '', disableCode: '' }));
     setMfaState((prev) => ({ ...prev, disabling: true, error: '', success: '' }));
     try {
       const res = await authFetch(`${API_BASE}/api/v1/auth/mfa/disable`, {
@@ -687,8 +767,8 @@ export default function Account() {
         headers: authHeaders({ 'Content-Type': 'application/json' }, 'POST'),
         credentials: 'include',
         body: JSON.stringify({
-          current_password: mfaState.disablePassword,
-          code: mfaState.disableCode.trim(),
+          current_password: password,
+          code,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -702,6 +782,7 @@ export default function Account() {
         disableCode: '',
         success: data?.message || 'MFA disabled.',
       }));
+      setMfaFieldErrors((prev) => ({ ...prev, disablePassword: '', disableCode: '' }));
       refreshUserProfile();
     } catch (error) {
       setMfaState((prev) => ({ ...prev, disabling: false, error: error.message || 'Unable to disable MFA.' }));
@@ -1175,6 +1256,7 @@ export default function Account() {
 
     updateConnectorDraft(connector.id, { connection_status: nextStatus });
     setJiraConfigError('');
+    setJiraConfigFieldErrors({});
     setJiraConfigSaving(false);
     setJiraConfigModal({
       open: true,
@@ -1190,8 +1272,11 @@ export default function Account() {
 
   const closeJiraConfigModal = (revertToPrevious = true, forceClose = false) => {
     if (!forceClose && hasJiraModalUnsavedChanges(jiraConfigModal)) {
-      const confirmed = confirmDiscardUnsavedChanges('You have unsaved connector changes. Discard them?');
-      if (!confirmed) return;
+      promptDiscardUnsavedChanges(
+        () => closeJiraConfigModal(revertToPrevious, true),
+        'You have unsaved connector changes. Discard them?'
+      );
+      return;
     }
     if (revertToPrevious && jiraConfigModal?.open && jiraConfigModal.intentEnable && jiraConfigModal.connectorId) {
       updateConnectorDraft(jiraConfigModal.connectorId, { connection_status: jiraConfigModal.revertStatus || 'disconnected' });
@@ -1199,7 +1284,47 @@ export default function Account() {
     setJiraConfigModal(emptyJiraModalState());
     setJiraConfigSaving(false);
     setJiraConfigError('');
+    setJiraConfigFieldErrors({});
   };
+
+  useEffect(() => {
+    if (!jiraConfigModal?.open) return undefined;
+    const onKeyDown = (event) => {
+      if (event.key !== 'Escape') return;
+      if (hasJiraModalUnsavedChanges(jiraConfigModal)) {
+        setDiscardDialog({
+          title: 'Discard unsaved changes?',
+          message: 'You have unsaved connector changes. Discard them?',
+          confirmLabel: 'Discard changes',
+          confirmVariant: 'danger',
+          onConfirm: () => {
+            setDiscardDialog(null);
+            if (jiraConfigModal.intentEnable && jiraConfigModal.connectorId) {
+              updateConnectorDraft(jiraConfigModal.connectorId, {
+                connection_status: jiraConfigModal.revertStatus || 'disconnected',
+              });
+            }
+            setJiraConfigModal(emptyJiraModalState());
+            setJiraConfigSaving(false);
+            setJiraConfigError('');
+            setJiraConfigFieldErrors({});
+          },
+        });
+        return;
+      }
+      if (jiraConfigModal.intentEnable && jiraConfigModal.connectorId) {
+        updateConnectorDraft(jiraConfigModal.connectorId, {
+          connection_status: jiraConfigModal.revertStatus || 'disconnected',
+        });
+      }
+      setJiraConfigModal(emptyJiraModalState());
+      setJiraConfigSaving(false);
+      setJiraConfigError('');
+      setJiraConfigFieldErrors({});
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [jiraConfigModal]);
 
   const saveJiraConfigAndEnable = async () => {
     const modal = jiraConfigModal;
@@ -1208,6 +1333,7 @@ export default function Account() {
     const connectorLabel = connectorApiLabel(modal.connectorId);
     if (!connector) {
       setJiraConfigError(`Unable to locate ${connectorLabel} connector state.`);
+      setJiraConfigFieldErrors({});
       return;
     }
     const nextDraft = {
@@ -1224,11 +1350,17 @@ export default function Account() {
         jira_issue_type: String(modal.data.jira_issue_type || DEFAULT_JIRA_ISSUE_TYPE).trim() || DEFAULT_JIRA_ISSUE_TYPE,
       };
       const tokenAvailable = Boolean(modal.storedFlags?.jira_api_token) || Boolean(trimmed.jira_api_token);
-      if (!trimmed.jira_base_url || !trimmed.jira_project_key || !trimmed.jira_email) {
+      const nextFieldErrors = {};
+      if (!trimmed.jira_base_url) nextFieldErrors.jira_base_url = 'Jira URL is required.';
+      if (!trimmed.jira_project_key) nextFieldErrors.jira_project_key = 'Jira project key is required.';
+      if (!trimmed.jira_email) nextFieldErrors.jira_email = 'Jira email is required.';
+      if (Object.keys(nextFieldErrors).length > 0) {
+        setJiraConfigFieldErrors(nextFieldErrors);
         setJiraConfigError('Jira URL, project key, and Jira email are required.');
         return;
       }
       if (!tokenAvailable) {
+        setJiraConfigFieldErrors({ jira_api_token: 'Jira API token is required before enabling Jira sync.' });
         setJiraConfigError('Jira API token is required before enabling Jira sync.');
         return;
       }
@@ -1245,11 +1377,16 @@ export default function Account() {
         workfront_api_token: String(modal.data.workfront_api_token || '').trim(),
       };
       const tokenAvailable = Boolean(modal.storedFlags?.workfront_api_token) || Boolean(trimmed.workfront_api_token);
-      if (!trimmed.workfront_base_url || !trimmed.workfront_project_id) {
+      const nextFieldErrors = {};
+      if (!trimmed.workfront_base_url) nextFieldErrors.workfront_base_url = 'Workfront URL is required.';
+      if (!trimmed.workfront_project_id) nextFieldErrors.workfront_project_id = 'Project ID is required.';
+      if (Object.keys(nextFieldErrors).length > 0) {
+        setJiraConfigFieldErrors(nextFieldErrors);
         setJiraConfigError('Workfront URL and project id are required.');
         return;
       }
       if (!tokenAvailable) {
+        setJiraConfigFieldErrors({ workfront_api_token: 'Workfront API token is required before enabling Workfront sync.' });
         setJiraConfigError('Workfront API token is required before enabling Workfront sync.');
         return;
       }
@@ -1264,11 +1401,16 @@ export default function Account() {
         smartsheet_api_token: String(modal.data.smartsheet_api_token || '').trim(),
       };
       const tokenAvailable = Boolean(modal.storedFlags?.smartsheet_api_token) || Boolean(trimmed.smartsheet_api_token);
-      if (!trimmed.smartsheet_base_url || !trimmed.smartsheet_sheet_id) {
+      const nextFieldErrors = {};
+      if (!trimmed.smartsheet_base_url) nextFieldErrors.smartsheet_base_url = 'Smartsheet URL is required.';
+      if (!trimmed.smartsheet_sheet_id) nextFieldErrors.smartsheet_sheet_id = 'Sheet ID is required.';
+      if (Object.keys(nextFieldErrors).length > 0) {
+        setJiraConfigFieldErrors(nextFieldErrors);
         setJiraConfigError('Smartsheet URL and sheet id are required.');
         return;
       }
       if (!tokenAvailable) {
+        setJiraConfigFieldErrors({ smartsheet_api_token: 'Smartsheet API token is required before enabling Smartsheet sync.' });
         setJiraConfigError('Smartsheet API token is required before enabling Smartsheet sync.');
         return;
       }
@@ -1286,11 +1428,20 @@ export default function Account() {
       };
       const hasSecret = Boolean(modal.storedFlags?.salesforce_client_secret) || Boolean(trimmed.salesforce_client_secret);
       const hasRefresh = Boolean(modal.storedFlags?.salesforce_refresh_token) || Boolean(trimmed.salesforce_refresh_token);
-      if (!trimmed.salesforce_auth_base_url || !trimmed.salesforce_instance_url || !trimmed.salesforce_client_id) {
+      const nextFieldErrors = {};
+      if (!trimmed.salesforce_auth_base_url) nextFieldErrors.salesforce_auth_base_url = 'Auth base URL is required.';
+      if (!trimmed.salesforce_instance_url) nextFieldErrors.salesforce_instance_url = 'Instance URL is required.';
+      if (!trimmed.salesforce_client_id) nextFieldErrors.salesforce_client_id = 'Client ID is required.';
+      if (Object.keys(nextFieldErrors).length > 0) {
+        setJiraConfigFieldErrors(nextFieldErrors);
         setJiraConfigError('Salesforce auth base URL, instance URL, and client id are required.');
         return;
       }
       if (!hasSecret || !hasRefresh) {
+        const tokenErrors = {};
+        if (!hasSecret) tokenErrors.salesforce_client_secret = 'Client secret is required before enabling.';
+        if (!hasRefresh) tokenErrors.salesforce_refresh_token = 'Refresh token is required before enabling.';
+        setJiraConfigFieldErrors(tokenErrors);
         setJiraConfigError('Salesforce client secret and refresh token are required before enabling.');
         return;
       }
@@ -1314,11 +1465,22 @@ export default function Account() {
       };
       const hasPassword = Boolean(modal.storedFlags?.snowflake_password) || Boolean(trimmed.snowflake_password);
       const hasPrivateKey = Boolean(modal.storedFlags?.snowflake_private_key) || Boolean(trimmed.snowflake_private_key);
-      if (!trimmed.snowflake_account || !trimmed.snowflake_warehouse || !trimmed.snowflake_database || !trimmed.snowflake_schema || !trimmed.snowflake_user) {
+      const nextFieldErrors = {};
+      if (!trimmed.snowflake_account) nextFieldErrors.snowflake_account = 'Account is required.';
+      if (!trimmed.snowflake_warehouse) nextFieldErrors.snowflake_warehouse = 'Warehouse is required.';
+      if (!trimmed.snowflake_database) nextFieldErrors.snowflake_database = 'Database is required.';
+      if (!trimmed.snowflake_schema) nextFieldErrors.snowflake_schema = 'Schema is required.';
+      if (!trimmed.snowflake_user) nextFieldErrors.snowflake_user = 'User is required.';
+      if (Object.keys(nextFieldErrors).length > 0) {
+        setJiraConfigFieldErrors(nextFieldErrors);
         setJiraConfigError('Snowflake account, warehouse, database, schema, and user are required.');
         return;
       }
       if (!hasPassword && !hasPrivateKey) {
+        setJiraConfigFieldErrors({
+          snowflake_password: 'Provide password or private key before enabling.',
+          snowflake_private_key: 'Provide private key or password before enabling.',
+        });
         setJiraConfigError('Snowflake password or private key is required before enabling.');
         return;
       }
@@ -1340,11 +1502,16 @@ export default function Account() {
         oracle_fusion_business_unit: String(modal.data.oracle_fusion_business_unit || '').trim(),
       };
       const hasPassword = Boolean(modal.storedFlags?.oracle_fusion_password) || Boolean(trimmed.oracle_fusion_password);
-      if (!trimmed.oracle_fusion_base_url || !trimmed.oracle_fusion_username) {
+      const nextFieldErrors = {};
+      if (!trimmed.oracle_fusion_base_url) nextFieldErrors.oracle_fusion_base_url = 'Base URL is required.';
+      if (!trimmed.oracle_fusion_username) nextFieldErrors.oracle_fusion_username = 'Username is required.';
+      if (Object.keys(nextFieldErrors).length > 0) {
+        setJiraConfigFieldErrors(nextFieldErrors);
         setJiraConfigError('Oracle Fusion URL and username are required.');
         return;
       }
       if (!hasPassword) {
+        setJiraConfigFieldErrors({ oracle_fusion_password: 'Oracle Fusion password is required before enabling.' });
         setJiraConfigError('Oracle Fusion password is required before enabling.');
         return;
       }
@@ -1361,11 +1528,16 @@ export default function Account() {
         servicenow_table_allowlist: String(modal.data.servicenow_table_allowlist || '').trim(),
       };
       const hasPassword = Boolean(modal.storedFlags?.servicenow_password) || Boolean(trimmed.servicenow_password);
-      if (!trimmed.servicenow_instance_url || !trimmed.servicenow_username) {
+      const nextFieldErrors = {};
+      if (!trimmed.servicenow_instance_url) nextFieldErrors.servicenow_instance_url = 'Instance URL is required.';
+      if (!trimmed.servicenow_username) nextFieldErrors.servicenow_username = 'Username is required.';
+      if (Object.keys(nextFieldErrors).length > 0) {
+        setJiraConfigFieldErrors(nextFieldErrors);
         setJiraConfigError('ServiceNow instance URL and username are required.');
         return;
       }
       if (!hasPassword) {
+        setJiraConfigFieldErrors({ servicenow_password: 'ServiceNow password is required before enabling.' });
         setJiraConfigError('ServiceNow password is required before enabling.');
         return;
       }
@@ -1385,11 +1557,20 @@ export default function Account() {
       };
       const hasConsumerSecret = Boolean(modal.storedFlags?.netsuite_consumer_secret) || Boolean(trimmed.netsuite_consumer_secret);
       const hasTokenSecret = Boolean(modal.storedFlags?.netsuite_token_secret) || Boolean(trimmed.netsuite_token_secret);
-      if (!trimmed.netsuite_account_id || !trimmed.netsuite_consumer_key || !trimmed.netsuite_token_id) {
+      const nextFieldErrors = {};
+      if (!trimmed.netsuite_account_id) nextFieldErrors.netsuite_account_id = 'Account ID is required.';
+      if (!trimmed.netsuite_consumer_key) nextFieldErrors.netsuite_consumer_key = 'Consumer key is required.';
+      if (!trimmed.netsuite_token_id) nextFieldErrors.netsuite_token_id = 'Token ID is required.';
+      if (Object.keys(nextFieldErrors).length > 0) {
+        setJiraConfigFieldErrors(nextFieldErrors);
         setJiraConfigError('NetSuite account id, consumer key, and token id are required.');
         return;
       }
       if (!hasConsumerSecret || !hasTokenSecret) {
+        const tokenErrors = {};
+        if (!hasConsumerSecret) tokenErrors.netsuite_consumer_secret = 'Consumer secret is required before enabling.';
+        if (!hasTokenSecret) tokenErrors.netsuite_token_secret = 'Token secret is required before enabling.';
+        setJiraConfigFieldErrors(tokenErrors);
         setJiraConfigError('NetSuite consumer secret and token secret are required before enabling.');
         return;
       }
@@ -1402,12 +1583,14 @@ export default function Account() {
       nextDraft.external_workspace = trimmed.netsuite_account_id;
     } else {
       setJiraConfigError('Unsupported connector for modal settings.');
+      setJiraConfigFieldErrors({});
       return;
     }
 
     updateConnectorDraft(connector.id, nextDraft);
     setJiraConfigSaving(true);
     setJiraConfigError('');
+    setJiraConfigFieldErrors({});
     const success = await saveConnectorDraft(connector, nextDraft);
     setJiraConfigSaving(false);
     if (success) {
@@ -1620,6 +1803,21 @@ export default function Account() {
   const accountMfaSetupCodeId = 'account-mfa-setup-code';
   const accountMfaDisablePasswordId = 'account-mfa-disable-password';
   const accountMfaDisableCodeId = 'account-mfa-disable-code';
+  const mfaSetupCodeErrorId = 'account-mfa-setup-code-error';
+  const mfaDisablePasswordErrorId = 'account-mfa-disable-password-error';
+  const mfaDisableCodeErrorId = 'account-mfa-disable-code-error';
+  const mfaSetupCodeDescribedBy = [
+    mfaFieldErrors.setupCode ? mfaSetupCodeErrorId : null,
+    mfaFeedbackDescribedBy || null,
+  ].filter(Boolean).join(' ') || undefined;
+  const mfaDisablePasswordDescribedBy = [
+    mfaFieldErrors.disablePassword ? mfaDisablePasswordErrorId : null,
+    mfaFeedbackDescribedBy || null,
+  ].filter(Boolean).join(' ') || undefined;
+  const mfaDisableCodeDescribedBy = [
+    mfaFieldErrors.disableCode ? mfaDisableCodeErrorId : null,
+    mfaFeedbackDescribedBy || null,
+  ].filter(Boolean).join(' ') || undefined;
 
   return (
     <div className="account-page">
@@ -1857,8 +2055,11 @@ export default function Account() {
                           data: { ...prev.data, jira_base_url: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.jira_base_url ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.jira_base_url)}
+                        aria-describedby={jiraFieldDescribedBy('jira_base_url')}
 />
+                      <FieldError id={"account-connector-jira_base_url-error"} message={jiraConfigFieldErrors.jira_base_url} />
                     </label>
                     <label htmlFor={"account-connector-jira_project_key"}>
                       {requiredFieldLabel('Jira project key', true)}
@@ -1872,8 +2073,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, jira_project_key: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.jira_project_key ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.jira_project_key)}
+                        aria-describedby={jiraFieldDescribedBy('jira_project_key')}
 />
+                      <FieldError id={"account-connector-jira_project_key-error"} message={jiraConfigFieldErrors.jira_project_key} />
                     </label>
                     <label htmlFor={"account-connector-jira_email"}>
                       {requiredFieldLabel('Jira email', true)}
@@ -1887,8 +2091,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, jira_email: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.jira_email ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.jira_email)}
+                        aria-describedby={jiraFieldDescribedBy('jira_email')}
 />
+                      <FieldError id={"account-connector-jira_email-error"} message={jiraConfigFieldErrors.jira_email} />
                     </label>
                     <label htmlFor={"account-connector-jira_issue_type"}>
                       Jira issue type
@@ -1902,8 +2109,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, jira_issue_type: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.jira_issue_type ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.jira_issue_type)}
+                        aria-describedby={jiraFieldDescribedBy('jira_issue_type')}
 />
+                      <FieldError id={"account-connector-jira_issue_type-error"} message={jiraConfigFieldErrors.jira_issue_type} />
                     </label>
                     <label className="account-jira-modal-token-field" htmlFor={"account-connector-jira_api_token"}>
                       {requiredFieldLabel('Jira API token', true)}
@@ -1917,8 +2127,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, jira_api_token: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.jira_api_token ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.jira_api_token)}
+                        aria-describedby={jiraFieldDescribedBy('jira_api_token')}
 />
+                      <FieldError id={"account-connector-jira_api_token-error"} message={jiraConfigFieldErrors.jira_api_token} />
                     </label>
                   </>
                 )}
@@ -1936,8 +2149,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, workfront_base_url: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.workfront_base_url ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.workfront_base_url)}
+                        aria-describedby={jiraFieldDescribedBy('workfront_base_url')}
 />
+                      <FieldError id={"account-connector-workfront_base_url-error"} message={jiraConfigFieldErrors.workfront_base_url} />
                     </label>
                     <label htmlFor={"account-connector-workfront_project_id"}>
                       {requiredFieldLabel('Project ID', true)}
@@ -1951,8 +2167,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, workfront_project_id: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.workfront_project_id ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.workfront_project_id)}
+                        aria-describedby={jiraFieldDescribedBy('workfront_project_id')}
 />
+                      <FieldError id={"account-connector-workfront_project_id-error"} message={jiraConfigFieldErrors.workfront_project_id} />
                     </label>
                     <label className="account-jira-modal-token-field" htmlFor={"account-connector-workfront_api_token"}>
                       {requiredFieldLabel('Workfront API token', true)}
@@ -1966,8 +2185,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, workfront_api_token: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.workfront_api_token ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.workfront_api_token)}
+                        aria-describedby={jiraFieldDescribedBy('workfront_api_token')}
 />
+                      <FieldError id={"account-connector-workfront_api_token-error"} message={jiraConfigFieldErrors.workfront_api_token} />
                     </label>
                   </>
                 )}
@@ -1985,8 +2207,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, smartsheet_base_url: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.smartsheet_base_url ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.smartsheet_base_url)}
+                        aria-describedby={jiraFieldDescribedBy('smartsheet_base_url')}
 />
+                      <FieldError id={"account-connector-smartsheet_base_url-error"} message={jiraConfigFieldErrors.smartsheet_base_url} />
                     </label>
                     <label htmlFor={"account-connector-smartsheet_sheet_id"}>
                       {requiredFieldLabel('Sheet ID', true)}
@@ -2000,8 +2225,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, smartsheet_sheet_id: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.smartsheet_sheet_id ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.smartsheet_sheet_id)}
+                        aria-describedby={jiraFieldDescribedBy('smartsheet_sheet_id')}
 />
+                      <FieldError id={"account-connector-smartsheet_sheet_id-error"} message={jiraConfigFieldErrors.smartsheet_sheet_id} />
                     </label>
                     <label className="account-jira-modal-token-field" htmlFor={"account-connector-smartsheet_api_token"}>
                       {requiredFieldLabel('Smartsheet API token', true)}
@@ -2015,8 +2243,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, smartsheet_api_token: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.smartsheet_api_token ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.smartsheet_api_token)}
+                        aria-describedby={jiraFieldDescribedBy('smartsheet_api_token')}
 />
+                      <FieldError id={"account-connector-smartsheet_api_token-error"} message={jiraConfigFieldErrors.smartsheet_api_token} />
                     </label>
                   </>
                 )}
@@ -2034,8 +2265,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, salesforce_auth_base_url: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.salesforce_auth_base_url ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.salesforce_auth_base_url)}
+                        aria-describedby={jiraFieldDescribedBy('salesforce_auth_base_url')}
 />
+                      <FieldError id={"account-connector-salesforce_auth_base_url-error"} message={jiraConfigFieldErrors.salesforce_auth_base_url} />
                     </label>
                     <label htmlFor={"account-connector-salesforce_instance_url"}>
                       {requiredFieldLabel('Instance URL', true)}
@@ -2049,8 +2283,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, salesforce_instance_url: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.salesforce_instance_url ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.salesforce_instance_url)}
+                        aria-describedby={jiraFieldDescribedBy('salesforce_instance_url')}
 />
+                      <FieldError id={"account-connector-salesforce_instance_url-error"} message={jiraConfigFieldErrors.salesforce_instance_url} />
                     </label>
                     <label htmlFor={"account-connector-salesforce_client_id"}>
                       {requiredFieldLabel('Client ID', true)}
@@ -2064,8 +2301,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, salesforce_client_id: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.salesforce_client_id ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.salesforce_client_id)}
+                        aria-describedby={jiraFieldDescribedBy('salesforce_client_id')}
 />
+                      <FieldError id={"account-connector-salesforce_client_id-error"} message={jiraConfigFieldErrors.salesforce_client_id} />
                     </label>
                     <label className="account-jira-modal-token-field" htmlFor={"account-connector-salesforce_client_secret"}>
                       {requiredFieldLabel('Client secret', true)}
@@ -2079,8 +2319,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, salesforce_client_secret: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.salesforce_client_secret ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.salesforce_client_secret)}
+                        aria-describedby={jiraFieldDescribedBy('salesforce_client_secret')}
 />
+                      <FieldError id={"account-connector-salesforce_client_secret-error"} message={jiraConfigFieldErrors.salesforce_client_secret} />
                     </label>
                     <label className="account-jira-modal-token-field" htmlFor={"account-connector-salesforce_refresh_token"}>
                       {requiredFieldLabel('Refresh token', true)}
@@ -2094,8 +2337,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, salesforce_refresh_token: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.salesforce_refresh_token ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.salesforce_refresh_token)}
+                        aria-describedby={jiraFieldDescribedBy('salesforce_refresh_token')}
 />
+                      <FieldError id={"account-connector-salesforce_refresh_token-error"} message={jiraConfigFieldErrors.salesforce_refresh_token} />
                     </label>
                   </>
                 )}
@@ -2113,8 +2359,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, snowflake_account: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.snowflake_account ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.snowflake_account)}
+                        aria-describedby={jiraFieldDescribedBy('snowflake_account')}
 />
+                      <FieldError id={"account-connector-snowflake_account-error"} message={jiraConfigFieldErrors.snowflake_account} />
                     </label>
                     <label htmlFor={"account-connector-snowflake_warehouse"}>
                       {requiredFieldLabel('Warehouse', true)}
@@ -2128,8 +2377,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, snowflake_warehouse: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.snowflake_warehouse ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.snowflake_warehouse)}
+                        aria-describedby={jiraFieldDescribedBy('snowflake_warehouse')}
 />
+                      <FieldError id={"account-connector-snowflake_warehouse-error"} message={jiraConfigFieldErrors.snowflake_warehouse} />
                     </label>
                     <label htmlFor={"account-connector-snowflake_database"}>
                       {requiredFieldLabel('Database', true)}
@@ -2143,8 +2395,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, snowflake_database: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.snowflake_database ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.snowflake_database)}
+                        aria-describedby={jiraFieldDescribedBy('snowflake_database')}
 />
+                      <FieldError id={"account-connector-snowflake_database-error"} message={jiraConfigFieldErrors.snowflake_database} />
                     </label>
                     <label htmlFor={"account-connector-snowflake_schema"}>
                       {requiredFieldLabel('Schema', true)}
@@ -2158,8 +2413,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, snowflake_schema: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.snowflake_schema ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.snowflake_schema)}
+                        aria-describedby={jiraFieldDescribedBy('snowflake_schema')}
 />
+                      <FieldError id={"account-connector-snowflake_schema-error"} message={jiraConfigFieldErrors.snowflake_schema} />
                     </label>
                     <label htmlFor={"account-connector-snowflake_role"}>
                       Role
@@ -2173,8 +2431,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, snowflake_role: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.snowflake_role ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.snowflake_role)}
+                        aria-describedby={jiraFieldDescribedBy('snowflake_role')}
 />
+                      <FieldError id={"account-connector-snowflake_role-error"} message={jiraConfigFieldErrors.snowflake_role} />
                     </label>
                     <label htmlFor={"account-connector-snowflake_user"}>
                       {requiredFieldLabel('User', true)}
@@ -2188,8 +2449,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, snowflake_user: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.snowflake_user ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.snowflake_user)}
+                        aria-describedby={jiraFieldDescribedBy('snowflake_user')}
 />
+                      <FieldError id={"account-connector-snowflake_user-error"} message={jiraConfigFieldErrors.snowflake_user} />
                     </label>
                     <label className="account-jira-modal-token-field" htmlFor={"account-connector-snowflake_password"}>
                       {requiredFieldLabel('Password', true)}
@@ -2203,8 +2467,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, snowflake_password: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.snowflake_password ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.snowflake_password)}
+                        aria-describedby={jiraFieldDescribedBy('snowflake_password')}
 />
+                      <FieldError id={"account-connector-snowflake_password-error"} message={jiraConfigFieldErrors.snowflake_password} />
                     </label>
                     <label className="account-jira-modal-token-field" htmlFor={"account-connector-snowflake_private_key"}>
                       Private key
@@ -2218,8 +2485,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, snowflake_private_key: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.snowflake_private_key ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.snowflake_private_key)}
+                        aria-describedby={jiraFieldDescribedBy('snowflake_private_key')}
 />
+                      <FieldError id={"account-connector-snowflake_private_key-error"} message={jiraConfigFieldErrors.snowflake_private_key} />
                     </label>
                     <label className="account-jira-modal-token-field" htmlFor={"account-connector-snowflake_table_allowlist"}>
                       Table allowlist
@@ -2233,8 +2503,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, snowflake_table_allowlist: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.snowflake_table_allowlist ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.snowflake_table_allowlist)}
+                        aria-describedby={jiraFieldDescribedBy('snowflake_table_allowlist')}
 />
+                      <FieldError id={"account-connector-snowflake_table_allowlist-error"} message={jiraConfigFieldErrors.snowflake_table_allowlist} />
                     </label>
                   </>
                 )}
@@ -2252,8 +2525,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, oracle_fusion_base_url: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.oracle_fusion_base_url ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.oracle_fusion_base_url)}
+                        aria-describedby={jiraFieldDescribedBy('oracle_fusion_base_url')}
 />
+                      <FieldError id={"account-connector-oracle_fusion_base_url-error"} message={jiraConfigFieldErrors.oracle_fusion_base_url} />
                     </label>
                     <label htmlFor={"account-connector-oracle_fusion_username"}>
                       {requiredFieldLabel('Username', true)}
@@ -2267,8 +2543,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, oracle_fusion_username: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.oracle_fusion_username ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.oracle_fusion_username)}
+                        aria-describedby={jiraFieldDescribedBy('oracle_fusion_username')}
 />
+                      <FieldError id={"account-connector-oracle_fusion_username-error"} message={jiraConfigFieldErrors.oracle_fusion_username} />
                     </label>
                     <label className="account-jira-modal-token-field" htmlFor={"account-connector-oracle_fusion_password"}>
                       {requiredFieldLabel('Password', true)}
@@ -2282,8 +2561,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, oracle_fusion_password: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.oracle_fusion_password ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.oracle_fusion_password)}
+                        aria-describedby={jiraFieldDescribedBy('oracle_fusion_password')}
 />
+                      <FieldError id={"account-connector-oracle_fusion_password-error"} message={jiraConfigFieldErrors.oracle_fusion_password} />
                     </label>
                     <label htmlFor={"account-connector-oracle_fusion_business_unit"}>
                       Business unit
@@ -2297,8 +2579,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, oracle_fusion_business_unit: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.oracle_fusion_business_unit ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.oracle_fusion_business_unit)}
+                        aria-describedby={jiraFieldDescribedBy('oracle_fusion_business_unit')}
 />
+                      <FieldError id={"account-connector-oracle_fusion_business_unit-error"} message={jiraConfigFieldErrors.oracle_fusion_business_unit} />
                     </label>
                   </>
                 )}
@@ -2316,8 +2601,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, servicenow_instance_url: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.servicenow_instance_url ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.servicenow_instance_url)}
+                        aria-describedby={jiraFieldDescribedBy('servicenow_instance_url')}
 />
+                      <FieldError id={"account-connector-servicenow_instance_url-error"} message={jiraConfigFieldErrors.servicenow_instance_url} />
                     </label>
                     <label htmlFor={"account-connector-servicenow_username"}>
                       {requiredFieldLabel('Username', true)}
@@ -2331,8 +2619,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, servicenow_username: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.servicenow_username ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.servicenow_username)}
+                        aria-describedby={jiraFieldDescribedBy('servicenow_username')}
 />
+                      <FieldError id={"account-connector-servicenow_username-error"} message={jiraConfigFieldErrors.servicenow_username} />
                     </label>
                     <label className="account-jira-modal-token-field" htmlFor={"account-connector-servicenow_password"}>
                       {requiredFieldLabel('Password', true)}
@@ -2346,8 +2637,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, servicenow_password: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.servicenow_password ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.servicenow_password)}
+                        aria-describedby={jiraFieldDescribedBy('servicenow_password')}
 />
+                      <FieldError id={"account-connector-servicenow_password-error"} message={jiraConfigFieldErrors.servicenow_password} />
                     </label>
                     <label className="account-jira-modal-token-field" htmlFor={"account-connector-servicenow_table_allowlist"}>
                       Table allowlist
@@ -2361,8 +2655,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, servicenow_table_allowlist: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.servicenow_table_allowlist ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.servicenow_table_allowlist)}
+                        aria-describedby={jiraFieldDescribedBy('servicenow_table_allowlist')}
 />
+                      <FieldError id={"account-connector-servicenow_table_allowlist-error"} message={jiraConfigFieldErrors.servicenow_table_allowlist} />
                     </label>
                   </>
                 )}
@@ -2380,8 +2677,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, netsuite_account_id: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.netsuite_account_id ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.netsuite_account_id)}
+                        aria-describedby={jiraFieldDescribedBy('netsuite_account_id')}
 />
+                      <FieldError id={"account-connector-netsuite_account_id-error"} message={jiraConfigFieldErrors.netsuite_account_id} />
                     </label>
                     <label htmlFor={"account-connector-netsuite_consumer_key"}>
                       {requiredFieldLabel('Consumer key', true)}
@@ -2395,8 +2695,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, netsuite_consumer_key: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.netsuite_consumer_key ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.netsuite_consumer_key)}
+                        aria-describedby={jiraFieldDescribedBy('netsuite_consumer_key')}
 />
+                      <FieldError id={"account-connector-netsuite_consumer_key-error"} message={jiraConfigFieldErrors.netsuite_consumer_key} />
                     </label>
                     <label className="account-jira-modal-token-field" htmlFor={"account-connector-netsuite_consumer_secret"}>
                       {requiredFieldLabel('Consumer secret', true)}
@@ -2410,8 +2713,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, netsuite_consumer_secret: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.netsuite_consumer_secret ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.netsuite_consumer_secret)}
+                        aria-describedby={jiraFieldDescribedBy('netsuite_consumer_secret')}
 />
+                      <FieldError id={"account-connector-netsuite_consumer_secret-error"} message={jiraConfigFieldErrors.netsuite_consumer_secret} />
                     </label>
                     <label htmlFor={"account-connector-netsuite_token_id"}>
                       {requiredFieldLabel('Token ID', true)}
@@ -2425,8 +2731,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, netsuite_token_id: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.netsuite_token_id ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.netsuite_token_id)}
+                        aria-describedby={jiraFieldDescribedBy('netsuite_token_id')}
 />
+                      <FieldError id={"account-connector-netsuite_token_id-error"} message={jiraConfigFieldErrors.netsuite_token_id} />
                     </label>
                     <label className="account-jira-modal-token-field" htmlFor={"account-connector-netsuite_token_secret"}>
                       {requiredFieldLabel('Token secret', true)}
@@ -2440,8 +2749,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, netsuite_token_secret: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.netsuite_token_secret ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.netsuite_token_secret)}
+                        aria-describedby={jiraFieldDescribedBy('netsuite_token_secret')}
 />
+                      <FieldError id={"account-connector-netsuite_token_secret-error"} message={jiraConfigFieldErrors.netsuite_token_secret} />
                     </label>
                     <label htmlFor={"account-connector-netsuite_rest_base_url"}>
                       REST base URL
@@ -2455,8 +2767,11 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                           data: { ...prev.data, netsuite_rest_base_url: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+                        className={jiraConfigFieldErrors.netsuite_rest_base_url ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(jiraConfigFieldErrors.netsuite_rest_base_url)}
+                        aria-describedby={jiraFieldDescribedBy('netsuite_rest_base_url')}
 />
+                      <FieldError id={"account-connector-netsuite_rest_base_url-error"} message={jiraConfigFieldErrors.netsuite_rest_base_url} />
                     </label>
                   </>
                 )}
@@ -2628,10 +2943,23 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                       type="text"
                       inputMode="numeric"
                       value={mfaState.code}
-                      onChange={(e) => setMfaState((prev) => ({ ...prev, code: e.target.value }))}
+                      onChange={(e) => {
+                        setMfaState((prev) => ({ ...prev, code: e.target.value }));
+                        setMfaFieldErrors((prev) => ({ ...prev, setupCode: '' }));
+                      }}
+                      onBlur={() => {
+                        const value = String(mfaState.code || '').trim();
+                        let nextError = '';
+                        if (!value) nextError = 'Enter the MFA code from your authenticator app.';
+                        else if (value.length < 6) nextError = 'Code must be at least 6 digits.';
+                        setMfaFieldErrors((prev) => ({ ...prev, setupCode: nextError }));
+                      }}
                       placeholder="123456"
-                      aria-describedby={mfaFeedbackDescribedBy}
+                      className={mfaFieldErrors.setupCode ? 'account-input-invalid' : ''}
+                      aria-invalid={Boolean(mfaFieldErrors.setupCode)}
+                      aria-describedby={mfaSetupCodeDescribedBy}
                     />
+                    <FieldError id={mfaSetupCodeErrorId} message={mfaFieldErrors.setupCode} />
                   </label>
                   <button
                     type="button"
@@ -2666,17 +2994,37 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
                         type="password"
                         placeholder="Current password"
                         value={mfaState.disablePassword}
-                        onChange={(e) => setMfaState((prev) => ({ ...prev, disablePassword: e.target.value }))}
-                        aria-describedby={mfaFeedbackDescribedBy}
+                        onChange={(e) => {
+                          setMfaState((prev) => ({ ...prev, disablePassword: e.target.value }));
+                          setMfaFieldErrors((prev) => ({ ...prev, disablePassword: '' }));
+                        }}
+                        onBlur={() => {
+                          const value = String(mfaState.disablePassword || '').trim();
+                          setMfaFieldErrors((prev) => ({ ...prev, disablePassword: value ? '' : 'Current password is required.' }));
+                        }}
+                        className={mfaFieldErrors.disablePassword ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(mfaFieldErrors.disablePassword)}
+                        aria-describedby={mfaDisablePasswordDescribedBy}
                       />
+                      <FieldError id={mfaDisablePasswordErrorId} message={mfaFieldErrors.disablePassword} />
                       <input
                         id={accountMfaDisableCodeId}
                         type="text"
                         placeholder="MFA code"
                         value={mfaState.disableCode}
-                        onChange={(e) => setMfaState((prev) => ({ ...prev, disableCode: e.target.value }))}
-                        aria-describedby={mfaFeedbackDescribedBy}
+                        onChange={(e) => {
+                          setMfaState((prev) => ({ ...prev, disableCode: e.target.value }));
+                          setMfaFieldErrors((prev) => ({ ...prev, disableCode: '' }));
+                        }}
+                        onBlur={() => {
+                          const value = String(mfaState.disableCode || '').trim();
+                          setMfaFieldErrors((prev) => ({ ...prev, disableCode: value ? '' : 'MFA code is required.' }));
+                        }}
+                        className={mfaFieldErrors.disableCode ? 'account-input-invalid' : ''}
+                        aria-invalid={Boolean(mfaFieldErrors.disableCode)}
+                        aria-describedby={mfaDisableCodeDescribedBy}
                       />
+                      <FieldError id={mfaDisableCodeErrorId} message={mfaFieldErrors.disableCode} />
                     </div>
                     <button
                       type="button"
@@ -2932,6 +3280,15 @@ aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
             </div>
           </section>
         )}
+        <ConfirmDialog
+          isOpen={Boolean(discardDialog)}
+          title={discardDialog?.title || 'Discard unsaved changes?'}
+          message={discardDialog?.message || 'You have unsaved changes. Leave this page and discard them?'}
+          confirmLabel={discardDialog?.confirmLabel || 'Discard changes'}
+          confirmVariant={discardDialog?.confirmVariant || 'danger'}
+          onConfirm={discardDialog?.onConfirm}
+          onCancel={() => setDiscardDialog(null)}
+        />
           </div>
         </div>
       </div>

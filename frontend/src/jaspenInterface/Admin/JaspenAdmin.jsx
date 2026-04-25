@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { API_BASE } from '../../config/apiBase';
 import { buildAuthHeaders } from '../../shared/auth/http';
 import ConfirmDialog from '../../shared/components/ConfirmDialog';
+import FieldError from '../../shared/components/FieldError';
 import Feedback from './Feedback';
 import './JaspenAdmin.css';
 import AppMenu from '../shared/AppMenu';
@@ -177,6 +178,7 @@ export default function JaspenAdmin() {
     reason: '',
   });
   const [recoveryReason, setRecoveryReason] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
   const [confirmDialog, setConfirmDialog] = useState(null);
 
   const openPreview = (path) => {
@@ -430,30 +432,35 @@ export default function JaspenAdmin() {
   const runCreditAction = async () => {
     if (!draft?.id) return;
     const reason = String(creditOp.reason || '').trim();
-    if (!reason) {
-      setMessage('Credit reason is required.');
-      return;
-    }
+    const nextFieldErrors = {};
+    if (!reason) nextFieldErrors.credit_reason = 'Credit reason is required.';
 
     const payload = { mode: creditOp.mode, reason };
     if (creditOp.mode === 'adjust') {
       const delta = Number(creditOp.delta);
       if (!Number.isInteger(delta) || delta === 0) {
-        setMessage('Adjust mode requires a non-zero integer delta.');
-        return;
+        nextFieldErrors.credit_delta = 'Adjust mode requires a non-zero integer delta.';
+      } else {
+        payload.delta = delta;
       }
-      payload.delta = delta;
     } else if (creditOp.mode === 'set') {
       const raw = String(creditOp.value || '').trim();
-      payload.value = raw === '' ? null : Number(raw);
-      if (raw !== '' && (!Number.isFinite(payload.value) || payload.value < 0)) {
-        setMessage('Set mode requires a non-negative number or blank for unlimited.');
-        return;
+      const parsedValue = raw === '' ? null : Number(raw);
+      if (raw !== '' && (!Number.isFinite(parsedValue) || parsedValue < 0)) {
+        nextFieldErrors.credit_value = 'Set mode requires a non-negative number or blank for unlimited.';
+      } else {
+        payload.value = parsedValue;
       }
+    }
+    if (Object.keys(nextFieldErrors).length > 0) {
+      setFieldErrors((prev) => ({ ...prev, ...nextFieldErrors }));
+      setMessage('Please fix the highlighted credit fields.');
+      return;
     }
 
     setPending(true);
     setMessage('');
+    setFieldErrors((prev) => ({ ...prev, credit_reason: '', credit_delta: '', credit_value: '' }));
     try {
       const response = await fetch(`${API_BASE}/api/v1/admin/users/${encodeURIComponent(draft.id)}/credits`, {
         method: 'POST',
@@ -516,9 +523,11 @@ export default function JaspenAdmin() {
     if (!draft?.id) return;
     const reason = String(recoveryReason || '').trim();
     if (!reason) {
-      setMessage('Recovery reason is required.');
+      setFieldErrors((prev) => ({ ...prev, recovery_reason: 'Recovery reason is required.' }));
+      setMessage('Please add a recovery reason.');
       return;
     }
+    setFieldErrors((prev) => ({ ...prev, recovery_reason: '' }));
     setConfirmDialog({
       title: 'Run recovery action',
       message: `Run "${label}" for ${draft.email}?`,
@@ -553,9 +562,11 @@ export default function JaspenAdmin() {
     if (!draft?.id) return;
     const reason = String(recoveryReason || '').trim();
     if (!reason) {
-      setMessage('A reason is required before deactivating a user.');
+      setFieldErrors((prev) => ({ ...prev, recovery_reason: 'A reason is required before deactivating a user.' }));
+      setMessage('Please add a deactivation reason.');
       return;
     }
+    setFieldErrors((prev) => ({ ...prev, recovery_reason: '' }));
     setConfirmDialog({
       title: 'Deactivate user',
       message: `Deactivate ${draft.email}? Their sessions will be invalidated, but their data will stay recoverable for 30 days.`,
@@ -971,12 +982,18 @@ export default function JaspenAdmin() {
 
                 <section className="jas-admin-subsection">
                   <h3>Credit Operations</h3>
+                  <p className="jas-admin-required-legend">
+                    <span className="jas-admin-required-mark" aria-hidden="true">*</span> Required fields
+                  </p>
                   <div className="jas-admin-inline-grid">
                     <label>
                       Mode
                       <select
                         value={creditOp.mode}
-                        onChange={(e) => setCreditOp((prev) => ({ ...prev, mode: e.target.value }))}
+                        onChange={(e) => {
+                          setCreditOp((prev) => ({ ...prev, mode: e.target.value }));
+                          setFieldErrors((prev) => ({ ...prev, credit_delta: '', credit_value: '' }));
+                        }}
                       >
                         {CREDIT_MODE_OPTIONS.map((option) => (
                           <option key={option.value} value={option.value}>{option.label}</option>
@@ -985,34 +1002,75 @@ export default function JaspenAdmin() {
                     </label>
                     {creditOp.mode === 'adjust' && (
                       <label>
-                        Delta
+                        Delta <span className="jas-admin-required-mark" aria-hidden="true">*</span>
                         <input
                           type="number"
                           placeholder="e.g. 500 or -100"
                           value={creditOp.delta}
-                          onChange={(e) => setCreditOp((prev) => ({ ...prev, delta: e.target.value }))}
+                          onChange={(e) => {
+                            setCreditOp((prev) => ({ ...prev, delta: e.target.value }));
+                            setFieldErrors((prev) => ({ ...prev, credit_delta: '' }));
+                          }}
+                          className={fieldErrors.credit_delta ? 'is-invalid' : ''}
+                          aria-invalid={Boolean(fieldErrors.credit_delta)}
+                          aria-describedby={fieldErrors.credit_delta ? 'jas-admin-credit-delta-error' : undefined}
+                          onBlur={() => {
+                            const raw = String(creditOp.delta || '').trim();
+                            const value = Number(raw);
+                            let nextError = '';
+                            if (!raw) nextError = 'Delta is required in adjust mode.';
+                            else if (!Number.isFinite(value) || value === 0) nextError = 'Enter a non-zero delta.';
+                            setFieldErrors((prev) => ({ ...prev, credit_delta: nextError }));
+                          }}
                         />
+                        <FieldError id="jas-admin-credit-delta-error" message={fieldErrors.credit_delta} />
                       </label>
                     )}
                     {creditOp.mode === 'set' && (
                       <label>
-                        Set value
+                        Set value <span className="jas-admin-required-mark" aria-hidden="true">*</span>
                         <input
                           type="number"
                           placeholder="Blank = unlimited"
                           value={creditOp.value}
-                          onChange={(e) => setCreditOp((prev) => ({ ...prev, value: e.target.value }))}
+                          onChange={(e) => {
+                            setCreditOp((prev) => ({ ...prev, value: e.target.value }));
+                            setFieldErrors((prev) => ({ ...prev, credit_value: '' }));
+                          }}
+                          className={fieldErrors.credit_value ? 'is-invalid' : ''}
+                          aria-invalid={Boolean(fieldErrors.credit_value)}
+                          aria-describedby={fieldErrors.credit_value ? 'jas-admin-credit-value-error' : undefined}
+                          onBlur={() => {
+                            const raw = String(creditOp.value || '').trim();
+                            const parsed = Number(raw);
+                            let nextError = '';
+                            if (!raw) nextError = 'Set value is required in set mode.';
+                            else if (!Number.isFinite(parsed) || parsed < 0) nextError = 'Enter a valid non-negative value.';
+                            setFieldErrors((prev) => ({ ...prev, credit_value: nextError }));
+                          }}
                         />
+                        <FieldError id="jas-admin-credit-value-error" message={fieldErrors.credit_value} />
                       </label>
                     )}
                     <label className="jas-admin-wide">
-                      Reason
+                      Reason <span className="jas-admin-required-mark" aria-hidden="true">*</span>
                       <input
                         type="text"
                         placeholder="Required for audit trail"
                         value={creditOp.reason}
-                        onChange={(e) => setCreditOp((prev) => ({ ...prev, reason: e.target.value }))}
+                        onChange={(e) => {
+                          setCreditOp((prev) => ({ ...prev, reason: e.target.value }));
+                          setFieldErrors((prev) => ({ ...prev, credit_reason: '' }));
+                        }}
+                        className={fieldErrors.credit_reason ? 'is-invalid' : ''}
+                        aria-invalid={Boolean(fieldErrors.credit_reason)}
+                        aria-describedby={fieldErrors.credit_reason ? 'jas-admin-credit-reason-error' : undefined}
+                        onBlur={() => {
+                          const raw = String(creditOp.reason || '').trim();
+                          setFieldErrors((prev) => ({ ...prev, credit_reason: raw ? '' : 'Reason is required.' }));
+                        }}
                       />
+                      <FieldError id="jas-admin-credit-reason-error" message={fieldErrors.credit_reason} />
                     </label>
                   </div>
                   <div className="jas-admin-actions">
@@ -1090,15 +1148,29 @@ export default function JaspenAdmin() {
 
                 <section className="jas-admin-subsection">
                   <h3>Recovery Tools</h3>
+                  <p className="jas-admin-required-legend">
+                    <span className="jas-admin-required-mark" aria-hidden="true">*</span> Required fields
+                  </p>
                   <div className="jas-admin-inline-grid">
                     <label className="jas-admin-wide">
-                      Reason
+                      Reason <span className="jas-admin-required-mark" aria-hidden="true">*</span>
                       <input
                         type="text"
                         placeholder="Required for recovery actions"
                         value={recoveryReason}
-                        onChange={(e) => setRecoveryReason(e.target.value)}
+                        onChange={(e) => {
+                          setRecoveryReason(e.target.value);
+                          setFieldErrors((prev) => ({ ...prev, recovery_reason: '' }));
+                        }}
+                        className={fieldErrors.recovery_reason ? 'is-invalid' : ''}
+                        aria-invalid={Boolean(fieldErrors.recovery_reason)}
+                        aria-describedby={fieldErrors.recovery_reason ? 'jas-admin-recovery-reason-error' : undefined}
+                        onBlur={() => {
+                          const raw = String(recoveryReason || '').trim();
+                          setFieldErrors((prev) => ({ ...prev, recovery_reason: raw ? '' : 'Reason is required for recovery actions.' }));
+                        }}
                       />
+                      <FieldError id="jas-admin-recovery-reason-error" message={fieldErrors.recovery_reason} />
                     </label>
                   </div>
                   {draft.deactivated_at && (

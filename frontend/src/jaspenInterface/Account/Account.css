@@ -851,7 +851,8 @@
   color: #1f355c;
 }
 
-.account-jira-modal-grid input[aria-describedby="account-jira-modal-error"] {
+.account-jira-modal-grid input.account-input-invalid,
+.account-jira-modal-grid input[aria-invalid="true"] {
   border-color: var(--color-status-danger, #c0392b);
   box-shadow: 0 0 0 2px rgba(192, 57, 43, 0.12);
 }
@@ -1187,6 +1188,12 @@
   font-size: 0.9rem;
 }
 
+.account-security-code input.account-input-invalid,
+.account-security-code input[aria-invalid="true"] {
+  border-color: var(--color-status-danger, #c0392b);
+  box-shadow: 0 0 0 2px rgba(192, 57, 43, 0.12);
+}
+
 .account-security-backups {
   margin-top: 8px;
   padding: 10px;
@@ -1229,6 +1236,12 @@
   border-radius: var(--int-radius-sm);
   padding: 8px 10px;
   font-size: 0.85rem;
+}
+
+.account-security-disable-fields input.account-input-invalid,
+.account-security-disable-fields input[aria-invalid="true"] {
+  border-color: var(--color-status-danger, #c0392b);
+  box-shadow: 0 0 0 2px rgba(192, 57, 43, 0.12);
 }
 
 .account-security-error {

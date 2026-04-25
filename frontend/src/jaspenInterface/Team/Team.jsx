@@ -4,6 +4,7 @@ import { API_BASE } from '../../config/apiBase';
 import { useAuth } from '../../shared/auth/AuthContext';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import ConfirmDialog from '../../shared/components/ConfirmDialog';
+import FieldError from '../../shared/components/FieldError';
 import './Team.css';
 import AppMenu from '../shared/AppMenu';
 
@@ -152,6 +153,8 @@ export default function Team({ mode = 'team' }) {
 
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState('collaborator');
+  const [inviteFieldErrors, setInviteFieldErrors] = useState({});
+  const [orgNameFieldError, setOrgNameFieldError] = useState('');
   const [sharingDrafts, setSharingDrafts] = useState({});
   const [isGlobalAdmin, setIsGlobalAdmin] = useState(false);
   const [previewRole, setPreviewRole] = useState(PREVIEW_ROLE_ACTUAL);
@@ -317,9 +320,11 @@ export default function Team({ mode = 'team' }) {
     if (!canManageMembers || previewModeActive || !activeOrgId) return;
     const nextName = String(orgNameDraft || '').trim();
     if (!nextName) {
+      setOrgNameFieldError(`${teamNameLabel} is required.`);
       setError(`${teamNameLabel} is required.`);
       return;
     }
+    setOrgNameFieldError('');
     if (nextName === String(activeOrg?.name || '').trim()) return;
     setBusy(true);
     setNotice('');
@@ -341,16 +346,33 @@ export default function Team({ mode = 'team' }) {
   const onInvite = async (event) => {
     event.preventDefault();
     if (!canManageMembers || previewModeActive || !activeOrgId) return;
+    const normalizedEmail = String(inviteEmail || '').trim().toLowerCase();
+    const nextFieldErrors = {};
+    if (!normalizedEmail) {
+      nextFieldErrors.inviteEmail = 'Invite email is required.';
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      nextFieldErrors.inviteEmail = 'Enter a valid email address.';
+    }
+    if (!String(inviteRole || '').trim()) {
+      nextFieldErrors.inviteRole = 'Role is required.';
+    }
+    if (Object.keys(nextFieldErrors).length > 0) {
+      setInviteFieldErrors(nextFieldErrors);
+      setError('Please fix the highlighted invite fields.');
+      return;
+    }
+
     setBusy(true);
     setNotice('');
     setError('');
     try {
       const result = await teamFetch(`/api/v1/teams/${encodeURIComponent(activeOrgId)}/invite`, {
         method: 'POST',
-        body: JSON.stringify({ email: inviteEmail, role: inviteRole }),
+        body: JSON.stringify({ email: normalizedEmail, role: inviteRole }),
       });
       setInviteEmail('');
       setInviteRole('collaborator');
+      setInviteFieldErrors({});
       await loadAll();
       setNotice(result?.email_error ? `Invite saved, but email failed: ${result.email_error}` : 'Invite sent.');
     } catch (err) {
@@ -671,10 +693,21 @@ export default function Team({ mode = 'team' }) {
               <input
                 type="text"
                 value={orgNameDraft}
-                onChange={(event) => setOrgNameDraft(event.target.value)}
+                onChange={(event) => {
+                  setOrgNameDraft(event.target.value);
+                  setOrgNameFieldError('');
+                }}
+                onBlur={() => {
+                  const nextName = String(orgNameDraft || '').trim();
+                  setOrgNameFieldError(nextName ? '' : `${teamNameLabel} is required.`);
+                }}
                 disabled={busy || !canManageMembers || previewModeActive}
                 style={{ minWidth: 240 }}
+                className={orgNameFieldError ? 'is-invalid' : ''}
+                aria-invalid={Boolean(orgNameFieldError)}
+                aria-describedby={orgNameFieldError ? 'team-org-name-error' : undefined}
               />
+              <FieldError id="team-org-name-error" message={orgNameFieldError} />
               <button
                 type="button"
                 className="team-btn ghost int-btn int-btn-ghost"
@@ -959,23 +992,62 @@ export default function Team({ mode = 'team' }) {
             <div className="team-card">
               <h2>Invite Members</h2>
               <form className="team-invite-form" onSubmit={onInvite}>
-                <input
-                  type="email"
-                  placeholder="name@company.com"
-                  value={inviteEmail}
-                  onChange={(event) => setInviteEmail(event.target.value)}
-                  disabled={!canManageMembers || busy || previewModeActive}
-                  required
-                />
-                <select
-                  value={inviteRole}
-                  onChange={(event) => setInviteRole(event.target.value)}
-                  disabled={!canManageMembers || busy || previewModeActive}
-                >
-                  {INVITE_ROLE_OPTIONS.map((role) => (
-                    <option key={role} value={role}>{role}</option>
-                  ))}
-                </select>
+                <p className="team-required-legend">
+                  <span className="team-required-mark" aria-hidden="true">*</span> Required fields
+                </p>
+                <div className="team-invite-field">
+                  <label htmlFor="team-invite-email" className="team-field-label">
+                    Invite email <span className="team-required-mark" aria-hidden="true">*</span>
+                  </label>
+                  <input
+                    id="team-invite-email"
+                    type="email"
+                    placeholder="name@company.com"
+                    value={inviteEmail}
+                    onChange={(event) => {
+                      setInviteEmail(event.target.value);
+                      setInviteFieldErrors((prev) => ({ ...prev, inviteEmail: '' }));
+                    }}
+                    onBlur={() => {
+                      const normalizedEmail = String(inviteEmail || '').trim().toLowerCase();
+                      if (!normalizedEmail) {
+                        setInviteFieldErrors((prev) => ({ ...prev, inviteEmail: 'Invite email is required.' }));
+                      } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+                        setInviteFieldErrors((prev) => ({ ...prev, inviteEmail: 'Enter a valid email address.' }));
+                      }
+                    }}
+                    disabled={!canManageMembers || busy || previewModeActive}
+                    required
+                    aria-required="true"
+                    className={inviteFieldErrors.inviteEmail ? 'is-invalid' : ''}
+                    aria-invalid={Boolean(inviteFieldErrors.inviteEmail)}
+                    aria-describedby={inviteFieldErrors.inviteEmail ? 'team-invite-email-error' : undefined}
+                  />
+                  <FieldError id="team-invite-email-error" message={inviteFieldErrors.inviteEmail} />
+                </div>
+                <div className="team-invite-field">
+                  <label htmlFor="team-invite-role" className="team-field-label">
+                    Role <span className="team-required-mark" aria-hidden="true">*</span>
+                  </label>
+                  <select
+                    id="team-invite-role"
+                    value={inviteRole}
+                    onChange={(event) => {
+                      setInviteRole(event.target.value);
+                      setInviteFieldErrors((prev) => ({ ...prev, inviteRole: '' }));
+                    }}
+                    disabled={!canManageMembers || busy || previewModeActive}
+                    aria-required="true"
+                    className={inviteFieldErrors.inviteRole ? 'is-invalid' : ''}
+                    aria-invalid={Boolean(inviteFieldErrors.inviteRole)}
+                    aria-describedby={inviteFieldErrors.inviteRole ? 'team-invite-role-error' : undefined}
+                  >
+                    {INVITE_ROLE_OPTIONS.map((role) => (
+                      <option key={role} value={role}>{role}</option>
+                    ))}
+                  </select>
+                  <FieldError id="team-invite-role-error" message={inviteFieldErrors.inviteRole} />
+                </div>
                 <button type="submit" className="team-btn" disabled={!canManageMembers || busy || previewModeActive} aria-disabled={!canManageMembers || busy || previewModeActive}>
                   Send invite
                 </button>

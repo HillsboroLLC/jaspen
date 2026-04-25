@@ -180,6 +180,17 @@
   color: var(--int-text);
 }
 
+.jas-admin-required-legend {
+  margin: -4px 0 10px;
+  font-size: 0.8rem;
+  color: var(--int-text-sub);
+}
+
+.jas-admin-required-mark {
+  color: var(--color-status-danger, #c0392b);
+  font-weight: 700;
+}
+
 .jas-admin-section-head {
   display: flex;
   align-items: flex-start;
@@ -317,6 +328,18 @@
   font-size: 0.92rem;
   color: var(--int-text);
   background: #fff;
+}
+
+.jas-admin-grid input.is-invalid,
+.jas-admin-grid select.is-invalid,
+.jas-admin-inline-grid input.is-invalid,
+.jas-admin-inline-grid select.is-invalid,
+.jas-admin-grid input[aria-invalid="true"],
+.jas-admin-grid select[aria-invalid="true"],
+.jas-admin-inline-grid input[aria-invalid="true"],
+.jas-admin-inline-grid select[aria-invalid="true"] {
+  border-color: var(--color-status-danger, #c0392b);
+  box-shadow: 0 0 0 2px rgba(192, 57, 43, 0.12);
 }
 
 .jas-admin-wide {

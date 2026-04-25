@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { API_BASE } from '../../config/apiBase';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
+import SkeletonBlock from '../../shared/components/SkeletonLoader';
 import './Activity.css';
 import AppMenu from '../shared/AppMenu';
 
@@ -142,7 +143,20 @@ export default function Activity() {
         />
       </section>
 
-      {loading && <div className="activity-state" role="status" aria-live="polite">Loading activity...</div>}
+      {loading && (
+        <section className="activity-skeleton" role="status" aria-live="polite" aria-label="Loading activity">
+          <SkeletonBlock width="28%" height={14} />
+          <div className="activity-skeleton-list">
+            {Array.from({ length: 5 }).map((_, idx) => (
+              <div key={`activity-skeleton-${idx}`} className="activity-skeleton-item">
+                <SkeletonBlock width="22%" height={12} />
+                <SkeletonBlock width="88%" height={16} />
+                <SkeletonBlock width="44%" height={12} />
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
       {!loading && error && <div className="activity-state activity-state-error" role="status" aria-live="polite">{error}</div>}
       {!loading && !error && events.length === 0 && (
         <div className="activity-state">No matching activity events yet.</div>

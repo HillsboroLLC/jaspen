@@ -10,6 +10,7 @@ import {
 } from '@fortawesome/free-solid-svg-icons';
 import { API_BASE } from '../../config/apiBase';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
+import SkeletonBlock from '../../shared/components/SkeletonLoader';
 import './Projects.css';
 import AppMenu from '../shared/AppMenu';
 
@@ -345,7 +346,28 @@ export default function Projects() {
         </button>
       </section>
 
-      {loading && <div className="projects-state" role="status" aria-live="polite">Loading projects...</div>}
+      {loading && (
+        <section className="projects-skeleton" role="status" aria-live="polite" aria-label="Loading projects">
+          <SkeletonBlock width="24%" height={14} />
+          <div className="projects-skeleton-grid">
+            {Array.from({ length: 6 }).map((_, idx) => (
+              <article key={`projects-skeleton-${idx}`} className="projects-skeleton-card">
+                <div className="projects-skeleton-card-top">
+                  <SkeletonBlock width={20} height={20} />
+                  <SkeletonBlock width={78} height={22} />
+                </div>
+                <SkeletonBlock width="62%" height={22} />
+                <SkeletonBlock width="38%" height={14} />
+                <SkeletonBlock width="30%" height={20} />
+                <div className="projects-skeleton-actions">
+                  <SkeletonBlock width={94} height={34} />
+                  <SkeletonBlock width={106} height={34} />
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
       {!loading && error && <div className="projects-state projects-state-error" role="status" aria-live="polite">{error}</div>}
       {!loading && !error && filtered.length === 0 && (
         <div className="projects-state">No projects found for this filter.</div>
