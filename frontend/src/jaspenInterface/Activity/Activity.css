@@ -65,6 +65,16 @@
   color: #962739;
 }
 
+.activity-empty-state {
+  margin-top: 14px;
+}
+
+.activity-empty-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .activity-skeleton {
   margin-top: 14px;
   border-radius: var(--int-radius-md);

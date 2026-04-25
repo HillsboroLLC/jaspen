@@ -208,6 +208,10 @@
   color: #6f7b9b;
 }
 
+.insights-empty-state {
+  margin-top: 14px;
+}
+
 .insights-results {
   margin-top: 14px;
   display: grid;

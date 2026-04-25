@@ -7,10 +7,12 @@ import {
   faArrowUpRightFromSquare,
   faBoxArchive,
   faDownload,
+  faFolderOpen,
 } from '@fortawesome/free-solid-svg-icons';
 import { API_BASE } from '../../config/apiBase';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import SkeletonBlock from '../../shared/components/SkeletonLoader';
+import EmptyState from '../../homeSections/homeUi/EmptyState';
 import './Projects.css';
 import AppMenu from '../shared/AppMenu';
 
@@ -377,7 +379,32 @@ export default function Projects() {
         </div>
       )}
       {!loading && !error && filtered.length === 0 && (
-        <div className="projects-state">No projects found for this filter.</div>
+        <EmptyState
+          className="projects-empty-state"
+          title="No projects found"
+          description="Adjust your filters or start a new workspace thread to generate projects."
+          icon={<FontAwesomeIcon icon={faFolderOpen} />}
+          action={(
+            <div className="projects-empty-actions">
+              <button
+                type="button"
+                className="int-btn int-btn-ghost"
+                onClick={() => {
+                  setSearch('');
+                  setStatusFilter('All');
+                  setGroupBy('None');
+                  setSortBy('updated');
+                  setSortDir('desc');
+                }}
+              >
+                Reset filters
+              </button>
+              <button type="button" className="int-btn int-btn-primary" onClick={() => navigate('/new')}>
+                Open Jaspen
+              </button>
+            </div>
+          )}
+        />
       )}
 
       {!loading && !error && filtered.length > 0 && grouped.map((group) => (

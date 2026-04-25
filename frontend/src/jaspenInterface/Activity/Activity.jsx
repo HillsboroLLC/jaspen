@@ -1,7 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faClockRotateLeft } from '@fortawesome/free-solid-svg-icons';
 import { API_BASE } from '../../config/apiBase';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import SkeletonBlock from '../../shared/components/SkeletonLoader';
+import EmptyState from '../../homeSections/homeUi/EmptyState';
 import './Activity.css';
 import AppMenu from '../shared/AppMenu';
 
@@ -41,6 +45,7 @@ function authHeaders(method = 'GET') {
 }
 
 export default function Activity() {
+  const navigate = useNavigate();
   const [events, setEvents] = useState([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
@@ -166,7 +171,31 @@ export default function Activity() {
         </div>
       )}
       {!loading && !error && events.length === 0 && (
-        <div className="activity-state">No matching activity events yet.</div>
+        <EmptyState
+          className="activity-empty-state"
+          title="No matching activity events"
+          description="Try resetting filters, or create activity from the workspace."
+          icon={<FontAwesomeIcon icon={faClockRotateLeft} />}
+          action={(
+            <div className="activity-empty-actions">
+              <button
+                type="button"
+                className="int-btn int-btn-ghost"
+                onClick={() => {
+                  setTypeFilter('');
+                  setFromDate('');
+                  setToDate('');
+                  setOffset(0);
+                }}
+              >
+                Reset filters
+              </button>
+              <button type="button" className="int-btn int-btn-primary" onClick={() => navigate('/new')}>
+                Open Jaspen
+              </button>
+            </div>
+          )}
+        />
       )}
 
       {!loading && !error && events.length > 0 && (

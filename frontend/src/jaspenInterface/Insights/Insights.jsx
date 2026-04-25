@@ -23,6 +23,7 @@ import { Bar, Line, Pie } from 'react-chartjs-2';
 import { Jaspen } from '../Workspace/JaspenClient';
 import ConfirmDialog from '../../shared/components/ConfirmDialog';
 import SkeletonBlock from '../../shared/components/SkeletonLoader';
+import EmptyState from '../../homeSections/homeUi/EmptyState';
 import './Insights.css';
 import AppMenu from '../shared/AppMenu';
 
@@ -308,53 +309,63 @@ export default function Insights() {
             ))}
           </div>
         ) : (
-          <div className="insights-table-wrap">
-            <table className="insights-table">
-              <thead>
-                <tr>
-                  <th>Filename</th>
-                  <th>Rows</th>
-                  <th>Columns</th>
-                  <th>Date</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {datasets.length === 0 ? (
+          datasets.length === 0 ? (
+            <EmptyState
+              className="insights-empty-state"
+              title="No datasets yet"
+              description="Upload your first CSV or Excel dataset to start AI analysis."
+              icon={<FontAwesomeIcon icon={faCloudArrowUp} />}
+              action={(
+                <button type="button" className="int-btn int-btn-primary" onClick={() => fileInputRef.current?.click()}>
+                  Upload dataset
+                </button>
+              )}
+            />
+          ) : (
+            <div className="insights-table-wrap">
+              <table className="insights-table">
+                <thead>
                   <tr>
-                    <td colSpan={5} className="insights-empty">No datasets yet.</td>
+                    <th>Filename</th>
+                    <th>Rows</th>
+                    <th>Columns</th>
+                    <th>Date</th>
+                    <th>Actions</th>
                   </tr>
-                ) : datasets.map((row) => (
-                  <tr key={row.id} className={String(activeDatasetId) === String(row.id) ? 'active' : ''}>
-                    <td>{row.filename || 'dataset'}</td>
-                    <td>{row.row_count ?? '—'}</td>
-                    <td>{safeList(row.column_names).join(', ') || '—'}</td>
-                    <td>{formatDate(row.created_at)}</td>
-                    <td>
-                      <div className="insights-actions">
-                        <button
-                          type="button"
-                          className="insights-btn"
-                          onClick={() => onAnalyze(row.id)}
-                          disabled={analyzing || Boolean(deletingDatasetId)} aria-disabled={analyzing || Boolean(deletingDatasetId)}
-                        >
-                          {analyzing && String(activeDatasetId) === String(row.id) ? 'Analyzing…' : 'Analyze'}
-                        </button>
-                        <button
-                          type="button"
-                          className="insights-btn danger"
-                          onClick={() => onDeleteDataset(row.id)}
-                          disabled={analyzing || deletingDatasetId === String(row.id)} aria-disabled={analyzing || deletingDatasetId === String(row.id)}
-                        >
-                          {deletingDatasetId === String(row.id) ? 'Deleting…' : 'Delete'}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {datasets.map((row) => (
+                    <tr key={row.id} className={String(activeDatasetId) === String(row.id) ? 'active' : ''}>
+                      <td>{row.filename || 'dataset'}</td>
+                      <td>{row.row_count ?? '—'}</td>
+                      <td>{safeList(row.column_names).join(', ') || '—'}</td>
+                      <td>{formatDate(row.created_at)}</td>
+                      <td>
+                        <div className="insights-actions">
+                          <button
+                            type="button"
+                            className="insights-btn"
+                            onClick={() => onAnalyze(row.id)}
+                            disabled={analyzing || Boolean(deletingDatasetId)} aria-disabled={analyzing || Boolean(deletingDatasetId)}
+                          >
+                            {analyzing && String(activeDatasetId) === String(row.id) ? 'Analyzing…' : 'Analyze'}
+                          </button>
+                          <button
+                            type="button"
+                            className="insights-btn danger"
+                            onClick={() => onDeleteDataset(row.id)}
+                            disabled={analyzing || deletingDatasetId === String(row.id)} aria-disabled={analyzing || deletingDatasetId === String(row.id)}
+                          >
+                            {deletingDatasetId === String(row.id) ? 'Deleting…' : 'Delete'}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
         )}
       </section>
 
@@ -405,9 +416,23 @@ export default function Insights() {
         )}
 
         {!analysis ? (
-          <div className="insights-empty">
-            Select a dataset and click Analyze to generate AI insights.
-          </div>
+          <EmptyState
+            className="insights-empty-state"
+            title="No analysis yet"
+            description="Select a dataset and run analysis to generate trends, anomalies, opportunities, and risks."
+            icon={<FontAwesomeIcon icon={faLightbulb} />}
+            action={(
+              <button
+                type="button"
+                className="int-btn int-btn-primary"
+                onClick={() => onAnalyze(activeDatasetId || datasets[0]?.id)}
+                disabled={!activeDatasetId && !datasets[0]?.id}
+                aria-disabled={!activeDatasetId && !datasets[0]?.id}
+              >
+                Analyze now
+              </button>
+            )}
+          />
         ) : (
           <div className="insights-results">
             <article className="insights-card full">
