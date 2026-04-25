@@ -68,23 +68,23 @@ function AnimatedAppRoutes({ withShell }) {
         <Suspense fallback={<div className="app-route-loading" aria-live="polite">Loading page…</div>}>
           <Routes location={location}>
             {/* Public */}
-            <Route path="/"               element={withShell(<HomePage />, { showHeader: false, fullBleed: true, noPadding: true })} />
-            <Route path="/login"          element={withShell(<GetInTouch />, { showHeader: false, fullBleed: true, noPadding: true })} />
-            <Route path="/pricing"        element={withShell(<PricingResult />)} />
-            <Route path="/pages/privacy"  element={withShell(<Privacy />)} />
-            <Route path="/pages/terms"    element={withShell(<Terms />)} />
-            <Route path="/pages/support"  element={withShell(<Support />)} />
-            <Route path="/pages/jaspen-score" element={withShell(<JaspenScorePage />, { showHeader: false, fullBleed: true, noPadding: true })} />
-            <Route path="/pages/solutions" element={withShell(<SolutionsPage />, { showHeader: false, fullBleed: true, noPadding: true })} />
-            <Route path="/pages/pricing" element={withShell(<PricingPage />, { showHeader: false, fullBleed: true, noPadding: true })} />
-            <Route path="/pages/api" element={withShell(<ApiPage />, { showHeader: false, fullBleed: true, noPadding: true })} />
-            <Route path="/pages/resources/demos" element={withShell(<DemosPage />, { showHeader: false, fullBleed: true, noPadding: true })} />
-            <Route path="/pages/resources/tutorials" element={withShell(<TutorialsPage />, { showHeader: false, fullBleed: true, noPadding: true })} />
-            <Route path="/pages/resources/integrations" element={withShell(<IntegrationsPage />, { showHeader: false, fullBleed: true, noPadding: true })} />
-            <Route path="/pages/resources/connectors" element={withShell(<ConnectorsPage />, { showHeader: false, fullBleed: true, noPadding: true })} />
-            <Route path="/pages/resources/plugins" element={withShell(<PluginsPage />, { showHeader: false, fullBleed: true, noPadding: true })} />
-            <Route path="/auth/callback"  element={withShell(<AuthCallback />, { showHeader: false, fullBleed: true, noPadding: true })} />
-            <Route path="/reset-password" element={withShell(<ResetPasswordPage />, { showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/"               element={withShell(<HomePage />, { title: 'Jaspen', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/login"          element={withShell(<GetInTouch />, { title: 'Login', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/pricing"        element={withShell(<PricingResult />, { title: 'Pricing' })} />
+            <Route path="/pages/privacy"  element={withShell(<Privacy />, { title: 'Privacy policy' })} />
+            <Route path="/pages/terms"    element={withShell(<Terms />, { title: 'Terms of service' })} />
+            <Route path="/pages/support"  element={withShell(<Support />, { title: 'Support' })} />
+            <Route path="/pages/jaspen-score" element={withShell(<JaspenScorePage />, { title: 'Jaspen Score', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/pages/solutions" element={withShell(<SolutionsPage />, { title: 'Solutions', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/pages/pricing" element={withShell(<PricingPage />, { title: 'Pricing', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/pages/api" element={withShell(<ApiPage />, { title: 'API', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/pages/resources/demos" element={withShell(<DemosPage />, { title: 'Demos', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/pages/resources/tutorials" element={withShell(<TutorialsPage />, { title: 'Tutorials', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/pages/resources/integrations" element={withShell(<IntegrationsPage />, { title: 'Integrations', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/pages/resources/connectors" element={withShell(<ConnectorsPage />, { title: 'Connectors', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/pages/resources/plugins" element={withShell(<PluginsPage />, { title: 'Plugins', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/auth/callback"  element={withShell(<AuthCallback />, { title: 'Authentication', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/reset-password" element={withShell(<ResetPasswordPage />, { title: 'Reset password', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/server-error" element={withShell(<ServerErrorPage />, { title: 'Server error', showHeader: false, fullBleed: true, noPadding: true })} />
 
             {/* Protected (Market) */}
@@ -93,7 +93,7 @@ function AnimatedAppRoutes({ withShell }) {
               element={
                 <ProtectedRoute>
                   <RequireDashboardAccess>
-                    {withShell(<Dashboard />, { showHeader: false, fullBleed: true, noPadding: true })}
+                    {withShell(<Dashboard />, { title: 'Dashboard', showHeader: false, fullBleed: true, noPadding: true })}
                   </RequireDashboardAccess>
                 </ProtectedRoute>
               }
@@ -103,12 +103,12 @@ function AnimatedAppRoutes({ withShell }) {
               element={withShell(<JaspenWorkspace />, { title: 'Jaspen', showHeader: false, fullBleed: true, noPadding: true })}
             />
             <Route path="/strategy" element={<Navigate to="/new" replace />} />
-            <Route path="/projects"  element={<ProtectedRoute>{withShell(<Projects />, { showHeader: false, fullBleed: true, noPadding: true })}</ProtectedRoute>} />
+            <Route path="/projects"  element={<ProtectedRoute>{withShell(<Projects />, { title: 'Projects', showHeader: false, fullBleed: true, noPadding: true })}</ProtectedRoute>} />
             <Route
               path="/scores"
               element={
                 <ProtectedRoute>
-                  {withShell(<Scores />, { showHeader: false, fullBleed: true, noPadding: true })}
+                  {withShell(<Scores />, { title: 'Scores', showHeader: false, fullBleed: true, noPadding: true })}
                 </ProtectedRoute>
               }
             />
@@ -116,7 +116,7 @@ function AnimatedAppRoutes({ withShell }) {
               path="/insights"
               element={
                 <ProtectedRoute>
-                  {withShell(<Insights />, { showHeader: false, fullBleed: true, noPadding: true })}
+                  {withShell(<Insights />, { title: 'Insights', showHeader: false, fullBleed: true, noPadding: true })}
                 </ProtectedRoute>
               }
             />
@@ -124,7 +124,7 @@ function AnimatedAppRoutes({ withShell }) {
               path="/reports"
               element={
                 <ProtectedRoute>
-                  {withShell(<Reports />, { showHeader: false, fullBleed: true, noPadding: true })}
+                  {withShell(<Reports />, { title: 'Reports', showHeader: false, fullBleed: true, noPadding: true })}
                 </ProtectedRoute>
               }
             />
@@ -132,7 +132,7 @@ function AnimatedAppRoutes({ withShell }) {
               path="/activity"
               element={
                 <ProtectedRoute>
-                  {withShell(<Activity />, { showHeader: false, fullBleed: true, noPadding: true })}
+                  {withShell(<Activity />, { title: 'Activity', showHeader: false, fullBleed: true, noPadding: true })}
                 </ProtectedRoute>
               }
             />
@@ -140,7 +140,7 @@ function AnimatedAppRoutes({ withShell }) {
               path="/connectors-manage"
               element={
                 <ProtectedRoute>
-                  {withShell(<ConnectorsManage />, { showHeader: false, fullBleed: true, noPadding: true })}
+                  {withShell(<ConnectorsManage />, { title: 'Data Sources', showHeader: false, fullBleed: true, noPadding: true })}
                 </ProtectedRoute>
               }
             />
@@ -211,7 +211,7 @@ function AnimatedAppRoutes({ withShell }) {
                 </ProtectedRoute>
               }
             />
-            <Route path="/payment"   element={<ProtectedRoute>{withShell(<PaymentPage />)}</ProtectedRoute>} />
+            <Route path="/payment"   element={<ProtectedRoute>{withShell(<PaymentPage />, { title: 'Payment' })}</ProtectedRoute>} />
 
             <Route path="*" element={withShell(<NotFoundPage />, { title: 'Page not found', showHeader: false, fullBleed: true, noPadding: true })} />
           </Routes>
@@ -253,18 +253,8 @@ export default function App() {
     return () => media.removeListener(onChange);
   }, [user?.ui_preferences?.theme]);
 
-  const getDisplayName = (node) =>
-    node?.type?.displayName || node?.type?.name || 'Page';
-
-  const toTitle = (name) =>
-    String(name || 'Page')
-      .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
-      .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-      .replace(/_/g, ' ')
-      .trim();
-
   const withShell = (node, options = {}) => {
-    const title = options.title ?? toTitle(getDisplayName(node));
+    const title = options.title ?? 'Jaspen';
     return (
       <AppShell
         title={title}
