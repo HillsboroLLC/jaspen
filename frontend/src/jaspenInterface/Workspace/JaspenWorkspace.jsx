@@ -5094,84 +5094,61 @@ const liveStatusMessage = useMemo(() => {
 }, [beginBusy, busy, isStreamingReply, streamToolStatus, sessionId]);
 
 async function onBeginProject() {
-    if (!canAccessExecutionTab) {
-      showToast('Upgrade to Essential to begin a project from this scorecard.', 'info');
-      setBillingModalOpen(true);
-      return;
-    }
-    if (!canStartOrgProjects) {
-      showToast('Only creators and admins can start new projects in a shared workspace.', 'info');
-      return;
-    }
-    const suggestedName = deriveIdeaTitle({
-      result: activeScorecard || analysisResult,
-      messages,
-      fallback: 'Untitled Idea',
-    });
+  if (!canAccessExecutionTab) {
+    showToast('Upgrade to Essential to begin a project from this scorecard.', 'info');
+    setBillingModalOpen(true);
+    return;
+  }
+  if (!canStartOrgProjects) {
+    showToast('Only creators and admins can start new projects in a shared workspace.', 'info');
+    return;
+  }
 
-    const ok = window.confirm(
-        `Begin a project from your Jaspen context?\n\n` +
-        `Project name: "${suggestedName}"\n\n` +
-        `This will create/update a project and plan in your Jaspen workspace.`
+  const tid = currentSessionId || sessionId;
+  if (!tid) {
+    showToast('No active session. Start a conversation first.', 'error');
+    return;
+  }
+
+  const ok = window.confirm(
+    `Build an execution plan from this scorecard?\n\n` +
+    `Jaspen will generate a project WBS and open it in the Execution tab.`
+  );
+  if (!ok) return;
+
+  setBeginBusy(true);
+  setBeginMsg('Building your project plan…');
+
+  try {
+    const resp = await fetch(
+      `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(tid)}/ai-wbs`,
+      {
+        method: 'POST',
+        headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
+        credentials: 'include',
+        body: JSON.stringify({ commit: true }),
+      }
     );
-    if (!ok) return;
 
-    setBeginBusy(true);
-    setBeginMsg("Building your project plan…");
+    const json = await resp.json().catch(() => ({}));
 
-    try {
-        // Use your session id when available so future runs "replace" the same project
-        const sid = (currentSessionId || sessionId || `web_${Date.now()}`);
-
-        // IMPORTANT: send the actual scorecard context already rendered in the UI
-        const scorecard = activeScorecard || analysisResult || null;
-
-        const body = {
-            sid,
-            project_name: suggestedName,
-            scorecard_id: effectiveSelectedScorecardId || null,
-            scorecard,                       // <--- this is the key fix
-            dry_run: false,
-            persist: true,
-            mode: 'replace',
-            commit_message: 'begin-project from Jaspen'
-        };
-
-        const resp = await fetch(`${API_BASE}/api/v1/projects/generate/ai`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        });
-
-        const json = await resp.json().catch(() => ({}));
-
-        if (!resp.ok) {
-            const detail = json?.detail || json?.error || `HTTP ${resp.status}`;
-            setBeginMsg(`Could not create the plan: ${detail}`);
-            setTimeout(() => setBeginBusy(false), 1200);
-            return;
-        }
-
-        const projectId = json?.project_id;
-        const redirect = json?.redirect || (projectId
-            ? `/ops/project-planning?projectId=${encodeURIComponent(projectId)}`
-            : null
-        );
-
-        setBeginMsg("Plan ready — opening Project Planning…");
-        setTimeout(() => {
-            if (redirect) {
-                window.location.href = redirect;
-            } else {
-                setBeginBusy(false);
-                showToast('Plan created, but no redirect was provided.', 'info');
-            }
-        }, 600);
-    } catch (e) {
-        console.error('[Begin Project] failed', e);
-        setBeginMsg('Something went wrong. Please try again.');
-        setTimeout(() => setBeginBusy(false), 1200);
+    if (!resp.ok) {
+      const detail = json?.error || json?.detail || `HTTP ${resp.status}`;
+      setBeginMsg(`Could not generate plan: ${detail}`);
+      setTimeout(() => setBeginBusy(false), 2000);
+      return;
     }
+
+    setBeginMsg('Plan ready — opening Execution tab…');
+    setTimeout(() => {
+      setBeginBusy(false);
+      setActiveTab('execution');
+    }, 700);
+  } catch (e) {
+    console.error('[Begin Project] failed', e);
+    setBeginMsg('Something went wrong. Please try again.');
+    setTimeout(() => setBeginBusy(false), 2000);
+  }
 }
 
 function handleOpenBatchIdeaThread(threadId) {
@@ -8522,7 +8499,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                             </button>
                             {useSnapshotSelect && (
                               <div className="jas-select-option-actions">
-                                {!option.isBaseline && !option.isActive && (
+                                {!option.isActive && (
                                   <button
                                     type="button"
                                     className="jas-select-option-action"
