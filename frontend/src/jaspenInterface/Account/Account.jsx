@@ -17,14 +17,13 @@ import {
   faTimes,
 } from '@fortawesome/free-solid-svg-icons';
 import FieldError from '../../shared/components/FieldError';
+import { PLAN_ORDER, PLAN_RANK } from '../../shared/constants/appConstants';
 import './Account.css';
 import AppMenu from '../shared/AppMenu';
 
 function authHeaders(extra = {}, method = 'GET') {
   return buildAuthHeaders(extra, method);
 }
-
-const PLAN_ORDER = ['free', 'essential', 'team', 'enterprise'];
 
 function priceDisplay(plan) {
   if (plan?.price_model === 'per_seat' && Number.isFinite(plan?.monthly_price_usd)) {
@@ -40,12 +39,6 @@ function priceDisplay(plan) {
 }
 const PACK_ORDER = ['pack_1000', 'pack_5000', 'pack_20000'];
 const MODEL_ORDER = ['pluto', 'orbit', 'titan'];
-const PLAN_RANK = {
-  free: 0,
-  essential: 1,
-  team: 2,
-  enterprise: 3,
-};
 const FALLBACK_MODEL_TYPES = {
   pluto: {
     model_type: 'pluto',

@@ -5,11 +5,10 @@ import { useAuth } from '../../shared/auth/AuthContext';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import ConfirmDialog from '../../shared/components/ConfirmDialog';
 import FieldError from '../../shared/components/FieldError';
+import { ROLE_OPTIONS, INVITE_ROLE_OPTIONS } from '../../shared/constants/appConstants';
 import './Team.css';
 import AppMenu from '../shared/AppMenu';
 
-const ROLE_OPTIONS = ['owner', 'admin', 'creator', 'collaborator', 'viewer'];
-const INVITE_ROLE_OPTIONS = ['admin', 'creator', 'collaborator', 'viewer'];
 const VISIBILITY_OPTIONS = ['private', 'team', 'specific'];
 const SEAT_EDITABLE_ROLES = ROLE_OPTIONS.filter((role) => role !== 'owner');
 const SEAT_MODE_DEFAULT = 'default';

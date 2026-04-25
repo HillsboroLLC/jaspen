@@ -4,6 +4,7 @@ import { API_BASE } from '../../config/apiBase';
 import { useAuth } from '../../shared/auth/AuthContext';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import Seo from '../../shared/components/Seo';
+import { PLAN_ORDER, PLAN_RANK } from '../../shared/constants/appConstants';
 
 const FALLBACK_PLANS = [
   {
@@ -67,13 +68,6 @@ const FALLBACK_MODEL_TYPES = {
 };
 
 const MODEL_ORDER = ['pluto', 'orbit', 'titan'];
-const PLAN_ORDER = ['free', 'essential', 'team', 'enterprise'];
-const PLAN_RANK = {
-  free: 0,
-  essential: 1,
-  team: 2,
-  enterprise: 3,
-};
 
 export default function PricingPage() {
   const { user, loading } = useAuth();
@@ -88,7 +82,7 @@ export default function PricingPage() {
       .then((res) => res.json())
       .then((data) => {
         if (data?.plans) {
-          const ordered = ['free', 'essential', 'team', 'enterprise']
+          const ordered = PLAN_ORDER
             .map((key) => data.plans[key])
             .filter(Boolean)
             .map((plan) => ({

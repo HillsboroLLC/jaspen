@@ -16,6 +16,7 @@ import ConfirmDialog from '../../shared/components/ConfirmDialog';
 import FieldError from '../../shared/components/FieldError';
 import SkeletonBlock from '../../shared/components/SkeletonLoader';
 import { getPlanConnectors } from '../../shared/billing/planConnectors';
+import { PLAN_ORDER, PLAN_RANK } from '../../shared/constants/appConstants';
 import ConnectorMonitor from '../Monitoring/ConnectorMonitor';
 import './ConnectorsManage.css';
 import AppMenu from '../shared/AppMenu';
@@ -37,8 +38,6 @@ const PLAN_CONNECTOR_IDS = {
   team: ['jira_sync', 'workfront_sync', 'smartsheet_sync'],
   enterprise: CONNECTOR_ORDER,
 };
-const PLAN_ORDER = ['free', 'essential', 'team', 'enterprise'];
-const PLAN_RANK = { free: 0, essential: 1, team: 2, enterprise: 3 };
 const REQUIRED_FIELDS_BY_CONNECTOR = {
   jira_sync: ['jira_base_url', 'jira_project_key', 'jira_email', 'jira_api_token'],
   workfront_sync: ['workfront_base_url', 'workfront_project_id', 'workfront_api_token'],

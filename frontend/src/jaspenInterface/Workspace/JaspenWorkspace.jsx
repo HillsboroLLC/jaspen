@@ -42,6 +42,7 @@ import Onboarding from './components/Onboarding';
 import SidebarIdentityFooter from './components/SidebarIdentityFooter';
 import ThreadEditModal from '../components/ThreadEditModal';
 import { buildInviteDisplay, buildInviteLink } from '../../shared/inviteLink';
+import { PLAN_ORDER, PLAN_RANK } from '../../shared/constants/appConstants';
 
 // Styles - Single source of truth
 import "./JaspenWorkspace.css";
@@ -924,8 +925,6 @@ function isSelfServePlan(plan) {
   return ['free', 'essential'].includes(normalizePlanKey(plan));
 }
 
-const PLAN_ORDER = ['free', 'essential', 'team', 'enterprise'];
-const PLAN_RANK = { free: 0, essential: 1, team: 2, enterprise: 3 };
 const SUPPORT_ROLE_SWITCH_OPTIONS = [
   { value: 'actual', label: 'Actual account', path: '/new' },
   { value: 'workspace:free', label: 'Personal · Free', path: '/new?admin_preview=workspace&plan_key=free' },

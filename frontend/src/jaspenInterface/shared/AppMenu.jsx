@@ -18,15 +18,13 @@ import { buildAuthHeaders } from '../../shared/auth/http';
 import { API_BASE } from '../../config/apiBase';
 import { buildInviteLink, buildInviteDisplay } from '../../shared/inviteLink';
 import { getPlanConnectorSentence } from '../../shared/billing/planConnectors';
+import { PLAN_ORDER, PLAN_RANK } from '../../shared/constants/appConstants';
 import SidebarIdentityFooter from '../Workspace/components/SidebarIdentityFooter';
 import './AppMenu.css';
 
 // ---------------------------------------------------------------------------
 // Constants (mirrors JaspenWorkspace)
 // ---------------------------------------------------------------------------
-const PLAN_RANK = { free: 0, essential: 1, team: 2, enterprise: 3 };
-const PLAN_ORDER = ['free', 'essential', 'team', 'enterprise'];
-
 function highestPlanKey(...plans) {
   return plans
     .filter((plan) => Object.prototype.hasOwnProperty.call(PLAN_RANK, plan))
