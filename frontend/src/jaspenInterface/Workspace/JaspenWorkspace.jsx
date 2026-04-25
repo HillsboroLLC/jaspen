@@ -38,7 +38,6 @@ import ScoreDashboard   from './ScoreDashboard';
 import ScenarioModeler  from './ScenarioModeler';
 import ComparisonView   from './ComparisonView';
 import BatchIdeaManager from './components/BatchIdeaManager';
-import ExecutionPanel from './components/ExecutionPanel';
 import Onboarding from './components/Onboarding';
 import SidebarIdentityFooter from './components/SidebarIdentityFooter';
 import ThreadEditModal from '../components/ThreadEditModal';
@@ -1997,7 +1996,6 @@ useEffect(() => {
     : isOrgCreator;
   const canStartOrgProjects = previewPlanCategory === 'individual' || effectiveIsCreator || (isPlatformAdmin && !customerPreviewActive);
   const canAccessExecutionTab = (isPlatformAdmin && !customerPreviewActive) || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.essential;
-  const executionTabLocked = !canAccessExecutionTab;
   const canEditExecutionFields = canAccessExecutionTab && canUseWbsWrite && (
     previewPlanCategory === 'individual' ||
     effectiveIsCreator ||
@@ -2010,7 +2008,6 @@ useEffect(() => {
     (isPlatformAdmin && !customerPreviewActive)
   );
   const canEditExecutionDependencies = canEditExecutionStructure;
-  const executionReadOnly = previewPlanCategory !== 'individual' && effectiveIsViewer;
   const showRealTeam = !isPlatformAdmin && effectiveCanManageOrg;
   const showLockedTeam = previewPlanCategory === 'individual' && (!isPlatformAdmin || customerPreviewActive);
   const showRealDashboard = previewPlanCategory !== 'individual' || (isPlatformAdmin && !customerPreviewActive);
@@ -2479,14 +2476,6 @@ useEffect(() => {
       setView('summary');
     }
   }, [canUseScenarios, activeTab]);
-
-  useEffect(() => {
-    const path = String(location.pathname || '').trim().replace(/\/+$/, '');
-    if (path === '/execution-plan') {
-      setActiveTab('execution');
-      setView('execution');
-    }
-  }, [location.pathname]);
 
   const loadThreadUsage = useCallback(async (targetThreadId = activeThreadId) => {
     if (!targetThreadId) {
@@ -7866,17 +7855,12 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       ? 'Ask about this scorecard, its risks, or how to sharpen the wording...'
       : 'Ask about tasks, timeline, resources...';
     const openWorkspaceTab = async (id) => {
-      const isLocked = (id === 'scenario' && scenarioTabLocked) || (id === 'execution' && executionTabLocked);
+      const isLocked = id === 'scenario' && scenarioTabLocked;
       if (isLocked) {
         if (id === 'scenario' && effectiveIsViewer) {
           showToast('Viewers can review shared project results but cannot use scenario tools.', 'info');
         } else if (id === 'scenario') {
           showToast('Scenarios are available on Essential, Team, and Enterprise plans.', 'info');
-          setBillingModalOpen(true);
-        } else if (id === 'execution' && effectiveIsViewer) {
-          showToast('Viewers can review execution plans but cannot edit them.', 'info');
-        } else if (id === 'execution') {
-          showToast('Execution is available on Essential, Team, and Enterprise plans.', 'info');
           setBillingModalOpen(true);
         }
         return;
@@ -7890,10 +7874,10 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
         } catch {}
       }
     };
-    const topTabIds = ['summary', 'scenario', 'execution'];
+    const topTabIds = ['summary', 'scenario'];
     const TabButton = ({ id, label }) => {
-      const isLocked = (id === 'scenario' && scenarioTabLocked) || (id === 'execution' && executionTabLocked);
-      const badgeLabel = (id === 'scenario' || id === 'execution') && isLocked ? 'Essential+' : '';
+      const isLocked = id === 'scenario' && scenarioTabLocked;
+      const badgeLabel = id === 'scenario' && isLocked ? 'Essential+' : '';
       return (
       <button
         type="button"
@@ -7913,7 +7897,6 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
           event.preventDefault();
           const enabledTabs = topTabIds.filter((tabId) => {
             if (tabId === 'scenario' && scenarioTabLocked) return false;
-            if (tabId === 'execution' && executionTabLocked) return false;
             return true;
           });
           if (!enabledTabs.length) return;
@@ -8578,7 +8561,6 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
             <nav className="jas-top-tabs" role="tablist" aria-label="Jaspen views">
               <TabButton id="summary"  label="Score" />
               <TabButton id="scenario" label="Scenarios" />
-              <TabButton id="execution" label="Execution" />
 
               {/* Only show dropdowns and Begin Project on Score tab */}
               {activeTab === 'summary' && (
@@ -8884,33 +8866,6 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                   </ErrorBoundary>
                 )}
               </>
-            )}
-            {activeTab === 'execution' && (
-              <ErrorBoundary title="Execution plan unavailable" onRetry={() => {
-                const tid = String(currentSessionId || sessionId || '').trim();
-                if (tid) {
-                  void handleExecutionRefresh();
-                }
-              }}>
-                <ExecutionPanel
-                  threadId={String(currentSessionId || sessionId || '').trim()}
-                  wbs={threadWbs}
-                  authFetch={authFetch}
-                  onRefresh={handleExecutionRefresh}
-                  onUpdateTask={handleExecutionTaskUpdate}
-                  onAddTask={handleExecutionTaskAdd}
-                  onRemoveTask={handleExecutionTaskRemove}
-                  onAddDependency={handleExecutionDependencyAdd}
-                  canEditFields={canEditExecutionFields}
-                  canEditStructure={canEditExecutionStructure}
-                  canEditDependencies={canEditExecutionDependencies}
-                  isViewer={executionReadOnly}
-                  isLocked={executionTabLocked}
-                  onOpenChat={openExecutionAssistant}
-                  onOpenBilling={() => setBillingModalOpen(true)}
-                  loading={wbsLoading}
-                />
-              </ErrorBoundary>
             )}
           </div>
         </div>
