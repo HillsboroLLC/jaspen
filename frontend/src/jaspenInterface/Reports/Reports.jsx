@@ -4,6 +4,7 @@ import { faFilePdf, faTrashCan, faWandMagicSparkles } from '@fortawesome/free-so
 import { API_BASE } from '../../config/apiBase';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import ConfirmDialog from '../../shared/components/ConfirmDialog';
+import EmptyState from '../../homeSections/homeUi/EmptyState';
 import './Reports.css';
 import AppMenu from '../shared/AppMenu';
 
@@ -219,7 +220,24 @@ export default function Reports() {
         <section className="reports-list-card">
           <h2>Generated Reports</h2>
           {reports.length === 0 ? (
-            <div className="reports-state">No reports generated yet.</div>
+            <EmptyState
+              className="reports-state"
+              title="No reports generated yet"
+              description="Create your first export to share summary insights with your team."
+              icon={<FontAwesomeIcon icon={faFilePdf} />}
+              action={(
+                <button
+                  type="button"
+                  className="int-btn int-btn-primary"
+                  onClick={generateReport}
+                  disabled={busy || !selectedThreadId}
+                  aria-disabled={busy || !selectedThreadId}
+                >
+                  <FontAwesomeIcon icon={faWandMagicSparkles} />
+                  {busy ? 'Generating...' : 'Generate report'}
+                </button>
+              )}
+            />
           ) : (
             <div className="reports-table-wrap">
               <table className="reports-table">

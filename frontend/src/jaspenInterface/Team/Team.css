@@ -98,11 +98,18 @@
 }
 
 .team-state {
-  background: #fff;
+  background: var(--int-surface);
   border: 1px solid var(--int-border);
   border-radius: var(--int-radius-sm);
   padding: 12px;
   margin-bottom: 12px;
+}
+
+.team-state.with-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
 
 .team-state.error {
@@ -121,6 +128,12 @@
   color: #1f3360;
   border-color: #c5d3ee;
   background: #f4f8ff;
+}
+
+.team-state-retry-btn {
+  flex: 0 0 auto;
+  height: 32px;
+  padding: 0 12px;
 }
 
 .team-seat-policy-bar {
@@ -220,7 +233,7 @@
   border-radius: var(--int-radius-sm);
   min-height: 34px;
   padding: 0 10px;
-  background: #fff;
+  background: var(--int-surface);
   color: var(--int-text);
 }
 
@@ -299,7 +312,7 @@
   overflow: auto;
   border: 1px solid var(--int-border);
   border-radius: var(--int-radius-sm);
-  background: #fff;
+  background: var(--int-surface);
   -webkit-overflow-scrolling: touch;
 }
 
@@ -311,7 +324,7 @@
 
 .team-table th,
 .team-table td {
-  border-bottom: 1px solid #e6edf8;
+  border-bottom: 1px solid var(--int-border);
   padding: 10px 12px;
   text-align: left;
   vertical-align: middle;
@@ -337,7 +350,7 @@
   border-radius: var(--int-radius-sm);
   min-height: 34px;
   padding: 0 10px;
-  background: #fff;
+  background: var(--int-surface);
 }
 
 .team-invite-form {

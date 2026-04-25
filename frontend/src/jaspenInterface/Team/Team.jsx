@@ -758,8 +758,19 @@ export default function Team({ mode = 'team' }) {
       </section>
 
       {(error || notice) && (
-        <div className={`team-state ${error ? 'error' : 'success'}`} role="status" aria-live="polite">
-          {error || notice}
+        <div className={`team-state ${error ? 'error with-action' : 'success'}`} role="status" aria-live="polite">
+          <span>{error || notice}</span>
+          {error && (
+            <button
+              type="button"
+              className="int-btn int-btn-ghost team-state-retry-btn"
+              onClick={loadAll}
+              disabled={loading || busy}
+              aria-disabled={loading || busy}
+            >
+              Retry
+            </button>
+          )}
         </div>
       )}
 

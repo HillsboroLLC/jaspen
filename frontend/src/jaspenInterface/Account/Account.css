@@ -1145,7 +1145,7 @@
   height: 120px;
   border-radius: var(--int-radius-sm);
   border: 1px solid #d7e1f0;
-  background: #fff;
+  background: var(--int-surface);
 }
 
 .account-security-secret {

@@ -17,7 +17,7 @@
 
 .reports-header p {
   margin: 8px 0 0;
-  color: #5b6b90;
+  color: var(--int-text-sub);
 }
 
 .reports-generate-card,
@@ -25,7 +25,7 @@
   margin-top: 16px;
   border: 1px solid var(--int-border);
   border-radius: var(--int-radius-md);
-  background: #fff;
+  background: var(--int-surface);
   padding: 16px;
 }
 
@@ -45,18 +45,18 @@
 .reports-generate-form button {
   height: 42px;
   border-radius: var(--int-radius-sm);
-  border: 1px solid #bcc9e0;
+  border: 1px solid var(--int-border-md);
 }
 
 .reports-generate-form select {
-  background: #fff;
-  color: #203560;
+  background: var(--int-surface);
+  color: var(--int-text);
   padding: 0 12px;
 }
 
 .reports-generate-form button {
   background: #182f63;
-  color: #fff;
+  color: var(--int-surface);
   border-color: #182f63;
   padding: 0 14px;
   display: inline-flex;
@@ -70,16 +70,16 @@
 
 .reports-generate-context {
   margin: 10px 0 0;
-  color: #43547d;
+  color: var(--int-eyebrow);
 }
 
 .reports-state {
   margin-top: 12px;
-  border: 1px solid #d3dced;
-  background: #fff;
+  border: 1px solid var(--int-border);
+  background: var(--int-surface);
   border-radius: var(--int-radius-md);
   padding: 14px;
-  color: #41527b;
+  color: var(--int-text-sub);
 }
 
 .reports-state p {
@@ -113,13 +113,13 @@
 .reports-table th,
 .reports-table td {
   padding: 12px 10px;
-  border-bottom: 1px solid #e4eaf6;
+  border-bottom: 1px solid var(--int-border);
   text-align: left;
 }
 
 .reports-table th {
   background: #f8fafd;
-  color: #44557d;
+  color: var(--int-eyebrow);
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -130,8 +130,8 @@
   align-items: center;
   gap: 6px;
   border: 1px solid #bbc8df;
-  background: #fff;
-  color: #203c73;
+  background: var(--int-surface);
+  color: var(--int-text);
   border-radius: var(--int-radius-sm);
   height: 34px;
   padding: 0 10px;

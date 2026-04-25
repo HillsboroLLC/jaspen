@@ -2,7 +2,7 @@
   min-height: 100vh;
   padding: 28px;
   background: var(--int-bg);
-  color: #17233f;
+  color: var(--int-text);
 }
 
 .activity-inner {
@@ -17,7 +17,7 @@
 
 .activity-header p {
   margin: 8px 0 0;
-  color: #5d6d92;
+  color: var(--int-text-sub);
 }
 
 .activity-controls {
@@ -33,9 +33,9 @@
   height: 42px;
   min-width: 180px;
   border-radius: var(--int-radius-sm);
-  border: 1px solid #c0cce2;
-  background: #fff;
-  color: #24355f;
+  border: 1px solid var(--int-border-md);
+  background: var(--int-surface);
+  color: var(--int-text);
   padding: 0 12px;
 }
 
@@ -47,7 +47,7 @@
   margin-top: 14px;
   border-radius: var(--int-radius-md);
   border: 1px solid #d1daec;
-  background: #fff;
+  background: var(--int-surface);
   color: #3f517b;
   padding: 14px;
 }
@@ -79,7 +79,7 @@
   margin-top: 14px;
   border-radius: var(--int-radius-md);
   border: 1px solid var(--int-border);
-  background: #fff;
+  background: var(--int-surface);
   padding: 14px;
   display: grid;
   gap: 12px;
@@ -124,7 +124,7 @@
 .activity-content {
   border: 1px solid var(--int-border);
   border-radius: var(--int-radius-md);
-  background: #fff;
+  background: var(--int-surface);
   padding: 12px;
 }
 
@@ -144,7 +144,7 @@
 }
 
 .activity-content time {
-  color: #617295;
+  color: var(--int-text-sub);
   font-size: 12px;
 }
 
@@ -157,7 +157,7 @@
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
-  color: #607198;
+  color: var(--int-text-sub);
   font-size: 13px;
 }
 
@@ -171,7 +171,7 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  color: #4e6088;
+  color: var(--int-eyebrow);
 }
 
 .activity-pagination-controls {
@@ -189,7 +189,7 @@
 
 .activity-pagination-go label {
   font-size: 12px;
-  color: #4d5f87;
+  color: var(--int-eyebrow);
   font-weight: 600;
 }
 
@@ -197,18 +197,18 @@
   width: 72px;
   height: 34px;
   border-radius: var(--int-radius-sm);
-  border: 1px solid #bccae2;
-  background: #fff;
-  color: #1f3a70;
+  border: 1px solid var(--int-border-md);
+  background: var(--int-surface);
+  color: var(--int-text);
   padding: 0 10px;
 }
 
 .activity-pagination button {
   height: 34px;
   border-radius: var(--int-radius-sm);
-  border: 1px solid #bccae2;
-  background: #fff;
-  color: #1f3a70;
+  border: 1px solid var(--int-border-md);
+  background: var(--int-surface);
+  color: var(--int-text);
   padding: 0 10px;
   margin-left: 8px;
 }

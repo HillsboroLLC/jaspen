@@ -1,8 +1,8 @@
 .projects-page {
   min-height: 100vh;
   padding: 28px 28px 40px;
-  background: #f6f8fc;
-  color: #1a2443;
+  background: var(--int-bg);
+  color: var(--int-text);
 }
 
 .projects-inner {
@@ -24,7 +24,7 @@
 
 .projects-header p {
   margin: 8px 0 0;
-  color: #5b6b90;
+  color: var(--int-text-sub);
 }
 
 .projects-header-actions {
@@ -36,14 +36,14 @@
   width: 40px;
   height: 40px;
   border-radius: 10px;
-  border: 1px solid #b8c4de;
-  background: #fff;
+  border: 1px solid var(--int-border-md);
+  background: var(--int-surface);
   color: #3f537f;
 }
 
 .projects-view-toggle.is-active {
   background: #1f3a7a;
-  color: #fff;
+  color: var(--int-surface);
   border-color: #1f3a7a;
 }
 
@@ -58,9 +58,9 @@
 .projects-filters select {
   height: 42px;
   border-radius: 10px;
-  border: 1px solid #c5d0e6;
-  background: #fff;
-  color: #1a2443;
+  border: 1px solid var(--int-border-md);
+  background: var(--int-surface);
+  color: var(--int-text);
   padding: 0 12px;
 }
 
@@ -75,15 +75,15 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  color: #40527b;
+  color: var(--int-text-sub);
   margin-right: 8px;
 }
 
 .projects-bulk-actions button {
   height: 36px;
   border-radius: 9px;
-  border: 1px solid #afbdd9;
-  background: #fff;
+  border: 1px solid var(--int-border-md);
+  background: var(--int-surface);
   color: #23345e;
   padding: 0 12px;
   display: inline-flex;
@@ -98,10 +98,10 @@
 .projects-state {
   margin-top: 16px;
   border-radius: 14px;
-  border: 1px solid #d2daeb;
-  background: #fff;
+  border: 1px solid var(--int-border);
+  background: var(--int-surface);
   padding: 18px;
-  color: #3e5079;
+  color: var(--int-text-sub);
 }
 
 .projects-state p {
@@ -131,7 +131,7 @@
   margin-top: 16px;
   border: 1px solid var(--int-border);
   border-radius: var(--int-radius-lg);
-  background: #fff;
+  background: var(--int-surface);
   padding: 16px;
   display: grid;
   gap: 14px;
@@ -146,7 +146,7 @@
 .projects-skeleton-card {
   border: 1px solid var(--int-border);
   border-radius: var(--int-radius-lg);
-  background: #fff;
+  background: var(--int-surface);
   padding: 14px;
   display: grid;
   gap: 10px;
@@ -181,8 +181,8 @@
 
 .project-card {
   border-radius: 14px;
-  border: 1px solid #ccd6ea;
-  background: #fff;
+  border: 1px solid var(--int-border);
+  background: var(--int-surface);
   padding: 14px;
   display: grid;
   gap: 10px;
@@ -201,7 +201,7 @@
 
 .project-updated {
   margin: 0;
-  color: #617399;
+  color: var(--int-text-sub);
   font-size: 13px;
 }
 
@@ -221,8 +221,8 @@
   height: 34px;
   border-radius: 8px;
   border: 1px solid #c0cbe1;
-  background: #fff;
-  color: #253865;
+  background: var(--int-surface);
+  color: var(--int-text);
   padding: 0 10px;
   display: inline-flex;
   align-items: center;
@@ -289,9 +289,9 @@
 }
 
 .projects-table-wrap {
-  border: 1px solid #ccd6ea;
+  border: 1px solid var(--int-border);
   border-radius: 14px;
-  background: #fff;
+  background: var(--int-surface);
   overflow-x: auto;
 }
 
@@ -304,7 +304,7 @@
 .projects-table th,
 .projects-table td {
   padding: 12px 10px;
-  border-bottom: 1px solid #e5ebf7;
+  border-bottom: 1px solid var(--int-border);
   text-align: left;
 }
 

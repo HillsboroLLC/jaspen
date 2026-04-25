@@ -14,15 +14,15 @@ export default function EmptyState({
       style={{
         textAlign: 'center',
         padding: '32px 20px',
-        border: '1px dashed #e2e8f0',
-        borderRadius: 12,
-        background: '#f8fafc',
-        color: '#64748b',
+        border: '1px dashed var(--int-border)',
+        borderRadius: 'var(--int-radius-md)',
+        background: 'var(--int-bg)',
+        color: 'var(--int-eyebrow)',
         ...style,
       }}
     >
       {icon && <div style={{ fontSize: 28, marginBottom: 10 }}>{icon}</div>}
-      <h3 style={{ margin: 0, color: '#161f3b', fontSize: '1.25rem' }}>{title}</h3>
+      <h3 style={{ margin: 0, color: 'var(--int-text)', fontSize: '1.25rem' }}>{title}</h3>
       {description && <p style={{ marginTop: 8 }}>{description}</p>}
       {action && <div style={{ marginTop: 16 }}>{action}</div>}
     </div>

@@ -18,7 +18,7 @@
 
 .insights-panel {
   margin-top: 22px;
-  background: #fff;
+  background: var(--int-surface);
   border: 1px solid var(--int-border);
   border-radius: var(--int-radius-md);
   padding: 18px;
@@ -104,7 +104,7 @@
   margin-top: 14px;
   border: 1px solid var(--int-border);
   border-radius: var(--int-radius-md);
-  background: #fff;
+  background: var(--int-surface);
   padding: 12px;
   display: grid;
   gap: 10px;
@@ -154,7 +154,7 @@
 
 .insights-btn.primary {
   background: var(--int-text);
-  color: #fff;
+  color: var(--int-surface);
   border-color: var(--int-text);
 }
 
@@ -275,7 +275,7 @@
 .insights-chart-card {
   border: 1px solid #e6ecf8;
   border-radius: var(--int-radius-md);
-  background: #fff;
+  background: var(--int-surface);
   padding: 10px;
   min-height: 300px;
   display: flex;

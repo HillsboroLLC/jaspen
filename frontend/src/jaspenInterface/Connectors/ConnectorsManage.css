@@ -21,7 +21,7 @@
   margin-top: 14px;
   border: 1px solid var(--int-border);
   border-radius: var(--int-radius-md);
-  background: #fff;
+  background: var(--int-surface);
   padding: 14px;
   color: #41537d;
 }
@@ -48,7 +48,7 @@
   margin-top: 14px;
   border: 1px solid var(--int-border);
   border-radius: var(--int-radius-lg);
-  background: #fff;
+  background: var(--int-surface);
   padding: 16px;
   display: grid;
   gap: 14px;
@@ -185,7 +185,7 @@
   border-radius: 999px;
   border: 0;
   background: #1f3f78;
-  color: #fff;
+  color: var(--int-surface);
   text-decoration: none;
   font-weight: 700;
   cursor: pointer;
@@ -208,7 +208,7 @@
   text-align: left;
   border: 1px solid var(--int-border);
   border-radius: var(--int-radius-md);
-  background: #fff;
+  background: var(--int-surface);
   padding: 12px;
   color: #1e2f58;
 }
@@ -275,7 +275,7 @@
 .connector-detail-panel {
   border: 1px solid var(--int-border);
   border-radius: var(--int-radius-md);
-  background: #fff;
+  background: var(--int-surface);
   padding: 14px;
 }
 
@@ -324,7 +324,7 @@
   height: 36px;
   border-radius: var(--int-radius-sm);
   border: 1px solid var(--int-border-md);
-  background: #fff;
+  background: var(--int-surface);
   color: #203a6c;
   padding: 0 10px;
   display: inline-flex;
@@ -360,7 +360,7 @@
   border: 1px solid var(--int-border-md);
   border-radius: var(--int-radius-sm);
   padding: 0 10px;
-  background: #fff;
+  background: var(--int-surface);
   color: #1d2f5a;
 }
 
@@ -411,7 +411,7 @@
 }
 
 .connector-audit-table-wrap {
-  border: 1px solid #d3dced;
+  border: 1px solid var(--int-border);
   border-radius: var(--int-radius-sm);
   overflow-x: auto;
 }
