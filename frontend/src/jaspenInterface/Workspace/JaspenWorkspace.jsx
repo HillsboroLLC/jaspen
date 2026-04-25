@@ -5181,7 +5181,7 @@ async function onBeginProject() {
                 window.location.href = redirect;
             } else {
                 setBeginBusy(false);
-                alert('Plan created, but no redirect was provided.');
+                showToast('Plan created, but no redirect was provided.', 'info');
             }
         }, 600);
     } catch (e) {

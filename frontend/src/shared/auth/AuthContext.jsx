@@ -507,8 +507,8 @@ export function AuthProvider({ children }) {
     setPermissions([]);
     setLssUsers([]);
 
-    // Redirect
-    window.location.href = '/?auth=1';
+    // Redirect to login with a visible signed-out confirmation.
+    window.location.href = '/?auth=1&signed_out=1';
   };
 
   const signup = async (email, password, name, options = {}) => {

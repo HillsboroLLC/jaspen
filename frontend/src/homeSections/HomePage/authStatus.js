@@ -1,5 +1,12 @@
 export function readAuthQueryNotice(search) {
   const params = new URLSearchParams(search || '');
+  if (params.get('signed_out') === '1') {
+    return {
+      tone: 'success',
+      message: "You've been signed out.",
+    };
+  }
+
   if (params.get('verified') === '1') {
     return {
       tone: 'success',

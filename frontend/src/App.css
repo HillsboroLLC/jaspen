@@ -45,6 +45,19 @@ body {
   white-space: normal;
 }
 
+.app-route-transition {
+  min-height: 100vh;
+}
+
+.app-route-loading {
+  min-height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-secondary);
+  font-size: 0.95rem;
+}
+
 .container {
   max-width: 1200px;
   margin: 0 auto;
