@@ -150,6 +150,7 @@ export default function Scores() {
   const [sortBy, setSortBy] = useState('date');
   const [sortDir, setSortDir] = useState('desc');
   const [offset, setOffset] = useState(0);
+  const [pageInput, setPageInput] = useState('');
 
   const [expandedRows, setExpandedRows] = useState({});
   const [exportingCsv, setExportingCsv] = useState(false);
@@ -218,6 +219,8 @@ export default function Scores() {
   const end = total === 0 ? 0 : Math.min(offset + scores.length, total);
   const hasPrevious = offset > 0;
   const hasNext = offset + scores.length < total;
+  const totalPages = total > 0 ? Math.ceil(total / PAGE_LIMIT) : 0;
+  const currentPage = total > 0 ? Math.floor(offset / PAGE_LIMIT) + 1 : 0;
 
   function toggleSort(column) {
     if (sortBy === column) {
@@ -236,6 +239,15 @@ export default function Scores() {
 
   function toggleExpanded(rowKey) {
     setExpandedRows((prev) => ({ ...prev, [rowKey]: !prev[rowKey] }));
+  }
+
+  function goToPage(rawValue) {
+    if (totalPages <= 0) return;
+    const parsed = Number.parseInt(String(rawValue || '').trim(), 10);
+    if (!Number.isFinite(parsed)) return;
+    const nextPage = Math.min(totalPages, Math.max(1, parsed));
+    setOffset((nextPage - 1) * PAGE_LIMIT);
+    setPageInput(String(nextPage));
   }
 
   function openAnalysis(threadId) {
@@ -722,6 +734,32 @@ export default function Scores() {
             <div className="scores-pagination">
               <span>Showing {start}-{end} of {total}</span>
               <div className="scores-pagination-actions">
+                <form
+                  className="scores-pagination-go"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    goToPage(pageInput);
+                  }}
+                >
+                  <label htmlFor="scores-go-to-page">Go to page</label>
+                  <input
+                    id="scores-go-to-page"
+                    type="number"
+                    min="1"
+                    max={Math.max(1, totalPages)}
+                    value={pageInput}
+                    onChange={(event) => setPageInput(event.target.value)}
+                    placeholder={currentPage ? String(currentPage) : '1'}
+                  />
+                  <button
+                    type="submit"
+                    className="scores-secondary-btn int-btn int-btn-ghost"
+                    disabled={totalPages <= 1}
+                    aria-disabled={totalPages <= 1}
+                  >
+                    Go
+                  </button>
+                </form>
                 <button
                   type="button"
                   className="scores-secondary-btn int-btn int-btn-ghost"

@@ -49,6 +49,7 @@ export default function Activity() {
   const [events, setEvents] = useState([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
+  const [pageInput, setPageInput] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
@@ -98,11 +99,22 @@ export default function Activity() {
 
   const hasPrev = offset > 0;
   const hasNext = offset + events.length < total;
+  const totalPages = total > 0 ? Math.ceil(total / PAGE_SIZE) : 0;
+  const currentPage = total > 0 ? Math.floor(offset / PAGE_SIZE) + 1 : 0;
 
   const typeLabelByValue = useMemo(
     () => TYPE_OPTIONS.reduce((acc, item) => ({ ...acc, [item.value]: item.label }), {}),
     []
   );
+
+  function goToPage(rawValue) {
+    if (totalPages <= 0) return;
+    const parsed = Number.parseInt(String(rawValue || '').trim(), 10);
+    if (!Number.isFinite(parsed)) return;
+    const nextPage = Math.min(totalPages, Math.max(1, parsed));
+    setOffset((nextPage - 1) * PAGE_SIZE);
+    setPageInput(String(nextPage));
+  }
 
   return (
     <div className="activity-page int-page">
@@ -222,7 +234,26 @@ export default function Activity() {
       {!loading && !error && total > 0 && (
         <footer className="activity-pagination">
           <p>Showing {start}-{end} of {total}</p>
-          <div>
+          <div className="activity-pagination-controls">
+            <form
+              className="activity-pagination-go"
+              onSubmit={(event) => {
+                event.preventDefault();
+                goToPage(pageInput);
+              }}
+            >
+              <label htmlFor="activity-go-to-page">Go to page</label>
+              <input
+                id="activity-go-to-page"
+                type="number"
+                min="1"
+                max={Math.max(1, totalPages)}
+                value={pageInput}
+                onChange={(event) => setPageInput(event.target.value)}
+                placeholder={currentPage ? String(currentPage) : '1'}
+              />
+              <button type="submit" disabled={totalPages <= 1} aria-disabled={totalPages <= 1}>Go</button>
+            </form>
             <button type="button" onClick={() => setOffset((prev) => Math.max(0, prev - PAGE_SIZE))} disabled={!hasPrev} aria-disabled={!hasPrev}>Previous</button>
             <button type="button" onClick={() => setOffset((prev) => prev + PAGE_SIZE)} disabled={!hasNext} aria-disabled={!hasNext}>Next</button>
           </div>
