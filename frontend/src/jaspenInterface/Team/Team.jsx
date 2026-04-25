@@ -632,8 +632,11 @@ export default function Team({ mode = 'team' }) {
 
   if (loading) {
     return (
-      <div className="team-page jas-internal-page jas-internal-page-shell">
-        <div className="team-state">Loading team data…</div>
+      <div className="team-page jas-internal-page jas-internal-page-shell int-page">
+        <AppMenu />
+        <div className="team-inner int-page-inner">
+          <div className="team-state">Loading team data…</div>
+        </div>
       </div>
     );
   }

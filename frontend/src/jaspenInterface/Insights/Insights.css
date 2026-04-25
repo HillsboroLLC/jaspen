@@ -18,10 +18,7 @@
 
 .insights-panel {
   margin-top: 22px;
-  background: var(--int-surface);
-  border: 1px solid var(--int-border);
-  border-radius: var(--int-radius-md);
-  padding: 18px;
+  padding: 0;
 }
 
 .insights-panel h2 {

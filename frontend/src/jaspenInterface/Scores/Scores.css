@@ -310,6 +310,10 @@
   color: #9b1e35;
 }
 
+.scores-empty-state {
+  margin-top: 12px;
+}
+
 .scores-table-wrap {
   border: 1px solid var(--int-border);
   border-radius: var(--int-radius-md);

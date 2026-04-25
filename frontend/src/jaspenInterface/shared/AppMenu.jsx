@@ -5,7 +5,7 @@
 // =============================================================================
 
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faBars, faTimes, faListCheck, faPlus, faLayerGroup, faChartLine,
@@ -53,6 +53,7 @@ async function copyText(text) {
 // ---------------------------------------------------------------------------
 export default function AppMenu() {
   const navigate = useNavigate();
+  const location = useLocation();
   const {
     user,
     logout,
@@ -239,6 +240,16 @@ export default function AppMenu() {
       ? 'Contracted'
       : Number(creditsRemaining || 0).toLocaleString();
 
+  const currentPath = String(location?.pathname || '');
+  const isActivePath = useCallback(
+    (paths) => (Array.isArray(paths) ? paths : [paths]).some((path) => currentPath === String(path || '')),
+    [currentPath],
+  );
+  const menuItemClass = useCallback(
+    (paths, extra = '') => `jas-ud-item${isActivePath(paths) ? ' is-active' : ''}${extra ? ` ${extra}` : ''}`,
+    [isActivePath],
+  );
+
   // ---------------------------------------------------------------------------
   // Handlers
   // ---------------------------------------------------------------------------
@@ -372,7 +383,7 @@ export default function AppMenu() {
           <div className="jas-ud-section-label">Navigate</div>
 
           {showRealDashboard && (
-            <button className="jas-ud-item" onClick={() => { close(); navigate('/dashboard'); }}>
+            <button className={menuItemClass('/dashboard')} onClick={() => { close(); navigate('/dashboard'); }}>
               <FontAwesomeIcon icon={faListCheck} />
               <span className="jas-ud-item-label">Dashboard</span>
             </button>
@@ -390,14 +401,14 @@ export default function AppMenu() {
           )}
 
           {canStartOrgProjects && (
-            <button className="jas-ud-item" onClick={() => { close(); navigate('/new'); }}>
+            <button className={menuItemClass('/new')} onClick={() => { close(); navigate('/new'); }}>
               <FontAwesomeIcon icon={faPlus} />
               <span className="jas-ud-item-label">New Project</span>
             </button>
           )}
 
           <button
-            className={`jas-ud-item ${batchIdeasLocked ? 'is-locked' : ''}`}
+            className={menuItemClass('/new', batchIdeasLocked ? 'is-locked' : '')}
             onClick={() => { close(); navigate('/new'); }}
             title={
               batchIdeasLockReason === 'plan'
@@ -414,18 +425,18 @@ export default function AppMenu() {
             )}
           </button>
 
-          <button className="jas-ud-item" onClick={() => { close(); navigate('/projects'); }}>
+          <button className={menuItemClass('/projects')} onClick={() => { close(); navigate('/projects'); }}>
             <FontAwesomeIcon icon={faLayerGroup} />
             <span className="jas-ud-item-label">Projects</span>
           </button>
 
-          <button className="jas-ud-item" onClick={() => { close(); navigate('/scores'); }}>
+          <button className={menuItemClass('/scores')} onClick={() => { close(); navigate('/scores'); }}>
             <FontAwesomeIcon icon={faChartLine} />
             <span className="jas-ud-item-label">Scores</span>
           </button>
 
           {showRealInsights && (
-            <button className="jas-ud-item" onClick={() => { close(); navigate('/insights'); }}>
+            <button className={menuItemClass('/insights')} onClick={() => { close(); navigate('/insights'); }}>
               <FontAwesomeIcon icon={faChartLine} />
               <span className="jas-ud-item-label">Insights</span>
             </button>
@@ -443,7 +454,7 @@ export default function AppMenu() {
           )}
 
           {showRealReports && (
-            <button className="jas-ud-item" onClick={() => { close(); navigate('/reports'); }}>
+            <button className={menuItemClass('/reports')} onClick={() => { close(); navigate('/reports'); }}>
               <FontAwesomeIcon icon={faDownload} />
               <span className="jas-ud-item-label">Reports</span>
             </button>
@@ -461,7 +472,7 @@ export default function AppMenu() {
           )}
 
           {showRealActivity && (
-            <button className="jas-ud-item" onClick={() => { close(); navigate('/activity'); }}>
+            <button className={menuItemClass('/activity')} onClick={() => { close(); navigate('/activity'); }}>
               <FontAwesomeIcon icon={faClockRotateLeft} />
               <span className="jas-ud-item-label">Activity</span>
             </button>
@@ -479,7 +490,7 @@ export default function AppMenu() {
           )}
 
           {showRealTeam && (
-            <button className="jas-ud-item" onClick={() => { close(); navigate('/team'); }}>
+            <button className={menuItemClass('/team')} onClick={() => { close(); navigate('/team'); }}>
               <FontAwesomeIcon icon={faUser} />
               <span className="jas-ud-item-label">Team</span>
             </button>
@@ -497,14 +508,14 @@ export default function AppMenu() {
           )}
 
           {!isPlatformAdmin && isEnterpriseAdmin && (
-            <button className="jas-ud-item" onClick={() => { close(); navigate('/enterprise-admin'); }}>
+            <button className={menuItemClass('/enterprise-admin')} onClick={() => { close(); navigate('/enterprise-admin'); }}>
               <FontAwesomeIcon icon={faGaugeHigh} />
               <span className="jas-ud-item-label">Enterprise Admin</span>
             </button>
           )}
 
           {showRealConnectors && (
-            <button className="jas-ud-item" onClick={() => { close(); navigate('/connectors-manage'); }}>
+            <button className={menuItemClass('/connectors-manage')} onClick={() => { close(); navigate('/connectors-manage'); }}>
               <FontAwesomeIcon icon={faLayerGroup} />
               <span className="jas-ud-item-label">Data Sources</span>
             </button>
@@ -521,18 +532,18 @@ export default function AppMenu() {
             </button>
           )}
 
-          <button className="jas-ud-item" onClick={() => { close(); navigate('/knowledge'); }}>
+          <button className={menuItemClass('/knowledge')} onClick={() => { close(); navigate('/knowledge'); }}>
             <FontAwesomeIcon icon={faQuestionCircle} />
             <span className="jas-ud-item-label">Knowledge</span>
           </button>
 
-          <button className="jas-ud-item" onClick={() => { close(); navigate('/account'); }}>
+          <button className={menuItemClass('/account')} onClick={() => { close(); navigate('/account'); }}>
             <FontAwesomeIcon icon={faUser} />
             <span className="jas-ud-item-label">Account</span>
           </button>
 
           {isPlatformAdmin && (
-            <button className="jas-ud-item" onClick={() => { close(); navigate('/jaspen-admin'); }}>
+            <button className={menuItemClass('/jaspen-admin')} onClick={() => { close(); navigate('/jaspen-admin'); }}>
               <FontAwesomeIcon icon={faUser} />
               <span className="jas-ud-item-label">Jaspen Admin</span>
             </button>

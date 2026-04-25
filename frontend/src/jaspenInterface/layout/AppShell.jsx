@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { SectionHeader } from '../../homeSections/homeUi';
 
 export default function AppShell({
@@ -15,6 +15,16 @@ export default function AppShell({
 }) {
   const containerClass = fullBleed ? '' : 'container';
   const contentStyle = noPadding ? {} : { padding: '24px 0 40px' };
+
+  useEffect(() => {
+    const brand = 'Jaspen';
+    const pageTitle = String(title || '').trim();
+    if (!pageTitle) {
+      document.title = brand;
+      return;
+    }
+    document.title = pageTitle.toLowerCase() === brand.toLowerCase() ? brand : `${pageTitle} | ${brand}`;
+  }, [title]);
 
   return (
     <div className={className}>

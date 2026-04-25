@@ -4,6 +4,7 @@ import { faFilePdf, faTrashCan, faWandMagicSparkles } from '@fortawesome/free-so
 import { API_BASE } from '../../config/apiBase';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import ConfirmDialog from '../../shared/components/ConfirmDialog';
+import SkeletonBlock from '../../shared/components/SkeletonLoader';
 import EmptyState from '../../homeSections/homeUi/EmptyState';
 import './Reports.css';
 import AppMenu from '../shared/AppMenu';
@@ -205,7 +206,21 @@ export default function Reports() {
         )}
       </section>
 
-      {loading && <div className="reports-state" role="status" aria-live="polite">Loading reports...</div>}
+      {loading && (
+        <div className="reports-loading" role="status" aria-live="polite" aria-label="Loading reports">
+          <SkeletonBlock width="22%" height={14} />
+          <div className="reports-loading-row">
+            <SkeletonBlock height={42} />
+            <SkeletonBlock height={42} />
+            <SkeletonBlock height={42} />
+          </div>
+          <div className="reports-loading-table">
+            {Array.from({ length: 4 }).map((_, idx) => (
+              <SkeletonBlock key={`reports-skeleton-row-${idx}`} height={18} />
+            ))}
+          </div>
+        </div>
+      )}
       {!loading && error && (
         <div className="reports-state reports-state-error" role="status" aria-live="polite">
           <p>{error}</p>

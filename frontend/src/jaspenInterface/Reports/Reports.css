@@ -23,10 +23,7 @@
 .reports-generate-card,
 .reports-list-card {
   margin-top: 16px;
-  border: 1px solid var(--int-border);
-  border-radius: var(--int-radius-md);
-  background: var(--int-surface);
-  padding: 16px;
+  padding: 0;
 }
 
 .reports-generate-card h2,
@@ -80,6 +77,27 @@
   border-radius: var(--int-radius-md);
   padding: 14px;
   color: var(--int-text-sub);
+}
+
+.reports-loading {
+  margin-top: 12px;
+  border: 1px solid var(--int-border);
+  border-radius: var(--int-radius-md);
+  background: var(--int-surface);
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.reports-loading-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr auto;
+  gap: 10px;
+}
+
+.reports-loading-table {
+  display: grid;
+  gap: 8px;
 }
 
 .reports-state p {
@@ -151,6 +169,10 @@
   }
 
   .reports-generate-form {
+    grid-template-columns: 1fr;
+  }
+
+  .reports-loading-row {
     grid-template-columns: 1fr;
   }
 }

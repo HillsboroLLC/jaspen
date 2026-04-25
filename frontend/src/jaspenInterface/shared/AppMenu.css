@@ -264,6 +264,12 @@ body.jaspen-sidebar-open .int-page {
   color: var(--navy);
 }
 
+.app-menu-host .jas-ud-item.is-active {
+  background: #eef3ff;
+  color: var(--navy);
+  box-shadow: inset 3px 0 0 var(--navy);
+}
+
 .app-menu-host .jas-ud-item.is-locked {
   opacity: 0.72;
 }
@@ -280,6 +286,10 @@ body.jaspen-sidebar-open .int-page {
 }
 
 .app-menu-host .jas-ud-item:hover svg {
+  color: var(--navy);
+}
+
+.app-menu-host .jas-ud-item.is-active svg {
   color: var(--navy);
 }
 

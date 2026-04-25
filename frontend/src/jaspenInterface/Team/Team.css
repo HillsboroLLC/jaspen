@@ -10,14 +10,6 @@
   margin: 0 auto;
 }
 
-.team-panel {
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-  padding: 0;
-  box-shadow: none;
-}
-
 .team-head {
   display: flex;
   justify-content: space-between;
@@ -501,10 +493,6 @@
 @media (max-width: 760px) {
   .team-page {
     padding: 12px;
-  }
-
-  .team-panel {
-    padding: 14px;
   }
 
   .team-head {

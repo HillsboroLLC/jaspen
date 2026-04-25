@@ -288,7 +288,7 @@ export default function Projects() {
   const allVisibleSelected = filtered.length > 0 && filtered.every((row) => selectedIds.has(row.threadId));
 
   return (
-    <div className="projects-page">
+    <div className="projects-page int-page">
       <AppMenu />
       <div className="projects-inner">
       <header className="projects-header">

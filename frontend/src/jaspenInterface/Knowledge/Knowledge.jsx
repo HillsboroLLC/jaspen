@@ -500,7 +500,7 @@ export default function Knowledge() {
   }, [activeTopicId, visibleTopicIds]);
 
   return (
-    <div className="knowledge-page">
+    <div className="knowledge-page int-page">
       <AppMenu />
       <div className={`knowledge-layout ${sidebarCollapsed ? 'is-sidebar-collapsed' : ''}`}>
         <aside className={`knowledge-sidebar ${sidebarCollapsed ? 'is-collapsed' : ''}`}>

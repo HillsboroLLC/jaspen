@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faArrowUpRightFromSquare, faDownload, faChevronDown, faChevronUp, faTimes, faTrash } from '@fortawesome/free-solid-svg-icons';
+import { faArrowUpRightFromSquare, faChartLine, faDownload, faChevronDown, faChevronUp, faTimes, faTrash } from '@fortawesome/free-solid-svg-icons';
 import { List } from 'react-window';
 import { API_BASE } from '../../config/apiBase';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import ConfirmDialog from '../../shared/components/ConfirmDialog';
+import EmptyState from '../../homeSections/homeUi/EmptyState';
 import './Scores.css';
 import AppMenu from '../shared/AppMenu';
 
@@ -728,9 +729,17 @@ export default function Scores() {
           </div>
         )}
         {!loading && !error && total === 0 && (
-          <div className="scores-state">
-            No completed analyses yet. Start a new project to get your first Jaspen Score.
-          </div>
+          <EmptyState
+            className="scores-empty-state"
+            title="No completed scores yet"
+            description="Start your first project in Jaspen and complete an analysis to populate this page."
+            icon={<FontAwesomeIcon icon={faChartLine} />}
+            action={(
+              <button type="button" className="int-btn int-btn-primary" onClick={() => navigate('/new')}>
+                Start first project
+              </button>
+            )}
+          />
         )}
 
         {!loading && !error && total > 0 && (

@@ -1734,9 +1734,9 @@ export default function Account() {
 
   if (loading) {
     return (
-      <div className="account-page">
+      <div className="account-page int-page">
         <AppMenu />
-        <div className="account-panel">Loading account details...</div>
+        <div className="account-loading-state">Loading account details...</div>
       </div>
     );
   }
@@ -1813,9 +1813,9 @@ export default function Account() {
   ].filter(Boolean).join(' ') || undefined;
 
   return (
-    <div className="account-page">
+    <div className="account-page int-page">
       <AppMenu />
-      <div className="account-panel">
+      <div>
         <div className={`account-content-layout ${sidebarCollapsed ? 'is-sidebar-collapsed' : ''}`}>
           <aside className={`account-sidebar ${sidebarCollapsed ? 'is-collapsed' : ''}`}>
             <div className="account-sidebar-head">
