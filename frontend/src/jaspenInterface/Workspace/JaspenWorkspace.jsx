@@ -1445,7 +1445,12 @@ const refreshBundle = async (tid) => {
       setMessages(bundleMessages);
     }
   } catch (e) {
-    showToast(e?.message || 'Unable to refresh thread bundle.', 'error');
+    showToast(e?.message || 'We could not refresh this thread right now.', 'error', {
+      actionLabel: 'Retry',
+      onAction: () => {
+        void refreshBundle(tid);
+      },
+    });
   } finally {
     setBundleLoading(false);
   }
@@ -1462,7 +1467,12 @@ const refreshThreadWbs = useCallback(async (tid) => {
     setThreadWbs(nextWbs);
     return nextWbs;
   } catch (e) {
-    showToast(e?.message || 'Unable to refresh execution plan.', 'error');
+    showToast(e?.message || 'We could not refresh the execution plan right now.', 'error', {
+      actionLabel: 'Retry',
+      onAction: () => {
+        void refreshThreadWbs(tid);
+      },
+    });
     return null;
   } finally {
     setWbsLoading(false);
@@ -5022,7 +5032,12 @@ async function regenerateLastResponse() {
       return updated;
     });
     setStreamToolStatus('');
-    showToast(e?.message || 'Failed to regenerate. Original response restored.', 'error');
+    showToast(e?.message || 'We could not regenerate that response just now.', 'error', {
+      actionLabel: 'Retry',
+      onAction: () => {
+        void regenerateLastResponse();
+      },
+    });
   } finally {
     setRegenerating(false);
   }
@@ -5068,7 +5083,12 @@ async function undoLastMutationTurn() {
 
     showToast(data?.message || 'Reverted the latest AI-applied changes.', 'success');
   } catch (undoError) {
-    showToast(undoError?.message || 'Failed to undo the latest changes.', 'error');
+    showToast(undoError?.message || 'We could not undo those changes right now.', 'error', {
+      actionLabel: 'Retry',
+      onAction: () => {
+        void undoLastMutationTurn();
+      },
+    });
   } finally {
     setUndoingMutation(false);
   }
@@ -5838,7 +5858,7 @@ if (data?.model_type) {
     // await saveSessionToBackend({...});
   } catch (e) {
     console.error('[SCORECARD_UPDATE_FIELD] persist failed', e);
-    showToast('Updated UI, but failed to persist changes', 'error');
+    showToast('Your updates appeared on screen, but we could not save them yet.', 'error');
   }
 },
     
@@ -5895,7 +5915,14 @@ if (data?.model_type) {
         showToast('Scenario complete', 'success');
       } catch (e) {
         console.error('[SCENARIO_RUN] failed', e);
-        showToast('Scenario run failed', 'error');
+        showToast('We could not run that scenario right now.', 'error', {
+          actionLabel: 'Retry',
+          onAction: () => {
+            void api.runScenario(payload).catch(() => {
+              showToast('Scenario retry failed. Please try again.', 'error');
+            });
+          },
+        });
       }
     },
 

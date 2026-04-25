@@ -3,24 +3,82 @@
 // Purpose: Simple toast notification for chat action feedback
 // ============================================================================
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+
+const MAX_VISIBLE_TOASTS = 4;
+const DEFAULT_TOAST_DURATION_MS = 3000;
 
 export function useToast() {
   const [toasts, setToasts] = useState([]);
+  const queuedToastsRef = useRef([]);
+  const timeoutMapRef = useRef(new Map());
+  const idCounterRef = useRef(0);
 
-  const showToast = (message, type = 'info') => {
-    const id = Date.now();
-    setToasts(prev => [...prev, { id, message, type }]);
-    
-    // Auto-dismiss after 3 seconds
-    setTimeout(() => {
-      setToasts(prev => prev.filter(t => t.id !== id));
-    }, 3000);
-  };
+  const scheduleDismiss = useCallback((toast) => {
+    const duration = Number.isFinite(toast.durationMs) ? toast.durationMs : DEFAULT_TOAST_DURATION_MS;
+    if (duration <= 0) return;
+    const timeoutId = window.setTimeout(() => {
+      setToasts((prev) => {
+        const nextVisible = prev.filter((item) => item.id !== toast.id);
+        if (nextVisible.length >= MAX_VISIBLE_TOASTS) return nextVisible;
+        const queued = queuedToastsRef.current.shift();
+        if (!queued) return nextVisible;
+        scheduleDismiss(queued);
+        return [...nextVisible, queued];
+      });
+      timeoutMapRef.current.delete(toast.id);
+    }, duration);
+    timeoutMapRef.current.set(toast.id, timeoutId);
+  }, []);
 
-  const dismissToast = (id) => {
-    setToasts(prev => prev.filter(t => t.id !== id));
-  };
+  const showToast = useCallback((message, type = 'info', options = {}) => {
+    const nextId = Date.now() + idCounterRef.current;
+    idCounterRef.current += 1;
+    const nextToast = {
+      id: nextId,
+      message,
+      type,
+      actionLabel: options?.actionLabel ? String(options.actionLabel) : '',
+      onAction: typeof options?.onAction === 'function' ? options.onAction : null,
+      durationMs: Number(options?.durationMs),
+      dismissOnAction: options?.dismissOnAction !== false,
+    };
+
+    setToasts((prev) => {
+      if (prev.length >= MAX_VISIBLE_TOASTS) {
+        queuedToastsRef.current.push(nextToast);
+        return prev;
+      }
+      scheduleDismiss(nextToast);
+      return [...prev, nextToast];
+    });
+  }, [scheduleDismiss]);
+
+  const dismissToast = useCallback((id) => {
+    const activeTimeout = timeoutMapRef.current.get(id);
+    if (activeTimeout) {
+      window.clearTimeout(activeTimeout);
+      timeoutMapRef.current.delete(id);
+    }
+    setToasts((prev) => {
+      const nextVisible = prev.filter((item) => item.id !== id);
+      if (nextVisible.length >= MAX_VISIBLE_TOASTS) return nextVisible;
+      const queued = queuedToastsRef.current.shift();
+      if (!queued) return nextVisible;
+      scheduleDismiss(queued);
+      return [...nextVisible, queued];
+    });
+  }, [scheduleDismiss]);
+
+  useEffect(() => {
+    const timeoutMap = timeoutMapRef.current;
+    const queuedToasts = queuedToastsRef;
+    return () => {
+      timeoutMap.forEach((timeoutId) => window.clearTimeout(timeoutId));
+      timeoutMap.clear();
+      queuedToasts.current = [];
+    };
+  }, []);
 
   return { toasts, showToast, dismissToast };
 }
@@ -51,17 +109,7 @@ export function ToastContainer({ toasts, onDismiss }) {
   );
 }
 
-function Toast({ message, type, onDismiss }) {
-  const [isExiting, setIsExiting] = useState(false);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setIsExiting(true);
-      setTimeout(onDismiss, 200); // Wait for exit animation
-    }, 2800);
-    return () => clearTimeout(timer);
-  }, [onDismiss]);
-
+function Toast({ message, type, onDismiss, actionLabel = '', onAction = null, dismissOnAction = true }) {
   const bgColors = {
     success: 'var(--color-status-success)',
     error: 'var(--color-status-danger)',
@@ -71,26 +119,59 @@ function Toast({ message, type, onDismiss }) {
 
   return (
     <div
-      onClick={onDismiss}
       style={{
         background: bgColors[type] || bgColors.info,
         color: 'var(--color-text-inverse)',
         padding: '12px 16px',
         borderRadius: '8px',
         boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-        cursor: 'pointer',
+        cursor: 'default',
         fontSize: '14px',
         fontWeight: '500',
-        opacity: isExiting ? 0 : 1,
-        transform: isExiting ? 'translateX(20px)' : 'translateX(0)',
-        transition: 'all 0.2s ease-out',
         display: 'flex',
         alignItems: 'center',
         gap: '8px'
       }}
     >
       <span style={{ flex: 1 }}>{message}</span>
-      <span style={{ opacity: 0.7, fontSize: '12px' }}>×</span>
+      {actionLabel && onAction && (
+        <button
+          type="button"
+          onClick={() => {
+            onAction();
+            if (dismissOnAction) onDismiss();
+          }}
+          style={{
+            border: '1px solid rgba(255,255,255,0.5)',
+            background: 'transparent',
+            color: 'var(--color-text-inverse)',
+            borderRadius: '999px',
+            padding: '4px 10px',
+            fontSize: '12px',
+            fontWeight: '700',
+            cursor: 'pointer'
+          }}
+        >
+          {actionLabel}
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={onDismiss}
+        aria-label="Dismiss notification"
+        style={{
+          opacity: 0.75,
+          fontSize: '14px',
+          border: 'none',
+          background: 'transparent',
+          color: 'var(--color-text-inverse)',
+          cursor: 'pointer',
+          padding: 0,
+          lineHeight: 1
+        }}
+      >
+        ×
+      </button>
     </div>
   );
 }
