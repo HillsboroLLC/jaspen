@@ -52,6 +52,14 @@
   padding: 14px;
 }
 
+.activity-state p {
+  margin: 0;
+}
+
+.activity-retry-btn {
+  margin-top: 10px;
+}
+
 .activity-state-error {
   border-color: #deadb3;
   color: #962739;

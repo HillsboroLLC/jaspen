@@ -73,9 +73,17 @@
   color: #445883;
 }
 
+.connector-monitor-state p {
+  margin: 0;
+}
+
 .connector-monitor-state.is-error {
   border-color: #e2b4bb;
   color: #8e2634;
+}
+
+.connector-monitor-retry-btn {
+  margin-top: 10px;
 }
 
 .connector-alert-grid {

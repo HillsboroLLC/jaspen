@@ -60,6 +60,14 @@
   font-weight: 600;
 }
 
+.enterprise-admin-error p {
+  margin: 0;
+}
+
+.enterprise-admin-retry-btn {
+  margin-top: 10px;
+}
+
 .enterprise-admin-notice {
   margin-top: 14px;
   border-color: #b7e3c7;

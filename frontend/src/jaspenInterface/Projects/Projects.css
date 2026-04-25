@@ -104,6 +104,14 @@
   color: #3e5079;
 }
 
+.projects-state p {
+  margin: 0;
+}
+
+.projects-retry-btn {
+  margin-top: 10px;
+}
+
 .projects-state-error {
   border-color: #d89ca4;
   color: #8a2534;

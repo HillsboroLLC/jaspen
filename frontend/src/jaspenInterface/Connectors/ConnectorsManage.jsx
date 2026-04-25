@@ -823,7 +823,14 @@ export default function ConnectorsManage() {
           </div>
         </section>
       )}
-      {!loading && error && <div className="connectors-manage-state is-error" role="status" aria-live="polite">{error}</div>}
+      {!loading && error && (
+        <div className="connectors-manage-state is-error" role="status" aria-live="polite">
+          <p>{error}</p>
+          <button type="button" className="int-btn int-btn-ghost connectors-retry-btn" onClick={refresh}>
+            Retry
+          </button>
+        </div>
+      )}
       {!loading && !error && message && <div className="connectors-manage-state is-success" role="status" aria-live="polite">{message}</div>}
 
       {!loading && !error && (

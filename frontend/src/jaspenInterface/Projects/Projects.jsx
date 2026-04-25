@@ -368,7 +368,14 @@ export default function Projects() {
           </div>
         </section>
       )}
-      {!loading && error && <div className="projects-state projects-state-error" role="status" aria-live="polite">{error}</div>}
+      {!loading && error && (
+        <div className="projects-state projects-state-error" role="status" aria-live="polite">
+          <p>{error}</p>
+          <button type="button" className="int-btn int-btn-ghost projects-retry-btn" onClick={loadProjects}>
+            Retry
+          </button>
+        </div>
+      )}
       {!loading && !error && filtered.length === 0 && (
         <div className="projects-state">No projects found for this filter.</div>
       )}

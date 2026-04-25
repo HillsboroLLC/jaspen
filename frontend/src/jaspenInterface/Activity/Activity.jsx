@@ -157,7 +157,14 @@ export default function Activity() {
           </div>
         </section>
       )}
-      {!loading && error && <div className="activity-state activity-state-error" role="status" aria-live="polite">{error}</div>}
+      {!loading && error && (
+        <div className="activity-state activity-state-error" role="status" aria-live="polite">
+          <p>{error}</p>
+          <button type="button" className="int-btn int-btn-ghost activity-retry-btn" onClick={loadActivity}>
+            Retry
+          </button>
+        </div>
+      )}
       {!loading && !error && events.length === 0 && (
         <div className="activity-state">No matching activity events yet.</div>
       )}

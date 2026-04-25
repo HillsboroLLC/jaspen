@@ -205,7 +205,14 @@ export default function Reports() {
       </section>
 
       {loading && <div className="reports-state" role="status" aria-live="polite">Loading reports...</div>}
-      {!loading && error && <div className="reports-state reports-state-error" role="status" aria-live="polite">{error}</div>}
+      {!loading && error && (
+        <div className="reports-state reports-state-error" role="status" aria-live="polite">
+          <p>{error}</p>
+          <button type="button" className="int-btn int-btn-ghost reports-retry-btn" onClick={refresh}>
+            Retry
+          </button>
+        </div>
+      )}
       {!loading && !error && message && <div className="reports-state reports-state-success" role="status" aria-live="polite">{message}</div>}
 
       {!loading && !error && (

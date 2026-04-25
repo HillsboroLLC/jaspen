@@ -296,6 +296,14 @@
   color: #34446a;
 }
 
+.scores-state p {
+  margin: 0;
+}
+
+.scores-retry-btn {
+  margin-top: 10px;
+}
+
 .scores-state-error {
   border-color: #e7c0c7;
   background: #fff6f7;

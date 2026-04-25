@@ -30,6 +30,8 @@ import IntegrationsPage from './pages/Resources/IntegrationsPage';
 import ConnectorsPage from './pages/Resources/ConnectorsPage';
 import PluginsPage from './pages/Resources/PluginsPage';
 import NotFoundPage from './pages/NotFound/NotFound';
+import ServerErrorPage from './pages/ServerError/ServerError';
+import OfflineBanner from './shared/components/OfflineBanner';
 
 // Jaspen
 import PricingResult from './jaspenInterface/PricingResult/PricingResult';
@@ -111,6 +113,7 @@ export default function App() {
 
   return (
     <BrowserRouter>
+      <OfflineBanner />
       <Routes>
         {/* Public */}
         <Route path="/"               element={withShell(<HomePage />, { showHeader: false, fullBleed: true, noPadding: true })} />
@@ -130,6 +133,7 @@ export default function App() {
         <Route path="/pages/resources/plugins" element={withShell(<PluginsPage />, { showHeader: false, fullBleed: true, noPadding: true })} />
         <Route path="/auth/callback"  element={withShell(<AuthCallback />, { showHeader: false, fullBleed: true, noPadding: true })} />
         <Route path="/reset-password" element={withShell(<ResetPasswordPage />, { showHeader: false, fullBleed: true, noPadding: true })} />
+        <Route path="/server-error" element={withShell(<ServerErrorPage />, { title: 'Server error', showHeader: false, fullBleed: true, noPadding: true })} />
 
         {/* Protected (Market) */}
         <Route

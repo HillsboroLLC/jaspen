@@ -551,7 +551,14 @@ export default function Scores() {
         </div>
 
         {loading && <div className="scores-state">Loading completed analyses...</div>}
-        {!loading && error && <div className="scores-state scores-state-error">{error}</div>}
+        {!loading && error && (
+          <div className="scores-state scores-state-error" role="status" aria-live="polite">
+            <p>{error}</p>
+            <button type="button" className="int-btn int-btn-ghost scores-retry-btn" onClick={loadScores}>
+              Retry
+            </button>
+          </div>
+        )}
         {!loading && !error && total === 0 && (
           <div className="scores-state">
             No completed analyses yet. Start a new project to get your first Jaspen Score.

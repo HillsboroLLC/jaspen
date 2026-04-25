@@ -379,7 +379,14 @@ export default function EnterpriseAdmin() {
         </div>
       </section>
 
-      {!!error && <section className="enterprise-admin-card enterprise-admin-error" role="status" aria-live="polite">{error}</section>}
+      {!!error && (
+        <section className="enterprise-admin-card enterprise-admin-error" role="status" aria-live="polite">
+          <p>{error}</p>
+          <button type="button" className="int-btn int-btn-ghost enterprise-admin-retry-btn" onClick={loadEnterpriseAdmin}>
+            Retry
+          </button>
+        </section>
+      )}
       {!!notice && <section className="enterprise-admin-card enterprise-admin-notice" role="status" aria-live="polite">{notice}</section>}
 
       <section className="enterprise-admin-tabs">

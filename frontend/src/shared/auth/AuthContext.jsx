@@ -1,7 +1,7 @@
 // Enhanced AuthContext with cookie-friendly auth + server logout
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { API_BASE } from '../../config/apiBase';
-import { authFetch as cookieAuthFetch } from './http';
+import { AUTH_EVENTS, authFetch as cookieAuthFetch } from './http';
 
 // User roles for LSS system
 export const USER_ROLES = {
@@ -216,6 +216,7 @@ export function AuthProvider({ children }) {
   const [lssUsers, setLssUsers] = useState([]);
   const [currentUserRole, setCurrentUserRole] = useState(null);
   const [permissions, setPermissions] = useState([]);
+  const authRedirectInFlightRef = useRef(false);
   const clearAuthTokens = () => {
     localStorage.removeItem('access_token');
     localStorage.removeItem('token');
@@ -247,6 +248,59 @@ export function AuthProvider({ children }) {
       window.clearInterval(intervalId);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const handleSessionExpired = () => {
+      if (authRedirectInFlightRef.current) return;
+      authRedirectInFlightRef.current = true;
+
+      clearAuthTokens();
+      setMfaEnforcement(null);
+      setUser(null);
+      setCurrentUserRole(null);
+      setPermissions([]);
+      setLssUsers([]);
+
+      const target = '/?auth=1&error=session_expired';
+      const current = `${window.location.pathname}${window.location.search}`;
+      if (current !== target) {
+        window.location.assign(target);
+        return;
+      }
+
+      authRedirectInFlightRef.current = false;
+    };
+
+    const handleServerError = () => {
+      const protectedPrefixes = [
+        '/new',
+        '/dashboard',
+        '/projects',
+        '/scores',
+        '/insights',
+        '/reports',
+        '/activity',
+        '/connectors-manage',
+        '/account',
+        '/team',
+        '/enterprise-admin',
+        '/knowledge',
+        '/jaspen-admin',
+        '/payment',
+      ];
+      const isProtectedPath = protectedPrefixes.some((prefix) => window.location.pathname.startsWith(prefix));
+      if (isProtectedPath) {
+        window.location.assign('/server-error');
+      }
+    };
+
+    window.addEventListener(AUTH_EVENTS.SESSION_EXPIRED_EVENT, handleSessionExpired);
+    window.addEventListener(AUTH_EVENTS.SERVER_ERROR_EVENT, handleServerError);
+    return () => {
+      window.removeEventListener(AUTH_EVENTS.SESSION_EXPIRED_EVENT, handleSessionExpired);
+      window.removeEventListener(AUTH_EVENTS.SERVER_ERROR_EVENT, handleServerError);
+    };
   }, []);
 
   // Load LSS users and set role when user changes

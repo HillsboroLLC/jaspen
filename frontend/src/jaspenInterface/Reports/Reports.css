@@ -82,6 +82,14 @@
   color: #41527b;
 }
 
+.reports-state p {
+  margin: 0;
+}
+
+.reports-retry-btn {
+  margin-top: 10px;
+}
+
 .reports-state-error {
   border-color: #dca5ad;
   color: #952130;

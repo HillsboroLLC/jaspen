@@ -51,6 +51,11 @@ export function readAuthQueryNotice(search) {
         message: 'This account is currently unavailable.',
         detail: 'If this looks wrong, contact Jaspen support and we can review the account history and restore access when appropriate.',
       };
+    case 'session_expired':
+      return {
+        tone: 'info',
+        message: 'Your session expired. Please sign in again to continue.',
+      };
     default:
       return null;
   }

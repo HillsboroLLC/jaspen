@@ -194,6 +194,14 @@
   color: #8d2626;
 }
 
+.insights-error p {
+  margin: 0;
+}
+
+.insights-retry-btn {
+  margin-top: 10px;
+}
+
 .insights-empty {
   margin-top: 12px;
   padding: 10px;

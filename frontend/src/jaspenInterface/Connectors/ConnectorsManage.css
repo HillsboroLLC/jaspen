@@ -26,6 +26,14 @@
   color: #41537d;
 }
 
+.connectors-manage-state p {
+  margin: 0;
+}
+
+.connectors-retry-btn {
+  margin-top: 10px;
+}
+
 .connectors-manage-state.is-error {
   border-color: #dca8b0;
   color: #8e2634;

@@ -194,7 +194,14 @@ export default function ConnectorMonitor({ selectedThreadId = '', onResynced = n
       </header>
 
       {loading && <div className="connector-monitor-state">Loading data source health...</div>}
-      {!loading && error && <div className="connector-monitor-state is-error">{error}</div>}
+      {!loading && error && (
+        <div className="connector-monitor-state is-error" role="status" aria-live="polite">
+          <p>{error}</p>
+          <button type="button" className="int-btn int-btn-ghost connector-monitor-retry-btn" onClick={refreshHealth}>
+            Retry
+          </button>
+        </div>
+      )}
 
       {!loading && !error && (
         <>

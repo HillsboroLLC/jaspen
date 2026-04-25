@@ -389,7 +389,20 @@ export default function Insights() {
           </div>
         )}
 
-        {error && <div className="insights-error">{error}</div>}
+        {error && (
+          <div className="insights-error" role="status" aria-live="polite">
+            <p>{error}</p>
+            <button
+              type="button"
+              className="int-btn int-btn-ghost insights-retry-btn"
+              onClick={loadDatasets}
+              disabled={loading || uploading || analyzing}
+              aria-disabled={loading || uploading || analyzing}
+            >
+              Retry
+            </button>
+          </div>
+        )}
 
         {!analysis ? (
           <div className="insights-empty">
