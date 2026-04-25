@@ -134,7 +134,7 @@ export default function Onboarding({
               className={`jas-onboarding-option ${step.value === option.key ? 'selected' : ''}`}
               onClick={() => step.onSelect(option.key)}
               aria-pressed={step.value === option.key}
-              disabled={busy}
+              disabled={busy} aria-disabled={busy}
             >
               <span className="jas-onboarding-option-title-row">
                 <span className="jas-onboarding-option-title">{option.label}</span>
@@ -160,7 +160,7 @@ export default function Onboarding({
                   }
                   setStepIndex((prev) => Math.max(0, prev - 1));
                 }}
-                disabled={busy}
+                disabled={busy} aria-disabled={busy}
               >
                 Back
               </button>
@@ -170,7 +170,7 @@ export default function Onboarding({
                 type="button"
                 className="jas-onboarding-skip"
                 onClick={() => onSkip?.()}
-                disabled={busy}
+                disabled={busy} aria-disabled={busy}
               >
                 Set up later
               </button>
@@ -181,7 +181,7 @@ export default function Onboarding({
               type="button"
               className="jas-onboarding-primary"
               onClick={() => setStepIndex((prev) => Math.min(steps.length - 1, prev + 1))}
-              disabled={!isStepComplete || busy}
+              disabled={!isStepComplete || busy} aria-disabled={!isStepComplete || busy}
             >
               Continue
             </button>
@@ -196,7 +196,7 @@ export default function Onboarding({
                   startMode,
                 })
               }
-              disabled={!isStepComplete || busy}
+              disabled={!isStepComplete || busy} aria-disabled={!isStepComplete || busy}
             >
               {busy ? (busyLabel || 'Starting…') : submitLabel}
             </button>

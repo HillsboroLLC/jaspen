@@ -34,6 +34,7 @@ export default function SidebarIdentityFooter({
   const location = useLocation();
   const {
     user,
+    updateUiPreferences,
     orgDisplayName,
     isPlatformAdmin,
     isEnterpriseAdmin,
@@ -41,6 +42,7 @@ export default function SidebarIdentityFooter({
   } = useAuth();
 
   const [accountQuickMenuOpen, setAccountQuickMenuOpen] = useState(false);
+  const [themeSavePending, setThemeSavePending] = useState(false);
   const [knowledgeMenuOpen, setKnowledgeMenuOpen] = useState(false);
   const [knowledgeMenuStyle, setKnowledgeMenuStyle] = useState(null);
   const knowledgeSubmenuWrapRef = useRef(null);
@@ -49,6 +51,12 @@ export default function SidebarIdentityFooter({
 
   const userEmail = user?.email || 'user@example.com';
   const userName = displayName || user?.name || userEmail.split('@')[0] || 'User';
+  const themePreference = (() => {
+    const raw = String(user?.ui_preferences?.theme || 'system').trim().toLowerCase();
+    return ['light', 'dark', 'system'].includes(raw) ? raw : 'system';
+  })();
+  const nextThemePreference = themePreference === 'dark' ? 'light' : 'dark';
+  const themeToggleLabel = nextThemePreference === 'dark' ? 'Switch to dark mode' : 'Switch to light mode';
   const currentPlanLabel = String(planLabel || '').trim() || 'Individual';
   const userInitials = getInitials(userName);
   const connectorsPath = (() => {
@@ -146,6 +154,16 @@ export default function SidebarIdentityFooter({
     closeMenus();
   }, [navigate, closeMenus]);
 
+  const handleThemeToggle = useCallback(async () => {
+    if (themeSavePending) return;
+    setThemeSavePending(true);
+    try {
+      await updateUiPreferences({ theme: nextThemePreference });
+    } finally {
+      setThemeSavePending(false);
+    }
+  }, [nextThemePreference, themeSavePending, updateUiPreferences]);
+
   return (
     <div className="jas-ud-footer">
       <button
@@ -215,6 +233,14 @@ export default function SidebarIdentityFooter({
             }}
           >
             Upgrade plan
+          </button>
+          <button
+            type="button"
+            onClick={handleThemeToggle}
+            disabled={themeSavePending}
+            aria-disabled={themeSavePending}
+          >
+            {themeSavePending ? 'Saving theme...' : themeToggleLabel}
           </button>
           {isPlatformAdmin && (
             <button type="button" onClick={() => navigateInternal('/jaspen-admin')}>

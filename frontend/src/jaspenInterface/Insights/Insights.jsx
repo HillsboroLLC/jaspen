@@ -21,6 +21,7 @@ import {
 } from 'chart.js';
 import { Bar, Line, Pie } from 'react-chartjs-2';
 import { Jaspen } from '../Workspace/JaspenClient';
+import ConfirmDialog from '../../shared/components/ConfirmDialog';
 import './Insights.css';
 import AppMenu from '../shared/AppMenu';
 
@@ -82,17 +83,6 @@ function chartDataFor(chart = {}, idx = 0) {
   };
 }
 
-const CHART_OPTIONS = {
-  responsive: true,
-  maintainAspectRatio: false,
-  plugins: {
-    legend: {
-      display: true,
-      position: 'bottom',
-    },
-  },
-};
-
 export default function Insights() {
   const fileInputRef = useRef(null);
   const [datasets, setDatasets] = useState([]);
@@ -104,6 +94,59 @@ export default function Insights() {
   const [question, setQuestion] = useState('');
   const [analysis, setAnalysis] = useState(null);
   const [activeDatasetId, setActiveDatasetId] = useState('');
+  const [themeVersion, setThemeVersion] = useState(0);
+  const [confirmDialog, setConfirmDialog] = useState(null);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const bump = () => setThemeVersion((prev) => prev + 1);
+    const observer = new MutationObserver(bump);
+    observer.observe(root, { attributes: true, attributeFilter: ['data-theme'] });
+    if (typeof media.addEventListener === 'function') media.addEventListener('change', bump);
+    else media.addListener(bump);
+    return () => {
+      observer.disconnect();
+      if (typeof media.removeEventListener === 'function') media.removeEventListener('change', bump);
+      else media.removeListener(bump);
+    };
+  }, []);
+
+  const chartOptions = (() => {
+    const styles = getComputedStyle(document.documentElement);
+    const textColor = styles.getPropertyValue('--color-text-secondary').trim() || '#475569';
+    const gridColor = styles.getPropertyValue('--color-border-default').trim() || '#dbe3ee';
+    const tooltipBg = styles.getPropertyValue('--color-surface-default').trim() || '#ffffff';
+    const tooltipText = styles.getPropertyValue('--color-text-primary').trim() || '#161f3b';
+    return {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: {
+          ticks: { color: textColor },
+          grid: { color: gridColor },
+        },
+        y: {
+          ticks: { color: textColor },
+          grid: { color: gridColor },
+        },
+      },
+      plugins: {
+        legend: {
+          display: true,
+          position: 'bottom',
+          labels: { color: textColor },
+        },
+        tooltip: {
+          backgroundColor: tooltipBg,
+          titleColor: tooltipText,
+          bodyColor: tooltipText,
+          borderColor: gridColor,
+          borderWidth: 1,
+        },
+      },
+    };
+  })();
 
   const loadDatasets = useCallback(async () => {
     setLoading(true);
@@ -171,31 +214,40 @@ export default function Insights() {
     if (!id) return;
     const target = datasets.find((row) => String(row?.id || '') === id);
     const targetName = target?.filename || 'this dataset';
-    const confirmed = window.confirm(`Delete ${targetName}? This cannot be undone.`);
-    if (!confirmed) return;
-
-    setDeletingDatasetId(id);
-    setError('');
-    try {
-      await Jaspen.deleteInsightsDataset(id);
-      if (String(activeDatasetId || '') === id) {
-        setActiveDatasetId('');
-        setAnalysis(null);
-      }
-      await loadDatasets();
-    } catch (err) {
-      setError(err?.message || 'Delete failed');
-    } finally {
-      setDeletingDatasetId('');
-    }
+    setConfirmDialog({
+      title: 'Delete dataset',
+      message: `Delete ${targetName}? This cannot be undone.`,
+      confirmLabel: 'Delete dataset',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        setDeletingDatasetId(id);
+        setError('');
+        try {
+          await Jaspen.deleteInsightsDataset(id);
+          if (String(activeDatasetId || '') === id) {
+            setActiveDatasetId('');
+            setAnalysis(null);
+          }
+          await loadDatasets();
+        } catch (err) {
+          setError(err?.message || 'Delete failed');
+        } finally {
+          setDeletingDatasetId('');
+        }
+      },
+    });
   }, [activeDatasetId, datasets, loadDatasets]);
 
   return (
-    <div className="insights-page">
+    <div className="insights-page int-page">
       <AppMenu />
-      <header className="insights-header">
-        <h1>Insights</h1>
-        <p>Upload company datasets, run AI analysis, and review trends, anomalies, opportunities, and risks.</p>
+      <header className="insights-header int-page-head">
+        <div>
+          <p className="int-eyebrow">Insights</p>
+          <h1>Insights</h1>
+          <p>Upload company datasets, run AI analysis, and review trends, anomalies, opportunities, and risks.</p>
+        </div>
       </header>
 
       <section className="insights-panel">
@@ -262,7 +314,7 @@ export default function Insights() {
                         type="button"
                         className="insights-btn"
                         onClick={() => onAnalyze(row.id)}
-                        disabled={analyzing || Boolean(deletingDatasetId)}
+                        disabled={analyzing || Boolean(deletingDatasetId)} aria-disabled={analyzing || Boolean(deletingDatasetId)}
                       >
                         {analyzing && String(activeDatasetId) === String(row.id) ? 'Analyzing…' : 'Analyze'}
                       </button>
@@ -270,7 +322,7 @@ export default function Insights() {
                         type="button"
                         className="insights-btn danger"
                         onClick={() => onDeleteDataset(row.id)}
-                        disabled={analyzing || deletingDatasetId === String(row.id)}
+                        disabled={analyzing || deletingDatasetId === String(row.id)} aria-disabled={analyzing || deletingDatasetId === String(row.id)}
                       >
                         {deletingDatasetId === String(row.id) ? 'Deleting…' : 'Delete'}
                       </button>
@@ -300,7 +352,7 @@ export default function Insights() {
             type="button"
             className="insights-btn primary"
             onClick={() => onAnalyze(activeDatasetId)}
-            disabled={!activeDatasetId || analyzing}
+            disabled={!activeDatasetId || analyzing} aria-disabled={!activeDatasetId || analyzing}
           >
             {analyzing ? 'Analyzing…' : 'Analyze'}
           </button>
@@ -344,12 +396,12 @@ export default function Insights() {
                     const data = chartDataFor(chart, idx);
                     const canRender = safeList(data.labels).length > 0 && safeList(data.datasets?.[0]?.data).length > 0;
                     return (
-                      <div key={`chart_${idx}`} className="insights-chart-card">
+                      <div key={`chart_${idx}_${themeVersion}`} className="insights-chart-card">
                         <h4>{chart?.title || `Chart ${idx + 1}`}</h4>
                         {!canRender && <div className="insights-chart-empty">No chart data available.</div>}
-                        {canRender && chartType === 'bar' && <Bar data={data} options={CHART_OPTIONS} />}
-                        {canRender && chartType === 'line' && <Line data={data} options={CHART_OPTIONS} />}
-                        {canRender && chartType === 'pie' && <Pie data={data} options={CHART_OPTIONS} />}
+                        {canRender && chartType === 'bar' && <Bar data={data} options={chartOptions} />}
+                        {canRender && chartType === 'line' && <Line data={data} options={chartOptions} />}
+                        {canRender && chartType === 'pie' && <Pie data={data} options={chartOptions} />}
                         {canRender && !['bar', 'line', 'pie'].includes(chartType) && (
                           <div className="insights-chart-empty">Unsupported chart type: {chartType || 'unknown'}.</div>
                         )}
@@ -362,6 +414,16 @@ export default function Insights() {
           </div>
         )}
       </section>
+      <ConfirmDialog
+        isOpen={Boolean(confirmDialog)}
+        title={confirmDialog?.title}
+        message={confirmDialog?.message}
+        confirmLabel={confirmDialog?.confirmLabel}
+        confirmVariant={confirmDialog?.confirmVariant}
+        pending={Boolean(deletingDatasetId)}
+        onCancel={() => setConfirmDialog(null)}
+        onConfirm={() => confirmDialog?.onConfirm?.()}
+      />
     </div>
   );
 }

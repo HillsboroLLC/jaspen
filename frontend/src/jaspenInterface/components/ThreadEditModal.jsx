@@ -29,6 +29,8 @@ export default function ThreadEditModal({
 
   const [name, setName] = React.useState(initialName || '');
   const [adoptedAnalysisId, setAdoptedAnalysisId] = React.useState(initialAdoptedAnalysisId || '');
+  const titleId = React.useId();
+  const descriptionId = React.useId();
   const nameRef = React.useRef(initialName || '');
   const adoptedAnalysisIdRef = React.useRef(initialAdoptedAnalysisId || '');
   const initialAdoptedAnalysisIdRef = React.useRef(initialAdoptedAnalysisId || '');
@@ -224,15 +226,22 @@ export default function ThreadEditModal({
 
   return (
     <div style={styles.backdrop} onMouseDown={onClose}>
-      <div style={styles.modal} onMouseDown={(e) => e.stopPropagation()}>
+      <div
+        style={styles.modal}
+        onMouseDown={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+      >
         <div style={styles.header}>
           <div>
-            <div style={styles.title}>Edit Analysis</div>
-            <div style={styles.sub}>
+            <div id={titleId} style={styles.title}>Edit Analysis</div>
+            <div id={descriptionId} style={styles.sub}>
               {sessionId ? `Session: ${sessionId}` : ''}
             </div>
           </div>
-          <button style={styles.close} onClick={onClose}>✕</button>
+          <button type="button" style={styles.close} onClick={onClose} aria-label="Close edit analysis dialog">✕</button>
         </div>
 
         {error && <div style={styles.error}>{error}</div>}
@@ -275,10 +284,10 @@ export default function ThreadEditModal({
         </div>
 
         <div style={styles.footer}>
-          <button style={styles.btnSecondary} onClick={onClose} disabled={saving}>
+          <button type="button" style={styles.btnSecondary} onClick={onClose} disabled={saving} aria-disabled={saving}>
             Cancel
           </button>
-          <button style={styles.btnPrimary} onClick={doSave} disabled={saving || (!threadId && !sessionId)}>
+          <button type="button" style={styles.btnPrimary} onClick={doSave} disabled={saving || (!threadId && !sessionId)} aria-disabled={saving || (!threadId && !sessionId)}>
             {saving ? 'Saving…' : 'Save changes'}
           </button>
         </div>
@@ -300,7 +309,7 @@ const styles = {
   },
   modal: {
     width: 'min(720px, 100%)',
-    background: '#fff',
+    background: 'var(--color-surface-default)',
     borderRadius: 14,
     boxShadow: '0 10px 40px rgba(0,0,0,0.25)',
     overflow: 'hidden',
@@ -312,17 +321,17 @@ const styles = {
     padding: '16px 18px',
     borderBottom: '1px solid rgba(0,0,0,0.08)',
   },
-  title: { fontSize: 16, fontWeight: 800, color: '#161f3b' },
-  sub: { fontSize: 12, color: '#64748b', marginTop: 3 },
+  title: { fontSize: 16, fontWeight: 800, color: 'var(--color-text-primary)' },
+  sub: { fontSize: 12, color: 'var(--color-text-muted)', marginTop: 3 },
   close: {
     border: 'none',
     background: 'transparent',
     fontSize: 18,
     cursor: 'pointer',
-    color: '#334155',
+    color: 'var(--color-text-secondary)',
   },
   body: { padding: 18 },
-  label: { display: 'block', fontSize: 12, fontWeight: 700, color: '#334155', marginBottom: 6 },
+  label: { display: 'block', fontSize: 12, fontWeight: 700, color: 'var(--color-text-secondary)', marginBottom: 6 },
   input: {
     width: '100%',
     padding: '10px 12px',
@@ -336,19 +345,19 @@ const styles = {
     padding: '10px 12px',
     borderRadius: 10,
     border: '1px solid rgba(0,0,0,0.14)',
-    background: '#fff',
+    background: 'var(--color-surface-default)',
     outline: 'none',
     fontSize: 14,
   },
-  hint: { marginTop: 8, fontSize: 12, color: '#64748b' },
-  muted: { fontSize: 13, color: '#64748b' },
+  hint: { marginTop: 8, fontSize: 12, color: 'var(--color-text-muted)' },
+  muted: { fontSize: 13, color: 'var(--color-text-muted)' },
   error: {
     margin: 18,
     padding: 12,
     borderRadius: 10,
     background: 'rgba(255,0,0,0.07)',
     border: '1px solid rgba(255,0,0,0.18)',
-    color: '#7f1d1d',
+    color: 'var(--color-status-danger)',
     fontSize: 13,
   },
   footer: {
@@ -357,24 +366,24 @@ const styles = {
     gap: 10,
     padding: 16,
     borderTop: '1px solid rgba(0,0,0,0.08)',
-    background: '#f8fafc',
+    background: 'var(--color-surface-subtle)',
   },
   btnSecondary: {
     padding: '10px 14px',
     borderRadius: 10,
     border: '1px solid rgba(22,31,59,0.18)',
-    background: '#fff',
+    background: 'var(--color-surface-default)',
     cursor: 'pointer',
     fontWeight: 700,
-    color: '#161f3b',
+    color: 'var(--color-text-primary)',
   },
   btnPrimary: {
     padding: '10px 14px',
     borderRadius: 10,
     border: 'none',
-    background: '#161f3b',
+    background: 'var(--color-brand-navy)',
     cursor: 'pointer',
     fontWeight: 800,
-    color: '#fff',
+    color: 'var(--color-text-inverse)',
   },
 };

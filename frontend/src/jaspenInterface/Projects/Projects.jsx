@@ -337,16 +337,16 @@ export default function Projects() {
           />
           Select visible
         </label>
-        <button type="button" onClick={archiveSelected} disabled={!selectedIds.size || bulkBusy}>
+        <button type="button" onClick={archiveSelected} disabled={!selectedIds.size || bulkBusy} aria-disabled={!selectedIds.size || bulkBusy}>
           <FontAwesomeIcon icon={faBoxArchive} /> Archive
         </button>
-        <button type="button" onClick={exportSelected} disabled={!selectedIds.size}>
+        <button type="button" onClick={exportSelected} disabled={!selectedIds.size} aria-disabled={!selectedIds.size}>
           <FontAwesomeIcon icon={faDownload} /> Export
         </button>
       </section>
 
-      {loading && <div className="projects-state">Loading projects...</div>}
-      {!loading && error && <div className="projects-state projects-state-error">{error}</div>}
+      {loading && <div className="projects-state" role="status" aria-live="polite">Loading projects...</div>}
+      {!loading && error && <div className="projects-state projects-state-error" role="status" aria-live="polite">{error}</div>}
       {!loading && !error && filtered.length === 0 && (
         <div className="projects-state">No projects found for this filter.</div>
       )}
@@ -384,7 +384,7 @@ export default function Projects() {
                     <button
                       type="button"
                       onClick={() => archiveSingle(row.threadId)}
-                      disabled={bulkBusy}
+                      disabled={bulkBusy} aria-disabled={bulkBusy}
                     >
                       <FontAwesomeIcon icon={faBoxArchive} /> Archive
                     </button>

@@ -4,6 +4,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faArrowUpRightFromSquare, faDownload, faChevronDown, faChevronUp, faTimes, faTrash } from '@fortawesome/free-solid-svg-icons';
 import { API_BASE } from '../../config/apiBase';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
+import ConfirmDialog from '../../shared/components/ConfirmDialog';
 import './Scores.css';
 import AppMenu from '../shared/AppMenu';
 
@@ -158,6 +159,8 @@ export default function Scores() {
   const [portfolioBusy, setPortfolioBusy] = useState(false);
   const [portfolioError, setPortfolioError] = useState('');
   const [portfolioMeta, setPortfolioMeta] = useState(null);
+  const [deletingRowKey, setDeletingRowKey] = useState('');
+  const [confirmDialog, setConfirmDialog] = useState(null);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -266,24 +269,35 @@ export default function Scores() {
 
   async function deleteScoreEntry(row) {
     const label = row?.project_name || 'this entry';
-    if (!window.confirm(`Delete "${label}"? This cannot be undone.`)) return;
-
-    try {
-      const threadId = encodeURIComponent(row?.thread_id || '');
-      const snapshotId = encodeURIComponent(row?.snapshot_id || '');
-      const response = await authFetch(`${API_BASE}/api/v1/strategy/scores/${threadId}/${snapshotId}`, {
-        method: 'DELETE',
-        credentials: 'include',
-        headers: buildAuthHeaders({}, 'DELETE'),
-      });
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data?.error || `Delete failed (${response.status})`);
-      }
-      loadScores();
-    } catch (err) {
-      setError(err?.message || 'Failed to delete score entry.');
-    }
+    const rowKey = `${row?.thread_id || ''}:${row?.snapshot_id || ''}`;
+    setConfirmDialog({
+      title: 'Delete score entry',
+      message: `Delete "${label}"? This cannot be undone.`,
+      confirmLabel: 'Delete score',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        setDeletingRowKey(rowKey);
+        try {
+          const threadId = encodeURIComponent(row?.thread_id || '');
+          const snapshotId = encodeURIComponent(row?.snapshot_id || '');
+          const response = await authFetch(`${API_BASE}/api/v1/strategy/scores/${threadId}/${snapshotId}`, {
+            method: 'DELETE',
+            credentials: 'include',
+            headers: buildAuthHeaders({}, 'DELETE'),
+          });
+          if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            throw new Error(data?.error || `Delete failed (${response.status})`);
+          }
+          loadScores();
+        } catch (err) {
+          setError(err?.message || 'Failed to delete score entry.');
+        } finally {
+          setDeletingRowKey('');
+        }
+      },
+    });
   }
 
   async function exportCsv() {
@@ -402,7 +416,7 @@ export default function Scores() {
   }, [portfolioMeta, total, category, search]);
 
   return (
-    <div className={`scores-container ${portfolioDrawerOpen ? 'drawer-open' : ''}`}>
+    <div className={`scores-container int-page int-page-inner ${portfolioDrawerOpen ? 'drawer-open' : ''}`}>
       <AppMenu />
       {!portfolioDrawerOpen && (
         <button
@@ -451,7 +465,7 @@ export default function Scores() {
                     type="button"
                     className="scores-agent-starter"
                     onClick={() => submitPortfolioPrompt(prompt)}
-                    disabled={portfolioBusy || loading || total === 0}
+                    disabled={portfolioBusy || loading || total === 0} aria-disabled={portfolioBusy || loading || total === 0}
                   >
                     {prompt}
                   </button>
@@ -489,9 +503,9 @@ export default function Scores() {
             />
             <button
               type="button"
-              className="scores-primary-btn scores-agent-send"
+              className="scores-primary-btn scores-agent-send int-btn int-btn-primary"
               onClick={() => submitPortfolioPrompt(portfolioInput)}
-              disabled={portfolioBusy || loading || total === 0 || !portfolioInput.trim()}
+              disabled={portfolioBusy || loading || total === 0 || !portfolioInput.trim()} aria-disabled={portfolioBusy || loading || total === 0 || !portfolioInput.trim()}
             >
               {portfolioBusy ? 'Thinking…' : 'Send'}
             </button>
@@ -500,16 +514,17 @@ export default function Scores() {
       </aside>
 
       <div className="scores-card">
-        <div className="scores-toolbar">
+        <div className="scores-toolbar int-page-head">
           <div>
+            <p className="int-eyebrow">Scores</p>
             <h1>Completed Scores</h1>
             <p>All completed analyses and adopted scenarios</p>
           </div>
           <div className="scores-toolbar-actions">
-            <button type="button" className="scores-secondary-btn" onClick={() => navigate('/new')}>
+            <button type="button" className="scores-secondary-btn int-btn int-btn-ghost" onClick={() => navigate('/new')}>
               Back to Jaspen
             </button>
-            <button type="button" className="scores-primary-btn" onClick={exportCsv} disabled={exportingCsv || loading || total === 0}>
+            <button type="button" className="scores-primary-btn int-btn int-btn-primary" onClick={exportCsv} disabled={exportingCsv || loading || total === 0} aria-disabled={exportingCsv || loading || total === 0}>
               {exportingCsv ? 'Exporting...' : 'Export CSV'}
             </button>
           </div>
@@ -632,6 +647,8 @@ export default function Scores() {
                                 className="scores-icon-btn scores-delete-btn"
                                 title={row?.is_baseline ? 'Delete project and all variants' : 'Delete this variant'}
                                 onClick={() => deleteScoreEntry(row)}
+                                disabled={Boolean(deletingRowKey)}
+                                aria-disabled={Boolean(deletingRowKey)}
                               >
                                 <FontAwesomeIcon icon={faTrash} />
                               </button>
@@ -700,17 +717,17 @@ export default function Scores() {
               <div className="scores-pagination-actions">
                 <button
                   type="button"
-                  className="scores-secondary-btn"
+                  className="scores-secondary-btn int-btn int-btn-ghost"
                   onClick={() => setOffset((prev) => Math.max(0, prev - PAGE_LIMIT))}
-                  disabled={!hasPrevious}
+                  disabled={!hasPrevious} aria-disabled={!hasPrevious}
                 >
                   Previous
                 </button>
                 <button
                   type="button"
-                  className="scores-secondary-btn"
+                  className="scores-secondary-btn int-btn int-btn-ghost"
                   onClick={() => setOffset((prev) => prev + PAGE_LIMIT)}
-                  disabled={!hasNext}
+                  disabled={!hasNext} aria-disabled={!hasNext}
                 >
                   Next
                 </button>
@@ -719,6 +736,16 @@ export default function Scores() {
           </>
         )}
       </div>
+      <ConfirmDialog
+        isOpen={Boolean(confirmDialog)}
+        title={confirmDialog?.title}
+        message={confirmDialog?.message}
+        confirmLabel={confirmDialog?.confirmLabel}
+        confirmVariant={confirmDialog?.confirmVariant}
+        pending={Boolean(deletingRowKey)}
+        onCancel={() => setConfirmDialog(null)}
+        onConfirm={() => confirmDialog?.onConfirm?.()}
+      />
     </div>
   );
 }

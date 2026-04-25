@@ -177,6 +177,11 @@ class User(db.Model):
         db.String(36),
         nullable=True,
     )
+    ui_preferences = db.Column(
+        db.JSON,
+        nullable=True,
+        default=dict,
+    )
 
     # Timestamps
     created_at = db.Column(
@@ -221,6 +226,7 @@ class User(db.Model):
             'feedback_earned': self.feedback_earned,
             'referred_by_user_id': self.referred_by_user_id,
             'signup_referral_code_used': self.signup_referral_code_used,
+            'ui_preferences': self.ui_preferences if isinstance(self.ui_preferences, dict) else {},
             'stripe_customer_id': self.stripe_customer_id,
             'stripe_subscription_id': self.stripe_subscription_id,
             'active_organization_id': self.active_organization_id,

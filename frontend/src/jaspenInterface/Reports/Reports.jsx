@@ -3,6 +3,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faFilePdf, faTrashCan, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons';
 import { API_BASE } from '../../config/apiBase';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
+import ConfirmDialog from '../../shared/components/ConfirmDialog';
 import './Reports.css';
 import AppMenu from '../shared/AppMenu';
 
@@ -40,6 +41,7 @@ export default function Reports() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [confirmDialog, setConfirmDialog] = useState(null);
 
   const loadThreads = useCallback(async () => {
     const res = await authFetch(`${API_BASE}/api/v1/ai-agent/threads`, {
@@ -133,37 +135,46 @@ export default function Reports() {
 
   async function deleteReport(reportId) {
     if (!reportId) return;
-    const confirmed = window.confirm('Delete this report?');
-    if (!confirmed) return;
-
-    setBusy(true);
-    setError('');
-    setMessage('');
-    try {
-      const res = await authFetch(`${API_BASE}/api/v1/reports/${encodeURIComponent(reportId)}`, {
-        method: 'DELETE',
-        credentials: 'include',
-        headers: authHeaders('DELETE'),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data?.error || `Delete failed (${res.status})`);
-      }
-      await loadReports();
-    } catch (err) {
-      setError(err?.message || 'Failed to delete report.');
-    } finally {
-      setBusy(false);
-    }
+    setConfirmDialog({
+      title: 'Delete report',
+      message: 'Delete this report? This cannot be undone.',
+      confirmLabel: 'Delete report',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        setBusy(true);
+        setError('');
+        setMessage('');
+        try {
+          const res = await authFetch(`${API_BASE}/api/v1/reports/${encodeURIComponent(reportId)}`, {
+            method: 'DELETE',
+            credentials: 'include',
+            headers: authHeaders('DELETE'),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            throw new Error(data?.error || `Delete failed (${res.status})`);
+          }
+          await loadReports();
+        } catch (err) {
+          setError(err?.message || 'Failed to delete report.');
+        } finally {
+          setBusy(false);
+        }
+      },
+    });
   }
 
   return (
-    <div className="reports-page">
+    <div className="reports-page int-page">
       <AppMenu />
-      <div className="reports-inner">
-      <header className="reports-header">
-        <h1>Reports</h1>
-        <p>Generate executive and detailed PDFs from completed analyses.</p>
+      <div className="reports-inner int-page-inner">
+      <header className="reports-header int-page-head">
+        <div>
+          <p className="int-eyebrow">Reports</p>
+          <h1>Reports</h1>
+          <p>Generate executive and detailed PDFs from completed analyses.</p>
+        </div>
       </header>
 
       <section className="reports-generate-card">
@@ -182,7 +193,7 @@ export default function Reports() {
               <option key={item.value} value={item.value}>{item.label}</option>
             ))}
           </select>
-          <button type="button" onClick={generateReport} disabled={busy || !selectedThreadId}>
+          <button type="button" onClick={generateReport} disabled={busy || !selectedThreadId} aria-disabled={busy || !selectedThreadId}>
             <FontAwesomeIcon icon={faWandMagicSparkles} /> {busy ? 'Generating...' : 'Generate'}
           </button>
         </div>
@@ -193,9 +204,9 @@ export default function Reports() {
         )}
       </section>
 
-      {loading && <div className="reports-state">Loading reports...</div>}
-      {!loading && error && <div className="reports-state reports-state-error">{error}</div>}
-      {!loading && !error && message && <div className="reports-state reports-state-success">{message}</div>}
+      {loading && <div className="reports-state" role="status" aria-live="polite">Loading reports...</div>}
+      {!loading && error && <div className="reports-state reports-state-error" role="status" aria-live="polite">{error}</div>}
+      {!loading && !error && message && <div className="reports-state reports-state-success" role="status" aria-live="polite">{message}</div>}
 
       {!loading && !error && (
         <section className="reports-list-card">
@@ -234,7 +245,7 @@ export default function Reports() {
                           type="button"
                           className="reports-action reports-action-danger"
                           onClick={() => deleteReport(report.report_id)}
-                          disabled={busy}
+                          disabled={busy} aria-disabled={busy}
                         >
                           <FontAwesomeIcon icon={faTrashCan} /> Delete
                         </button>
@@ -248,6 +259,16 @@ export default function Reports() {
         </section>
       )}
       </div>
+      <ConfirmDialog
+        isOpen={Boolean(confirmDialog)}
+        title={confirmDialog?.title}
+        message={confirmDialog?.message}
+        confirmLabel={confirmDialog?.confirmLabel}
+        confirmVariant={confirmDialog?.confirmVariant}
+        pending={busy}
+        onCancel={() => setConfirmDialog(null)}
+        onConfirm={() => confirmDialog?.onConfirm?.()}
+      />
     </div>
   );
 }

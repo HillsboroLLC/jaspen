@@ -29,7 +29,7 @@ export default function Feedback({
             {scopedUserLabel ? ` Showing feedback for ${scopedUserLabel}.` : ''}
           </p>
         </div>
-        <button type="button" className="jas-admin-secondary" onClick={onRefresh} disabled={isLoading}>
+        <button type="button" className="jas-admin-secondary" onClick={onRefresh} disabled={isLoading} aria-disabled={isLoading}>
           {isLoading ? 'Refreshing...' : 'Refresh'}
         </button>
       </div>

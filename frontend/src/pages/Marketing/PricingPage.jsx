@@ -308,7 +308,7 @@ export default function PricingPage() {
                     type="button"
                     className="pricing-cta-button"
                     onClick={() => beginCheckout(plan.plan_key)}
-                    disabled={loading}
+                    disabled={loading} aria-disabled={loading}
                   >
                     {loading
                       ? 'Redirecting...'
@@ -379,7 +379,7 @@ export default function PricingPage() {
                       type="button"
                       className="pricing-cta-button"
                       onClick={() => buyOveragePack(pack.pack_key)}
-                      disabled={loading}
+                      disabled={loading} aria-disabled={loading}
                     >
                       {loading ? 'Redirecting...' : 'Buy credit pack'}
                     </button>
@@ -400,7 +400,7 @@ export default function PricingPage() {
             Update payment methods, manage Essential, or cancel at period end from your billing settings.
           </p>
           {isLoggedIn ? (
-            <button type="button" className="pricing-portal-button" onClick={openPortal} disabled={pendingKey === 'portal'}>
+            <button type="button" className="pricing-portal-button" onClick={openPortal} disabled={pendingKey === 'portal'} aria-disabled={pendingKey === 'portal'}>
               {pendingKey === 'portal' ? 'Opening...' : 'Manage billing'}
             </button>
           ) : (

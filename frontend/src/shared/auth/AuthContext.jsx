@@ -349,6 +349,32 @@ export function AuthProvider({ children }) {
     }
   };
 
+  const updateUiPreferences = async (uiPreferences = {}) => {
+    if (!uiPreferences || typeof uiPreferences !== 'object' || Array.isArray(uiPreferences)) {
+      return { success: false, error: 'Invalid preferences payload.' };
+    }
+
+    try {
+      const res = await authFetch('/api/v1/auth/me', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ui_preferences: uiPreferences })
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return { success: false, error: data?.error || data?.msg || data?.message || 'Unable to update preferences.' };
+      }
+
+      const normalized = normalizeUser(data);
+      setUser(normalized);
+      return { success: true, user: normalized };
+    } catch (error) {
+      console.error('Update UI preferences error:', error);
+      return { success: false, error: 'Network error. Please try again.' };
+    }
+  };
+
   const login = async (email, password) => {
     try {
       setLoading(true);
@@ -616,6 +642,7 @@ export function AuthProvider({ children }) {
     setUser,
     checkAuthStatus,
     updateDisplayName,
+    updateUiPreferences,
     isAuthenticated,
     planCategory,
     orgDisplayName,

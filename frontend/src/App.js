@@ -1,7 +1,7 @@
 // =====================================================
 // File: src/App.js
 // =====================================================
-import React from 'react';
+import React, { useEffect } from 'react';
 import '@fortawesome/fontawesome-free/css/all.min.css';
 import './App.css';
 
@@ -9,6 +9,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import ProtectedRoute from './homeSections/ProtectedRoute';
 import RequireTeamAccess from './shared/auth/RequireTeamAccess';
 import RequireDashboardAccess from './shared/auth/RequireDashboardAccess';
+import { useAuth } from './shared/auth/AuthContext';
 import { AppShell } from './jaspenInterface/layout';
 
 // Shared
@@ -28,6 +29,7 @@ import TutorialsPage from './pages/Resources/TutorialsPage';
 import IntegrationsPage from './pages/Resources/IntegrationsPage';
 import ConnectorsPage from './pages/Resources/ConnectorsPage';
 import PluginsPage from './pages/Resources/PluginsPage';
+import NotFoundPage from './pages/NotFound/NotFound';
 
 // Jaspen
 import PricingResult from './jaspenInterface/PricingResult/PricingResult';
@@ -47,8 +49,39 @@ import EnterpriseAdmin from './jaspenInterface/EnterpriseAdmin/EnterpriseAdmin';
 
 // Jaspen.ai Workspace
 import JaspenWorkspace from './jaspenInterface/Workspace/JaspenWorkspace';
-console.log("[BOOT] App.js loaded", window.location.href);
 export default function App() {
+  const { user } = useAuth();
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const preference = String(user?.ui_preferences?.theme || 'system').trim().toLowerCase();
+    const themePreference = ['light', 'dark', 'system'].includes(preference) ? preference : 'system';
+
+    const applyResolvedTheme = () => {
+      if (themePreference === 'dark') {
+        root.setAttribute('data-theme', 'dark');
+        return;
+      }
+      if (themePreference === 'light') {
+        root.setAttribute('data-theme', 'light');
+        return;
+      }
+      root.removeAttribute('data-theme');
+    };
+
+    applyResolvedTheme();
+
+    if (themePreference !== 'system') return undefined;
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = () => applyResolvedTheme();
+    if (typeof media.addEventListener === 'function') {
+      media.addEventListener('change', onChange);
+      return () => media.removeEventListener('change', onChange);
+    }
+    media.addListener(onChange);
+    return () => media.removeListener(onChange);
+  }, [user?.ui_preferences?.theme]);
+
   const getDisplayName = (node) =>
     node?.type?.displayName || node?.type?.name || 'Page';
 
@@ -224,7 +257,7 @@ export default function App() {
         />
         <Route path="/payment"   element={<ProtectedRoute>{withShell(<PaymentPage />)}</ProtectedRoute>} />
 
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={withShell(<NotFoundPage />, { title: 'Page not found', showHeader: false, fullBleed: true, noPadding: true })} />
       </Routes>
     </BrowserRouter>
   );

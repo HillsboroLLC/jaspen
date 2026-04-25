@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { API_BASE } from '../../config/apiBase';
 import { useAuth } from '../../shared/auth/AuthContext';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
+import ConfirmDialog from '../../shared/components/ConfirmDialog';
 import './Team.css';
 import AppMenu from '../shared/AppMenu';
 
@@ -156,6 +157,7 @@ export default function Team({ mode = 'team' }) {
   const [previewRole, setPreviewRole] = useState(PREVIEW_ROLE_ACTUAL);
   const [seatDraft, setSeatDraft] = useState({});
   const [savedSeatDraft, setSavedSeatDraft] = useState({});
+  const [confirmDialog, setConfirmDialog] = useState(null);
 
   const isEnterpriseMode = String(mode || '').toLowerCase() === 'enterprise';
   const routePlanForCopy = isEnterpriseMode ? 'enterprise' : 'team';
@@ -380,19 +382,27 @@ export default function Team({ mode = 'team' }) {
   const onRemoveMember = async (member) => {
     if (!canManageMembers || previewModeActive || !activeOrgId) return;
     const label = member?.user?.name || member?.user?.email || member?.user_id;
-    if (!window.confirm(`Remove ${label} from this team?`)) return;
-    setBusy(true);
-    setNotice('');
-    setError('');
-    try {
-      await teamFetch(`/api/v1/teams/${encodeURIComponent(activeOrgId)}/members/${encodeURIComponent(member.id)}`, { method: 'DELETE' });
-      await loadAll();
-      setNotice('Member removed.');
-    } catch (err) {
-      setError(err?.message || 'Failed to remove member');
-    } finally {
-      setBusy(false);
-    }
+    setConfirmDialog({
+      title: 'Remove team member',
+      message: `Remove ${label} from this team?`,
+      confirmLabel: 'Remove member',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        setBusy(true);
+        setNotice('');
+        setError('');
+        try {
+          await teamFetch(`/api/v1/teams/${encodeURIComponent(activeOrgId)}/members/${encodeURIComponent(member.id)}`, { method: 'DELETE' });
+          await loadAll();
+          setNotice('Member removed.');
+        } catch (err) {
+          setError(err?.message || 'Failed to remove member');
+        } finally {
+          setBusy(false);
+        }
+      },
+    });
   };
 
   const onResendInvitation = async (invitationId) => {
@@ -416,22 +426,30 @@ export default function Team({ mode = 'team' }) {
 
   const onCancelInvitation = async (invitationId) => {
     if (!canManageMembers || previewModeActive || !activeOrgId) return;
-    if (!window.confirm('Cancel this invitation?')) return;
-    setBusy(true);
-    setNotice('');
-    setError('');
-    try {
-      await teamFetch(
-        `/api/v1/teams/${encodeURIComponent(activeOrgId)}/invitations/${encodeURIComponent(invitationId)}`,
-        { method: 'DELETE' }
-      );
-      await loadAll();
-      setNotice('Invitation cancelled.');
-    } catch (err) {
-      setError(err?.message || 'Failed to cancel invitation');
-    } finally {
-      setBusy(false);
-    }
+    setConfirmDialog({
+      title: 'Cancel invitation',
+      message: 'Cancel this invitation?',
+      confirmLabel: 'Cancel invitation',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        setBusy(true);
+        setNotice('');
+        setError('');
+        try {
+          await teamFetch(
+            `/api/v1/teams/${encodeURIComponent(activeOrgId)}/invitations/${encodeURIComponent(invitationId)}`,
+            { method: 'DELETE' }
+          );
+          await loadAll();
+          setNotice('Invitation cancelled.');
+        } catch (err) {
+          setError(err?.message || 'Failed to cancel invitation');
+        } finally {
+          setBusy(false);
+        }
+      },
+    });
   };
 
   const onSharingDraftChange = (sessionId, patch) => {
@@ -623,12 +641,12 @@ export default function Team({ mode = 'team' }) {
     : `${routePlanForCopy.charAt(0).toUpperCase() + routePlanForCopy.slice(1)} defaults: ${planSeatSummary(routePlanForCopy)}.`;
 
   return (
-    <div className="team-page jas-internal-page jas-internal-page-shell">
+    <div className="team-page jas-internal-page jas-internal-page-shell int-page">
       <AppMenu />
-      <div className="team-inner">
-      <header className="team-head">
+      <div className="team-inner int-page-inner">
+      <header className="team-head int-page-head">
         <div>
-          <p className="team-eyebrow">{isEnterpriseMode ? 'Jaspen Enterprise' : 'Jaspen Team'}</p>
+          <p className="team-eyebrow int-eyebrow">{isEnterpriseMode ? 'Jaspen Enterprise' : 'Jaspen Team'}</p>
           <h1>{isEnterpriseMode ? 'Enterprise Admin' : 'Team'}</h1>
           <p className="team-sub">
             {isEnterpriseMode
@@ -638,7 +656,7 @@ export default function Team({ mode = 'team' }) {
         </div>
         <button
           type="button"
-          className="team-btn ghost team-back-btn"
+          className="team-btn ghost team-back-btn int-btn int-btn-ghost"
           onClick={() => navigate(routePreviewRole ? '/jaspen-admin' : '/new')}
         >
           {routePreviewRole ? 'Back to Jaspen Admin' : 'Back to Jaspen'}
@@ -659,9 +677,9 @@ export default function Team({ mode = 'team' }) {
               />
               <button
                 type="button"
-                className="team-btn ghost"
+                className="team-btn ghost int-btn int-btn-ghost"
                 onClick={onSaveOrganizationName}
-                disabled={busy || !showOrgNameSave || !activeOrgId}
+                disabled={busy || !showOrgNameSave || !activeOrgId} aria-disabled={busy || !showOrgNameSave || !activeOrgId}
               >
                 Save
               </button>
@@ -708,7 +726,7 @@ export default function Team({ mode = 'team' }) {
       </section>
 
       {(error || notice) && (
-        <div className={`team-state ${error ? 'error' : 'success'}`}>
+        <div className={`team-state ${error ? 'error' : 'success'}`} role="status" aria-live="polite">
           {error || notice}
         </div>
       )}
@@ -746,9 +764,9 @@ export default function Team({ mode = 'team' }) {
           <div className="team-seat-policy-actions">
             <button
               type="button"
-              className="team-btn ghost"
+              className="team-btn ghost int-btn int-btn-ghost"
               onClick={onDiscardSeatPolicy}
-              disabled={busy || !seatDraftDirty || !canEditSeatPolicy}
+              disabled={busy || !seatDraftDirty || !canEditSeatPolicy} aria-disabled={busy || !seatDraftDirty || !canEditSeatPolicy}
             >
               Discard changes
             </button>
@@ -756,15 +774,15 @@ export default function Team({ mode = 'team' }) {
               type="button"
               className="team-btn"
               onClick={onSaveSeatPolicy}
-              disabled={busy || !seatDraftDirty || !canEditSeatPolicy}
+              disabled={busy || !seatDraftDirty || !canEditSeatPolicy} aria-disabled={busy || !seatDraftDirty || !canEditSeatPolicy}
             >
               {busy ? 'Saving…' : 'Save seat policy'}
             </button>
             <button
               type="button"
-              className="team-btn ghost"
+              className="team-btn ghost int-btn int-btn-ghost"
               onClick={onResetSeatPolicy}
-              disabled={busy || !canEditSeatPolicy}
+              disabled={busy || !canEditSeatPolicy} aria-disabled={busy || !canEditSeatPolicy}
             >
               Reset to plan defaults
             </button>
@@ -920,7 +938,7 @@ export default function Team({ mode = 'team' }) {
                             type="button"
                             className="team-btn tiny danger"
                             onClick={() => onRemoveMember(member)}
-                            disabled={busy || previewModeActive}
+                            disabled={busy || previewModeActive} aria-disabled={busy || previewModeActive}
                           >
                             Remove
                           </button>
@@ -958,7 +976,7 @@ export default function Team({ mode = 'team' }) {
                     <option key={role} value={role}>{role}</option>
                   ))}
                 </select>
-                <button type="submit" className="team-btn" disabled={!canManageMembers || busy || previewModeActive}>
+                <button type="submit" className="team-btn" disabled={!canManageMembers || busy || previewModeActive} aria-disabled={!canManageMembers || busy || previewModeActive}>
                   Send invite
                 </button>
               </form>
@@ -995,7 +1013,7 @@ export default function Team({ mode = 'team' }) {
                               type="button"
                               className="team-btn tiny ghost"
                               onClick={() => onResendInvitation(row.id)}
-                              disabled={!canManageMembers || busy || previewModeActive}
+                              disabled={!canManageMembers || busy || previewModeActive} aria-disabled={!canManageMembers || busy || previewModeActive}
                             >
                               Resend
                             </button>
@@ -1003,7 +1021,7 @@ export default function Team({ mode = 'team' }) {
                               type="button"
                               className="team-btn tiny danger"
                               onClick={() => onCancelInvitation(row.id)}
-                              disabled={!canManageMembers || busy || previewModeActive}
+                              disabled={!canManageMembers || busy || previewModeActive} aria-disabled={!canManageMembers || busy || previewModeActive}
                             >
                               Cancel
                             </button>
@@ -1112,7 +1130,7 @@ export default function Team({ mode = 'team' }) {
                         type="button"
                         className="team-btn tiny"
                         onClick={() => onSaveSharing(project.session_id)}
-                        disabled={busy || previewModeActive || !canSaveSharing}
+                        disabled={busy || previewModeActive || !canSaveSharing} aria-disabled={busy || previewModeActive || !canSaveSharing}
                       >
                         Save
                       </button>
@@ -1131,6 +1149,16 @@ export default function Team({ mode = 'team' }) {
           </table>
         </div>
       </section>
+      <ConfirmDialog
+        isOpen={Boolean(confirmDialog)}
+        title={confirmDialog?.title}
+        message={confirmDialog?.message}
+        confirmLabel={confirmDialog?.confirmLabel}
+        confirmVariant={confirmDialog?.confirmVariant}
+        pending={busy}
+        onCancel={() => setConfirmDialog(null)}
+        onConfirm={() => confirmDialog?.onConfirm?.()}
+      />
       </div>
     </div>
   );

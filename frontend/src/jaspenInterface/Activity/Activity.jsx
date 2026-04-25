@@ -99,12 +99,15 @@ export default function Activity() {
   );
 
   return (
-    <div className="activity-page">
+    <div className="activity-page int-page">
       <AppMenu />
-      <div className="activity-inner">
-      <header className="activity-header">
-        <h1>Activity</h1>
-        <p>Unified timeline of scorecards, scenarios, WBS updates, connectors, team, and data events.</p>
+      <div className="activity-inner int-page-inner">
+      <header className="activity-header int-page-head">
+        <div>
+          <p className="int-eyebrow">Activity</p>
+          <h1>Activity</h1>
+          <p>Unified timeline of scorecards, scenarios, WBS updates, connectors, team, and data events.</p>
+        </div>
       </header>
 
       <section className="activity-controls">
@@ -139,8 +142,8 @@ export default function Activity() {
         />
       </section>
 
-      {loading && <div className="activity-state">Loading activity...</div>}
-      {!loading && error && <div className="activity-state activity-state-error">{error}</div>}
+      {loading && <div className="activity-state" role="status" aria-live="polite">Loading activity...</div>}
+      {!loading && error && <div className="activity-state activity-state-error" role="status" aria-live="polite">{error}</div>}
       {!loading && !error && events.length === 0 && (
         <div className="activity-state">No matching activity events yet.</div>
       )}
@@ -170,8 +173,8 @@ export default function Activity() {
         <footer className="activity-pagination">
           <p>Showing {start}-{end} of {total}</p>
           <div>
-            <button type="button" onClick={() => setOffset((prev) => Math.max(0, prev - PAGE_SIZE))} disabled={!hasPrev}>Previous</button>
-            <button type="button" onClick={() => setOffset((prev) => prev + PAGE_SIZE)} disabled={!hasNext}>Next</button>
+            <button type="button" onClick={() => setOffset((prev) => Math.max(0, prev - PAGE_SIZE))} disabled={!hasPrev} aria-disabled={!hasPrev}>Previous</button>
+            <button type="button" onClick={() => setOffset((prev) => prev + PAGE_SIZE)} disabled={!hasNext} aria-disabled={!hasNext}>Next</button>
           </div>
         </footer>
       )}

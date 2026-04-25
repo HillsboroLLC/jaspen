@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuth } from '../../shared/auth/AuthContext';
 import { API_BASE } from '../../config/apiBase';
-import { authFetch } from '../../shared/auth/http';
+import FieldError from '../../shared/components/FieldError';
 import { readAuthQueryNotice } from './authStatus';
 
 export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChange, initialMfaData }) {
@@ -12,6 +12,7 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState('');
   const [errorDetail, setErrorDetail] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
 
   // MFA state
   const [mfaStep, setMfaStep] = useState(null); // null | 'challenge' | 'setup' | 'setup-verify' | 'backup-codes'
@@ -24,11 +25,17 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
 
   const isEmailMode = mode === 'email';
   const isForgotMode = mode === 'forgot';
+  const requiredLabel = (text) => (
+    <>
+      {text} <span className="auth-required-marker" aria-hidden="true">*</span>
+    </>
+  );
 
   const resetState = () => {
     setStatus('idle');
     setError('');
     setErrorDetail('');
+    setFieldErrors({});
     setPassword('');
     setMfaStep(null);
     setMfaPendingToken('');
@@ -105,8 +112,15 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
   const handleEmailSubmit = async (event) => {
     event.preventDefault();
     const normalizedEmail = String(email || '').trim().toLowerCase();
-    if (!normalizedEmail) { setError('Please enter a valid email address.'); return; }
-    if (!password || String(password).length < 8) { setError('Password must be at least 8 characters.'); return; }
+    const nextFieldErrors = {};
+    if (!normalizedEmail) nextFieldErrors.email = 'Please enter your email address.';
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) nextFieldErrors.email = 'Please enter a valid email address.';
+    if (!password || String(password).length < 8) nextFieldErrors.password = 'Password must be at least 8 characters.';
+    if (Object.keys(nextFieldErrors).length > 0) {
+      setFieldErrors((prev) => ({ ...prev, ...nextFieldErrors }));
+      setError('Please fix the highlighted fields.');
+      return;
+    }
 
     setStatus('sending');
     setError('');
@@ -183,7 +197,11 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
   const handleMfaSetupVerify = async (event) => {
     event.preventDefault();
     const code = String(mfaCode || '').trim();
-    if (!code || code.length < 6) { setError('Enter the 6-digit code from your authenticator app.'); return; }
+    if (!code || code.length < 6) {
+      setFieldErrors((prev) => ({ ...prev, mfa_setup_code: 'Enter the 6-digit code from your authenticator app.' }));
+      setError('Please fix the highlighted fields.');
+      return;
+    }
 
     setError('');
     setStatus('sending');
@@ -221,7 +239,11 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
   const handleMfaChallenge = async (event) => {
     event.preventDefault();
     const code = String(mfaCode || '').trim();
-    if (!code) { setError('Enter your authenticator code or a backup code.'); return; }
+    if (!code) {
+      setFieldErrors((prev) => ({ ...prev, mfa_challenge_code: 'Enter your authenticator code or a backup code.' }));
+      setError('Please fix the highlighted fields.');
+      return;
+    }
 
     setError('');
     setStatus('sending');
@@ -255,7 +277,16 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
   const handleForgotSubmit = async (event) => {
     event.preventDefault();
     const normalizedEmail = String(email || '').trim().toLowerCase();
-    if (!normalizedEmail) { setError('Please enter a valid email address.'); return; }
+    if (!normalizedEmail) {
+      setFieldErrors((prev) => ({ ...prev, email: 'Please enter your email address.' }));
+      setError('Please fix the highlighted fields.');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      setFieldErrors((prev) => ({ ...prev, email: 'Please enter a valid email address.' }));
+      setError('Please fix the highlighted fields.');
+      return;
+    }
 
     setStatus('sending');
     setError('');
@@ -288,24 +319,35 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
       {error && <div className="auth-modal-alert is-error"><strong>{error}</strong></div>}
       {statusMessage && <div className="auth-modal-success">{statusMessage}</div>}
       <form className="auth-modal-form" onSubmit={handleMfaChallenge}>
-        <label className="auth-modal-label" htmlFor="mfa-code">Authentication code</label>
+        <p className="auth-required-legend"><span aria-hidden="true">*</span> Required</p>
+        <label className="auth-modal-label" htmlFor="mfa-code">{requiredLabel('Authentication code')}</label>
         <input
           id="mfa-code"
           type="text"
           inputMode="numeric"
           autoComplete="one-time-code"
-          className="auth-modal-input"
+          className={`auth-modal-input${fieldErrors.mfa_challenge_code ? ' is-invalid' : ''}`}
           placeholder="000000"
           value={mfaCode}
-          onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 8))}
+          onChange={(e) => {
+            setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 8));
+            setFieldErrors((prev) => ({ ...prev, mfa_challenge_code: '' }));
+          }}
+          onBlur={() => {
+            if (!String(mfaCode || '').trim()) {
+              setFieldErrors((prev) => ({ ...prev, mfa_challenge_code: 'Enter your authenticator code or a backup code.' }));
+            }
+          }}
+          aria-describedby={fieldErrors.mfa_challenge_code ? 'mfa-code-error' : undefined}
           disabled={status === 'sending' || status === 'sent'}
           autoFocus
           style={{ letterSpacing: '0.25em', fontSize: '1.25rem', textAlign: 'center' }}
         />
+        <FieldError id="mfa-code-error" message={fieldErrors.mfa_challenge_code} />
         <button
           type="submit"
           className="jaspen-btn jaspen-btn-primary auth-modal-submit"
-          disabled={status === 'sending' || status === 'sent' || !mfaCode.trim()}
+          disabled={status === 'sending' || status === 'sent' || !mfaCode.trim()} aria-disabled={status === 'sending' || status === 'sent' || !mfaCode.trim()}
         >
           {status === 'sending' ? 'Verifying...' : 'Verify'}
         </button>
@@ -334,12 +376,12 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
       {error && <div className="auth-modal-alert is-error"><strong>{error}</strong></div>}
       {mfaQrCode && (
         <div style={{ textAlign: 'center', margin: '16px 0' }}>
-          <img src={mfaQrCode} alt="MFA QR Code" style={{ width: 180, height: 180, borderRadius: 8 }} />
+          <img src={mfaQrCode} alt="QR code for MFA setup" style={{ width: 180, height: 180, borderRadius: 8 }} />
         </div>
       )}
       {mfaSecret && (
-        <div style={{ textAlign: 'center', margin: '0 0 16px', fontSize: '0.85rem', color: '#64748b' }}>
-          Manual entry key: <code style={{ background: '#f1f5f9', padding: '2px 6px', borderRadius: 4, fontWeight: 600, letterSpacing: '0.05em' }}>{mfaSecret}</code>
+        <div style={{ textAlign: 'center', margin: '0 0 16px', fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
+          Manual entry key: <code style={{ background: 'var(--color-bg-subtle)', padding: '2px 6px', borderRadius: 4, fontWeight: 600, letterSpacing: '0.05em' }}>{mfaSecret}</code>
         </div>
       )}
       <details className="auth-modal-help">
@@ -351,24 +393,35 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
         </p>
       </details>
       <form className="auth-modal-form" onSubmit={handleMfaSetupVerify}>
-        <label className="auth-modal-label" htmlFor="mfa-setup-code">Enter the 6-digit code from your app</label>
+        <p className="auth-required-legend"><span aria-hidden="true">*</span> Required</p>
+        <label className="auth-modal-label" htmlFor="mfa-setup-code">{requiredLabel('Enter the 6-digit code from your app')}</label>
         <input
           id="mfa-setup-code"
           type="text"
           inputMode="numeric"
           autoComplete="one-time-code"
-          className="auth-modal-input"
+          className={`auth-modal-input${fieldErrors.mfa_setup_code ? ' is-invalid' : ''}`}
           placeholder="000000"
           value={mfaCode}
-          onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+          onChange={(e) => {
+            setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6));
+            setFieldErrors((prev) => ({ ...prev, mfa_setup_code: '' }));
+          }}
+          onBlur={() => {
+            if (String(mfaCode || '').trim().length < 6) {
+              setFieldErrors((prev) => ({ ...prev, mfa_setup_code: 'Enter the 6-digit code from your authenticator app.' }));
+            }
+          }}
+          aria-describedby={fieldErrors.mfa_setup_code ? 'mfa-setup-code-error' : undefined}
           disabled={status === 'sending'}
           autoFocus
           style={{ letterSpacing: '0.25em', fontSize: '1.25rem', textAlign: 'center' }}
         />
+        <FieldError id="mfa-setup-code-error" message={fieldErrors.mfa_setup_code} />
         <button
           type="submit"
           className="jaspen-btn jaspen-btn-primary auth-modal-submit"
-          disabled={status === 'sending' || mfaCode.trim().length < 6}
+          disabled={status === 'sending' || mfaCode.trim().length < 6} aria-disabled={status === 'sending' || mfaCode.trim().length < 6}
         >
           {status === 'sending' ? 'Verifying...' : 'Verify and enable MFA'}
         </button>
@@ -397,21 +450,21 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
         gap: '8px',
         margin: '16px 0',
         padding: '16px',
-        background: '#f8fafc',
+        background: 'var(--color-surface-subtle)',
         borderRadius: 8,
-        border: '1px solid #e2e8f0',
+        border: '1px solid var(--color-border-default)',
       }}>
         {mfaBackupCodes.map((code, idx) => (
           <code key={idx} style={{
             display: 'block',
             textAlign: 'center',
             padding: '6px',
-            background: '#fff',
+            background: 'var(--color-surface-default)',
             borderRadius: 4,
             fontWeight: 600,
             fontSize: '0.9rem',
             letterSpacing: '0.1em',
-            border: '1px solid #e2e8f0',
+            border: '1px solid var(--color-border-default)',
           }}>{code}</code>
         ))}
       </div>
@@ -449,34 +502,60 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
 
       {isEmailMode || isForgotMode ? (
         <form className="auth-modal-form" onSubmit={isForgotMode ? handleForgotSubmit : handleEmailSubmit}>
-          <label className="auth-modal-label" htmlFor="auth-email">Email</label>
+          <p className="auth-required-legend"><span aria-hidden="true">*</span> Required</p>
+          <label className="auth-modal-label" htmlFor="auth-email">{requiredLabel('Email')}</label>
           <input
             id="auth-email"
             type="email"
-            className="auth-modal-input"
+            className={`auth-modal-input${fieldErrors.email ? ' is-invalid' : ''}`}
             placeholder="Enter your email"
             value={email}
-            onChange={(event) => setEmail(event.target.value)}
+            onChange={(event) => {
+              setEmail(event.target.value);
+              setFieldErrors((prev) => ({ ...prev, email: '' }));
+            }}
+            onBlur={() => {
+              const normalizedEmail = String(email || '').trim().toLowerCase();
+              if (!normalizedEmail) {
+                setFieldErrors((prev) => ({ ...prev, email: 'Please enter your email address.' }));
+                return;
+              }
+              if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+                setFieldErrors((prev) => ({ ...prev, email: 'Please enter a valid email address.' }));
+              }
+            }}
+            aria-describedby={fieldErrors.email ? 'auth-email-error' : undefined}
             disabled={status === 'sending' || status === 'sent'}
           />
+          <FieldError id="auth-email-error" message={fieldErrors.email} />
           {!isForgotMode && (
             <>
-              <label className="auth-modal-label" htmlFor="auth-password">Password</label>
+              <label className="auth-modal-label" htmlFor="auth-password">{requiredLabel('Password')}</label>
               <input
                 id="auth-password"
                 type="password"
-                className="auth-modal-input"
+                className={`auth-modal-input${fieldErrors.password ? ' is-invalid' : ''}`}
                 placeholder="Enter your password"
                 value={password}
-                onChange={(event) => setPassword(event.target.value)}
+                onChange={(event) => {
+                  setPassword(event.target.value);
+                  setFieldErrors((prev) => ({ ...prev, password: '' }));
+                }}
+                onBlur={() => {
+                  if (String(password || '').length < 8) {
+                    setFieldErrors((prev) => ({ ...prev, password: 'Password must be at least 8 characters.' }));
+                  }
+                }}
+                aria-describedby={fieldErrors.password ? 'auth-password-error' : undefined}
                 disabled={status === 'sending' || status === 'sent'}
               />
+              <FieldError id="auth-password-error" message={fieldErrors.password} />
             </>
           )}
           <button
             type="submit"
             className="jaspen-btn jaspen-btn-primary auth-modal-submit"
-            disabled={status === 'sending' || status === 'sent'}
+            disabled={status === 'sending' || status === 'sent'} aria-disabled={status === 'sending' || status === 'sent'}
           >
             {status === 'sending'
               ? (isForgotMode ? 'Sending reset link...' : 'Signing in...')

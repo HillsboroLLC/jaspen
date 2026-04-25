@@ -137,6 +137,7 @@ function emptyJiraModalState() {
     revertStatus: 'disconnected',
     hasStoredToken: false,
     storedFlags: {},
+    initialData: {},
     data: {
       jira_base_url: '',
       jira_project_key: '',
@@ -329,6 +330,31 @@ function connectorToggleMeaning(connector) {
   return 'On enables insight ingestion. Off excludes this system from analysis context.';
 }
 
+function requiredFieldLabel(text, required = false) {
+  return (
+    <>
+      {text}
+      {required && <span className="account-required-marker" aria-hidden="true"> *</span>}
+    </>
+  );
+}
+
+function recordsEqual(left = {}, right = {}) {
+  const leftKeys = Object.keys(left || {}).sort();
+  const rightKeys = Object.keys(right || {}).sort();
+  if (leftKeys.length !== rightKeys.length) return false;
+  for (let i = 0; i < leftKeys.length; i += 1) {
+    if (leftKeys[i] !== rightKeys[i]) return false;
+    if (left[leftKeys[i]] !== right[rightKeys[i]]) return false;
+  }
+  return true;
+}
+
+function hasJiraModalUnsavedChanges(modalState) {
+  if (!modalState?.open) return false;
+  return !recordsEqual(modalState.initialData || {}, modalState.data || {});
+}
+
 export default function Account() {
   const navigate = useNavigate();
   const [status, setStatus] = useState(null);
@@ -373,6 +399,25 @@ export default function Account() {
     draft: null,
     pending: false,
   });
+
+  const hasAdminDraftUnsavedChanges = () => {
+    if (!adminState.isAdmin || !adminState.draft?.id) return false;
+    const selected = (adminState.users || []).find((item) => item.id === adminState.selectedUserId);
+    if (!selected) return false;
+    const baseline = toAdminDraft(selected);
+    return !recordsEqual(adminState.draft, baseline);
+  };
+
+  const hasUnsavedChanges = () => hasJiraModalUnsavedChanges(jiraConfigModal) || hasAdminDraftUnsavedChanges();
+
+  const confirmDiscardUnsavedChanges = (
+    prompt = 'You have unsaved changes. Leave this page and discard them?'
+  ) => window.confirm(prompt);
+
+  const guardUnsavedChanges = (onProceed, prompt) => {
+    if (hasUnsavedChanges() && !confirmDiscardUnsavedChanges(prompt)) return;
+    onProceed();
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -527,6 +572,16 @@ export default function Account() {
     const nextUrl = `${window.location.pathname}${search.toString() ? `?${search.toString()}` : ''}${window.location.hash || ''}`;
     window.history.replaceState({}, document.title, nextUrl);
   }, []);
+
+  useEffect(() => {
+    const onBeforeUnload = (event) => {
+      if (!hasUnsavedChanges()) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  });
 
   const refreshStatus = async () => {
     const res = await authFetch(`${API_BASE}/api/v1/billing/status`, {
@@ -1128,17 +1183,20 @@ export default function Account() {
       revertStatus,
       hasStoredToken: Object.values(storedFlags).some(Boolean),
       storedFlags,
+      initialData: { ...baseData, ...modalData },
       data: { ...baseData, ...modalData },
     });
   };
 
-  const closeJiraConfigModal = (revertToPrevious = true) => {
-    setJiraConfigModal((prev) => {
-      if (revertToPrevious && prev?.open && prev.intentEnable && prev.connectorId) {
-        updateConnectorDraft(prev.connectorId, { connection_status: prev.revertStatus || 'disconnected' });
-      }
-      return emptyJiraModalState();
-    });
+  const closeJiraConfigModal = (revertToPrevious = true, forceClose = false) => {
+    if (!forceClose && hasJiraModalUnsavedChanges(jiraConfigModal)) {
+      const confirmed = confirmDiscardUnsavedChanges('You have unsaved connector changes. Discard them?');
+      if (!confirmed) return;
+    }
+    if (revertToPrevious && jiraConfigModal?.open && jiraConfigModal.intentEnable && jiraConfigModal.connectorId) {
+      updateConnectorDraft(jiraConfigModal.connectorId, { connection_status: jiraConfigModal.revertStatus || 'disconnected' });
+    }
+    setJiraConfigModal(emptyJiraModalState());
     setJiraConfigSaving(false);
     setJiraConfigError('');
   };
@@ -1353,8 +1411,7 @@ export default function Account() {
     const success = await saveConnectorDraft(connector, nextDraft);
     setJiraConfigSaving(false);
     if (success) {
-      setJiraConfigModal(emptyJiraModalState());
-      setJiraConfigError('');
+      closeJiraConfigModal(false, true);
     }
   };
 
@@ -1556,6 +1613,13 @@ export default function Account() {
   const mfaPolicy = userProfile?.active_organization_mfa_policy || null;
   const mfaEnabled = Boolean(userProfile?.mfa_enabled);
   const mfaPolicyLabel = mfaPolicy ? mfaPolicy.charAt(0).toUpperCase() + mfaPolicy.slice(1) : 'Optional';
+  const mfaFeedbackDescribedBy = [
+    mfaState.error ? 'account-security-error' : null,
+    mfaState.success ? 'account-security-success' : null,
+  ].filter(Boolean).join(' ') || undefined;
+  const accountMfaSetupCodeId = 'account-mfa-setup-code';
+  const accountMfaDisablePasswordId = 'account-mfa-disable-password';
+  const accountMfaDisableCodeId = 'account-mfa-disable-code';
 
   return (
     <div className="account-page">
@@ -1581,7 +1645,8 @@ export default function Account() {
                   key={item.key}
                   type="button"
                   className={`account-sidebar-item ${activeTab === item.key ? 'is-active' : ''}`}
-                  onClick={() => setActiveTab(item.key)}
+                  onClick={() => guardUnsavedChanges(() => setActiveTab(item.key))}
+                  aria-label={item.label}
                   title={sidebarCollapsed ? item.label : undefined}
                 >
                   <span className="account-sidebar-icon">
@@ -1620,11 +1685,19 @@ export default function Account() {
           </div>
           <div className="account-header-actions">
             {isAdminUser && (
-              <button type="button" onClick={() => navigate('/jaspen-admin')} className="account-secondary-btn">
+              <button
+                type="button"
+                onClick={() => guardUnsavedChanges(() => navigate('/jaspen-admin'))}
+                className="account-secondary-btn"
+              >
                 Jaspen Admin
               </button>
             )}
-            <button type="button" onClick={() => navigate('/new')} className="account-secondary-btn">
+            <button
+              type="button"
+              onClick={() => guardUnsavedChanges(() => navigate('/new'))}
+              className="account-secondary-btn"
+            >
               Back to Jaspen
             </button>
           </div>
@@ -1645,7 +1718,7 @@ export default function Account() {
           </span>
         </div>
 
-        {message && <p className="account-message">{message}</p>}
+        {message && <p className="account-message" role="status" aria-live="polite">{message}</p>}
 
         {activeTab === 'overview' && (
         <section className="account-section">
@@ -1709,7 +1782,7 @@ export default function Account() {
                         type="button"
                         className="account-primary-btn"
                         onClick={() => startPlanChange(key)}
-                        disabled={isPending}
+                        disabled={isPending} aria-disabled={isPending}
                       >
                         {isPending ? 'Redirecting...' : key === 'essential' ? 'Upgrade' : 'Switch'}
                       </button>
@@ -1768,553 +1841,637 @@ export default function Account() {
                 {isServiceNowModal && 'Enter ServiceNow credentials and mapping details, then save. Required: instance URL, username, password.'}
                 {isNetSuiteModal && 'Enter NetSuite token-based integration details, then save. Required: account id, consumer key/secret, token id/secret.'}
               </p>
+              <p className="account-required-legend"><span aria-hidden="true">*</span> Required</p>
               <div className="account-jira-modal-grid">
                 {isJiraModal && (
                   <>
-                    <label>
-                      Jira URL
+                    <label htmlFor={"account-connector-jira_base_url"}>
+                      {requiredFieldLabel('Jira URL', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.jira_base_url}
+                        id={"account-connector-jira_base_url"}
                         placeholder="https://your-company.atlassian.net"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, jira_base_url: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
-                    <label>
-                      Jira project key
+                    <label htmlFor={"account-connector-jira_project_key"}>
+                      {requiredFieldLabel('Jira project key', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.jira_project_key}
+                        id={"account-connector-jira_project_key"}
                         placeholder="PROJ"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, jira_project_key: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
-                    <label>
-                      Jira email
+                    <label htmlFor={"account-connector-jira_email"}>
+                      {requiredFieldLabel('Jira email', true)}
                       <input
                         type="email"
                         value={jiraConfigModal.data.jira_email}
+                        id={"account-connector-jira_email"}
                         placeholder="service-account@company.com"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, jira_email: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
-                    <label>
+                    <label htmlFor={"account-connector-jira_issue_type"}>
                       Jira issue type
                       <input
                         type="text"
                         value={jiraConfigModal.data.jira_issue_type}
+                        id={"account-connector-jira_issue_type"}
                         placeholder="Task"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, jira_issue_type: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
-                    <label className="account-jira-modal-token-field">
-                      Jira API token
+                    <label className="account-jira-modal-token-field" htmlFor={"account-connector-jira_api_token"}>
+                      {requiredFieldLabel('Jira API token', true)}
                       <input
                         type="password"
                         value={jiraConfigModal.data.jira_api_token}
+                        id={"account-connector-jira_api_token"}
                         placeholder={jiraConfigModal.storedFlags?.jira_api_token ? 'Token exists. Enter to rotate token.' : 'Enter Jira API token'}
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, jira_api_token: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                   </>
                 )}
                 {isWorkfrontModal && (
                   <>
-                    <label>
-                      Workfront URL
+                    <label htmlFor={"account-connector-workfront_base_url"}>
+                      {requiredFieldLabel('Workfront URL', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.workfront_base_url}
+                        id={"account-connector-workfront_base_url"}
                         placeholder={DEFAULT_WORKFRONT_BASE_URL}
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, workfront_base_url: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
-                    <label>
-                      Project ID
+                    <label htmlFor={"account-connector-workfront_project_id"}>
+                      {requiredFieldLabel('Project ID', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.workfront_project_id}
+                        id={"account-connector-workfront_project_id"}
                         placeholder="Project or portfolio id"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, workfront_project_id: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
-                    <label className="account-jira-modal-token-field">
-                      Workfront API token
+                    <label className="account-jira-modal-token-field" htmlFor={"account-connector-workfront_api_token"}>
+                      {requiredFieldLabel('Workfront API token', true)}
                       <input
                         type="password"
                         value={jiraConfigModal.data.workfront_api_token}
+                        id={"account-connector-workfront_api_token"}
                         placeholder={jiraConfigModal.storedFlags?.workfront_api_token ? 'Token exists. Enter to rotate token.' : 'Enter Workfront API token'}
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, workfront_api_token: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                   </>
                 )}
                 {isSmartsheetModal && (
                   <>
-                    <label>
-                      Smartsheet URL
+                    <label htmlFor={"account-connector-smartsheet_base_url"}>
+                      {requiredFieldLabel('Smartsheet URL', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.smartsheet_base_url}
+                        id={"account-connector-smartsheet_base_url"}
                         placeholder={DEFAULT_SMARTSHEET_BASE_URL}
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, smartsheet_base_url: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
-                    <label>
-                      Sheet ID
+                    <label htmlFor={"account-connector-smartsheet_sheet_id"}>
+                      {requiredFieldLabel('Sheet ID', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.smartsheet_sheet_id}
+                        id={"account-connector-smartsheet_sheet_id"}
                         placeholder="Sheet id"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, smartsheet_sheet_id: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
-                    <label className="account-jira-modal-token-field">
-                      Smartsheet API token
+                    <label className="account-jira-modal-token-field" htmlFor={"account-connector-smartsheet_api_token"}>
+                      {requiredFieldLabel('Smartsheet API token', true)}
                       <input
                         type="password"
                         value={jiraConfigModal.data.smartsheet_api_token}
+                        id={"account-connector-smartsheet_api_token"}
                         placeholder={jiraConfigModal.storedFlags?.smartsheet_api_token ? 'Token exists. Enter to rotate token.' : 'Enter Smartsheet API token'}
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, smartsheet_api_token: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                   </>
                 )}
                 {isSalesforceModal && (
                   <>
-                    <label>
-                      Auth Base URL
+                    <label htmlFor={"account-connector-salesforce_auth_base_url"}>
+                      {requiredFieldLabel('Auth Base URL', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.salesforce_auth_base_url}
+                        id={"account-connector-salesforce_auth_base_url"}
                         placeholder="https://login.salesforce.com"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, salesforce_auth_base_url: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
-                    <label>
-                      Instance URL
+                    <label htmlFor={"account-connector-salesforce_instance_url"}>
+                      {requiredFieldLabel('Instance URL', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.salesforce_instance_url}
+                        id={"account-connector-salesforce_instance_url"}
                         placeholder="https://your-instance.salesforce.com"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, salesforce_instance_url: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
-                    <label>
-                      Client ID
+                    <label htmlFor={"account-connector-salesforce_client_id"}>
+                      {requiredFieldLabel('Client ID', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.salesforce_client_id}
+                        id={"account-connector-salesforce_client_id"}
                         placeholder="Connected app client id"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, salesforce_client_id: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
-                    <label className="account-jira-modal-token-field">
-                      Client secret
+                    <label className="account-jira-modal-token-field" htmlFor={"account-connector-salesforce_client_secret"}>
+                      {requiredFieldLabel('Client secret', true)}
                       <input
                         type="password"
                         value={jiraConfigModal.data.salesforce_client_secret}
+                        id={"account-connector-salesforce_client_secret"}
                         placeholder={jiraConfigModal.storedFlags?.salesforce_client_secret ? 'Secret exists. Enter to rotate.' : 'Enter client secret'}
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, salesforce_client_secret: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
-                    <label className="account-jira-modal-token-field">
-                      Refresh token
+                    <label className="account-jira-modal-token-field" htmlFor={"account-connector-salesforce_refresh_token"}>
+                      {requiredFieldLabel('Refresh token', true)}
                       <input
                         type="password"
                         value={jiraConfigModal.data.salesforce_refresh_token}
+                        id={"account-connector-salesforce_refresh_token"}
                         placeholder={jiraConfigModal.storedFlags?.salesforce_refresh_token ? 'Token exists. Enter to rotate.' : 'Enter refresh token'}
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, salesforce_refresh_token: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                   </>
                 )}
                 {isSnowflakeModal && (
                   <>
-                    <label>
-                      Account
+                    <label htmlFor={"account-connector-snowflake_account"}>
+                      {requiredFieldLabel('Account', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.snowflake_account}
+                        id={"account-connector-snowflake_account"}
                         placeholder="org-account.region.cloud"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, snowflake_account: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
-                    <label>
-                      Warehouse
+                    <label htmlFor={"account-connector-snowflake_warehouse"}>
+                      {requiredFieldLabel('Warehouse', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.snowflake_warehouse}
+                        id={"account-connector-snowflake_warehouse"}
                         placeholder="ANALYTICS_WH"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, snowflake_warehouse: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
-                    <label>
-                      Database
+                    <label htmlFor={"account-connector-snowflake_database"}>
+                      {requiredFieldLabel('Database', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.snowflake_database}
+                        id={"account-connector-snowflake_database"}
                         placeholder="ANALYTICS"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, snowflake_database: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
-                    <label>
-                      Schema
+                    <label htmlFor={"account-connector-snowflake_schema"}>
+                      {requiredFieldLabel('Schema', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.snowflake_schema}
+                        id={"account-connector-snowflake_schema"}
                         placeholder="PUBLIC"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, snowflake_schema: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
-                    <label>
+                    <label htmlFor={"account-connector-snowflake_role"}>
                       Role
                       <input
                         type="text"
                         value={jiraConfigModal.data.snowflake_role}
+                        id={"account-connector-snowflake_role"}
                         placeholder="ANALYST_ROLE"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, snowflake_role: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
-                    <label>
-                      User
+                    <label htmlFor={"account-connector-snowflake_user"}>
+                      {requiredFieldLabel('User', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.snowflake_user}
+                        id={"account-connector-snowflake_user"}
                         placeholder="service_user"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, snowflake_user: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
-                    <label className="account-jira-modal-token-field">
-                      Password
+                    <label className="account-jira-modal-token-field" htmlFor={"account-connector-snowflake_password"}>
+                      {requiredFieldLabel('Password', true)}
                       <input
                         type="password"
                         value={jiraConfigModal.data.snowflake_password}
+                        id={"account-connector-snowflake_password"}
                         placeholder={jiraConfigModal.storedFlags?.snowflake_password ? 'Password exists. Enter to rotate.' : 'Optional if key is provided'}
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, snowflake_password: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
-                    <label className="account-jira-modal-token-field">
+                    <label className="account-jira-modal-token-field" htmlFor={"account-connector-snowflake_private_key"}>
                       Private key
                       <input
                         type="password"
                         value={jiraConfigModal.data.snowflake_private_key}
+                        id={"account-connector-snowflake_private_key"}
                         placeholder={jiraConfigModal.storedFlags?.snowflake_private_key ? 'Key exists. Enter to rotate.' : 'Optional if password is provided'}
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, snowflake_private_key: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
-                    <label className="account-jira-modal-token-field">
+                    <label className="account-jira-modal-token-field" htmlFor={"account-connector-snowflake_table_allowlist"}>
                       Table allowlist
                       <input
                         type="text"
                         value={jiraConfigModal.data.snowflake_table_allowlist}
+                        id={"account-connector-snowflake_table_allowlist"}
                         placeholder="schema.table_a, schema.table_b"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, snowflake_table_allowlist: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                   </>
                 )}
                 {isOracleFusionModal && (
                   <>
-                    <label>
-                      Base URL
+                    <label htmlFor={"account-connector-oracle_fusion_base_url"}>
+                      {requiredFieldLabel('Base URL', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.oracle_fusion_base_url}
+                        id={"account-connector-oracle_fusion_base_url"}
                         placeholder={DEFAULT_ORACLE_FUSION_BASE_URL}
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, oracle_fusion_base_url: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
-                    <label>
-                      Username
+                    <label htmlFor={"account-connector-oracle_fusion_username"}>
+                      {requiredFieldLabel('Username', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.oracle_fusion_username}
+                        id={"account-connector-oracle_fusion_username"}
                         placeholder="integration.user@company.com"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, oracle_fusion_username: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
-                    <label className="account-jira-modal-token-field">
-                      Password
+                    <label className="account-jira-modal-token-field" htmlFor={"account-connector-oracle_fusion_password"}>
+                      {requiredFieldLabel('Password', true)}
                       <input
                         type="password"
                         value={jiraConfigModal.data.oracle_fusion_password}
+                        id={"account-connector-oracle_fusion_password"}
                         placeholder={jiraConfigModal.storedFlags?.oracle_fusion_password ? 'Password exists. Enter to rotate.' : 'Enter password'}
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, oracle_fusion_password: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
-                    <label>
+                    <label htmlFor={"account-connector-oracle_fusion_business_unit"}>
                       Business unit
                       <input
                         type="text"
                         value={jiraConfigModal.data.oracle_fusion_business_unit}
+                        id={"account-connector-oracle_fusion_business_unit"}
                         placeholder="US Operations"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, oracle_fusion_business_unit: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                   </>
                 )}
                 {isServiceNowModal && (
                   <>
-                    <label>
-                      Instance URL
+                    <label htmlFor={"account-connector-servicenow_instance_url"}>
+                      {requiredFieldLabel('Instance URL', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.servicenow_instance_url}
+                        id={"account-connector-servicenow_instance_url"}
                         placeholder={DEFAULT_SERVICENOW_INSTANCE_URL}
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, servicenow_instance_url: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
-                    <label>
-                      Username
+                    <label htmlFor={"account-connector-servicenow_username"}>
+                      {requiredFieldLabel('Username', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.servicenow_username}
+                        id={"account-connector-servicenow_username"}
                         placeholder="integration.user"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, servicenow_username: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
-                    <label className="account-jira-modal-token-field">
-                      Password
+                    <label className="account-jira-modal-token-field" htmlFor={"account-connector-servicenow_password"}>
+                      {requiredFieldLabel('Password', true)}
                       <input
                         type="password"
                         value={jiraConfigModal.data.servicenow_password}
+                        id={"account-connector-servicenow_password"}
                         placeholder={jiraConfigModal.storedFlags?.servicenow_password ? 'Password exists. Enter to rotate.' : 'Enter password'}
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, servicenow_password: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
-                    <label className="account-jira-modal-token-field">
+                    <label className="account-jira-modal-token-field" htmlFor={"account-connector-servicenow_table_allowlist"}>
                       Table allowlist
                       <input
                         type="text"
                         value={jiraConfigModal.data.servicenow_table_allowlist}
+                        id={"account-connector-servicenow_table_allowlist"}
                         placeholder="incident,change_request"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, servicenow_table_allowlist: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                   </>
                 )}
                 {isNetSuiteModal && (
                   <>
-                    <label>
-                      Account ID
+                    <label htmlFor={"account-connector-netsuite_account_id"}>
+                      {requiredFieldLabel('Account ID', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.netsuite_account_id}
+                        id={"account-connector-netsuite_account_id"}
                         placeholder="123456_SB1"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, netsuite_account_id: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
-                    <label>
-                      Consumer key
+                    <label htmlFor={"account-connector-netsuite_consumer_key"}>
+                      {requiredFieldLabel('Consumer key', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.netsuite_consumer_key}
+                        id={"account-connector-netsuite_consumer_key"}
                         placeholder="Integration consumer key"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, netsuite_consumer_key: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
-                    <label className="account-jira-modal-token-field">
-                      Consumer secret
+                    <label className="account-jira-modal-token-field" htmlFor={"account-connector-netsuite_consumer_secret"}>
+                      {requiredFieldLabel('Consumer secret', true)}
                       <input
                         type="password"
                         value={jiraConfigModal.data.netsuite_consumer_secret}
+                        id={"account-connector-netsuite_consumer_secret"}
                         placeholder={jiraConfigModal.storedFlags?.netsuite_consumer_secret ? 'Secret exists. Enter to rotate.' : 'Enter consumer secret'}
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, netsuite_consumer_secret: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
-                    <label>
-                      Token ID
+                    <label htmlFor={"account-connector-netsuite_token_id"}>
+                      {requiredFieldLabel('Token ID', true)}
                       <input
                         type="text"
                         value={jiraConfigModal.data.netsuite_token_id}
+                        id={"account-connector-netsuite_token_id"}
                         placeholder="Token id"
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, netsuite_token_id: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
-                    <label className="account-jira-modal-token-field">
-                      Token secret
+                    <label className="account-jira-modal-token-field" htmlFor={"account-connector-netsuite_token_secret"}>
+                      {requiredFieldLabel('Token secret', true)}
                       <input
                         type="password"
                         value={jiraConfigModal.data.netsuite_token_secret}
+                        id={"account-connector-netsuite_token_secret"}
                         placeholder={jiraConfigModal.storedFlags?.netsuite_token_secret ? 'Secret exists. Enter to rotate.' : 'Enter token secret'}
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, netsuite_token_secret: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
-                    <label>
+                    <label htmlFor={"account-connector-netsuite_rest_base_url"}>
                       REST base URL
                       <input
                         type="text"
                         value={jiraConfigModal.data.netsuite_rest_base_url}
+                        id={"account-connector-netsuite_rest_base_url"}
                         placeholder={DEFAULT_NETSUITE_REST_BASE_URL}
                         onChange={(e) => setJiraConfigModal((prev) => ({
                           ...prev,
                           data: { ...prev.data, netsuite_rest_base_url: e.target.value },
                         }))}
                         disabled={jiraConfigSaving}
-                      />
+aria-describedby={jiraConfigError ? 'account-jira-modal-error' : undefined}
+/>
                     </label>
                   </>
                 )}
               </div>
-              {jiraConfigError && <p className="account-jira-modal-error">{jiraConfigError}</p>}
+              {jiraConfigError && (
+                <p id="account-jira-modal-error" className="account-jira-modal-error" role="status" aria-live="polite">
+                  <span className="account-jira-modal-error-icon" aria-hidden="true">!</span>
+                  <span>{jiraConfigError}</span>
+                </p>
+              )}
               <div className="account-jira-modal-actions">
-                <button type="button" className="account-secondary-btn" onClick={() => closeJiraConfigModal(true)} disabled={jiraConfigSaving}>
+                <button type="button" className="account-secondary-btn" onClick={() => closeJiraConfigModal(true)} disabled={jiraConfigSaving} aria-disabled={jiraConfigSaving}>
                   Cancel
                 </button>
-                <button type="button" className="account-primary-btn" onClick={saveJiraConfigAndEnable} disabled={jiraConfigSaving}>
+                <button type="button" className="account-primary-btn" onClick={saveJiraConfigAndEnable} disabled={jiraConfigSaving} aria-disabled={jiraConfigSaving}>
                   {jiraConfigSaving ? 'Saving...' : modalSaveLabel}
                 </button>
               </div>
@@ -2338,7 +2495,7 @@ export default function Account() {
                     type="button"
                     className="account-primary-btn"
                     onClick={() => buyPack(key)}
-                    disabled={isPending}
+                    disabled={isPending} aria-disabled={isPending}
                   >
                     {isPending ? 'Redirecting...' : `Purchase for $${pack.price_usd}`}
                   </button>
@@ -2414,8 +2571,8 @@ export default function Account() {
                 </div>
               </div>
 
-              {mfaState.error && <p className="account-security-error">{mfaState.error}</p>}
-              {mfaState.success && <p className="account-security-success">{mfaState.success}</p>}
+              {mfaState.error && <p id="account-security-error" className="account-security-error" role="status" aria-live="polite">{mfaState.error}</p>}
+              {mfaState.success && <p id="account-security-success" className="account-security-success" role="status" aria-live="polite">{mfaState.success}</p>}
 
               {!mfaEnabled && (
                 <div className="account-security-actions">
@@ -2424,7 +2581,7 @@ export default function Account() {
                       type="button"
                       className="account-primary-btn"
                       onClick={startMfaSetup}
-                      disabled={mfaState.loading}
+                      disabled={mfaState.loading} aria-disabled={mfaState.loading}
                     >
                       {mfaState.loading ? 'Starting...' : 'Set up MFA'}
                     </button>
@@ -2440,7 +2597,7 @@ export default function Account() {
               {!mfaEnabled && mfaState.secret && (
                 <div className="account-security-setup">
                   <div className="account-security-qr">
-                    {mfaState.qrCode && <img src={mfaState.qrCode} alt="MFA QR code" />}
+                    {mfaState.qrCode && <img src={mfaState.qrCode} alt="QR code for MFA setup" />}
                     <div>
                       <p>
                         This QR code opens your browser or device default authenticator. If you prefer another
@@ -2464,21 +2621,23 @@ export default function Account() {
                       </details>
                     </div>
                   </div>
-                  <label className="account-security-code">
+                  <label className="account-security-code" htmlFor={accountMfaSetupCodeId}>
                     Enter the 6-digit code
                     <input
+                      id={accountMfaSetupCodeId}
                       type="text"
                       inputMode="numeric"
                       value={mfaState.code}
                       onChange={(e) => setMfaState((prev) => ({ ...prev, code: e.target.value }))}
                       placeholder="123456"
+                      aria-describedby={mfaFeedbackDescribedBy}
                     />
                   </label>
                   <button
                     type="button"
                     className="account-primary-btn"
                     onClick={verifyMfaSetup}
-                    disabled={mfaState.verifying}
+                    disabled={mfaState.verifying} aria-disabled={mfaState.verifying}
                   >
                     {mfaState.verifying ? 'Verifying...' : 'Verify & enable'}
                   </button>
@@ -2503,23 +2662,27 @@ export default function Account() {
                     <p>Require your password and a valid MFA code to disable.</p>
                     <div className="account-security-disable-fields">
                       <input
+                        id={accountMfaDisablePasswordId}
                         type="password"
                         placeholder="Current password"
                         value={mfaState.disablePassword}
                         onChange={(e) => setMfaState((prev) => ({ ...prev, disablePassword: e.target.value }))}
+                        aria-describedby={mfaFeedbackDescribedBy}
                       />
                       <input
+                        id={accountMfaDisableCodeId}
                         type="text"
                         placeholder="MFA code"
                         value={mfaState.disableCode}
                         onChange={(e) => setMfaState((prev) => ({ ...prev, disableCode: e.target.value }))}
+                        aria-describedby={mfaFeedbackDescribedBy}
                       />
                     </div>
                     <button
                       type="button"
                       className="account-danger-btn"
                       onClick={disableMfa}
-                      disabled={mfaState.disabling}
+                      disabled={mfaState.disabling} aria-disabled={mfaState.disabling}
                     >
                       {mfaState.disabling ? 'Disabling...' : 'Disable MFA'}
                     </button>
@@ -2537,7 +2700,7 @@ export default function Account() {
             type="button"
             className="account-secondary-btn"
             onClick={openBillingPortal}
-            disabled={pendingAction === 'portal'}
+            disabled={pendingAction === 'portal'} aria-disabled={pendingAction === 'portal'}
           >
             {pendingAction === 'portal' ? 'Opening...' : 'Manage billing'}
           </button>
@@ -2545,7 +2708,7 @@ export default function Account() {
             type="button"
             className="account-danger-btn"
             onClick={cancelAtPeriodEnd}
-            disabled={pendingAction === 'cancel' || !status?.stripe_subscription_id}
+            disabled={pendingAction === 'cancel' || !status?.stripe_subscription_id} aria-disabled={pendingAction === 'cancel' || !status?.stripe_subscription_id}
           >
             {pendingAction === 'cancel' ? 'Canceling...' : 'Cancel at period end'}
           </button>
@@ -2569,7 +2732,7 @@ export default function Account() {
                 type="button"
                 className="account-secondary-btn"
                 onClick={() => refreshAdminUsers(adminState.query)}
-                disabled={adminState.loading}
+                disabled={adminState.loading} aria-disabled={adminState.loading}
               >
                 {adminState.loading ? 'Searching...' : 'Search'}
               </button>
@@ -2583,11 +2746,11 @@ export default function Account() {
                       type="button"
                       key={user.id}
                       className={`account-admin-user ${selected ? 'is-selected' : ''}`}
-                      onClick={() => setAdminState((prev) => ({
+                      onClick={() => guardUnsavedChanges(() => setAdminState((prev) => ({
                         ...prev,
                         selectedUserId: user.id,
                         draft: toAdminDraft(user),
-                      }))}
+                      })))}
                     >
                       <strong>{user.email}</strong>
                       <span>{user.name}</span>
@@ -2600,13 +2763,14 @@ export default function Account() {
                 {adminState.draft ? (
                   <>
                     <div className="account-admin-grid">
-                      <label>
+                      <label htmlFor="account-admin-email">
                         Email
-                        <input type="text" value={adminState.draft.email} disabled />
+                        <input id="account-admin-email" type="text" value={adminState.draft.email} disabled />
                       </label>
-                      <label>
+                      <label htmlFor="account-admin-name">
                         Name
                         <input
+                          id="account-admin-name"
                           type="text"
                           value={adminState.draft.name}
                           onChange={(e) => setAdminState((prev) => ({
@@ -2615,9 +2779,10 @@ export default function Account() {
                           }))}
                         />
                       </label>
-                      <label>
+                      <label htmlFor="account-admin-plan">
                         Plan
                         <select
+                          id="account-admin-plan"
                           value={adminState.draft.subscription_plan}
                           onChange={(e) => setAdminState((prev) => ({
                             ...prev,
@@ -2627,9 +2792,10 @@ export default function Account() {
                           {PLAN_ORDER.map((key) => <option key={key} value={key}>{key}</option>)}
                         </select>
                       </label>
-                      <label>
+                      <label htmlFor="account-admin-credits">
                         Credits
                         <input
+                          id="account-admin-credits"
                           type="number"
                           value={adminState.draft.credits_remaining}
                           onChange={(e) => setAdminState((prev) => ({
@@ -2638,9 +2804,10 @@ export default function Account() {
                           }))}
                         />
                       </label>
-                      <label>
+                      <label htmlFor="account-admin-seat-limit">
                         Seat limit
                         <input
+                          id="account-admin-seat-limit"
                           type="number"
                           value={adminState.draft.seat_limit}
                           onChange={(e) => setAdminState((prev) => ({
@@ -2649,9 +2816,10 @@ export default function Account() {
                           }))}
                         />
                       </label>
-                      <label>
+                      <label htmlFor="account-admin-max-seats">
                         Max seats
                         <input
+                          id="account-admin-max-seats"
                           type="number"
                           value={adminState.draft.max_seats}
                           onChange={(e) => setAdminState((prev) => ({
@@ -2660,9 +2828,10 @@ export default function Account() {
                           }))}
                         />
                       </label>
-                      <label>
+                      <label htmlFor="account-admin-max-concurrent-sessions">
                         Max concurrent sessions
                         <input
+                          id="account-admin-max-concurrent-sessions"
                           type="number"
                           value={adminState.draft.max_concurrent_sessions}
                           onChange={(e) => setAdminState((prev) => ({
@@ -2671,9 +2840,10 @@ export default function Account() {
                           }))}
                         />
                       </label>
-                      <label>
+                      <label htmlFor="account-admin-stripe-customer-id">
                         Stripe customer id
                         <input
+                          id="account-admin-stripe-customer-id"
                           type="text"
                           value={adminState.draft.stripe_customer_id}
                           onChange={(e) => setAdminState((prev) => ({
@@ -2682,9 +2852,10 @@ export default function Account() {
                           }))}
                         />
                       </label>
-                      <label>
+                      <label htmlFor="account-admin-stripe-subscription-id">
                         Stripe subscription id
                         <input
+                          id="account-admin-stripe-subscription-id"
                           type="text"
                           value={adminState.draft.stripe_subscription_id}
                           onChange={(e) => setAdminState((prev) => ({
@@ -2693,8 +2864,9 @@ export default function Account() {
                           }))}
                         />
                       </label>
-                      <label className="account-admin-checkbox">
+                      <label className="account-admin-checkbox" htmlFor="account-admin-unlimited-analysis">
                         <input
+                          id="account-admin-unlimited-analysis"
                           type="checkbox"
                           checked={Boolean(adminState.draft.unlimited_analysis)}
                           onChange={(e) => setAdminState((prev) => ({
@@ -2710,15 +2882,29 @@ export default function Account() {
                         type="button"
                         className="account-primary-btn"
                         onClick={saveAdminUser}
-                        disabled={adminState.pending}
+                        disabled={adminState.pending} aria-disabled={adminState.pending}
                       >
                         {adminState.pending ? 'Saving...' : 'Save user settings'}
                       </button>
                       <button
                         type="button"
                         className="account-secondary-btn"
+                        onClick={() => {
+                          const selected = (adminState.users || []).find((item) => item.id === adminState.selectedUserId);
+                          if (!selected) return;
+                          setAdminState((prev) => ({ ...prev, draft: toAdminDraft(selected) }));
+                          setMessage('Reverted unsaved admin edits.');
+                        }}
+                        disabled={adminState.pending || !hasAdminDraftUnsavedChanges()}
+                        aria-disabled={adminState.pending || !hasAdminDraftUnsavedChanges()}
+                      >
+                        Revert edits
+                      </button>
+                      <button
+                        type="button"
+                        className="account-secondary-btn"
                         onClick={forceEssential}
-                        disabled={adminState.pending}
+                        disabled={adminState.pending} aria-disabled={adminState.pending}
                       >
                         Force Essential + reset credits
                       </button>

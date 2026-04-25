@@ -1,0 +1,189 @@
+.jas-drawer-tab {
+  appearance: none;
+  -webkit-appearance: none;
+  position: fixed;
+  left: 0;
+  top: 340px;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  background: #f8fafc;
+  border: 1px solid #d9deea;
+  border-left: none;
+  padding: 14px 8px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #161f3b;
+  cursor: pointer;
+  z-index: 1300;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 0 6px 6px 0;
+  transition: background 0.2s ease;
+  font-family: inherit;
+}
+
+.jas-drawer-tab:hover {
+  background: #e9edf7;
+}
+
+.jas-drawer-tab svg {
+  writing-mode: horizontal-tb;
+  font-size: 0.75rem;
+  width: 12px;
+  height: 12px;
+}
+
+.jas-main-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  border: 0;
+  background: transparent;
+  cursor: default;
+  z-index: 1309;
+}
+
+.jas-left-sidebar {
+  position: fixed;
+  left: -320px;
+  top: 0;
+  bottom: 0;
+  width: 320px;
+  background: #f8fafc !important;
+  border-right: 1px solid #d9deea;
+  z-index: 1311;
+  display: flex;
+  flex-direction: column;
+  transition: left 0.3s ease;
+  box-shadow: 4px 0 12px rgba(22, 31, 59, 0.08);
+  opacity: 1 !important;
+}
+
+.jas-left-sidebar.sidebar-open {
+  left: 0;
+}
+
+.jas-left-sidebar.jas-settings-sidebar .jas-sidebar-content {
+  background: #f8fafc !important;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.jas-sidebar-header {
+  padding: 18px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #d9deea;
+  background: #f8fafc !important;
+}
+
+.jas-sidebar-header h3 {
+  margin: 0;
+  font-size: 2rem;
+  font-weight: 700;
+  color: #161f3b;
+}
+
+.jas-close-btn {
+  background: none;
+  border: none;
+  color: #6d7890;
+  cursor: pointer;
+  font-size: 0.875rem;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s ease;
+}
+
+.jas-close-btn:hover {
+  color: #161f3b;
+}
+
+.jas-ud-layout {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  background: #f8fafc !important;
+}
+
+.jas-ud-scroll {
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1;
+  background: #f8fafc !important;
+}
+
+.jas-ud-section {
+  padding: 12px 0;
+  border-bottom: 1px solid #d9deea;
+  background: #f8fafc !important;
+}
+
+.jas-ud-section-label {
+  margin: 0 24px 8px;
+  color: rgba(22, 31, 59, 0.5);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+}
+
+.jas-ud-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 0;
+  border-left: 2px solid transparent;
+  background: transparent;
+  color: rgba(22, 31, 59, 0.9);
+  padding: 11px 14px 11px 16px;
+  font-size: 1.05rem;
+  cursor: pointer;
+  text-align: left;
+  text-decoration: none;
+}
+
+.jas-ud-item svg {
+  width: 16px;
+  color: #495677;
+  transition: color 0.2s ease;
+}
+
+.jas-ud-item:hover {
+  color: #161f3b;
+}
+
+.jas-ud-item:hover svg {
+  color: #161f3b;
+}
+
+.jas-ud-item.is-active {
+  border-left-color: #161f3b;
+  color: #161f3b;
+  font-weight: 600;
+}
+
+.jas-ud-item.is-active svg {
+  color: #161f3b;
+}
+
+.jas-ud-item-label {
+  line-height: 1.2;
+}
+
+@media (max-width: 900px) {
+  .jas-left-sidebar {
+    width: min(92vw, 340px);
+    left: min(-92vw, -340px);
+  }
+}

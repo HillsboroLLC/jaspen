@@ -1,8 +1,8 @@
 .team-page {
   min-height: 100vh;
-  background: #f6f8fc;
+  background: var(--int-bg);
   padding: 28px;
-  color: #161f3b;
+  color: var(--int-text);
 }
 
 .team-inner {
@@ -32,18 +32,18 @@
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #4d6391;
+  color: var(--int-eyebrow);
 }
 
 .team-head h1 {
   margin: 0;
   font-size: 1.6rem;
-  color: #111b3b;
+  color: var(--int-text);
 }
 
 .team-sub {
   margin: 8px 0 0;
-  color: #4f628a;
+  color: var(--int-text-sub);
   max-width: 780px;
 }
 
@@ -70,31 +70,31 @@
   font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.03em;
-  color: #3d5180;
+  color: var(--int-eyebrow);
 }
 
 .team-inline-field select {
   min-width: 220px;
-  border: 1px solid #c9d6ec;
-  border-radius: 9px;
+  border: 1px solid var(--int-border-md);
+  border-radius: var(--int-radius-sm);
   min-height: 36px;
   padding: 0 10px;
-  background: #ffffff;
+  background: var(--int-surface);
 }
 
 .team-inline-field input {
   min-width: 220px;
-  border: 1px solid #c9d6ec;
-  border-radius: 9px;
+  border: 1px solid var(--int-border-md);
+  border-radius: var(--int-radius-sm);
   min-height: 36px;
   padding: 0 10px;
-  background: #ffffff;
+  background: var(--int-surface);
 }
 
 .team-state {
   background: #fff;
-  border: 1px solid #d8e1f0;
-  border-radius: 10px;
+  border: 1px solid var(--int-border);
+  border-radius: var(--int-radius-sm);
   padding: 12px;
   margin-bottom: 12px;
 }
@@ -122,8 +122,8 @@
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  border: 1px solid #d8e1f0;
-  border-radius: 12px;
+  border: 1px solid var(--int-border);
+  border-radius: var(--int-radius-md);
   background: #f9fbff;
   padding: 12px;
   margin-bottom: 12px;
@@ -147,7 +147,7 @@
 
 .team-seat-policy-copy span {
   font-size: 0.82rem;
-  color: #4f628a;
+  color: var(--int-text-sub);
 }
 
 .team-seat-policy-actions {
@@ -166,15 +166,15 @@
 
 .team-seat-card {
   background: #fbfcff;
-  border: 1px solid #d8e1f0;
-  border-radius: 12px;
+  border: 1px solid var(--int-border);
+  border-radius: var(--int-radius-md);
   padding: 12px;
 }
 
 .team-seat-card h3 {
   margin: 0;
   font-size: 0.95rem;
-  color: #162246;
+  color: var(--int-text);
 }
 
 .team-seat-main {
@@ -185,7 +185,7 @@
 
 .team-seat-sub {
   margin: 0;
-  color: #4f628a;
+  color: var(--int-text-sub);
   font-size: 0.82rem;
 }
 
@@ -210,12 +210,12 @@
 .team-seat-editor select,
 .team-seat-editor input {
   width: 100%;
-  border: 1px solid #c9d6ec;
-  border-radius: 9px;
+  border: 1px solid var(--int-border-md);
+  border-radius: var(--int-radius-sm);
   min-height: 34px;
   padding: 0 10px;
   background: #fff;
-  color: #161f3b;
+  color: var(--int-text);
 }
 
 .team-seat-cap-note {
@@ -238,16 +238,16 @@
 }
 
 .team-card {
-  background: #ffffff;
-  border: 1px solid #d8e1f0;
-  border-radius: 12px;
+  background: var(--int-surface);
+  border: 1px solid var(--int-border);
+  border-radius: var(--int-radius-md);
   padding: 14px;
 }
 
 .team-card h2 {
   margin: 0 0 10px;
   font-size: 1.08rem;
-  color: #162246;
+  color: var(--int-text);
 }
 
 .team-subhead {
@@ -258,7 +258,7 @@
 
 .team-subcopy {
   margin: -4px 0 12px;
-  color: #4f628a;
+  color: var(--int-text-sub);
 }
 
 .team-meta-note {
@@ -270,9 +270,10 @@
 
 .team-table-wrap {
   overflow: auto;
-  border: 1px solid #d8e1f0;
-  border-radius: 10px;
+  border: 1px solid var(--int-border);
+  border-radius: var(--int-radius-sm);
   background: #fff;
+  -webkit-overflow-scrolling: touch;
 }
 
 .team-table {
@@ -290,7 +291,7 @@
 }
 
 .team-table th {
-  background: #f6f8fc;
+  background: var(--int-bg);
   font-size: 0.78rem;
   letter-spacing: 0.02em;
   color: #304574;
@@ -305,8 +306,8 @@
 .team-invite-form input,
 .team-invite-form select {
   width: 100%;
-  border: 1px solid #c9d6ec;
-  border-radius: 8px;
+  border: 1px solid var(--int-border-md);
+  border-radius: var(--int-radius-sm);
   min-height: 34px;
   padding: 0 10px;
   background: #fff;
@@ -325,8 +326,8 @@
 }
 
 .team-list-item {
-  border: 1px solid #d8e1f0;
-  border-radius: 10px;
+  border: 1px solid var(--int-border);
+  border-radius: var(--int-radius-sm);
   padding: 10px;
   display: flex;
   justify-content: space-between;
@@ -337,7 +338,7 @@
 
 .team-list-item p {
   margin: 4px 0 0;
-  color: #4f628a;
+  color: var(--int-text-sub);
   font-size: 0.8rem;
 }
 
@@ -349,7 +350,7 @@
 .team-pill {
   display: inline-flex;
   align-items: center;
-  border: 1px solid #d8e1f0;
+  border: 1px solid var(--int-border);
   border-radius: 999px;
   padding: 4px 8px;
   font-size: 0.75rem;
@@ -359,13 +360,29 @@
 
 .team-empty {
   margin: 0;
-  color: #4f628a;
+  color: var(--int-text-sub);
+}
+
+@media (max-width: 768px) {
+  .team-table-wrap {
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .team-table {
+    min-width: 760px;
+  }
+
+  .team-table th,
+  .team-table td {
+    white-space: nowrap;
+  }
 }
 
 .team-btn {
-  border: 1px solid #161f3b;
-  background: #161f3b;
-  color: #ffffff;
+  border: 1px solid var(--int-text);
+  background: var(--int-text);
+  color: var(--int-surface);
   border-radius: 999px;
   min-height: 36px;
   padding: 0 14px;
@@ -375,21 +392,21 @@
 }
 
 .team-btn.ghost {
-  background: #ffffff;
-  color: #161f3b;
+  background: var(--int-surface);
+  color: var(--int-text);
 }
 
 .team-btn.danger {
   border-color: #9d174d;
   background: #9d174d;
-  color: #ffffff;
+  color: var(--int-surface);
 }
 
 .team-btn.tiny {
   min-height: 30px;
   padding: 0 10px;
   font-size: 0.78rem;
-  border-radius: 8px;
+  border-radius: var(--int-radius-sm);
 }
 
 .team-btn:disabled {

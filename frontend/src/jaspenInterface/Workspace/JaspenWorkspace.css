@@ -67,12 +67,22 @@
   background: var(--navy);
   color: var(--white);
   text-decoration: none;
-  transform: translateY(-140%);
-  transition: transform var(--transition);
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
-.jas-skip-link:focus {
-  transform: translateY(0);
+.jas-skip-link:focus,
+.jas-skip-link:focus-visible {
+  width: auto;
+  height: auto;
+  overflow: visible;
+  clip: auto;
+  clip-path: none;
+  white-space: normal;
 }
 
 .jas-sr-only {
@@ -4355,11 +4365,7 @@
   }
 
   .jas-drawer {
-    width: 100%;
-  }
-
-  .jas-drawer-tab {
-    display: none;
+    width: min(92vw, 340px);
   }
 
   .jas-chat-content {
@@ -4393,9 +4399,49 @@
     padding: 0 16px;
   }
 
+  .jas-drawer-tab,
+  .jas-sidebar-tab {
+    writing-mode: horizontal-tb;
+    text-orientation: mixed;
+    top: auto !important;
+    left: 12px;
+    border-left: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 10px 12px;
+    gap: 6px;
+    background: var(--white);
+    box-shadow: 0 8px 20px rgba(22, 31, 59, 0.14);
+    z-index: 360;
+  }
+
+  .jas-drawer-tab svg,
+  .jas-sidebar-tab svg {
+    width: 13px;
+    height: 13px;
+  }
+
+  .jas-tab-label {
+    writing-mode: horizontal-tb;
+    text-orientation: initial;
+  }
+
+  .jas-drawer-tab-settings,
+  .jas-tab-settings {
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+  }
+
+  .jas-drawer-tab-history {
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 62px);
+  }
+
+  .jas-drawer-tab-readiness,
+  .jas-tab-assistant {
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 112px);
+  }
+
   /* AI drawer responsive */
   .jas-ai-drawer {
-    width: 100%;
+    width: min(92vw, 340px);
   }
 
   .jas-workspace.jas-ai-open,
@@ -4427,6 +4473,17 @@
 
   .jas-app-card p {
     min-height: 0;
+  }
+
+  .jas-left-sidebar {
+    width: min(92vw, 340px);
+    left: 0;
+    transform: translateX(-105%);
+    transition: transform 0.3s ease;
+  }
+
+  .jas-left-sidebar.sidebar-open {
+    transform: translateX(0);
   }
 }
 

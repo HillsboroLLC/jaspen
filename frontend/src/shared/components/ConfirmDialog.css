@@ -1,0 +1,68 @@
+.jas-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 14, 30, 0.45);
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.jas-confirm-dialog {
+  width: min(460px, 100%);
+  background: var(--color-surface-default, #ffffff);
+  border: 1px solid var(--color-border-default, #dbe3ee);
+  border-radius: 14px;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.18);
+  padding: 20px;
+}
+
+.jas-confirm-title {
+  margin: 0;
+  color: var(--color-text-primary, #161f3b);
+  font-size: 1.05rem;
+}
+
+.jas-confirm-message {
+  margin: 10px 0 0;
+  color: var(--color-text-secondary, #4b5563);
+  line-height: 1.5;
+}
+
+.jas-confirm-actions {
+  margin-top: 18px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.jas-confirm-btn {
+  border: 1px solid transparent;
+  border-radius: 9px;
+  min-height: 36px;
+  padding: 0 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.jas-confirm-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.jas-confirm-btn-cancel {
+  background: var(--color-surface-subtle, #f8fafc);
+  border-color: var(--color-border-default, #dbe3ee);
+  color: var(--color-text-primary, #161f3b);
+}
+
+.jas-confirm-btn-primary {
+  background: var(--color-brand-navy, #161f3b);
+  color: var(--color-text-inverse, #ffffff);
+}
+
+.jas-confirm-btn-danger {
+  background: var(--color-brand-magenta, #a0036c);
+  color: var(--color-text-inverse, #ffffff);
+}

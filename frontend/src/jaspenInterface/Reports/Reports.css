@@ -1,8 +1,8 @@
 .reports-page {
   min-height: 100vh;
   padding: 28px;
-  background: #f6f8fc;
-  color: #182441;
+  background: var(--int-bg);
+  color: var(--int-text);
 }
 
 .reports-inner {
@@ -23,8 +23,8 @@
 .reports-generate-card,
 .reports-list-card {
   margin-top: 16px;
-  border: 1px solid #ccd7eb;
-  border-radius: 14px;
+  border: 1px solid var(--int-border);
+  border-radius: var(--int-radius-md);
   background: #fff;
   padding: 16px;
 }
@@ -44,7 +44,7 @@
 .reports-generate-form select,
 .reports-generate-form button {
   height: 42px;
-  border-radius: 10px;
+  border-radius: var(--int-radius-sm);
   border: 1px solid #bcc9e0;
 }
 
@@ -77,7 +77,7 @@
   margin-top: 12px;
   border: 1px solid #d3dced;
   background: #fff;
-  border-radius: 12px;
+  border-radius: var(--int-radius-md);
   padding: 14px;
   color: #41527b;
 }
@@ -124,7 +124,7 @@
   border: 1px solid #bbc8df;
   background: #fff;
   color: #203c73;
-  border-radius: 8px;
+  border-radius: var(--int-radius-sm);
   height: 34px;
   padding: 0 10px;
   margin-right: 6px;

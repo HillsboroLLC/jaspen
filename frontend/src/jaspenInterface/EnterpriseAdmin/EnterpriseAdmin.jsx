@@ -346,11 +346,11 @@ export default function EnterpriseAdmin() {
   }
 
   return (
-    <div className="enterprise-admin-page">
+    <div className="enterprise-admin-page int-page int-page-inner">
       <AppMenu />
-      <section className="enterprise-admin-card enterprise-admin-header">
+      <section className="enterprise-admin-card enterprise-admin-header int-page-head">
         <div>
-          <p className="enterprise-admin-eyebrow">Jaspen Enterprise</p>
+          <p className="enterprise-admin-eyebrow int-eyebrow">Jaspen Enterprise</p>
           <h1>Enterprise Admin</h1>
           <p>Manage enterprise controls for team operations, security, data governance, and audit readiness.</p>
         </div>
@@ -360,8 +360,8 @@ export default function EnterpriseAdmin() {
         </div>
       </section>
 
-      {!!error && <section className="enterprise-admin-card enterprise-admin-error">{error}</section>}
-      {!!notice && <section className="enterprise-admin-card enterprise-admin-notice">{notice}</section>}
+      {!!error && <section className="enterprise-admin-card enterprise-admin-error" role="status" aria-live="polite">{error}</section>}
+      {!!notice && <section className="enterprise-admin-card enterprise-admin-notice" role="status" aria-live="polite">{notice}</section>}
 
       <section className="enterprise-admin-tabs">
         {TABS.map((tab) => (
@@ -443,10 +443,10 @@ export default function EnterpriseAdmin() {
           {!!ssoTestMessage && <div className="enterprise-helper">{ssoTestMessage}</div>}
 
           <div className="enterprise-actions">
-            <button type="button" className="secondary" onClick={testSsoConnection} disabled={busy}>
+            <button type="button" className="secondary" onClick={testSsoConnection} disabled={busy} aria-disabled={busy}>
               Test Connection
             </button>
-            <button type="button" className="primary" onClick={saveSsoSettings} disabled={busy}>
+            <button type="button" className="primary" onClick={saveSsoSettings} disabled={busy} aria-disabled={busy}>
               Save Configuration
             </button>
           </div>
@@ -520,7 +520,7 @@ export default function EnterpriseAdmin() {
           </div>
 
           <div className="enterprise-actions">
-            <button type="button" className="primary" onClick={saveGovernanceSettings} disabled={busy}>
+            <button type="button" className="primary" onClick={saveGovernanceSettings} disabled={busy} aria-disabled={busy}>
               Save Settings
             </button>
           </div>
@@ -531,7 +531,7 @@ export default function EnterpriseAdmin() {
         <section className="enterprise-admin-panel enterprise-admin-card">
           <header className="enterprise-panel-head">
             <h2>Audit Log</h2>
-            <button type="button" className="secondary" onClick={onRefreshAudit} disabled={auditLoading}>
+            <button type="button" className="secondary" onClick={onRefreshAudit} disabled={auditLoading} aria-disabled={auditLoading}>
               {auditLoading ? 'Refreshing…' : 'Refresh'}
             </button>
           </header>
@@ -567,7 +567,7 @@ export default function EnterpriseAdmin() {
           </div>
 
           <div className="enterprise-actions">
-            <button type="button" className="secondary" onClick={onRefreshAudit} disabled={auditLoading}>
+            <button type="button" className="secondary" onClick={onRefreshAudit} disabled={auditLoading} aria-disabled={auditLoading}>
               Apply Filters
             </button>
           </div>

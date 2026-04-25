@@ -716,7 +716,7 @@ export default function ExecutionPanel({
             <p className="execution-eyebrow">Execution Sync</p>
             <h4>Connected PM systems</h4>
           </div>
-          <button type="button" className="execution-tertiary-btn" onClick={loadSyncState} disabled={syncLoading}>
+          <button type="button" className="execution-tertiary-btn" onClick={loadSyncState} disabled={syncLoading} aria-disabled={syncLoading}>
             <FontAwesomeIcon icon={syncLoading ? faSpinner : faRefresh} spin={syncLoading} />
             Refresh
           </button>
@@ -742,7 +742,7 @@ export default function ExecutionPanel({
                     type="button"
                     className="execution-secondary-btn"
                     onClick={() => runManualSync(connectorId)}
-                    disabled={syncAction === connectorId}
+                    disabled={syncAction === connectorId} aria-disabled={syncAction === connectorId}
                   >
                     <FontAwesomeIcon icon={syncAction === connectorId ? faSpinner : faRefresh} spin={syncAction === connectorId} />
                     Sync now

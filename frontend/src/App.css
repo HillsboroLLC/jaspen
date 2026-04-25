@@ -1,4 +1,6 @@
 /* Reset and Base Styles */
+@import './styles/internal-unify.css';
+
 * {
   margin: 0;
   padding: 0;
@@ -9,8 +11,38 @@
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   line-height: 1.6;
-  color: #161f3b;
-  background-color: #FFFFFF;
+  color: var(--color-text-primary);
+  background-color: var(--color-bg-page);
+}
+
+.app-skip-link {
+  position: absolute;
+  left: 16px;
+  top: 12px;
+  z-index: 2000;
+  padding: 10px 14px;
+  border-radius: 8px;
+  text-decoration: none;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  background: var(--color-surface-default);
+  border: 2px solid var(--color-brand-navy);
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.app-skip-link:focus,
+.app-skip-link:focus-visible {
+  width: auto;
+  height: auto;
+  overflow: visible;
+  clip: auto;
+  clip-path: none;
+  white-space: normal;
 }
 
 .container {
@@ -24,7 +56,7 @@ h1, h2, h3, h4, h5, h6 {
   font-weight: 600;
   line-height: 1.2;
   margin-bottom: 1rem;
-  color: #161f3b;
+  color: var(--color-text-primary);
 }
 h1 { font-size: 3rem; font-weight: 700; }
 h2 { font-size: 2.5rem; }
@@ -33,9 +65,9 @@ h3 { font-size: 1.5rem; }
 /* PARAGRAPHS */
 p {
   margin-bottom: 1rem;
-  color: #6C757D;
+  color: var(--color-text-secondary);
 }
-.highlight { color: #a0036c; }
+.highlight { color: var(--color-highlight); }
 
 /* Buttons */
 .btn {
@@ -51,22 +83,22 @@ p {
   font-size: 1rem;
 }
 .btn-primary {
-  background-color: #a0036c;
-  color: #FFFFFF;
+  background-color: var(--color-brand-magenta);
+  color: var(--color-text-inverse);
 }
 .btn-primary:hover {
-  background-color: #8a025a;
+  background-color: var(--color-brand-magenta);
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(160,3,108,0.3);
+  box-shadow: 0 4px 12px rgba(160, 3, 108, 0.3);
 }
 .btn-secondary {
   background: transparent;
-  color: #161f3b;
-  border: 2px solid #161f3b;
+  color: var(--color-text-primary);
+  border: 2px solid var(--color-brand-navy);
 }
 .btn-secondary:hover {
-  background-color: #161f3b;
-  color: #FFFFFF;
+  background-color: var(--color-brand-navy);
+  color: var(--color-text-inverse);
   transform: translateY(-2px);
 }
 .btn-large {
@@ -76,9 +108,9 @@ p {
 
 /* Header */
 .header {
-  background: rgba(255,255,255,0.95);
+  background: rgba(255, 255, 255, 0.95);
   backdrop-filter: blur(10px);
-  border-bottom: 1px solid rgba(22,31,59,0.1);
+  border-bottom: 1px solid rgba(22, 31, 59, 0.1);
   position: fixed;
   top: 0; left: 0; right: 0;
   z-index: 1000;
@@ -92,7 +124,7 @@ p {
 .logo-text {
   font-size: 1.5rem;
   font-weight: 700;
-  color: #a0036c;
+  color: var(--color-brand-magenta);
   text-decoration: none;
 }
 .nav-list {
@@ -101,12 +133,12 @@ p {
   gap: 2rem;
 }
 .nav-link {
-  color: #161f3b;
+  color: var(--color-text-primary);
   text-decoration: none;
   font-weight: 500;
   transition: color 0.3s ease;
 }
-.nav-link:hover { color: #a0036c; }
+.nav-link:hover { color: var(--color-brand-magenta); }
 .header-actions {
   display: flex;
   gap: 1rem;
@@ -118,15 +150,15 @@ p {
 /* Pricing */
 .pricing {
   padding: 80px 0;
-  background: #eff9fc;
+  background: var(--color-surface-tint);
 }
 .pricing-header { text-align: center; margin-bottom: 3rem; }
 .founder-offer-section { margin-bottom: 4rem; padding-top: 3rem; }
 .founder-offer {
-  background: #a0036c;
+  background: var(--color-brand-magenta);
   border-radius: 16px;
   padding: 3rem;
-  color: #FFFFFF;
+  color: var(--color-text-inverse);
   position: relative;
   overflow: visible;
   box-shadow: 0 15px 40px rgba(160,3,108,0.3);
@@ -150,8 +182,8 @@ p {
   position:absolute;
   top:-8px;
   left:3rem;
-  background:#eff9fc;
-  color:#161f3b;
+  background: var(--color-surface-tint);
+  color: var(--color-text-primary);
   padding:0.5rem 1.5rem;
   border-radius:20px;
   font-size:0.9rem;
@@ -162,7 +194,7 @@ p {
 .founder-left h3 {
   font-size:2.5rem;
   font-weight:700;
-  color:#FFFFFF ;
+  color: var(--color-text-inverse);
   margin-bottom:1rem;
 }
 .founder-left p {
@@ -181,7 +213,7 @@ p {
   margin-bottom:0.5rem;
   color:rgba(255,255,255,0.9) ;
 }
-.founder-features i { color:#eff9fc ; }
+.founder-features i { color: var(--color-surface-tint); }
 .founder-center {
   text-align:center;
   border-left:1px solid rgba(255,255,255,0.2);
@@ -198,11 +230,11 @@ p {
 .founder-amount   { font-size:4rem; font-weight:700; color:#FFFFFF ; }
 .founder-period   { font-size:1.2rem; color:rgba(255,255,255,0.8) ; margin-left:0.5rem; }
 .founder-savings  {
-  background:#e9b57b;
-  padding:0.5rem 1rem;
+  background: var(--color-accent-primary);
+  padding: 0.5rem 1rem;
   border-radius:20px;
   font-size:0.9rem;
-  color:#161f3b;
+  color: var(--color-text-primary);
   font-weight:600;
   margin-bottom:1rem;
 }
@@ -216,8 +248,8 @@ p {
 .founder-urgency h4 { color:#FFFFFF ; margin-bottom:0.5rem; }
 .founder-urgency p { color:rgba(255,255,255,0.8) ; margin:0; font-size:0.9rem; }
 .founder-cta {
-  background:#FFFFFF;
-  color:#a0036c ;
+  background: var(--color-surface-default);
+  color: var(--color-brand-magenta);
   padding:1rem 2rem;
   border-radius:8px;
   text-decoration:none;
@@ -554,7 +586,7 @@ p {
 .payment-summary .price {
   font-size:2rem;
   font-weight:700;
-  color:#a0036c;
+  color: var(--color-brand-magenta);
   margin-bottom:0.5rem;
 }
 .payment-summary .savings {
@@ -563,8 +595,8 @@ p {
   font-size:0.9rem;
 }
 .payment-button {
-  background:#a0036c;
-  color:#FFFFFF;
+  background: var(--color-brand-magenta);
+  color: var(--color-text-inverse);
   padding:1rem 2rem;
   border:none;
   border-radius:8px;
@@ -574,7 +606,7 @@ p {
   transition:all 0.3s ease;
   width:100%;
 }
-.payment-button:hover { background:#8a025a; transform:translateY(-2px); }
+.payment-button:hover { background: var(--color-brand-magenta); transform:translateY(-2px); }
 .payment-button:disabled {
   background:#ccc;
   cursor:not-allowed;
@@ -583,17 +615,17 @@ p {
 .payment-error { color:#dc3545; font-size:0.9rem; margin-top:0.5rem; }
 .modal-note {
   font-size:0.9rem;
-  color:#6C757D;
+  color: var(--color-text-secondary);
   text-align:center;
   margin-top:1rem;
 }
 
 /* Live Chat Customization */
 .crisp-client .cc-tlyw .cc-kxkl .cc-1hqb {
-  background:#a0036c;
+  background: var(--color-brand-magenta);
 }
 .crisp-client .cc-tlyw .cc-kxkl .cc-1hqb:hover {
-  background:#8a025a;
+  background: var(--color-brand-magenta);
 }
 
 /* Responsive */

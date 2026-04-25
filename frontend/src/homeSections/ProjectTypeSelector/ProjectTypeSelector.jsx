@@ -342,7 +342,7 @@ const ProjectTypeSelector = ({ onProjectSelect, initialContext = null, showModeS
         <button
           className={styles.startButton}
           onClick={handleProjectSelect}
-          disabled={!selectedProjectType}
+          disabled={!selectedProjectType} aria-disabled={!selectedProjectType}
         >
           <i className="fas fa-play"></i>
           Start Project

@@ -1,0 +1,6 @@
+.jas-field-error {
+  margin: 4px 0 0;
+  color: var(--color-status-danger, #c0392b);
+  font-size: 0.84rem;
+  line-height: 1.35;
+}

@@ -3,13 +3,13 @@
   max-width: 1320px;
   margin: 0 auto;
   padding: 24px;
-  color: #1b2648;
+  color: var(--int-text);
 }
 
 .enterprise-admin-card {
-  background: #f7f9ff;
-  border: 1px solid #d7e0f4;
-  border-radius: 16px;
+  background: var(--int-bg);
+  border: 1px solid var(--int-border);
+  border-radius: var(--int-radius-lg);
   padding: 20px;
 }
 
@@ -77,7 +77,7 @@
 
 .enterprise-admin-tab {
   border: 1px solid #b8c6ea;
-  background: #ffffff;
+  background: var(--int-surface);
   color: #23386c;
   border-radius: 999px;
   padding: 10px 14px;
@@ -93,7 +93,7 @@
 .enterprise-admin-tab.active {
   border-color: #203466;
   background: #203466;
-  color: #ffffff;
+  color: var(--int-surface);
 }
 
 .enterprise-admin-panel {
@@ -175,9 +175,9 @@
 .enterprise-audit-filters input {
   width: 100%;
   border: 1px solid #b6c4e8;
-  background: #ffffff;
+  background: var(--int-surface);
   color: #1c2f58;
-  border-radius: 10px;
+  border-radius: var(--int-radius-sm);
   font-size: 14px;
   padding: 10px 12px;
   outline: none;
@@ -242,7 +242,7 @@
 .enterprise-actions button.primary {
   border: 1px solid #1e3468;
   background: #1e3468;
-  color: #ffffff;
+  color: var(--int-surface);
 }
 
 .enterprise-actions button.primary:hover:not(:disabled) {
@@ -251,7 +251,7 @@
 
 .enterprise-actions button.secondary {
   border: 1px solid #7f93c4;
-  background: #ffffff;
+  background: var(--int-surface);
   color: #2d4479;
 }
 
@@ -290,8 +290,9 @@
   margin-top: 12px;
   overflow-x: auto;
   border: 1px solid #d3def6;
-  border-radius: 12px;
-  background: #ffffff;
+  border-radius: var(--int-radius-md);
+  background: var(--int-surface);
+  -webkit-overflow-scrolling: touch;
 }
 
 .enterprise-audit-table {
@@ -335,8 +336,8 @@
 
 .enterprise-compliance-card {
   border: 1px solid #d3dff9;
-  background: #ffffff;
-  border-radius: 12px;
+  background: var(--int-surface);
+  border-radius: var(--int-radius-md);
   padding: 14px;
 }
 
@@ -392,5 +393,14 @@
 
   .enterprise-actions {
     flex-wrap: wrap;
+  }
+
+  .enterprise-audit-table {
+    min-width: 720px;
+  }
+
+  .enterprise-audit-table th,
+  .enterprise-audit-table td {
+    white-space: nowrap;
   }
 }

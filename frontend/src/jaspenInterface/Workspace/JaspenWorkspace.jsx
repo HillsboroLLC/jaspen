@@ -1438,7 +1438,6 @@ const refreshBundle = async (tid) => {
       setMessages(bundleMessages);
     }
   } catch (e) {
-    console.debug('[refreshBundle] skipped', e);
     showToast(e?.message || 'Unable to refresh thread bundle.', 'error');
   } finally {
     setBundleLoading(false);
@@ -1456,7 +1455,6 @@ const refreshThreadWbs = useCallback(async (tid) => {
     setThreadWbs(nextWbs);
     return nextWbs;
   } catch (e) {
-    console.debug('[refreshThreadWbs] skipped', e);
     showToast(e?.message || 'Unable to refresh execution plan.', 'error');
     return null;
   } finally {
@@ -1556,7 +1554,7 @@ const renderMessageAttachments = (message) => {
               <img
                 className="attachment-thumb"
                 src={attachment.preview}
-                alt={attachment.name}
+                alt={attachment?.name ? `Attachment preview: ${attachment.name}` : 'Attachment preview'}
                 onLoad={() => {
                   try { if (attachment.preview?.startsWith?.('blob:')) URL.revokeObjectURL(attachment.preview); } catch {}
                 }}
@@ -1678,7 +1676,7 @@ const renderMessageActions = (message, messageKey, idx, total) => {
         }}
         aria-label="Thumbs up"
         title="Thumbs up"
-        disabled={!canFeedback || isFeedbackBusy}
+        disabled={!canFeedback || isFeedbackBusy} aria-disabled={!canFeedback || isFeedbackBusy}
       >
         <FontAwesomeIcon icon={faThumbsUp} />
       </button>
@@ -1702,7 +1700,7 @@ const renderMessageActions = (message, messageKey, idx, total) => {
         }}
         aria-label="Thumbs down"
         title="Thumbs down"
-        disabled={!canFeedback || isFeedbackBusy}
+        disabled={!canFeedback || isFeedbackBusy} aria-disabled={!canFeedback || isFeedbackBusy}
       >
         <FontAwesomeIcon icon={faThumbsDown} />
       </button>
@@ -1713,7 +1711,7 @@ const renderMessageActions = (message, messageKey, idx, total) => {
           onClick={regenerateLastResponse}
           aria-label="Regenerate response"
           title="Regenerate"
-          disabled={regenerating}
+          disabled={regenerating} aria-disabled={regenerating}
         >
           <FontAwesomeIcon icon={faRotate} />
         </button>
@@ -1725,7 +1723,7 @@ const renderMessageActions = (message, messageKey, idx, total) => {
           onClick={undoLastMutationTurn}
           aria-label="Undo changes"
           title="Undo changes"
-          disabled={undoingMutation}
+          disabled={undoingMutation} aria-disabled={undoingMutation}
         >
           <FontAwesomeIcon icon={faClockRotateLeft} />
         </button>
@@ -2719,7 +2717,7 @@ useEffect(() => {
                   }
                 }
               }}
-              disabled={!nameInput.trim() || nameSaving}
+              disabled={!nameInput.trim() || nameSaving} aria-disabled={!nameInput.trim() || nameSaving}
             >
               {nameSaving ? 'Saving...' : 'Save'}
             </button>
@@ -2789,7 +2787,7 @@ useEffect(() => {
                       type="button"
                       className="jas-account-action-btn"
                       onClick={() => startPlanChange(key)}
-                      disabled={billingActionLoading === key}
+                      disabled={billingActionLoading === key} aria-disabled={billingActionLoading === key}
                     >
                       {billingActionLoading === key ? 'Redirecting...' : 'Select plan'}
                     </button>
@@ -2806,7 +2804,7 @@ useEffect(() => {
               type="button"
               className="jas-account-portal-btn"
               onClick={openBillingPortal}
-              disabled={billingActionLoading === 'portal'}
+              disabled={billingActionLoading === 'portal'} aria-disabled={billingActionLoading === 'portal'}
             >
               {billingActionLoading === 'portal' ? 'Opening...' : 'Manage billing'}
             </button>
@@ -2845,7 +2843,7 @@ useEffect(() => {
                 type="button"
                 className="jas-notifications-clear"
                 onClick={clearNotificationBadge}
-                disabled={unreadNotificationCount === 0}
+                disabled={unreadNotificationCount === 0} aria-disabled={unreadNotificationCount === 0}
               >
                 Clear
               </button>
@@ -3142,7 +3140,7 @@ useEffect(() => {
                 type="button"
                 className="jas-ud-invite-btn"
                 onClick={handleCopyInviteLink}
-                disabled={!inviteLink}
+                disabled={!inviteLink} aria-disabled={!inviteLink}
               >
                 Copy link
               </button>
@@ -3814,7 +3812,6 @@ async function loadSessionById(id) {
       readiness: raw.readiness ? normalizeReadiness(raw.readiness) : normalizeReadiness(null),
     };
   } catch (e) {
-    console.debug('[loadSessionById] failed', e);
     return null;
   }
 }
@@ -3991,7 +3988,6 @@ useEffect(() => {
             objective_explicitly_set: false,
           };
         } catch (e) {
-          console.debug('[auto-restore] bundle fallback failed', e);
         }
       }
 
@@ -3999,7 +3995,6 @@ useEffect(() => {
         try {
           restoreBundle = await Jaspen.getThreadBundle(sid, { msg_limit: 50, scn_limit: 50 });
         } catch (e) {
-          console.debug('[auto-restore] bundle hydrate skipped', e);
         }
       }
 
@@ -4202,8 +4197,6 @@ if (rawHistory.length > 0) {
   // Fetch readiness snapshot (percent + categories) for a given session id
   // RETURNS the audit payload for immediate use in persistence
 async function fetchReadinessFor(sid) {
-  console.log('[fetchReadinessFor] ENTRY', { sid, currentSessionId, sessionId });
-
   if (!sid) {
     console.warn('[fetchReadinessFor] ABORT - no sid provided');
     return null;
@@ -4212,7 +4205,6 @@ async function fetchReadinessFor(sid) {
   try {
     const apiBase = API_BASE;
     const url = `${apiBase}/api/v1/ai-agent/readiness/audit?thread_id=${encodeURIComponent(sid)}`;
-    console.log('[fetchReadinessFor] fetching URL:', url);
 
     const res = await fetch(url, {
       method: 'GET',
@@ -4223,11 +4215,9 @@ async function fetchReadinessFor(sid) {
       },
     });
 
-    console.log('[fetchReadinessFor] response status:', res.status);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
     const auditPayload = await res.json();
-    console.log('[fetchReadinessFor] RAW auditPayload:', JSON.stringify(auditPayload, null, 2));
 
     const overall = {
       percent: Number(auditPayload?.overall?.percent ?? auditPayload?.percent ?? 0),
@@ -4235,13 +4225,6 @@ async function fetchReadinessFor(sid) {
       heur_overall: Number(auditPayload?.overall?.heur_overall ?? auditPayload?.heur_overall ?? 0),
     };
     const pct = Math.max(0, Math.min(100, Math.round(overall.percent || 0)));
-
-    console.log('[fetchReadinessFor] PARSED', {
-      raw_overall_percent: auditPayload?.overall?.percent,
-      raw_percent: auditPayload?.percent,
-      computed_pct: pct,
-      categories_count: auditPayload?.categories?.length,
-    });
 
     const categories = Array.isArray(auditPayload?.categories) ? auditPayload.categories : [];
     const items = Array.isArray(auditPayload?.items) ? auditPayload.items : [];
@@ -4251,7 +4234,6 @@ async function fetchReadinessFor(sid) {
     const version = auditPayload?.version || null;
 
     const newAudit = { overall: { ...overall, percent: pct }, categories, items, checklist_summary, version };
-    console.log('[fetchReadinessFor] calling setReadinessAudit with:', newAudit);
     setReadinessAudit(newAudit);
     setReadinessSource(overall.source);
     setReadinessVersion(version);
@@ -4322,16 +4304,6 @@ const uiReadiness = hasConversationMessages && readinessAudit?.overall?.percent 
   ? clampPercent(readinessAudit.overall.percent)
   : 0;
 
-// DEBUG: Track readinessAudit state changes
-useEffect(() => {
-  console.log('[DEBUG] readinessAudit STATE CHANGED:', {
-    readinessAudit,
-    uiReadiness,
-    overall_percent: readinessAudit?.overall?.percent,
-    categories_count: readinessAudit?.categories?.length,
-  });
-}, [readinessAudit, uiReadiness]);
-
 // Readiness gate (use backend overall.percent via uiReadiness)
 const canAnalyze = React.useMemo(() => {
   const hasUserTurns = messages?.some(m => m.role === 'user' && (m.text || '').trim());
@@ -4397,7 +4369,7 @@ const renderReadinessChecklistGroup = (title, items, helper = '') => {
     <div className="jas-collected-section">
       <h4>{title}</h4>
       {helper ? (
-        <p style={{ color: '#64748b', fontSize: '12px', margin: '0 0 10px' }}>{helper}</p>
+        <p style={{ color: 'var(--color-text-muted)', fontSize: '12px', margin: '0 0 10px' }}>{helper}</p>
       ) : null}
       <div className="jas-checklist">
         {items.map((item) => (
@@ -4429,7 +4401,7 @@ const renderReadinessChecklist = () => {
     <>
       <div className="jas-collected-section">
         <h4>Progress Checklist</h4>
-        <p style={{ color: '#64748b', fontSize: '12px', margin: '0 0 10px' }}>
+        <p style={{ color: 'var(--color-text-muted)', fontSize: '12px', margin: '0 0 10px' }}>
           {readinessChecklistSummary.done}/{readinessChecklistSummary.total} captured
           {readinessChecklistSummary.inProgress > 0 ? ` • ${readinessChecklistSummary.inProgress} in progress` : ''}
         </p>
@@ -4446,7 +4418,7 @@ const renderReadinessChecklist = () => {
         </>
       ) : (
         <div className="jas-collected-section">
-          <p style={{ color: '#64748b', fontSize: '13px', lineHeight: 1.5, margin: '6px 0 0' }}>
+          <p style={{ color: 'var(--color-text-muted)', fontSize: '13px', lineHeight: 1.5, margin: '6px 0 0' }}>
             Ask one more question to start checklist tracking.
           </p>
         </div>
@@ -4465,7 +4437,7 @@ const renderModelTypeInlinePicker = (className = '') => (
       aria-label="Select model"
       title="Select model"
       onClick={() => setModelMenuOpen((prev) => !prev)}
-      disabled={busy}
+      disabled={busy} aria-disabled={busy}
     >
       <span className="jas-model-picker-trigger-text">{selectedModelOption?.withVersion || 'Model'}</span>
       <FontAwesomeIcon icon={faChevronDown} className={`jas-model-picker-caret ${modelMenuOpen ? 'is-open' : ''}`} />
@@ -4479,7 +4451,7 @@ const renderModelTypeInlinePicker = (className = '') => (
             role="option"
             aria-selected={selectedModelType === option.key}
             className={`jas-model-picker-option ${selectedModelType === option.key ? 'is-selected' : ''}`}
-            disabled={!option.isAllowed}
+            disabled={!option.isAllowed} aria-disabled={!option.isAllowed}
             onClick={() => {
               if (!option.isAllowed) return;
               setSelectedModelType(option.key);
@@ -4531,7 +4503,7 @@ const renderSelectedObjectivePill = (className = '') => {
           onClick={() => applyStrategyObjective('balanced', { persist: true, explicit: false, silent: true })}
           aria-label="Remove selected intention"
           title="Remove intention"
-          disabled={busy}
+          disabled={busy} aria-disabled={busy}
         >
           <FontAwesomeIcon icon={faTimes} />
         </button>
@@ -4567,7 +4539,7 @@ const renderStarterSelector = (className = '') => {
             type="button"
             className="jas-starter-clear-btn"
             onClick={() => setSelectedStarterId('')}
-            disabled={busy}
+            disabled={busy} aria-disabled={busy}
           >
             Clear
           </button>
@@ -4811,7 +4783,6 @@ useEffect(() => {
   // === Conversation Start ===
   // Flow: Call Jaspen.convoStart → set session → await audit → append message → save
   async function startConversation(description, options = {}) {
-    console.log('[startConversation] ENTRY', { description: description?.substring(0, 50) });
     setBusy(true); setError(null);
 
     // Clear old readiness immediately to show 0% for new conversation
@@ -4847,24 +4818,16 @@ useEffect(() => {
       setBusy(false);
       const data = await dataPromise;
 
-      console.log('[startConversation] convoStart returned:', {
-        thread_id: data.thread_id,
-        session_id: data.session_id,
-        readiness: data.readiness,
-      });
-
       // Step 2: Set sessionId (must use real thread_id/session_id from backend)
       const sid = data.thread_id || data.session_id;
       if (!sid) {
         throw new Error('Missing thread_id from convoStart response');
       }
-      console.log('[startConversation] setting sessionId to:', sid);
       setSessionId(sid);
       setCurrentSessionId(sid);
       dispatchSidebar({ type: "OPEN_READINESS" });
 
       // Step 3: await GET /api/v1/readiness/audit (authoritative)
-      console.log('[startConversation] calling fetchReadinessFor with sid:', sid);
       await fetchReadinessFor(sid);
       
       if (data?.model_type) {
@@ -4898,13 +4861,6 @@ useEffect(() => {
   // === Conversation Continue ===
   // Flow: Call Jaspen.convoContinue → append message → await audit → persist using returned payload
 async function continueConversation(userText, options = {}) {
-  console.log('[continueConversation] ENTRY', {
-    sessionId,
-    currentSessionId,
-    userText: userText?.substring(0, 50),
-    messagesCount: messages?.length,
-  });
-
   if (!sessionId) {
     console.warn('[continueConversation] ABORT - no sessionId');
     return null;
@@ -4913,20 +4869,12 @@ async function continueConversation(userText, options = {}) {
   setError(null);
 
   try {
-    console.log('[continueConversation] calling Jaspen.streamConversation with session_id:', sessionId);
-
     const data = await streamConversationReply({
       threadId: sessionId,
       userText,
       modelType: selectedModelType,
       objective: strategyObjective,
       attachments: Array.isArray(options.attachments) ? options.attachments : [],
-    });
-
-    console.log('[continueConversation] convoContinue returned:', {
-      hasReply: Boolean(data?.reply || data?.message),
-      readinessFromConvo: data?.readiness,
-      thread_id_in_response: data?.thread_id,
     });
 
     if (data?.model_type) {
@@ -4936,16 +4884,8 @@ async function continueConversation(userText, options = {}) {
     setObjectiveExplicitlySet(Boolean(data?.objective_explicitly_set) || objectiveExplicitlySet);
     await applyMutationRefreshes(data, sessionId);
 
-    console.log('[continueConversation] about to call fetchReadinessFor with sessionId:', sessionId);
-
     // Step 3: await GET /api/v1/readiness/audit
     const auditPayload = await fetchReadinessFor(sessionId);
-
-    console.log('[continueConversation] fetchReadinessFor returned auditPayload:', {
-      hasAudit: Boolean(auditPayload),
-      overall_percent: auditPayload?.overall?.percent,
-      categories_count: auditPayload?.categories?.length,
-    });
 
     const updatedCollected = data?.collected_data || collectedData;
     setCollectedData(updatedCollected);
@@ -4959,8 +4899,6 @@ async function continueConversation(userText, options = {}) {
         ? auditPayload.checklist_summary
         : null;
       const version = auditPayload?.version || null;
-
-      console.log('[continueConversation] setting readinessAudit with pct:', pct);
 
       setReadinessAudit({
         overall: { ...auditPayload.overall, percent: pct },
@@ -5315,7 +5253,7 @@ const handleSaveStarter = async () => {
     if (refresh) {
       const tid = currentSessionId || sessionId;
       if (tid) {
-        refreshBundle(tid).catch((err) => console.debug('[applySnapshotMeta] refreshBundle failed', err));
+        refreshBundle(tid).catch(() => {});
       }
     }
   }, [analysisResult, baselineScorecardId, bundleBaselineScorecard, currentSessionId, refreshBundle, sessionId]);
@@ -6778,7 +6716,7 @@ const renderPostAdoptWbsPrompt = () => {
             <FontAwesomeIcon icon={faTimes} />
           </button>
         </div>
-        <p style={{ margin: '0 0 16px', color: '#475569' }}>
+        <p style={{ margin: '0 0 16px', color: 'var(--color-text-secondary)' }}>
           {scenarioLabel} is active. Generate a project WBS from this scorecard now, or do it later from the Score tab.
         </p>
         <div className="jas-account-modal-actions">
@@ -7530,7 +7468,7 @@ const handleScenarioSaved = useCallback((payload = {}) => {
   // across refresh/logout. The optimistic update above keeps the UI snappy.
   const tid = currentSessionId || sessionId;
   if (tid) {
-    refreshBundle(tid).catch((err) => console.debug('[handleScenarioSaved] refreshBundle failed', err));
+    refreshBundle(tid).catch(() => {});
   }
 }, [currentSessionId, refreshBundle, sessionId]);
 
@@ -7640,16 +7578,6 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
     }
   };
 
-  // Debug readiness state
-  useEffect(() => {
-    console.log('[JAS readiness debug]', {
-      sessionId,
-      uiReadiness,
-      audit_percent: readinessAudit?.overall?.percent,
-    });
-  }, [sessionId, uiReadiness, readinessAudit]);
-
-
   // =========================
   // ====== WORKSPACE TABS ===
   // =========================
@@ -7721,12 +7649,6 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
           scorecardSnapshots,
           sessionId,
         });
-    // DEBUG: trace why baseline may be missing from dropdown
-    console.log('[ScoreDropdown] scorecardSnapshots:', scorecardSnapshots?.length, scorecardSnapshots?.map(s => ({ id: s?.id?.slice?.(0,8), label: s?.label, isBaseline: s?.isBaseline })));
-    console.log('[ScoreDropdown] mergedScoreWorkspaceSnapshots:', mergedScoreWorkspaceSnapshots?.length, mergedScoreWorkspaceSnapshots?.map(s => ({ id: s?.id?.slice?.(0,8), label: s?.label, isBaseline: s?.isBaseline })));
-    console.log('[ScoreDropdown] mergedSnapshots:', mergedSnapshots?.length, mergedSnapshots?.map(s => ({ id: s?.id?.slice?.(0,8), label: s?.label, isBaseline: s?.isBaseline })));
-    console.log('[ScoreDropdown] baselineScorecardId:', baselineScorecardId?.slice?.(0,8), 'effectiveSelectedScorecardId:', effectiveSelectedScorecardId?.slice?.(0,8));
-    console.log('[ScoreDropdown] analysisResult._baseline_scorecard?', Boolean(analysisResult?._baseline_scorecard), 'bundleBaselineScorecard?', Boolean(bundleBaselineScorecard));
     const snapshotOptions = mergedSnapshots.length > 0
       ? [...mergedSnapshots]
           .sort((a, b) => {
@@ -7749,7 +7671,6 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
             canDelete: !Boolean(snap?.isBaseline),
           }))
       : [];
-    console.log('[ScoreDropdown] snapshotOptions:', JSON.stringify(snapshotOptions));
     const useSnapshotSelect = snapshotOptions.length > 0;
     const resolvedScoreSelectValue = String(
       activeScorecardId ||
@@ -7794,10 +7715,12 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       const badgeLabel = id === 'scenario' && isLocked ? 'Essential+' : '';
       return (
       <button
+        type="button"
         className={`jas-top-tab ${activeTab === id ? 'active' : ''} ${isLocked ? 'disabled' : ''}`}
         role="tab"
         aria-selected={activeTab === id}
         aria-disabled={isLocked}
+        tabIndex={activeTab === id ? 0 : -1}
 onClick={async () => {
   if (isLocked) {
     if (id === 'scenario' && effectiveIsViewer) {
@@ -7826,24 +7749,6 @@ onClick={async () => {
       );
     };
 
-    if (process.env.NODE_ENV === "development" && scoreWorkspaceMode === 'summary') {
-      const activeAnalysis = activeScorecard;
-      console.log('[ScoreDashboard activeAnalysis]', {
-        activeAnalysisName: 'activeScorecard',
-        activeAnalysisKeys: Object.keys(activeAnalysis || {}),
-        scoresKeys: Object.keys(activeAnalysis?.scores || {}),
-        financialImpactKeys: Object.keys(activeAnalysis?.financial_impact || {}),
-        sections: {
-          decision_framework: Boolean(activeAnalysis?.decision_framework),
-          investment_analysis: Boolean(activeAnalysis?.investment_analysis),
-          npv_irr_analysis: Boolean(activeAnalysis?.npv_irr_analysis),
-          valuation: Boolean(activeAnalysis?.valuation),
-          before_after_financials: Boolean(activeAnalysis?.before_after_financials),
-          metrics: Boolean(activeAnalysis?.metrics),
-        },
-      });
-    }
-
     return (
       <div className={`jas jas-shell ${shellOpen ? 'drawer-open' : ''}`}>
         <a href="#jas-main-content" className="jas-skip-link">Skip to main content</a>
@@ -7859,7 +7764,11 @@ onClick={async () => {
       >
         <div className="jas-sidebar-header">
           <h3 id="jas-workspace-settings-title">User Settings</h3>
-          <button className="jas-sidebar-close" onClick={() => dispatchSidebar({ type: 'CLOSE_SETTINGS' })}>
+          <button
+            className="jas-sidebar-close"
+            onClick={() => dispatchSidebar({ type: 'CLOSE_SETTINGS' })}
+            aria-label="Close user settings"
+          >
             <FontAwesomeIcon icon={faTimes} />
           </button>
         </div>
@@ -7925,17 +7834,20 @@ onClick={async () => {
       <div className="jas-ai-title">
         <span>Jaspen</span>
       </div>
-      <button className="jas-close-btn" onClick={toggleAIDrawer}>
+      <button className="jas-close-btn" onClick={toggleAIDrawer} aria-label="Close assistant drawer">
         <FontAwesomeIcon icon={faTimes} />
       </button>
     </div>
 
     {isScenarioTab && (
-      <div className="jas-ai-toggle">
+      <div className="jas-ai-toggle" role="tablist" aria-label="Assistant drawer views">
         <button
           type="button"
           className={`jas-ai-toggle-btn ${scenarioDrawerView === 'assistant' ? 'active' : ''}`}
           onClick={() => setScenarioDrawerView('assistant')}
+          role="tab"
+          aria-selected={scenarioDrawerView === 'assistant'}
+          tabIndex={scenarioDrawerView === 'assistant' ? 0 : -1}
         >
           Jaspen
         </button>
@@ -7943,6 +7855,9 @@ onClick={async () => {
           type="button"
           className={`jas-ai-toggle-btn ${scenarioDrawerView === 'scorecard' ? 'active' : ''}`}
           onClick={() => setScenarioDrawerView('scorecard')}
+          role="tab"
+          aria-selected={scenarioDrawerView === 'scorecard'}
+          tabIndex={scenarioDrawerView === 'scorecard' ? 0 : -1}
         >
           Scorecard
         </button>
@@ -8039,7 +7954,7 @@ onClick={async () => {
                       type="button"
                       className="jas-ai-mini-btn"
                       onClick={() => removeProposalLever(row.key)}
-                      disabled={aiScenarioBusy}
+                      disabled={aiScenarioBusy} aria-disabled={aiScenarioBusy}
                       title="Remove lever"
                     >
                       Remove
@@ -8064,23 +7979,23 @@ onClick={async () => {
                       <option key={lever.key} value={lever.key}>{lever.label}</option>
                     ))}
                 </select>
-                <button type="button" className="jas-ai-mini-btn" onClick={addProposalLever} disabled={aiScenarioBusy || !aiScenarioProposal.addLeverKey}>
+                <button type="button" className="jas-ai-mini-btn" onClick={addProposalLever} disabled={aiScenarioBusy || !aiScenarioProposal.addLeverKey} aria-disabled={aiScenarioBusy || !aiScenarioProposal.addLeverKey}>
                   Add
                 </button>
               </div>
             )}
 
             <div className="jas-ai-scenario-actions">
-              <button type="button" className="jas-ai-mini-btn secondary" onClick={regenerateAiScenarioProposal} disabled={aiScenarioBusy}>
+              <button type="button" className="jas-ai-mini-btn secondary" onClick={regenerateAiScenarioProposal} disabled={aiScenarioBusy} aria-disabled={aiScenarioBusy}>
                 Modify (Regenerate)
               </button>
-              <button type="button" className="jas-ai-mini-btn secondary" onClick={previewAiScenarioProposal} disabled={aiScenarioBusy}>
+              <button type="button" className="jas-ai-mini-btn secondary" onClick={previewAiScenarioProposal} disabled={aiScenarioBusy} aria-disabled={aiScenarioBusy}>
                 Update Preview
               </button>
-              <button type="button" className="jas-ai-mini-btn danger" onClick={rejectAiScenarioProposal} disabled={aiScenarioBusy}>
+              <button type="button" className="jas-ai-mini-btn danger" onClick={rejectAiScenarioProposal} disabled={aiScenarioBusy} aria-disabled={aiScenarioBusy}>
                 Reject
               </button>
-              <button type="button" className="jas-ai-mini-btn primary" onClick={acceptAiScenarioProposal} disabled={aiScenarioBusy || aiScenarioProposal.rows.length === 0}>
+              <button type="button" className="jas-ai-mini-btn primary" onClick={acceptAiScenarioProposal} disabled={aiScenarioBusy || aiScenarioProposal.rows.length === 0} aria-disabled={aiScenarioBusy || aiScenarioProposal.rows.length === 0}>
                 {aiScenarioBusy ? 'Applying…' : 'Accept'}
               </button>
             </div>
@@ -8117,7 +8032,7 @@ onClick={async () => {
                 }
               }}
             />
-            <button className="jas-ai-send-btn" onClick={sendAIMessage}>
+            <button className="jas-ai-send-btn" onClick={sendAIMessage} aria-label="Send assistant message">
               <FontAwesomeIcon icon={faPaperPlane} />
             </button>
           </div>
@@ -8303,7 +8218,7 @@ onClick={async () => {
                     <button
                       type="button"
                       className="jas-select-trigger"
-                      aria-haspopup="menu"
+                      aria-haspopup="listbox"
                       aria-expanded={scoreShellMenu === 'scorecard'}
                       onClick={() => setScoreShellMenu((prev) => (prev === 'scorecard' ? null : 'scorecard'))}
                     >
@@ -8311,7 +8226,7 @@ onClick={async () => {
                       <FontAwesomeIcon icon={faChevronDown} />
                     </button>
                     {scoreShellMenu === 'scorecard' && (
-                      <div className="jas-select-dropdown" role="menu" aria-label="Scorecard views">
+                      <div className="jas-select-dropdown" role="listbox" aria-label="Scorecard views">
                         {(useSnapshotSelect ? snapshotOptions : scoreVariants).map((option) => (
                           <div
                             key={option.id}
@@ -8320,8 +8235,8 @@ onClick={async () => {
                             <button
                               type="button"
                               className={`jas-select-option ${scoreSelectValue === option.id ? 'selected' : ''}`}
-                              role="menuitemradio"
-                              aria-checked={scoreSelectValue === option.id}
+                              role="option"
+                              aria-selected={scoreSelectValue === option.id}
                               onClick={async () => {
                                 if (useSnapshotSelect) {
                                   handleSnapshotSelect(option.id);
@@ -8394,7 +8309,7 @@ onClick={async () => {
                     <button
                       type="button"
                       className="jas-select-trigger"
-                      aria-haspopup="menu"
+                      aria-haspopup="listbox"
                       aria-expanded={scoreShellMenu === 'history'}
                       onClick={() => setScoreShellMenu((prev) => (prev === 'history' ? null : 'history'))}
                     >
@@ -8402,7 +8317,7 @@ onClick={async () => {
                       <FontAwesomeIcon icon={faChevronDown} />
                     </button>
                     {scoreShellMenu === 'history' && (
-                      <div className="jas-select-dropdown" role="menu" aria-label="Completed scores">
+                      <div className="jas-select-dropdown" role="listbox" aria-label="Completed scores">
                         {completedScoreOptions.length === 0 ? (
                           <div className="jas-select-empty">No completed scores yet.</div>
                         ) : (
@@ -8411,7 +8326,8 @@ onClick={async () => {
                               key={option.id}
                               type="button"
                               className="jas-select-option"
-                              role="menuitem"
+                              role="option"
+                              aria-selected="false"
                               onClick={() => {
                                 if (option.result) {
                                   handleSelectAnalysis(option);
@@ -8431,7 +8347,7 @@ onClick={async () => {
                       type="button"
                       className="begin-project-btn"
                       onClick={onBeginProject}
-                      disabled={beginBusy || !canBeginProject}
+                      disabled={beginBusy || !canBeginProject} aria-disabled={beginBusy || !canBeginProject}
                       title={projectActionTitle}
                     >
                       <FontAwesomeIcon icon={beginBusy ? faSpinner : faPlay} spin={beginBusy} />
@@ -8441,7 +8357,7 @@ onClick={async () => {
                     type="button"
                     className="save-starter-btn"
                     onClick={openSaveStarterModal}
-                    disabled={savingStarter || beginBusy || !(currentSessionId || sessionId)}
+                    disabled={savingStarter || beginBusy || !(currentSessionId || sessionId)} aria-disabled={savingStarter || beginBusy || !(currentSessionId || sessionId)}
                   >
                     <span>{savingStarter ? 'Saving…' : 'Save as Starter'}</span>
                   </button>
@@ -8473,10 +8389,10 @@ onClick={async () => {
         textAlign: "center",
       }}
     >
-      <div style={{ fontSize: 22, marginBottom: 10, fontWeight: 600, color: "#0f172a" }}>
+      <div style={{ fontSize: 22, marginBottom: 10, fontWeight: 600, color: 'var(--color-text-primary)' }}>
         Getting Things Ready
       </div>
-      <div style={{ marginBottom: 14, color: "#334155" }}>{beginMsg}</div>
+      <div style={{ marginBottom: 14, color: 'var(--color-text-secondary)' }}>{beginMsg}</div>
       <div style={{ display: "flex", gap: 6, justifyContent: "center" }}>
         {[0,1,2].map((i) => (
           <span
@@ -8485,7 +8401,7 @@ onClick={async () => {
               width: 8,
               height: 8,
               borderRadius: "50%",
-              background: "#8b5cf6",
+              background: 'var(--color-brand-magenta)',
               display: "inline-block",
               animation: `jas-dot 1s ease-in-out ${i * 0.12}s infinite`,
             }}
@@ -8717,7 +8633,11 @@ onClick={async () => {
       >
         <div className="jas-sidebar-header">
           <h3 id="jas-intake-readiness-title">Analysis Readiness</h3>
-          <button className="jas-sidebar-close" onClick={() => dispatchSidebar({ type: 'CLOSE_READINESS' })}>
+          <button
+            className="jas-sidebar-close"
+            onClick={() => dispatchSidebar({ type: 'CLOSE_READINESS' })}
+            aria-label="Close analysis readiness"
+          >
             <FontAwesomeIcon icon={faTimes} />
           </button>
         </div>
@@ -8725,10 +8645,10 @@ onClick={async () => {
           <div className="jas-readiness-display">
             <div className="jas-readiness-circle">
               <svg className="jas-progress-ring" width="120" height="120">
-                <circle className="jas-progress-ring-bg" stroke="#e2e8f0" strokeWidth="8" fill="transparent" r="52" cx="60" cy="60" />
+                <circle className="jas-progress-ring-bg" stroke="var(--color-border-default)" strokeWidth="8" fill="transparent" r="52" cx="60" cy="60" />
                 <circle
                   className="jas-progress-ring-fill"
-                  stroke="#10b981"
+                  stroke="var(--color-status-success)"
                   strokeWidth="8"
                   fill="transparent"
                   r="52"
@@ -8745,11 +8665,11 @@ onClick={async () => {
 </div>
 
 {(readinessSource || readinessVersion) && (
-  <div className="jas-readiness-meta" style={{ marginTop: '6px', fontSize: '12px', color: '#64748b' }}>
+  <div className="jas-readiness-meta" style={{ marginTop: '6px', fontSize: '12px', color: 'var(--color-text-muted)' }}>
     {readinessSource && (
       <span className="jas-chip" style={{
         display: 'inline-block', padding: '2px 6px', borderRadius: '8px',
-        border: '1px solid #cbd5e1', marginRight: '6px'
+        border: '1px solid var(--color-border-default)', marginRight: '6px'
       }}>
         Source: {readinessSource.toUpperCase()}
       </span>
@@ -8757,7 +8677,7 @@ onClick={async () => {
     {readinessVersion && (
       <span className="jas-chip" style={{
         display: 'inline-block', padding: '2px 6px', borderRadius: '8px',
-        border: '1px solid #cbd5e1'
+        border: '1px solid var(--color-border-default)'
       }}>
         {readinessVersion}
       </span>
@@ -8790,13 +8710,17 @@ onClick={async () => {
             <button
               className="jas-sidebar-clear jas-sidebar-clear-left"
               onClick={handleClearHistory}
-              disabled={clearingHistory || analysisHistory.length === 0}
+              disabled={clearingHistory || analysisHistory.length === 0} aria-disabled={clearingHistory || analysisHistory.length === 0}
               title="Clear all history"
             >
               {clearingHistory ? 'Clearing…' : 'Clear'}
             </button>
             <h3 id="jas-intake-history-title">Analysis History</h3>
-            <button className="jas-sidebar-close" onClick={() => dispatchSidebar({ type: 'CLOSE_HISTORY' })}>
+            <button
+              className="jas-sidebar-close"
+              onClick={() => dispatchSidebar({ type: 'CLOSE_HISTORY' })}
+              aria-label="Close analysis history"
+            >
               <FontAwesomeIcon icon={faTimes} />
             </button>
           </div>
@@ -8864,7 +8788,11 @@ onClick={async () => {
       >
         <div className="jas-sidebar-header">
           <h3 id="jas-intake-settings-title">User Settings</h3>
-          <button className="jas-sidebar-close" onClick={() => dispatchSidebar({ type: 'CLOSE_SETTINGS' })}>
+          <button
+            className="jas-sidebar-close"
+            onClick={() => dispatchSidebar({ type: 'CLOSE_SETTINGS' })}
+            aria-label="Close user settings"
+          >
             <FontAwesomeIcon icon={faTimes} />
           </button>
         </div>
@@ -8982,7 +8910,7 @@ onClick={async () => {
                 type="button"
                 className="jas-ai-mini-btn"
                 onClick={() => setSaveStarterModalOpen(false)}
-                disabled={savingStarter}
+                disabled={savingStarter} aria-disabled={savingStarter}
               >
                 Close
               </button>
@@ -9015,7 +8943,7 @@ onClick={async () => {
                     type="button"
                     className="jas-ai-mini-btn secondary"
                     onClick={() => setSaveStarterModalOpen(false)}
-                    disabled={savingStarter}
+                    disabled={savingStarter} aria-disabled={savingStarter}
                   >
                     Cancel
                   </button>
@@ -9023,7 +8951,7 @@ onClick={async () => {
                     type="button"
                     className="jas-ai-mini-btn primary"
                     onClick={handleSaveStarter}
-                    disabled={savingStarter || !String(newStarterName || '').trim()}
+                    disabled={savingStarter || !String(newStarterName || '').trim()} aria-disabled={savingStarter || !String(newStarterName || '').trim()}
                   >
                     {savingStarter ? 'Saving…' : 'Save Starter'}
                   </button>
@@ -9087,7 +9015,7 @@ onClick={async () => {
               <img
                 className="jas-chat-welcome-unicorn"
                 src="/android-chrome-192x192.png"
-                alt="Jaspen unicorn"
+                alt="Jaspen mascot logo"
               />
               <span>{welcomeHeading}</span>
             </h2>
@@ -9163,11 +9091,11 @@ onClick={async () => {
           {pendingFiles?.length > 0 && (
             <div className="jas-file-chips" style={{ maxWidth: '800px', margin: '0 auto 8px', display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
               {pendingFiles.map((f, i) => (
-                <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 8px', background: '#f1f3f5', borderRadius: '4px', fontSize: '0.75rem' }}>
+                <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 8px', background: 'var(--color-bg-subtle)', borderRadius: '4px', fontSize: '0.75rem' }}>
                   {f.name}
                   <button
                     type="button"
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0', fontSize: '0.875rem', color: '#868e96' }}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0', fontSize: '0.875rem', color: 'var(--color-text-muted)' }}
                     title="Remove"
                     onClick={() => setPendingFiles(prev => prev.filter((_, idx) => idx !== i))}
                   >
@@ -9195,7 +9123,7 @@ onClick={async () => {
                   className="jas-ci-btn"
                   aria-label="Attach files"
                   title="Attach"
-                  disabled={busy || effectiveIsViewer}
+                  disabled={busy || effectiveIsViewer} aria-disabled={busy || effectiveIsViewer}
                   onClick={() => fileInputRef.current?.click()}
                 >
                   <FontAwesomeIcon icon={faPaperclip} />
@@ -9209,7 +9137,7 @@ onClick={async () => {
                   className={`jas-ci-btn ${isRecording ? 'recording' : ''}`}
                   aria-label={isRecording ? 'Stop recording' : 'Start recording'}
                   title="Voice"
-                  disabled={busy || effectiveIsViewer}
+                  disabled={busy || effectiveIsViewer} aria-disabled={busy || effectiveIsViewer}
                   onClick={() => setIsRecording(prev => !prev)}
                 >
                   <FontAwesomeIcon icon={faMicrophone} />
@@ -9217,7 +9145,7 @@ onClick={async () => {
                 <button
                   className="jas-ci-btn send"
                   onClick={onSubmit}
-                  disabled={busy || effectiveIsViewer || (!input.trim() && pendingFiles.length === 0)}
+                  disabled={busy || effectiveIsViewer || (!input.trim() && pendingFiles.length === 0)} aria-disabled={busy || effectiveIsViewer || (!input.trim() && pendingFiles.length === 0)}
                   title="Send"
                 >
                   {busy ? <FontAwesomeIcon icon={faSpinner} spin /> : <FontAwesomeIcon icon={faArrowUp} />}
@@ -9239,7 +9167,7 @@ onClick={async () => {
               <button
                 className="finish-analyze-btn"
                 onClick={onFinishAnalyze}
-                disabled={!canAnalyze || busy || effectiveIsViewer}
+                disabled={!canAnalyze || busy || effectiveIsViewer} aria-disabled={!canAnalyze || busy || effectiveIsViewer}
                 title={effectiveIsViewer ? 'Viewers cannot generate new scorecards' : (canAnalyze ? "Generate your Jaspen score" : "Keep chatting to gather more information")}
               >
                 <FontAwesomeIcon icon={faCheck} />
@@ -9257,7 +9185,7 @@ onClick={async () => {
           <div className="jas-help-content">
             <div className="jas-help-header">
               <h3>Help & Support</h3>
-              <button className="jas-help-close" onClick={() => setHelpOpen(false)}>
+              <button className="jas-help-close" onClick={() => setHelpOpen(false)} aria-label="Close help">
                 <FontAwesomeIcon icon={faTimes} />
               </button>
             </div>
@@ -9309,7 +9237,7 @@ onClick={async () => {
                 placeholder="Ask a question..."
                 disabled={helpLoading}
               />
-              <button onClick={sendHelpMessage} disabled={helpLoading || !helpInput.trim()}>
+              <button onClick={sendHelpMessage} disabled={helpLoading || !helpInput.trim()} aria-disabled={helpLoading || !helpInput.trim()} aria-label="Send help message">
                 <FontAwesomeIcon icon={faPaperPlane} />
               </button>
             </div>

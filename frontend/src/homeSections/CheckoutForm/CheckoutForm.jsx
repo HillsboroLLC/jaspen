@@ -49,7 +49,7 @@ export default function CheckoutForm() {
     <form className="checkout-form" onSubmit={handleSubmit}>
       <CardElement options={{ hidePostalCode: true }} />
       {errorMsg && <div className="card-error">{errorMsg}</div>}
-      <button type="submit" disabled={!stripe}>Pay</button>
+      <button type="submit" disabled={!stripe} aria-disabled={!stripe}>Pay</button>
     </form>
   );
 }
