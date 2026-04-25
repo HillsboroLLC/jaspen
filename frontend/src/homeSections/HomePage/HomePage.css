@@ -952,6 +952,99 @@
   border-radius: 24px;
   border: 1px dashed var(--gray-300);
   background: rgba(255, 255, 255, 0.7);
+  display: grid;
+  place-items: center;
+  padding: 18px;
+}
+
+.intro-preview-card {
+  width: 100%;
+  height: 100%;
+  border: 1px solid var(--gray-200);
+  border-radius: 18px;
+  background: linear-gradient(160deg, #ffffff 0%, #f8fafc 100%);
+  box-shadow: 0 12px 32px rgba(22, 31, 59, 0.08);
+  padding: 16px;
+  display: grid;
+  gap: 10px;
+}
+
+.intro-preview-header {
+  display: flex;
+  gap: 6px;
+}
+
+.intro-preview-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--gray-300);
+}
+
+.intro-preview-line {
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(22, 31, 59, 0.09);
+}
+
+.intro-preview-line-long {
+  width: 90%;
+}
+
+.intro-preview-line-short {
+  width: 62%;
+}
+
+.intro-preview-kpi-row {
+  margin-top: 4px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.intro-preview-kpi {
+  border: 1px solid var(--gray-200);
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 8px;
+  display: grid;
+  gap: 2px;
+}
+
+.intro-preview-kpi strong {
+  color: var(--navy-deep);
+  font-size: 0.95rem;
+}
+
+.intro-preview-kpi span {
+  color: var(--gray-600);
+  font-size: 0.7rem;
+}
+
+.intro-preview-progress {
+  margin-top: auto;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(22, 31, 59, 0.08);
+  overflow: hidden;
+}
+
+.intro-preview-progress span {
+  display: block;
+  height: 100%;
+  width: 55%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #161f3b 0%, #a0036c 70%, #fd6b02 100%);
+  animation: introProgressPulse 2.6s ease-in-out infinite;
+}
+
+@keyframes introProgressPulse {
+  0%, 100% {
+    width: 55%;
+  }
+  50% {
+    width: 82%;
+  }
 }
 
 /* ============================================================================

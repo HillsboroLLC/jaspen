@@ -382,7 +382,33 @@ export default function HomePage() {
                 </p>
               </div>
               <div className="intro-gif-placeholder">
-                {/* TODO: insert gif */}
+                <div className="intro-preview-card" aria-hidden="true">
+                  <div className="intro-preview-header">
+                    <span className="intro-preview-dot"></span>
+                    <span className="intro-preview-dot"></span>
+                    <span className="intro-preview-dot"></span>
+                  </div>
+                  <div className="intro-preview-line intro-preview-line-long"></div>
+                  <div className="intro-preview-line"></div>
+                  <div className="intro-preview-line intro-preview-line-short"></div>
+                  <div className="intro-preview-kpi-row">
+                    <div className="intro-preview-kpi">
+                      <strong>+18%</strong>
+                      <span>Readiness</span>
+                    </div>
+                    <div className="intro-preview-kpi">
+                      <strong>3</strong>
+                      <span>Risks</span>
+                    </div>
+                    <div className="intro-preview-kpi">
+                      <strong>7</strong>
+                      <span>Actions</span>
+                    </div>
+                  </div>
+                  <div className="intro-preview-progress">
+                    <span></span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

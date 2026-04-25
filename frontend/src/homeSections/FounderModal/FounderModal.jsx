@@ -8,8 +8,11 @@ export default function FounderModal({ isOpen, onClose }) {
       <div className="modal-content">
         <button className="close" onClick={onClose}>&times;</button>
         <h4><i className="fas fa-crown"></i> Founder Lifetime Access</h4>
-        {/* TODO: replace below with your Stripe component later */}
-        <p>Stripe placeholder component goes here.</p>
+        <p>Founder billing is managed through secure checkout. Continue to pricing to complete setup.</p>
+        <div className="founder-modal-actions">
+          <a className="founder-modal-primary" href="/pages/pricing">Open Pricing</a>
+          <button type="button" className="founder-modal-secondary" onClick={onClose}>Close</button>
+        </div>
       </div>
     </div>
   );
