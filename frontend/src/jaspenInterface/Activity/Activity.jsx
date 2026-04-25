@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faClockRotateLeft } from '@fortawesome/free-solid-svg-icons';
+import { List } from 'react-window';
 import { API_BASE } from '../../config/apiBase';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import SkeletonBlock from '../../shared/components/SkeletonLoader';
@@ -22,7 +23,9 @@ const TYPE_OPTIONS = [
   { value: 'project_activity', label: 'Project activity' },
 ];
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 200;
+const ACTIVITY_VIRTUALIZE_THRESHOLD = 80;
+const ACTIVITY_ROW_HEIGHT = 136;
 
 function toIsoStart(dateInput) {
   const value = String(dateInput || '').trim();
@@ -42,6 +45,30 @@ function toIsoEnd(dateInput) {
 
 function authHeaders(method = 'GET') {
   return buildAuthHeaders({}, method);
+}
+
+function ActivityRow({ index, style, events, typeLabelByValue, ariaAttributes }) {
+  const event = events[index];
+  if (!event) return null;
+
+  return (
+    <div style={style} {...ariaAttributes}>
+      <article className="activity-item">
+        <div className="activity-dot" aria-hidden="true" />
+        <div className="activity-content">
+          <header>
+            <span className="activity-type">{typeLabelByValue[event.type] || event.type}</span>
+            <time title={event.timestamp}>{event.timestamp ? new Date(event.timestamp).toLocaleString() : 'Unknown time'}</time>
+          </header>
+          <p>{event.description || 'Activity event'}</p>
+          <div className="activity-meta">
+            {event.project_name && <span>Project: {event.project_name}</span>}
+            {event.user_name && <span>User: {event.user_name}</span>}
+          </div>
+        </div>
+      </article>
+    </div>
+  );
 }
 
 export default function Activity() {
@@ -101,6 +128,8 @@ export default function Activity() {
   const hasNext = offset + events.length < total;
   const totalPages = total > 0 ? Math.ceil(total / PAGE_SIZE) : 0;
   const currentPage = total > 0 ? Math.floor(offset / PAGE_SIZE) + 1 : 0;
+  const useVirtualTimeline = events.length > ACTIVITY_VIRTUALIZE_THRESHOLD;
+  const virtualListHeight = Math.min(640, Math.max(280, events.length * ACTIVITY_ROW_HEIGHT));
 
   const typeLabelByValue = useMemo(
     () => TYPE_OPTIONS.reduce((acc, item) => ({ ...acc, [item.value]: item.label }), {}),
@@ -212,22 +241,33 @@ export default function Activity() {
 
       {!loading && !error && events.length > 0 && (
         <section className="activity-timeline">
-          {events.map((event, index) => (
-            <article className="activity-item" key={`${event.timestamp}-${index}-${event.type}`}>
-              <div className="activity-dot" aria-hidden="true" />
-              <div className="activity-content">
-                <header>
-                  <span className="activity-type">{typeLabelByValue[event.type] || event.type}</span>
-                  <time title={event.timestamp}>{event.timestamp ? new Date(event.timestamp).toLocaleString() : 'Unknown time'}</time>
-                </header>
-                <p>{event.description || 'Activity event'}</p>
-                <div className="activity-meta">
-                  {event.project_name && <span>Project: {event.project_name}</span>}
-                  {event.user_name && <span>User: {event.user_name}</span>}
+          {useVirtualTimeline ? (
+            <List
+              className="activity-virtual-list"
+              style={{ height: virtualListHeight }}
+              rowCount={events.length}
+              rowHeight={ACTIVITY_ROW_HEIGHT}
+              rowComponent={ActivityRow}
+              rowProps={{ events, typeLabelByValue }}
+            />
+          ) : (
+            events.map((event, index) => (
+              <article className="activity-item" key={`${event.timestamp}-${index}-${event.type}`}>
+                <div className="activity-dot" aria-hidden="true" />
+                <div className="activity-content">
+                  <header>
+                    <span className="activity-type">{typeLabelByValue[event.type] || event.type}</span>
+                    <time title={event.timestamp}>{event.timestamp ? new Date(event.timestamp).toLocaleString() : 'Unknown time'}</time>
+                  </header>
+                  <p>{event.description || 'Activity event'}</p>
+                  <div className="activity-meta">
+                    {event.project_name && <span>Project: {event.project_name}</span>}
+                    {event.user_name && <span>User: {event.user_name}</span>}
+                  </div>
                 </div>
-              </div>
-            </article>
-          ))}
+              </article>
+            ))
+          )}
         </section>
       )}
 

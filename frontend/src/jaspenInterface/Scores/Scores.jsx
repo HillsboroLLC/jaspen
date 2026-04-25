@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faArrowUpRightFromSquare, faDownload, faChevronDown, faChevronUp, faTimes, faTrash } from '@fortawesome/free-solid-svg-icons';
+import { List } from 'react-window';
 import { API_BASE } from '../../config/apiBase';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import ConfirmDialog from '../../shared/components/ConfirmDialog';
@@ -9,7 +10,10 @@ import './Scores.css';
 import AppMenu from '../shared/AppMenu';
 
 const CATEGORY_OPTIONS = ['All', 'Excellent', 'Good', 'Fair', 'At Risk'];
-const PAGE_LIMIT = 50;
+const PAGE_LIMIT = 200;
+const SCORES_VIRTUALIZE_THRESHOLD = 80;
+const SCORE_ROW_BASE_HEIGHT = 106;
+const SCORE_ROW_EXPANDED_HEIGHT = 356;
 const PORTFOLIO_STARTER_PROMPTS = [
   'Which scored project should I do next?',
   'Rank my top 3 next-best projects and explain why.',
@@ -221,6 +225,21 @@ export default function Scores() {
   const hasNext = offset + scores.length < total;
   const totalPages = total > 0 ? Math.ceil(total / PAGE_LIMIT) : 0;
   const currentPage = total > 0 ? Math.floor(offset / PAGE_LIMIT) + 1 : 0;
+  const useVirtualRows = scores.length > SCORES_VIRTUALIZE_THRESHOLD;
+
+  const getRowKey = useCallback((row, index) => `${row?.thread_id || 'thread'}:${row?.snapshot_id || index}`, []);
+
+  const getVirtualRowHeight = useCallback((index) => {
+    const row = scores[index];
+    const rowKey = getRowKey(row, index);
+    return expandedRows[rowKey] ? SCORE_ROW_EXPANDED_HEIGHT : SCORE_ROW_BASE_HEIGHT;
+  }, [expandedRows, getRowKey, scores]);
+
+  const virtualListHeight = useMemo(() => {
+    if (!scores.length) return 0;
+    const totalHeight = scores.reduce((height, _row, index) => height + getVirtualRowHeight(index), 0);
+    return Math.min(640, Math.max(280, totalHeight));
+  }, [scores, getVirtualRowHeight]);
 
   function toggleSort(column) {
     if (sortBy === column) {
@@ -427,6 +446,143 @@ export default function Scores() {
     return parts.join(' • ');
   }, [portfolioMeta, total, category, search]);
 
+  const renderVirtualScoreRow = ({ index, style, rows, expandedRowsMap, deletingRowKeyValue, trendByProjectMap, ariaAttributes }) => {
+    const row = rows[index];
+    if (!row) return null;
+
+    const rowKey = getRowKey(row, index);
+    const expanded = Boolean(expandedRowsMap[rowKey]);
+    const scoreValue = Number(row?.jaspen_score);
+    const projectName = row?.project_name || 'Untitled project';
+    const variantLabel = row?.variant_label || (row?.is_baseline ? 'Baseline' : '—');
+    const baseProject = row?.base_project_name || projectName;
+    const trendPoints = trendByProjectMap.get(baseProject) || [];
+
+    return (
+      <div style={style} {...ariaAttributes}>
+        <article className={`scores-virtual-row${expanded ? ' is-expanded' : ''}`}>
+          <div className="scores-virtual-main">
+            <div className="scores-virtual-col project">
+              <button
+                type="button"
+                className="scores-link-btn"
+                onClick={() => openAnalysis(row?.thread_id)}
+                title="Open analysis in workspace"
+              >
+                {projectName}
+              </button>
+              <div className="scores-trend-row">
+                <span className="scores-trend-label">Trend</span>
+                <Sparkline points={trendPoints} />
+              </div>
+            </div>
+            <div className="scores-virtual-col score">
+              <span className={getScoreBadgeClass(row?.score_category)}>
+                {Number.isFinite(scoreValue) ? scoreValue : '—'}
+              </span>
+            </div>
+            <div className="scores-virtual-col category">
+              <span className={getScoreBadgeClass(row?.score_category)}>
+                {row?.score_category || 'At Risk'}
+              </span>
+            </div>
+            <div className="scores-virtual-col meta">
+              <span className="scores-virtual-label">Variant</span>
+              <span>{variantLabel}</span>
+            </div>
+            <div className="scores-virtual-col meta">
+              <span className="scores-virtual-label">Date</span>
+              <span>{formatFullDate(row?.created_at || row?.updated_at)}</span>
+            </div>
+            <div className="scores-actions">
+              <button
+                type="button"
+                className="scores-expand-btn"
+                onClick={() => toggleExpanded(rowKey)}
+                aria-expanded={expanded}
+              >
+                {expanded ? 'Hide' : 'View'} details <FontAwesomeIcon icon={expanded ? faChevronUp : faChevronDown} />
+              </button>
+              <button
+                type="button"
+                className="scores-icon-btn"
+                title="View analysis"
+                onClick={() => openAnalysis(row?.thread_id)}
+              >
+                <FontAwesomeIcon icon={faArrowUpRightFromSquare} />
+              </button>
+              <button
+                type="button"
+                className="scores-icon-btn"
+                title="Export individual report"
+                onClick={() => exportRowReport(row)}
+              >
+                <FontAwesomeIcon icon={faDownload} />
+              </button>
+              <button
+                type="button"
+                className="scores-icon-btn scores-delete-btn"
+                title={row?.is_baseline ? 'Delete project and all variants' : 'Delete this variant'}
+                onClick={() => deleteScoreEntry(row)}
+                disabled={Boolean(deletingRowKeyValue)}
+                aria-disabled={Boolean(deletingRowKeyValue)}
+              >
+                <FontAwesomeIcon icon={faTrash} />
+              </button>
+            </div>
+          </div>
+
+          {expanded && (
+            <div className="scores-expanded-grid">
+              <div>
+                <h4>Variant</h4>
+                <p>{variantLabel}{row?.is_baseline ? ' (Baseline)' : ''}</p>
+                <h4 style={{ marginTop: 12 }}>All Variants</h4>
+                <ul>
+                  {rows
+                    .filter((s) => s?.thread_id === row?.thread_id)
+                    .map((s, si) => (
+                      <li key={`sibling-virtual-${rowKey}-${si}`}>
+                        {s?.project_name || 'Untitled'} — {s?.jaspen_score ?? '—'}
+                      </li>
+                    ))}
+                </ul>
+              </div>
+              <div>
+                <h4>Component Scores</h4>
+                {row?.component_scores && Object.keys(row.component_scores).length > 0 ? (
+                  <ul>
+                    {Object.entries(row.component_scores)
+                      .filter(([, value]) => value != null && typeof value !== 'object')
+                      .map(([key, value]) => (
+                        <li key={`component-virtual-${rowKey}-${key}`}>{key}: {String(value)}</li>
+                      ))}
+                  </ul>
+                ) : (
+                  <p>No component scores available.</p>
+                )}
+              </div>
+              <div>
+                <h4>Financial Impact</h4>
+                {row?.financial_impact && Object.keys(row.financial_impact).length > 0 ? (
+                  <ul>
+                    {Object.entries(row.financial_impact)
+                      .filter(([, value]) => value != null && typeof value !== 'object')
+                      .map(([key, value]) => (
+                        <li key={`financial-virtual-${rowKey}-${key}`}>{key}: {String(value)}</li>
+                      ))}
+                  </ul>
+                ) : (
+                  <p>No financial impact data.</p>
+                )}
+              </div>
+            </div>
+          )}
+        </article>
+      </div>
+    );
+  };
+
   return (
     <div className={`scores-container int-page int-page-inner ${portfolioDrawerOpen ? 'drawer-open' : ''}`}>
       <AppMenu />
@@ -579,157 +735,187 @@ export default function Scores() {
 
         {!loading && !error && total > 0 && (
           <>
-            <div className="scores-table-wrap">
-              <table className="scores-table">
-                <thead>
-                  <tr>
-                    <th onClick={() => toggleSort('name')}>Project Name{sortIndicator('name')}</th>
-                    <th onClick={() => toggleSort('score')}>Jaspen Score{sortIndicator('score')}</th>
-                    <th onClick={() => toggleSort('category')}>Category{sortIndicator('category')}</th>
-                    <th>Variant</th>
-                    <th>Component Scores</th>
-                    <th onClick={() => toggleSort('date')}>Date{sortIndicator('date')}</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {scores.map((row, index) => {
-                    const rowKey = `${row?.thread_id || 'thread'}:${row?.snapshot_id || index}`;
-                    const expanded = Boolean(expandedRows[rowKey]);
-                    const scoreValue = Number(row?.jaspen_score);
-                    const projectName = row?.project_name || 'Untitled project';
-                    const variantLabel = row?.variant_label || (row?.is_baseline ? 'Baseline' : '—');
-                    const baseProject = row?.base_project_name || projectName;
-                    const trendPoints = trendByProject.get(baseProject) || [];
-                    return (
-                      <React.Fragment key={rowKey}>
-                        <tr>
-                          <td>
-                            <button
-                              type="button"
-                              className="scores-link-btn"
-                              onClick={() => openAnalysis(row?.thread_id)}
-                              title="Open analysis in workspace"
-                            >
-                              {projectName}
-                            </button>
-                            <div className="scores-trend-row">
-                              <span className="scores-trend-label">Trend</span>
-                              <Sparkline points={trendPoints} />
-                            </div>
-                          </td>
-                          <td>
-                            <span className={getScoreBadgeClass(row?.score_category)}>
-                              {Number.isFinite(scoreValue) ? scoreValue : '—'}
-                            </span>
-                          </td>
-                          <td>
-                            <span className={getScoreBadgeClass(row?.score_category)}>
-                              {row?.score_category || 'At Risk'}
-                            </span>
-                          </td>
-                          <td>{variantLabel}</td>
-                          <td>
-                            <button
-                              type="button"
-                              className="scores-expand-btn"
-                              onClick={() => toggleExpanded(rowKey)}
-                              aria-expanded={expanded}
-                            >
-                              {expanded ? 'Hide' : 'View'} details{' '}
-                              <FontAwesomeIcon icon={expanded ? faChevronUp : faChevronDown} />
-                            </button>
-                          </td>
-                          <td>
-                            {formatFullDate(row?.created_at || row?.updated_at)}
-                          </td>
-                          <td>
-                            <div className="scores-actions">
+            {useVirtualRows ? (
+              <div className="scores-virtual-wrap">
+                <div className="scores-virtual-head">
+                  <span>Project</span>
+                  <span>Score</span>
+                  <span>Category</span>
+                  <span>Variant</span>
+                  <span>Date</span>
+                  <span>Actions</span>
+                </div>
+                <List
+                  className="scores-virtual-list"
+                  style={{ height: virtualListHeight }}
+                  rowCount={scores.length}
+                  rowHeight={(index, rowProps) => {
+                    const row = rowProps.rows[index];
+                    const rowKey = getRowKey(row, index);
+                    return rowProps.expandedRowsMap[rowKey] ? SCORE_ROW_EXPANDED_HEIGHT : SCORE_ROW_BASE_HEIGHT;
+                  }}
+                  rowComponent={renderVirtualScoreRow}
+                  rowProps={{
+                    rows: scores,
+                    expandedRowsMap: expandedRows,
+                    deletingRowKeyValue: deletingRowKey,
+                    trendByProjectMap: trendByProject,
+                  }}
+                />
+              </div>
+            ) : (
+              <div className="scores-table-wrap">
+                <table className="scores-table">
+                  <thead>
+                    <tr>
+                      <th onClick={() => toggleSort('name')}>Project Name{sortIndicator('name')}</th>
+                      <th onClick={() => toggleSort('score')}>Jaspen Score{sortIndicator('score')}</th>
+                      <th onClick={() => toggleSort('category')}>Category{sortIndicator('category')}</th>
+                      <th>Variant</th>
+                      <th>Component Scores</th>
+                      <th onClick={() => toggleSort('date')}>Date{sortIndicator('date')}</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {scores.map((row, index) => {
+                      const rowKey = getRowKey(row, index);
+                      const expanded = Boolean(expandedRows[rowKey]);
+                      const scoreValue = Number(row?.jaspen_score);
+                      const projectName = row?.project_name || 'Untitled project';
+                      const variantLabel = row?.variant_label || (row?.is_baseline ? 'Baseline' : '—');
+                      const baseProject = row?.base_project_name || projectName;
+                      const trendPoints = trendByProject.get(baseProject) || [];
+                      return (
+                        <React.Fragment key={rowKey}>
+                          <tr>
+                            <td>
                               <button
                                 type="button"
-                                className="scores-icon-btn"
-                                title="View analysis"
+                                className="scores-link-btn"
                                 onClick={() => openAnalysis(row?.thread_id)}
+                                title="Open analysis in workspace"
                               >
-                                <FontAwesomeIcon icon={faArrowUpRightFromSquare} />
+                                {projectName}
                               </button>
+                              <div className="scores-trend-row">
+                                <span className="scores-trend-label">Trend</span>
+                                <Sparkline points={trendPoints} />
+                              </div>
+                            </td>
+                            <td>
+                              <span className={getScoreBadgeClass(row?.score_category)}>
+                                {Number.isFinite(scoreValue) ? scoreValue : '—'}
+                              </span>
+                            </td>
+                            <td>
+                              <span className={getScoreBadgeClass(row?.score_category)}>
+                                {row?.score_category || 'At Risk'}
+                              </span>
+                            </td>
+                            <td>{variantLabel}</td>
+                            <td>
                               <button
                                 type="button"
-                                className="scores-icon-btn"
-                                title="Export individual report"
-                                onClick={() => exportRowReport(row)}
+                                className="scores-expand-btn"
+                                onClick={() => toggleExpanded(rowKey)}
+                                aria-expanded={expanded}
                               >
-                                <FontAwesomeIcon icon={faDownload} />
+                                {expanded ? 'Hide' : 'View'} details{' '}
+                                <FontAwesomeIcon icon={expanded ? faChevronUp : faChevronDown} />
                               </button>
-                              <button
-                                type="button"
-                                className="scores-icon-btn scores-delete-btn"
-                                title={row?.is_baseline ? 'Delete project and all variants' : 'Delete this variant'}
-                                onClick={() => deleteScoreEntry(row)}
-                                disabled={Boolean(deletingRowKey)}
-                                aria-disabled={Boolean(deletingRowKey)}
-                              >
-                                <FontAwesomeIcon icon={faTrash} />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                        {expanded && (
-                          <tr className="scores-expanded-row">
-                            <td colSpan={7}>
-                              <div className="scores-expanded-grid">
-                                <div>
-                                  <h4>Variant</h4>
-                                  <p>{variantLabel}{row?.is_baseline ? ' (Baseline)' : ''}</p>
-                                  <h4 style={{ marginTop: 12 }}>All Variants</h4>
-                                  <ul>
-                                    {scores
-                                      .filter((s) => s?.thread_id === row?.thread_id)
-                                      .map((s, si) => (
-                                        <li key={`sibling-${rowKey}-${si}`}>
-                                          {s?.project_name || 'Untitled'} — {s?.jaspen_score ?? '—'}
-                                        </li>
-                                      ))}
-                                  </ul>
-                                </div>
-                                <div>
-                                  <h4>Component Scores</h4>
-                                  {row?.component_scores && Object.keys(row.component_scores).length > 0 ? (
-                                    <ul>
-                                      {Object.entries(row.component_scores)
-                                        .filter(([, value]) => value != null && typeof value !== 'object')
-                                        .map(([key, value]) => (
-                                          <li key={`component-${rowKey}-${key}`}>{key}: {String(value)}</li>
-                                        ))}
-                                    </ul>
-                                  ) : (
-                                    <p>No component scores available.</p>
-                                  )}
-                                </div>
-                                <div>
-                                  <h4>Financial Impact</h4>
-                                  {row?.financial_impact && Object.keys(row.financial_impact).length > 0 ? (
-                                    <ul>
-                                      {Object.entries(row.financial_impact)
-                                        .filter(([, value]) => value != null && typeof value !== 'object')
-                                        .map(([key, value]) => (
-                                          <li key={`financial-${rowKey}-${key}`}>{key}: {String(value)}</li>
-                                        ))}
-                                    </ul>
-                                  ) : (
-                                    <p>No financial impact data.</p>
-                                  )}
-                                </div>
+                            </td>
+                            <td>
+                              {formatFullDate(row?.created_at || row?.updated_at)}
+                            </td>
+                            <td>
+                              <div className="scores-actions">
+                                <button
+                                  type="button"
+                                  className="scores-icon-btn"
+                                  title="View analysis"
+                                  onClick={() => openAnalysis(row?.thread_id)}
+                                >
+                                  <FontAwesomeIcon icon={faArrowUpRightFromSquare} />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="scores-icon-btn"
+                                  title="Export individual report"
+                                  onClick={() => exportRowReport(row)}
+                                >
+                                  <FontAwesomeIcon icon={faDownload} />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="scores-icon-btn scores-delete-btn"
+                                  title={row?.is_baseline ? 'Delete project and all variants' : 'Delete this variant'}
+                                  onClick={() => deleteScoreEntry(row)}
+                                  disabled={Boolean(deletingRowKey)}
+                                  aria-disabled={Boolean(deletingRowKey)}
+                                >
+                                  <FontAwesomeIcon icon={faTrash} />
+                                </button>
                               </div>
                             </td>
                           </tr>
-                        )}
-                      </React.Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                          {expanded && (
+                            <tr className="scores-expanded-row">
+                              <td colSpan={7}>
+                                <div className="scores-expanded-grid">
+                                  <div>
+                                    <h4>Variant</h4>
+                                    <p>{variantLabel}{row?.is_baseline ? ' (Baseline)' : ''}</p>
+                                    <h4 style={{ marginTop: 12 }}>All Variants</h4>
+                                    <ul>
+                                      {scores
+                                        .filter((s) => s?.thread_id === row?.thread_id)
+                                        .map((s, si) => (
+                                          <li key={`sibling-${rowKey}-${si}`}>
+                                            {s?.project_name || 'Untitled'} — {s?.jaspen_score ?? '—'}
+                                          </li>
+                                        ))}
+                                    </ul>
+                                  </div>
+                                  <div>
+                                    <h4>Component Scores</h4>
+                                    {row?.component_scores && Object.keys(row.component_scores).length > 0 ? (
+                                      <ul>
+                                        {Object.entries(row.component_scores)
+                                          .filter(([, value]) => value != null && typeof value !== 'object')
+                                          .map(([key, value]) => (
+                                            <li key={`component-${rowKey}-${key}`}>{key}: {String(value)}</li>
+                                          ))}
+                                      </ul>
+                                    ) : (
+                                      <p>No component scores available.</p>
+                                    )}
+                                  </div>
+                                  <div>
+                                    <h4>Financial Impact</h4>
+                                    {row?.financial_impact && Object.keys(row.financial_impact).length > 0 ? (
+                                      <ul>
+                                        {Object.entries(row.financial_impact)
+                                          .filter(([, value]) => value != null && typeof value !== 'object')
+                                          .map(([key, value]) => (
+                                            <li key={`financial-${rowKey}-${key}`}>{key}: {String(value)}</li>
+                                          ))}
+                                      </ul>
+                                    ) : (
+                                      <p>No financial impact data.</p>
+                                    )}
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
 
             <div className="scores-pagination">
               <span>Showing {start}-{end} of {total}</span>
