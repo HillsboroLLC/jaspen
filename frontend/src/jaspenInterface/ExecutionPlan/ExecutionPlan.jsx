@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faPaperPlane, faSpinner, faTimes, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons';
 import AppMenu from '../shared/AppMenu';
+import JaspenAssistantTab from '../shared/JaspenAssistantTab';
 import { Jaspen } from '../Workspace/JaspenClient';
 import ExecutionPanel from '../Workspace/components/ExecutionPanel';
 import { parseUIActions, ChatActionTypes } from '../../shared/hooks/useChatCommands';
@@ -495,17 +496,19 @@ export default function ExecutionPlan() {
       </section>
 
       {!assistantOpen && (
-        <button
-          type="button"
-          className="execution-plan-chat-tab"
+        <JaspenAssistantTab
           onClick={() => openAssistant('Edit this execution plan using the current context.')}
-          aria-label="Open Jaspen assistant"
-        >
-          JASPEN
-        </button>
+          expanded={assistantOpen}
+          controlsId="execution-plan-chat-drawer"
+          top={258}
+        />
       )}
 
-      <aside className={`execution-plan-chat-drawer ${assistantOpen ? 'is-open' : ''}`} aria-label="Jaspen execution assistant">
+      <aside
+        id="execution-plan-chat-drawer"
+        className={`execution-plan-chat-drawer ${assistantOpen ? 'is-open' : ''}`}
+        aria-label="Jaspen execution assistant"
+      >
         <div className="execution-plan-chat-head">
           <h3>Jaspen</h3>
           <button type="button" onClick={() => setAssistantOpen(false)} aria-label="Close assistant">

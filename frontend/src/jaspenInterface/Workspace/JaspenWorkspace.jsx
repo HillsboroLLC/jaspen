@@ -41,6 +41,7 @@ import BatchIdeaManager from './components/BatchIdeaManager';
 import Onboarding from './components/Onboarding';
 import SidebarIdentityFooter from './components/SidebarIdentityFooter';
 import ThreadEditModal from '../components/ThreadEditModal';
+import JaspenAssistantTab from '../shared/JaspenAssistantTab';
 import { buildInviteDisplay, buildInviteLink } from '../../shared/inviteLink';
 import { PLAN_ORDER, PLAN_RANK } from '../../shared/constants/appConstants';
 
@@ -8193,18 +8194,12 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
 
 {/* Assistant Vertical Tab (Score + Scenarios only) */}
 {activeTab !== 'chat' && !aiDrawerOpen && (
-  <button
-    type="button"
-    className="jas-sidebar-tab jas-tab-assistant"
-    style={{ top: `${sideTabSecond}px` }}
+  <JaspenAssistantTab
     onClick={toggleAIDrawer}
-    aria-label="Jaspen"
-    title="Jaspen"
-    aria-expanded={aiDrawerOpen}
-    aria-controls="jas-ai-drawer-panel"
-  >
-    <span className="jas-tab-label">Jaspen</span>
-  </button>
+    expanded={aiDrawerOpen}
+    controlsId="jas-ai-drawer-panel"
+    top={sideTabSecond}
+  />
 )}
 
 {/* Assistant Drawer (Score + Scenarios only) */}

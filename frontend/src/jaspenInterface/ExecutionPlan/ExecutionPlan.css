@@ -33,39 +33,6 @@
   color: var(--int-text-sub, #475569);
 }
 
-.execution-plan-chat-tab {
-  position: fixed;
-  left: 0;
-  top: 258px;
-  z-index: 104;
-  writing-mode: vertical-rl;
-  text-orientation: mixed;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--border, var(--int-border, #e2e8f0));
-  border-left: none;
-  border-radius: 0 4px 4px 0;
-  background: var(--light-bg, var(--int-bg, #f8fafc));
-  color: var(--navy, var(--int-navy, #161f3b));
-  padding: 14px 8px;
-  font: inherit;
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  cursor: pointer;
-  transition: background 0.2s ease;
-}
-
-.execution-plan-chat-tab:hover {
-  background: var(--gray-200, #e9ecef);
-}
-
-body.jaspen-sidebar-open .execution-plan-chat-tab {
-  left: 320px;
-}
-
 .execution-plan-chat-drawer {
   position: fixed;
   top: 0;
@@ -199,11 +166,6 @@ body.jaspen-sidebar-open .execution-plan-chat-drawer.is-open {
     width: 100%;
     justify-content: flex-start;
     flex-wrap: wrap;
-  }
-
-  .execution-plan-chat-tab {
-    top: auto;
-    bottom: 120px;
   }
 
   .execution-plan-chat-drawer {
