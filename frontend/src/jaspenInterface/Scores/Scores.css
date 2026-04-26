@@ -242,6 +242,45 @@
   flex-wrap: wrap;
 }
 
+.scores-summary-grid {
+  margin-top: 14px;
+  margin-bottom: 14px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.scores-summary-card {
+  border: 1px solid var(--int-border);
+  border-radius: var(--int-radius-md);
+  background: var(--int-surface);
+  padding: 12px;
+  display: grid;
+  gap: 4px;
+}
+
+.scores-summary-card h2 {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--int-eyebrow);
+}
+
+.scores-summary-card p {
+  margin: 0;
+  font-size: 1.35rem;
+  line-height: 1.2;
+  font-weight: 700;
+  color: var(--int-text);
+}
+
+.scores-summary-card span {
+  color: var(--int-text-sub);
+  font-size: 0.8rem;
+}
+
 .scores-primary-btn,
 .scores-secondary-btn,
 .scores-icon-btn,
@@ -627,6 +666,10 @@
     grid-template-columns: 1fr;
   }
 
+  .scores-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .scores-expanded-grid {
     grid-template-columns: 1fr;
   }
@@ -653,5 +696,11 @@
 
   .scores-agent-drawer {
     width: 100vw;
+  }
+}
+
+@media (max-width: 700px) {
+  .scores-summary-grid {
+    grid-template-columns: 1fr;
   }
 }

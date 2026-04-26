@@ -220,6 +220,31 @@ export default function Scores() {
     return map;
   }, [scores]);
 
+  const scoreSummary = useMemo(() => {
+    const valid = scores
+      .map((row) => Number(row?.jaspen_score))
+      .filter((value) => Number.isFinite(value));
+    const topScore = valid.length ? Math.max(...valid) : null;
+    const avgScore = valid.length
+      ? Math.round(valid.reduce((sum, value) => sum + value, 0) / valid.length)
+      : null;
+    const goodOrBetter = scores.filter((row) => {
+      const categoryValue = String(row?.score_category || '').toLowerCase();
+      return categoryValue === 'excellent' || categoryValue === 'good';
+    }).length;
+    const latestProject = [...scores]
+      .sort((a, b) => parseTimestamp(b?.created_at || b?.updated_at) - parseTimestamp(a?.created_at || a?.updated_at))[0];
+
+    return {
+      topScore,
+      avgScore,
+      goodOrBetter,
+      latestProjectName: latestProject?.project_name || '—',
+      latestProjectTime: latestProject ? formatFullDate(latestProject?.created_at || latestProject?.updated_at) : '—',
+      latestProjectRelative: latestProject ? formatRelativeTime(latestProject?.created_at || latestProject?.updated_at) : '',
+    };
+  }, [scores]);
+
   const start = total === 0 ? 0 : offset + 1;
   const end = total === 0 ? 0 : Math.min(offset + scores.length, total);
   const hasPrevious = offset > 0;
@@ -698,6 +723,31 @@ export default function Scores() {
             </button>
           </div>
         </div>
+
+        {!loading && !error && total > 0 && (
+          <section className="scores-summary-grid" aria-label="Portfolio summary">
+            <article className="scores-summary-card">
+              <h2>Top Score</h2>
+              <p>{scoreSummary.topScore != null ? scoreSummary.topScore : '—'}</p>
+            </article>
+            <article className="scores-summary-card">
+              <h2>Average Score</h2>
+              <p>{scoreSummary.avgScore != null ? scoreSummary.avgScore : '—'}</p>
+            </article>
+            <article className="scores-summary-card">
+              <h2>Good or Better</h2>
+              <p>{scoreSummary.goodOrBetter} of {scores.length}</p>
+            </article>
+            <article className="scores-summary-card">
+              <h2>Latest Project</h2>
+              <p>{scoreSummary.latestProjectName}</p>
+              <span>
+                {scoreSummary.latestProjectTime}
+                {scoreSummary.latestProjectRelative ? ` (${scoreSummary.latestProjectRelative})` : ''}
+              </span>
+            </article>
+          </section>
+        )}
 
         <div className="scores-filters">
           <input

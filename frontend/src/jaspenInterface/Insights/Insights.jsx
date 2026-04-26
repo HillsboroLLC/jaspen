@@ -252,7 +252,7 @@ export default function Insights() {
         </div>
       </header>
 
-      <section className="insights-panel">
+      <section className="insights-section">
         <h2>Upload Data</h2>
         <div
           className={`insights-dropzone ${uploading ? 'busy' : ''}`}
@@ -291,7 +291,7 @@ export default function Insights() {
         )}
       </section>
 
-      <section className="insights-panel">
+      <section className="insights-section">
         <div className="insights-row-head">
           <h2>Datasets</h2>
         </div>
@@ -369,7 +369,7 @@ export default function Insights() {
         )}
       </section>
 
-      <section className="insights-panel">
+      <section className="insights-section">
         <div className="insights-row-head">
           <h2>Analysis Results</h2>
           {activeDataset && <span className="insights-muted">Dataset: {activeDataset.filename}</span>}

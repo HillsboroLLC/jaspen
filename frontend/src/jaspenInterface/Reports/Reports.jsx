@@ -179,7 +179,7 @@ export default function Reports() {
         </div>
       </header>
 
-      <section className="reports-generate-card">
+      <section className="reports-section">
         <h2>Generate Report</h2>
         <div className="reports-generate-form">
           <select value={selectedThreadId} onChange={(event) => setSelectedThreadId(event.target.value)}>
@@ -232,7 +232,7 @@ export default function Reports() {
       {!loading && !error && message && <div className="reports-state reports-state-success" role="status" aria-live="polite">{message}</div>}
 
       {!loading && !error && (
-        <section className="reports-list-card">
+        <section className="reports-section">
           <h2>Generated Reports</h2>
           {reports.length === 0 ? (
             <EmptyState
