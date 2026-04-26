@@ -4385,6 +4385,7 @@ def generate_ai_wbs(thread_id):
             or payload.get('prompt')
             or ''
         ).strip()
+        preflight_answers = payload.get('preflight_answers') if isinstance(payload.get('preflight_answers'), dict) else {}
         scenario_id = str(payload.get('scenario_id') or '').strip() or None
 
         all_data, thread_data, baseline, _baseline_inputs, session, _strategy_objective = _resolve_thread_baseline(user_id, thread_id)
@@ -4403,6 +4404,32 @@ def generate_ai_wbs(thread_id):
             current_scorecard = session.get('result')
         if not isinstance(current_scorecard, dict):
             return jsonify({'error': 'No scorecard context found for this thread.'}), 404
+
+        if not preflight_answers:
+            has_exec_summary = bool(str(current_scorecard.get('executive_summary') or '').strip())
+            score_value = int(current_scorecard.get('jaspen_score') or 0)
+            if not has_exec_summary or score_value == 0:
+                return jsonify({
+                    'needs_preflight': True,
+                    'questions': [
+                        {'id': 'team', 'label': 'Who are the primary team members or owners of this project? (e.g., names, roles, or departments)'},
+                        {'id': 'timeline', 'label': 'What is your target completion timeline or hard deadline?'},
+                        {'id': 'functions', 'label': 'Which business functions or systems are most directly affected?'},
+                        {'id': 'constraints', 'label': 'Are there any budget caps, compliance requirements, or technical constraints we should account for?'},
+                    ],
+                }), 200
+
+        if preflight_answers:
+            preflight_context = '\n'.join([
+                f"- {key}: {value}"
+                for key, value in preflight_answers.items()
+                if str(value or '').strip()
+            ])
+            if preflight_context:
+                instruction = (
+                    f"Project Planning Context (from pre-flight):\n{preflight_context}\n\n"
+                    f"{instruction or ''}"
+                ).strip()
 
         client = get_llm_client()
         raw_wbs = _generate_ai_wbs_suggestion(
@@ -5137,6 +5164,42 @@ def update_scorecard_snapshot(thread_id, snapshot_id):
     except Exception as e:
         current_app.logger.error("[update_scorecard_snapshot] %s", e)
         return jsonify({'error': str(e)}), 500
+
+
+@strategy_bp.route('/threads/<thread_id>/scorecard-patch', methods=['PATCH'])
+@jwt_required()
+def patch_thread_scorecard(thread_id):
+    user_id = get_jwt_identity()
+    payload = request.get_json(silent=True) or {}
+    patchable_fields = {
+        'executive_summary', 'executive_narrative',
+        'top_risks', 'risks', 'recommendations',
+        'assumptions', 'key_insights',
+    }
+    patch = {key: value for key, value in payload.items() if key in patchable_fields}
+    if not patch:
+        return jsonify({'error': 'No patchable fields provided'}), 400
+
+    sessions = load_user_sessions(user_id) or {}
+    session = sessions.get(thread_id)
+    resolved_thread_id = thread_id
+    if not isinstance(session, dict):
+        resolved_thread_id, session = _resolve_session_entry(sessions, thread_id)
+    if not isinstance(session, dict):
+        return jsonify({'error': 'Thread not found'}), 404
+
+    analysis_result = session.get('analysis_result')
+    if not isinstance(analysis_result, dict):
+        analysis_result = session.get('result')
+    if not isinstance(analysis_result, dict):
+        analysis_result = {}
+
+    analysis_result.update(patch)
+    session['analysis_result'] = analysis_result
+    session['result'] = analysis_result
+    sessions[resolved_thread_id] = session
+    save_user_sessions(user_id, sessions)
+    return jsonify({'success': True}), 200
 
 
 @strategy_bp.route('/threads/<thread_id>/scorecard-snapshots/<snapshot_id>', methods=['DELETE'])

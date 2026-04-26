@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faArrowTrendUp,
@@ -86,6 +87,7 @@ function chartDataFor(chart = {}, idx = 0) {
 }
 
 export default function Insights() {
+  const navigate = useNavigate();
   const fileInputRef = useRef(null);
   const [datasets, setDatasets] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -240,6 +242,19 @@ export default function Insights() {
       },
     });
   }, [activeDatasetId, datasets, loadDatasets]);
+
+  const buildOpportunityStatement = useCallback((analysisResult, dataset) => {
+    const filename = dataset?.filename ? `"${dataset.filename}"` : 'the uploaded dataset';
+    const summary = String(analysisResult?.summary || '').trim();
+    const topOpportunity = Array.isArray(analysisResult?.opportunities) ? analysisResult.opportunities[0] : '';
+    const topRisk = Array.isArray(analysisResult?.risks) ? analysisResult.risks[0] : '';
+    const parts = [`I've analyzed ${filename} and found the following insights.`];
+    if (summary) parts.push(summary);
+    if (topOpportunity) parts.push(`Top opportunity: ${topOpportunity}`);
+    if (topRisk) parts.push(`Key risk to address: ${topRisk}`);
+    parts.push('I would like to score this opportunity.');
+    return parts.join(' ');
+  }, []);
 
   return (
     <div className="insights-page int-page">
@@ -483,6 +498,32 @@ export default function Insights() {
           </div>
         )}
       </section>
+
+      {analysis && (
+        <section className="insights-section insights-score-cta-section">
+          <article className="insights-card full insights-score-cta">
+            <div className="insights-score-cta-copy">
+              <FontAwesomeIcon icon={faArrowTrendUp} />
+              <div>
+                <h3>Ready to score this opportunity?</h3>
+                <p>
+                  Turn these insights into a strategic Jaspen Score with financial analysis, risk
+                  assessment, and an AI-generated recommendation.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="int-btn int-btn-primary"
+              onClick={() => navigate('/new', {
+                state: { prefillMessage: buildOpportunityStatement(analysis, activeDataset) },
+              })}
+            >
+              Score this opportunity →
+            </button>
+          </article>
+        </section>
+      )}
       <ConfirmDialog
         isOpen={Boolean(confirmDialog)}
         title={confirmDialog?.title}

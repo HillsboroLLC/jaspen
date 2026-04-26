@@ -127,6 +127,17 @@
   background: #1e2a4f;
 }
 
+.score-dashboard-container .sc-btn-success {
+  background: var(--color-status-success, #16a34a);
+  color: #fff;
+  border-color: var(--color-status-success, #16a34a);
+}
+
+.score-dashboard-container .sc-btn-success:hover {
+  background: #15803d;
+  border-color: #15803d;
+}
+
 .score-dashboard-container .sc-btn-secondary {
   background: var(--white);
   color: var(--navy);
@@ -597,6 +608,80 @@
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-muted);
+}
+
+.score-dashboard-container .section-card-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.score-dashboard-container .card-edit-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.score-dashboard-container .card-edit-btn:hover,
+.score-dashboard-container .card-edit-btn.active {
+  color: var(--magenta);
+  background: rgba(160, 3, 108, 0.06);
+}
+
+.score-dashboard-container .card-edit-mode {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 8px 20px 16px;
+}
+
+.score-dashboard-container .card-edit-textarea {
+  width: 100%;
+  min-height: 120px;
+  padding: 10px;
+  border: 1.5px solid var(--border);
+  border-radius: 6px;
+  font-size: 14px;
+  resize: vertical;
+}
+
+.score-dashboard-container .card-edit-list-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.score-dashboard-container .card-edit-input {
+  flex: 1;
+  padding: 7px 10px;
+  border: 1.5px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.score-dashboard-container .card-edit-remove {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #e53e3e;
+  font-size: 16px;
+  padding: 0 4px;
+}
+
+.score-dashboard-container .card-edit-add {
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+.score-dashboard-container .card-edit-actions {
+  display: flex;
+  gap: 8px;
+  padding-top: 4px;
 }
 
 .score-dashboard-container .card-drag-handle {

@@ -5253,6 +5253,39 @@ const liveStatusMessage = useMemo(() => {
   return sessionId ? 'Jaspen is thinking.' : 'Jaspen is starting the conversation.';
 }, [beginBusy, busy, isStreamingReply, streamToolStatus, sessionId]);
 
+const handleScoreCardFieldEdit = useCallback(async (fieldKey, newValue) => {
+  const tid = String(currentSessionId || sessionId || '').trim();
+  if (!tid) return;
+
+  const FIELD_MAP = {
+    executive: 'executive_summary',
+    risks: 'top_risks',
+    recommendations: 'recommendations',
+    assumptions: 'assumptions',
+  };
+  const fieldName = FIELD_MAP[fieldKey] || fieldKey;
+
+  setAnalysisResult((prev) => (prev ? { ...prev, [fieldName]: newValue } : prev));
+
+  try {
+    const headers = buildAuthHeaders({ 'Content-Type': 'application/json' }, 'PATCH');
+    const response = await fetch(
+      `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(tid)}/scorecard-patch`,
+      {
+        method: 'PATCH',
+        headers,
+        credentials: 'include',
+        body: JSON.stringify({ [fieldName]: newValue }),
+      }
+    );
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+  } catch {
+    showToast('Failed to save edit. Changes are local only.', 'warning');
+  }
+}, [currentSessionId, sessionId, showToast]);
+
 async function onBeginProject() {
   if (!canAccessExecutionTab) {
     showToast('Upgrade to Essential to begin a project from this scorecard.', 'info');
@@ -8900,6 +8933,8 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
         analysisResult={activeScorecard}
         loading={bundleLoading && !activeScorecard}
         drawerOpen={aiDrawerOpen}
+        onEditField={handleScoreCardFieldEdit}
+        editEnabled
 
         scoreVariants={scoreVariants}
         selectedVariantId={selectedVariantId}

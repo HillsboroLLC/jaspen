@@ -5,7 +5,7 @@
 // ============================================================================
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faChevronDown, faDownload, faGripVertical, faSpinner } from '@fortawesome/free-solid-svg-icons';
+import { faChevronDown, faDownload, faGripVertical, faPencil, faSpinner, faTimes } from '@fortawesome/free-solid-svg-icons';
 import { ScoreDashboardSkeleton } from '../../shared/components/SkeletonLoader';
 import './ScoreDashboard.css';
 
@@ -69,6 +69,8 @@ export default function ScoreDashboard({
   onExportConversationMarkdown = null,
   loading = false,
   drawerOpen = false,
+  onEditField = null,
+  editEnabled = false,
 }) {
   const getGridColumns = useCallback(() => {
     if (typeof window === 'undefined') return 6;
@@ -87,6 +89,8 @@ export default function ScoreDashboard({
   const [dragOverPlacement, setDragOverPlacement] = useState('before');
   const [resizeState, setResizeState] = useState(null);
   const [gridColumns, setGridColumns] = useState(() => getGridColumns());
+  const [editingCardKey, setEditingCardKey] = useState(null);
+  const [editDraft, setEditDraft] = useState(null);
   const exportMenuRef = useRef(null);
   const dashboardGridRef = useRef(null);
   const cardLayoutsRef = useRef(DEFAULT_CARD_LAYOUT);
@@ -175,6 +179,48 @@ export default function ScoreDashboard({
     if (/^what is your specific goal/i.test(text)) return '';
     return text;
   };
+
+  const normalizeListDraft = useCallback((items = [], fallbackField) => (
+    Array.isArray(items)
+      ? items.map((item) => {
+          if (typeof item === 'string') return item;
+          if (item && typeof item === 'object') return String(item[fallbackField] || item.title || item.description || '').trim();
+          return '';
+        }).filter(Boolean)
+      : []
+  ), []);
+
+  const getEditInitialValue = useCallback((key) => {
+    switch (key) {
+      case 'executive':
+        return executiveSummary || '';
+      case 'risks':
+        return normalizeListDraft(risks, 'risk');
+      case 'recommendations':
+        return normalizeListDraft(recommendations, 'action');
+      case 'assumptions':
+        return normalizeListDraft(assumptions, 'assumption');
+      default:
+        return null;
+    }
+  }, [assumptions, executiveSummary, normalizeListDraft, recommendations, risks]);
+
+  const openEdit = useCallback((key) => {
+    setEditingCardKey(key);
+    setEditDraft(getEditInitialValue(key));
+  }, [getEditInitialValue]);
+
+  const commitEdit = useCallback(() => {
+    if (!onEditField || editingCardKey === null) return;
+    onEditField(editingCardKey, editDraft);
+    setEditingCardKey(null);
+    setEditDraft(null);
+  }, [editingCardKey, editDraft, onEditField]);
+
+  const cancelEdit = useCallback(() => {
+    setEditingCardKey(null);
+    setEditDraft(null);
+  }, []);
 
   const buildSmartExplanations = () => {
     const fallbackByCategory = (key) => {
@@ -521,11 +567,27 @@ export default function ScoreDashboard({
       populated: Boolean(executiveSummary),
       priority: 1,
       render: () => (
-        <div className="executive-summary-card card-shell card-scroll">
-          <p className="executive-summary-text">
-            {executiveSummary || 'Not enough information to generate an executive summary yet.'}
-          </p>
-        </div>
+        editingCardKey === 'executive' ? (
+          <div className="card-edit-mode">
+            <textarea
+              className="card-edit-textarea"
+              value={typeof editDraft === 'string' ? editDraft : ''}
+              onChange={(event) => setEditDraft(event.target.value)}
+              rows={6}
+              autoFocus
+            />
+            <div className="card-edit-actions">
+              <button type="button" className="sc-btn sc-btn-primary sc-btn-sm" onClick={commitEdit}>Save</button>
+              <button type="button" className="sc-btn sc-btn-secondary sc-btn-sm" onClick={cancelEdit}>Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <div className="executive-summary-card card-shell card-scroll">
+            <p className="executive-summary-text">
+              {executiveSummary || 'Not enough information to generate an executive summary yet.'}
+            </p>
+          </div>
+        )
       ),
     },
     {
@@ -614,29 +676,66 @@ export default function ScoreDashboard({
       populated: recommendations.length > 0,
       priority: 5,
       render: () => (
-        <div className="recommendations-section">
-          {recommendations.map((rec, idx) => {
-            const recommendationText = typeof rec === 'string'
-              ? rec
-              : (rec.action || rec.title || rec.recommendation || rec.description || 'Not enough information.');
-            const chips = [rec.expected_impact, rec.effort, rec.timeline].filter(Boolean);
-            return (
-              <div key={idx} className="rec-item">
-                <span className="rec-num">{idx + 1}</span>
-                <div className="rec-text">
-                  <div className="section-item-title">{recommendationText}</div>
-                  {chips.length > 0 && (
-                    <div className="section-chip-row">
-                      {chips.map((chip) => (
-                        <span className="section-chip" key={`${idx}_${chip}`}>{chip}</span>
-                      ))}
-                    </div>
-                  )}
-                </div>
+        editingCardKey === 'recommendations' ? (
+          <div className="card-edit-mode card-list-edit">
+            {(Array.isArray(editDraft) ? editDraft : []).map((item, idx) => (
+              <div className="card-edit-list-row" key={idx}>
+                <input
+                  type="text"
+                  className="card-edit-input"
+                  value={typeof item === 'string' ? item : ''}
+                  onChange={(event) => {
+                    const next = [...(Array.isArray(editDraft) ? editDraft : [])];
+                    next[idx] = event.target.value;
+                    setEditDraft(next);
+                  }}
+                />
+                <button
+                  type="button"
+                  className="card-edit-remove"
+                  onClick={() => setEditDraft((Array.isArray(editDraft) ? editDraft : []).filter((_, i) => i !== idx))}
+                >
+                  ×
+                </button>
               </div>
-            );
-          })}
-        </div>
+            ))}
+            <button
+              type="button"
+              className="card-edit-add sc-btn sc-btn-ghost sc-btn-sm"
+              onClick={() => setEditDraft([...(Array.isArray(editDraft) ? editDraft : []), ''])}
+            >
+              + Add recommendation
+            </button>
+            <div className="card-edit-actions">
+              <button type="button" className="sc-btn sc-btn-primary sc-btn-sm" onClick={commitEdit}>Save</button>
+              <button type="button" className="sc-btn sc-btn-secondary sc-btn-sm" onClick={cancelEdit}>Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <div className="recommendations-section">
+            {recommendations.map((rec, idx) => {
+              const recommendationText = typeof rec === 'string'
+                ? rec
+                : (rec.action || rec.title || rec.recommendation || rec.description || 'Not enough information.');
+              const chips = [rec.expected_impact, rec.effort, rec.timeline].filter(Boolean);
+              return (
+                <div key={idx} className="rec-item">
+                  <span className="rec-num">{idx + 1}</span>
+                  <div className="rec-text">
+                    <div className="section-item-title">{recommendationText}</div>
+                    {chips.length > 0 && (
+                      <div className="section-chip-row">
+                        {chips.map((chip) => (
+                          <span className="section-chip" key={`${idx}_${chip}`}>{chip}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )
       ),
     },
     {
@@ -645,37 +744,74 @@ export default function ScoreDashboard({
       populated: risks.length > 0,
       priority: 6,
       render: () => (
-        <div className="risks-section">
-          {risks.map((risk, idx) => {
-            const riskText = typeof risk === 'string'
-              ? risk
-              : (risk.risk || risk.title || risk.description || 'Not enough information.');
-            const chips = [
-              risk.probability,
-              risk.impact_category ? formatLabel(risk.impact_category) : null,
-              risk.impact_dollars || risk.impact,
-              risk.residual_risk ? `Residual: ${risk.residual_risk}` : null,
-            ].filter(Boolean);
-            return (
-              <div key={idx} className="risk-item">
-                <span className="ri-num">{idx + 1}</span>
-                <div className="ri-text">
-                  <div className="section-item-title">{riskText}</div>
-                  {chips.length > 0 && (
-                    <div className="section-chip-row">
-                      {chips.map((chip) => (
-                        <span className="section-chip" key={`${idx}_${chip}`}>{chip}</span>
-                      ))}
-                    </div>
-                  )}
-                  {typeof risk === 'object' && risk.mitigation && (
-                    <div className="section-inline-note">Mitigation: {risk.mitigation}</div>
-                  )}
-                </div>
+        editingCardKey === 'risks' ? (
+          <div className="card-edit-mode card-list-edit">
+            {(Array.isArray(editDraft) ? editDraft : []).map((item, idx) => (
+              <div className="card-edit-list-row" key={idx}>
+                <input
+                  type="text"
+                  className="card-edit-input"
+                  value={typeof item === 'string' ? item : ''}
+                  onChange={(event) => {
+                    const next = [...(Array.isArray(editDraft) ? editDraft : [])];
+                    next[idx] = event.target.value;
+                    setEditDraft(next);
+                  }}
+                />
+                <button
+                  type="button"
+                  className="card-edit-remove"
+                  onClick={() => setEditDraft((Array.isArray(editDraft) ? editDraft : []).filter((_, i) => i !== idx))}
+                >
+                  ×
+                </button>
               </div>
-            );
-          })}
-        </div>
+            ))}
+            <button
+              type="button"
+              className="card-edit-add sc-btn sc-btn-ghost sc-btn-sm"
+              onClick={() => setEditDraft([...(Array.isArray(editDraft) ? editDraft : []), ''])}
+            >
+              + Add risk
+            </button>
+            <div className="card-edit-actions">
+              <button type="button" className="sc-btn sc-btn-primary sc-btn-sm" onClick={commitEdit}>Save</button>
+              <button type="button" className="sc-btn sc-btn-secondary sc-btn-sm" onClick={cancelEdit}>Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <div className="risks-section">
+            {risks.map((risk, idx) => {
+              const riskText = typeof risk === 'string'
+                ? risk
+                : (risk.risk || risk.title || risk.description || 'Not enough information.');
+              const chips = [
+                risk.probability,
+                risk.impact_category ? formatLabel(risk.impact_category) : null,
+                risk.impact_dollars || risk.impact,
+                risk.residual_risk ? `Residual: ${risk.residual_risk}` : null,
+              ].filter(Boolean);
+              return (
+                <div key={idx} className="risk-item">
+                  <span className="ri-num">{idx + 1}</span>
+                  <div className="ri-text">
+                    <div className="section-item-title">{riskText}</div>
+                    {chips.length > 0 && (
+                      <div className="section-chip-row">
+                        {chips.map((chip) => (
+                          <span className="section-chip" key={`${idx}_${chip}`}>{chip}</span>
+                        ))}
+                      </div>
+                    )}
+                    {typeof risk === 'object' && risk.mitigation && (
+                      <div className="section-inline-note">Mitigation: {risk.mitigation}</div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )
       ),
     },
     {
@@ -802,11 +938,48 @@ export default function ScoreDashboard({
       populated: assumptions.length > 0,
       priority: 13,
       render: () => (
-        <div className="section-bullet-list">
-          {assumptions.map((item, idx) => (
-            <div className="section-bullet-item" key={`assumption_${idx}`}>{item}</div>
-          ))}
-        </div>
+        editingCardKey === 'assumptions' ? (
+          <div className="card-edit-mode card-list-edit">
+            {(Array.isArray(editDraft) ? editDraft : []).map((item, idx) => (
+              <div className="card-edit-list-row" key={idx}>
+                <input
+                  type="text"
+                  className="card-edit-input"
+                  value={typeof item === 'string' ? item : ''}
+                  onChange={(event) => {
+                    const next = [...(Array.isArray(editDraft) ? editDraft : [])];
+                    next[idx] = event.target.value;
+                    setEditDraft(next);
+                  }}
+                />
+                <button
+                  type="button"
+                  className="card-edit-remove"
+                  onClick={() => setEditDraft((Array.isArray(editDraft) ? editDraft : []).filter((_, i) => i !== idx))}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              className="card-edit-add sc-btn sc-btn-ghost sc-btn-sm"
+              onClick={() => setEditDraft([...(Array.isArray(editDraft) ? editDraft : []), ''])}
+            >
+              + Add assumption
+            </button>
+            <div className="card-edit-actions">
+              <button type="button" className="sc-btn sc-btn-primary sc-btn-sm" onClick={commitEdit}>Save</button>
+              <button type="button" className="sc-btn sc-btn-secondary sc-btn-sm" onClick={cancelEdit}>Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <div className="section-bullet-list">
+            {assumptions.map((item, idx) => (
+              <div className="section-bullet-item" key={`assumption_${idx}`}>{item}</div>
+            ))}
+          </div>
+        )
       ),
     },
   ]), [
@@ -830,6 +1003,11 @@ export default function ScoreDashboard({
     investmentAnalysis,
     narrativeHighlights,
     npvIrrAnalysis,
+    editDraft,
+    editingCardKey,
+    cancelEdit,
+    commitEdit,
+    openEdit,
     recommendations,
     risks,
     score,
@@ -966,11 +1144,30 @@ export default function ScoreDashboard({
                 }}
               >
                 <span className="section-card-title">{section.title}</span>
-                <div
-                  className={`card-drag-handle ${draggedCardKey === section.key ? 'is-dragging' : ''}`}
-                  aria-hidden="true"
-                >
-                  <FontAwesomeIcon icon={faGripVertical} />
+                <div className="section-card-head-actions">
+                  {editEnabled && onEditField && ['executive', 'risks', 'recommendations', 'assumptions'].includes(section.key) && (
+                    <button
+                      type="button"
+                      className={`card-edit-btn ${editingCardKey === section.key ? 'active' : ''}`}
+                      title={editingCardKey === section.key ? 'Cancel edit' : 'Edit this card'}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (editingCardKey === section.key) {
+                          cancelEdit();
+                        } else {
+                          openEdit(section.key);
+                        }
+                      }}
+                    >
+                      <FontAwesomeIcon icon={editingCardKey === section.key ? faTimes : faPencil} />
+                    </button>
+                  )}
+                  <div
+                    className={`card-drag-handle ${draggedCardKey === section.key ? 'is-dragging' : ''}`}
+                    aria-hidden="true"
+                  >
+                    <FontAwesomeIcon icon={faGripVertical} />
+                  </div>
                 </div>
               </div>
               <div className="section-card-body">{section.render()}</div>
