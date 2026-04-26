@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faCheck, faCopy, faPaperPlane, faRotate, faSpinner, faThumbsDown, faThumbsUp, faTimes, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons';
+import { faCheck, faCopy, faRotate, faSpinner, faThumbsDown, faThumbsUp, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons';
 import AppMenu from '../shared/AppMenu';
 import { Jaspen } from '../Workspace/JaspenClient';
+import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
 import ExecutionPanel from '../Workspace/components/ExecutionPanel';
 import { parseUIActions, ChatActionTypes } from '../../shared/hooks/useChatCommands';
 import { useToast, ToastContainer } from '../../shared/components/Toast';
@@ -622,69 +623,24 @@ export default function ExecutionPlan() {
         )}
       </section>
 
-      {!assistantOpen && (
-        <button
-          type="button"
-          className="jas-sidebar-tab jas-tab-assistant"
-          style={{ top: '258px' }}
-          onClick={() => openAssistant('Edit this execution plan using the current context.')}
-          aria-label="Jaspen"
-          title="Jaspen"
-          aria-expanded={assistantOpen}
-          aria-controls="execution-plan-chat-drawer"
-        >
-          <span className="jas-tab-label">Jaspen</span>
-        </button>
-      )}
-
-      <aside
+      <JaspenAiDrawer
         id="execution-plan-chat-drawer"
-        className={`execution-plan-chat-drawer ${assistantOpen ? 'is-open' : ''}`}
-        aria-label="Jaspen execution assistant"
-      >
-        <div className="execution-plan-chat-head">
-          <h3>Jaspen</h3>
-          <button type="button" onClick={() => setAssistantOpen(false)} aria-label="Close assistant">
-            <FontAwesomeIcon icon={faTimes} />
-          </button>
-        </div>
-
-        <div className="execution-plan-chat-suggestions">
-          {promptSuggestions.map((prompt) => (
-            <button key={prompt} type="button" onClick={() => setAssistantInput(prompt)}>
-              {prompt}
-            </button>
-          ))}
-        </div>
-
-        <div className="execution-plan-chat-messages">
-          {assistantMessages.map((message, index) => (
-            <div key={`${message.role}-${index}`} className={`execution-plan-chat-message ${message.role}`}>
-              <div className="execution-plan-chat-message-bubble">{message.text}</div>
-              {renderMessageActions(message, `execution:${index}`, index, assistantMessages.length)}
-            </div>
-          ))}
-          <div ref={assistantMessagesEndRef} />
-        </div>
-
-        <div className="execution-plan-chat-input">
-          <textarea
-            value={assistantInput}
-            onChange={(event) => setAssistantInput(event.target.value)}
-            placeholder="Ask Jaspen to edit this execution plan..."
-            rows={3}
-          />
-          <button
-            type="button"
-            onClick={() => { void sendAssistantMessage(); }}
-            disabled={!assistantInput.trim() || assistantBusy || !threadId}
-            aria-disabled={!assistantInput.trim() || assistantBusy || !threadId}
-            aria-label="Send message"
-          >
-            <FontAwesomeIcon icon={assistantBusy ? faSpinner : faPaperPlane} spin={assistantBusy} />
-          </button>
-        </div>
-      </aside>
+        isOpen={assistantOpen}
+        onOpen={() => openAssistant('Edit this execution plan using the current context.')}
+        onClose={() => setAssistantOpen(false)}
+        showSideTab={true}
+        sideTabTop={258}
+        messages={assistantMessages}
+        renderMessage={(message) => <>{message?.text || ''}</>}
+        renderActions={(message, messageKey, index, total) => renderMessageActions(message, messageKey, index, total)}
+        messagesEndRef={assistantMessagesEndRef}
+        input={assistantInput}
+        onInputChange={setAssistantInput}
+        onSend={() => { void sendAssistantMessage(); }}
+        placeholder="Ask Jaspen to edit this execution plan..."
+        busy={assistantBusy || retryBusy}
+        starterPrompts={promptSuggestions}
+      />
     </div>
   );
 }

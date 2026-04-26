@@ -40,6 +40,7 @@ import ComparisonView   from './ComparisonView';
 import BatchIdeaManager from './components/BatchIdeaManager';
 import Onboarding from './components/Onboarding';
 import SidebarIdentityFooter from './components/SidebarIdentityFooter';
+import JaspenAiDrawer from './JaspenAiDrawer';
 import ThreadEditModal from '../components/ThreadEditModal';
 import { buildInviteDisplay, buildInviteLink } from '../../shared/inviteLink';
 import { PLAN_ORDER, PLAN_RANK } from '../../shared/constants/appConstants';
@@ -1137,7 +1138,6 @@ const [helpLoading, setHelpLoading] = useState(false);
   const [commandQuery, setCommandQuery] = useState('');
   const commandPaletteInputRef = useRef(null);
   const workspaceTabRefs = useRef({});
-  const aiToggleTabRefs = useRef({});
 // Score view dropdown state (baseline + up to 3 scenarios)
 const [scenarioOptions, setScenarioOptions] = useState([]);
 const [activeScenarioId, setActiveScenarioId] = useState('baseline');
@@ -8192,286 +8192,173 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       )}
 
 {/* Assistant Vertical Tab (Score + Scenarios only) */}
-{activeTab !== 'chat' && !aiDrawerOpen && (
-  <button
-    type="button"
-    className="jas-sidebar-tab jas-tab-assistant"
-    style={{ top: `${sideTabSecond}px` }}
-    onClick={toggleAIDrawer}
-    aria-label="Jaspen"
-    title="Jaspen"
-    aria-expanded={aiDrawerOpen}
-    aria-controls="jas-ai-drawer-panel"
-  >
-    <span className="jas-tab-label">Jaspen</span>
-  </button>
-)}
-
-{/* Assistant Drawer (Score + Scenarios only) */}
 {activeTab !== 'chat' && (
-  <div
+  <JaspenAiDrawer
     id="jas-ai-drawer-panel"
-    ref={aiDrawerPanelRef}
-    className={`jas-ai-drawer ${aiDrawerOpen ? 'jas-drawer-open' : ''}`}
-    aria-label="Jaspen assistant drawer"
-  >
-    <div className="jas-ai-header">
-      <div className="jas-ai-title">
-        <span>Jaspen</span>
-      </div>
-      <button className="jas-close-btn" onClick={toggleAIDrawer} aria-label="Close assistant drawer">
-        <FontAwesomeIcon icon={faTimes} />
-      </button>
-    </div>
-
-    {isScenarioTab && (
-      <div className="jas-ai-toggle" role="tablist" aria-label="Assistant drawer views">
-        <button
-          type="button"
-          ref={(node) => {
-            if (node) aiToggleTabRefs.current.assistant = node;
-          }}
-          className={`jas-ai-toggle-btn ${scenarioDrawerView === 'assistant' ? 'active' : ''}`}
-          onClick={() => setScenarioDrawerView('assistant')}
-          role="tab"
-          aria-selected={scenarioDrawerView === 'assistant'}
-          tabIndex={scenarioDrawerView === 'assistant' ? 0 : -1}
-          onKeyDown={(event) => {
-            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-            event.preventDefault();
-            const order = ['assistant', 'scorecard'];
-            const current = order.indexOf('assistant');
-            let next = current;
-            if (event.key === 'ArrowRight') next = (current + 1) % order.length;
-            if (event.key === 'ArrowLeft') next = (current - 1 + order.length) % order.length;
-            if (event.key === 'Home') next = 0;
-            if (event.key === 'End') next = order.length - 1;
-            const nextKey = order[next];
-            setScenarioDrawerView(nextKey);
-            aiToggleTabRefs.current[nextKey]?.focus();
-          }}
-        >
-          Jaspen
-        </button>
-        <button
-          type="button"
-          ref={(node) => {
-            if (node) aiToggleTabRefs.current.scorecard = node;
-          }}
-          className={`jas-ai-toggle-btn ${scenarioDrawerView === 'scorecard' ? 'active' : ''}`}
-          onClick={() => setScenarioDrawerView('scorecard')}
-          role="tab"
-          aria-selected={scenarioDrawerView === 'scorecard'}
-          tabIndex={scenarioDrawerView === 'scorecard' ? 0 : -1}
-          onKeyDown={(event) => {
-            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-            event.preventDefault();
-            const order = ['assistant', 'scorecard'];
-            const current = order.indexOf('scorecard');
-            let next = current;
-            if (event.key === 'ArrowRight') next = (current + 1) % order.length;
-            if (event.key === 'ArrowLeft') next = (current - 1 + order.length) % order.length;
-            if (event.key === 'Home') next = 0;
-            if (event.key === 'End') next = order.length - 1;
-            const nextKey = order[next];
-            setScenarioDrawerView(nextKey);
-            aiToggleTabRefs.current[nextKey]?.focus();
-          }}
-        >
-          Scorecard
-        </button>
-      </div>
-    )}
-
-    {(!isScenarioTab || scenarioDrawerView === 'assistant') ? (
-      <>
-	        <div className="jas-ai-messages" ref={aiMessagesRef}>
-	          {messages.map((m, idx) => (
-	            <div
-	              key={idx}
-	              className={`jas-ai-message ${m.role === 'user' ? 'user' : 'assistant'}`}
-	            >
-	              <div className="jas-message-content">{renderConversationMessage(m)}</div>
-	              {renderMessageAttachments(m)}
-	              {renderMessageActions(m, `drawer:${idx}`, idx, messages.length)}
-	            </div>
-	          ))}
-            <div ref={aiMessagesEndRef} aria-hidden="true" />
-	        </div>
-        {renderStreamToolStatus()}
-
-        {aiScenarioProposal && (
-          <div className="jas-ai-scenario-panel">
-            <div className="jas-ai-scenario-head">
-              <div className="jas-ai-scenario-title">AI Scenario Draft</div>
-              <div className="jas-ai-scenario-sub">
-                {aiScenarioProposal.preview?.jaspen_score != null
-                  ? `Projected score: ${aiScenarioProposal.preview.jaspen_score}`
-                  : 'Projected score unavailable'}
-              </div>
-            </div>
-
-            <div className="jas-ai-scenario-field">
-              <label>Scenario label</label>
-              <input
-                type="text"
-                value={aiScenarioProposal.label}
-                onChange={(e) => setAiScenarioProposal((prev) => (prev ? { ...prev, label: e.target.value } : prev))}
-                disabled={aiScenarioBusy}
-              />
-            </div>
-
-            <div className="jas-ai-scenario-field">
-              <label>Desired outcome</label>
-              <textarea
-                rows={2}
-                value={aiScenarioProposal.instruction}
-                onChange={(e) => setAiScenarioProposal((prev) => (prev ? { ...prev, instruction: e.target.value } : prev))}
-                disabled={aiScenarioBusy}
-              />
-            </div>
-
-            <div className="jas-ai-scenario-field">
-              <label>Objective profile</label>
-              <select
-                value={strategyObjective}
-                onChange={(e) => applyStrategyObjective(e.target.value, { persist: true, markExplicit: true, silent: true })}
-                disabled={aiScenarioBusy}
-              >
-                {OBJECTIVE_OPTIONS.map((option) => (
-                  <option key={option.key} value={option.key}>{option.label}</option>
-                ))}
-              </select>
-            </div>
-
-            {aiScenarioProposal.summary && (
-              <p className="jas-ai-scenario-summary">{aiScenarioProposal.summary}</p>
-            )}
-
-            <div className="jas-ai-scenario-rows">
-              {aiScenarioProposal.rows.map((row) => (
-                <div className="jas-ai-scenario-row" key={row.key}>
-                  <div className="jas-ai-scenario-row-label">
-                    <strong>{row.label}</strong>
-                    <span>Current: {row.current}</span>
-                  </div>
-                  <div className="jas-ai-scenario-row-input">
-                    <input
-                      type="number"
-                      value={row.value}
-                      min={row.min}
-                      max={row.max}
-                      step={row.step}
-                      disabled={aiScenarioBusy}
-                      onChange={(e) => {
-                        const nextVal = Number(e.target.value);
-                        if (!Number.isFinite(nextVal)) return;
-                        setProposalRowValue(row.key, nextVal);
-                      }}
-                    />
-                    <button
-                      type="button"
-                      className="jas-ai-mini-btn"
-                      onClick={() => removeProposalLever(row.key)}
-                      disabled={aiScenarioBusy} aria-disabled={aiScenarioBusy}
-                      title="Remove lever"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                  {row.rationale && <div className="jas-ai-scenario-rationale">{row.rationale}</div>}
-                </div>
-              ))}
-            </div>
-
-            {Array.isArray(aiScenarioProposal.availableLevers) && aiScenarioProposal.availableLevers.length > aiScenarioProposal.rows.length && (
-              <div className="jas-ai-scenario-add">
-                <select
-                  value={aiScenarioProposal.addLeverKey || ''}
-                  onChange={(e) => setProposalAddLeverKey(e.target.value)}
-                  disabled={aiScenarioBusy}
-                >
-                  <option value="">Add lever...</option>
-                  {aiScenarioProposal.availableLevers
-                    .filter((lever) => !aiScenarioProposal.rows.some((row) => row.key === lever.key))
-                    .map((lever) => (
-                      <option key={lever.key} value={lever.key}>{lever.label}</option>
-                    ))}
-                </select>
-                <button type="button" className="jas-ai-mini-btn" onClick={addProposalLever} disabled={aiScenarioBusy || !aiScenarioProposal.addLeverKey} aria-disabled={aiScenarioBusy || !aiScenarioProposal.addLeverKey}>
-                  Add
-                </button>
-              </div>
-            )}
-
-            <div className="jas-ai-scenario-actions">
-              <button type="button" className="jas-ai-mini-btn secondary" onClick={regenerateAiScenarioProposal} disabled={aiScenarioBusy} aria-disabled={aiScenarioBusy}>
-                Modify (Regenerate)
-              </button>
-              <button type="button" className="jas-ai-mini-btn secondary" onClick={previewAiScenarioProposal} disabled={aiScenarioBusy} aria-disabled={aiScenarioBusy}>
-                Update Preview
-              </button>
-              <button type="button" className="jas-ai-mini-btn danger" onClick={rejectAiScenarioProposal} disabled={aiScenarioBusy} aria-disabled={aiScenarioBusy}>
-                Reject
-              </button>
-              <button type="button" className="jas-ai-mini-btn primary" onClick={acceptAiScenarioProposal} disabled={aiScenarioBusy || aiScenarioProposal.rows.length === 0} aria-disabled={aiScenarioBusy || aiScenarioProposal.rows.length === 0}>
-                {aiScenarioBusy ? 'Applying…' : 'Accept'}
-              </button>
+    panelRef={aiDrawerPanelRef}
+    messagesContainerRef={aiMessagesRef}
+    messagesEndRef={aiMessagesEndRef}
+    isOpen={aiDrawerOpen}
+    onOpen={toggleAIDrawer}
+    onClose={toggleAIDrawer}
+    showSideTab={true}
+    sideTabTop={sideTabSecond}
+    tabs={isScenarioTab ? [{ key: 'assistant', label: 'Jaspen' }, { key: 'scorecard', label: 'Scorecard' }] : null}
+    activeDrawerTab={scenarioDrawerView}
+    onDrawerTabChange={setScenarioDrawerView}
+    messages={messages}
+    renderMessage={(m) => renderConversationMessage(m)}
+    renderAttachments={(m) => renderMessageAttachments(m)}
+    renderActions={(m, key, idx, total) => renderMessageActions(m, key, idx, total)}
+    streamStatus={renderStreamToolStatus()}
+    extraPanel={
+      aiScenarioProposal ? (
+        <div className="jas-ai-scenario-panel">
+          <div className="jas-ai-scenario-head">
+            <div className="jas-ai-scenario-title">AI Scenario Draft</div>
+            <div className="jas-ai-scenario-sub">
+              {aiScenarioProposal.preview?.jaspen_score != null
+                ? `Projected score: ${aiScenarioProposal.preview.jaspen_score}`
+                : 'Projected score unavailable'}
             </div>
           </div>
-        )}
 
-        <div className="jas-ai-input-area">
-          {scoreDrawerPrompts.length > 0 && (
-            <div className="jas-ai-starter-row">
-              {scoreDrawerPrompts.map((prompt) => (
-                <button
-                  key={prompt}
-                  type="button"
-                  className="jas-ai-starter-chip"
-                  onClick={() => setAiInput(prompt)}
-                >
-                  {prompt}
-                </button>
+          <div className="jas-ai-scenario-field">
+            <label>Scenario label</label>
+            <input
+              type="text"
+              value={aiScenarioProposal.label}
+              onChange={(e) => setAiScenarioProposal((prev) => (prev ? { ...prev, label: e.target.value } : prev))}
+              disabled={aiScenarioBusy}
+            />
+          </div>
+
+          <div className="jas-ai-scenario-field">
+            <label>Desired outcome</label>
+            <textarea
+              rows={2}
+              value={aiScenarioProposal.instruction}
+              onChange={(e) => setAiScenarioProposal((prev) => (prev ? { ...prev, instruction: e.target.value } : prev))}
+              disabled={aiScenarioBusy}
+            />
+          </div>
+
+          <div className="jas-ai-scenario-field">
+            <label>Objective profile</label>
+            <select
+              value={strategyObjective}
+              onChange={(e) => applyStrategyObjective(e.target.value, { persist: true, markExplicit: true, silent: true })}
+              disabled={aiScenarioBusy}
+            >
+              {OBJECTIVE_OPTIONS.map((option) => (
+                <option key={option.key} value={option.key}>{option.label}</option>
               ))}
+            </select>
+          </div>
+
+          {aiScenarioProposal.summary && (
+            <p className="jas-ai-scenario-summary">{aiScenarioProposal.summary}</p>
+          )}
+
+          <div className="jas-ai-scenario-rows">
+            {aiScenarioProposal.rows.map((row) => (
+              <div className="jas-ai-scenario-row" key={row.key}>
+                <div className="jas-ai-scenario-row-label">
+                  <strong>{row.label}</strong>
+                  <span>Current: {row.current}</span>
+                </div>
+                <div className="jas-ai-scenario-row-input">
+                  <input
+                    type="number"
+                    value={row.value}
+                    min={row.min}
+                    max={row.max}
+                    step={row.step}
+                    disabled={aiScenarioBusy}
+                    onChange={(e) => {
+                      const nextVal = Number(e.target.value);
+                      if (!Number.isFinite(nextVal)) return;
+                      setProposalRowValue(row.key, nextVal);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="jas-ai-mini-btn"
+                    onClick={() => removeProposalLever(row.key)}
+                    disabled={aiScenarioBusy} aria-disabled={aiScenarioBusy}
+                    title="Remove lever"
+                  >
+                    Remove
+                  </button>
+                </div>
+                {row.rationale && <div className="jas-ai-scenario-rationale">{row.rationale}</div>}
+              </div>
+            ))}
+          </div>
+
+          {Array.isArray(aiScenarioProposal.availableLevers) && aiScenarioProposal.availableLevers.length > aiScenarioProposal.rows.length && (
+            <div className="jas-ai-scenario-add">
+              <select
+                value={aiScenarioProposal.addLeverKey || ''}
+                onChange={(e) => setProposalAddLeverKey(e.target.value)}
+                disabled={aiScenarioBusy}
+              >
+                <option value="">Add lever...</option>
+                {aiScenarioProposal.availableLevers
+                  .filter((lever) => !aiScenarioProposal.rows.some((row) => row.key === lever.key))
+                  .map((lever) => (
+                    <option key={lever.key} value={lever.key}>{lever.label}</option>
+                  ))}
+              </select>
+              <button type="button" className="jas-ai-mini-btn" onClick={addProposalLever} disabled={aiScenarioBusy || !aiScenarioProposal.addLeverKey} aria-disabled={aiScenarioBusy || !aiScenarioProposal.addLeverKey}>
+                Add
+              </button>
             </div>
           )}
-          {renderObjectiveTags('jas-ai-objective-tags')}
-          <div className="jas-ai-input-row">
-            <textarea
-              className="jas-ai-input"
-              placeholder={aiDrawerPlaceholder}
-              rows="3"
-              value={aiInput}
-              onChange={(e) => setAiInput(e.target.value)}
-              onKeyPress={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  sendAIMessage();
-                }
-              }}
-            />
-            <button className="jas-ai-send-btn" onClick={sendAIMessage} aria-label="Send assistant message">
-              <FontAwesomeIcon icon={faPaperPlane} />
+
+          <div className="jas-ai-scenario-actions">
+            <button type="button" className="jas-ai-mini-btn secondary" onClick={regenerateAiScenarioProposal} disabled={aiScenarioBusy} aria-disabled={aiScenarioBusy}>
+              Modify (Regenerate)
+            </button>
+            <button type="button" className="jas-ai-mini-btn secondary" onClick={previewAiScenarioProposal} disabled={aiScenarioBusy} aria-disabled={aiScenarioBusy}>
+              Update Preview
+            </button>
+            <button type="button" className="jas-ai-mini-btn danger" onClick={rejectAiScenarioProposal} disabled={aiScenarioBusy} aria-disabled={aiScenarioBusy}>
+              Reject
+            </button>
+            <button type="button" className="jas-ai-mini-btn primary" onClick={acceptAiScenarioProposal} disabled={aiScenarioBusy || aiScenarioProposal.rows.length === 0} aria-disabled={aiScenarioBusy || aiScenarioProposal.rows.length === 0}>
+              {aiScenarioBusy ? 'Applying…' : 'Accept'}
             </button>
           </div>
         </div>
-      </>
-    ) : (
-      <div className="jas-ai-messages">
-        {renderMiniScorecard(activeScorecard)}
-      </div>
-    )}
-    <SidebarIdentityFooter
-      displayName={displayName}
-      planLabel={footerPlanLabel}
-      onOpenDisplayNameEditor={openDisplayNameEditor}
-      onOpenOnboardingEditor={openOnboardingEditor}
-      onOpenBilling={() => setBillingModalOpen(true)}
-      onLogout={handleLogout}
-      onClose={() => setAiDrawerOpen(false)}
-    />
-  </div>
+      ) : null
+    }
+    input={aiInput}
+    onInputChange={setAiInput}
+    onInputKeyDown={(e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendAIMessage();
+      }
+    }}
+    onSend={sendAIMessage}
+    placeholder={aiDrawerPlaceholder}
+    busy={busy}
+    starterPrompts={scoreDrawerPrompts}
+    inputExtras={renderObjectiveTags('jas-ai-objective-tags')}
+    alternateContent={renderMiniScorecard(activeScorecard)}
+    footer={
+      <SidebarIdentityFooter
+        displayName={displayName}
+        planLabel={footerPlanLabel}
+        onOpenDisplayNameEditor={openDisplayNameEditor}
+        onOpenOnboardingEditor={openOnboardingEditor}
+        onOpenBilling={() => setBillingModalOpen(true)}
+        onLogout={handleLogout}
+        onClose={() => setAiDrawerOpen(false)}
+      />
+    }
+  />
 )}
 
       <ThreadEditModal
