@@ -1,9 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faPaperPlane, faSpinner, faTimes, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons';
+import { faCheck, faCopy, faPaperPlane, faRotate, faSpinner, faThumbsDown, faThumbsUp, faTimes, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons';
 import AppMenu from '../shared/AppMenu';
-import JaspenAssistantTab from '../shared/JaspenAssistantTab';
 import { Jaspen } from '../Workspace/JaspenClient';
 import ExecutionPanel from '../Workspace/components/ExecutionPanel';
 import { parseUIActions, ChatActionTypes } from '../../shared/hooks/useChatCommands';
@@ -102,7 +101,47 @@ export default function ExecutionPlan() {
   const [assistantInput, setAssistantInput] = useState('');
   const [assistantMessages, setAssistantMessages] = useState([]);
   const [assistantBusy, setAssistantBusy] = useState(false);
+  const [retryBusy, setRetryBusy] = useState(false);
+  const [copiedMessageKey, setCopiedMessageKey] = useState(null);
+  const [feedbackByMessageKey, setFeedbackByMessageKey] = useState({});
   const [planBusy, setPlanBusy] = useState(false);
+  const assistantMessagesEndRef = useRef(null);
+  const copyResetTimeoutRef = useRef(null);
+
+  const copyTextToClipboard = useCallback(async (value) => {
+    const text = String(value || '').trim();
+    if (!text) return;
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'absolute';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textarea);
+  }, []);
+
+  const handleCopyMessage = useCallback(async (messageKey, text) => {
+    const resolvedText = String(text || '').trim();
+    if (!resolvedText) return;
+    try {
+      await copyTextToClipboard(resolvedText);
+      setCopiedMessageKey(messageKey);
+      if (copyResetTimeoutRef.current) {
+        clearTimeout(copyResetTimeoutRef.current);
+      }
+      copyResetTimeoutRef.current = setTimeout(() => {
+        setCopiedMessageKey(null);
+      }, 1800);
+    } catch {
+      showToast('Failed to copy message.', 'error');
+    }
+  }, [copyTextToClipboard, showToast]);
 
   useEffect(() => {
     const nextThreadId = getThreadIdFromSearch(location.search);
@@ -202,6 +241,18 @@ export default function ExecutionPlan() {
       localStorage.setItem(getAssistantStorageKey(tid), JSON.stringify(assistantMessages.slice(-80)));
     } catch {}
   }, [assistantMessages, threadId]);
+
+  useEffect(() => {
+    if (!assistantOpen) return;
+    assistantMessagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [assistantMessages, assistantBusy, assistantOpen]);
+
+  useEffect(
+    () => () => {
+      if (copyResetTimeoutRef.current) clearTimeout(copyResetTimeoutRef.current);
+    },
+    [],
+  );
 
   const resolveThreadWbsState = useCallback(async (targetThreadId) => {
     const response = await Jaspen.getThreadWbs(targetThreadId);
@@ -340,14 +391,17 @@ export default function ExecutionPlan() {
     }
   }, [hasExistingPlan, planBusy, refreshThreadWbs, showToast, threadId]);
 
-  const sendAssistantMessage = useCallback(async () => {
-    const text = String(assistantInput || '').trim();
+  const sendAssistantMessage = useCallback(async (overrideText = '', options = {}) => {
+    const text = String(overrideText || assistantInput || '').trim();
     const tid = String(threadId || '').trim();
-    if (!text || !tid || assistantBusy) return;
+    const addUserMessage = options?.addUserMessage !== false;
+    if (!text || !tid || assistantBusy || retryBusy) return;
 
-    setAssistantInput('');
+    if (!overrideText) setAssistantInput('');
     setAssistantBusy(true);
-    setAssistantMessages((prev) => [...prev, { role: 'user', text }]);
+    if (addUserMessage) {
+      setAssistantMessages((prev) => [...prev, { role: 'user', text }]);
+    }
 
     try {
       if (GENERATE_PLAN_REGEX.test(text)) {
@@ -421,6 +475,79 @@ export default function ExecutionPlan() {
     threadBundle,
     threadWbs,
     threadId,
+    retryBusy,
+  ]);
+
+  const handleRetryLastResponse = useCallback(async () => {
+    const lastUserMessage = [...assistantMessages].reverse().find((message) => message?.role === 'user');
+    const prompt = String(lastUserMessage?.text || '').trim();
+    if (!prompt || assistantBusy || retryBusy || !threadId) return;
+    setRetryBusy(true);
+    try {
+      await sendAssistantMessage(prompt, { addUserMessage: false });
+    } finally {
+      setRetryBusy(false);
+    }
+  }, [assistantBusy, assistantMessages, retryBusy, sendAssistantMessage, threadId]);
+
+  const renderMessageActions = useCallback((message, messageKey, index, total) => {
+    if (message?.role === 'user') return null;
+    const isCopied = copiedMessageKey === messageKey;
+    const isLatestAssistant = index === total - 1;
+    const feedbackValue = feedbackByMessageKey[messageKey];
+    const canRetry = isLatestAssistant && !assistantBusy && !retryBusy && !planBusy;
+    return (
+      <div className="jas-message-actions">
+        <button
+          type="button"
+          className={`jas-message-copy-btn ${isCopied ? 'is-copied' : ''}`}
+          onClick={() => handleCopyMessage(messageKey, message?.text || '')}
+          aria-label={isCopied ? 'Copied message' : 'Copy message'}
+          title={isCopied ? 'Copied' : 'Copy'}
+        >
+          <FontAwesomeIcon icon={isCopied ? faCheck : faCopy} />
+        </button>
+        <button
+          type="button"
+          className={`jas-message-feedback-btn ${feedbackValue === 'up' ? 'is-active' : ''}`}
+          onClick={() => setFeedbackByMessageKey((prev) => ({ ...prev, [messageKey]: feedbackValue === 'up' ? '' : 'up' }))}
+          aria-label="Thumbs up"
+          title="Thumbs up"
+        >
+          <FontAwesomeIcon icon={faThumbsUp} />
+        </button>
+        <button
+          type="button"
+          className={`jas-message-feedback-btn ${feedbackValue === 'down' ? 'is-active is-negative' : ''}`}
+          onClick={() => setFeedbackByMessageKey((prev) => ({ ...prev, [messageKey]: feedbackValue === 'down' ? '' : 'down' }))}
+          aria-label="Thumbs down"
+          title="Thumbs down"
+        >
+          <FontAwesomeIcon icon={faThumbsDown} />
+        </button>
+        {canRetry && (
+          <button
+            type="button"
+            className="jas-message-regen-btn"
+            onClick={() => { void handleRetryLastResponse(); }}
+            aria-label="Regenerate response"
+            title="Regenerate"
+            disabled={retryBusy}
+            aria-disabled={retryBusy}
+          >
+            <FontAwesomeIcon icon={faRotate} spin={retryBusy} />
+          </button>
+        )}
+      </div>
+    );
+  }, [
+    assistantBusy,
+    copiedMessageKey,
+    feedbackByMessageKey,
+    handleCopyMessage,
+    handleRetryLastResponse,
+    planBusy,
+    retryBusy,
   ]);
 
   const openAssistant = useCallback((prefill = 'Edit this execution plan: update phases, owners, due dates, dependencies, and priorities.') => {
@@ -451,7 +578,7 @@ export default function ExecutionPlan() {
   );
 
   return (
-    <div className="execution-plan-page int-page">
+    <div className={`execution-plan-page int-page ${assistantOpen ? 'execution-ai-open' : ''}`}>
       <AppMenu />
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
@@ -496,12 +623,18 @@ export default function ExecutionPlan() {
       </section>
 
       {!assistantOpen && (
-        <JaspenAssistantTab
+        <button
+          type="button"
+          className="jas-sidebar-tab jas-tab-assistant"
+          style={{ top: '258px' }}
           onClick={() => openAssistant('Edit this execution plan using the current context.')}
-          expanded={assistantOpen}
-          controlsId="execution-plan-chat-drawer"
-          top={258}
-        />
+          aria-label="Jaspen"
+          title="Jaspen"
+          aria-expanded={assistantOpen}
+          aria-controls="execution-plan-chat-drawer"
+        >
+          <span className="jas-tab-label">Jaspen</span>
+        </button>
       )}
 
       <aside
@@ -527,9 +660,11 @@ export default function ExecutionPlan() {
         <div className="execution-plan-chat-messages">
           {assistantMessages.map((message, index) => (
             <div key={`${message.role}-${index}`} className={`execution-plan-chat-message ${message.role}`}>
-              {message.text}
+              <div className="execution-plan-chat-message-bubble">{message.text}</div>
+              {renderMessageActions(message, `execution:${index}`, index, assistantMessages.length)}
             </div>
           ))}
+          <div ref={assistantMessagesEndRef} />
         </div>
 
         <div className="execution-plan-chat-input">

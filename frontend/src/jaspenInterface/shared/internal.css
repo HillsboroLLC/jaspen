@@ -380,47 +380,6 @@
   margin-bottom: 14px;
 }
 
-/* Shared left-edge assistant tab (same control used in workspace score/scenario views). */
-.jas-sidebar-tab {
-  appearance: none;
-  -webkit-appearance: none;
-  position: fixed;
-  left: 0;
-  top: 260px;
-  writing-mode: vertical-rl;
-  text-orientation: mixed;
-  background: var(--light-bg, var(--int-bg, #f8fafc));
-  border: 1px solid var(--border, var(--int-border, #e2e8f0));
-  border-left: none;
-  padding: 14px 8px;
-  font-size: 0.6875rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--navy, var(--int-navy, #161f3b));
-  cursor: pointer;
-  z-index: 104;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border-radius: 0 var(--int-radius-sm, 6px) var(--int-radius-sm, 6px) 0;
-  transition: background 0.18s ease;
-  font-family: inherit;
-}
-
-.jas-sidebar-tab:hover {
-  background: var(--gray-200, #e9ecef);
-}
-
-.jas-tab-label {
-  writing-mode: vertical-rl;
-  text-orientation: mixed;
-}
-
-body.jaspen-sidebar-open .jas-tab-assistant {
-  left: 320px;
-}
-
 @media (max-width: 768px) {
   .int-page {
     padding: 16px;
@@ -432,10 +391,5 @@ body.jaspen-sidebar-open .jas-tab-assistant {
 
   .int-toolbar {
     flex-direction: column;
-  }
-
-  .jas-sidebar-tab {
-    top: auto;
-    bottom: 120px;
   }
 }
