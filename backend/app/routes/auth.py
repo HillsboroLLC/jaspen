@@ -1520,6 +1520,45 @@ def update_current_user():
                     return jsonify(error="ui_preferences.theme must be 'light', 'dark', or 'system'"), 400
                 next_prefs['theme'] = theme
 
+        if 'onboarding' in incoming:
+            raw_onboarding = incoming.get('onboarding')
+            if raw_onboarding is None:
+                next_prefs.pop('onboarding', None)
+            else:
+                if not isinstance(raw_onboarding, dict):
+                    return jsonify(error='ui_preferences.onboarding must be an object'), 400
+
+                current_onboarding = next_prefs.get('onboarding')
+                if not isinstance(current_onboarding, dict):
+                    current_onboarding = {}
+
+                next_onboarding = dict(current_onboarding)
+                if 'completed' in raw_onboarding:
+                    next_onboarding['completed'] = bool(raw_onboarding.get('completed'))
+                if 'deferred' in raw_onboarding:
+                    next_onboarding['deferred'] = bool(raw_onboarding.get('deferred'))
+                if 'dismissed' in raw_onboarding:
+                    next_onboarding['dismissed'] = bool(raw_onboarding.get('dismissed'))
+                if 'selection' in raw_onboarding:
+                    raw_selection = raw_onboarding.get('selection')
+                    if raw_selection is None:
+                        next_onboarding['selection'] = None
+                    else:
+                        if not isinstance(raw_selection, dict):
+                            return jsonify(error='ui_preferences.onboarding.selection must be an object'), 400
+                        safe_selection = {}
+                        for key in ('role', 'evaluation', 'startMode'):
+                            value = raw_selection.get(key)
+                            if value is None:
+                                continue
+                            text = str(value).strip()
+                            if text:
+                                safe_selection[key] = text[:64]
+                        next_onboarding['selection'] = safe_selection or None
+
+                next_onboarding['updated_at'] = datetime.now(timezone.utc).isoformat()
+                next_prefs['onboarding'] = next_onboarding
+
         user.ui_preferences = next_prefs
 
     db.session.commit()

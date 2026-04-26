@@ -58,15 +58,21 @@ export default function AppMenu() {
     user,
     logout,
     updateDisplayName,
+    updateUiPreferences,
     isPlatformAdmin,
     isEnterpriseAdmin,
     canManageOrg,
     isOrgCreator,
-    planCategory,
   } = useAuth();
 
   // Sidebar open state
   const [open, setOpen] = useState(false);
+  const [gettingStartedLoading, setGettingStartedLoading] = useState(false);
+  const [gettingStartedProgress, setGettingStartedProgress] = useState({
+    hasProject: false,
+    hasScore: false,
+  });
+  const [gettingStartedHidden, setGettingStartedHidden] = useState(false);
 
   // Billing
   const [billingStatus, setBillingStatus] = useState(null);
@@ -237,6 +243,37 @@ export default function AppMenu() {
     (paths, extra = '') => `jas-ud-item${isActivePath(paths) ? ' is-active' : ''}${extra ? ` ${extra}` : ''}`,
     [isActivePath],
   );
+  const onboardingPrefs = user?.ui_preferences?.onboarding && typeof user.ui_preferences.onboarding === 'object'
+    ? user.ui_preferences.onboarding
+    : {};
+  const onboardingCompleted = Boolean(onboardingPrefs.completed || user?.ui_preferences?.onboarding_complete);
+  const gettingStartedDismissed = Boolean(onboardingPrefs.dismissed);
+  const gettingStartedSteps = useMemo(() => ([
+    {
+      key: 'onboarding',
+      label: 'Complete setup preferences',
+      done: onboardingCompleted,
+      href: '/new',
+    },
+    {
+      key: 'first-project',
+      label: 'Start your first project',
+      done: Boolean(gettingStartedProgress.hasProject),
+      href: '/new',
+    },
+    {
+      key: 'first-score',
+      label: 'Generate your first score',
+      done: Boolean(gettingStartedProgress.hasScore),
+      href: '/scores',
+    },
+  ]), [gettingStartedProgress.hasProject, gettingStartedProgress.hasScore, onboardingCompleted]);
+  const gettingStartedDoneCount = gettingStartedSteps.filter((step) => step.done).length;
+  useEffect(() => {
+    setGettingStartedHidden(gettingStartedDismissed);
+  }, [gettingStartedDismissed]);
+
+  const showGettingStartedCard = !gettingStartedHidden && gettingStartedDoneCount < gettingStartedSteps.length;
 
   // ---------------------------------------------------------------------------
   // Handlers
@@ -263,6 +300,57 @@ export default function AppMenu() {
     },
     [],
   );
+
+  const loadGettingStartedProgress = useCallback(async () => {
+    if (!open || !user) return;
+    setGettingStartedLoading(true);
+    try {
+      const [projectsRes, scoresRes] = await Promise.all([
+        fetch(`${API_BASE}/api/v1/ai-agent/threads`, {
+          headers: buildAuthHeaders({}, 'GET'),
+          credentials: 'include',
+        }),
+        fetch(`${API_BASE}/api/v1/strategy/scores?limit=1&offset=0`, {
+          headers: buildAuthHeaders({}, 'GET'),
+          credentials: 'include',
+        }),
+      ]);
+      const projectsJson = await projectsRes.json().catch(() => ({}));
+      const scoresJson = await scoresRes.json().catch(() => ({}));
+      const sessions = Array.isArray(projectsJson?.sessions) ? projectsJson.sessions : [];
+      const scores = Array.isArray(scoresJson?.scores) ? scoresJson.scores : [];
+      const totalScores = Number(scoresJson?.total);
+      setGettingStartedProgress({
+        hasProject: sessions.length > 0,
+        hasScore: scores.length > 0 || (Number.isFinite(totalScores) && totalScores > 0),
+      });
+    } catch {
+      setGettingStartedProgress({ hasProject: false, hasScore: false });
+    } finally {
+      setGettingStartedLoading(false);
+    }
+  }, [open, user]);
+
+  useEffect(() => {
+    void loadGettingStartedProgress();
+  }, [loadGettingStartedProgress]);
+
+  const dismissGettingStarted = useCallback(async () => {
+    setGettingStartedHidden(true);
+    if (typeof updateUiPreferences !== 'function') return;
+    const currentPrefs = user?.ui_preferences && typeof user.ui_preferences === 'object'
+      ? user.ui_preferences
+      : {};
+    const currentOnboarding = currentPrefs?.onboarding && typeof currentPrefs.onboarding === 'object'
+      ? currentPrefs.onboarding
+      : {};
+    await updateUiPreferences({
+      onboarding: {
+        ...currentOnboarding,
+        dismissed: true,
+      },
+    });
+  }, [updateUiPreferences, user?.ui_preferences]);
 
   const startBillingPlanChange = useCallback(
     async (planKey) => {
@@ -519,6 +607,44 @@ export default function AppMenu() {
             </button>
           )}
         </div>
+
+        {showGettingStartedCard && (
+          <div className="jas-ud-section">
+            <div className="jas-ud-section-label">Getting Started</div>
+            <div className="jas-ud-role-switcher jas-ud-getting-started-card">
+              <div className="jas-ud-getting-started-head">
+                <strong>{gettingStartedDoneCount}/{gettingStartedSteps.length} completed</strong>
+                <button
+                  type="button"
+                  className="jas-ud-getting-started-dismiss"
+                  onClick={() => { void dismissGettingStarted(); }}
+                >
+                  Dismiss
+                </button>
+              </div>
+              <div className="jas-ud-getting-started-list" aria-live="polite">
+                {gettingStartedSteps.map((step) => (
+                  <div key={step.key} className={`jas-ud-getting-started-row${step.done ? ' is-done' : ''}`}>
+                    <span className="jas-ud-getting-started-state" aria-hidden="true">{step.done ? '✓' : '○'}</span>
+                    <span className="jas-ud-getting-started-label">{step.label}</span>
+                    {!step.done && (
+                      <button
+                        type="button"
+                        className="jas-ud-getting-started-link"
+                        onClick={() => { close(); navigate(step.href); }}
+                      >
+                        Go
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {gettingStartedLoading && (
+                <p className="jas-ud-getting-started-loading">Refreshing progress…</p>
+              )}
+            </div>
+          </div>
+        )}
 
         <div className="jas-ud-section">
           <div className="jas-ud-section-label">User Tools</div>

@@ -243,6 +243,85 @@ body.jaspen-sidebar-open .int-page {
   cursor: not-allowed;
 }
 
+.app-menu-host .jas-ud-getting-started-card {
+  gap: 10px;
+}
+
+.app-menu-host .jas-ud-getting-started-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--navy);
+  font-size: 0.75rem;
+}
+
+.app-menu-host .jas-ud-getting-started-dismiss {
+  border: 0;
+  background: transparent;
+  color: var(--gray-600);
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+
+.app-menu-host .jas-ud-getting-started-dismiss:hover {
+  color: var(--navy);
+  text-decoration: underline;
+}
+
+.app-menu-host .jas-ud-getting-started-list {
+  display: grid;
+  gap: 6px;
+}
+
+.app-menu-host .jas-ud-getting-started-row {
+  display: grid;
+  grid-template-columns: 14px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+}
+
+.app-menu-host .jas-ud-getting-started-row.is-done .jas-ud-getting-started-label {
+  color: var(--navy);
+}
+
+.app-menu-host .jas-ud-getting-started-state {
+  color: var(--gray-600);
+  font-size: 0.72rem;
+}
+
+.app-menu-host .jas-ud-getting-started-row.is-done .jas-ud-getting-started-state {
+  color: #198754;
+}
+
+.app-menu-host .jas-ud-getting-started-label {
+  color: var(--gray-700);
+  font-size: 0.75rem;
+}
+
+.app-menu-host .jas-ud-getting-started-link {
+  border: 1px solid var(--gray-300);
+  background: var(--white);
+  color: var(--navy);
+  border-radius: 999px;
+  min-height: 24px;
+  padding: 0 9px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.app-menu-host .jas-ud-getting-started-link:hover {
+  background: var(--gray-50);
+}
+
+.app-menu-host .jas-ud-getting-started-loading {
+  margin: 2px 0 0;
+  color: var(--gray-600);
+  font-size: 0.68rem;
+}
+
 .app-menu-host .jas-ud-item {
   display: flex;
   align-items: center;

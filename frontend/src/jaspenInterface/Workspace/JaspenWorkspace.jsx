@@ -598,17 +598,79 @@ const NAME_PROMPT_STORAGE_KEY = 'jaspen_name_prompt_state_v1';
 
 function readOnboardingState(user) {
   const ownerKey = getOnboardingOwnerKey(user);
-  if (!ownerKey) return null;
+  const profilePrefs = user?.ui_preferences && typeof user.ui_preferences === 'object'
+    ? user.ui_preferences
+    : {};
+  const profileOnboarding = profilePrefs?.onboarding && typeof profilePrefs.onboarding === 'object'
+    ? profilePrefs.onboarding
+    : null;
+  const profileFallbackCompleted = typeof profilePrefs?.onboarding_complete === 'boolean'
+    ? profilePrefs.onboarding_complete
+    : null;
+  if (!ownerKey) {
+    if (profileOnboarding) {
+      return {
+        completed: Boolean(profileOnboarding.completed),
+        deferred: Boolean(profileOnboarding.deferred),
+        selection: profileOnboarding.selection && typeof profileOnboarding.selection === 'object'
+          ? { ...profileOnboarding.selection }
+          : null,
+      };
+    }
+    if (typeof profileFallbackCompleted === 'boolean') {
+      return { completed: profileFallbackCompleted, deferred: false, selection: null };
+    }
+    return null;
+  }
   try {
     const raw = localStorage.getItem(ONBOARDING_STORAGE_KEY);
-    if (!raw) return null;
+    if (!raw) {
+      if (profileOnboarding) {
+        return {
+          completed: Boolean(profileOnboarding.completed),
+          deferred: Boolean(profileOnboarding.deferred),
+          selection: profileOnboarding.selection && typeof profileOnboarding.selection === 'object'
+            ? { ...profileOnboarding.selection }
+            : null,
+        };
+      }
+      if (typeof profileFallbackCompleted === 'boolean') {
+        return { completed: profileFallbackCompleted, deferred: false, selection: null };
+      }
+      return null;
+    }
     if (raw === 'true') return { completed: true, deferred: false, selection: null };
     const parsed = JSON.parse(raw);
     const entry = parsed?.[ownerKey];
     if (typeof entry === 'boolean') return { completed: entry, deferred: false, selection: null };
-    return entry && typeof entry === 'object' ? entry : null;
+    if (entry && typeof entry === 'object') return entry;
+    if (profileOnboarding) {
+      return {
+        completed: Boolean(profileOnboarding.completed),
+        deferred: Boolean(profileOnboarding.deferred),
+        selection: profileOnboarding.selection && typeof profileOnboarding.selection === 'object'
+          ? { ...profileOnboarding.selection }
+          : null,
+      };
+    }
+    if (typeof profileFallbackCompleted === 'boolean') {
+      return { completed: profileFallbackCompleted, deferred: false, selection: null };
+    }
+    return null;
   } catch (error) {
     devWarn('[onboarding] Failed to read onboarding completion state', error);
+    if (profileOnboarding) {
+      return {
+        completed: Boolean(profileOnboarding.completed),
+        deferred: Boolean(profileOnboarding.deferred),
+        selection: profileOnboarding.selection && typeof profileOnboarding.selection === 'object'
+          ? { ...profileOnboarding.selection }
+          : null,
+      };
+    }
+    if (typeof profileFallbackCompleted === 'boolean') {
+      return { completed: profileFallbackCompleted, deferred: false, selection: null };
+    }
     return null;
   }
 }
@@ -986,6 +1048,7 @@ export default function JaspenWorkspace() {
     logout,
     checkAuthStatus,
     updateDisplayName,
+    updateUiPreferences,
     planCategory,
     isPlatformAdmin,
     isEnterpriseAdmin,
@@ -2939,10 +3002,43 @@ useEffect(() => {
     setNameModalOpen(true);
   };
 
+  const persistOnboardingProfileState = useCallback(async (payload = {}) => {
+    if (typeof updateUiPreferences !== 'function') return;
+    const currentPrefs = user?.ui_preferences && typeof user.ui_preferences === 'object'
+      ? user.ui_preferences
+      : {};
+    const currentOnboarding = currentPrefs?.onboarding && typeof currentPrefs.onboarding === 'object'
+      ? currentPrefs.onboarding
+      : {};
+    const nextSelection = payload?.selection && typeof payload.selection === 'object'
+      ? { ...payload.selection }
+      : (payload?.selection === null ? null : (currentOnboarding.selection && typeof currentOnboarding.selection === 'object'
+        ? { ...currentOnboarding.selection }
+        : null));
+    const nextOnboarding = {
+      ...currentOnboarding,
+      ...(Object.prototype.hasOwnProperty.call(payload || {}, 'completed') ? { completed: Boolean(payload?.completed) } : {}),
+      ...(Object.prototype.hasOwnProperty.call(payload || {}, 'deferred') ? { deferred: Boolean(payload?.deferred) } : {}),
+      ...(Object.prototype.hasOwnProperty.call(payload || {}, 'selection') ? { selection: nextSelection } : {}),
+    };
+    const result = await updateUiPreferences({
+      onboarding: nextOnboarding,
+      onboarding_complete: Boolean(nextOnboarding.completed),
+    });
+    if (!result?.success) {
+      devWarn('[onboarding] Failed to persist profile onboarding state', result?.error || 'unknown error');
+    }
+  }, [updateUiPreferences, user?.ui_preferences]);
+
   const deferSetupPrompt = () => {
     const previousSelection = readOnboardingState(user)?.selection || onboardingInitialSelection || null;
     writeNamePromptDeferred(user, true);
     writeOnboardingState(user, {
+      completed: false,
+      deferred: true,
+      selection: previousSelection,
+    });
+    void persistOnboardingProfileState({
       completed: false,
       deferred: true,
       selection: previousSelection,
@@ -2958,6 +3054,11 @@ useEffect(() => {
     dismissNotification(SETUP_REMINDER_NOTIFICATION.id);
     writeNamePromptDeferred(user, false);
     writeOnboardingState(user, {
+      completed: false,
+      deferred: false,
+      selection: previousSelection,
+    });
+    void persistOnboardingProfileState({
       completed: false,
       deferred: false,
       selection: previousSelection,
@@ -7074,6 +7175,7 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
     setPendingOnboardingContext(nextContext);
     setOnboardingInitialSelection(nextSelection);
     writeOnboardingState(user, { completed: true, deferred: false, selection: nextSelection });
+    void persistOnboardingProfileState({ completed: true, deferred: false, selection: nextSelection });
     dismissNotification(SETUP_REMINDER_NOTIFICATION.id);
     if (onboardingMode === 'settings') {
       if (!sessionId && !currentSessionId && (!Array.isArray(messages) || messages.length === 0)) {
@@ -7107,7 +7209,7 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
       }
       setOnboardingLaunchLabel('');
     }, 260);
-  }, [user, onboardingMode, sessionId, currentSessionId, messages, showToast, dismissNotification]);
+  }, [user, onboardingMode, sessionId, currentSessionId, messages, showToast, dismissNotification, persistOnboardingProfileState]);
 
   const handleNewAnalysis = useCallback((forceNew = false) => {
     clearLastSessionId();
@@ -9251,6 +9353,11 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
         onSkip={() => {
           const previousSelection = readOnboardingState(user)?.selection || onboardingInitialSelection || null;
           writeOnboardingState(user, {
+            completed: false,
+            deferred: true,
+            selection: previousSelection,
+          });
+          void persistOnboardingProfileState({
             completed: false,
             deferred: true,
             selection: previousSelection,
