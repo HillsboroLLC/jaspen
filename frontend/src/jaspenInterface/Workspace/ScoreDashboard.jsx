@@ -180,36 +180,6 @@ export default function ScoreDashboard({
     return text;
   };
 
-  const normalizeListDraft = useCallback((items = [], fallbackField) => (
-    Array.isArray(items)
-      ? items.map((item) => {
-          if (typeof item === 'string') return item;
-          if (item && typeof item === 'object') return String(item[fallbackField] || item.title || item.description || '').trim();
-          return '';
-        }).filter(Boolean)
-      : []
-  ), []);
-
-  const getEditInitialValue = useCallback((key) => {
-    switch (key) {
-      case 'executive':
-        return executiveSummary || '';
-      case 'risks':
-        return normalizeListDraft(risks, 'risk');
-      case 'recommendations':
-        return normalizeListDraft(recommendations, 'action');
-      case 'assumptions':
-        return normalizeListDraft(assumptions, 'assumption');
-      default:
-        return null;
-    }
-  }, [assumptions, executiveSummary, normalizeListDraft, recommendations, risks]);
-
-  const openEdit = useCallback((key) => {
-    setEditingCardKey(key);
-    setEditDraft(getEditInitialValue(key));
-  }, [getEditInitialValue]);
-
   const commitEdit = useCallback(() => {
     if (!onEditField || editingCardKey === null) return;
     onEditField(editingCardKey, editDraft);
@@ -371,6 +341,37 @@ export default function ScoreDashboard({
     }
     return '';
   }, [result.executive_summary, result.executive_narrative, narrativeHighlights]);
+
+  // Edit helpers — declared AFTER executiveSummary to avoid Temporal Dead Zone
+  const normalizeListDraft = useCallback((items = [], fallbackField) => (
+    Array.isArray(items)
+      ? items.map((item) => {
+          if (typeof item === 'string') return item;
+          if (item && typeof item === 'object') return String(item[fallbackField] || item.title || item.description || '').trim();
+          return '';
+        }).filter(Boolean)
+      : []
+  ), []);
+
+  const getEditInitialValue = useCallback((key) => {
+    switch (key) {
+      case 'executive':
+        return executiveSummary || '';
+      case 'risks':
+        return normalizeListDraft(risks, 'risk');
+      case 'recommendations':
+        return normalizeListDraft(recommendations, 'action');
+      case 'assumptions':
+        return normalizeListDraft(assumptions, 'assumption');
+      default:
+        return null;
+    }
+  }, [assumptions, executiveSummary, normalizeListDraft, recommendations, risks]);
+
+  const openEdit = useCallback((key) => {
+    setEditingCardKey(key);
+    setEditDraft(getEditInitialValue(key));
+  }, [getEditInitialValue]);
 
   // Category scores with progress bar data
   const categoryScoreRows = useMemo(() => {
