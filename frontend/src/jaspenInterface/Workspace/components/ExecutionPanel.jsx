@@ -686,7 +686,7 @@ export default function ExecutionPanel({
           <p className="execution-eyebrow">Execution</p>
           <h3>{wbs?.name || 'Execution Plan'}</h3>
           <p className="execution-panel-subcopy">
-            Keep task status, owners, dates, and sync posture aligned with the work Jaspen generated for this thread.
+            Jaspen built this plan from your scorecard context. Update task owners, due dates, statuses, and dependencies as the work progresses.
           </p>
         </div>
         <div className="execution-header-actions">
@@ -705,7 +705,7 @@ export default function ExecutionPanel({
             </button>
           </div>
           <button type="button" className="execution-tertiary-btn" onClick={onRefresh}>
-            Refresh WBS
+            Refresh Plan
           </button>
         </div>
       </header>

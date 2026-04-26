@@ -459,7 +459,7 @@ export default function ExecutionPlan() {
           <div>
             <p className="int-eyebrow">Execution</p>
             <h1>Execution Plan</h1>
-            <p>Manage tasks, owners, dependencies, and milestones with full-page planning space.</p>
+            <p>Track tasks, owners, and milestones from this project. Use the Jaspen assistant on the left to modify the plan with natural language.</p>
           </div>
           {pageActions}
         </header>

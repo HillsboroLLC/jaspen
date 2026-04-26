@@ -3414,21 +3414,27 @@ Return JSON only:
 }}
 
 Rules:
-- Return 5-20 tasks total.
-- Ensure dependencies are realistic and avoid circular references.
-- Include at least one risk-mitigation task and one value-capture task.
+- Return 15-30 tasks total spread across 4-7 meaningful phases.
+- Phases must follow a logical sequence: e.g. Discovery -> Planning -> Build/Execute -> Validate -> Launch -> Operate.
+- Every task must have a concrete, specific title (not generic like "Research" - say what is being researched).
+- Assign a realistic suggested_role to every task.
 - Include function and activity_type for every task.
+- Include at least 2 risk-mitigation tasks, 1 change-management task, 1 stakeholder-communication task, and 1 value-capture/measurement task.
+- Estimated_days should be realistic for the task complexity (range: 1-15).
+- Dependencies must reference real task IDs in the list; avoid circular references.
+- Use context from key_insights and recommendations to make tasks specific to THIS initiative, not generic templates.
+- If a scenario was provided, weight tasks toward the scenario's adopted assumptions and lever changes.
 """.strip()
 
     try:
         response = client.chat.completions.create(
             model=llm_model,
             messages=[
-                {"role": "system", "content": "You are a WBS planning assistant. Return strict JSON only."},
+                {"role": "system", "content": "You are a senior project planning assistant. Generate comprehensive, initiative-specific execution plans with 15-30 tasks across 4-7 phases. Every task title must be specific and actionable. Return strict JSON only."},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.25,
-            max_tokens=1200,
+            max_tokens=4000,
         )
         parsed = _extract_json_object(response.choices[0].message.content)
         if not isinstance(parsed, dict):
