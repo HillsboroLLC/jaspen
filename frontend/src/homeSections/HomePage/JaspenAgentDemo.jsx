@@ -28,7 +28,7 @@ const INSIGHTS = [
 const PLAN_STEPS = [
   {
     title: 'Phase 1: Data Integration & MVP',
-    desc: 'Develop core algorithm connecting basic health APIs (e.g., Apple Health) with a single local grocery chain's inventory API.',
+    desc: "Develop core algorithm connecting basic health APIs (e.g., Apple Health) with a single local grocery chain's inventory API.",
   },
   {
     title: 'Phase 2: Recipe Generation Engine',
