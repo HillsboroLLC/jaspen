@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import StrategyAccessCard from './StrategyAccessCard';
+import JaspenAgentDemo from './JaspenAgentDemo';
 import './HomePage.css';
 
 const STEPS = [
@@ -381,35 +382,7 @@ export default function HomePage() {
                   Evaluate ideas, prioritize opportunities, and structure cross-functional work into executable plans.
                 </p>
               </div>
-              <div className="intro-gif-placeholder">
-                <div className="intro-preview-card" aria-hidden="true">
-                  <div className="intro-preview-header">
-                    <span className="intro-preview-dot"></span>
-                    <span className="intro-preview-dot"></span>
-                    <span className="intro-preview-dot"></span>
-                  </div>
-                  <div className="intro-preview-line intro-preview-line-long"></div>
-                  <div className="intro-preview-line"></div>
-                  <div className="intro-preview-line intro-preview-line-short"></div>
-                  <div className="intro-preview-kpi-row">
-                    <div className="intro-preview-kpi">
-                      <strong>+18%</strong>
-                      <span>Readiness</span>
-                    </div>
-                    <div className="intro-preview-kpi">
-                      <strong>3</strong>
-                      <span>Risks</span>
-                    </div>
-                    <div className="intro-preview-kpi">
-                      <strong>7</strong>
-                      <span>Actions</span>
-                    </div>
-                  </div>
-                  <div className="intro-preview-progress">
-                    <span></span>
-                  </div>
-                </div>
-              </div>
+              <JaspenAgentDemo />
             </div>
           </div>
         </section>

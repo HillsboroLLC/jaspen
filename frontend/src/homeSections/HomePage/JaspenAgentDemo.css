@@ -1,0 +1,284 @@
+/* ============================================================================
+   JASPEN AGENT DEMO
+   Colors: #161f3b  #a0036c  #eff9fc  #e9b57b  #fd6b02  — no gradients
+   ============================================================================ */
+
+.jad-root {
+  width: 100%;
+  background: #eff9fc;
+  border-radius: 16px;
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  box-shadow: 0 2px 16px rgba(22, 31, 59, 0.08), 0 0 0 1px rgba(22, 31, 59, 0.06);
+  min-height: 240px;
+  box-sizing: border-box;
+}
+
+/* ── Shared eyebrow label ── */
+.jad-eyebrow {
+  display: block;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-bottom: 5px;
+}
+.jad-eyebrow--magenta { color: #a0036c; }
+.jad-eyebrow--orange  { color: #fd6b02; }
+.jad-eyebrow--navy    { color: #161f3b; }
+
+/* ── Input ── */
+.jad-input-wrap {
+  transition: transform 600ms ease-in-out, opacity 400ms ease;
+}
+
+.jad-input-locked {
+  transform: scale(0.97);
+  opacity: 0.8;
+}
+
+.jad-input-inner {
+  background: #ffffff;
+  border: 1.5px solid rgba(22, 31, 59, 0.15);
+  border-radius: 12px;
+  padding: 14px 18px;
+}
+
+.jad-input-text {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.55;
+  color: #161f3b;
+  word-break: break-word;
+}
+
+.jad-placeholder {
+  color: rgba(22, 31, 59, 0.35);
+}
+
+.jad-cursor {
+  display: inline-block;
+  width: 1.5px;
+  height: 0.95em;
+  background: #a0036c;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  animation: jadBlink 0.85s step-end infinite;
+}
+
+@keyframes jadBlink {
+  50% { opacity: 0; }
+}
+
+/* ── Thinking ── */
+.jad-thinking {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.jad-dots {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.jad-dots span {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #a0036c;
+  animation: jadDot 1.5s ease-in-out infinite;
+}
+
+.jad-dots span:nth-child(2) {
+  background: #e9b57b;
+  animation-delay: 0.2s;
+}
+
+.jad-dots span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes jadDot {
+  0%, 100% { opacity: 0.25; transform: scale(0.8); }
+  50%       { opacity: 1;    transform: scale(1.2); }
+}
+
+.jad-phrase {
+  font-size: 0.8rem;
+  color: #161f3b;
+  opacity: 0;
+  transition: opacity 300ms ease;
+}
+
+.jad-phrase-visible {
+  opacity: 1;
+}
+
+/* ── Score ── */
+.jad-score {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.jad-score-num {
+  font-size: 3rem;
+  font-weight: 800;
+  color: #161f3b;
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+
+.jad-score-denom {
+  font-size: 1.1rem;
+  font-weight: 500;
+  color: #e9b57b;
+  letter-spacing: 0;
+}
+
+/* ── Insight Cards ── */
+.jad-insights {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.jad-card {
+  background: #ffffff;
+  border: 1px solid rgba(22, 31, 59, 0.1);
+  border-radius: 10px;
+  padding: 14px 16px;
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity 500ms cubic-bezier(0.25, 1, 0.5, 1),
+              transform 500ms cubic-bezier(0.25, 1, 0.5, 1),
+              box-shadow 180ms ease;
+}
+
+.jad-card-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.jad-card-visible:hover {
+  box-shadow: 0 6px 20px rgba(22, 31, 59, 0.12);
+}
+
+.jad-card-text {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.55;
+  color: #161f3b;
+  opacity: 0;
+  transition: opacity 500ms ease 300ms;
+}
+
+.jad-card-visible .jad-card-text {
+  opacity: 1;
+}
+
+/* ── Execution Plan ── */
+.jad-plan {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.jad-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-left: 2px solid #e9b57b;
+  padding-left: 16px;
+  margin-left: 2px;
+}
+
+.jad-step {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  opacity: 0;
+  transform: translateX(-16px);
+  transition: opacity 500ms cubic-bezier(0.25, 1, 0.5, 1),
+              transform 500ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.jad-step-visible {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.jad-step-num {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fd6b02;
+  color: #ffffff;
+  font-size: 0.65rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+}
+
+.jad-step-content {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.jad-step-title {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #161f3b;
+}
+
+.jad-step-desc {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: rgba(22, 31, 59, 0.6);
+  opacity: 0;
+  transition: opacity 500ms ease 300ms;
+}
+
+.jad-step-visible .jad-step-desc {
+  opacity: 1;
+}
+
+/* ── Reveal animation ── */
+.jad-anim-up {
+  animation: jadUp 600ms cubic-bezier(0.25, 1, 0.5, 1) both;
+}
+
+@keyframes jadUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  .jad-cursor                { animation: none !important; }
+  .jad-dots span             { animation: none !important; opacity: 1; transform: none; }
+  .jad-phrase                { transition: none !important; }
+  .jad-input-wrap            { transition: none !important; }
+
+  .jad-card,
+  .jad-card-text,
+  .jad-step,
+  .jad-step-desc,
+  .jad-anim-up {
+    transition: none !important;
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}
