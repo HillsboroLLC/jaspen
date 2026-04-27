@@ -1,8 +1,81 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './JaspenAgentDemo.css';
 
-const BUSINESS_IDEA =
-  'AI-powered meal prep service that analyzes user biometrics and local grocery inventory to generate weekly recipes and automated delivery orders.';
+// ─── Add more scenarios here over time ───────────────────────────────────────
+const SCENARIOS = [
+  {
+    idea: 'AI-powered meal prep service that analyzes user biometrics and local grocery inventory to generate weekly recipes and automated delivery orders.',
+    score: 82,
+    insights: [
+      {
+        label: 'Market Demand',
+        text: 'High. Growing trend in personalized nutrition and time-saving convenience services among urban professionals.',
+      },
+      {
+        label: 'Competition',
+        text: 'Moderate to High. Existing meal kit services (HelloFresh, Blue Apron) are established, but lack deep biometric integration and dynamic local inventory sourcing.',
+      },
+      {
+        label: 'Risk Level',
+        text: 'Medium. Primary risks involve supply chain logistics for fresh ingredients and user privacy concerns regarding biometric data.',
+      },
+    ],
+    steps: [
+      {
+        title: 'Phase 1: Data Integration & MVP',
+        desc: "Develop core algorithm connecting basic health APIs (e.g., Apple Health) with a single local grocery chain's inventory API.",
+      },
+      {
+        title: 'Phase 2: Recipe Generation Engine',
+        desc: 'Train LLM on nutritional databases to generate viable, tasty recipes based on constrained inventory and user macros.',
+      },
+      {
+        title: 'Phase 3: Logistics & Fulfillment',
+        desc: 'Partner with existing last-mile delivery services (e.g., Instacart, DoorDash) rather than building an in-house delivery fleet.',
+      },
+      {
+        title: 'Phase 4: Beta Launch & Iteration',
+        desc: 'Launch closed beta in a single dense urban market to refine the recommendation engine and logistics flow.',
+      },
+    ],
+  },
+  {
+    idea: 'On-demand skilled trades platform connecting homeowners with verified local contractors for same-day repairs using real-time availability matching and upfront flat-rate pricing.',
+    score: 74,
+    insights: [
+      {
+        label: 'Market Demand',
+        text: 'High. Homeowner demand for reliable, transparent home services continues to grow as DIY fatigue increases and aging housing stock requires more maintenance.',
+      },
+      {
+        label: 'Competition',
+        text: 'High. Angi, TaskRabbit, and Thumbtack have established networks, but satisfaction scores remain low due to inconsistent contractor vetting and opaque pricing.',
+      },
+      {
+        label: 'Risk Level',
+        text: 'Medium. Key risks include contractor supply in non-urban markets, insurance and liability exposure, and thin unit economics in early geographies.',
+      },
+    ],
+    steps: [
+      {
+        title: 'Phase 1: Contractor Supply & Vetting',
+        desc: 'Build a rigorous onboarding funnel with license verification, background checks, and skills assessment. Target 50 vetted contractors in a single metro.',
+      },
+      {
+        title: 'Phase 2: Real-Time Booking Engine',
+        desc: 'Develop availability calendar sync and an instant matching algorithm to connect homeowners with available contractors within 2-hour windows.',
+      },
+      {
+        title: 'Phase 3: Flat-Rate Pricing Layer',
+        desc: 'Implement upfront flat-rate pricing for the top 20 job types to eliminate estimate friction and build consumer trust through price transparency.',
+      },
+      {
+        title: 'Phase 4: Metro Launch & Retention',
+        desc: 'Launch in one high-density urban market, focusing on repeat booking rate as the primary growth lever before expanding to adjacent cities.',
+      },
+    ],
+  },
+];
 
 const ANALYSIS_PHRASES = [
   'Analyzing market trends...',
@@ -10,44 +83,11 @@ const ANALYSIS_PHRASES = [
   'Calculating risk factors...',
 ];
 
-const INSIGHTS = [
-  {
-    label: 'Market Demand',
-    text: 'High. Growing trend in personalized nutrition and time-saving convenience services among urban professionals.',
-  },
-  {
-    label: 'Competition',
-    text: 'Moderate to High. Existing meal kit services (HelloFresh, Blue Apron) are established, but lack deep biometric integration and dynamic local inventory sourcing.',
-  },
-  {
-    label: 'Risk Level',
-    text: 'Medium. Primary risks involve supply chain logistics for fresh ingredients and user privacy concerns regarding biometric data.',
-  },
-];
-
-const PLAN_STEPS = [
-  {
-    title: 'Phase 1: Data Integration & MVP',
-    desc: "Develop core algorithm connecting basic health APIs (e.g., Apple Health) with a single local grocery chain's inventory API.",
-  },
-  {
-    title: 'Phase 2: Recipe Generation Engine',
-    desc: 'Train LLM on nutritional databases to generate viable, tasty recipes based on constrained inventory and user macros.',
-  },
-  {
-    title: 'Phase 3: Logistics & Fulfillment',
-    desc: 'Partner with existing last-mile delivery services (e.g., Instacart, DoorDash) rather than building an in-house delivery fleet.',
-  },
-  {
-    title: 'Phase 4: Beta Launch & Iteration',
-    desc: 'Launch closed beta in a single dense urban market to refine the recommendation engine and logistics flow.',
-  },
-];
-
-const SCORE = 82;
 const TYPING_SPEED = 15;
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function JaspenAgentDemo() {
+  const [scenarioIndex, setScenarioIndex] = useState(0);
   const [phase, setPhase] = useState('idle');
   const [typedText, setTypedText] = useState('');
   const [phraseIndex, setPhraseIndex] = useState(0);
@@ -86,6 +126,8 @@ export default function JaspenAgentDemo() {
     setVisibleSteps([]);
   };
 
+  const scenario = SCENARIOS[scenarioIndex];
+
   // Boot
   useEffect(() => {
     later(() => setPhase('typing'), 1000);
@@ -96,16 +138,17 @@ export default function JaspenAgentDemo() {
   // Typing
   useEffect(() => {
     if (phase !== 'typing') return;
+    const idea = SCENARIOS[scenarioIndex].idea;
     if (prefersReduced.current) {
-      setTypedText(BUSINESS_IDEA);
+      setTypedText(idea);
       later(() => setPhase('analyzing'), 400);
       return clearAll;
     }
     let i = 0;
     const tick = () => {
       i++;
-      setTypedText(BUSINESS_IDEA.slice(0, i));
-      if (i < BUSINESS_IDEA.length) {
+      setTypedText(idea.slice(0, i));
+      if (i < idea.length) {
         later(tick, TYPING_SPEED);
       } else {
         later(() => setPhase('analyzing'), 700);
@@ -114,7 +157,7 @@ export default function JaspenAgentDemo() {
     later(tick, 300);
     return clearAll;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase]);
+  }, [phase, scenarioIndex]);
 
   // Analyzing
   useEffect(() => {
@@ -141,8 +184,9 @@ export default function JaspenAgentDemo() {
   // Score count-up
   useEffect(() => {
     if (phase !== 'score') return;
+    const target = SCENARIOS[scenarioIndex].score;
     if (prefersReduced.current) {
-      setScore(SCORE);
+      setScore(target);
       later(() => setPhase('insights'), 400);
       return clearAll;
     }
@@ -151,46 +195,49 @@ export default function JaspenAgentDemo() {
     const tick = (now) => {
       const t = Math.min((now - start) / duration, 1);
       const eased = 1 - Math.pow(1 - t, 3);
-      setScore(Math.round(eased * SCORE));
+      setScore(Math.round(eased * target));
       if (t < 1) {
         raf.current = requestAnimationFrame(tick);
       } else {
-        setScore(SCORE);
+        setScore(target);
         later(() => setPhase('insights'), 600);
       }
     };
     raf.current = requestAnimationFrame(tick);
     return clearAll;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase]);
+  }, [phase, scenarioIndex]);
 
   // Insights stagger
   useEffect(() => {
     if (phase !== 'insights') return;
-    INSIGHTS.forEach((_, i) => {
+    const { insights } = SCENARIOS[scenarioIndex];
+    insights.forEach((_, i) => {
       later(() => setVisibleInsights((prev) => [...prev, i]), i * 200);
     });
-    later(() => setPhase('plan'), INSIGHTS.length * 200 + 1800);
+    later(() => setPhase('plan'), insights.length * 200 + 1800);
     return clearAll;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase]);
+  }, [phase, scenarioIndex]);
 
   // Plan stagger
   useEffect(() => {
     if (phase !== 'plan') return;
-    PLAN_STEPS.forEach((_, i) => {
+    const { steps } = SCENARIOS[scenarioIndex];
+    steps.forEach((_, i) => {
       later(() => setVisibleSteps((prev) => [...prev, i]), i * 400);
     });
-    later(() => setPhase('done'), PLAN_STEPS.length * 400 + 2500);
+    later(() => setPhase('done'), steps.length * 400 + 2500);
     return clearAll;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase]);
+  }, [phase, scenarioIndex]);
 
-  // Reset loop
+  // Advance to next scenario and loop
   useEffect(() => {
     if (phase !== 'done') return;
     later(() => {
       resetAll();
+      setScenarioIndex((prev) => (prev + 1) % SCENARIOS.length);
       later(() => setPhase('typing'), 1000);
     }, 3500);
     return clearAll;
@@ -205,6 +252,13 @@ export default function JaspenAgentDemo() {
 
   return (
     <div className="jad-root" aria-label="Jaspen AI Agent Demo" aria-live="polite">
+
+      {/* Scenario indicator */}
+      <div className="jad-scenario-dots" aria-hidden="true">
+        {SCENARIOS.map((_, i) => (
+          <span key={i} className={`jad-scenario-dot${i === scenarioIndex ? ' jad-scenario-dot--active' : ''}`} />
+        ))}
+      </div>
 
       {/* ── Input ── */}
       <div className={`jad-input-wrap${inputLocked ? ' jad-input-locked' : ''}`}>
@@ -249,7 +303,7 @@ export default function JaspenAgentDemo() {
       {/* ── Insights ── */}
       {showInsights && (
         <div className="jad-insights">
-          {INSIGHTS.map((insight, i) => (
+          {scenario.insights.map((insight, i) => (
             <div
               key={i}
               className={`jad-card${visibleInsights.includes(i) ? ' jad-card-visible' : ''}`}
@@ -266,7 +320,7 @@ export default function JaspenAgentDemo() {
         <div className="jad-plan">
           <span className="jad-eyebrow jad-eyebrow--navy jad-anim-up">Execution Plan</span>
           <div className="jad-steps">
-            {PLAN_STEPS.map((step, i) => (
+            {scenario.steps.map((step, i) => (
               <div
                 key={i}
                 className={`jad-step${visibleSteps.includes(i) ? ' jad-step-visible' : ''}`}

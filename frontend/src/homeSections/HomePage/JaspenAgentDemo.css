@@ -29,6 +29,26 @@
 .jad-eyebrow--orange  { color: #fd6b02; }
 .jad-eyebrow--navy    { color: #161f3b; }
 
+/* ── Scenario indicator ── */
+.jad-scenario-dots {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.jad-scenario-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(22, 31, 59, 0.18);
+  transition: background 400ms ease, transform 400ms ease;
+}
+
+.jad-scenario-dot--active {
+  background: #a0036c;
+  transform: scale(1.25);
+}
+
 /* ── Input ── */
 .jad-input-wrap {
   transition: transform 600ms ease-in-out, opacity 400ms ease;
