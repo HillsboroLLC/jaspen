@@ -295,10 +295,198 @@
   .jad-card-text,
   .jad-step,
   .jad-step-desc,
-  .jad-anim-up {
+  .jad-anim-up,
+  .jad-sm-lever,
+  .jad-sm-outcome {
     transition: none !important;
     animation: none !important;
     opacity: 1 !important;
     transform: none !important;
   }
+}
+
+/* ============================================================================
+   SCENARIO MODELER DEMO
+   ============================================================================ */
+
+.jad-sm-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.jad-sm-project {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.jad-sm-project-name {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #161f3b;
+}
+
+.jad-sm-baseline-pill {
+  font-size: 0.72rem;
+  color: rgba(22, 31, 59, 0.5);
+  background: rgba(22, 31, 59, 0.06);
+  padding: 3px 10px;
+  border-radius: 999px;
+}
+
+.jad-sm-baseline-pill strong {
+  color: #161f3b;
+}
+
+/* Scenario card overrides */
+.jad-sm-scenario {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.jad-sm-scenario-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.jad-sm-score-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.jad-sm-score-num {
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: #161f3b;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+.jad-sm-score-denom {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #e9b57b;
+  letter-spacing: 0;
+}
+
+.jad-sm-pts-delta {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #161f3b;
+}
+
+/* Levers */
+.jad-sm-levers {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.jad-sm-lever {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  opacity: 0;
+  transform: translateX(-12px);
+  transition: opacity 400ms cubic-bezier(0.25, 1, 0.5, 1),
+              transform 400ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.jad-sm-lever-visible {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.jad-sm-lever-label {
+  color: rgba(22, 31, 59, 0.45);
+  flex-shrink: 0;
+  min-width: 62px;
+}
+
+.jad-sm-lever-change {
+  color: #161f3b;
+  font-weight: 500;
+  flex: 1;
+}
+
+.jad-sm-lever-delta {
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(22, 31, 59, 0.06);
+  flex-shrink: 0;
+}
+
+.jad-sm-pos { color: #161f3b; }
+.jad-sm-neg { color: #a0036c; }
+
+/* Outcomes */
+.jad-sm-outcomes {
+  border-top: 1px solid rgba(22, 31, 59, 0.08);
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.jad-sm-outcome {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.75rem;
+  opacity: 0;
+  transition: opacity 300ms ease;
+}
+
+.jad-sm-outcome-visible { opacity: 1; }
+
+.jad-sm-outcome-label {
+  color: rgba(22, 31, 59, 0.45);
+  flex-shrink: 0;
+  min-width: 58px;
+}
+
+.jad-sm-outcome-val {
+  color: #161f3b;
+  font-weight: 600;
+  flex: 1;
+}
+
+.jad-sm-outcome-delta {
+  font-size: 0.65rem;
+  font-weight: 600;
+}
+
+/* Winner highlight */
+.jad-sm-winner {
+  border-color: #a0036c;
+  box-shadow: 0 0 0 2px rgba(160, 3, 108, 0.12);
+}
+
+.jad-sm-winner-badge {
+  align-self: flex-start;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #ffffff;
+  background: #a0036c;
+  padding: 3px 9px;
+  border-radius: 999px;
+}
+
+/* Cycler wrapper */
+.jad-cycler {
+  width: 100%;
 }

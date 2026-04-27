@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import StrategyAccessCard from './StrategyAccessCard';
-import JaspenAgentDemo from './JaspenAgentDemo';
+import JaspenDemoCycler from './JaspenDemoCycler';
 import './HomePage.css';
 
 const STEPS = [
@@ -382,7 +382,7 @@ export default function HomePage() {
                   Evaluate ideas, prioritize opportunities, and structure cross-functional work into executable plans.
                 </p>
               </div>
-              <JaspenAgentDemo />
+              <JaspenDemoCycler />
             </div>
           </div>
         </section>
