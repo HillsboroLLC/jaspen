@@ -5478,6 +5478,7 @@ def conversation_start():
             state = {}
             credits_settled = False
             try:
+                yield _sse_payload({"type": "tool_status", "status": "Analyzing strategic context..."})
                 for payload in _stream_assistant_reply_events(
                     user_message,
                     chat_history,
@@ -5494,6 +5495,7 @@ def conversation_start():
                 ):
                     yield _sse_payload(payload)
 
+                yield _sse_payload({"type": "tool_status", "status": "Building your scorecard..."})
                 assistant_reply = str(state.get("reply") or "").strip() or _next_question(readiness)
                 usage = state.get("usage") if isinstance(state.get("usage"), dict) else {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
                 actions = state.get("actions") if isinstance(state.get("actions"), list) else []
@@ -5910,6 +5912,7 @@ def conversation_continue():
             state = {}
             credits_settled = False
             try:
+                yield _sse_payload({"type": "tool_status", "status": "Updating your analysis context..."})
                 for payload in _stream_assistant_reply_events(
                     user_message,
                     chat_history,
@@ -5926,6 +5929,7 @@ def conversation_continue():
                 ):
                     yield _sse_payload(payload)
 
+                yield _sse_payload({"type": "tool_status", "status": "Composing recommendations..."})
                 assistant_reply = str(state.get("reply") or "").strip() or _next_question(readiness)
                 usage = state.get("usage") if isinstance(state.get("usage"), dict) else {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
                 actions = state.get("actions") if isinstance(state.get("actions"), list) else []
@@ -6925,6 +6929,7 @@ def conversation_regenerate():
             state = {}
             credits_settled = False
             try:
+                yield _sse_payload({"type": "tool_status", "status": "Generating an improved response..."})
                 for payload in _stream_assistant_reply_events(
                     user_message,
                     regen_history,
@@ -6941,6 +6946,7 @@ def conversation_regenerate():
                 ):
                     yield _sse_payload(payload)
 
+                yield _sse_payload({"type": "tool_status", "status": "Finalizing response..."})
                 assistant_reply = str(state.get("reply") or "").strip() or _next_question(readiness)
                 usage = state.get("usage") if isinstance(state.get("usage"), dict) else {
                     "provider": "heuristic",

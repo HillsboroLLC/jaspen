@@ -161,6 +161,96 @@
   margin-bottom: 20px;
 }
 
+.score-dashboard-container .score-confidence {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.score-dashboard-container .score-confidence-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+
+.score-dashboard-container .score-confidence-bar {
+  width: 120px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--gray-200);
+  overflow: hidden;
+}
+
+.score-dashboard-container .score-confidence-fill {
+  height: 100%;
+  border-radius: inherit;
+}
+
+.score-dashboard-container .score-confidence-pct {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+
+  .score-dashboard-container,
+  .score-dashboard-container * {
+    visibility: visible !important;
+  }
+
+  .score-dashboard-container {
+    display: block !important;
+    background: #fff !important;
+    padding: 0 !important;
+  }
+
+  .score-dashboard-container::before {
+    content: attr(data-project-name) " - Jaspen Strategy Score";
+    display: block;
+    font-size: 20px;
+    font-weight: 700;
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid #161f3b;
+    color: #161f3b;
+  }
+
+  .score-toolbar,
+  .card-drag-handle,
+  .card-resize-handle,
+  .card-resize-handle-x,
+  .card-edit-btn {
+    display: none !important;
+  }
+
+  .score-body-grid {
+    display: block !important;
+  }
+
+  .score-section-card {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    border: 1px solid #ddd !important;
+    margin-bottom: 16px;
+    padding: 16px;
+    box-shadow: none !important;
+    background: #fff !important;
+  }
+
+  .section-card-head {
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+}
+
 .score-dashboard-container .score-toolbar-copy {
   display: flex;
   flex-direction: column;

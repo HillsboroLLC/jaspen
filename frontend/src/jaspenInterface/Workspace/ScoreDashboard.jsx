@@ -5,7 +5,7 @@
 // ============================================================================
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faChevronDown, faDownload, faGripVertical, faPencil, faSpinner, faTimes } from '@fortawesome/free-solid-svg-icons';
+import { faChevronDown, faDownload, faGripVertical, faPencil, faPrint, faSpinner, faTimes } from '@fortawesome/free-solid-svg-icons';
 import { ScoreDashboardSkeleton } from '../../shared/components/SkeletonLoader';
 import './ScoreDashboard.css';
 
@@ -109,6 +109,7 @@ export default function ScoreDashboard({
 
   const result = selectedSnapshot || analysisResult || {};
   const score = result.jaspen_score || 0;
+  const dataConfidence = Number(result.data_confidence);
   const componentScores = useMemo(() => result.component_scores || {}, [result.component_scores]);
   const componentRationale = useMemo(() => result.component_rationale || {}, [result.component_rationale]);
   const sectionProvenance = useMemo(() => result.section_provenance || {}, [result.section_provenance]);
@@ -558,6 +559,21 @@ export default function ScoreDashboard({
           <div className="score-text">
             <h3>Strategy Score</h3>
             <span className={`score-rating ${scoreRatingClass}`}>{scoreLabel}</span>
+            {Number.isFinite(dataConfidence) && dataConfidence > 0 && (
+              <div className="score-confidence">
+                <span className="score-confidence-label">Data confidence</span>
+                <div className="score-confidence-bar">
+                  <div
+                    className="score-confidence-fill"
+                    style={{
+                      width: `${Math.max(0, Math.min(100, dataConfidence))}%`,
+                      background: dataConfidence >= 70 ? '#16a34a' : dataConfidence >= 45 ? '#d97706' : '#dc2626',
+                    }}
+                  />
+                </div>
+                <span className="score-confidence-pct">{Math.round(dataConfidence)}%</span>
+              </div>
+            )}
           </div>
         </div>
       ),
@@ -585,7 +601,7 @@ export default function ScoreDashboard({
         ) : (
           <div className="executive-summary-card card-shell card-scroll">
             <p className="executive-summary-text">
-              {executiveSummary || 'Not enough information to generate an executive summary yet.'}
+              {executiveSummary || 'Keep describing your idea in the chat. The more context you share, the sharper this summary gets.'}
             </p>
           </div>
         )
@@ -605,7 +621,7 @@ export default function ScoreDashboard({
               ))}
             </div>
           ) : (
-            <p className="section-fallback-message">Jaspen needs a little more context to explain what most affected this score.</p>
+            <p className="section-fallback-message">Share more about the business context, market, or team - Jaspen will explain what is driving the score.</p>
           )}
         </div>
       ),
@@ -1049,17 +1065,25 @@ export default function ScoreDashboard({
     return <div className="score-dashboard-container"><ScoreDashboardSkeleton /></div>;
   }
 
-  if (!selectedSnapshot && !analysisResult) return <div className="score-dashboard-container"><div className="empty-state"><p>No analysis result available</p></div></div>;
+  if (!selectedSnapshot && !analysisResult) return <div className="score-dashboard-container"><div className="empty-state"><p>Start a conversation to get your Jaspen Score - describe your idea, and the AI will build your scorecard.</p></div></div>;
 
   return (
-    <div className={`score-dashboard-container ${drawerOpen ? 'drawer-open' : ''}`}>
+    <div className={`score-dashboard-container ${drawerOpen ? 'drawer-open' : ''}`} data-project-name={result.project_name || 'Strategy Scorecard'}>
         <div className="score-toolbar">
           <div className="score-toolbar-copy">
             <span className="score-toolbar-kicker">{selectedSnapshot ? 'Selected scorecard' : 'Current scorecard'}</span>
             <span className="score-toolbar-title">{selectedScorecardLabel}</span>
           </div>
           {hasExportMenu && (
-            <div className="sc-export-wrap" ref={exportMenuRef}>
+            <div className="sc-export-wrap score-toolbar-actions" ref={exportMenuRef}>
+              <button
+                type="button"
+                className="sc-btn sc-btn-secondary sc-btn-sm"
+                onClick={() => window.print()}
+              >
+                <FontAwesomeIcon icon={faPrint} />
+                Print
+              </button>
               <button
                 type="button"
                 className="sc-btn sc-btn-secondary sc-btn-sm"

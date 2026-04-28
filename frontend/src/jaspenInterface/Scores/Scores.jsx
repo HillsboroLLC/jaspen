@@ -167,6 +167,8 @@ export default function Scores() {
   const [portfolioMeta, setPortfolioMeta] = useState(null);
   const [deletingRowKey, setDeletingRowKey] = useState('');
   const [confirmDialog, setConfirmDialog] = useState(null);
+  const [selectedForCompare, setSelectedForCompare] = useState(new Set());
+  const [compareModalOpen, setCompareModalOpen] = useState(false);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -298,6 +300,18 @@ export default function Scores() {
   function openAnalysis(threadId) {
     const encoded = encodeURIComponent(String(threadId || ''));
     navigate(`/new?session_id=${encoded}&sid=${encoded}`);
+  }
+
+  function toggleCompareSelection(rowKey, checked) {
+    setSelectedForCompare((prev) => {
+      const next = new Set(prev);
+      if (checked) {
+        if (next.size < 2 || next.has(rowKey)) next.add(rowKey);
+      } else {
+        next.delete(rowKey);
+      }
+      return next;
+    });
   }
 
   function exportRowReport(row) {
@@ -472,6 +486,45 @@ export default function Scores() {
     return parts.join(' • ');
   }, [portfolioMeta, total, category, search]);
 
+  const compareRows = useMemo(() => {
+    const keys = Array.from(selectedForCompare);
+    return keys
+      .map((rowKey) => {
+        const [threadId, snapshotId] = rowKey.split(':');
+        return scores.find((row, index) => {
+          const key = getRowKey(row, index);
+          return key === `${threadId}:${snapshotId}`;
+        });
+      })
+      .filter(Boolean);
+  }, [selectedForCompare, scores, getRowKey]);
+
+  const compareMetricRows = useMemo(() => {
+    if (compareRows.length !== 2) return [];
+    const [a, b] = compareRows;
+    const aScores = a?.component_scores || {};
+    const bScores = b?.component_scores || {};
+    const labels = [
+      'financial_health',
+      'operational_efficiency',
+      'market_position',
+      'execution_readiness',
+    ];
+    return labels.map((key) => {
+      const av = Number(aScores[key]);
+      const bv = Number(bScores[key]);
+      const safeA = Number.isFinite(av) ? av : 0;
+      const safeB = Number.isFinite(bv) ? bv : 0;
+      return {
+        key,
+        label: key.replace(/_/g, ' '),
+        a: safeA,
+        b: safeB,
+        delta: safeA - safeB,
+      };
+    });
+  }, [compareRows]);
+
   const renderVirtualScoreRow = ({ index, style, rows, expandedRowsMap, deletingRowKeyValue, trendByProjectMap, ariaAttributes }) => {
     const row = rows[index];
     if (!row) return null;
@@ -483,11 +536,22 @@ export default function Scores() {
     const variantLabel = row?.variant_label || (row?.is_baseline ? 'Baseline' : '—');
     const baseProject = row?.base_project_name || projectName;
     const trendPoints = trendByProjectMap.get(baseProject) || [];
+    const compareChecked = selectedForCompare.has(rowKey);
+    const compareDisabled = selectedForCompare.size >= 2 && !compareChecked;
 
     return (
       <div style={style} {...ariaAttributes}>
         <article className={`scores-virtual-row${expanded ? ' is-expanded' : ''}`}>
           <div className="scores-virtual-main">
+            <div className="scores-virtual-col compare">
+              <input
+                type="checkbox"
+                checked={compareChecked}
+                onChange={(event) => toggleCompareSelection(rowKey, event.target.checked)}
+                disabled={compareDisabled}
+                aria-label={`Select ${projectName} for compare`}
+              />
+            </div>
             <div className="scores-virtual-col project">
               <button
                 type="button"
@@ -501,6 +565,7 @@ export default function Scores() {
                 <span className="scores-trend-label">Trend</span>
                 <Sparkline points={trendPoints} />
               </div>
+              <div className="scores-rubric-chip">Rubric {row?.scoring_rubric_version || 'v3'}</div>
             </div>
             <div className="scores-virtual-col score">
               <span className={getScoreBadgeClass(row?.score_category)}>
@@ -769,6 +834,14 @@ export default function Scores() {
           </select>
         </div>
 
+        {selectedForCompare.size === 2 && (
+          <div className="scores-compare-cta">
+            <button type="button" className="int-btn int-btn-primary" onClick={() => setCompareModalOpen(true)}>
+              Compare selected ideas →
+            </button>
+          </div>
+        )}
+
         {loading && <div className="scores-state">Loading completed analyses...</div>}
         {!loading && error && (
           <div className="scores-state scores-state-error" role="status" aria-live="polite">
@@ -797,6 +870,7 @@ export default function Scores() {
             {useVirtualRows ? (
               <div className="scores-virtual-wrap">
                 <div className="scores-virtual-head">
+                  <span>Compare</span>
                   <span>Project</span>
                   <span>Score</span>
                   <span>Category</span>
@@ -827,6 +901,7 @@ export default function Scores() {
                 <table className="scores-table">
                   <thead>
                     <tr>
+                      <th>Compare</th>
                       <th onClick={() => toggleSort('name')}>Project Name{sortIndicator('name')}</th>
                       <th onClick={() => toggleSort('score')}>Jaspen Score{sortIndicator('score')}</th>
                       <th onClick={() => toggleSort('category')}>Category{sortIndicator('category')}</th>
@@ -849,6 +924,15 @@ export default function Scores() {
                         <React.Fragment key={rowKey}>
                           <tr>
                             <td>
+                              <input
+                                type="checkbox"
+                                checked={selectedForCompare.has(rowKey)}
+                                onChange={(event) => toggleCompareSelection(rowKey, event.target.checked)}
+                                disabled={selectedForCompare.size >= 2 && !selectedForCompare.has(rowKey)}
+                                aria-label={`Select ${projectName} for compare`}
+                              />
+                            </td>
+                            <td>
                               <button
                                 type="button"
                                 className="scores-link-btn"
@@ -861,6 +945,7 @@ export default function Scores() {
                                 <span className="scores-trend-label">Trend</span>
                                 <Sparkline points={trendPoints} />
                               </div>
+                              <div className="scores-rubric-chip">Rubric {row?.scoring_rubric_version || 'v3'}</div>
                             </td>
                             <td>
                               <span className={getScoreBadgeClass(row?.score_category)}>
@@ -920,7 +1005,7 @@ export default function Scores() {
                           </tr>
                           {expanded && (
                             <tr className="scores-expanded-row">
-                              <td colSpan={7}>
+                              <td colSpan={8}>
                                 <div className="scores-expanded-grid">
                                   <div>
                                     <h4>Variant</h4>
@@ -1026,6 +1111,35 @@ export default function Scores() {
           </>
         )}
       </div>
+
+      {compareModalOpen && compareRows.length === 2 && (
+        <div className="scores-compare-modal-overlay" role="dialog" aria-modal="true" aria-label="Compare selected ideas">
+          <div className="scores-compare-modal">
+            <div className="scores-compare-head">
+              <h3>Compare Ideas</h3>
+              <button type="button" className="scores-agent-close" onClick={() => setCompareModalOpen(false)} aria-label="Close compare modal">
+                <FontAwesomeIcon icon={faTimes} />
+              </button>
+            </div>
+            <div className="scores-compare-subhead">
+              <strong>{compareRows[0]?.project_name || 'Idea A'}</strong>
+              <strong>{compareRows[1]?.project_name || 'Idea B'}</strong>
+            </div>
+            <div className="scores-compare-grid">
+              {compareMetricRows.map((metric) => (
+                <div key={metric.key} className="scores-compare-row">
+                  <div className="scores-compare-label">{metric.label}</div>
+                  <div>{metric.a}</div>
+                  <div>{metric.b}</div>
+                  <div className={metric.delta >= 0 ? 'delta-positive' : 'delta-negative'}>
+                    {metric.delta >= 0 ? '+' : ''}{metric.delta}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
       <ConfirmDialog
         isOpen={Boolean(confirmDialog)}
         title={confirmDialog?.title}

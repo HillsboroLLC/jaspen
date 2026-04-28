@@ -558,8 +558,7 @@ function ScenarioColumn({
 
         {insufficientLevers ? (
           <div className="jas-scenario-empty">
-            <p>No adjustable levers found for this idea yet.</p>
-            <p>Add specific numbers to your assumptions (budget, timeline, team size) in the conversation, then re-run the scorecard to enable scenario modeling.</p>
+            <p>Add specific numbers to your plan - a budget, timeline, or team size - then re-score. Those numbers become the levers here.</p>
             <Button variant="outline" size="sm" onClick={onRequestDeeperAnalysis} disabled={disabled}>
               Run deeper financial analysis
             </Button>

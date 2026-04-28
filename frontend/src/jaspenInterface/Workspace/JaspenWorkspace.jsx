@@ -4827,6 +4827,7 @@ useEffect(() => {
         onDelta: (text) => appendStreamingAssistantDelta(placeholderId, text),
         onToolUse: (event) => setStreamToolStatus(toolStatusLabel(event?.tool)),
         onToolResult: () => setStreamToolStatus(''),
+        onToolStatus: (event) => setStreamToolStatus(String(event?.status || '').trim()),
         onDone: (payload) => {
           finalPayload = payload;
           setStreamToolStatus('');
@@ -4883,6 +4884,7 @@ useEffect(() => {
         onDelta: (text) => appendStreamingAssistantDelta(placeholderId, text),
         onToolUse: (event) => setStreamToolStatus(toolStatusLabel(event?.tool)),
         onToolResult: () => setStreamToolStatus(''),
+        onToolStatus: (event) => setStreamToolStatus(String(event?.status || '').trim()),
         onDone: (payload) => {
           finalPayload = payload;
           setStreamToolStatus('');
@@ -5114,6 +5116,7 @@ async function regenerateLastResponse() {
       onDelta: (text) => appendStreamingAssistantDelta(messageId, text),
       onToolUse: (event) => setStreamToolStatus(toolStatusLabel(event?.tool)),
       onToolResult: () => setStreamToolStatus(''),
+      onToolStatus: (event) => setStreamToolStatus(String(event?.status || '').trim()),
       onDone: (payload) => {
         setStreamToolStatus('');
         finalizeStreamingAssistant(messageId, payload?.reply || payload?.message || '', {
@@ -7348,6 +7351,18 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
     setView('summary');
   }, [analysisResult, activeTab]);
 
+useEffect(() => {
+  const hint = String(analysisResult?.proactive_next_step || '').trim();
+  if (!hint) return;
+  setMessages((prev) => {
+    if (prev.some((message) => message?._isProactiveHint)) return prev;
+    return [
+      ...prev,
+      { role: 'ai', text: hint, _isProactiveHint: true },
+    ];
+  });
+}, [analysisResult?.proactive_next_step]);
+
   useEffect(() => {
     if (!commandPaletteOpen) return;
     window.setTimeout(() => commandPaletteInputRef.current?.focus(), 0);
@@ -7385,6 +7400,18 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
         return;
       }
 
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        event.key === 'Enter' &&
+        editableTarget &&
+        document.activeElement === intakeInputRef.current &&
+        String(input || '').trim()
+      ) {
+        event.preventDefault();
+        void onSubmit();
+        return;
+      }
+
       if (editableTarget) return;
 
       if (
@@ -7399,7 +7426,7 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
       }
 
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
-        setCommandPaletteOpen(true);
+        setCommandPaletteOpen((prev) => !prev);
         event.preventDefault();
         return;
       }
@@ -7424,7 +7451,7 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
 
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [closeShortcutSurface, focusVisibleComposer, handleNewAnalysis, openHistorySearch]);
+  }, [closeShortcutSurface, focusVisibleComposer, handleNewAnalysis, input, openHistorySearch]);
 
   // ======== FIXED: Select analysis (history restore) ========================
   const handleSelectAnalysis = async (selection) => {
@@ -8145,7 +8172,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
         ]
       : [];
     const aiDrawerPlaceholder = scoreWorkspaceMode === 'summary'
-      ? 'Ask about this scorecard, its risks, or how to sharpen the wording...'
+      ? 'Ask about this scorecard, its risks, or how to sharpen the wording... (Cmd/Ctrl+K for commands)'
       : 'Ask about tasks, timeline, resources...';
     const openWorkspaceTab = async (id) => {
       const isLocked = id === 'scenario' && scenarioTabLocked;
@@ -9659,6 +9686,15 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
           </div>
         ) : messages.length === 0 ? (
           <div className="jas-chat-welcome">
+            <div className="workspace-journey-strip">
+              <div className="journey-step active"><span className="journey-num">1</span><span className="journey-label">Describe your idea</span></div>
+              <div className="journey-arrow">→</div>
+              <div className="journey-step"><span className="journey-num">2</span><span className="journey-label">Get your Jaspen Score</span></div>
+              <div className="journey-arrow">→</div>
+              <div className="journey-step"><span className="journey-num">3</span><span className="journey-label">Model scenarios</span></div>
+              <div className="journey-arrow">→</div>
+              <div className="journey-step"><span className="journey-num">4</span><span className="journey-label">Build your plan</span></div>
+            </div>
             <h2 className="jas-chat-welcome-title">
               <img
                 className="jas-chat-welcome-unicorn"

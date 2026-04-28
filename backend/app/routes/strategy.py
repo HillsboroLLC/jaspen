@@ -210,6 +210,8 @@ def _row_from_snapshot(snapshot, thread_id, base_project_name, variant_index, se
         'score_category': score_category,
         'component_scores': component_scores,
         'financial_impact': financial_impact,
+        'scoring_rubric_version': snapshot.get('scoring_rubric_version') or 'v3',
+        'data_confidence': _safe_int(snapshot.get('data_confidence')),
         'created_at': created_at,
         'updated_at': created_at,
     }
@@ -318,6 +320,8 @@ def _collect_completed_scores(
                 'score_category': score_category,
                 'component_scores': component_scores,
                 'financial_impact': financial_impact,
+                'scoring_rubric_version': result.get('scoring_rubric_version') or 'v3',
+                'data_confidence': _safe_int(result.get('data_confidence')),
                 'created_at': created_at,
                 'updated_at': created_at,
             }
@@ -890,6 +894,64 @@ def _normalize_scorecard_payload(payload):
         'ai_insights': _section_provenance(_list_has_values(normalized['ai_insights']), uploaded=True),
         'assumptions': _section_provenance(_list_has_values(normalized['assumptions']), estimated=bool(normalized['assumptions'])),
     }
+
+    normalized['scoring_rubric_version'] = str(
+        source.get('scoring_rubric_version')
+        or 'v3'
+    ).strip() or 'v3'
+
+    financial_numeric = normalized.get('financial_impact', {}).get('_numeric') if isinstance(normalized.get('financial_impact'), dict) else {}
+    has_financials = bool(
+        isinstance(financial_numeric, dict)
+        and any(_safe_float(financial_numeric.get(key)) is not None for key in ('roi_opportunity', 'projected_ebitda', 'potential_loss'))
+    )
+    component_scores = normalized.get('component_scores') if isinstance(normalized.get('component_scores'), dict) else {}
+    has_team_context = _safe_int(component_scores.get('execution_readiness')) is not None
+    assumptions_count = len(normalized.get('assumptions') or [])
+    conversation_turns = 0
+    source_meta = source.get('meta') if isinstance(source.get('meta'), dict) else {}
+    if isinstance(source_meta, dict):
+        conversation_turns = _safe_int(source_meta.get('conversation_turns')) or 0
+
+    confidence_pct = min(
+        100,
+        max(
+            20,
+            (30 if conversation_turns >= 5 else 10)
+            + (25 if has_financials else 0)
+            + (20 if has_team_context else 0)
+            + (25 if assumptions_count < 3 else 10),
+        ),
+    )
+    normalized['data_confidence'] = int(confidence_pct)
+
+    score_value = _safe_int(normalized.get('jaspen_score')) or 0
+    risks = normalized.get('top_risks') if isinstance(normalized.get('top_risks'), list) else []
+    recommendations = normalized.get('recommendations') if isinstance(normalized.get('recommendations'), list) else []
+    top_risk = risks[0] if risks and isinstance(risks[0], dict) else {}
+    top_rec = recommendations[0] if recommendations and isinstance(recommendations[0], dict) else {}
+    top_rec_action = _clean_scorecard_text(top_rec.get('action')) or 'refine the financial model'
+    top_risk_label = _clean_scorecard_text(top_risk.get('risk')) or 'execution risk'
+    weakest_component = 'execution_readiness'
+    if isinstance(component_scores, dict) and component_scores:
+        weakest_component = min(component_scores, key=lambda key: _safe_int(component_scores.get(key)) or 0)
+
+    if score_value >= 75:
+        proactive_hint = (
+            f"This scores {score_value} - strong execution candidate. "
+            f"Your highest-priority action: {top_rec_action}."
+        )
+    elif score_value >= 55:
+        proactive_hint = (
+            f"This scores {score_value} - promising but worth modeling a scenario. "
+            f"The biggest lever: {top_risk_label}. Try Scenario A to model a mitigation."
+        )
+    else:
+        proactive_hint = (
+            f"This scores {score_value} - the gap is primarily in {weakest_component}. "
+            "I can help you address that before progressing."
+        )
+    normalized['proactive_next_step'] = proactive_hint
 
     return normalized
 
@@ -1784,7 +1846,7 @@ The executive_summary must read like a concise leadership briefing. It should ne
                 system_prompt=system_prompt,
                 strategy_objective=strategy_objective,
                 max_tokens=4000,
-                temperature=0.2,
+                temperature=0.1,
             )
             return _normalize_scorecard_payload(_extract_json_object(routed_text))
         except Exception as routed_exc:
@@ -1799,7 +1861,7 @@ The executive_summary must read like a concise leadership briefing. It should ne
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": analysis_prompt}
         ],
-        temperature=0.7,
+        temperature=0.1,
         max_tokens=4000
     )
 

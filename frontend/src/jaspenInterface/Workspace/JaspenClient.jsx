@@ -536,6 +536,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
     onDelta,
     onToolUse,
     onToolResult,
+    onToolStatus,
     onDone,
   }) {
     const url = `${endpoints.convoStart}?stream=true`;
@@ -590,6 +591,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
           if (payload.type === 'delta' && payload.text) onDelta?.(payload.text);
           else if (payload.type === 'tool_use') onToolUse?.(payload);
           else if (payload.type === 'tool_result') onToolResult?.(payload);
+          else if (payload.type === 'tool_status') onToolStatus?.(payload);
           else if (payload.type === 'done') {
             donePayload = payload;
             onDone?.(payload);
@@ -619,6 +621,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
     onDelta,
     onToolUse,
     onToolResult,
+    onToolStatus,
     onDone,
   }) {
     const url = `${endpoints.convoNext}?stream=true`;
@@ -664,6 +667,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
           if (payload.type === 'delta' && payload.text) onDelta?.(payload.text);
           else if (payload.type === 'tool_use') onToolUse?.(payload);
           else if (payload.type === 'tool_result') onToolResult?.(payload);
+          else if (payload.type === 'tool_status') onToolStatus?.(payload);
           else if (payload.type === 'done') {
             donePayload = payload;
             onDone?.(payload);
@@ -690,6 +694,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
     onDelta,
     onToolUse,
     onToolResult,
+    onToolStatus,
     onDone,
   }) {
     const url = `${endpoints.regenerate}?stream=true`;
@@ -723,6 +728,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
           if (payload.type === 'delta' && payload.text) onDelta?.(payload.text);
           else if (payload.type === 'tool_use') onToolUse?.(payload);
           else if (payload.type === 'tool_result') onToolResult?.(payload);
+          else if (payload.type === 'tool_status') onToolStatus?.(payload);
           else if (payload.type === 'done') {
             donePayload = payload;
             onDone?.(payload);

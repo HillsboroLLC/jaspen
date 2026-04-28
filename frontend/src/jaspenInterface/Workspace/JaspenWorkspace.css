@@ -2019,6 +2019,63 @@
   height: 12px;
 }
 
+/* === Idea > Score > Scenario > Plan journey strip === */
+.workspace-journey-strip {
+  width: 100%;
+  max-width: 980px;
+  margin: 0 auto 14px;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.journey-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.journey-step.active {
+  color: var(--navy);
+}
+
+.journey-num {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--white);
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.journey-step.active .journey-num {
+  border-color: var(--navy);
+  color: var(--navy);
+}
+
+.journey-label {
+  line-height: 1.15;
+}
+
+.journey-arrow {
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
 /* === Messages Area === */
 .jas-messages {
   flex: 1;
@@ -5473,5 +5530,38 @@
 
   .jas-command-list {
     max-height: calc(100vh - 220px);
+  }
+}
+
+@media (max-width: 640px) {
+  .workspace-journey-strip {
+    justify-content: flex-start;
+    overflow-x: auto;
+    padding: 10px 12px;
+    gap: 8px;
+  }
+
+  .journey-step,
+  .journey-arrow {
+    flex: 0 0 auto;
+  }
+
+  .jas-ai-drawer {
+    position: fixed;
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    max-width: none;
+    height: 60vh;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    border-radius: 16px 16px 0 0;
+    transform: translateY(105%);
+  }
+
+  .jas-ai-drawer.jas-drawer-open {
+    transform: translateY(0);
   }
 }
