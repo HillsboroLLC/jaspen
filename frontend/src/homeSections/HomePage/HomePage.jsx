@@ -381,8 +381,39 @@ export default function HomePage() {
                 <p>
                   Evaluate ideas, prioritize opportunities, and structure cross-functional work into executable plans.
                 </p>
+                <div className="intro-feature-list">
+                  <div className="intro-feature-item">
+                    <span className="intro-feature-icon" aria-hidden="true">
+                      <i className="fa-solid fa-lightbulb"></i>
+                    </span>
+                    <div>
+                      <strong>Evaluate Ideas</strong>
+                      <p>Score any opportunity in seconds. Jaspen surfaces market demand, competitive risk, and a structured read on viability.</p>
+                    </div>
+                  </div>
+                  <div className="intro-feature-item">
+                    <span className="intro-feature-icon" aria-hidden="true">
+                      <i className="fa-solid fa-sliders"></i>
+                    </span>
+                    <div>
+                      <strong>Model Scenarios</strong>
+                      <p>Adjust key assumptions — budget, timeline, team — and instantly compare projected outcomes before committing.</p>
+                    </div>
+                  </div>
+                  <div className="intro-feature-item">
+                    <span className="intro-feature-icon" aria-hidden="true">
+                      <i className="fa-solid fa-diagram-project"></i>
+                    </span>
+                    <div>
+                      <strong>Build Execution Plans</strong>
+                      <p>Turn decisions into coordinated, phased plans your whole team can act on — without the handoff friction.</p>
+                    </div>
+                  </div>
+                </div>
               </div>
-              <JaspenDemoCycler />
+              <div className="intro-demo-frame">
+                <JaspenDemoCycler />
+              </div>
             </div>
           </div>
         </section>
