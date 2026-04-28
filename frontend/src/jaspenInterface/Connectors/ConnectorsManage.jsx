@@ -344,6 +344,34 @@ export default function ConnectorsManage() {
     return PLAN_ORDER.includes(planKey) ? planKey : '';
   }, [location.search, user?.is_admin]);
 
+  // Handle Salesforce OAuth callback result — backend redirects back here with ?sf_oauth=success|error
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const sfOauth = String(params.get('sf_oauth') || '').trim().toLowerCase();
+    const reason = String(params.get('reason') || '').trim();
+    if (!sfOauth) return;
+
+    if (sfOauth === 'success') {
+      setMessage('Salesforce connected successfully.');
+      // Refresh connector list so status badge updates immediately
+      loadConnectors();
+      // Auto-select Salesforce in the sidebar so user sees the updated status
+      setSelectedConnectorId('salesforce_insights');
+    } else {
+      setError(`Salesforce connection failed${reason ? `: ${reason.replace(/_/g, ' ')}` : ''}. Check your credentials and try again.`);
+    }
+
+    // Clean the URL so refreshing doesn't re-trigger
+    params.delete('sf_oauth');
+    params.delete('reason');
+    const cleanSearch = params.toString();
+    navigate(
+      `${location.pathname}${cleanSearch ? `?${cleanSearch}` : ''}`,
+      { replace: true }
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const effectivePlanKey = useMemo(() => (
     adminPreviewPlan || highestPlanKey(user?.active_organization_plan_key, user?.subscription_plan)
   ), [adminPreviewPlan, user?.active_organization_plan_key, user?.subscription_plan]);
