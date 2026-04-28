@@ -23,7 +23,7 @@ import {
   faPaperPlane, faSpinner, faTimes, faBars, faCheck, faExclamationTriangle,
   faChartLine, faTrash, faPlus, faMinus, faMicrophone,
   faBolt, faLayerGroup, faPlay, faListCheck, faArrowUpRightFromSquare, faGaugeHigh, faClockRotateLeft, faPaperclip, faArrowUp,
-  faDownload, faChevronDown, faUser, faBell, faLock, faCopy, faThumbsUp, faThumbsDown, faRotate, faPen
+  faDownload, faChevronDown, faUser, faBell, faLock, faCopy, faThumbsUp, faThumbsDown, faRotate, faPen, faArrowRightArrowLeft
 } from '@fortawesome/free-solid-svg-icons';
 import {
   MonitorCheck, MessageCircleQuestion,
@@ -1868,6 +1868,15 @@ useEffect(() => {
     if (['summary', 'scenario', 'comparison', 'execution'].includes(tab)) return tab;
     return '';
   }, [location.search]);
+
+  useEffect(() => {
+    const prefill = location.state?.prefillMessage;
+    if (prefill && typeof prefill === 'string' && prefill.trim()) {
+      setInput(prefill.trim());
+      navigate(location.pathname + location.search, { replace: true, state: {} });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const handleUnauthorized = useCallback(async () => {
     const status = await checkAuthStatus({ silent: true });
     if (!status?.authenticated) {
@@ -5212,6 +5221,11 @@ async function undoLastMutationTurn() {
 // === Begin Project (confirm + backend create + spinner + navigate) ===
 const [beginBusy, setBeginBusy] = useState(false);
 const [beginMsg, setBeginMsg] = useState("Generating your project plan…");
+const [preflightOpen, setPreflightOpen] = useState(false);
+const [preflightQuestions, setPreflightQuestions] = useState([]);
+const [preflightAnswers, setPreflightAnswers] = useState({});
+const [sfConnected, setSfConnected] = useState(false);
+const [sfPipelineLoading, setSfPipelineLoading] = useState(false);
 const hasProjectPlan = useMemo(
   () => Array.isArray(threadWbs?.tasks) && threadWbs.tasks.length > 0,
   [threadWbs]
@@ -5286,7 +5300,56 @@ const handleScoreCardFieldEdit = useCallback(async (fieldKey, newValue) => {
   }
 }, [currentSessionId, sessionId, showToast]);
 
-async function onBeginProject() {
+useEffect(() => {
+  const loadSalesforceConnection = async () => {
+    try {
+      const headers = buildAuthHeaders({}, 'GET');
+      const response = await fetch(`${API_BASE}/api/v1/connectors/status`, {
+        method: 'GET',
+        headers,
+        credentials: 'include',
+      });
+      if (!response.ok) return;
+      const data = await response.json().catch(() => ({}));
+      const connector = (Array.isArray(data?.connectors) ? data.connectors : [])
+        .find((item) => item?.id === 'salesforce_insights');
+      setSfConnected(Boolean(connector?.connected));
+    } catch {}
+  };
+  loadSalesforceConnection();
+}, []);
+
+const handleLoadSalesforcePipeline = useCallback(async () => {
+  setSfPipelineLoading(true);
+  try {
+    const headers = buildAuthHeaders({}, 'GET');
+    const response = await fetch(
+      `${API_BASE}/api/v1/connectors/salesforce/pipeline/summary?days=30&limit=50`,
+      {
+        method: 'GET',
+        headers,
+        credentials: 'include',
+      }
+    );
+    if (!response.ok) throw new Error('Failed to load pipeline');
+    const data = await response.json().catch(() => ({}));
+    const summary = String(
+      data?.summary
+      || data?.pipeline_summary
+      || (Array.isArray(data?.opportunities) ? `${data.opportunities.length} open opportunities in pipeline.` : '')
+      || ''
+    ).trim();
+    if (!summary) throw new Error('No pipeline summary available');
+    setInput(`Here is my current Salesforce pipeline:\n\n${summary}\n\nPlease factor this into the analysis.`);
+    showToast('Pipeline loaded — send the message to add it as context.', 'success');
+  } catch {
+    showToast('Could not load Salesforce pipeline. Check your connection in Connectors.', 'error');
+  } finally {
+    setSfPipelineLoading(false);
+  }
+}, [showToast]);
+
+async function onBeginProject(extraAnswers = null) {
   if (!canAccessExecutionTab) {
     showToast('Upgrade to Essential to begin a project from this scorecard.', 'info');
     setBillingModalOpen(true);
@@ -5317,17 +5380,29 @@ async function onBeginProject() {
   setBeginMsg('Building your project plan…');
 
   try {
+    const body = { commit: true };
+    if (extraAnswers && Object.keys(extraAnswers).length > 0) {
+      body.preflight_answers = extraAnswers;
+    }
     const resp = await fetch(
       `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(tid)}/ai-wbs`,
       {
         method: 'POST',
         headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
         credentials: 'include',
-        body: JSON.stringify({ commit: true }),
+        body: JSON.stringify(body),
       }
     );
 
     const json = await resp.json().catch(() => ({}));
+
+    if (json?.needs_preflight === true) {
+      setBeginBusy(false);
+      setPreflightQuestions(Array.isArray(json.questions) ? json.questions : []);
+      setPreflightAnswers({});
+      setPreflightOpen(true);
+      return;
+    }
 
     if (!resp.ok) {
       const detail = json?.error || json?.detail || `HTTP ${resp.status}`;
@@ -8056,6 +8131,13 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       : 'Begin project';
     const scoreDrawerPrompts = scoreWorkspaceMode === 'summary'
       ? [
+          ...(sfConnected ? [{
+            id: 'sf-pipeline',
+            label: 'Load my Salesforce pipeline',
+            icon: faArrowRightArrowLeft,
+            onClick: handleLoadSalesforcePipeline,
+            loading: sfPipelineLoading,
+          }] : []),
           'Explain what drove this score',
           'Rewrite the top recommendation to sound more executive',
           'Tighten the wording of the biggest risk',
@@ -9407,6 +9489,54 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
         busy={Boolean(onboardingLaunchLabel)}
         busyLabel={onboardingLaunchLabel}
       />
+      {preflightOpen && (
+        <div className="jas-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="preflight-title">
+          <div className="jas-modal-card preflight-panel">
+            <h2 id="preflight-title" className="preflight-title">Before we build the plan</h2>
+            <p className="preflight-subtitle">
+              Jaspen needs a few details to create the most useful execution plan for your team.
+              All fields are optional and you can skip anything that does not apply.
+            </p>
+            <div className="preflight-questions">
+              {preflightQuestions.map((question) => (
+                <div key={question.id} className="preflight-q">
+                  <label htmlFor={`pf-${question.id}`} className="preflight-label">{question.label}</label>
+                  <textarea
+                    id={`pf-${question.id}`}
+                    className="preflight-textarea"
+                    value={preflightAnswers[question.id] || ''}
+                    onChange={(event) => setPreflightAnswers((prev) => ({
+                      ...prev,
+                      [question.id]: event.target.value,
+                    }))}
+                    rows={2}
+                    placeholder="Optional"
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="preflight-actions">
+              <button
+                type="button"
+                className="sc-btn sc-btn-primary"
+                onClick={() => {
+                  setPreflightOpen(false);
+                  void onBeginProject(preflightAnswers);
+                }}
+              >
+                Generate execution plan
+              </button>
+              <button
+                type="button"
+                className="sc-btn sc-btn-secondary"
+                onClick={() => setPreflightOpen(false)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <BatchIdeaManager
         open={batchIdeasOpen}
         onClose={() => setBatchIdeasOpen(false)}

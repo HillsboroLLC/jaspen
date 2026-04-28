@@ -12,6 +12,13 @@ import time
 import uuid
 import requests
 
+try:
+    from docx import Document as DocxDocument
+    _HAS_DOCX = True
+except Exception:
+    DocxDocument = None
+    _HAS_DOCX = False
+
 from app import db, limiter
 from app.admin_audit import append_user_audit_event
 from app.models import BatchIdeaUpload, User
@@ -4516,7 +4523,7 @@ def _dataset_from_upload(uploaded_file):
     return df, filename
 
 
-BATCH_IDEA_ALLOWED_EXTENSIONS = {".csv", ".xlsx"}
+BATCH_IDEA_ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xls", ".doc", ".docx"}
 BATCH_IDEA_TITLE_HEADERS = {"name", "title", "idea", "ideaname", "ideatitle", "projecttitle", "projectname"}
 BATCH_PROJECT_CREATOR_ROLES = {"owner", "admin", "creator"}
 
@@ -4587,10 +4594,52 @@ def _coerce_score_int(value):
 
 
 def _batch_ideas_from_upload(uploaded_file):
-    df, filename = _dataset_from_upload(uploaded_file)
+    raw_name = str(getattr(uploaded_file, "filename", "") or "upload").strip() or "upload"
+    filename = re.sub(r"[^a-zA-Z0-9._-]", "_", raw_name)[:255] or "upload"
     ext = os.path.splitext(filename)[1].lower()
+
+    if ext in (".docx", ".doc"):
+        if ext == ".docx":
+            if not _HAS_DOCX or DocxDocument is None:
+                raise ValueError("Word document support requires python-docx.")
+            uploaded_file.seek(0)
+            try:
+                doc = DocxDocument(uploaded_file)
+            except Exception as exc:
+                raise ValueError(f"Could not parse Word file ({filename}): {exc}")
+            raw_lines = [str(p.text or '').strip() for p in doc.paragraphs]
+        else:
+            uploaded_file.seek(0)
+            content = uploaded_file.read() or b""
+            if not content:
+                raise ValueError("Uploaded file is empty.")
+            decoded = content.decode("utf-8", errors="ignore")
+            raw_lines = [line.strip() for line in decoded.splitlines()]
+
+        titles = [line for line in raw_lines if len(line) > 3][:100]
+        if not titles:
+            raise ValueError("Word document did not contain any usable idea lines.")
+
+        ideas = []
+        for idx, title in enumerate(titles, start=1):
+            ideas.append({
+                "idea_id": str(uuid.uuid4()),
+                "title": title[:255],
+                "metadata": {"source": "word", "line_index": idx},
+                "clarifications": [],
+                "rank": None,
+                "preliminary_score": None,
+                "scoreable": False,
+                "clarifying_questions": [],
+                "rationale": "",
+                "thread_id": None,
+                "promoted_at": None,
+            })
+        return filename, ideas, ["title"]
+
+    df, filename = _dataset_from_upload(uploaded_file)
     if ext not in BATCH_IDEA_ALLOWED_EXTENSIONS:
-        raise ValueError("Unsupported file type. Upload CSV or Excel (.csv/.xlsx).")
+        raise ValueError("Unsupported file type. Upload CSV, Excel, or Word (.csv/.xlsx/.xls/.doc/.docx).")
 
     columns = [str(col or "").strip() or f"column_{idx + 1}" for idx, col in enumerate(list(df.columns))]
     title_column = _batch_title_column(columns)

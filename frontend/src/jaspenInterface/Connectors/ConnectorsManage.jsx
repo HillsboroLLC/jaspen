@@ -47,7 +47,6 @@ const REQUIRED_FIELDS_BY_CONNECTOR = {
     'salesforce_instance_url',
     'salesforce_client_id',
     'salesforce_client_secret',
-    'salesforce_refresh_token',
   ],
   snowflake_insights: [
     'snowflake_account',
@@ -637,6 +636,27 @@ export default function ConnectorsManage() {
     }
   }
 
+  async function connectWithSalesforce() {
+    try {
+      const nextPath = window.location.pathname + window.location.search;
+      const response = await fetch(
+        `${API_BASE}/api/v1/connectors/salesforce/oauth/start?next=${encodeURIComponent(nextPath)}`,
+        {
+          method: 'GET',
+          headers: authHeaders(false, 'GET'),
+          credentials: 'include',
+        }
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data?.auth_url) {
+        throw new Error(data?.error || 'Could not start Salesforce OAuth. Check your Client ID and Secret.');
+      }
+      window.location.href = data.auth_url;
+    } catch (err) {
+      setError(err?.message || 'Failed to connect to Salesforce. Try again.');
+    }
+  }
+
   function renderConnectorSpecificFields(connectorId, draft) {
     if (!draft) return null;
     const fieldError = (field) => selectedDraftErrors?.[field] || '';
@@ -704,6 +724,26 @@ export default function ConnectorsManage() {
           {renderRequiredField('salesforce_client_id', 'Client ID')}
           {renderRequiredField('salesforce_client_secret', 'Client Secret', { type: 'password', placeholder: 'Enter secret to set or rotate' })}
           {renderRequiredField('salesforce_refresh_token', 'Refresh Token', { type: 'password', placeholder: 'Enter token to set or rotate' })}
+          <div className="connector-oauth-row">
+            <button
+              type="button"
+              className="connector-oauth-btn"
+              onClick={connectWithSalesforce}
+              title="Authorize Jaspen to access your Salesforce data via OAuth"
+            >
+              <img
+                src="https://c1.sfdcstatic.com/content/dam/sfdc-docs/www/logos/logo-salesforce.svg"
+                alt=""
+                className="connector-oauth-logo"
+                onError={(event) => { event.currentTarget.style.display = 'none'; }}
+              />
+              Connect with Salesforce
+            </button>
+            <p className="connector-oauth-hint">
+              Enter your Client ID and Secret above, save credentials, then click Connect to authorize via OAuth.
+              You will not need to enter a refresh token manually after authorization.
+            </p>
+          </div>
         </>
       );
     }

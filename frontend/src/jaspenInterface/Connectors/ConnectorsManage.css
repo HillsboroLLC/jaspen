@@ -175,6 +175,46 @@
   line-height: 1.45;
 }
 
+.connector-oauth-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--int-border, #dbe3ee);
+}
+
+.connector-oauth-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 18px;
+  border-radius: 8px;
+  background: #0070d2;
+  color: #fff;
+  border: none;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  width: fit-content;
+  transition: background 0.15s;
+}
+
+.connector-oauth-btn:hover {
+  background: #005fb2;
+}
+
+.connector-oauth-logo {
+  height: 18px;
+  filter: brightness(0) invert(1);
+}
+
+.connector-oauth-hint {
+  font-size: 12px;
+  color: var(--int-text-sub, #475569);
+  margin: 0;
+}
+
 .connectors-plan-gate-btn {
   display: inline-flex;
   align-items: center;

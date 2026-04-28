@@ -3702,6 +3702,62 @@
   padding: 20px;
 }
 
+.preflight-panel {
+  max-width: 540px;
+  width: 100%;
+}
+
+.preflight-title {
+  font-size: 18px;
+  font-weight: 700;
+  margin: 0 0 6px;
+  color: var(--int-text, #161f3b);
+}
+
+.preflight-subtitle {
+  font-size: 13px;
+  color: var(--int-text-sub, #475569);
+  margin: 0 0 20px;
+}
+
+.preflight-questions {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.preflight-q {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.preflight-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--int-text, #161f3b);
+}
+
+.preflight-textarea {
+  padding: 10px 12px;
+  border: 1.5px solid var(--int-border, #dbe3ee);
+  border-radius: 8px;
+  font-size: 13px;
+  resize: vertical;
+  min-height: 60px;
+}
+
+.preflight-textarea:focus {
+  outline: none;
+  border-color: var(--int-primary, #a0036c);
+}
+
+.preflight-actions {
+  display: flex;
+  gap: 10px;
+}
+
 .jas-modal-card {
   background: var(--white);
   border: 1px solid var(--gray-300);

@@ -102,7 +102,7 @@ export default function BatchIdeaManager({
 
   const handleUpload = async () => {
     if (!selectedFile) {
-      showToast?.('Choose a CSV or XLSX file first.', 'info');
+      showToast?.('Choose a CSV, Excel, or Word document.', 'info');
       return;
     }
     setUploading(true);
@@ -237,7 +237,7 @@ export default function BatchIdeaManager({
         <div className="jas-modal-head">
           <div>
             <h3>Batch Ideas</h3>
-            <p>Upload a CSV or XLSX, rank ideas, answer clarifications, and promote ready ideas into project threads.</p>
+            <p>Upload a CSV, Excel, or Word document, rank ideas, answer clarifications, and promote ready ideas into project threads.</p>
           </div>
           <button type="button" className="jas-ai-mini-btn" onClick={onClose}>
             <FontAwesomeIcon icon={faTimes} />
@@ -273,8 +273,8 @@ export default function BatchIdeaManager({
           <div className="jas-batch-body">
             <div className="jas-batch-upload">
               <label className="jas-batch-file-picker">
-                <input type="file" accept=".csv,.xlsx" onChange={onFileChange} />
-                <span><FontAwesomeIcon icon={faCloudArrowUp} /> Choose CSV or XLSX</span>
+                <input type="file" accept=".csv,.xlsx,.xls,.doc,.docx" onChange={onFileChange} />
+                <span><FontAwesomeIcon icon={faCloudArrowUp} /> Choose CSV, Excel, or Word</span>
               </label>
               <span className="jas-batch-file-name">{selectedFile?.name || batch?.filename || 'No file selected'}</span>
               <button type="button" className="jas-ai-mini-btn primary" onClick={handleUpload} disabled={uploading || !selectedFile} aria-disabled={uploading || !selectedFile}>

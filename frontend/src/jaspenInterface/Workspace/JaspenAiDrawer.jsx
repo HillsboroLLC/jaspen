@@ -125,16 +125,32 @@ export default function JaspenAiDrawer({
             <div className="jas-ai-input-area">
               {starterPrompts.length > 0 && (
                 <div className="jas-ai-starter-row">
-                  {starterPrompts.map((prompt) => (
-                    <button
-                      key={prompt}
-                      type="button"
-                      className="jas-ai-starter-chip"
-                      onClick={() => onInputChange?.(prompt)}
-                    >
-                      {prompt}
-                    </button>
-                  ))}
+                  {starterPrompts.map((prompt) => {
+                    const isObject = prompt && typeof prompt === 'object';
+                    const label = isObject ? String(prompt.label || '').trim() : String(prompt || '').trim();
+                    const key = isObject ? String(prompt.id || label || Math.random()) : label;
+                    if (!label) return null;
+                    const loading = Boolean(isObject && prompt.loading);
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        className="jas-ai-starter-chip"
+                        onClick={() => {
+                          if (loading) return;
+                          if (isObject && typeof prompt.onClick === 'function') {
+                            prompt.onClick();
+                            return;
+                          }
+                          onInputChange?.(label);
+                        }}
+                        disabled={loading}
+                        aria-disabled={loading}
+                      >
+                        {loading ? 'Loading…' : label}
+                      </button>
+                    );
+                  })}
                 </div>
               )}
               {inputExtras}
