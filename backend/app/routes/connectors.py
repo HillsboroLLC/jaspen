@@ -1,4 +1,5 @@
 import hmac
+import json
 import os
 from urllib.parse import urlencode
 
@@ -42,6 +43,7 @@ from app.salesforce_sync import (
     salesforce_missing_oauth_config,
     salesforce_runtime_config,
 )
+from app.routes.strategy import get_llm_client
 from app.smartsheet_sync import apply_smartsheet_webhook_to_wbs, sync_wbs_to_smartsheet
 from app.snowflake_insights import extract_kpi_metrics, run_allowlisted_query
 from app.tool_registry import get_tool_entitlements
@@ -1146,6 +1148,156 @@ def snowflake_kpis():
             metadata={"table": table},
         )
         return jsonify({"error": str(exc)}), 400
+
+
+@connectors_bp.route("/generate-ideas", methods=["POST"])
+@jwt_required()
+def generate_ideas_from_connector():
+    """
+    Pull live data from a connected source and use Claude to extract
+    3-5 strategic initiative ideas the user should consider executing.
+    """
+    user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    plan_key = to_public_plan(user.subscription_plan)
+    if plan_key not in ("enterprise", "team"):
+        return jsonify({
+            "error": "This feature requires an Enterprise or Team plan.",
+            "requires_upgrade": True,
+        }), 403
+
+    payload = request.get_json(silent=True) or {}
+    connector_id = _text(payload.get("connector_id"))
+    focus = _text(payload.get("focus") or "")
+    objective = _text(payload.get("objective") or "balanced")
+
+    if not connector_id:
+        return jsonify({"error": "connector_id is required"}), 400
+
+    connector_data = {}
+    data_description = ""
+
+    try:
+        if connector_id == "salesforce_insights":
+            result = fetch_pipeline_summary(user.id, lookback_days=90, max_records=100)
+            connector_data = result.get("summary") if isinstance(result, dict) else result
+            connector_data = connector_data or result
+            data_description = "Salesforce CRM pipeline data (opportunities, revenue, stage distribution, close rates)"
+        elif connector_id == "snowflake_insights":
+            result = extract_kpi_metrics(
+                user.id,
+                table=_text(payload.get("table") or "kpi_metrics"),
+                metric_columns=payload.get("metric_columns") or ["revenue", "cost", "efficiency", "growth"],
+                date_column=payload.get("date_column"),
+                date_from=payload.get("date_from"),
+                date_to=payload.get("date_to"),
+            )
+            connector_data = result.get("metrics") if isinstance(result, dict) else result
+            connector_data = connector_data or result
+            data_description = "Snowflake data warehouse KPI metrics (financial performance, operational efficiency)"
+        elif connector_id == "servicenow_insights":
+            from app.servicenow_sync import fetch_servicenow_summary
+            result = fetch_servicenow_summary(user.id)
+            connector_data = result
+            data_description = "ServiceNow IT service management data (incidents, requests, SLA performance, categories)"
+        elif connector_id == "netsuite_insights":
+            from app.netsuite_sync import fetch_netsuite_summary
+            result = fetch_netsuite_summary(user.id)
+            connector_data = result
+            data_description = "NetSuite ERP data (financial performance, AP/AR, inventory, operational costs)"
+        elif connector_id == "oracle_fusion_insights":
+            from app.oracle_fusion_sync import fetch_oracle_summary
+            result = fetch_oracle_summary(user.id)
+            connector_data = result
+            data_description = "Oracle Fusion ERP data (financials, supply chain, workforce metrics)"
+        else:
+            return jsonify({"error": f"Connector '{connector_id}' does not support idea generation yet."}), 400
+    except Exception as exc:
+        return jsonify({"error": f"Could not fetch data from {connector_id}: {str(exc)}"}), 400
+
+    objective_guidance = {
+        "cost": "Focus on cost reduction, process efficiency, and margin improvement opportunities.",
+        "speed": "Focus on time-to-market acceleration, bottleneck removal, and velocity improvements.",
+        "growth": "Focus on revenue expansion, market penetration, and new opportunity capture.",
+        "balanced": "Consider a balanced mix of cost, growth, efficiency, and risk reduction.",
+    }.get(objective, "Consider a balanced mix of cost, growth, efficiency, and risk reduction.")
+    focus_clause = f" The user's specific focus area is: {focus}." if focus else ""
+
+    system_prompt = (
+        "You are a senior strategy analyst specializing in identifying executable business initiatives from operational data. "
+        "You extract specific, actionable opportunities from raw data and frame them as business cases a leadership team can evaluate and score."
+    )
+    user_prompt = f"""
+Analyze the following {data_description} and identify the top 3-5 strategic initiatives this organization should consider executing.
+
+DATA:
+{str(connector_data)[:4000]}
+
+OBJECTIVE: {objective_guidance}{focus_clause}
+
+Return ONLY a JSON array with this exact structure (no other text):
+[
+  {{
+    "id": "idea_1",
+    "title": "Short initiative title (under 10 words)",
+    "description": "One paragraph describing the initiative, what it addresses, and why now is the right time based on the data.",
+    "data_signal": "The specific data point or trend that identified this opportunity (quote actual numbers where possible).",
+    "estimated_roi_band": "e.g. 15-25% cost reduction or $2-4M revenue uplift",
+    "effort_level": "Low | Medium | High",
+    "time_to_impact": "e.g. 3-6 months",
+    "category": "cost_reduction | revenue_growth | operational_efficiency | risk_mitigation | market_expansion"
+  }}
+]
+
+Be specific to the actual data. Do not generate generic ideas. Every idea must be directly traceable to a signal in the data provided.
+"""
+
+    try:
+        client = get_llm_client()
+        response = client.messages.create(
+            model=current_app.config.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022"),
+            max_tokens=2000,
+            temperature=0.3,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+        raw_text = str(response.content[0].text or "").strip()
+        if raw_text.startswith("```"):
+            parts = raw_text.split("```")
+            if len(parts) > 1:
+                raw_text = parts[1]
+            if raw_text.startswith("json"):
+                raw_text = raw_text[4:]
+        ideas = json.loads(raw_text.strip())
+        if not isinstance(ideas, list):
+            ideas = []
+    except Exception as exc:
+        return jsonify({"error": f"AI analysis failed: {str(exc)}"}), 500
+
+    for idea in ideas:
+        if not isinstance(idea, dict):
+            continue
+        parts = [
+            "I want to evaluate the following initiative for scoring:",
+            f"\n\n**{idea.get('title', 'Strategic Initiative')}**",
+            f"\n\n{idea.get('description', '')}",
+        ]
+        if idea.get("data_signal"):
+            parts.append(f"\n\nKey data signal: {idea['data_signal']}")
+        if idea.get("estimated_roi_band"):
+            parts.append(f"\nEstimated ROI: {idea['estimated_roi_band']}")
+        if idea.get("time_to_impact"):
+            parts.append(f"\nExpected time to impact: {idea['time_to_impact']}")
+        idea["prefill_statement"] = "".join(parts)
+
+    return jsonify({
+        "success": True,
+        "connector_id": connector_id,
+        "idea_count": len(ideas),
+        "ideas": ideas,
+    }), 200
 
 
 @connectors_bp.route("/threads/<thread_id>/sync", methods=["GET"])

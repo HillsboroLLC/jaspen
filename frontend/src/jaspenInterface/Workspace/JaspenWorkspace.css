@@ -2410,6 +2410,49 @@
   background: #eef2ff;
 }
 
+.jas-connector-context-tags {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  max-width: 920px;
+  margin: 6px auto 0;
+}
+
+.jas-connector-context-label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--gray-600);
+  min-width: 72px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.jas-connector-context-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 16px;
+  border: 1.5px solid #161f3b;
+  background: transparent;
+  color: #161f3b;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.jas-connector-context-chip:hover { background: rgba(22,31,59,0.06); }
+
+.jas-connector-context-chip.active {
+  background: #161f3b;
+  color: #fff;
+  border-color: #161f3b;
+}
+
+.jas-connector-context-chip svg { font-size: 0.625rem; }
+
 .jas-objective-selection-pill {
   display: inline-flex;
   align-items: center;

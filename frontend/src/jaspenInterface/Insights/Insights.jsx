@@ -25,6 +25,8 @@ import { Jaspen } from '../Workspace/JaspenClient';
 import ConfirmDialog from '../../shared/components/ConfirmDialog';
 import SkeletonBlock from '../../shared/components/SkeletonLoader';
 import EmptyState from '../../homeSections/homeUi/EmptyState';
+import { API_BASE } from '../../config/apiBase';
+import { buildAuthHeaders } from '../../shared/auth/http';
 import './Insights.css';
 import AppMenu from '../shared/AppMenu';
 
@@ -100,6 +102,14 @@ export default function Insights() {
   const [activeDatasetId, setActiveDatasetId] = useState('');
   const [themeVersion, setThemeVersion] = useState(0);
   const [confirmDialog, setConfirmDialog] = useState(null);
+  const [connectors, setConnectors] = useState([]);
+  const [activeConnectorId, setActiveConnectorIdForIdeas] = useState('');
+  const [ideasFocus, setIdeasFocus] = useState('');
+  const [ideasObjective, setIdeasObjective] = useState('balanced');
+  const [generatingIdeas, setGeneratingIdeas] = useState(false);
+  const [generatedIdeas, setGeneratedIdeas] = useState([]);
+  const [ideasError, setIdeasError] = useState('');
+  const [isEnterprise, setIsEnterprise] = useState(false);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -169,6 +179,32 @@ export default function Insights() {
   useEffect(() => {
     loadDatasets();
   }, [loadDatasets]);
+
+  useEffect(() => {
+    const loadConnectors = async () => {
+      try {
+        const headers = buildAuthHeaders({}, 'GET');
+        const response = await fetch(`${API_BASE}/api/v1/connectors/status`, {
+          method: 'GET',
+          headers,
+          credentials: 'include',
+        });
+        if (!response.ok) return;
+        const data = await response.json().catch(() => ({}));
+        const ideaConnectors = (Array.isArray(data?.connectors) ? data.connectors : []).filter((item) => (
+          item?.connected
+          && ['salesforce_insights', 'snowflake_insights', 'servicenow_insights', 'netsuite_insights', 'oracle_fusion_insights'].includes(item.id)
+        ));
+        setConnectors(ideaConnectors);
+        const isEnt = data?.plan_key === 'enterprise' || data?.plan_key === 'team';
+        setIsEnterprise(Boolean(isEnt));
+        if (ideaConnectors.length > 0) {
+          setActiveConnectorIdForIdeas(String(ideaConnectors[0].id));
+        }
+      } catch {}
+    };
+    loadConnectors();
+  }, []);
 
   const activeDataset = useMemo(
     () => datasets.find((row) => String(row?.id || '') === String(activeDatasetId || '')) || null,
@@ -256,6 +292,33 @@ export default function Insights() {
     return parts.join(' ');
   }, []);
 
+  const handleGenerateIdeas = useCallback(async () => {
+    if (!activeConnectorId) return;
+    setGeneratingIdeas(true);
+    setIdeasError('');
+    setGeneratedIdeas([]);
+    try {
+      const headers = buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST');
+      const response = await fetch(`${API_BASE}/api/v1/connectors/generate-ideas`, {
+        method: 'POST',
+        headers,
+        credentials: 'include',
+        body: JSON.stringify({
+          connector_id: activeConnectorId,
+          focus: ideasFocus,
+          objective: ideasObjective,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || 'Failed to generate ideas');
+      setGeneratedIdeas(Array.isArray(data?.ideas) ? data.ideas : []);
+    } catch (err) {
+      setIdeasError(err?.message || 'Failed to generate ideas. Check your connector connection.');
+    } finally {
+      setGeneratingIdeas(false);
+    }
+  }, [activeConnectorId, ideasFocus, ideasObjective]);
+
   return (
     <div className="insights-page int-page">
       <AppMenu />
@@ -266,6 +329,123 @@ export default function Insights() {
           <p>Upload company datasets, run AI analysis, and review trends, anomalies, opportunities, and risks.</p>
         </div>
       </header>
+
+      {isEnterprise && connectors.length > 0 && (
+        <section className="insights-section insights-ideas-section">
+          <div className="insights-row-head">
+            <div>
+              <h2>AI-Generated Initiative Ideas</h2>
+              <p className="insights-muted">Jaspen analyzes your connected data and surfaces strategic opportunities worth scoring.</p>
+            </div>
+          </div>
+
+          <div className="insights-ideas-config">
+            <div className="insights-ideas-connectors">
+              <span className="insights-ideas-config-label">Data source</span>
+              {connectors.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`insights-connector-chip ${activeConnectorId === item.id ? 'active' : ''}`}
+                  onClick={() => setActiveConnectorIdForIdeas(item.id)}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+            <div className="insights-ideas-objective">
+              <span className="insights-ideas-config-label">Objective</span>
+              {[
+                { key: 'balanced', label: 'Balanced' },
+                { key: 'cost', label: 'Cost Reduction' },
+                { key: 'speed', label: 'Speed to Market' },
+                { key: 'growth', label: 'Growth' },
+              ].map((obj) => (
+                <button
+                  key={obj.key}
+                  type="button"
+                  className={`insights-connector-chip ${ideasObjective === obj.key ? 'active' : ''}`}
+                  onClick={() => setIdeasObjective(obj.key)}
+                >
+                  {obj.label}
+                </button>
+              ))}
+            </div>
+            <div className="insights-ideas-focus-row">
+              <input
+                type="text"
+                className="insights-ideas-focus-input"
+                placeholder="Optional focus (e.g. reduce churn, expand APAC, cut logistics cost)"
+                value={ideasFocus}
+                onChange={(event) => setIdeasFocus(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    void handleGenerateIdeas();
+                  }
+                }}
+              />
+              <button
+                type="button"
+                className="int-btn int-btn-primary"
+                onClick={() => { void handleGenerateIdeas(); }}
+                disabled={!activeConnectorId || generatingIdeas}
+              >
+                {generatingIdeas ? <><FontAwesomeIcon icon={faSpinner} spin /> Analyzing…</> : 'Find opportunities'}
+              </button>
+            </div>
+          </div>
+
+          {generatingIdeas && (
+            <div className="insights-ideas-loading">
+              <div className="insights-progress-track">
+                <div className="insights-progress-bar insights-progress-bar-indeterminate" />
+              </div>
+              <span>
+                Jaspen is analyzing your {connectors.find((item) => item.id === activeConnectorId)?.label} data for strategic opportunities…
+              </span>
+            </div>
+          )}
+
+          {ideasError && <div className="insights-error"><p>{ideasError}</p></div>}
+
+          {generatedIdeas.length > 0 && (
+            <div className="insights-idea-cards">
+              {generatedIdeas.map((idea) => (
+                <article key={idea.id} className="insights-idea-card">
+                  <div className="insights-idea-header">
+                    <span className={`insights-idea-category-badge cat-${idea.category || 'balanced'}`}>
+                      {String(idea.category || 'initiative').replace(/_/g, ' ')}
+                    </span>
+                    <div className="insights-idea-meta">
+                      {idea.effort_level && <span className="insights-idea-chip">Effort: {idea.effort_level}</span>}
+                      {idea.time_to_impact && <span className="insights-idea-chip">{idea.time_to_impact}</span>}
+                    </div>
+                  </div>
+                  <h3 className="insights-idea-title">{idea.title}</h3>
+                  <p className="insights-idea-desc">{idea.description}</p>
+                  {idea.data_signal && (
+                    <div className="insights-idea-signal">
+                      <FontAwesomeIcon icon={faArrowTrendUp} />
+                      <span>{idea.data_signal}</span>
+                    </div>
+                  )}
+                  {idea.estimated_roi_band && (
+                    <div className="insights-idea-roi">Estimated: {idea.estimated_roi_band}</div>
+                  )}
+                  <button
+                    type="button"
+                    className="int-btn int-btn-primary insights-idea-score-btn"
+                    onClick={() => navigate('/new', { state: { prefillMessage: idea.prefill_statement } })}
+                  >
+                    Score this idea →
+                  </button>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       <section className="insights-section">
         <h2>Upload Data</h2>

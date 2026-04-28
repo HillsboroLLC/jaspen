@@ -4643,6 +4643,35 @@ const renderObjectiveTags = (className = '') => {
   );
 };
 
+const renderConnectorContextTags = () => {
+  if (planCategory !== 'enterprise' && planCategory !== 'team') return null;
+  if (!Array.isArray(connectedDataSources) || connectedDataSources.length === 0) return null;
+  return (
+    <div className="jas-connector-context-tags">
+      <span className="jas-connector-context-label">
+        {contextSourceLoading ? 'Loading…' : 'Data context'}
+      </span>
+      {connectedDataSources.map((source) => {
+        const isActive = activeContextSourceIds.has(source.id);
+        return (
+          <button
+            key={source.id}
+            type="button"
+            className={`jas-connector-context-chip ${isActive ? 'active' : ''}`}
+            onClick={() => {
+              void handleToggleContextSource(source.id, source.label);
+            }}
+            title={isActive ? `Remove ${source.label} context` : `Add live ${source.label} data as AI context`}
+          >
+            {isActive && <FontAwesomeIcon icon={faCheck} />}
+            {source.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+};
+
 const renderSelectedObjectivePill = (className = '') => {
   if (!objectiveExplicitlySet && !objectiveLocked) return null;
   return (
@@ -5227,8 +5256,12 @@ const [beginMsg, setBeginMsg] = useState("Generating your project plan…");
 const [preflightOpen, setPreflightOpen] = useState(false);
 const [preflightQuestions, setPreflightQuestions] = useState([]);
 const [preflightAnswers, setPreflightAnswers] = useState({});
-const [sfConnected, setSfConnected] = useState(false);
-const [sfPipelineLoading, setSfPipelineLoading] = useState(false);
+const [connectedDataSources, setConnectedDataSources] = useState([]);
+const [activeContextSourceIds, setActiveContextSourceIds] = useState(new Set());
+const [contextSourceData, setContextSourceData] = useState({});
+const [contextSourceLoading, setContextSourceLoading] = useState(false);
+const sfConnected = connectedDataSources.some((item) => item.id === 'salesforce_insights');
+const sfPipelineLoading = contextSourceLoading && activeContextSourceIds.has('salesforce_insights');
 const hasProjectPlan = useMemo(
   () => Array.isArray(threadWbs?.tasks) && threadWbs.tasks.length > 0,
   [threadWbs]
@@ -5304,7 +5337,13 @@ const handleScoreCardFieldEdit = useCallback(async (fieldKey, newValue) => {
 }, [currentSessionId, sessionId, showToast]);
 
 useEffect(() => {
-  const loadSalesforceConnection = async () => {
+  if (planCategory !== 'enterprise' && planCategory !== 'team') {
+    setConnectedDataSources([]);
+    setActiveContextSourceIds(new Set());
+    setContextSourceData({});
+    return;
+  }
+  const loadConnectedSources = async () => {
     try {
       const headers = buildAuthHeaders({}, 'GET');
       const response = await fetch(`${API_BASE}/api/v1/connectors/status`, {
@@ -5314,43 +5353,84 @@ useEffect(() => {
       });
       if (!response.ok) return;
       const data = await response.json().catch(() => ({}));
-      const connector = (Array.isArray(data?.connectors) ? data.connectors : [])
-        .find((item) => item?.id === 'salesforce_insights');
-      setSfConnected(Boolean(connector?.connected));
+      const allowed = ['salesforce_insights', 'snowflake_insights', 'servicenow_insights', 'netsuite_insights', 'oracle_fusion_insights'];
+      const connected = (Array.isArray(data?.connectors) ? data.connectors : [])
+        .filter((item) => item?.connected && allowed.includes(item?.id))
+        .map((item) => ({ id: item.id, label: item.label || item.id }));
+      setConnectedDataSources(connected);
     } catch {}
   };
-  loadSalesforceConnection();
-}, []);
+  loadConnectedSources();
+}, [planCategory]);
 
-const handleLoadSalesforcePipeline = useCallback(async () => {
-  setSfPipelineLoading(true);
+const handleToggleContextSource = useCallback(async (connectorId, label) => {
+  const wasActive = activeContextSourceIds.has(connectorId);
+  setActiveContextSourceIds((prev) => {
+    const next = new Set(prev);
+    if (next.has(connectorId)) next.delete(connectorId);
+    else next.add(connectorId);
+    return next;
+  });
+
+  if (wasActive || contextSourceData[connectorId]) return;
+  setContextSourceLoading(true);
   try {
-    const headers = buildAuthHeaders({}, 'GET');
-    const response = await fetch(
-      `${API_BASE}/api/v1/connectors/salesforce/pipeline/summary?days=30&limit=50`,
-      {
-        method: 'GET',
-        headers,
-        credentials: 'include',
-      }
-    );
-    if (!response.ok) throw new Error('Failed to load pipeline');
+    let url = '';
+    let method = 'GET';
+    let body = null;
+    if (connectorId === 'salesforce_insights') {
+      url = `${API_BASE}/api/v1/connectors/salesforce/pipeline/summary?days=30&limit=50`;
+    } else if (connectorId === 'snowflake_insights') {
+      url = `${API_BASE}/api/v1/connectors/snowflake/kpis`;
+      method = 'POST';
+      body = JSON.stringify({
+        table: 'kpi_metrics',
+        metric_columns: ['revenue', 'cost', 'efficiency'],
+      });
+    }
+
+    if (!url) {
+      setContextSourceData((prev) => ({
+        ...prev,
+        [connectorId]: `${label} is connected. Detailed context fetcher will be added as this connector API is finalized.`,
+      }));
+      showToast(`${label} connected. Context placeholder loaded.`, 'success');
+      return;
+    }
+
+    const response = await fetch(url, {
+      method,
+      headers: buildAuthHeaders(method === 'POST' ? { 'Content-Type': 'application/json' } : {}, method),
+      credentials: 'include',
+      ...(body ? { body } : {}),
+    });
     const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data?.error || `Could not load ${label} data.`);
     const summary = String(
       data?.summary
       || data?.pipeline_summary
-      || (Array.isArray(data?.opportunities) ? `${data.opportunities.length} open opportunities in pipeline.` : '')
+      || data?.message
+      || JSON.stringify(data).slice(0, 1000)
       || ''
     ).trim();
-    if (!summary) throw new Error('No pipeline summary available');
-    setInput(`Here is my current Salesforce pipeline:\n\n${summary}\n\nPlease factor this into the analysis.`);
-    showToast('Pipeline loaded — send the message to add it as context.', 'success');
+    if (!summary) throw new Error(`No ${label} context available.`);
+    setContextSourceData((prev) => ({ ...prev, [connectorId]: summary }));
+    showToast(`${label} data loaded as context.`, 'success');
   } catch {
-    showToast('Could not load Salesforce pipeline. Check your connection in Connectors.', 'error');
+    showToast(`Could not load ${label} data.`, 'error');
+    setActiveContextSourceIds((prev) => {
+      const next = new Set(prev);
+      next.delete(connectorId);
+      return next;
+    });
   } finally {
-    setSfPipelineLoading(false);
+    setContextSourceLoading(false);
   }
-}, [showToast]);
+}, [activeContextSourceIds, contextSourceData, showToast]);
+
+const handleLoadSalesforcePipeline = useCallback(async () => {
+  await handleToggleContextSource('salesforce_insights', 'Salesforce');
+}, [handleToggleContextSource]);
 
 async function onBeginProject(extraAnswers = null) {
   if (!canAccessExecutionTab) {
@@ -5846,17 +5926,28 @@ if (data?.model_type) {
       ...buildMessageAttachmentMeta(item),
       uploading: true,
     }));
-    const messageText = text || (
+    const activeContextParts = [...activeContextSourceIds]
+      .filter((id) => contextSourceData[id])
+      .map((id) => {
+        const source = connectedDataSources.find((item) => item.id === id);
+        return `[${source?.label || id} Context]\n${contextSourceData[id]}`;
+      });
+    const contextPrefix = activeContextParts.length > 0
+      ? `${activeContextParts.join('\n\n')}\n\n---\n\n`
+      : '';
+
+    const displayMessageText = (text || '').trim() || (
       chatFiles.length > 0
         ? 'Please review the attached files and help me interpret them.'
         : `Uploaded ${attachments.length} file${attachments.length === 1 ? '' : 's'}`
     );
+    const messageText = `${contextPrefix}${displayMessageText}`.trim();
 
     setMessages(prev => [
       ...prev,
       {
         role: 'user',
-        text: messageText,
+        text: displayMessageText,
         attachments,
       },
     ]);
@@ -9839,6 +9930,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
           </div>
 
           {renderObjectiveTags('jas-chat-objective-tags')}
+          {renderConnectorContextTags()}
 
           {sessionId && hasConversationMessages && (
             <div className="agent-chat-footer">

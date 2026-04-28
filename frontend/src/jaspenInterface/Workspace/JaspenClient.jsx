@@ -90,6 +90,8 @@ export const endpoints = {
   salesforcePipelineSummary: `${API_BASE}/api/v1/connectors/salesforce/pipeline/summary`,
   snowflakeQuery: `${API_BASE}/api/v1/connectors/snowflake/query`,
   snowflakeKpis: `${API_BASE}/api/v1/connectors/snowflake/kpis`,
+  generateIdeasFromConnector: `${API_BASE}/api/v1/connectors/generate-ideas`,
+  connectorGenerateIdeas: `${API_BASE}/api/v1/connectors/generate-ideas`,
 };
 // ---- Session ID for memory that survives Safari ITP ----
 const SID_KEY = 'jas_sid';
