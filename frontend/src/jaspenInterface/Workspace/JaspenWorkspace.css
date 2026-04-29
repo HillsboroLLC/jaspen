@@ -2020,119 +2020,103 @@
 }
 
 /* =========================================================
-   Dismissible tips card (Manus-style, sits above input)
+   Fixed bottom-right tips carousel (Manus-style)
    ========================================================= */
 
-.jas-tips-card {
-  position: relative;
-  max-width: 800px;
-  margin: 0 auto 12px;
-  padding: 14px 40px 14px 16px; /* right padding for the X button */
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--white);
-  box-shadow: 0 2px 12px rgba(15, 23, 42, 0.07);
-  animation: tips-slide-up 0.22s ease-out both;
+.jas-floattip {
+  position: fixed;
+  bottom: 22px;
+  right: 22px;
+  width: 232px;
+  background: var(--white, #fff);
+  border: 1px solid var(--border, #dde3ee);
+  border-radius: 12px;
+  padding: 11px 30px 10px 12px;
+  box-shadow: 0 4px 18px rgba(15, 23, 42, 0.11);
+  z-index: 200;
+  animation: floattip-in 0.2s ease-out both;
+  transition: opacity 0.18s ease, transform 0.18s ease;
 }
 
-@keyframes tips-slide-up {
-  from { opacity: 0; transform: translateY(10px); }
-  to   { opacity: 1; transform: translateY(0); }
+.jas-floattip.is-exiting {
+  opacity: 0;
+  transform: translateX(14px);
 }
 
-.jas-tips-close {
+@keyframes floattip-in {
+  from { opacity: 0; transform: translateX(14px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+.jas-floattip-close {
   position: absolute;
-  top: 10px;
-  right: 10px;
-  width: 22px;
-  height: 22px;
+  top: 7px;
+  right: 7px;
+  width: 18px;
+  height: 18px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 1.1rem;
-  color: var(--muted);
+  font-size: 0.95rem;
+  color: var(--muted, #94a3b8);
   border-radius: 999px;
   line-height: 1;
   padding: 0;
 }
 
-.jas-tips-close:hover {
-  background: var(--hover-bg, rgba(0,0,0,0.05));
-  color: var(--navy);
+.jas-floattip-close:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--navy, #1a2f5e);
 }
 
-.jas-tips-steps {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  flex-wrap: wrap;
+.jas-floattip-title {
+  margin: 0 0 3px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--navy, #1a2f5e);
+  line-height: 1.25;
 }
 
-.jas-tips-step {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  flex: 1;
-  min-width: 120px;
-}
-
-.jas-tips-num {
-  flex-shrink: 0;
-  width: 20px;
-  height: 20px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1.5px solid var(--navy, #1a2f5e);
-  border-radius: 999px;
+.jas-floattip-body {
+  margin: 0;
   font-size: 0.7rem;
-  font-weight: 700;
-  color: var(--navy, #1a2f5e);
-  margin-top: 1px;
+  color: var(--muted, #64748b);
+  line-height: 1.45;
 }
 
-.jas-tips-step-body {
+/* Progress dots */
+.jas-floattip-dots {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  gap: 4px;
+  margin-top: 9px;
+  align-items: center;
 }
 
-.jas-tips-step-body strong {
-  font-size: 0.78rem;
-  font-weight: 700;
-  color: var(--navy, #1a2f5e);
-  line-height: 1.2;
+.jas-floattip-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--border, #dde3ee);
+  transition: background 0.15s, width 0.15s;
 }
 
-.jas-tips-step-body span {
-  font-size: 0.72rem;
-  color: var(--muted);
-  line-height: 1.3;
+.jas-floattip-dot.active {
+  background: var(--navy, #1a2f5e);
+  width: 14px;
 }
 
-.jas-tips-arrow {
-  flex-shrink: 0;
-  color: var(--muted);
-  font-size: 0.8rem;
-  margin-top: 4px;
-  align-self: flex-start;
+.jas-floattip-dot.past {
+  background: #b0bcd4;
 }
 
 @media (max-width: 640px) {
-  .jas-tips-card {
-    padding: 12px 36px 12px 12px;
-  }
-
-  .jas-tips-steps {
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .jas-tips-arrow {
-    display: none;
+  .jas-floattip {
+    bottom: 80px;
+    right: 12px;
+    width: 200px;
   }
 }
 

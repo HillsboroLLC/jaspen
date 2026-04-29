@@ -1038,6 +1038,34 @@ function resolveSupportRoleSwitchValue(location) {
   return 'actual';
 }
 
+const WORKSPACE_TIPS = [
+  {
+    id: 'tip1',
+    title: 'Start with your goal',
+    body: 'Be specific — "Launch B2B SaaS for logistics" beats "build a startup". Jaspen builds a full strategy from your description.',
+  },
+  {
+    id: 'tip2',
+    title: 'Score before you plan',
+    body: 'Run the Jaspen Score to validate viability across financial health, market position, and execution readiness.',
+  },
+  {
+    id: 'tip3',
+    title: 'Model what-if scenarios',
+    body: 'Use the Scenarios tab to adjust cost, growth, and timeline levers and find your optimal path.',
+  },
+  {
+    id: 'tip4',
+    title: 'Generate your execution plan',
+    body: 'Say "Build my project plan" after scoring to get a full WBS with tasks, owners, and milestones.',
+  },
+  {
+    id: 'tip5',
+    title: 'Connect your data sources',
+    body: 'Link Snowflake or Salesforce in Data Sources to power AI recommendations from real operational data.',
+  },
+];
+
 export default function JaspenWorkspace() {
   // View states: intake | summary | scenario | comparison | execution
   const [view, setView] = useState('intake');
@@ -3039,13 +3067,20 @@ useEffect(() => {
     }
   }, [updateUiPreferences, user?.ui_preferences]);
 
-  // Dismissible tips card (Manus-style, persisted to localStorage)
-  const [tipsDismissed, setTipsDismissed] = useState(() => {
-    try { return localStorage.getItem('jaspen_tips_dismissed') === '1'; } catch { return false; }
+  // Dismissible tips carousel — fixed bottom-right, one card at a time
+  const [tipIndex, setTipIndex] = useState(() => {
+    try { return parseInt(localStorage.getItem('jaspen_tip_idx') || '0', 10); } catch { return 0; }
   });
-  const dismissTips = () => {
-    setTipsDismissed(true);
-    try { localStorage.setItem('jaspen_tips_dismissed', '1'); } catch { /* noop */ }
+  const [tipExiting, setTipExiting] = useState(false);
+  const dismissTip = () => {
+    if (tipExiting) return;
+    setTipExiting(true);
+    setTimeout(() => {
+      const next = tipIndex + 1;
+      try { localStorage.setItem('jaspen_tip_idx', String(next)); } catch { /* noop */ }
+      setTipIndex(next);
+      setTipExiting(false);
+    }, 200);
   };
 
   const deferSetupPrompt = () => {
@@ -9887,45 +9922,6 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
         {/* Input Area - Manus Style */}
         {!showSharedProjectsLanding && (
         <div className="jas-chat-input-area">
-          {/* Dismissible tips card — shown on empty threads until permanently closed */}
-          {messages.length === 0 && !tipsDismissed && (
-            <div className="jas-tips-card" role="note" aria-label="How Jaspen works">
-              <button className="jas-tips-close" onClick={dismissTips} aria-label="Dismiss tips">×</button>
-              <div className="jas-tips-steps">
-                <div className="jas-tips-step">
-                  <span className="jas-tips-num">1</span>
-                  <div className="jas-tips-step-body">
-                    <strong>Describe your idea</strong>
-                    <span>Tell Jaspen your project or business goal</span>
-                  </div>
-                </div>
-                <span className="jas-tips-arrow">→</span>
-                <div className="jas-tips-step">
-                  <span className="jas-tips-num">2</span>
-                  <div className="jas-tips-step-body">
-                    <strong>Get your Jaspen Score</strong>
-                    <span>AI scores viability across 4 dimensions</span>
-                  </div>
-                </div>
-                <span className="jas-tips-arrow">→</span>
-                <div className="jas-tips-step">
-                  <span className="jas-tips-num">3</span>
-                  <div className="jas-tips-step-body">
-                    <strong>Model scenarios</strong>
-                    <span>Adjust levers to find your optimal path</span>
-                  </div>
-                </div>
-                <span className="jas-tips-arrow">→</span>
-                <div className="jas-tips-step">
-                  <span className="jas-tips-num">4</span>
-                  <div className="jas-tips-step-body">
-                    <strong>Build your plan</strong>
-                    <span>Generate a full WBS with tasks and owners</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
           {renderStarterSelector()}
           <input
             ref={fileInputRef}
@@ -10105,6 +10101,28 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       )}
         </div>
       </main>
+
+      {/* Fixed bottom-right tips carousel */}
+      {tipIndex < WORKSPACE_TIPS.length && (
+        <div
+          key={WORKSPACE_TIPS[tipIndex].id}
+          className={`jas-floattip${tipExiting ? ' is-exiting' : ''}`}
+          role="note"
+          aria-label="Tip"
+        >
+          <button className="jas-floattip-close" onClick={dismissTip} aria-label="Dismiss tip">×</button>
+          <p className="jas-floattip-title">{WORKSPACE_TIPS[tipIndex].title}</p>
+          <p className="jas-floattip-body">{WORKSPACE_TIPS[tipIndex].body}</p>
+          <div className="jas-floattip-dots">
+            {WORKSPACE_TIPS.map((t, i) => (
+              <span
+                key={t.id}
+                className={`jas-floattip-dot${i === tipIndex ? ' active' : i < tipIndex ? ' past' : ''}`}
+              />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
