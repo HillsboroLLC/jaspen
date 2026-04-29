@@ -3039,6 +3039,15 @@ useEffect(() => {
     }
   }, [updateUiPreferences, user?.ui_preferences]);
 
+  // Dismissible tips card (Manus-style, persisted to localStorage)
+  const [tipsDismissed, setTipsDismissed] = useState(() => {
+    try { return localStorage.getItem('jaspen_tips_dismissed') === '1'; } catch { return false; }
+  });
+  const dismissTips = () => {
+    setTipsDismissed(true);
+    try { localStorage.setItem('jaspen_tips_dismissed', '1'); } catch { /* noop */ }
+  };
+
   const deferSetupPrompt = () => {
     const previousSelection = readOnboardingState(user)?.selection || onboardingInitialSelection || null;
     writeNamePromptDeferred(user, true);
@@ -9812,15 +9821,6 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
           </div>
         ) : messages.length === 0 ? (
           <div className="jas-chat-welcome">
-            <div className="workspace-journey-strip">
-              <div className="journey-step active"><span className="journey-num">1</span><span className="journey-label">Describe your idea</span></div>
-              <div className="journey-arrow">→</div>
-              <div className="journey-step"><span className="journey-num">2</span><span className="journey-label">Get your Jaspen Score</span></div>
-              <div className="journey-arrow">→</div>
-              <div className="journey-step"><span className="journey-num">3</span><span className="journey-label">Model scenarios</span></div>
-              <div className="journey-arrow">→</div>
-              <div className="journey-step"><span className="journey-num">4</span><span className="journey-label">Build your plan</span></div>
-            </div>
             <h2 className="jas-chat-welcome-title">
               <img
                 className="jas-chat-welcome-unicorn"
@@ -9887,6 +9887,45 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
         {/* Input Area - Manus Style */}
         {!showSharedProjectsLanding && (
         <div className="jas-chat-input-area">
+          {/* Dismissible tips card — shown on empty threads until permanently closed */}
+          {messages.length === 0 && !tipsDismissed && (
+            <div className="jas-tips-card" role="note" aria-label="How Jaspen works">
+              <button className="jas-tips-close" onClick={dismissTips} aria-label="Dismiss tips">×</button>
+              <div className="jas-tips-steps">
+                <div className="jas-tips-step">
+                  <span className="jas-tips-num">1</span>
+                  <div className="jas-tips-step-body">
+                    <strong>Describe your idea</strong>
+                    <span>Tell Jaspen your project or business goal</span>
+                  </div>
+                </div>
+                <span className="jas-tips-arrow">→</span>
+                <div className="jas-tips-step">
+                  <span className="jas-tips-num">2</span>
+                  <div className="jas-tips-step-body">
+                    <strong>Get your Jaspen Score</strong>
+                    <span>AI scores viability across 4 dimensions</span>
+                  </div>
+                </div>
+                <span className="jas-tips-arrow">→</span>
+                <div className="jas-tips-step">
+                  <span className="jas-tips-num">3</span>
+                  <div className="jas-tips-step-body">
+                    <strong>Model scenarios</strong>
+                    <span>Adjust levers to find your optimal path</span>
+                  </div>
+                </div>
+                <span className="jas-tips-arrow">→</span>
+                <div className="jas-tips-step">
+                  <span className="jas-tips-num">4</span>
+                  <div className="jas-tips-step-body">
+                    <strong>Build your plan</strong>
+                    <span>Generate a full WBS with tasks and owners</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
           {renderStarterSelector()}
           <input
             ref={fileInputRef}
