@@ -209,6 +209,29 @@ def _connect_snowflake(config):
 
 
 
+def test_snowflake_connection(user_id):
+    """
+    Attempt a lightweight connection test.
+    Returns (success: bool, error_message: str).
+    """
+    try:
+        config = snowflake_runtime_config(user_id)
+        conn = _connect_snowflake(config)
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT CURRENT_ACCOUNT()")
+            cur.fetchone()
+            cur.close()
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        return True, ""
+    except Exception as exc:
+        return False, str(exc)
+
+
 def run_allowlisted_query(user_id, table, *, columns=None, date_column=None, date_from=None, date_to=None, filters=None, order_by=None, limit=200):
     config = snowflake_runtime_config(user_id)
     missing = snowflake_missing_config(config)
@@ -324,4 +347,5 @@ __all__ = [
     "run_allowlisted_query",
     "snowflake_missing_config",
     "snowflake_runtime_config",
+    "test_snowflake_connection",
 ]

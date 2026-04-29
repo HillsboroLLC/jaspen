@@ -354,6 +354,13 @@
   font-weight: 700;
 }
 
+.connector-field-hint {
+  margin: -4px 0 10px;
+  font-size: 0.77rem;
+  color: var(--int-text-sub);
+  line-height: 1.4;
+}
+
 .connector-detail-actions {
   display: inline-flex;
   flex-wrap: wrap;

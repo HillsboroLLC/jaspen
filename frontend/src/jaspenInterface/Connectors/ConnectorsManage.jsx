@@ -53,8 +53,9 @@ const REQUIRED_FIELDS_BY_CONNECTOR = {
     'snowflake_warehouse',
     'snowflake_database',
     'snowflake_schema',
+    'snowflake_role',
     'snowflake_user',
-    'snowflake_password',
+    // password or private_key — handled by special case in validateRequiredFields
   ],
   oracle_fusion_insights: ['oracle_fusion_base_url', 'oracle_fusion_username', 'oracle_fusion_password'],
   servicenow_insights: ['servicenow_instance_url', 'servicenow_username', 'servicenow_password'],
@@ -779,27 +780,37 @@ export default function ConnectorsManage() {
     if (connectorId === 'snowflake_insights') {
       return (
         <>
-          {renderRequiredField('snowflake_account', 'Account')}
-          {renderRequiredField('snowflake_warehouse', 'Warehouse')}
-          {renderRequiredField('snowflake_database', 'Database')}
-          {renderRequiredField('snowflake_schema', 'Schema')}
-          <label>Role<input value={draft.snowflake_role} onChange={(event) => updateDraft('snowflake_role', event.target.value)} /></label>
-          {renderRequiredField('snowflake_user', 'User')}
+          {renderRequiredField('snowflake_account', 'Account Identifier', { placeholder: 'e.g. abc12345.us-east-1 or abc12345.us-east-1.aws' })}
+          <p className="connector-field-hint">Find this in Snowsight → Admin → Accounts. Use the format shown without .snowflakecomputing.com.</p>
+          {renderRequiredField('snowflake_warehouse', 'Warehouse', { placeholder: 'e.g. COMPUTE_WH' })}
+          {renderRequiredField('snowflake_database', 'Database', { placeholder: 'e.g. SNOWFLAKE_SAMPLE_DATA' })}
+          {renderRequiredField('snowflake_schema', 'Schema', { placeholder: 'e.g. TPCH_SF1 or PUBLIC' })}
+          {renderRequiredField('snowflake_role', 'Role', { placeholder: 'e.g. ACCOUNTADMIN or SYSADMIN' })}
+          <p className="connector-field-hint">Your Snowflake role must have SELECT access on the tables you want to query. ACCOUNTADMIN or SYSADMIN work for testing.</p>
+          {renderRequiredField('snowflake_user', 'Username', { placeholder: 'Your Snowflake login username' })}
           {renderRequiredField('snowflake_password', 'Password', { type: 'password', placeholder: 'Enter password to set or rotate' })}
           <label>
-            Private Key
+            Private Key (alternative to password)
             <input
               type="password"
               value={draft.snowflake_private_key}
               onChange={(event) => updateDraft('snowflake_private_key', event.target.value)}
-              placeholder="Enter key to set or rotate"
+              placeholder="Enter PEM key to set or rotate"
               className={inputClassName('snowflake_private_key')}
               aria-invalid={Boolean(fieldError('snowflake_private_key'))}
               aria-describedby={describedBy('snowflake_private_key')}
             />
             <FieldError id={`connector-field-error-${connectorId}-snowflake_private_key`} message={fieldError('snowflake_private_key')} />
           </label>
-          <label>Table Allowlist (comma-separated)<input value={draft.snowflake_table_allowlist} onChange={(event) => updateDraft('snowflake_table_allowlist', event.target.value)} /></label>
+          <label>
+            Table Allowlist (comma-separated)
+            <input
+              value={draft.snowflake_table_allowlist}
+              onChange={(event) => updateDraft('snowflake_table_allowlist', event.target.value)}
+              placeholder="e.g. lineitem, orders, customer"
+            />
+          </label>
+          <p className="connector-field-hint">List the tables Jaspen is allowed to query. Use schema.table format (e.g. tpch_sf1.lineitem) or just table name if it matches your schema above.</p>
         </>
       );
     }

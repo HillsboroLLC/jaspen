@@ -45,7 +45,7 @@ from app.salesforce_sync import (
 )
 from app.routes.strategy import get_llm_client
 from app.smartsheet_sync import apply_smartsheet_webhook_to_wbs, sync_wbs_to_smartsheet
-from app.snowflake_insights import extract_kpi_metrics, run_allowlisted_query
+from app.snowflake_insights import extract_kpi_metrics, run_allowlisted_query, test_snowflake_connection
 from app.tool_registry import get_tool_entitlements
 from app.workfront_sync import apply_workfront_webhook_to_wbs, sync_wbs_to_workfront
 
@@ -756,6 +756,17 @@ def update_connector(connector_id):
             if not valid:
                 return jsonify({
                     "error": "Unable to validate Smartsheet token.",
+                    "connector_id": connector_id,
+                }), 400
+        if connector_id == "snowflake_insights":
+            # Temporarily write candidate settings so test_snowflake_connection can read them
+            update_connector_settings(user.id, connector_id, updates)
+            ok, err_msg = test_snowflake_connection(user.id)
+            if not ok:
+                # Revert connection_status so we don't leave a false "connected" record
+                update_connector_settings(user.id, connector_id, {"connection_status": "disconnected"})
+                return jsonify({
+                    "error": f"Could not connect to Snowflake: {err_msg}",
                     "connector_id": connector_id,
                 }), 400
 
