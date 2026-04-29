@@ -258,7 +258,6 @@ function validateRequiredFields(connectorId, draft) {
 
 function buildUpdatePayload(connectorId, draft) {
   const payload = {
-    connection_status: draft.connection_status,
     sync_mode: draft.sync_mode,
     conflict_policy: draft.conflict_policy,
     auto_sync: Boolean(draft.auto_sync),
