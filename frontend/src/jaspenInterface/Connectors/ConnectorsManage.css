@@ -411,16 +411,32 @@
 }
 
 .connector-auto-sync {
+  display: inline-flex;
   align-items: center;
   grid-auto-flow: column;
   justify-content: flex-start;
   gap: 8px;
+  padding-top: 20px;
 }
 
 .connector-auto-sync input {
   width: 16px;
   height: 16px;
   margin: 0;
+  position: relative;
+  top: -1px;
+}
+
+.connector-status-readonly {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.connector-status-readonly .int-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
 }
 
 /* Generic field grid (used by Jira, Workfront, etc.) */
@@ -553,6 +569,21 @@
 
 .connector-audit-history {
   margin-top: 20px;
+}
+
+.connector-diagnostics {
+  margin-top: 20px;
+}
+
+.connector-diagnostics h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.connector-diagnostics-summary {
+  margin: 0 0 10px;
+  color: #60719a;
+  font-size: 0.8rem;
 }
 
 .connector-audit-history h3 {

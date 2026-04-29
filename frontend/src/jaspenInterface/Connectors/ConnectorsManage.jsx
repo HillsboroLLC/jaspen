@@ -336,6 +336,8 @@ export default function ConnectorsManage() {
   const [error, setError] = useState('');
   const [draftErrors, setDraftErrors] = useState({});
   const [discardDialog, setDiscardDialog] = useState(null);
+  const [snowflakeProbeBusy, setSnowflakeProbeBusy] = useState(false);
+  const [snowflakeProbeResult, setSnowflakeProbeResult] = useState(null);
 
   const adminPreviewPlan = useMemo(() => {
     if (!Boolean(user?.is_admin)) return '';
@@ -614,7 +616,11 @@ export default function ConnectorsManage() {
         if (live.status === 'error') {
           setError(`Connection failed: ${live.message || 'Unknown error'}`);
         } else {
-          setMessage(`Connection test passed: ${live.message || live.status}`);
+          if (selectedConnector.id === 'snowflake_insights') {
+            setMessage(`Connectivity test passed: ${live.message || live.status}. Next, run "Validate Data Access" to confirm table permissions.`);
+          } else {
+            setMessage(`Connection test passed: ${live.message || live.status}`);
+          }
         }
       } else {
         const storedStatus = data?.health?.status || 'unknown';
@@ -625,6 +631,63 @@ export default function ConnectorsManage() {
       setError(err?.message || 'Health check failed.');
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function validateSnowflakeDataAccess() {
+    if (!selectedConnector || selectedConnector.id !== 'snowflake_insights' || !selectedDraft) return;
+    const tables = parseList(selectedDraft.snowflake_table_allowlist).slice(0, 10);
+    if (!tables.length) {
+      setError('Add at least one table in Table Allowlist before running data validation.');
+      return;
+    }
+
+    setSnowflakeProbeBusy(true);
+    setError('');
+    setMessage('');
+    setSnowflakeProbeResult(null);
+    try {
+      const results = [];
+      for (const table of tables) {
+        const response = await authFetch(`${API_BASE}/api/v1/connectors/snowflake/query`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: authHeaders(true, 'POST'),
+          body: JSON.stringify({ table, limit: 1 }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          results.push({
+            table,
+            ok: false,
+            message: data?.error || `HTTP ${response.status}`,
+          });
+          continue;
+        }
+        results.push({
+          table,
+          ok: true,
+          message: `Readable (${Array.isArray(data?.rows) ? data.rows.length : 0} row sampled)`,
+        });
+      }
+
+      const okCount = results.filter((row) => row.ok).length;
+      const failCount = results.length - okCount;
+      setSnowflakeProbeResult({
+        checkedAt: Date.now(),
+        rows: results,
+        okCount,
+        failCount,
+      });
+      if (failCount === 0) {
+        setMessage(`Snowflake data validation passed for ${okCount}/${results.length} allowlisted table(s).`);
+      } else {
+        setError(`Snowflake data validation failed for ${failCount}/${results.length} table(s). Review diagnostics below.`);
+      }
+    } catch (err) {
+      setError(err?.message || 'Snowflake data validation failed.');
+    } finally {
+      setSnowflakeProbeBusy(false);
     }
   }
 
@@ -1030,6 +1093,17 @@ export default function ConnectorsManage() {
                     </div>
                     <div className="connector-detail-actions">
                       <button type="button" onClick={testConnection} disabled={busy} aria-disabled={busy}><FontAwesomeIcon icon={faFlask} /> Test Connection</button>
+                      {selectedConnector.id === 'snowflake_insights' && (
+                        <button
+                          type="button"
+                          onClick={validateSnowflakeDataAccess}
+                          disabled={busy || snowflakeProbeBusy}
+                          aria-disabled={busy || snowflakeProbeBusy}
+                        >
+                          <FontAwesomeIcon icon={faPlugCircleCheck} />
+                          {snowflakeProbeBusy ? 'Validating data…' : 'Validate Data Access'}
+                        </button>
+                      )}
                       <button type="button" onClick={syncNow} disabled={busy} aria-disabled={busy}><FontAwesomeIcon icon={faRotate} /> Sync Now</button>
                       <button type="button" onClick={saveConnector} disabled={busy} aria-disabled={busy}><FontAwesomeIcon icon={faServer} /> Save Settings</button>
                       <button
@@ -1046,11 +1120,12 @@ export default function ConnectorsManage() {
 
                   <div className="connector-core-controls">
                     <label>
-                      Status
-                      <select value={selectedDraft.connection_status} onChange={(event) => updateDraft('connection_status', event.target.value)}>
-                        <option value="disconnected">Disconnected</option>
-                        <option value="connected">Connected</option>
-                      </select>
+                      Connection Status
+                      <div className="connector-status-readonly">
+                        <span className={`int-badge ${selectedConnector.connected ? 'int-badge-success' : 'int-badge-danger'}`}>
+                          {selectedConnector.connected ? 'Connected' : 'Disconnected'}
+                        </span>
+                      </div>
                     </label>
                     <label>
                       Sync Mode
@@ -1074,7 +1149,7 @@ export default function ConnectorsManage() {
                     </label>
                     <label className="connector-auto-sync">
                       <input type="checkbox" checked={Boolean(selectedDraft.auto_sync)} onChange={(event) => updateDraft('auto_sync', event.target.checked)} />
-                      Auto-sync
+                      <span>Auto-sync</span>
                     </label>
                     {(selectedConnector.id === 'jira_sync' || selectedConnector.id === 'workfront_sync' || selectedConnector.id === 'smartsheet_sync') && (
                       <label>
@@ -1098,6 +1173,34 @@ export default function ConnectorsManage() {
                       </div>
                     )
                   }
+                  {selectedConnector.id === 'snowflake_insights' && snowflakeProbeResult && (
+                    <section className="connector-diagnostics">
+                      <h3>Snowflake Diagnostics</h3>
+                      <p className="connector-diagnostics-summary">
+                        Checked {snowflakeProbeResult.rows.length} table(s): {snowflakeProbeResult.okCount} passed, {snowflakeProbeResult.failCount} failed.
+                      </p>
+                      <div className="connector-audit-table-wrap">
+                        <table>
+                          <thead>
+                            <tr>
+                              <th>Table</th>
+                              <th>Status</th>
+                              <th>Details</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {snowflakeProbeResult.rows.map((row) => (
+                              <tr key={`sf-probe-${row.table}`}>
+                                <td>{row.table}</td>
+                                <td>{row.ok ? 'pass' : 'fail'}</td>
+                                <td>{row.message}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </section>
+                  )}
 
                   <section className="connector-audit-history">
                     <h3>Sync History</h3>
