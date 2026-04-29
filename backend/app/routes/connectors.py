@@ -264,8 +264,11 @@ def _missing_required_fields(connector_id, settings):
     runtime = _runtime_fields(connector_id, settings)
     missing = [key for key, value in runtime.items() if not value]
     if connector_id == "snowflake_insights":
-        if "snowflake_password" in missing and "snowflake_private_key" in missing:
-            missing = [field for field in missing if field not in {"snowflake_password", "snowflake_private_key"}]
+        # Snowflake auth supports password OR private key; either one satisfies setup.
+        has_password = bool(_text(runtime.get("snowflake_password")))
+        has_private_key = bool(_text(runtime.get("snowflake_private_key")))
+        missing = [field for field in missing if field not in {"snowflake_password", "snowflake_private_key"}]
+        if not has_password and not has_private_key:
             missing.append("snowflake_password_or_private_key")
     return missing
 
