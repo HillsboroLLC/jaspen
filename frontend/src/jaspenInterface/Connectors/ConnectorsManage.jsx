@@ -338,6 +338,7 @@ export default function ConnectorsManage() {
   const [discardDialog, setDiscardDialog] = useState(null);
   const [snowflakeProbeBusy, setSnowflakeProbeBusy] = useState(false);
   const [snowflakeProbeResult, setSnowflakeProbeResult] = useState(null);
+  const [setupModeByConnector, setSetupModeByConnector] = useState({});
 
   const adminPreviewPlan = useMemo(() => {
     if (!Boolean(user?.is_admin)) return '';
@@ -489,6 +490,9 @@ export default function ConnectorsManage() {
 
   const selectedDraft = selectedConnector ? drafts[selectedConnector.id] || normalizeDraft(selectedConnector) : null;
   const selectedDraftErrors = selectedConnector ? draftErrors[selectedConnector.id] || {} : {};
+  const selectedSetupMode = selectedConnector
+    ? (setupModeByConnector[selectedConnector.id] || 'automatic')
+    : 'automatic';
   const selectedConnectorDirty = useMemo(
     () => connectorDraftChanged(selectedConnector, selectedDraft),
     [selectedConnector, selectedDraft]
@@ -629,6 +633,85 @@ export default function ConnectorsManage() {
       await loadAudit(selectedConnector.id);
     } catch (err) {
       setError(err?.message || 'Health check failed.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runSetupCheck() {
+    if (!selectedConnector || !selectedDraft) return;
+    const validationErrors = validateRequiredFields(selectedConnector.id, selectedDraft);
+    if (Object.keys(validationErrors).length > 0) {
+      setDraftErrors((prev) => ({
+        ...prev,
+        [selectedConnector.id]: validationErrors,
+      }));
+      setError('Please fix the highlighted required fields.');
+      setMessage('');
+      return;
+    }
+
+    setBusy(true);
+    setSnowflakeProbeResult(null);
+    setError('');
+    setMessage('');
+
+    try {
+      const payload = buildUpdatePayload(selectedConnector.id, selectedDraft);
+      const saveRes = await authFetch(`${API_BASE}/api/v1/connectors/${encodeURIComponent(selectedConnector.id)}`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: authHeaders(true, 'PATCH'),
+        body: JSON.stringify(payload),
+      });
+      const saveData = await saveRes.json().catch(() => ({}));
+      if (!saveRes.ok) throw new Error(saveData?.error || `Save failed (${saveRes.status})`);
+
+      const healthRes = await authFetch(`${API_BASE}/api/v1/connectors/${encodeURIComponent(selectedConnector.id)}/health`, {
+        credentials: 'include',
+        headers: authHeaders(false, 'GET'),
+      });
+      const healthData = await healthRes.json().catch(() => ({}));
+      if (!healthRes.ok) throw new Error(healthData?.error || `Connection test failed (${healthRes.status})`);
+
+      if (selectedConnector.id === 'snowflake_insights') {
+        const tables = parseList(selectedDraft.snowflake_table_allowlist).slice(0, 10);
+        const results = [];
+        for (const table of tables) {
+          const response = await authFetch(`${API_BASE}/api/v1/connectors/snowflake/query`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: authHeaders(true, 'POST'),
+            body: JSON.stringify({ table, limit: 1 }),
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            results.push({ table, ok: false, message: data?.error || `HTTP ${response.status}` });
+          } else {
+            results.push({
+              table,
+              ok: true,
+              message: `Readable (${Array.isArray(data?.rows) ? data.rows.length : 0} row sampled)`,
+            });
+          }
+        }
+        const okCount = results.filter((row) => row.ok).length;
+        const failCount = results.length - okCount;
+        setSnowflakeProbeResult({
+          checkedAt: Date.now(),
+          rows: results,
+          okCount,
+          failCount,
+        });
+        if (failCount > 0) {
+          throw new Error(`Snowflake validation failed for ${failCount}/${results.length} table(s).`);
+        }
+      }
+
+      await syncNow();
+      setMessage('Setup check passed. Connector is ready to use.');
+    } catch (err) {
+      setError(err?.message || 'Setup check failed.');
     } finally {
       setBusy(false);
     }
@@ -1112,20 +1195,44 @@ export default function ConnectorsManage() {
                       )}
                     </div>
                     <div className="connector-detail-actions">
-                      <button type="button" onClick={testConnection} disabled={busy} aria-disabled={busy}><FontAwesomeIcon icon={faFlask} /> Test Connection</button>
-                      {selectedConnector.id === 'snowflake_insights' && (
+                      <div className="connector-setup-mode">
                         <button
                           type="button"
-                          onClick={validateSnowflakeDataAccess}
-                          disabled={busy || snowflakeProbeBusy}
-                          aria-disabled={busy || snowflakeProbeBusy}
+                          className={selectedSetupMode === 'automatic' ? 'is-active' : ''}
+                          onClick={() => setSetupModeByConnector((prev) => ({ ...prev, [selectedConnector.id]: 'automatic' }))}
                         >
-                          <FontAwesomeIcon icon={faPlugCircleCheck} />
-                          {snowflakeProbeBusy ? 'Validating data…' : 'Validate Data Access'}
+                          Automatic
                         </button>
+                        <button
+                          type="button"
+                          className={selectedSetupMode === 'manual' ? 'is-active' : ''}
+                          onClick={() => setSetupModeByConnector((prev) => ({ ...prev, [selectedConnector.id]: 'manual' }))}
+                        >
+                          Manual
+                        </button>
+                      </div>
+                      {selectedSetupMode === 'automatic' ? (
+                        <button type="button" onClick={runSetupCheck} disabled={busy} aria-disabled={busy}>
+                          <FontAwesomeIcon icon={faPlugCircleCheck} /> Run Setup Check
+                        </button>
+                      ) : (
+                        <>
+                          <button type="button" onClick={testConnection} disabled={busy} aria-disabled={busy}><FontAwesomeIcon icon={faFlask} /> Test Connection</button>
+                          {selectedConnector.id === 'snowflake_insights' && (
+                            <button
+                              type="button"
+                              onClick={validateSnowflakeDataAccess}
+                              disabled={busy || snowflakeProbeBusy}
+                              aria-disabled={busy || snowflakeProbeBusy}
+                            >
+                              <FontAwesomeIcon icon={faPlugCircleCheck} />
+                              {snowflakeProbeBusy ? 'Validating data…' : 'Validate Data Access'}
+                            </button>
+                          )}
+                          <button type="button" onClick={syncNow} disabled={busy} aria-disabled={busy}><FontAwesomeIcon icon={faRotate} /> Sync Now</button>
+                          <button type="button" onClick={saveConnector} disabled={busy} aria-disabled={busy}><FontAwesomeIcon icon={faServer} /> Save Settings</button>
+                        </>
                       )}
-                      <button type="button" onClick={syncNow} disabled={busy} aria-disabled={busy}><FontAwesomeIcon icon={faRotate} /> Sync Now</button>
-                      <button type="button" onClick={saveConnector} disabled={busy} aria-disabled={busy}><FontAwesomeIcon icon={faServer} /> Save Settings</button>
                       <button
                         type="button"
                         onClick={revertSelectedDraft}

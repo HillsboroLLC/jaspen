@@ -344,6 +344,7 @@
   flex-wrap: wrap;
   gap: 6px;
   flex-shrink: 0;
+  align-items: center;
 }
 
 .connector-detail-actions button {
@@ -362,6 +363,33 @@
 
 .connector-detail-actions button:disabled {
   opacity: 0.55;
+}
+
+.connector-setup-mode {
+  display: inline-flex;
+  border: 1px solid var(--int-border-md);
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--int-surface);
+  margin-right: 2px;
+}
+
+.connector-setup-mode button {
+  border: 0;
+  background: transparent;
+  height: 30px;
+  padding: 0 12px;
+  font-size: 0.78rem;
+  color: #334a78;
+}
+
+.connector-setup-mode button + button {
+  border-left: 1px solid var(--int-border);
+}
+
+.connector-setup-mode button.is-active {
+  background: #161f3b;
+  color: #fff;
 }
 
 /* ---- Core dropdowns row (Status / Sync Mode / etc.) ---- */
