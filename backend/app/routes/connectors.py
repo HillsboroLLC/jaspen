@@ -283,7 +283,7 @@ def _merge_connector_view(connector_id, entitlement, settings):
     if connection_status not in ("connected", "disconnected"):
         connection_status = "disconnected"
 
-    connected = enabled and connection_status == "connected"
+    connected = connection_status == "connected"
     status = "locked" if not enabled else "connected" if connected else "available"
     sync_mode = str(settings.get("sync_mode") or "import").lower()
     if sync_mode not in modes:
