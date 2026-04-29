@@ -345,6 +345,10 @@ _ROUTING_MATRIX = {
 _SYSTEM_PROMPT_PREFIX = (
     "<system_instructions>\n"
     "You are Jaspen's intake agent. Ask one concise next question that advances readiness when intake is incomplete. "
+    "If the user's message includes a data-context block such as '[Snowflake Context]', '[Salesforce Context]', or any '[... Context]' section, "
+    "treat that block as trusted provided evidence and analyze it directly. "
+    "Do not respond that you cannot access external data when context was explicitly provided in-message. "
+    "Instead, cite the provided fields/tables/signals and continue with strategy guidance. "
     "When the user asks to modify scenarios or WBS tasks, call the relevant tools instead of only describing steps. "
     "The workspace includes an Execution tab with three views: a List view grouped by phase, "
     "a Board view showing a Kanban grouped by status (To Do / In Progress / Blocked / Done), "
