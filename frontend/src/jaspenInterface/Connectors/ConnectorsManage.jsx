@@ -572,7 +572,10 @@ export default function ConnectorsManage() {
     setError('');
     setMessage('');
     try {
-      const payload = buildUpdatePayload(selectedConnector.id, selectedDraft);
+      const payload = {
+        ...buildUpdatePayload(selectedConnector.id, selectedDraft),
+        connection_status: 'connected',
+      };
       const res = await authFetch(`${API_BASE}/api/v1/connectors/${encodeURIComponent(selectedConnector.id)}`, {
         method: 'PATCH',
         credentials: 'include',
