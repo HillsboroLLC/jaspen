@@ -1042,6 +1042,7 @@ def salesforce_pipeline_snapshot():
     max_records = request.args.get("limit", 200)
     try:
         result = fetch_pipeline_summary(user.id, lookback_days=lookback_days, max_records=max_records)
+        update_connector_settings(user.id, "salesforce_insights", {"connection_status": "connected"})
         mark_connector_sync_result(user.id, "salesforce_insights", "success")
         append_sync_audit_event(
             user.id,
@@ -1092,6 +1093,7 @@ def snowflake_query():
             order_by=payload.get("order_by"),
             limit=payload.get("limit", 200),
         )
+        update_connector_settings(user.id, "snowflake_insights", {"connection_status": "connected"})
         mark_connector_sync_result(user.id, "snowflake_insights", "success")
         append_sync_audit_event(
             user.id,
