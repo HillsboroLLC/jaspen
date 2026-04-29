@@ -713,6 +713,17 @@ export default function ConnectorsManage() {
       } else if (selectedConnector.id === 'salesforce_insights') {
         endpoint = `${API_BASE}/api/v1/connectors/salesforce/pipeline/summary?days=30&limit=200`;
         method = 'GET';
+      } else if (selectedConnector.id === 'snowflake_insights') {
+        const tables = parseList(selectedDraft?.snowflake_table_allowlist || '');
+        if (!tables.length) {
+          throw new Error('Add at least one table in Table Allowlist to run Snowflake sync.');
+        }
+        endpoint = `${API_BASE}/api/v1/connectors/snowflake/query`;
+        method = 'POST';
+        body = {
+          table: tables[0],
+          limit: 200,
+        };
       } else {
         endpoint = `${API_BASE}/api/v1/connectors/${encodeURIComponent(selectedConnector.id)}/health`;
         method = 'GET';
@@ -727,7 +738,16 @@ export default function ConnectorsManage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || `Sync failed (${res.status})`);
 
-      setMessage('Sync completed successfully.');
+      if (selectedConnector.id === 'snowflake_insights') {
+        const rowCount = Array.isArray(data?.rows) ? data.rows.length : 0;
+        const tableName = String(data?.summary?.table || body?.table || '').trim();
+        setMessage(`Snowflake sync completed: read ${rowCount} row(s) from ${tableName || 'allowlisted table'}.`);
+      } else if (selectedConnector.id === 'salesforce_insights') {
+        const oppCount = Number(data?.summary?.opportunity_count || 0);
+        setMessage(`Salesforce sync completed: ${oppCount} opportunities summarized.`);
+      } else {
+        setMessage('Sync completed successfully.');
+      }
       await loadConnectors();
       await loadAudit(selectedConnector.id);
     } catch (err) {
@@ -1147,10 +1167,6 @@ export default function ConnectorsManage() {
                       External Workspace
                       <input value={selectedDraft.external_workspace} onChange={(event) => updateDraft('external_workspace', event.target.value)} />
                     </label>
-                    <label className="connector-auto-sync">
-                      <input type="checkbox" checked={Boolean(selectedDraft.auto_sync)} onChange={(event) => updateDraft('auto_sync', event.target.checked)} />
-                      <span>Auto-sync</span>
-                    </label>
                     {(selectedConnector.id === 'jira_sync' || selectedConnector.id === 'workfront_sync' || selectedConnector.id === 'smartsheet_sync') && (
                       <label>
                         Sync Thread
@@ -1162,6 +1178,19 @@ export default function ConnectorsManage() {
                         </select>
                       </label>
                     )}
+                  </div>
+                  <div className="connector-auto-sync-row">
+                    <label className="connector-auto-sync">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(selectedDraft.auto_sync)}
+                        onChange={(event) => updateDraft('auto_sync', event.target.checked)}
+                      />
+                      <span>Auto-sync</span>
+                    </label>
+                    <p className="connector-auto-sync-help">
+                      Auto-sync runs scheduled refreshes for this connector when supported.
+                    </p>
                   </div>
 
                   {/* Snowflake renders its own grid to avoid auto-fit column breaks */}

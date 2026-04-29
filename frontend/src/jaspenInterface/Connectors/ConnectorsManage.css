@@ -416,7 +416,7 @@
   grid-auto-flow: column;
   justify-content: flex-start;
   gap: 8px;
-  padding-top: 20px;
+  padding-top: 0;
 }
 
 .connector-auto-sync input {
@@ -437,6 +437,24 @@
   display: inline-flex;
   align-items: center;
   height: 24px;
+}
+
+.connector-auto-sync-row {
+  margin-top: 12px;
+  border: 1px solid var(--int-border);
+  border-radius: var(--int-radius-sm);
+  background: var(--int-bg, #f8fafc);
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.connector-auto-sync-help {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--int-text-sub, #475569);
 }
 
 /* Generic field grid (used by Jira, Workfront, etc.) */
@@ -680,5 +698,10 @@
   .connector-auto-sync {
     grid-auto-flow: row;
     justify-content: flex-start;
+  }
+
+  .connector-auto-sync-row {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }
