@@ -814,6 +814,30 @@ def get_connector_health(connector_id):
                 "last_sync_at": settings.get("last_sync_at"),
             }
         )
+    if connector_id == "snowflake_insights":
+        ok, err_msg = test_snowflake_connection(user.id)
+        live_status = {
+            "status": "healthy" if ok else "error",
+            "message": "Connection successful" if ok else (err_msg or "Connection failed"),
+        }
+        if ok:
+            mark_connector_sync_result(user.id, connector_id, "success")
+            append_sync_audit_event(
+                user.id,
+                connector_id,
+                action="health_check",
+                status="success",
+                message="Live connection test passed",
+            )
+        else:
+            mark_connector_sync_result(user.id, connector_id, "failed", error_message=err_msg)
+            append_sync_audit_event(
+                user.id,
+                connector_id,
+                action="health_check",
+                status="failed",
+                message=err_msg or "Connection failed",
+            )
     return jsonify({
         "success": True,
         "connector_id": connector_id,

@@ -609,8 +609,17 @@ export default function ConnectorsManage() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || `Test failed (${res.status})`);
-      const liveStatus = data?.live_status?.status || data?.health?.status || 'unknown';
-      setMessage(`Health check complete: ${liveStatus}`);
+      const live = data?.live_status;
+      if (live) {
+        if (live.status === 'error') {
+          setError(`Connection failed: ${live.message || 'Unknown error'}`);
+        } else {
+          setMessage(`Connection test passed: ${live.message || live.status}`);
+        }
+      } else {
+        const storedStatus = data?.health?.status || 'unknown';
+        setMessage(`Health check complete: ${storedStatus}`);
+      }
       await loadAudit(selectedConnector.id);
     } catch (err) {
       setError(err?.message || 'Health check failed.');
@@ -778,40 +787,59 @@ export default function ConnectorsManage() {
     }
 
     if (connectorId === 'snowflake_insights') {
+      // Snowflake renders its own grid — caller must NOT wrap in connector-field-grid
       return (
-        <>
-          {renderRequiredField('snowflake_account', 'Account Identifier', { placeholder: 'e.g. abc12345.us-east-1 or abc12345.us-east-1.aws' })}
-          <p className="connector-field-hint">Find this in Snowsight → Admin → Accounts. Use the format shown without .snowflakecomputing.com.</p>
+        <div className="connector-sf-grid">
+          {/* Setup guide */}
+          <p className="connector-sf-guide">
+            <strong>Account:</strong> Snowsight → Admin → Accounts. Format: <code>abc12345.us-east-1</code> — no <em>.snowflakecomputing.com</em>.{' '}
+            <strong>Role:</strong> Must have SELECT on your tables; <code>SYSADMIN</code> works for testing.{' '}
+            <strong>Table Allowlist:</strong> Required — Jaspen only queries tables you explicitly list here.
+          </p>
+
+          {/* Row 1: Account + Warehouse */}
+          {renderRequiredField('snowflake_account', 'Account Identifier', { placeholder: 'e.g. qzc42998.us-east-1' })}
           {renderRequiredField('snowflake_warehouse', 'Warehouse', { placeholder: 'e.g. COMPUTE_WH' })}
+
+          {/* Row 2: Database + Schema */}
           {renderRequiredField('snowflake_database', 'Database', { placeholder: 'e.g. SNOWFLAKE_SAMPLE_DATA' })}
-          {renderRequiredField('snowflake_schema', 'Schema', { placeholder: 'e.g. TPCH_SF1 or PUBLIC' })}
-          {renderRequiredField('snowflake_role', 'Role', { placeholder: 'e.g. ACCOUNTADMIN or SYSADMIN' })}
-          <p className="connector-field-hint">Your Snowflake role must have SELECT access on the tables you want to query. ACCOUNTADMIN or SYSADMIN work for testing.</p>
-          {renderRequiredField('snowflake_user', 'Username', { placeholder: 'Your Snowflake login username' })}
-          {renderRequiredField('snowflake_password', 'Password', { type: 'password', placeholder: 'Enter password to set or rotate' })}
+          {renderRequiredField('snowflake_schema', 'Schema', { placeholder: 'e.g. TPCH_SF1' })}
+
+          {/* Row 3: Role + Username */}
+          {renderRequiredField('snowflake_role', 'Role', { placeholder: 'e.g. SYSADMIN' })}
+          {renderRequiredField('snowflake_user', 'Username', { placeholder: 'Your Snowflake username' })}
+
+          {/* Credentials section */}
+          <p className="connector-sf-section">Credentials — password or private key required</p>
+          {renderRequiredField('snowflake_password', 'Password', { type: 'password', placeholder: 'Enter to set or rotate' })}
           <label>
-            Private Key (alternative to password)
+            Private Key (alternative)
             <input
               type="password"
               value={draft.snowflake_private_key}
               onChange={(event) => updateDraft('snowflake_private_key', event.target.value)}
-              placeholder="Enter PEM key to set or rotate"
+              placeholder="Paste PEM key to set or rotate"
               className={inputClassName('snowflake_private_key')}
               aria-invalid={Boolean(fieldError('snowflake_private_key'))}
               aria-describedby={describedBy('snowflake_private_key')}
             />
             <FieldError id={`connector-field-error-${connectorId}-snowflake_private_key`} message={fieldError('snowflake_private_key')} />
           </label>
-          <label>
-            Table Allowlist (comma-separated)
+          {fieldError('snowflake_password') && fieldError('snowflake_password') === fieldError('snowflake_private_key') && (
+            <p className="connector-sf-error-text">{fieldError('snowflake_password')}</p>
+          )}
+
+          {/* Data access */}
+          <p className="connector-sf-section">Data Access</p>
+          <label className="connector-sf-full">
+            Table Allowlist <span className="connector-required-marker" aria-hidden="true"> *</span>
             <input
               value={draft.snowflake_table_allowlist}
               onChange={(event) => updateDraft('snowflake_table_allowlist', event.target.value)}
-              placeholder="e.g. lineitem, orders, customer"
+              placeholder="e.g. tpch_sf1.lineitem, tpch_sf1.orders, tpch_sf1.customer"
             />
           </label>
-          <p className="connector-field-hint">List the tables Jaspen is allowed to query. Use schema.table format (e.g. tpch_sf1.lineitem) or just table name if it matches your schema above.</p>
-        </>
+        </div>
       );
     }
 
@@ -1061,9 +1089,15 @@ export default function ConnectorsManage() {
                     )}
                   </div>
 
-                  <div className="connector-field-grid">
-                    {renderConnectorSpecificFields(selectedConnector.id, selectedDraft)}
-                  </div>
+                  {/* Snowflake renders its own grid to avoid auto-fit column breaks */}
+                  {selectedConnector.id === 'snowflake_insights'
+                    ? renderConnectorSpecificFields(selectedConnector.id, selectedDraft)
+                    : (
+                      <div className="connector-field-grid">
+                        {renderConnectorSpecificFields(selectedConnector.id, selectedDraft)}
+                      </div>
+                    )
+                  }
 
                   <section className="connector-audit-history">
                     <h3>Sync History</h3>

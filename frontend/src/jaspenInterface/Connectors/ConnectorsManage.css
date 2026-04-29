@@ -1,3 +1,8 @@
+/* =========================================================
+   Connectors Manage — full-page anchored layout
+   ========================================================= */
+
+/* Remove extra padding; .int-page already applies --int-page-pad */
 .connectors-manage-page {
   padding: 24px;
 }
@@ -17,6 +22,7 @@
   color: var(--int-text-sub);
 }
 
+/* ---- Status / message banners ---- */
 .connectors-manage-state {
   margin-top: 14px;
   border: 1px solid var(--int-border);
@@ -44,6 +50,7 @@
   color: #1d7b42;
 }
 
+/* ---- Skeletons ---- */
 .connectors-skeleton {
   margin-top: 14px;
   border: 1px solid var(--int-border);
@@ -106,6 +113,7 @@
   gap: 10px;
 }
 
+/* ---- Plan gate ---- */
 .connectors-plan-gate {
   margin-top: 14px;
   border: 1px solid var(--int-border);
@@ -115,7 +123,6 @@
   color: #30456f;
 }
 
-/* .connectors-plan-note is plain text — no box, no border, no background */
 .connectors-plan-note {
   margin-top: 12px;
   display: flex;
@@ -175,46 +182,6 @@
   line-height: 1.45;
 }
 
-.connector-oauth-row {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--int-border, #dbe3ee);
-}
-
-.connector-oauth-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 18px;
-  border-radius: 8px;
-  background: #0070d2;
-  color: #fff;
-  border: none;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  width: fit-content;
-  transition: background 0.15s;
-}
-
-.connector-oauth-btn:hover {
-  background: #005fb2;
-}
-
-.connector-oauth-logo {
-  height: 18px;
-  filter: brightness(0) invert(1);
-}
-
-.connector-oauth-hint {
-  font-size: 12px;
-  color: var(--int-text-sub, #475569);
-  margin: 0;
-}
-
 .connectors-plan-gate-btn {
   display: inline-flex;
   align-items: center;
@@ -231,19 +198,38 @@
   cursor: pointer;
 }
 
+/* =========================================================
+   Two-panel layout — left list + right sticky detail
+   ========================================================= */
+
 .connectors-manage-layout {
   margin-top: 14px;
   display: grid;
   grid-template-columns: 360px 1fr;
   gap: 14px;
+  align-items: start; /* each column is only as tall as its content */
 }
 
+/* Left column: connector cards, scrolls naturally with page */
 .connectors-card-grid {
   display: grid;
   gap: 10px;
   align-content: start;
 }
 
+/* Right column: sticky detail panel, scrolls independently */
+.connector-detail-panel {
+  border: 1px solid var(--int-border);
+  border-radius: var(--int-radius-md);
+  background: var(--int-surface);
+  padding: 20px;
+  position: sticky;
+  top: 24px;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+}
+
+/* ---- Connector cards ---- */
 .connector-card {
   text-align: left;
   border: 1px solid var(--int-border);
@@ -312,12 +298,9 @@
   color: #475b87;
 }
 
-.connector-detail-panel {
-  border: 1px solid var(--int-border);
-  border-radius: var(--int-radius-md);
-  background: var(--int-surface);
-  padding: 14px;
-}
+/* =========================================================
+   Detail panel internals
+   ========================================================= */
 
 .connector-detail-header {
   display: flex;
@@ -328,23 +311,24 @@
 
 .connector-detail-header h2 {
   margin: 0;
-  font-size: 30px;
+  font-size: 26px;
 }
 
 .connector-detail-header p {
-  margin: 6px 0 0;
+  margin: 4px 0 0;
   color: var(--int-text-sub);
+  font-size: 0.875rem;
 }
 
 .connector-unsaved-note {
-  margin: 8px 0 0;
-  font-size: 0.8rem;
+  margin: 6px 0 0;
+  font-size: 0.78rem;
   color: #8f1d37;
   font-weight: 600;
 }
 
 .connector-required-legend {
-  margin: 8px 0 0;
+  margin: 10px 0 0;
   font-size: 0.78rem;
   color: var(--int-text-sub);
 }
@@ -354,21 +338,16 @@
   font-weight: 700;
 }
 
-.connector-field-hint {
-  margin: -4px 0 10px;
-  font-size: 0.77rem;
-  color: var(--int-text-sub);
-  line-height: 1.4;
-}
-
+/* ---- Action buttons ---- */
 .connector-detail-actions {
-  display: inline-flex;
+  display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .connector-detail-actions button {
-  height: 36px;
+  height: 34px;
   border-radius: var(--int-radius-sm);
   border: 1px solid var(--int-border-md);
   background: var(--int-surface);
@@ -377,24 +356,28 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  font-size: 0.8rem;
+  white-space: nowrap;
 }
 
 .connector-detail-actions button:disabled {
   opacity: 0.55;
 }
 
+/* ---- Core dropdowns row (Status / Sync Mode / etc.) ---- */
 .connector-core-controls {
-  margin-top: 12px;
+  margin-top: 14px;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 10px;
 }
 
 .connector-core-controls label,
 .connector-field-grid label {
   display: grid;
-  gap: 6px;
+  gap: 5px;
   font-size: 12px;
+  font-weight: 600;
   color: var(--int-eyebrow);
 }
 
@@ -403,23 +386,26 @@
 .connector-field-grid input,
 .connector-field-grid select,
 .connector-field-grid textarea {
-  height: 38px;
+  height: 36px;
   border: 1px solid var(--int-border-md);
   border-radius: var(--int-radius-sm);
   padding: 0 10px;
   background: var(--int-surface);
   color: #1d2f5a;
+  font-size: 0.875rem;
 }
 
 .connector-field-grid textarea {
-  min-height: 96px;
+  min-height: 84px;
+  height: auto;
   resize: vertical;
   padding-top: 8px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
 }
 
 .connector-field-grid .connector-input-invalid,
-.connector-core-controls .connector-input-invalid {
+.connector-core-controls .connector-input-invalid,
+.connector-sf-grid .connector-input-invalid {
   border-color: var(--color-status-danger, #c0392b);
   box-shadow: 0 0 0 2px rgba(192, 57, 43, 0.12);
 }
@@ -437,19 +423,141 @@
   margin: 0;
 }
 
+/* Generic field grid (used by Jira, Workfront, etc.) */
 .connector-field-grid {
-  margin-top: 12px;
+  margin-top: 14px;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 10px;
 }
 
-.connector-audit-history {
+/* =========================================================
+   Snowflake-specific field grid
+   — explicit 2-column layout so nothing floats randomly
+   ========================================================= */
+
+.connector-sf-grid {
   margin-top: 14px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 14px;
+}
+
+/* Guide note spans full width */
+.connector-sf-guide {
+  grid-column: 1 / -1;
+  padding: 10px 14px;
+  background: #f0f5ff;
+  border-radius: 6px;
+  border-left: 3px solid #4a6fa5;
+  font-size: 0.8rem;
+  color: #3a4e6b;
+  line-height: 1.6;
+  margin-bottom: 2px;
+}
+
+/* Field group label (e.g. "Credentials") spans full width */
+.connector-sf-section {
+  grid-column: 1 / -1;
+  margin: 6px 0 -2px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--int-eyebrow);
+  border-bottom: 1px solid var(--int-border);
+  padding-bottom: 4px;
+}
+
+/* Full-width fields inside sf-grid */
+.connector-sf-grid .connector-sf-full {
+  grid-column: 1 / -1;
+}
+
+/* Labels inside sf-grid */
+.connector-sf-grid label {
+  display: grid;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--int-eyebrow);
+}
+
+/* Inputs inside sf-grid */
+.connector-sf-grid input,
+.connector-sf-grid select {
+  height: 36px;
+  border: 1px solid var(--int-border-md);
+  border-radius: var(--int-radius-sm);
+  padding: 0 10px;
+  background: var(--int-surface);
+  color: #1d2f5a;
+  font-size: 0.875rem;
+}
+
+/* Error text */
+.connector-sf-error-text {
+  grid-column: 1 / -1;
+  font-size: 0.78rem;
+  color: var(--color-status-danger, #c0392b);
+  margin: -4px 0 0;
+}
+
+/* =========================================================
+   OAuth button (Salesforce)
+   ========================================================= */
+
+.connector-oauth-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--int-border, #dbe3ee);
+}
+
+.connector-oauth-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 18px;
+  border-radius: 8px;
+  background: #0070d2;
+  color: #fff;
+  border: none;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  width: fit-content;
+  transition: background 0.15s;
+}
+
+.connector-oauth-btn:hover {
+  background: #005fb2;
+}
+
+.connector-oauth-logo {
+  height: 18px;
+  filter: brightness(0) invert(1);
+}
+
+.connector-oauth-hint {
+  font-size: 12px;
+  color: var(--int-text-sub, #475569);
+  margin: 0;
+}
+
+/* =========================================================
+   Audit history table
+   ========================================================= */
+
+.connector-audit-history {
+  margin-top: 20px;
 }
 
 .connector-audit-history h3 {
   margin: 0 0 8px;
+  font-size: 15px;
 }
 
 .connector-audit-history p {
@@ -466,27 +574,42 @@
 .connector-audit-table-wrap table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 720px;
+  min-width: 640px;
 }
 
 .connector-audit-table-wrap th,
 .connector-audit-table-wrap td {
   text-align: left;
   border-bottom: 1px solid #e6ecf7;
-  padding: 10px;
+  padding: 8px 10px;
+  font-size: 0.8rem;
 }
 
 .connector-audit-table-wrap th {
   background: #f8fafd;
-  font-size: 12px;
+  font-size: 11px;
   color: var(--int-eyebrow);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 
+.connector-audit-table-wrap tr:last-child td {
+  border-bottom: none;
+}
+
+/* =========================================================
+   Responsive
+   ========================================================= */
+
 @media (max-width: 1180px) {
   .connectors-manage-layout {
     grid-template-columns: 1fr;
+  }
+
+  .connector-detail-panel {
+    position: static;
+    max-height: none;
+    overflow-y: visible;
   }
 
   .connectors-skeleton-layout {
@@ -500,7 +623,6 @@
 
 @media (max-width: 900px) {
   .connectors-manage-page {
-    width: 100%;
     padding: 16px 12px 22px;
   }
 
@@ -514,8 +636,14 @@
 
   .connector-core-controls,
   .connector-field-grid,
+  .connector-sf-grid,
   .connectors-skeleton-form {
     grid-template-columns: 1fr;
+  }
+
+  .connector-sf-grid label,
+  .connector-sf-grid .connector-sf-full {
+    grid-column: 1;
   }
 
   .connector-auto-sync {
