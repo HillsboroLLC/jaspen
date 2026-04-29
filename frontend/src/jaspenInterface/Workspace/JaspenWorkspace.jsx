@@ -6005,12 +6005,20 @@ if (data?.model_type) {
       ...buildMessageAttachmentMeta(item),
       uploading: true,
     }));
-    const activeContextParts = [...activeContextSourceIds]
+    const selectedContextIds = [...activeContextSourceIds];
+    const selectedContextLabels = selectedContextIds
+      .map((id) => connectedDataSources.find((item) => item.id === id)?.label || id)
+      .filter(Boolean);
+    const activeContextParts = selectedContextIds
       .filter((id) => contextSourceData[id])
       .map((id) => {
         const source = connectedDataSources.find((item) => item.id === id);
         return `[${source?.label || id} Context]\n${contextSourceData[id]}`;
       });
+    if (selectedContextIds.length > 0 && activeContextParts.length === 0) {
+      showToast('Selected data context is still loading. Please wait a moment, then send again.', 'info');
+      return;
+    }
     const contextPrefix = activeContextParts.length > 0
       ? `${activeContextParts.join('\n\n')}\n\n---\n\n`
       : '';
@@ -6020,13 +6028,17 @@ if (data?.model_type) {
         ? 'Please review the attached files and help me interpret them.'
         : `Uploaded ${attachments.length} file${attachments.length === 1 ? '' : 's'}`
     );
+    const contextLabelSuffix = selectedContextLabels.length > 0
+      ? `\n\n[Data context attached: ${selectedContextLabels.join(', ')}]`
+      : '';
+    const displayMessageTextWithContext = `${displayMessageText}${contextLabelSuffix}`;
     const messageText = `${contextPrefix}${displayMessageText}`.trim();
 
     setMessages(prev => [
       ...prev,
       {
         role: 'user',
-        text: displayMessageText,
+        text: displayMessageTextWithContext,
         attachments,
       },
     ]);
