@@ -2497,6 +2497,13 @@
   cursor: not-allowed;
 }
 
+.jas-selected-data-context-pills {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .jas-model-picker-row {
   max-width: 920px;
   margin: 0 auto 10px;

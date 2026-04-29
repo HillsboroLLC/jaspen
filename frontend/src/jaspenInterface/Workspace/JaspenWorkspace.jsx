@@ -4693,6 +4693,33 @@ const renderSelectedObjectivePill = (className = '') => {
   );
 };
 
+const renderSelectedDataContextPills = (className = '') => {
+  if (!Array.isArray(connectedDataSources) || connectedDataSources.length === 0) return null;
+  const activeSources = connectedDataSources.filter((source) => activeContextSourceIds.has(source.id));
+  if (activeSources.length === 0) return null;
+  return (
+    <div className={`jas-selected-data-context-pills ${className}`.trim()}>
+      {activeSources.map((source) => (
+        <span key={source.id} className="jas-objective-selection-pill">
+          <span className="jas-objective-selection-pill-text">{source.label}</span>
+          <button
+            type="button"
+            className="jas-objective-selection-pill-clear"
+            onClick={() => {
+              void handleToggleContextSource(source.id, source.label);
+            }}
+            aria-label={`Remove ${source.label} data context`}
+            title={`Remove ${source.label} data context`}
+            disabled={busy} aria-disabled={busy}
+          >
+            <FontAwesomeIcon icon={faTimes} />
+          </button>
+        </span>
+      ))}
+    </div>
+  );
+};
+
 const renderStarterSelector = (className = '') => {
   if (sessionId || messages.length > 0) return null;
   if (!startersLoading && savedStarterConfigs.length === 0) return null;
@@ -5356,7 +5383,11 @@ useEffect(() => {
       const allowed = ['salesforce_insights', 'snowflake_insights', 'servicenow_insights', 'netsuite_insights', 'oracle_fusion_insights'];
       const connected = (Array.isArray(data?.connectors) ? data.connectors : [])
         .filter((item) => item?.connected && allowed.includes(item?.id))
-        .map((item) => ({ id: item.id, label: item.label || item.id }));
+        .map((item) => ({
+          id: item.id,
+          label: item.label || item.id,
+          defaultTable: Array.isArray(item?.snowflake?.table_allowlist) ? (item.snowflake.table_allowlist[0] || '') : '',
+        }));
       setConnectedDataSources(connected);
     } catch {}
   };
@@ -5378,14 +5409,19 @@ const handleToggleContextSource = useCallback(async (connectorId, label) => {
     let url = '';
     let method = 'GET';
     let body = null;
+    const sourceMeta = connectedDataSources.find((item) => item.id === connectorId);
     if (connectorId === 'salesforce_insights') {
       url = `${API_BASE}/api/v1/connectors/salesforce/pipeline/summary?days=30&limit=50`;
     } else if (connectorId === 'snowflake_insights') {
-      url = `${API_BASE}/api/v1/connectors/snowflake/kpis`;
+      url = `${API_BASE}/api/v1/connectors/snowflake/query`;
       method = 'POST';
+      const defaultTable = String(sourceMeta?.defaultTable || '').trim();
+      if (!defaultTable) {
+        throw new Error('Snowflake allowlist is empty. Add at least one table in Connectors first.');
+      }
       body = JSON.stringify({
-        table: 'kpi_metrics',
-        metric_columns: ['revenue', 'cost', 'efficiency'],
+        table: defaultTable,
+        limit: 100,
       });
     }
 
@@ -5406,12 +5442,11 @@ const handleToggleContextSource = useCallback(async (connectorId, label) => {
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data?.error || `Could not load ${label} data.`);
-    const summary = String(
-      data?.summary
-      || data?.pipeline_summary
-      || data?.message
-      || JSON.stringify(data).slice(0, 1000)
-      || ''
+    const rawSummary = data?.summary ?? data?.pipeline_summary ?? data?.message ?? '';
+    const summary = (
+      typeof rawSummary === 'string'
+        ? rawSummary
+        : JSON.stringify(rawSummary || data).slice(0, 1000)
     ).trim();
     if (!summary) throw new Error(`No ${label} context available.`);
     setContextSourceData((prev) => ({ ...prev, [connectorId]: summary }));
@@ -5426,7 +5461,7 @@ const handleToggleContextSource = useCallback(async (connectorId, label) => {
   } finally {
     setContextSourceLoading(false);
   }
-}, [activeContextSourceIds, contextSourceData, showToast]);
+}, [activeContextSourceIds, connectedDataSources, contextSourceData, showToast]);
 
 const handleLoadSalesforcePipeline = useCallback(async () => {
   await handleToggleContextSource('salesforce_insights', 'Salesforce');
@@ -9905,6 +9940,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                 </button>
                 {renderModelTypeInlinePicker()}
                 {renderSelectedObjectivePill()}
+                {renderSelectedDataContextPills()}
               </div>
               <div className="jas-chat-input-right-controls">
                 <button
