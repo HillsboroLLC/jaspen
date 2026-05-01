@@ -1604,6 +1604,29 @@ def _build_agent_system_prompt(*, context_summary_text, intake_context, user_id,
     )
 
 
+def _message_has_data_context_request(user_message):
+    text = str(user_message or "").strip().lower()
+    if not text:
+        return False
+    markers = (
+        "[data context attached:",
+        "[snowflake context]",
+        "[salesforce context]",
+        "using my connected",
+        "connected data context",
+        "query_connector_data",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _fallback_reply_for_turn(user_message, readiness):
+    if _message_has_data_context_request(user_message):
+        return (
+            "Using your attached data context now. I will prioritize numeric evidence and cite the table/columns used."
+        )
+    return _next_question(readiness)
+
+
 def _log_injection_signals(*, user, thread_id, user_message, injection_signals, source):
     if not injection_signals:
         return
@@ -3314,7 +3337,7 @@ def _generate_assistant_reply_anthropic(
     disable_mutations=False,
     allow_failover=False,
 ):
-    fallback_reply = _next_question(readiness)
+    fallback_reply = _fallback_reply_for_turn(user_message, readiness)
     api_key = _anthropic_api_key()
     if not api_key:
         return fallback_reply, {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, [], [], None
@@ -3347,6 +3370,11 @@ def _generate_assistant_reply_anthropic(
         user_id=user_id,
         thread_id=thread_id,
     )
+    if _message_has_data_context_request(user_message):
+        system_prompt += (
+            "\nConnector-priority instruction: because the user attached data context or requested connector analysis, "
+            "answer with concrete numeric findings first. If query_connector_data is available, call it before asking any readiness follow-up."
+        )
     user_content = _anthropic_user_message_content(user_message, attachments=attachments)
     if messages and str(messages[-1].get("role") or "").strip().lower() == "user":
         messages[-1] = {**messages[-1], "content": user_content}
@@ -3528,7 +3556,7 @@ def _stream_assistant_reply_events_anthropic(
     allow_failover=False,
 ):
     state = state if isinstance(state, dict) else {}
-    fallback_reply = _next_question(readiness)
+    fallback_reply = _fallback_reply_for_turn(user_message, readiness)
     state.update({
         "reply": fallback_reply,
         "usage": {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
@@ -3571,6 +3599,11 @@ def _stream_assistant_reply_events_anthropic(
         user_id=user_id,
         thread_id=thread_id,
     )
+    if _message_has_data_context_request(user_message):
+        system_prompt += (
+            "\nConnector-priority instruction: because the user attached data context or requested connector analysis, "
+            "answer with concrete numeric findings first. If query_connector_data is available, call it before asking any readiness follow-up."
+        )
     user_content = _anthropic_user_message_content(user_message, attachments=attachments)
     if messages and str(messages[-1].get("role") or "").strip().lower() == "user":
         messages[-1] = {**messages[-1], "content": user_content}
@@ -3810,7 +3843,7 @@ def _generate_assistant_reply_gemini(
     if not _gemini_api_key():
         raise RuntimeError("GEMINI_API_KEY not configured")
 
-    fallback_reply = _next_question(readiness)
+    fallback_reply = _fallback_reply_for_turn(user_message, readiness)
     messages, context_summary_text, summary_usage = _prepare_context_window(
         session,
         chat_history,
@@ -3823,6 +3856,11 @@ def _generate_assistant_reply_gemini(
         user_id=user_id,
         thread_id=thread_id,
     )
+    if _message_has_data_context_request(user_message):
+        system_prompt += (
+            "\nConnector-priority instruction: because the user attached data context or requested connector analysis, "
+            "answer with concrete numeric findings first. If query_connector_data is available, call it before asking any readiness follow-up."
+        )
     if not messages:
         messages = [{"role": "user", "content": _wrap_user_message_content(user_message)}]
 
@@ -3994,7 +4032,7 @@ def _stream_assistant_reply_events_gemini(
         raise RuntimeError("GEMINI_API_KEY not configured")
 
     state = state if isinstance(state, dict) else {}
-    fallback_reply = _next_question(readiness)
+    fallback_reply = _fallback_reply_for_turn(user_message, readiness)
     state.update({
         "reply": fallback_reply,
         "usage": {"provider": "gemini", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
@@ -4015,6 +4053,11 @@ def _stream_assistant_reply_events_gemini(
         user_id=user_id,
         thread_id=thread_id,
     )
+    if _message_has_data_context_request(user_message):
+        system_prompt += (
+            "\nConnector-priority instruction: because the user attached data context or requested connector analysis, "
+            "answer with concrete numeric findings first. If query_connector_data is available, call it before asking any readiness follow-up."
+        )
     if not messages:
         messages = [{"role": "user", "content": _wrap_user_message_content(user_message)}]
 
