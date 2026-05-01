@@ -2903,7 +2903,7 @@ def _execute_connector_query_tool(user_id, tool_input):
                 "query": result.get("query"),
                 "used_columns": summary_meta.get("used_columns") if isinstance(summary_meta.get("used_columns"), list) else [],
                 "data": rows[:50],
-                "summary": f"Retrieved {len(rows)} rows from {resolved_table}.",
+                "summary": f"Retrieved {len(rows)} rows from {table}.",
             })
 
         if connector_type == "salesforce":
