@@ -110,6 +110,12 @@ export default function Insights() {
   const [generatedIdeas, setGeneratedIdeas] = useState([]);
   const [ideasError, setIdeasError] = useState('');
   const [isEnterprise, setIsEnterprise] = useState(false);
+  const [queryConnectorId, setQueryConnectorId] = useState('');
+  const [queryTable, setQueryTable] = useState('');
+  const [queryLimit, setQueryLimit] = useState(50);
+  const [queryBusy, setQueryBusy] = useState(false);
+  const [queryError, setQueryError] = useState('');
+  const [queryResult, setQueryResult] = useState(null);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -200,6 +206,8 @@ export default function Insights() {
         setIsEnterprise(Boolean(isEnt));
         if (ideaConnectors.length > 0) {
           setActiveConnectorIdForIdeas(String(ideaConnectors[0].id));
+          const queryable = ideaConnectors.find((item) => ['snowflake_insights', 'salesforce_insights'].includes(item.id));
+          if (queryable?.id) setQueryConnectorId(String(queryable.id));
         }
       } catch {}
     };
@@ -337,6 +345,78 @@ export default function Insights() {
     }
   }, [activeConnectorId, ideasFocus, ideasObjective]);
 
+  const buildConnectorContextStatement = useCallback((connectorId, result) => {
+    if (connectorId === 'snowflake_insights') {
+      const summary = result?.summary || {};
+      const rows = Array.isArray(result?.rows) ? result.rows.slice(0, 10) : [];
+      return [
+        '[Connector Context]',
+        `Source: Snowflake`,
+        `Table: ${summary?.table || queryTable || 'unknown'}`,
+        `Rows returned: ${summary?.returned_rows ?? rows.length}`,
+        `Columns used: ${Array.isArray(summary?.used_columns) ? summary.used_columns.join(', ') : 'unknown'}`,
+        `Data preview:`,
+        ...rows.map((row) => JSON.stringify(row)),
+        '',
+        'Use this data context in the strategy analysis.',
+      ].join('\n');
+    }
+    if (connectorId === 'salesforce_insights') {
+      const summaryText = result?.pipeline_summary || '';
+      const opptyCount = result?.summary?.opportunity_count ?? (Array.isArray(result?.opportunities) ? result.opportunities.length : 0);
+      return [
+        '[Connector Context]',
+        'Source: Salesforce',
+        `Opportunity count: ${opptyCount}`,
+        summaryText ? `Summary: ${summaryText}` : '',
+        'Use this data context in the strategy analysis.',
+      ].filter(Boolean).join('\n');
+    }
+    return '[Connector Context]\nUse connected data context in this analysis.';
+  }, [queryTable]);
+
+  const runConnectorQuery = useCallback(async () => {
+    if (!queryConnectorId) return;
+    setQueryBusy(true);
+    setQueryError('');
+    setQueryResult(null);
+    try {
+      const headersGet = buildAuthHeaders({}, 'GET');
+      const headersPost = buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST');
+      if (queryConnectorId === 'snowflake_insights') {
+        const table = String(queryTable || '').trim();
+        if (!table) throw new Error('Enter a Snowflake table (for example: tpch_sf1.lineitem).');
+        const response = await fetch(`${API_BASE}/api/v1/connectors/snowflake/query`, {
+          method: 'POST',
+          headers: headersPost,
+          credentials: 'include',
+          body: JSON.stringify({
+            table,
+            limit: Number.isFinite(Number(queryLimit)) ? Number(queryLimit) : 50,
+          }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data?.error || 'Snowflake query failed');
+        setQueryResult(data);
+      } else if (queryConnectorId === 'salesforce_insights') {
+        const response = await fetch(`${API_BASE}/api/v1/connectors/salesforce/pipeline/summary?days=90&limit=100`, {
+          method: 'GET',
+          headers: headersGet,
+          credentials: 'include',
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data?.error || 'Salesforce pipeline query failed');
+        setQueryResult(data);
+      } else {
+        throw new Error('This connector query flow is not available yet.');
+      }
+    } catch (err) {
+      setQueryError(err?.message || 'Connector query failed');
+    } finally {
+      setQueryBusy(false);
+    }
+  }, [queryConnectorId, queryLimit, queryTable]);
+
   return (
     <div className="insights-page int-page">
       <AppMenu />
@@ -460,6 +540,78 @@ export default function Insights() {
                   </button>
                 </article>
               ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {isEnterprise && connectors.some((item) => ['snowflake_insights', 'salesforce_insights'].includes(item.id)) && (
+        <section className="insights-section insights-query-section">
+          <div className="insights-row-head">
+            <div>
+              <h2>Query Connected Data</h2>
+              <p className="insights-muted">Run a live connector query and send the results into your strategy chat context.</p>
+            </div>
+          </div>
+          <div className="insights-query-controls">
+            <div className="insights-query-source">
+              <span className="insights-ideas-config-label">Source</span>
+              {connectors
+                .filter((item) => ['snowflake_insights', 'salesforce_insights'].includes(item.id))
+                .map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={`insights-connector-chip ${queryConnectorId === item.id ? 'active' : ''}`}
+                    onClick={() => setQueryConnectorId(item.id)}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+            </div>
+            {queryConnectorId === 'snowflake_insights' && (
+              <div className="insights-query-input-row">
+                <input
+                  type="text"
+                  className="insights-ideas-focus-input"
+                  placeholder="Table (for example: tpch_sf1.lineitem)"
+                  value={queryTable}
+                  onChange={(event) => setQueryTable(event.target.value)}
+                />
+                <input
+                  type="number"
+                  min={1}
+                  max={200}
+                  className="insights-query-limit"
+                  value={queryLimit}
+                  onChange={(event) => setQueryLimit(Number(event.target.value || 50))}
+                />
+              </div>
+            )}
+            <div className="insights-query-actions">
+              <button
+                type="button"
+                className="int-btn int-btn-primary"
+                onClick={() => { void runConnectorQuery(); }}
+                disabled={!queryConnectorId || queryBusy}
+              >
+                {queryBusy ? <><FontAwesomeIcon icon={faSpinner} spin /> Querying…</> : 'Run connector query'}
+              </button>
+            </div>
+          </div>
+          {queryError && <div className="insights-error"><p>{queryError}</p></div>}
+          {queryResult && (
+            <div className="insights-query-result">
+              <pre>{JSON.stringify(queryResult?.summary || queryResult, null, 2)}</pre>
+              <button
+                type="button"
+                className="int-btn int-btn-ghost"
+                onClick={() => navigate('/new', {
+                  state: { prefillMessage: buildConnectorContextStatement(queryConnectorId, queryResult) },
+                })}
+              >
+                Use in chat →
+              </button>
             </div>
           )}
         </section>

@@ -425,3 +425,63 @@
   .insights-idea-cards { grid-template-columns: 1fr; }
   .insights-ideas-focus-row { flex-direction: column; }
 }
+
+.insights-query-section {
+  border-top: 1px solid var(--int-border, #dbe3ee);
+  padding-top: 24px;
+}
+
+.insights-query-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.insights-query-source {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.insights-query-input-row {
+  display: flex;
+  gap: 10px;
+}
+
+.insights-query-limit {
+  width: 120px;
+  padding: 9px 12px;
+  border: 1.5px solid var(--int-border, #dbe3ee);
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.insights-query-result {
+  margin-top: 12px;
+  border: 1px solid var(--int-border, #dbe3ee);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--int-bg, #f8fafc);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.insights-query-result pre {
+  margin: 0;
+  max-height: 280px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+@media (max-width: 640px) {
+  .insights-query-input-row {
+    flex-direction: column;
+  }
+
+  .insights-query-limit {
+    width: 100%;
+  }
+}
