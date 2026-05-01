@@ -552,6 +552,75 @@ def get_llm_client():
     return _AnthropicCompatClient(api_key)
 
 
+def _strategy_generate_reply(
+    messages,
+    *,
+    system_prompt,
+    model_selection=None,
+    llm_model=None,
+    strategy_objective='balanced',
+    max_tokens=900,
+    temperature=0.2,
+):
+    """
+    Unified generation helper for strategy routes.
+    Prefer routed generation when model_selection is available; fall back to legacy compat client.
+    Returns tuple: (reply_text, usage_dict_or_none)
+    """
+    sanitized = []
+    for item in messages or []:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get('role') or '').strip().lower()
+        if role not in {'user', 'assistant'}:
+            continue
+        content = str(item.get('content') or '').strip()
+        if not content:
+            continue
+        sanitized.append({'role': role, 'content': content})
+
+    if not sanitized:
+        raise ValueError('At least one user/assistant message is required.')
+
+    if isinstance(model_selection, dict):
+        from .ai_agent import _generate_routed_chat_reply
+
+        return _generate_routed_chat_reply(
+            sanitized,
+            model_selection,
+            system_prompt=system_prompt,
+            strategy_objective=_normalize_strategy_objective(strategy_objective),
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+
+    client = get_llm_client()
+    model_name = str(llm_model or '').strip()
+    if not model_name:
+        raise ValueError('llm_model is required for legacy fallback generation.')
+    response = client.chat.completions.create(
+        model=model_name,
+        messages=[
+            {'role': 'system', 'content': system_prompt},
+            *sanitized,
+        ],
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+    usage_payload = getattr(response, 'usage', None)
+    usage = None
+    if usage_payload is not None:
+        if isinstance(usage_payload, dict):
+            usage = usage_payload
+        else:
+            usage = {
+                'input_tokens': int(getattr(usage_payload, 'input_tokens', 0) or 0),
+                'output_tokens': int(getattr(usage_payload, 'output_tokens', 0) or 0),
+                'total_tokens': int(getattr(usage_payload, 'total_tokens', 0) or 0),
+            }
+    return response.choices[0].message.content, usage
+
+
 def _extract_json_object(text):
     """Parse JSON object from model output (raw JSON or fenced/embedded JSON)."""
     try:
@@ -1836,36 +1905,34 @@ Provide specific, actionable insights with quantified financial impacts where th
 The executive_summary must read like a concise leadership briefing. It should never repeat raw prompt text or user questions.
 """
 
-    if isinstance(model_selection, dict):
-        try:
-            from .ai_agent import _generate_routed_chat_reply
-
-            routed_text, _usage = _generate_routed_chat_reply(
-                [{"role": "user", "content": analysis_prompt}],
-                model_selection,
-                system_prompt=system_prompt,
-                strategy_objective=strategy_objective,
-                max_tokens=4000,
-                temperature=0.1,
-            )
-            return _normalize_scorecard_payload(_extract_json_object(routed_text))
-        except Exception as routed_exc:
+    analysis_text = None
+    try:
+        analysis_text, _usage = _strategy_generate_reply(
+            [{"role": "user", "content": analysis_prompt}],
+            system_prompt=system_prompt,
+            model_selection=model_selection,
+            llm_model=llm_model,
+            strategy_objective=strategy_objective,
+            max_tokens=4000,
+            temperature=0.1,
+        )
+    except Exception as routed_exc:
+        if isinstance(model_selection, dict):
             current_app.logger.warning(
                 "[strategy.analyze] routed scorecard generation failed, falling back to legacy client: %s",
                 routed_exc,
             )
+        response = client.chat.completions.create(
+            model=llm_model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": analysis_prompt}
+            ],
+            temperature=0.1,
+            max_tokens=4000
+        )
+        analysis_text = response.choices[0].message.content
 
-    response = client.chat.completions.create(
-        model=llm_model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": analysis_prompt}
-        ],
-        temperature=0.1,
-        max_tokens=4000
-    )
-
-    analysis_text = response.choices[0].message.content
     return _normalize_scorecard_payload(_extract_json_object(analysis_text))
 
 
@@ -2208,27 +2275,21 @@ Keep responses concise but comprehensive (2-3 paragraphs maximum).
 
         # Call LLM API
         try:
-            response = client.chat.completions.create(
-                model=model_selection['llm_model'],
-                messages=[
-                    {"role": "system", "content": "You are a Jaspen strategy assistant specializing in commercialization strategy and financial optimization."},
-                    {"role": "user", "content": context_prompt}
-                ],
+            ai_response, usage = _strategy_generate_reply(
+                [{"role": "user", "content": context_prompt}],
+                system_prompt="You are a Jaspen strategy assistant specializing in commercialization strategy and financial optimization.",
+                model_selection=model_selection,
+                llm_model=model_selection.get('llm_model'),
+                strategy_objective=analysis_context.get('strategy_objective') or 'balanced',
+                max_tokens=800,
                 temperature=0.7,
-                max_tokens=800
             )
         except Exception:
             _release_reserved_credits(user, reserved_credits)
             db.session.commit()
             raise
 
-        usage_payload = getattr(response, 'usage', None)
-        total_tokens = None
-        if usage_payload is not None:
-            if isinstance(usage_payload, dict):
-                total_tokens = usage_payload.get('total_tokens')
-            else:
-                total_tokens = getattr(usage_payload, 'total_tokens', None)
+        total_tokens = (usage or {}).get('total_tokens') if isinstance(usage, dict) else None
 
         credits_charged = _estimate_usage_credit_charge(total_tokens, model_selection['model_type'])
         credit_settlement = _settle_reserved_credits(
@@ -2247,8 +2308,6 @@ Keep responses concise but comprehensive (2-3 paragraphs maximum).
         remaining = credit_settlement.get('remaining')
         credits_charged = int(credit_settlement.get('charged') or 0)
         db.session.commit()
-        
-        ai_response = response.choices[0].message.content
         
         return jsonify({
             'response': ai_response,
@@ -3062,6 +3121,7 @@ def _generate_ai_scenario_suggestion(
     objective='balanced',
     baseline_scorecard=None,
     lever_definitions=None,
+    model_selection=None,
 ):
     objective = _normalize_strategy_objective(objective)
     lever_catalog = []
@@ -3153,16 +3213,16 @@ Rules:
 """.strip()
 
     try:
-        response = client.chat.completions.create(
-            model=llm_model,
-            messages=[
-                {"role": "system", "content": "You are a strategy scenario planner. Return strict JSON only."},
-                {"role": "user", "content": prompt},
-            ],
+        raw_reply, _usage = _strategy_generate_reply(
+            [{"role": "user", "content": prompt}],
+            system_prompt="You are a strategy scenario planner. Return strict JSON only.",
+            model_selection=model_selection,
+            llm_model=llm_model,
+            strategy_objective=objective,
             temperature=0.2,
             max_tokens=900,
         )
-        parsed = _extract_json_object(response.choices[0].message.content)
+        parsed = _extract_json_object(raw_reply)
     except Exception:
         return _heuristic_scenario_suggestion(instruction, baseline_inputs, objective=objective)
 
@@ -3412,7 +3472,15 @@ def _heuristic_wbs_suggestion(scorecard, instruction, scenario_payload=None):
     }
 
 
-def _generate_ai_wbs_suggestion(client, llm_model, scorecard, instruction, scenario_payload=None):
+def _generate_ai_wbs_suggestion(
+    client,
+    llm_model,
+    scorecard,
+    instruction,
+    scenario_payload=None,
+    model_selection=None,
+    strategy_objective='balanced',
+):
     scorecard_payload = scorecard if isinstance(scorecard, dict) else {}
     scenario_context = scenario_payload if isinstance(scenario_payload, dict) else {}
     planning_mode = _infer_wbs_planning_mode(scorecard_payload, instruction, scenario_payload=scenario_context)
@@ -3489,16 +3557,16 @@ Rules:
 """.strip()
 
     try:
-        response = client.chat.completions.create(
-            model=llm_model,
-            messages=[
-                {"role": "system", "content": "You are a senior project planning assistant. Generate comprehensive, initiative-specific execution plans with 15-30 tasks across 4-7 phases. Every task title must be specific and actionable. Return strict JSON only."},
-                {"role": "user", "content": prompt},
-            ],
+        raw_reply, _usage = _strategy_generate_reply(
+            [{"role": "user", "content": prompt}],
+            system_prompt="You are a senior project planning assistant. Generate comprehensive, initiative-specific execution plans with 15-30 tasks across 4-7 phases. Every task title must be specific and actionable. Return strict JSON only.",
+            model_selection=model_selection,
+            llm_model=llm_model,
+            strategy_objective=strategy_objective,
             temperature=0.25,
             max_tokens=4000,
         )
-        parsed = _extract_json_object(response.choices[0].message.content)
+        parsed = _extract_json_object(raw_reply)
         if not isinstance(parsed, dict):
             raise ValueError('invalid_wbs_response')
         if not isinstance(parsed.get('phases'), list) and not isinstance(parsed.get('tasks'), list):
@@ -4344,6 +4412,7 @@ def create_ai_scenario(thread_id):
                 objective=strategy_objective,
                 baseline_scorecard=baseline,
                 lever_definitions=lever_context,
+                model_selection=model_selection,
             )
 
         deltas = suggestion.get('deltas') if isinstance(suggestion, dict) else {}
@@ -4536,6 +4605,8 @@ def generate_ai_wbs(thread_id):
             scorecard=current_scorecard,
             instruction=instruction,
             scenario_payload=adopted_scenario,
+            model_selection=model_selection,
+            strategy_objective=_strategy_objective,
         )
         materialized = _materialize_ai_wbs(raw_wbs)
         normalized_wbs = _normalize_project_wbs({'project_wbs': materialized}, existing=None)
