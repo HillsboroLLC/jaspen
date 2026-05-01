@@ -1728,7 +1728,94 @@ def _direct_connector_fallback_reply(user_id, user_message, readiness):
             if isinstance(row, dict):
                 compact = ", ".join(f"{k}={row.get(k)}" for k in list(row.keys())[:6])
                 lines.append(f"{idx}. {compact}")
-        lines.append("I can now compute focused cost-driver summaries from this result set.")
+        def _to_float(value):
+            try:
+                if value is None:
+                    return None
+                if isinstance(value, (int, float)):
+                    return float(value)
+                text = str(value).strip().replace(",", "")
+                if not text:
+                    return None
+                return float(text)
+            except Exception:
+                return None
+
+        def _avg(values):
+            nums = [v for v in values if isinstance(v, (int, float))]
+            return (sum(nums) / len(nums)) if nums else None
+
+        cost_col = None
+        preferred_cost_cols = ["L_EXTENDEDPRICE", "EXTENDEDPRICE", "TOTAL_COST", "COST", "AMOUNT", "VALUE", "PRICE"]
+        available_keys = set()
+        for row in rows:
+            if isinstance(row, dict):
+                available_keys.update(str(k) for k in row.keys())
+        for candidate in preferred_cost_cols:
+            if candidate in available_keys:
+                cost_col = candidate
+                break
+        if cost_col is None:
+            for key in available_keys:
+                key_upper = str(key).upper()
+                if any(tok in key_upper for tok in ("PRICE", "COST", "AMOUNT", "VALUE")):
+                    cost_col = key
+                    break
+
+        discount_col = "L_DISCOUNT" if "L_DISCOUNT" in available_keys else None
+        tax_col = "L_TAX" if "L_TAX" in available_keys else None
+        qty_col = "L_QUANTITY" if "L_QUANTITY" in available_keys else None
+
+        ranked = []
+        if cost_col:
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                cost_val = _to_float(row.get(cost_col))
+                if cost_val is None:
+                    continue
+                ranked.append((cost_val, row))
+            ranked.sort(key=lambda t: t[0], reverse=True)
+
+        top3 = ranked[:3]
+        if top3:
+            lines.append("")
+            lines.append("Top 3 cost-driver insights:")
+            for idx, (val, row) in enumerate(top3, start=1):
+                line_no = row.get("L_LINENUMBER", "n/a") if isinstance(row, dict) else "n/a"
+                order_key = row.get("L_ORDERKEY", "n/a") if isinstance(row, dict) else "n/a"
+                qty_val = _to_float(row.get(qty_col)) if (qty_col and isinstance(row, dict)) else None
+                disc_val = _to_float(row.get(discount_col)) if (discount_col and isinstance(row, dict)) else None
+                tax_val = _to_float(row.get(tax_col)) if (tax_col and isinstance(row, dict)) else None
+                parts = [f"{idx}) {cost_col}={val:.2f} (ORDERKEY={order_key}, LINENUMBER={line_no})"]
+                if qty_val is not None:
+                    parts.append(f"{qty_col}={qty_val:.2f}")
+                if disc_val is not None:
+                    parts.append(f"{discount_col}={disc_val:.4f}")
+                if tax_val is not None:
+                    parts.append(f"{tax_col}={tax_val:.4f}")
+                lines.append(" | ".join(parts))
+
+            top_vals = [v for v, _ in top3]
+            avg_top = _avg(top_vals)
+            all_cost_vals = [v for v, _ in ranked]
+            avg_all = _avg(all_cost_vals)
+            if avg_top is not None and avg_all is not None:
+                lines.append(
+                    f"Summary: Top-3 average {cost_col} is {avg_top:.2f} vs overall sampled average {avg_all:.2f}."
+                )
+            if discount_col:
+                discounts = [_to_float(r.get(discount_col)) for r in rows if isinstance(r, dict)]
+                avg_disc = _avg(discounts)
+                if avg_disc is not None:
+                    lines.append(f"Discount signal: average {discount_col} across sampled rows is {avg_disc:.4f}.")
+            if tax_col:
+                taxes = [_to_float(r.get(tax_col)) for r in rows if isinstance(r, dict)]
+                avg_tax = _avg(taxes)
+                if avg_tax is not None:
+                    lines.append(f"Tax signal: average {tax_col} across sampled rows is {avg_tax:.4f}.")
+        else:
+            lines.append("I could not compute numeric cost drivers from the returned rows. Try specifying cost columns.")
     else:
         lines.append("No rows were returned for that query. Try adjusting table/columns or filters.")
     return "\n".join(lines)
