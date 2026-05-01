@@ -5438,6 +5438,29 @@ useEffect(() => {
   loadConnectedSources();
 }, [planCategory]);
 
+function formatConnectorContextForAgent(data, connectorType) {
+  if (connectorType === 'snowflake' && Array.isArray(data?.rows)) {
+    const meta = typeof data?.summary === 'object' && data.summary ? data.summary : {};
+    const table = meta.table || 'unknown_table';
+    const cols = Array.isArray(meta.used_columns) ? meta.used_columns.join(', ') : 'all columns';
+    const rowCount = meta.returned_rows ?? data.rows.length;
+    const rowsText = data.rows
+      .slice(0, 50)
+      .map((row, i) => `Row ${i + 1}: ${JSON.stringify(row)}`)
+      .join('\n');
+    return (
+      `Source: Snowflake | Table: ${table}\n` +
+      `Columns available: ${cols}\n` +
+      `Rows returned: ${rowCount}\n\n` +
+      `DATA:\n${rowsText}`
+    );
+  }
+  if (typeof data?.pipeline_summary === 'string') return data.pipeline_summary;
+  if (typeof data?.summary === 'string') return data.summary;
+  if (typeof data?.message === 'string') return data.message;
+  return JSON.stringify(data).slice(0, 5000);
+}
+
 const handleToggleContextSource = useCallback(async (connectorId, label) => {
   const wasActive = activeContextSourceIds.has(connectorId);
   setActiveContextSourceIds((prev) => {
@@ -5487,32 +5510,12 @@ const handleToggleContextSource = useCallback(async (connectorId, label) => {
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data?.error || `Could not load ${label} data.`);
     const MAX_CONNECTOR_CONTEXT_CHARS = 8000;
-    const extractConnectorSummary = (payload, sourceType) => {
-      if (typeof payload?.summary === 'string' && payload.summary.trim()) return payload.summary.trim();
-      if (sourceType === 'snowflake' && Array.isArray(payload?.rows) && payload.rows.length > 0) {
-        const meta = payload?.summary && typeof payload.summary === 'object' ? payload.summary : {};
-        const usedColumns = Array.isArray(meta?.used_columns) ? meta.used_columns.join(', ') : '';
-        const preview = payload.rows.slice(0, 10).map((row) => JSON.stringify(row)).join('\n');
-        return [
-          `Table: ${meta?.table || 'unknown'}`,
-          `Rows returned: ${meta?.returned_rows || payload.rows.length}`,
-          `Columns: ${usedColumns || 'all columns'}`,
-          '',
-          'Data preview:',
-          preview,
-        ].join('\n');
-      }
-      if (typeof payload?.pipeline_summary === 'string' && payload.pipeline_summary.trim()) {
-        return payload.pipeline_summary.trim();
-      }
-      return JSON.stringify(payload || {}).slice(0, MAX_CONNECTOR_CONTEXT_CHARS);
-    };
     const sourceType = connectorId === 'snowflake_insights'
       ? 'snowflake'
       : connectorId === 'salesforce_insights'
         ? 'salesforce'
         : 'generic';
-    const summary = extractConnectorSummary(data, sourceType).slice(0, MAX_CONNECTOR_CONTEXT_CHARS).trim();
+    const summary = formatConnectorContextForAgent(data, sourceType).slice(0, MAX_CONNECTOR_CONTEXT_CHARS).trim();
     if (!summary) throw new Error(`No ${label} context available.`);
     setContextSourceData((prev) => ({ ...prev, [connectorId]: summary }));
     showToast(`${label} data loaded as context.`, 'success');
