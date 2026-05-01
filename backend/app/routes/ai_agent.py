@@ -2691,36 +2691,77 @@ def _connected_connector_types_from_registry(user_id, plan_key):
     return connected
 
 
+def _snowflake_allowlist(user_id):
+    settings = get_connector_settings(user_id, "snowflake_insights") if user_id else {}
+    raw = settings.get("snowflake_table_allowlist") if isinstance(settings, dict) else []
+    if not isinstance(raw, list):
+        return []
+    cleaned = []
+    for item in raw:
+        table = str(item or "").strip().lower()
+        if table and table not in cleaned:
+            cleaned.append(table)
+    return cleaned
+
+
+def _infer_snowflake_table_from_intent(allowlist, query_intent):
+    tables = [str(t or "").strip().lower() for t in (allowlist or []) if str(t or "").strip()]
+    if not tables:
+        return ""
+    intent = str(query_intent or "").strip().lower()
+    if intent:
+        # Direct mention wins.
+        for table in tables:
+            if table in intent:
+                return table
+        # Match terminal segment token (e.g. "lineitem", "orders", "customer").
+        for table in tables:
+            segment = table.split(".")[-1]
+            if segment and segment in intent:
+                return table
+    return tables[0]
+
+
 def _execute_connector_query_tool(user_id, tool_input):
     params = tool_input if isinstance(tool_input, dict) else {}
     connector_type = str(params.get("connector_type") or "snowflake").strip().lower()
-    table = str(params.get("table") or "").strip()
+    table = str(params.get("table") or "").strip().lower()
     query_intent = str(params.get("query_intent") or "").strip()
     columns = params.get("columns") if isinstance(params.get("columns"), list) else None
     limit = max(1, min(int(params.get("limit") or 50), 200))
-    if not table or not query_intent:
-        return _tool_error("connector_type, table, and query_intent are required.", code="invalid_input")
+    if not query_intent:
+        return _tool_error("connector_type and query_intent are required.", code="invalid_input")
 
     try:
         if connector_type == "snowflake":
             from app.snowflake_insights import build_query_from_intent, run_allowlisted_query
+            allowlist = _snowflake_allowlist(user_id)
+            resolved_table = table or _infer_snowflake_table_from_intent(allowlist, query_intent)
+            if not resolved_table:
+                return _tool_error(
+                    "No Snowflake allowlisted table is configured. Set table_allowlist in connector settings first.",
+                    code="missing_allowlist",
+                )
             query_kwargs = build_query_from_intent(
-                table=table,
+                table=resolved_table,
                 columns=columns,
                 query_intent=query_intent,
                 limit=limit,
             )
             result = run_allowlisted_query(user_id, **query_kwargs)
             rows = result.get("rows") if isinstance(result.get("rows"), list) else []
+            summary_meta = result.get("summary") if isinstance(result.get("summary"), dict) else {}
             return _tool_success({
                 "tool": "query_connector_data",
                 "source": "snowflake",
-                "table": table,
+                "table": resolved_table,
                 "query_intent": query_intent,
                 "returned_rows": len(rows),
                 "columns": list(rows[0].keys()) if rows else [],
+                "query": result.get("query"),
+                "used_columns": summary_meta.get("used_columns") if isinstance(summary_meta.get("used_columns"), list) else [],
                 "data": rows[:50],
-                "summary": f"Retrieved {len(rows)} rows from {table}.",
+                "summary": f"Retrieved {len(rows)} rows from {resolved_table}.",
             })
 
         if connector_type == "salesforce":
@@ -2769,11 +2810,18 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
         or _connected_connector_types(user_id)
     )
     if active_connectors:
+        snowflake_tables = _snowflake_allowlist(user_id) if "snowflake" in active_connectors else []
+        snowflake_hint = (
+            f" For Snowflake, if table is omitted I will infer one from allowlist: {', '.join(snowflake_tables[:6])}."
+            if snowflake_tables
+            else ""
+        )
         tools.append({
             "name": "query_connector_data",
             "description": (
                 "Execute a read-only query against connected data sources. "
                 "Use this to retrieve rows, KPIs, and trends and cite table/columns used."
+                f"{snowflake_hint}"
             ),
             "input_schema": {
                 "type": "object",
@@ -2787,7 +2835,7 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                     "columns": {"type": "array", "items": {"type": "string"}},
                     "limit": {"type": "integer", "default": 50},
                 },
-                "required": ["connector_type", "table", "query_intent"],
+                "required": ["connector_type", "query_intent"],
                 "additionalProperties": False,
             },
         })
@@ -3364,49 +3412,41 @@ def _generate_assistant_reply_anthropic(
                     raw_input = getattr(block, "input", None)
                     tool_input = raw_input if isinstance(raw_input, dict) else {}
 
-                if tool_name in {"get_readiness_snapshot", "get_data_contract"}:
-                    result_payload = _anthropic_tool_output(tool_name, readiness)
-                else:
-                    mutation_guard = _guard_mutation_tool(
-                        tool_name,
-                        user_turn_count=user_turn_count,
-                        mutations_this_turn=mutations_this_turn,
+                is_mutation = _is_mutation_tool(tool_name)
+                if is_mutation:
+                    undo_snapshot = _maybe_capture_turn_undo_snapshot(
+                        undo_snapshot,
+                        tool_name=tool_name,
+                        user_id=user_id,
+                        thread_id=thread_id,
                     )
-                    if mutation_guard:
-                        result_payload = mutation_guard
-                    else:
-                        undo_snapshot = _maybe_capture_turn_undo_snapshot(
-                            undo_snapshot,
-                            tool_name=tool_name,
-                            user_id=user_id,
-                            thread_id=thread_id,
-                        )
-                        if _is_mutation_tool(tool_name):
-                            mutations_this_turn += 1
-                        result_payload = _execute_mutation_tool(
-                            tool_name,
-                            tool_input,
-                            user=user,
-                            user_id=user_id,
-                            thread_id=thread_id,
-                        )
-                    if isinstance(result_payload, dict) and result_payload.get("ok"):
-                        confirmation = str(result_payload.get("confirmation") or "").strip()
-                        if confirmation:
-                            tool_confirmations.append(confirmation)
-                    if isinstance(result_payload, dict):
-                        executed_actions.append({
-                            "tool": tool_name,
-                            "input": tool_input,
-                            "result": result_payload,
-                        })
-                        executed_mutations.append({
-                            "tool": tool_name,
-                            "success": bool(result_payload.get("ok")),
-                            "result_summary": _mutation_result_summary(tool_name, result_payload),
-                            "error": result_payload.get("error"),
-                            "code": result_payload.get("code"),
-                        })
+                result_payload, mutations_this_turn = _execute_local_tool(
+                    tool_name,
+                    tool_input,
+                    readiness=readiness,
+                    user=user,
+                    user_id=user_id,
+                    thread_id=thread_id,
+                    user_turn_count=user_turn_count,
+                    mutations_this_turn=mutations_this_turn,
+                )
+                if isinstance(result_payload, dict) and result_payload.get("ok"):
+                    confirmation = str(result_payload.get("confirmation") or "").strip()
+                    if confirmation:
+                        tool_confirmations.append(confirmation)
+                if isinstance(result_payload, dict):
+                    executed_actions.append({
+                        "tool": tool_name,
+                        "input": tool_input,
+                        "result": result_payload,
+                    })
+                    executed_mutations.append({
+                        "tool": tool_name,
+                        "success": bool(result_payload.get("ok")),
+                        "result_summary": _mutation_result_summary(tool_name, result_payload),
+                        "error": result_payload.get("error"),
+                        "code": result_payload.get("code"),
+                    })
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": tool_use_id,
@@ -3637,49 +3677,41 @@ def _stream_assistant_reply_events_anthropic(
                     tool_input = raw_input if isinstance(raw_input, dict) else {}
 
                 yield {"type": "tool_use", "tool": tool_name, "input": tool_input}
-                if tool_name in {"get_readiness_snapshot", "get_data_contract"}:
-                    result_payload = _anthropic_tool_output(tool_name, readiness)
-                else:
-                    mutation_guard = _guard_mutation_tool(
-                        tool_name,
-                        user_turn_count=user_turn_count,
-                        mutations_this_turn=mutations_this_turn,
+                is_mutation = _is_mutation_tool(tool_name)
+                if is_mutation:
+                    undo_snapshot = _maybe_capture_turn_undo_snapshot(
+                        undo_snapshot,
+                        tool_name=tool_name,
+                        user_id=user_id,
+                        thread_id=thread_id,
                     )
-                    if mutation_guard:
-                        result_payload = mutation_guard
-                    else:
-                        undo_snapshot = _maybe_capture_turn_undo_snapshot(
-                            undo_snapshot,
-                            tool_name=tool_name,
-                            user_id=user_id,
-                            thread_id=thread_id,
-                        )
-                        if _is_mutation_tool(tool_name):
-                            mutations_this_turn += 1
-                        result_payload = _execute_mutation_tool(
-                            tool_name,
-                            tool_input,
-                            user=user,
-                            user_id=user_id,
-                            thread_id=thread_id,
-                        )
-                    if isinstance(result_payload, dict) and result_payload.get("ok"):
-                        confirmation = str(result_payload.get("confirmation") or "").strip()
-                        if confirmation:
-                            tool_confirmations.append(confirmation)
-                    if isinstance(result_payload, dict):
-                        executed_actions.append({
-                            "tool": tool_name,
-                            "input": tool_input,
-                            "result": result_payload,
-                        })
-                        executed_mutations.append({
-                            "tool": tool_name,
-                            "success": bool(result_payload.get("ok")),
-                            "result_summary": _mutation_result_summary(tool_name, result_payload),
-                            "error": result_payload.get("error"),
-                            "code": result_payload.get("code"),
-                        })
+                result_payload, mutations_this_turn = _execute_local_tool(
+                    tool_name,
+                    tool_input,
+                    readiness=readiness,
+                    user=user,
+                    user_id=user_id,
+                    thread_id=thread_id,
+                    user_turn_count=user_turn_count,
+                    mutations_this_turn=mutations_this_turn,
+                )
+                if isinstance(result_payload, dict) and result_payload.get("ok"):
+                    confirmation = str(result_payload.get("confirmation") or "").strip()
+                    if confirmation:
+                        tool_confirmations.append(confirmation)
+                if isinstance(result_payload, dict):
+                    executed_actions.append({
+                        "tool": tool_name,
+                        "input": tool_input,
+                        "result": result_payload,
+                    })
+                    executed_mutations.append({
+                        "tool": tool_name,
+                        "success": bool(result_payload.get("ok")),
+                        "result_summary": _mutation_result_summary(tool_name, result_payload),
+                        "error": result_payload.get("error"),
+                        "code": result_payload.get("code"),
+                    })
                 yield {"type": "tool_result", "tool": tool_name, "result": result_payload}
                 tool_results.append({
                     "type": "tool_result",
