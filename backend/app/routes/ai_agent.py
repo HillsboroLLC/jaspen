@@ -1627,6 +1627,54 @@ def _fallback_reply_for_turn(user_message, readiness):
     return _next_question(readiness)
 
 
+def _infer_connector_query_params_from_message(user_message):
+    text = str(user_message or "").strip()
+    lower = text.lower()
+    connector_type = "snowflake" if "snowflake" in lower else ("salesforce" if "salesforce" in lower else "snowflake")
+    table_match = re.search(r"\b([a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*)\b", text)
+    table = table_match.group(1).lower() if table_match else ""
+    cols = []
+    for token in re.findall(r"\b[A-Z][A-Z0-9_]{2,}\b", text):
+        if token not in cols:
+            cols.append(token)
+        if len(cols) >= 12:
+            break
+    return {
+        "connector_type": connector_type,
+        "table": table,
+        "query_intent": text,
+        "columns": cols or None,
+        "limit": 50,
+    }
+
+
+def _direct_connector_fallback_reply(user_id, user_message, readiness):
+    if not _message_has_data_context_request(user_message):
+        return _next_question(readiness)
+    params = _infer_connector_query_params_from_message(user_message)
+    result = _execute_connector_query_tool(user_id, params)
+    if not isinstance(result, dict) or not result.get("ok"):
+        return _fallback_reply_for_turn(user_message, readiness)
+    payload = result.get("result") if isinstance(result.get("result"), dict) else {}
+    rows = payload.get("data") if isinstance(payload.get("data"), list) else []
+    table = str(payload.get("table") or params.get("table") or "connector data").strip()
+    cols = payload.get("columns") if isinstance(payload.get("columns"), list) else []
+    preview_rows = rows[:5]
+    lines = [f"I queried `{table}` and pulled {len(rows)} row(s)."]
+    if cols:
+        lines.append(f"Columns used: {', '.join(cols[:10])}.")
+    if preview_rows:
+        lines.append("Top rows preview:")
+        for idx, row in enumerate(preview_rows, start=1):
+            if isinstance(row, dict):
+                compact = ", ".join(f"{k}={row.get(k)}" for k in list(row.keys())[:6])
+                lines.append(f"{idx}. {compact}")
+        lines.append("I can now compute focused cost-driver summaries from this result set.")
+    else:
+        lines.append("No rows were returned for that query. Try adjusting table/columns or filters.")
+    return "\n".join(lines)
+
+
 def _log_injection_signals(*, user, thread_id, user_message, injection_signals, source):
     if not injection_signals:
         return
@@ -5863,7 +5911,7 @@ def conversation_start():
                     yield _sse_payload(payload)
 
                 yield _sse_payload({"type": "tool_status", "status": "Building your scorecard..."})
-                assistant_reply = str(state.get("reply") or "").strip() or _next_question(readiness)
+                assistant_reply = str(state.get("reply") or "").strip() or _direct_connector_fallback_reply(user_id, user_message, readiness)
                 usage = state.get("usage") if isinstance(state.get("usage"), dict) else {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
                 actions = state.get("actions") if isinstance(state.get("actions"), list) else []
                 mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
@@ -6310,7 +6358,7 @@ def conversation_continue():
                     yield _sse_payload(payload)
 
                 yield _sse_payload({"type": "tool_status", "status": "Composing recommendations..."})
-                assistant_reply = str(state.get("reply") or "").strip() or _next_question(readiness)
+                assistant_reply = str(state.get("reply") or "").strip() or _direct_connector_fallback_reply(user_id, user_message, readiness)
                 usage = state.get("usage") if isinstance(state.get("usage"), dict) else {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
                 actions = state.get("actions") if isinstance(state.get("actions"), list) else []
                 mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
@@ -7349,7 +7397,7 @@ def conversation_regenerate():
                     yield _sse_payload(payload)
 
                 yield _sse_payload({"type": "tool_status", "status": "Finalizing response..."})
-                assistant_reply = str(state.get("reply") or "").strip() or _next_question(readiness)
+                assistant_reply = str(state.get("reply") or "").strip() or _direct_connector_fallback_reply(user_id, user_message, readiness)
                 usage = state.get("usage") if isinstance(state.get("usage"), dict) else {
                     "provider": "heuristic",
                     "model": None,
