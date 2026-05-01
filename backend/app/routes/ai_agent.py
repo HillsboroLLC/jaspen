@@ -1622,7 +1622,8 @@ def _message_has_data_context_request(user_message):
 def _fallback_reply_for_turn(user_message, readiness):
     if _message_has_data_context_request(user_message):
         return (
-            "Using your attached data context now. I will prioritize numeric evidence and cite the table/columns used."
+            "I could not retrieve connector rows for that request. "
+            "Please confirm the connected source/table and try again."
         )
     return _next_question(readiness)
 
@@ -1654,6 +1655,10 @@ def _direct_connector_fallback_reply(user_id, user_message, readiness):
     params = _infer_connector_query_params_from_message(user_message)
     result = _execute_connector_query_tool(user_id, params)
     if not isinstance(result, dict) or not result.get("ok"):
+        err = result.get("error") if isinstance(result, dict) else ""
+        err_text = str(err or "").strip()
+        if err_text:
+            return f"Connector query failed: {err_text}"
         return _fallback_reply_for_turn(user_message, readiness)
     payload = result.get("result") if isinstance(result.get("result"), dict) else {}
     rows = payload.get("data") if isinstance(payload.get("data"), list) else []
@@ -1702,12 +1707,12 @@ def _log_injection_signals(*, user, thread_id, user_message, injection_signals, 
         current_app.logger.exception("Failed to audit injection signal")
 
 
-def _is_category_addressed(key, chat_history, keyword_map, lookback=3):
+def _is_category_addressed(key, chat_history, keyword_map, lookback=12):
     recent_user_msgs = [
         _message_text(m)
         for m in (chat_history or [])
         if isinstance(m, dict) and str(m.get("role", "")).lower() == "user"
-    ][-max(1, int(lookback or 3)):]
+    ][-max(1, int(lookback or 12)):]
     if not recent_user_msgs:
         return False
     keywords = keyword_map.get(key, [])
@@ -1752,7 +1757,7 @@ def _compute_readiness(chat_history, strategy_objective="balanced"):
             completed = evidence["quality_score"] >= 3
             percent = min(100, evidence["quality_score"] * 20)
         else:
-            hits = _is_category_addressed(key, chat_history, keyword_map, lookback=3)
+            hits = _is_category_addressed(key, chat_history, keyword_map, lookback=12)
             completed = bool(hits)
             percent = 100 if hits else 0
 
@@ -1810,7 +1815,16 @@ def _clamp_readiness_with_delta(previous_snapshot, current_snapshot):
 
     prev_percent = int(((previous_snapshot.get("overall") or {}).get("percent")) or previous_snapshot.get("percent") or 0)
     curr_percent = int(((current_snapshot.get("overall") or {}).get("percent")) or current_snapshot.get("percent") or 0)
-    if curr_percent <= prev_percent:
+    if curr_percent < prev_percent:
+        clamped = dict(current_snapshot)
+        overall = dict(clamped.get("overall") or {})
+        overall["percent"] = prev_percent
+        overall["heur_overall"] = prev_percent
+        clamped["overall"] = overall
+        clamped["percent"] = prev_percent
+        clamped["delta_clamped"] = True
+        return clamped
+    if curr_percent == prev_percent:
         return current_snapshot
 
     prev_completed = _readiness_completed_keys(previous_snapshot)
