@@ -1058,7 +1058,7 @@ def _build_objective_focus_items(objective, user_text, user_turns):
     for item in OBJECTIVE_FOCUS_PROFILES.get(objective, OBJECTIVE_FOCUS_PROFILES["balanced"]):
         hits = sum(1 for term in item.get("keywords", []) if term in user_text)
         if hits > 0:
-            percent = min(100, 45 + hits * 18 + min(user_turns * 5, 20))
+            percent = min(100, 45 + hits * 18)
         else:
             percent = 0
         items.append({
@@ -1103,9 +1103,9 @@ def _build_readiness_items(spec, version, categories, user_text, user_turns, obj
         for item in profile.get("items", []):
             hits = sum(1 for term in item.get("keywords", []) if term in user_text)
             if hits > 0:
-                percent = min(100, 55 + hits * 20 + min(user_turns * 4, 20))
+                percent = min(100, 55 + hits * 20)
             else:
-                percent = min(45, user_turns * 10)
+                percent = 0
             items.append({
                 "id": item.get("id"),
                 "key": item.get("id"),
