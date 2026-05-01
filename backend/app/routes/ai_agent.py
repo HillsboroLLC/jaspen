@@ -35,6 +35,7 @@ from app.billing_config import (
 )
 from app.connector_monitor import check_connector_health
 from app.tool_registry import (
+    get_active_connector_tools,
     get_context_budget,
     get_tool_catalog,
     get_tool_entitlements,
@@ -1987,9 +1988,13 @@ def _generate_routed_chat_reply(
     raise RuntimeError("No provider routes available")
 
 
-def _openai_tools_from_anthropic(enable_mutation_tools=False, user_id=None):
+def _openai_tools_from_anthropic(enable_mutation_tools=False, user_id=None, plan_key="free"):
     tools = []
-    for item in _anthropic_tool_definitions(enable_mutation_tools=enable_mutation_tools, user_id=user_id):
+    for item in _anthropic_tool_definitions(
+        enable_mutation_tools=enable_mutation_tools,
+        user_id=user_id,
+        plan_key=plan_key,
+    ):
         if not isinstance(item, dict):
             continue
         tools.append({
@@ -2670,6 +2675,22 @@ def _connected_connector_types(user_id):
     return connected
 
 
+def _connected_connector_types_from_registry(user_id, plan_key):
+    mapping = {
+        "snowflake_insights": "snowflake",
+        "salesforce_insights": "salesforce",
+        "bigquery_insights": "bigquery",
+    }
+    tools = get_active_connector_tools(user_id, plan_key) if user_id else []
+    connected = []
+    for tool in (tools or []):
+        tool_id = str(tool.get("id") or "").strip().lower()
+        connector_type = mapping.get(tool_id)
+        if connector_type and connector_type not in connected:
+            connected.append(connector_type)
+    return connected
+
+
 def _execute_connector_query_tool(user_id, tool_input):
     params = tool_input if isinstance(tool_input, dict) else {}
     connector_type = str(params.get("connector_type") or "snowflake").strip().lower()
@@ -2722,7 +2743,7 @@ def _execute_connector_query_tool(user_id, tool_input):
     return _tool_error(f"Connector {connector_type} not implemented for agent querying.", code="connector_not_supported")
 
 
-def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None):
+def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_key="free"):
     tools = [
         {
             "name": "get_readiness_snapshot",
@@ -2743,7 +2764,10 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None):
             },
         },
     ]
-    active_connectors = set(_connected_connector_types(user_id))
+    active_connectors = set(
+        _connected_connector_types_from_registry(user_id, plan_key)
+        or _connected_connector_types(user_id)
+    )
     if active_connectors:
         tools.append({
             "name": "query_connector_data",
@@ -3291,7 +3315,11 @@ def _generate_assistant_reply_anthropic(
         or is_tool_allowed(plan_key, "wbs_write", "write")
         )
     )
-    tools = _anthropic_tool_definitions(enable_mutation_tools=can_mutate, user_id=user_id)
+    tools = _anthropic_tool_definitions(
+        enable_mutation_tools=can_mutate,
+        user_id=user_id,
+        plan_key=plan_key,
+    )
     total_input_tokens = 0
     total_output_tokens = 0
     executed_actions = []
@@ -3519,7 +3547,11 @@ def _stream_assistant_reply_events_anthropic(
         or is_tool_allowed(plan_key, "wbs_write", "write")
         )
     )
-    tools = _anthropic_tool_definitions(enable_mutation_tools=can_mutate, user_id=user_id)
+    tools = _anthropic_tool_definitions(
+        enable_mutation_tools=can_mutate,
+        user_id=user_id,
+        plan_key=plan_key,
+    )
     total_input_tokens = 0
     total_output_tokens = 0
     executed_actions = []
@@ -3781,7 +3813,11 @@ def _generate_assistant_reply_gemini(
             or is_tool_allowed(plan_key, "wbs_write", "write")
         )
     )
-    tools = _openai_tools_from_anthropic(enable_mutation_tools=can_mutate, user_id=user_id)
+    tools = _openai_tools_from_anthropic(
+        enable_mutation_tools=can_mutate,
+        user_id=user_id,
+        plan_key=plan_key,
+    )
     total_usage = {
         "provider": "gemini",
         "model": model_selection.get("llm_model"),
@@ -3969,7 +4005,11 @@ def _stream_assistant_reply_events_gemini(
             or is_tool_allowed(plan_key, "wbs_write", "write")
         )
     )
-    tools = _openai_tools_from_anthropic(enable_mutation_tools=can_mutate, user_id=user_id)
+    tools = _openai_tools_from_anthropic(
+        enable_mutation_tools=can_mutate,
+        user_id=user_id,
+        plan_key=plan_key,
+    )
     total_usage = {
         "provider": "gemini",
         "model": model_selection.get("llm_model"),

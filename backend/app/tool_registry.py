@@ -273,3 +273,29 @@ def get_scenario_limits_for_plan(plan_key):
     limits = tool.get("limits") or {}
     normalized_plan = normalize_plan_key(plan_key)
     return deepcopy(limits.get(normalized_plan) or {})
+
+
+def get_active_connector_tools(user_id, plan_key):
+    """
+    Return connector tool registry entries that are both plan-allowed and connected.
+    """
+    try:
+        from app.connector_store import get_connector_settings
+    except Exception:
+        return []
+
+    normalized_plan = normalize_plan_key(plan_key)
+    active = []
+    for tool in TOOL_REGISTRY:
+        if str(tool.get("type") or "").strip().lower() != "connector":
+            continue
+        tool_id = str(tool.get("id") or "").strip().lower()
+        if not tool_id:
+            continue
+        if not is_tool_allowed(normalized_plan, tool_id, "read"):
+            continue
+        settings = get_connector_settings(user_id, tool_id) if user_id else {}
+        status = str((settings or {}).get("connection_status") or "").strip().lower()
+        if status == "connected":
+            active.append(deepcopy(tool))
+    return active
