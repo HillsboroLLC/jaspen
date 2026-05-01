@@ -1714,7 +1714,7 @@ def _direct_connector_fallback_reply(user_id, user_message, readiness):
         if err_text:
             return f"Connector query failed: {err_text}"
         return _fallback_reply_for_turn(user_message, readiness)
-    payload = result.get("result") if isinstance(result.get("result"), dict) else {}
+    payload = result if isinstance(result, dict) else {}
     rows = payload.get("data") if isinstance(payload.get("data"), list) else []
     table = str(payload.get("table") or params.get("table") or "connector data").strip()
     cols = payload.get("columns") if isinstance(payload.get("columns"), list) else []
@@ -3463,7 +3463,7 @@ def _generate_assistant_reply_anthropic(
     disable_mutations=False,
     allow_failover=False,
 ):
-    fallback_reply = _fallback_reply_for_turn(user_message, readiness)
+    fallback_reply = _direct_connector_fallback_reply(user_id, user_message, readiness)
     api_key = _anthropic_api_key()
     if not api_key:
         return fallback_reply, {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, [], [], None
@@ -3682,7 +3682,7 @@ def _stream_assistant_reply_events_anthropic(
     allow_failover=False,
 ):
     state = state if isinstance(state, dict) else {}
-    fallback_reply = _fallback_reply_for_turn(user_message, readiness)
+    fallback_reply = _direct_connector_fallback_reply(user_id, user_message, readiness)
     state.update({
         "reply": fallback_reply,
         "usage": {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
@@ -3969,7 +3969,7 @@ def _generate_assistant_reply_gemini(
     if not _gemini_api_key():
         raise RuntimeError("GEMINI_API_KEY not configured")
 
-    fallback_reply = _fallback_reply_for_turn(user_message, readiness)
+    fallback_reply = _direct_connector_fallback_reply(user_id, user_message, readiness)
     messages, context_summary_text, summary_usage = _prepare_context_window(
         session,
         chat_history,
@@ -4158,7 +4158,7 @@ def _stream_assistant_reply_events_gemini(
         raise RuntimeError("GEMINI_API_KEY not configured")
 
     state = state if isinstance(state, dict) else {}
-    fallback_reply = _fallback_reply_for_turn(user_message, readiness)
+    fallback_reply = _direct_connector_fallback_reply(user_id, user_message, readiness)
     state.update({
         "reply": fallback_reply,
         "usage": {"provider": "gemini", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
