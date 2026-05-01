@@ -176,8 +176,8 @@ def _session_query_for_user(user_id):
     return query
 
 
-def save_user_sessions(user_id, sessions):
-    """Persist the complete session map for a user into DB."""
+def save_user_sessions(user_id, sessions, session_ids_to_delete=None):
+    """Upsert provided sessions; delete only explicitly requested session ids."""
     user_id = str(user_id)
     sessions = sessions if isinstance(sessions, dict) else {}
 
@@ -201,9 +201,15 @@ def save_user_sessions(user_id, sessions):
             if row.id is None:
                 db.session.add(row)
 
-        for sid, row in existing_rows.items():
-            if sid not in incoming_ids:
-                db.session.delete(row)
+        explicit_deletes = {
+            str(sid).strip()
+            for sid in (session_ids_to_delete or [])
+            if str(sid or "").strip()
+        }
+        if explicit_deletes:
+            for sid, row in existing_rows.items():
+                if sid in explicit_deletes:
+                    db.session.delete(row)
 
         db.session.commit()
         return True

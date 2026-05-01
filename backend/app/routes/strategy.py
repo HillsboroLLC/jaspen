@@ -3550,7 +3550,7 @@ def _materialize_ai_wbs(wbs_payload):
                 estimated_days = max(1, int(estimated_days)) if estimated_days is not None else None
             except Exception:
                 estimated_days = None
-            due_date = (now + timedelta(days=estimated_days)).date().isoformat() if estimated_days else None
+            due_date = None
 
             task = {
                 'id': task_id,
@@ -3621,6 +3621,42 @@ def _materialize_ai_wbs(wbs_payload):
                 if dep_id and dep_id != task_id and dep_id not in deps:
                     deps.append(dep_id)
             task['depends_on'] = deps
+
+    # Dependency-aware scheduling: forward pass through the dependency graph.
+    task_map = {str(item.get('id') or ''): item for item in created if isinstance(item, dict)}
+    finish_cache = {}
+
+    def _task_finish(task_id, visiting=None):
+        if not task_id or task_id not in task_map:
+            return now
+        if task_id in finish_cache:
+            return finish_cache[task_id]
+        visiting = visiting or set()
+        if task_id in visiting:
+            # Circular dependency guard: fall back to current timestamp.
+            return now
+        visiting.add(task_id)
+        task = task_map[task_id]
+        deps = task.get('depends_on') if isinstance(task.get('depends_on'), list) else []
+        start_at = now
+        for dep_id in deps:
+            dep_finish = _task_finish(str(dep_id), visiting)
+            if dep_finish > start_at:
+                start_at = dep_finish
+        est_days = task.get('estimated_days')
+        try:
+            est_days = max(1, int(est_days)) if est_days is not None else None
+        except Exception:
+            est_days = None
+        finish_at = start_at + timedelta(days=est_days or 1)
+        task['start_date'] = start_at.date().isoformat()
+        task['due_date'] = finish_at.date().isoformat()
+        finish_cache[task_id] = finish_at
+        visiting.discard(task_id)
+        return finish_at
+
+    for t in created:
+        _task_finish(str(t.get('id') or ''))
 
     return {
         'name': str(wbs_payload.get('name') or 'AI Generated WBS').strip() or 'AI Generated WBS',

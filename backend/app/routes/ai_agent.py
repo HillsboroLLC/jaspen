@@ -42,6 +42,7 @@ from app.tool_registry import (
 )
 from app.orgs import normalize_org_role, resolve_active_org_for_user
 from app.scenarios_store import save_scenarios_data
+from app.connector_store import get_connector_settings
 
 from .sessions import load_user_sessions, save_user_sessions
 
@@ -299,7 +300,7 @@ MAX_CONVERSATION_ATTACHMENTS = 5
 MAX_CONVERSATION_ATTACHMENT_BYTES = 10 * 1024 * 1024
 USER_MESSAGE_OPEN_TAG = "<user_message>"
 USER_MESSAGE_CLOSE_TAG = "</user_message>"
-_MUTATION_TOOLS = {"create_scenario", "update_wbs_task", "add_wbs_task", "remove_wbs_task"}
+_MUTATION_TOOLS = {"create_scenario", "update_wbs_task", "add_wbs_task", "remove_wbs_task", "generate_execution_plan"}
 _INJECTION_PATTERNS = [
     re.compile(r"ignore\s+(all\s+)?(previous|prior|above)\s+(instructions|prompts|rules)", re.I),
     re.compile(r"you\s+are\s+now\s+(a|an)\s+", re.I),
@@ -1058,7 +1059,7 @@ def _build_objective_focus_items(objective, user_text, user_turns):
         if hits > 0:
             percent = min(100, 45 + hits * 18 + min(user_turns * 5, 20))
         else:
-            percent = min(35, user_turns * 8)
+            percent = 0
         items.append({
             "id": item.get("id"),
             "key": item.get("id"),
@@ -1629,6 +1630,29 @@ def _log_injection_signals(*, user, thread_id, user_message, injection_signals, 
         current_app.logger.exception("Failed to audit injection signal")
 
 
+def _is_category_addressed(key, chat_history, keyword_map, lookback=3):
+    recent_user_msgs = [
+        _message_text(m)
+        for m in (chat_history or [])
+        if isinstance(m, dict) and str(m.get("role", "")).lower() == "user"
+    ][-max(1, int(lookback or 3)):]
+    if not recent_user_msgs:
+        return False
+    keywords = keyword_map.get(key, [])
+    for msg in recent_user_msgs:
+        msg_lower = str(msg or "").lower()
+        for kw in keywords:
+            kw_norm = str(kw or "").strip().lower()
+            if not kw_norm:
+                continue
+            idx = msg_lower.find(kw_norm)
+            if idx >= 0:
+                context = msg_lower[max(0, idx - 20): idx + len(kw_norm) + 30]
+                if len(context.split()) >= 4:
+                    return True
+    return False
+
+
 def _compute_readiness(chat_history, strategy_objective="balanced"):
     spec = _active_readiness_spec()
     version = spec.get("version", "readiness-v1")
@@ -1654,11 +1678,11 @@ def _compute_readiness(chat_history, strategy_objective="balanced"):
             # Evidence is complete when we have a measurable baseline format that
             # works for both financial and non-financial KPI metrics.
             completed = evidence["quality_score"] >= 3
-            percent = min(100, evidence["quality_score"] * 20 + min(user_turns * 4, 20))
+            percent = min(100, evidence["quality_score"] * 20)
         else:
-            hits = any(k in user_text for k in keyword_map.get(key, []))
+            hits = _is_category_addressed(key, chat_history, keyword_map, lookback=3)
             completed = bool(hits)
-            percent = 100 if hits else min(70, user_turns * 15)
+            percent = 100 if hits else 0
 
         if completed:
             completed_weight += weight
@@ -1674,9 +1698,7 @@ def _compute_readiness(chat_history, strategy_objective="balanced"):
             category_payload["evidence_checks"] = evidence
         categories.append(category_payload)
 
-    # Small progress bonus for conversational depth.
-    progress_bonus = min(0.15, user_turns * 0.025)
-    overall = int(round(min(1.0, completed_weight + progress_bonus) * 100))
+    overall = int(round(min(1.0, completed_weight) * 100))
     readiness_payload = {
         "overall": {
             "percent": overall,
@@ -1695,6 +1717,44 @@ def _compute_readiness(chat_history, strategy_objective="balanced"):
         readiness_payload["evidence_quality"] = evidence
         readiness_payload["data_contract"] = EVIDENCE_DATA_CONTRACT
     return readiness_payload
+
+
+def _readiness_completed_keys(readiness_payload):
+    return {
+        str(item.get("key") or "").strip()
+        for item in (readiness_payload.get("categories") if isinstance(readiness_payload, dict) else [])
+        if isinstance(item, dict) and bool(item.get("completed")) and str(item.get("key") or "").strip()
+    }
+
+
+def _clamp_readiness_with_delta(previous_snapshot, current_snapshot):
+    """
+    Allow readiness increases only when newly completed categories are present.
+    """
+    if not isinstance(current_snapshot, dict):
+        return current_snapshot
+    if not isinstance(previous_snapshot, dict):
+        return current_snapshot
+
+    prev_percent = int(((previous_snapshot.get("overall") or {}).get("percent")) or previous_snapshot.get("percent") or 0)
+    curr_percent = int(((current_snapshot.get("overall") or {}).get("percent")) or current_snapshot.get("percent") or 0)
+    if curr_percent <= prev_percent:
+        return current_snapshot
+
+    prev_completed = _readiness_completed_keys(previous_snapshot)
+    curr_completed = _readiness_completed_keys(current_snapshot)
+    newly_completed = curr_completed - prev_completed
+    if newly_completed:
+        return current_snapshot
+
+    clamped = dict(current_snapshot)
+    overall = dict(clamped.get("overall") or {})
+    overall["percent"] = prev_percent
+    overall["heur_overall"] = prev_percent
+    clamped["overall"] = overall
+    clamped["percent"] = prev_percent
+    clamped["delta_clamped"] = True
+    return clamped
 
 
 def _next_question(readiness):
@@ -1927,9 +1987,9 @@ def _generate_routed_chat_reply(
     raise RuntimeError("No provider routes available")
 
 
-def _openai_tools_from_anthropic(enable_mutation_tools=False):
+def _openai_tools_from_anthropic(enable_mutation_tools=False, user_id=None):
     tools = []
-    for item in _anthropic_tool_definitions(enable_mutation_tools=enable_mutation_tools):
+    for item in _anthropic_tool_definitions(enable_mutation_tools=enable_mutation_tools, user_id=user_id):
         if not isinstance(item, dict):
             continue
         tools.append({
@@ -2104,6 +2164,8 @@ def _attach_failover_usage(usage, *, attempted_providers=None, final_provider=No
 def _execute_local_tool(tool_name, tool_input, *, readiness, user, user_id, thread_id, user_turn_count, mutations_this_turn):
     if tool_name in {"get_readiness_snapshot", "get_data_contract"}:
         return _anthropic_tool_output(tool_name, readiness), mutations_this_turn
+    if tool_name == "query_connector_data":
+        return _execute_connector_query_tool(user_id, tool_input), mutations_this_turn
 
     mutation_guard = _guard_mutation_tool(
         tool_name,
@@ -2591,7 +2653,76 @@ def _prepare_context_window(session, chat_history, context_budget, model_selecti
     return recent_messages, summary_text, summary_usage
 
 
-def _anthropic_tool_definitions(enable_mutation_tools=False):
+def _has_connected_connector(user_id, connector_id):
+    settings = get_connector_settings(user_id, connector_id) if user_id else {}
+    return str(settings.get("connection_status") or "").strip().lower() == "connected"
+
+
+def _connected_connector_types(user_id):
+    mapping = {
+        "snowflake_insights": "snowflake",
+        "salesforce_insights": "salesforce",
+    }
+    connected = []
+    for connector_id, connector_type in mapping.items():
+        if _has_connected_connector(user_id, connector_id):
+            connected.append(connector_type)
+    return connected
+
+
+def _execute_connector_query_tool(user_id, tool_input):
+    params = tool_input if isinstance(tool_input, dict) else {}
+    connector_type = str(params.get("connector_type") or "snowflake").strip().lower()
+    table = str(params.get("table") or "").strip()
+    query_intent = str(params.get("query_intent") or "").strip()
+    columns = params.get("columns") if isinstance(params.get("columns"), list) else None
+    limit = max(1, min(int(params.get("limit") or 50), 200))
+    if not table or not query_intent:
+        return _tool_error("connector_type, table, and query_intent are required.", code="invalid_input")
+
+    try:
+        if connector_type == "snowflake":
+            from app.snowflake_insights import build_query_from_intent, run_allowlisted_query
+            query_kwargs = build_query_from_intent(
+                table=table,
+                columns=columns,
+                query_intent=query_intent,
+                limit=limit,
+            )
+            result = run_allowlisted_query(user_id, **query_kwargs)
+            rows = result.get("rows") if isinstance(result.get("rows"), list) else []
+            return _tool_success({
+                "tool": "query_connector_data",
+                "source": "snowflake",
+                "table": table,
+                "query_intent": query_intent,
+                "returned_rows": len(rows),
+                "columns": list(rows[0].keys()) if rows else [],
+                "data": rows[:50],
+                "summary": f"Retrieved {len(rows)} rows from {table}.",
+            })
+
+        if connector_type == "salesforce":
+            from app.salesforce_sync import fetch_pipeline_summary
+            result = fetch_pipeline_summary(user_id, lookback_days=90, max_records=200)
+            summary = result.get("pipeline_summary") or result.get("summary") or {}
+            return _tool_success({
+                "tool": "query_connector_data",
+                "source": "salesforce",
+                "table": table,
+                "query_intent": query_intent,
+                "returned_rows": len(result.get("opportunities") or []),
+                "columns": [],
+                "data": (result.get("opportunities") or [])[:50],
+                "summary": summary,
+            })
+    except Exception as exc:
+        return _tool_error(str(exc), code="connector_query_failed")
+
+    return _tool_error(f"Connector {connector_type} not implemented for agent querying.", code="connector_not_supported")
+
+
+def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None):
     tools = [
         {
             "name": "get_readiness_snapshot",
@@ -2612,6 +2743,30 @@ def _anthropic_tool_definitions(enable_mutation_tools=False):
             },
         },
     ]
+    active_connectors = set(_connected_connector_types(user_id))
+    if active_connectors:
+        tools.append({
+            "name": "query_connector_data",
+            "description": (
+                "Execute a read-only query against connected data sources. "
+                "Use this to retrieve rows, KPIs, and trends and cite table/columns used."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "connector_type": {
+                        "type": "string",
+                        "enum": sorted(active_connectors),
+                    },
+                    "table": {"type": "string"},
+                    "query_intent": {"type": "string"},
+                    "columns": {"type": "array", "items": {"type": "string"}},
+                    "limit": {"type": "integer", "default": 50},
+                },
+                "required": ["connector_type", "table", "query_intent"],
+                "additionalProperties": False,
+            },
+        })
     if enable_mutation_tools:
         tools.extend([
             {
@@ -2686,6 +2841,23 @@ def _anthropic_tool_definitions(enable_mutation_tools=False):
                     "additionalProperties": False,
                 },
             },
+            {
+                "name": "generate_execution_plan",
+                "description": (
+                    "Generate or regenerate the detailed execution plan (WBS) for the current initiative."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "focus_areas": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                        "timeline_constraint": {"type": "string"},
+                    },
+                    "additionalProperties": False,
+                },
+            },
         ])
     return tools
 
@@ -2746,7 +2918,11 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id):
     from .strategy import (
         _compute_scenario_scorecard,
         _create_scenario_record,
+        _generate_ai_wbs_suggestion,
+        get_llm_client,
+        _materialize_ai_wbs,
         _normalize_project_wbs,
+        _resolve_user_model_selection,
         _resolve_thread_baseline,
         _sanitize_deltas,
         _save_scenarios,
@@ -2810,6 +2986,54 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id):
                 f"and a projected score of {result.get('jaspen_score')}."
             ),
             "scenario": scenario,
+        })
+
+    if tool_name == "generate_execution_plan":
+        if not is_tool_allowed(plan_key, "wbs_write", "write"):
+            return _tool_error("Execution plan generation is not allowed on your current plan.", code="tool_not_allowed")
+        all_data, thread_data, baseline, _baseline_inputs, session, _objective = _resolve_thread_baseline(user_id, thread_id)
+        scenarios = thread_data.get("scenarios") if isinstance(thread_data.get("scenarios"), dict) else {}
+        adopted_id = thread_data.get("adopted_scenario_id")
+        adopted_scenario = scenarios.get(adopted_id) if adopted_id in scenarios else None
+        scorecard = adopted_scenario.get("result") if isinstance(adopted_scenario, dict) and isinstance(adopted_scenario.get("result"), dict) else baseline
+        if not isinstance(scorecard, dict) and isinstance(session, dict):
+            scorecard = session.get("result") if isinstance(session.get("result"), dict) else None
+        if not isinstance(scorecard, dict):
+            return _tool_error("No scorecard context found for this thread.", code="missing_scorecard")
+
+        focus_areas = tool_input.get("focus_areas") if isinstance(tool_input.get("focus_areas"), list) else []
+        timeline_constraint = str(tool_input.get("timeline_constraint") or "").strip()
+        instruction_parts = []
+        if focus_areas:
+            instruction_parts.append(f"Focus areas: {', '.join(str(item) for item in focus_areas if str(item).strip())}")
+        if timeline_constraint:
+            instruction_parts.append(f"Timeline constraint: {timeline_constraint}")
+        instruction = "\n".join(part for part in instruction_parts if part).strip()
+
+        model_selection, _model_error = _resolve_user_model_selection(user)
+        client = get_llm_client()
+        raw_wbs = _generate_ai_wbs_suggestion(
+            client,
+            model_selection["llm_model"],
+            scorecard=scorecard,
+            instruction=instruction,
+            scenario_payload=adopted_scenario,
+        )
+        materialized = _materialize_ai_wbs(raw_wbs)
+        normalized_wbs = _normalize_project_wbs({"project_wbs": materialized}, existing=None)
+        normalized_wbs["ai_generated"] = True
+        normalized_wbs["ai_generated_at"] = datetime.utcnow().isoformat()
+        normalized_wbs["ai_summary"] = str(raw_wbs.get("summary") or "").strip()
+        thread_data["project_wbs"] = normalized_wbs
+        all_data[thread_id] = thread_data
+        _save_scenarios(user_id, all_data)
+        return _tool_success({
+            "tool": tool_name,
+            "confirmation": (
+                f"Generated an execution plan with {len(normalized_wbs.get('tasks') or [])} tasks. "
+                "Open the Execution view to review list, board, and timeline."
+            ),
+            "project_wbs": normalized_wbs,
         })
 
     if tool_name in {"update_wbs_task", "add_wbs_task", "remove_wbs_task"}:
@@ -3067,7 +3291,7 @@ def _generate_assistant_reply_anthropic(
         or is_tool_allowed(plan_key, "wbs_write", "write")
         )
     )
-    tools = _anthropic_tool_definitions(enable_mutation_tools=can_mutate)
+    tools = _anthropic_tool_definitions(enable_mutation_tools=can_mutate, user_id=user_id)
     total_input_tokens = 0
     total_output_tokens = 0
     executed_actions = []
@@ -3295,7 +3519,7 @@ def _stream_assistant_reply_events_anthropic(
         or is_tool_allowed(plan_key, "wbs_write", "write")
         )
     )
-    tools = _anthropic_tool_definitions(enable_mutation_tools=can_mutate)
+    tools = _anthropic_tool_definitions(enable_mutation_tools=can_mutate, user_id=user_id)
     total_input_tokens = 0
     total_output_tokens = 0
     executed_actions = []
@@ -3557,7 +3781,7 @@ def _generate_assistant_reply_gemini(
             or is_tool_allowed(plan_key, "wbs_write", "write")
         )
     )
-    tools = _openai_tools_from_anthropic(enable_mutation_tools=can_mutate)
+    tools = _openai_tools_from_anthropic(enable_mutation_tools=can_mutate, user_id=user_id)
     total_usage = {
         "provider": "gemini",
         "model": model_selection.get("llm_model"),
@@ -3745,7 +3969,7 @@ def _stream_assistant_reply_events_gemini(
             or is_tool_allowed(plan_key, "wbs_write", "write")
         )
     )
-    tools = _openai_tools_from_anthropic(enable_mutation_tools=can_mutate)
+    tools = _openai_tools_from_anthropic(enable_mutation_tools=can_mutate, user_id=user_id)
     total_usage = {
         "provider": "gemini",
         "model": model_selection.get("llm_model"),
@@ -5074,6 +5298,25 @@ def _promote_batch_idea_to_thread(user, batch, idea, model_selection):
     }, None, None
 
 
+def _rollback_promoted_session(user, thread_id, credits_to_refund=0):
+    """Best-effort rollback for a promoted batch thread."""
+    try:
+        sessions = load_user_sessions(user.id) or {}
+        session_key, _session = _resolve_user_session(sessions, thread_id)
+        target_key = session_key or str(thread_id)
+        if target_key in sessions:
+            sessions.pop(target_key, None)
+            save_user_sessions(user.id, sessions, session_ids_to_delete=[target_key])
+    except Exception:
+        current_app.logger.exception("Rollback failed while removing promoted session")
+    try:
+        refund = int(credits_to_refund or 0)
+        if refund > 0:
+            add_credits(user, refund)
+    except Exception:
+        current_app.logger.exception("Rollback failed while refunding credits")
+
+
 def _linear_slope(values):
     n = len(values)
     if n < 2:
@@ -5383,7 +5626,11 @@ def conversation_start():
 
     session.pop(PENDING_MUTATION_UNDO_KEY, None)
     chat_history.append(_user_chat_entry(user_message, attachments=attachments))
-    readiness = _compute_readiness(chat_history, session.get("strategy_objective"))
+    previous_readiness = session.get("readiness") if isinstance(session.get("readiness"), dict) else None
+    readiness = _clamp_readiness_with_delta(
+        previous_readiness,
+        _compute_readiness(chat_history, session.get("strategy_objective")),
+    )
     stream_requested = str(request.args.get("stream") or "").strip().lower() in {"1", "true", "yes"}
     if _is_objective_offtopic_turn(user_message):
         assistant_reply = _objective_refocus_reply(session.get("strategy_objective"))
@@ -5394,6 +5641,7 @@ def conversation_start():
         session["model_type"] = model_selection["model_type"]
         session["timestamp"] = _iso_now()
         session["status"] = "in_progress"
+        session["readiness"] = readiness
         sessions[thread_id] = session
         if not save_user_sessions(user_id, sessions):
             return jsonify({"error": "Failed to persist conversation state"}), 500
@@ -5530,7 +5778,10 @@ def conversation_start():
                     undo={"available": True} if undo_available else None,
                 ))
                 assistant_message_index = len(final_chat_history) - 1
-                final_readiness = _compute_readiness(final_chat_history, session.get("strategy_objective"))
+                final_readiness = _clamp_readiness_with_delta(
+                    previous_readiness,
+                    _compute_readiness(final_chat_history, session.get("strategy_objective")),
+                )
 
                 session["chat_history"] = final_chat_history
                 if undo_available:
@@ -5544,6 +5795,7 @@ def conversation_start():
                 session["model_type"] = model_selection["model_type"]
                 session["timestamp"] = _iso_now()
                 session["status"] = "in_progress"
+                session["readiness"] = final_readiness
                 _record_usage(session, usage, credits_charged)
                 sessions[thread_id] = session
                 if not save_user_sessions(user_id, sessions):
@@ -5665,6 +5917,11 @@ def conversation_start():
     session["model_type"] = model_selection["model_type"]
     session["timestamp"] = _iso_now()
     session["status"] = "in_progress"
+    final_readiness_non_stream = _clamp_readiness_with_delta(
+        previous_readiness,
+        _compute_readiness(chat_history, session.get("strategy_objective")),
+    )
+    session["readiness"] = final_readiness_non_stream
     _record_usage(session, usage, credits_charged)
     sessions[thread_id] = session
     if not save_user_sessions(user_id, sessions):
@@ -5702,11 +5959,11 @@ def conversation_start():
             "remaining": remaining,
         },
         "readiness": {
-            "percent": readiness["overall"]["percent"],
-            "categories": readiness["categories"],
-            "items": readiness.get("items", []),
-            "checklist_summary": readiness.get("checklist_summary", {}),
-            "version": readiness.get("version"),
+            "percent": final_readiness_non_stream["overall"]["percent"],
+            "categories": final_readiness_non_stream["categories"],
+            "items": final_readiness_non_stream.get("items", []),
+            "checklist_summary": final_readiness_non_stream.get("checklist_summary", {}),
+            "version": final_readiness_non_stream.get("version"),
             "updated_at": _iso_now(),
         },
         "status": "gathering_info",
@@ -5831,7 +6088,11 @@ def conversation_continue():
 
     session.pop(PENDING_MUTATION_UNDO_KEY, None)
     chat_history.append(_user_chat_entry(user_message, attachments=attachments))
-    readiness = _compute_readiness(chat_history, session.get("strategy_objective"))
+    previous_readiness = session.get("readiness") if isinstance(session.get("readiness"), dict) else None
+    readiness = _clamp_readiness_with_delta(
+        previous_readiness,
+        _compute_readiness(chat_history, session.get("strategy_objective")),
+    )
     stream_requested = str(request.args.get("stream") or "").strip().lower() in {"1", "true", "yes"}
     if _is_objective_offtopic_turn(user_message):
         assistant_reply = _objective_refocus_reply(session.get("strategy_objective"))
@@ -5964,7 +6225,10 @@ def conversation_continue():
                     undo={"available": True} if undo_available else None,
                 ))
                 assistant_message_index = len(final_chat_history) - 1
-                final_readiness = _compute_readiness(final_chat_history, session.get("strategy_objective"))
+                final_readiness = _clamp_readiness_with_delta(
+                    previous_readiness,
+                    _compute_readiness(final_chat_history, session.get("strategy_objective")),
+                )
 
                 session["chat_history"] = final_chat_history
                 if undo_available:
@@ -5977,6 +6241,7 @@ def conversation_continue():
                 session["model_type"] = model_selection["model_type"]
                 session["timestamp"] = _iso_now()
                 session["status"] = "ready_to_analyze" if final_readiness["overall"]["percent"] >= 85 else "in_progress"
+                session["readiness"] = final_readiness
                 _record_usage(session, usage, credits_charged)
                 sessions[thread_id] = session
                 if not save_user_sessions(user_id, sessions):
@@ -6096,7 +6361,12 @@ def conversation_continue():
         session.pop(PENDING_MUTATION_UNDO_KEY, None)
     session["model_type"] = model_selection["model_type"]
     session["timestamp"] = _iso_now()
-    session["status"] = "ready_to_analyze" if readiness["overall"]["percent"] >= 85 else "in_progress"
+    final_readiness_non_stream = _clamp_readiness_with_delta(
+        previous_readiness,
+        _compute_readiness(chat_history, session.get("strategy_objective")),
+    )
+    session["status"] = "ready_to_analyze" if final_readiness_non_stream["overall"]["percent"] >= 85 else "in_progress"
+    session["readiness"] = final_readiness_non_stream
     _record_usage(session, usage, credits_charged)
     sessions[thread_id] = session
     if not save_user_sessions(user_id, sessions):
@@ -6134,14 +6404,14 @@ def conversation_continue():
             "remaining": remaining,
         },
         "readiness": {
-            "percent": readiness["overall"]["percent"],
-            "categories": readiness["categories"],
-            "items": readiness.get("items", []),
-            "checklist_summary": readiness.get("checklist_summary", {}),
-            "version": readiness.get("version"),
+            "percent": final_readiness_non_stream["overall"]["percent"],
+            "categories": final_readiness_non_stream["categories"],
+            "items": final_readiness_non_stream.get("items", []),
+            "checklist_summary": final_readiness_non_stream.get("checklist_summary", {}),
+            "version": final_readiness_non_stream.get("version"),
             "updated_at": _iso_now(),
         },
-        "status": "ready_to_analyze" if readiness["overall"]["percent"] >= 85 else "gathering_info",
+        "status": "ready_to_analyze" if final_readiness_non_stream["overall"]["percent"] >= 85 else "gathering_info",
         "strategy_objective": session.get("strategy_objective") or "balanced",
         "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
         "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
@@ -6211,7 +6481,10 @@ def readiness_audit():
     user_id = get_jwt_identity()
     session = _find_session_by_thread(thread_id, user_id=user_id)
     chat_history = session.get("chat_history", []) if isinstance(session, dict) else []
-    readiness = _compute_readiness(chat_history, (session or {}).get("strategy_objective"))
+    readiness = _clamp_readiness_with_delta(
+        (session or {}).get("readiness") if isinstance((session or {}).get("readiness"), dict) else None,
+        _compute_readiness(chat_history, (session or {}).get("strategy_objective")),
+    )
     return jsonify(readiness), 200
 
 
@@ -6265,7 +6538,8 @@ def reset_threads():
     cleared_threads = len(sessions) if isinstance(sessions, dict) else 0
 
     # Reset per-user AI Agent sessions.
-    save_user_sessions(user_id, {})
+    existing_ids = list(sessions.keys()) if isinstance(sessions, dict) else []
+    save_user_sessions(user_id, {}, session_ids_to_delete=existing_ids)
 
     # Reset per-user scenario storage used by ScenarioModeler.
     scenarios_cleared = save_scenarios_data(user_id, {})
@@ -6824,7 +7098,12 @@ def conversation_undo_mutations():
         },
     )
 
-    readiness = _compute_readiness(updated_chat_history, session.get("strategy_objective"))
+    previous_readiness = session.get("readiness") if isinstance(session.get("readiness"), dict) else None
+    readiness = _clamp_readiness_with_delta(
+        previous_readiness,
+        _compute_readiness(updated_chat_history, session.get("strategy_objective")),
+    )
+    session["readiness"] = readiness
 
     return jsonify({
         "success": True,
@@ -6904,7 +7183,11 @@ def conversation_regenerate():
     )
 
     regen_history = list(chat_history[:-1])
-    readiness = _compute_readiness(regen_history, session.get("strategy_objective"))
+    previous_readiness = session.get("readiness") if isinstance(session.get("readiness"), dict) else None
+    readiness = _clamp_readiness_with_delta(
+        previous_readiness,
+        _compute_readiness(regen_history, session.get("strategy_objective")),
+    )
     context_budget = get_context_budget(to_public_plan(user.subscription_plan))
     old_response = {
         "content": str(last_msg.get("content") or ""),
@@ -6984,10 +7267,14 @@ def conversation_regenerate():
                 )
                 chat_history[-1] = new_msg
                 assistant_message_index = len(chat_history) - 1
-                final_readiness = _compute_readiness(chat_history, session.get("strategy_objective"))
+                final_readiness = _clamp_readiness_with_delta(
+                    previous_readiness,
+                    _compute_readiness(chat_history, session.get("strategy_objective")),
+                )
 
                 session["chat_history"] = chat_history
                 session["timestamp"] = _iso_now()
+                session["readiness"] = final_readiness
                 _record_usage(session, usage, credits_charged)
                 sessions[session_key or thread_id] = session
                 if not save_user_sessions(user_id, sessions):
@@ -7092,6 +7379,11 @@ def conversation_regenerate():
     session["chat_history"] = chat_history
     session["timestamp"] = _iso_now()
     _record_usage(session, usage, credits_charged)
+    final_readiness = _clamp_readiness_with_delta(
+        previous_readiness,
+        _compute_readiness(chat_history, session.get("strategy_objective")),
+    )
+    session["readiness"] = final_readiness
     sessions[session_key or thread_id] = session
     if not save_user_sessions(user_id, sessions):
         return jsonify({"error": "Failed to persist regenerated response"}), 500
@@ -7105,8 +7397,6 @@ def conversation_regenerate():
             "alternatives_count": len(new_msg.get("alternatives") or []),
         },
     )
-
-    final_readiness = _compute_readiness(chat_history, session.get("strategy_objective"))
 
     return jsonify({
         "thread_id": thread_id,
@@ -7661,25 +7951,63 @@ def promote_all_batch_ideas(batch_id):
     ]
     limited_indexes = eligible_indexes[:10]
 
+    rollback_records = []
     for idx in limited_indexes:
         idea = ideas[idx]
         try:
             promoted, error_body, error_status = _promote_batch_idea_to_thread(user, batch, idea, model_selection)
         except Exception as exc:
             db.session.rollback()
+            for record in rollback_records:
+                _rollback_promoted_session(
+                    user,
+                    record.get("thread_id"),
+                    credits_to_refund=record.get("credits_charged", 0),
+                )
+                rollback_idx = int(record.get("idea_index"))
+                rollback_idea = ideas[rollback_idx] if 0 <= rollback_idx < len(ideas) else None
+                if isinstance(rollback_idea, dict):
+                    rollback_idea["thread_id"] = None
+                    rollback_idea["promoted_at"] = None
+                    ideas[rollback_idx] = rollback_idea
             current_app.logger.exception("Failed bulk-promoting batch idea")
-            return jsonify({"error": f"Failed to promote idea '{idea.get('title') or idx + 1}': {exc}"}), 500
+            db.session.commit()
+            return jsonify({
+                "error": f"Failed to promote idea '{idea.get('title') or idx + 1}': {exc}",
+                "rolled_back": len(rollback_records),
+            }), 500
         if error_body:
             db.session.rollback()
+            for record in rollback_records:
+                _rollback_promoted_session(
+                    user,
+                    record.get("thread_id"),
+                    credits_to_refund=record.get("credits_charged", 0),
+                )
+                rollback_idx = int(record.get("idea_index"))
+                rollback_idea = ideas[rollback_idx] if 0 <= rollback_idx < len(ideas) else None
+                if isinstance(rollback_idea, dict):
+                    rollback_idea["thread_id"] = None
+                    rollback_idea["promoted_at"] = None
+                    ideas[rollback_idx] = rollback_idea
+            error_body["rolled_back"] = len(rollback_records)
+            db.session.commit()
             return jsonify(error_body), error_status
         idea["thread_id"] = promoted["thread_id"]
         idea["promoted_at"] = datetime.utcnow().isoformat()
         ideas[idx] = idea
+        rollback_records.append({
+            "idea_index": idx,
+            "thread_id": promoted["thread_id"],
+            "credits_charged": promoted.get("credits_charged", 0),
+        })
         created.append({
             "idea_id": idea.get("idea_id"),
             "title": idea.get("title"),
             "thread_id": promoted["thread_id"],
             "analysis_id": promoted["analysis_id"],
+            "session_id": promoted["thread_id"],
+            "url": f"/new?sid={promoted['thread_id']}",
         })
 
     has_more = len(eligible_indexes) > len(limited_indexes)

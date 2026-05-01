@@ -292,6 +292,24 @@ export default function Insights() {
     return parts.join(' ');
   }, []);
 
+  const buildInsightsContextStatement = useCallback((analysisResult, dataset) => {
+    const filename = dataset?.filename ? `"${dataset.filename}"` : 'the current dataset';
+    const summary = String(analysisResult?.summary || '').trim();
+    const trends = safeList(analysisResult?.trends).slice(0, 3);
+    const opportunities = safeList(analysisResult?.opportunities).slice(0, 3);
+    const risks = safeList(analysisResult?.risks).slice(0, 3);
+    const lines = [
+      `[Insights Context]`,
+      `Source: ${filename}`,
+    ];
+    if (summary) lines.push(`Summary: ${summary}`);
+    if (trends.length > 0) lines.push(`Trends:\n${trends.map((item) => `- ${item}`).join('\n')}`);
+    if (opportunities.length > 0) lines.push(`Opportunities:\n${opportunities.map((item) => `- ${item}`).join('\n')}`);
+    if (risks.length > 0) lines.push(`Risks:\n${risks.map((item) => `- ${item}`).join('\n')}`);
+    lines.push('Use this as context for my current strategy session.');
+    return lines.join('\n\n');
+  }, []);
+
   const handleGenerateIdeas = useCallback(async () => {
     if (!activeConnectorId) return;
     setGeneratingIdeas(true);
@@ -692,15 +710,26 @@ export default function Insights() {
                 </p>
               </div>
             </div>
-            <button
-              type="button"
-              className="int-btn int-btn-primary"
-              onClick={() => navigate('/new', {
-                state: { prefillMessage: buildOpportunityStatement(analysis, activeDataset) },
-              })}
-            >
-              Score this opportunity →
-            </button>
+            <div className="insights-score-cta-actions">
+              <button
+                type="button"
+                className="int-btn int-btn-ghost"
+                onClick={() => navigate('/new', {
+                  state: { prefillMessage: buildInsightsContextStatement(analysis, activeDataset) },
+                })}
+              >
+                Use as context →
+              </button>
+              <button
+                type="button"
+                className="int-btn int-btn-primary"
+                onClick={() => navigate('/new', {
+                  state: { prefillMessage: buildOpportunityStatement(analysis, activeDataset) },
+                })}
+              >
+                Score this opportunity →
+              </button>
+            </div>
           </article>
         </section>
       )}

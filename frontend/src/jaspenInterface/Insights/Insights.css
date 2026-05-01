@@ -356,13 +356,21 @@
   line-height: 1.5;
 }
 
+.insights-score-cta-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 @media (max-width: 640px) {
   .insights-score-cta {
     flex-direction: column;
     align-items: flex-start;
   }
 
-  .insights-score-cta .int-btn {
+  .insights-score-cta .int-btn,
+  .insights-score-cta-actions {
     width: 100%;
   }
 }

@@ -175,6 +175,30 @@ def _build_select_query(table, columns, date_column=None, date_from=None, date_t
     return query, params, safe_limit
 
 
+def build_query_from_intent(table, columns, query_intent, limit=50):
+    """
+    Build safe run_allowlisted_query kwargs from a natural-language intent.
+    """
+    intent = _text(query_intent).lower()
+    requested_columns = columns if isinstance(columns, list) and columns else None
+    order_by = None
+
+    if any(token in intent for token in ("top", "highest", "largest", "cost", "driver")):
+        numeric_candidates = [
+            _text(col) for col in (requested_columns or [])
+            if any(mark in _text(col).upper() for mark in ("PRICE", "COST", "AMOUNT", "QTY", "VALUE"))
+        ]
+        if numeric_candidates:
+            order_by = numeric_candidates[0]
+
+    return {
+        "table": table,
+        "columns": requested_columns,
+        "order_by": order_by,
+        "limit": max(1, min(int(limit or 50), 200)),
+    }
+
+
 
 def _connect_snowflake(config):
     try:
@@ -343,6 +367,7 @@ def extract_kpi_metrics(user_id, table, metric_columns, *, date_column=None, dat
 
 
 __all__ = [
+    "build_query_from_intent",
     "extract_kpi_metrics",
     "run_allowlisted_query",
     "snowflake_missing_config",
