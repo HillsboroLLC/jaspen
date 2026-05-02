@@ -2250,27 +2250,39 @@ def chat_with_analysis():
             or 0
         )
         
-        # Initialize Anthropic-backed LLM client
-        client = get_llm_client()
-        
         # Create context from analysis
+        strategy_objective = analysis_context.get('strategy_objective') or 'balanced'
+        key_insights = analysis_context.get('key_insights') if isinstance(analysis_context.get('key_insights'), list) else []
+        recommendations = analysis_context.get('recommendations') if isinstance(analysis_context.get('recommendations'), list) else []
+        top_risks = analysis_context.get('top_risks') if isinstance(analysis_context.get('top_risks'), list) else []
+        assumptions = analysis_context.get('assumptions') if isinstance(analysis_context.get('assumptions'), list) else []
+
         context_prompt = f"""
-You are a Jaspen strategy assistant. The user has received the following analysis:
+You are a Jaspen strategy assistant helping a user interpret an existing scorecard.
 
-Jaspen Score: {analysis_context.get('jaspen_score', 'N/A')}
-Component Scores: {json.dumps(analysis_context.get('component_scores', {}), indent=2)}
-Financial Impact: {json.dumps(analysis_context.get('financial_impact', {}), indent=2)}
+SCORECARD SNAPSHOT
+- Strategy objective: {strategy_objective}
+- Jaspen score: {analysis_context.get('jaspen_score', 'N/A')}
+- Component scores: {json.dumps(analysis_context.get('component_scores', {}), indent=2)}
+- Financial impact: {json.dumps(analysis_context.get('financial_impact', {}), indent=2)}
+- Executive summary: {analysis_context.get('executive_summary') or 'Not provided'}
+- Key insights (max 5): {json.dumps(key_insights[:5], indent=2)}
+- Recommendations (max 5): {json.dumps(recommendations[:5], indent=2)}
+- Top risks (max 5): {json.dumps(top_risks[:5], indent=2)}
+- Assumptions/gaps (max 5): {json.dumps(assumptions[:5], indent=2)}
 
-User Question: {message}
+USER QUESTION
+{message}
 
-Provide a detailed, helpful response that:
-1. References specific data from their analysis
-2. Offers actionable recommendations
-3. Quantifies financial impacts where possible
-4. Maintains focus on EBITDA, ROI, and operational efficiency
-5. Uses a professional, consultative tone
-
-Keep responses concise but comprehensive (2-3 paragraphs maximum).
+RESPONSE RULES
+1) Answer the user's exact question first.
+2) Cite scorecard evidence explicitly (metric names, score values, risk/recommendation text).
+3) Quantify where possible; if missing data prevents quantification, say exactly which input is missing.
+4) Keep it concise and practical:
+   - "Direct answer" (2-4 sentences)
+   - "Why this matters" (1-2 bullets)
+   - "Next actions" (up to 3 bullets)
+5) Never claim external data access in this endpoint; rely on provided scorecard context only.
 """
 
         # Call LLM API
@@ -2280,9 +2292,9 @@ Keep responses concise but comprehensive (2-3 paragraphs maximum).
                 system_prompt="You are a Jaspen strategy assistant specializing in commercialization strategy and financial optimization.",
                 model_selection=model_selection,
                 llm_model=model_selection.get('llm_model'),
-                strategy_objective=analysis_context.get('strategy_objective') or 'balanced',
-                max_tokens=800,
-                temperature=0.7,
+                strategy_objective=strategy_objective,
+                max_tokens=900,
+                temperature=0.2,
             )
         except Exception:
             _release_reserved_credits(user, reserved_credits)
