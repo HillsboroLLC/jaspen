@@ -565,7 +565,7 @@ export default function Scores() {
                 <span className="scores-trend-label">Trend</span>
                 <Sparkline points={trendPoints} />
               </div>
-              <div className="scores-rubric-chip">Rubric {row?.scoring_rubric_version || 'v3'}</div>
+              <div className="scores-rubric-chip">Scored with Rubric {row?.scoring_rubric_version || 'v3'}</div>
             </div>
             <div className="scores-virtual-col score">
               <span className={getScoreBadgeClass(row?.score_category)}>
@@ -945,7 +945,7 @@ export default function Scores() {
                                 <span className="scores-trend-label">Trend</span>
                                 <Sparkline points={trendPoints} />
                               </div>
-                              <div className="scores-rubric-chip">Rubric {row?.scoring_rubric_version || 'v3'}</div>
+                              <div className="scores-rubric-chip">Scored with Rubric {row?.scoring_rubric_version || 'v3'}</div>
                             </td>
                             <td>
                               <span className={getScoreBadgeClass(row?.score_category)}>

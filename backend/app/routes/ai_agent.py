@@ -6199,7 +6199,8 @@ def conversation_start():
             state = {}
             credits_settled = False
             try:
-                yield _sse_payload({"type": "tool_status", "status": "Analyzing strategic context..."})
+                yield _sse_payload({"type": "tool_status", "status": "Analyzing financial position..."})
+                yield _sse_payload({"type": "tool_status", "status": "Modeling scenario outcomes..."})
                 for payload in _stream_assistant_reply_events(
                     user_message,
                     chat_history,
@@ -6696,7 +6697,8 @@ def conversation_continue():
             state = {}
             credits_settled = False
             try:
-                yield _sse_payload({"type": "tool_status", "status": "Updating your analysis context..."})
+                yield _sse_payload({"type": "tool_status", "status": "Analyzing financial position..."})
+                yield _sse_payload({"type": "tool_status", "status": "Modeling scenario outcomes..."})
                 for payload in _stream_assistant_reply_events(
                     user_message,
                     chat_history,
@@ -6713,7 +6715,7 @@ def conversation_continue():
                 ):
                     yield _sse_payload(payload)
 
-                yield _sse_payload({"type": "tool_status", "status": "Composing recommendations..."})
+                yield _sse_payload({"type": "tool_status", "status": "Building your scorecard..."})
                 assistant_reply = str(state.get("reply") or "").strip() or _direct_connector_fallback_reply(user_id, user_message, readiness)
                 assistant_reply = _enforce_connector_data_reply(
                     user_id,
