@@ -1030,9 +1030,16 @@ def _merge_scorecard_patch(base_scorecard, patch):
     update = patch if isinstance(patch, dict) else {}
     merged = dict(base)
 
-    editable_dict_keys = {'component_rationale', 'decision_framework'}
+    editable_dict_keys = {
+        'component_rationale',
+        'decision_framework',
+        'financial_impact',
+        'investment_analysis',
+        'npv_irr_analysis',
+        'valuation',
+    }
     editable_list_keys = {'key_insights', 'top_risks', 'recommendations', 'assumptions'}
-    editable_scalar_keys = {'executive_summary'}
+    editable_scalar_keys = {'executive_summary', 'executive_narrative'}
 
     for key in editable_dict_keys:
         value = update.get(key)
@@ -5356,31 +5363,83 @@ def patch_thread_scorecard(thread_id):
         'executive_summary', 'executive_narrative',
         'top_risks', 'risks', 'recommendations',
         'assumptions', 'key_insights',
+        'component_rationale', 'decision_framework',
+        'financial_impact', 'investment_analysis',
+        'npv_irr_analysis', 'valuation',
     }
     patch = {key: value for key, value in payload.items() if key in patchable_fields}
+    if 'risks' in patch and 'top_risks' not in patch:
+        patch['top_risks'] = patch['risks']
+    patch.pop('risks', None)
     if not patch:
         return jsonify({'error': 'No patchable fields provided'}), 400
 
     sessions = load_user_sessions(user_id) or {}
-    session = sessions.get(thread_id)
-    resolved_thread_id = thread_id
-    if not isinstance(session, dict):
-        resolved_thread_id, session = _resolve_session_entry(sessions, thread_id)
+    resolved_thread_id, session = _resolve_session_entry(sessions, thread_id)
     if not isinstance(session, dict):
         return jsonify({'error': 'Thread not found'}), 404
 
-    analysis_result = session.get('analysis_result')
-    if not isinstance(analysis_result, dict):
-        analysis_result = session.get('result')
-    if not isinstance(analysis_result, dict):
-        analysis_result = {}
+    session_result = session.get('result') if isinstance(session.get('result'), dict) else {}
+    snapshot_state = _scorecard_snapshot_state(session_result, resolved_thread_id)
+    base_scorecard = (
+        payload.get('scorecard')
+        if isinstance(payload.get('scorecard'), dict)
+        else snapshot_state['selected_snapshot']
+    )
+    base_scorecard = _normalize_scorecard_payload(base_scorecard)
+    if not isinstance(base_scorecard, dict) or not base_scorecard:
+        return jsonify({'error': 'No scorecard context is available for this thread'}), 400
 
-    analysis_result.update(patch)
-    session['analysis_result'] = analysis_result
-    session['result'] = analysis_result
+    updated_scorecard = _merge_scorecard_patch(base_scorecard, patch)
+    current_selected = snapshot_state['selected_snapshot'] or snapshot_state['baseline']
+    current_selected_id = str(
+        payload.get('selected_scorecard_id')
+        or current_selected.get('id')
+        or snapshot_state['selected_id']
+        or resolved_thread_id
+    )
+    edited_id = current_selected_id if current_selected_id.endswith('__edited') else f"{current_selected_id}__edited"
+    edited_label = (
+        current_selected.get('label')
+        or ('Baseline' if current_selected.get('isBaseline') else 'Edited scorecard')
+    )
+    edited_snapshot = {
+        **updated_scorecard,
+        'id': edited_id,
+        'label': edited_label if edited_label.endswith('(Edited)') else f"{edited_label} (Edited)",
+        'isBaseline': False,
+        'createdAt': int(time.time() * 1000),
+    }
+
+    next_snapshots = []
+    replaced = False
+    for snapshot in snapshot_state['snapshots']:
+        snapshot_id = str(snapshot.get('id') or '')
+        if snapshot_id == edited_id:
+            next_snapshots.append(edited_snapshot)
+            replaced = True
+        else:
+            next_snapshots.append(snapshot)
+    if not replaced:
+        next_snapshots.append(edited_snapshot)
+
+    next_result = {
+        **session_result,
+        '_baseline_scorecard': session_result.get('_baseline_scorecard') or snapshot_state['baseline'],
+        'scorecard_snapshots': next_snapshots,
+        'selected_scorecard_id': edited_id,
+    }
+    session['analysis_result'] = next_result
+    session['result'] = next_result
+    session['timestamp'] = datetime.utcnow().isoformat()
     sessions[resolved_thread_id] = session
     save_user_sessions(user_id, sessions)
-    return jsonify({'success': True}), 200
+    return jsonify({
+        'success': True,
+        'updated_scorecard': edited_snapshot,
+        'scorecard_snapshots': next_snapshots,
+        'selected_scorecard_id': edited_id,
+    }), 200
 
 
 @strategy_bp.route('/threads/<thread_id>/scorecard-snapshots/<snapshot_id>', methods=['DELETE'])
@@ -5628,6 +5687,9 @@ def scorecard_assistant(thread_id):
             'recommendations': base_scorecard.get('recommendations'),
             'decision_framework': base_scorecard.get('decision_framework'),
             'assumptions': base_scorecard.get('assumptions'),
+            'investment_analysis': base_scorecard.get('investment_analysis'),
+            'npv_irr_analysis': base_scorecard.get('npv_irr_analysis'),
+            'valuation': base_scorecard.get('valuation'),
         }
 
         system_prompt = (
@@ -5692,7 +5754,19 @@ Return one valid JSON object only in this format:
       "downside_scenario": "<downside wording or null>",
       "upside_scenario": "<upside wording or null>"
     }},
-    "assumptions": ["<optional updated assumption list>"]
+    "assumptions": ["<optional updated assumption list>"],
+    "financial_impact": {{
+      "<metric_key>": "<optional rewritten wording>"
+    }},
+    "investment_analysis": {{
+      "<metric_key>": "<optional rewritten wording>"
+    }},
+    "npv_irr_analysis": {{
+      "<metric_key>": "<optional rewritten wording>"
+    }},
+    "valuation": {{
+      "<metric_key>": "<optional rewritten wording>"
+    }}
   }},
   "updated_sections": ["<section keys you changed>"]
 }}
@@ -5703,6 +5777,7 @@ Rules:
 - Only rewrite wording or organization for text sections.
 - Preserve the original meaning unless the user explicitly asks to change the substance.
 - If you update a list section, return the full replacement list for that section.
+- If you update an object section, return the full replacement object for that section.
 - Keep the reply crisp and professional.
 """.strip()
 
