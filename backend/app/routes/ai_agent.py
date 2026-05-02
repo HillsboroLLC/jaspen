@@ -1476,6 +1476,55 @@ def _finalize_agent_reply(reply, fallback_reply, tool_confirmations, *, user_id,
     return final_reply
 
 
+def _has_successful_connector_query_action(executed_actions):
+    for action in (executed_actions or []):
+        if not isinstance(action, dict):
+            continue
+        if str(action.get("tool") or "").strip() != "query_connector_data":
+            continue
+        result = action.get("result") if isinstance(action.get("result"), dict) else {}
+        if result.get("ok"):
+            return True
+    return False
+
+
+def _looks_like_connector_deferral(reply):
+    text = str(reply or "").strip().lower()
+    if not text:
+        return True
+    markers = (
+        "i can't access",
+        "i cannot access",
+        "i could not retrieve connector rows",
+        "please confirm the connected source/table",
+        "what is the specific initiative goal",
+        "share baseline data:",
+        "i will prioritize numeric evidence",
+        "i can now compute focused cost-driver summaries",
+    )
+    return any(marker in text for marker in markers)
+
+
+def _enforce_connector_data_reply(user_id, user_message, readiness, reply, executed_actions):
+    """
+    Ensure connector-context turns return concrete numeric findings, not readiness prompts/deferrals.
+    """
+    current_reply = str(reply or "").strip()
+    if not _message_has_data_context_request(user_message):
+        return current_reply
+
+    has_query = _has_successful_connector_query_action(executed_actions)
+    needs_override = _looks_like_connector_deferral(current_reply)
+    if not has_query and not needs_override:
+        return current_reply
+
+    fallback = _direct_connector_fallback_reply(user_id, user_message, readiness)
+    fallback_text = str(fallback or "").strip()
+    if fallback_text:
+        return fallback_text
+    return current_reply
+
+
 def _exception_status_code(exc):
     status_code = getattr(exc, "status_code", None)
     if isinstance(status_code, int):
@@ -2957,6 +3006,28 @@ def _infer_snowflake_table_from_intent(allowlist, query_intent):
     return tables[0]
 
 
+def _resolve_snowflake_table(table, allowlist, query_intent):
+    """
+    Resolve a Snowflake table name against the user's allowlist.
+    Supports exact FQN, terminal segment matches (e.g. lineitem), and intent inference.
+    """
+    normalized_allowlist = [str(t or "").strip().lower() for t in (allowlist or []) if str(t or "").strip()]
+    if not normalized_allowlist:
+        return str(table or "").strip().lower()
+
+    requested = str(table or "").strip().lower()
+    if requested:
+        if requested in normalized_allowlist:
+            return requested
+        req_segment = requested.split(".")[-1]
+        for candidate in normalized_allowlist:
+            if candidate.split(".")[-1] == req_segment:
+                return candidate
+
+    inferred = _infer_snowflake_table_from_intent(normalized_allowlist, query_intent)
+    return inferred or normalized_allowlist[0]
+
+
 def _execute_connector_query_tool(user_id, tool_input):
     params = tool_input if isinstance(tool_input, dict) else {}
     connector_type = str(params.get("connector_type") or "snowflake").strip().lower()
@@ -2965,12 +3036,13 @@ def _execute_connector_query_tool(user_id, tool_input):
     columns = params.get("columns") if isinstance(params.get("columns"), list) else None
     order_by = str(params.get("order_by") or "").strip()
     limit = max(1, min(int(params.get("limit") or 50), 200))
-    if not table:
-        return _tool_error("table is required.", code="invalid_input")
-
     try:
         if connector_type == "snowflake":
             from app.snowflake_insights import run_allowlisted_query
+            allowlist = _snowflake_allowlist(user_id)
+            table = _resolve_snowflake_table(table, allowlist, query_intent)
+            if not table:
+                return _tool_error("table is required.", code="invalid_input")
             result = run_allowlisted_query(
                 user_id=user_id,
                 table=table,
@@ -2997,14 +3069,26 @@ def _execute_connector_query_tool(user_id, tool_input):
             from app.salesforce_sync import fetch_pipeline_summary
             result = fetch_pipeline_summary(user_id, lookback_days=90, max_records=200)
             summary = result.get("pipeline_summary") or result.get("summary") or {}
+            opportunities = (result.get("opportunities") or [])[:50]
+            top_opps = []
+            for opp in opportunities[:5]:
+                if not isinstance(opp, dict):
+                    continue
+                top_opps.append({
+                    "name": opp.get("name"),
+                    "stage": opp.get("stage"),
+                    "amount": opp.get("amount"),
+                    "close_date": opp.get("close_date"),
+                })
             return _tool_success({
                 "tool": "query_connector_data",
                 "source": "salesforce",
-                "table": table,
+                "table": table or "salesforce.opportunities",
                 "query_intent": query_intent,
                 "returned_rows": len(result.get("opportunities") or []),
                 "columns": [],
-                "data": (result.get("opportunities") or [])[:50],
+                "data": opportunities,
+                "top_rows": top_opps,
                 "summary": summary,
             })
     except Exception as exc:
@@ -3715,6 +3799,7 @@ def _generate_assistant_reply_anthropic(
             user_id=user_id,
             thread_id=thread_id,
         )
+        reply = _enforce_connector_data_reply(user_id, user_message, readiness, reply, executed_actions)
         usage = {
             "provider": "anthropic",
             "model": resolved_model_name,
@@ -3738,6 +3823,7 @@ def _generate_assistant_reply_anthropic(
                 user_id=user_id,
                 thread_id=thread_id,
             )
+            reply = _enforce_connector_data_reply(user_id, user_message, readiness, reply, executed_actions)
             usage = {
                 "provider": "anthropic",
                 "model": resolved_model_name,
@@ -4148,6 +4234,7 @@ def _generate_assistant_reply_gemini(
                     user_id=user_id,
                     thread_id=thread_id,
                 )
+                reply = _enforce_connector_data_reply(user_id, user_message, readiness, reply, executed_actions)
                 total_usage["provider"] = "gemini"
                 total_usage["model"] = model_name
                 return reply, total_usage, executed_actions, executed_mutations, undo_snapshot
@@ -4217,6 +4304,7 @@ def _generate_assistant_reply_gemini(
                 user_id=user_id,
                 thread_id=thread_id,
             )
+            reply = _enforce_connector_data_reply(user_id, user_message, readiness, reply, executed_actions)
             return reply, total_usage, executed_actions, executed_mutations, undo_snapshot
         if allow_failover:
             raise
@@ -6120,6 +6208,13 @@ def conversation_start():
 
                 yield _sse_payload({"type": "tool_status", "status": "Building your scorecard..."})
                 assistant_reply = str(state.get("reply") or "").strip() or _direct_connector_fallback_reply(user_id, user_message, readiness)
+                assistant_reply = _enforce_connector_data_reply(
+                    user_id,
+                    user_message,
+                    readiness,
+                    assistant_reply,
+                    state.get("actions") if isinstance(state.get("actions"), list) else [],
+                )
                 usage = state.get("usage") if isinstance(state.get("usage"), dict) else {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
                 actions = state.get("actions") if isinstance(state.get("actions"), list) else []
                 mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
@@ -6610,6 +6705,13 @@ def conversation_continue():
 
                 yield _sse_payload({"type": "tool_status", "status": "Composing recommendations..."})
                 assistant_reply = str(state.get("reply") or "").strip() or _direct_connector_fallback_reply(user_id, user_message, readiness)
+                assistant_reply = _enforce_connector_data_reply(
+                    user_id,
+                    user_message,
+                    readiness,
+                    assistant_reply,
+                    state.get("actions") if isinstance(state.get("actions"), list) else [],
+                )
                 usage = state.get("usage") if isinstance(state.get("usage"), dict) else {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
                 actions = state.get("actions") if isinstance(state.get("actions"), list) else []
                 mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
@@ -7649,6 +7751,13 @@ def conversation_regenerate():
 
                 yield _sse_payload({"type": "tool_status", "status": "Finalizing response..."})
                 assistant_reply = str(state.get("reply") or "").strip() or _direct_connector_fallback_reply(user_id, user_message, readiness)
+                assistant_reply = _enforce_connector_data_reply(
+                    user_id,
+                    user_message,
+                    readiness,
+                    assistant_reply,
+                    state.get("actions") if isinstance(state.get("actions"), list) else [],
+                )
                 usage = state.get("usage") if isinstance(state.get("usage"), dict) else {
                     "provider": "heuristic",
                     "model": None,
