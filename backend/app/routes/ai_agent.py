@@ -1768,15 +1768,20 @@ def _direct_connector_fallback_reply(user_id, user_message, readiness):
     table = str(payload.get("table") or params.get("table") or "connector data").strip()
     cols = payload.get("columns") if isinstance(payload.get("columns"), list) else []
     preview_rows = rows[:5]
-    lines = [f"I queried `{table}` and pulled {len(rows)} row(s)."]
+    lines = [
+        "**Connector Analysis Summary**",
+        f"- Source table: `{table}`",
+        f"- Rows analyzed: `{len(rows)}`",
+    ]
     if cols:
-        lines.append(f"Columns used: {', '.join(cols[:10])}.")
+        lines.append(f"- Columns used: {', '.join(cols[:10])}")
     if preview_rows:
-        lines.append("Top rows preview:")
+        lines.append("")
+        lines.append("**Top Rows Preview**")
         for idx, row in enumerate(preview_rows, start=1):
             if isinstance(row, dict):
                 compact = ", ".join(f"{k}={row.get(k)}" for k in list(row.keys())[:6])
-                lines.append(f"{idx}. {compact}")
+                lines.append(f"- {idx}. {compact}")
         def _to_float(value):
             try:
                 if value is None:
@@ -1829,7 +1834,7 @@ def _direct_connector_fallback_reply(user_id, user_message, readiness):
         top3 = ranked[:3]
         if top3:
             lines.append("")
-            lines.append("Top 3 cost-driver insights:")
+            lines.append("**Top 3 Cost Drivers (Numeric Evidence)**")
             for idx, (val, row) in enumerate(top3, start=1):
                 line_no = row.get("L_LINENUMBER", "n/a") if isinstance(row, dict) else "n/a"
                 order_key = row.get("L_ORDERKEY", "n/a") if isinstance(row, dict) else "n/a"
@@ -1843,26 +1848,31 @@ def _direct_connector_fallback_reply(user_id, user_message, readiness):
                     parts.append(f"{discount_col}={disc_val:.4f}")
                 if tax_val is not None:
                     parts.append(f"{tax_col}={tax_val:.4f}")
-                lines.append(" | ".join(parts))
+                lines.append(f"- {' | '.join(parts)}")
 
             top_vals = [v for v, _ in top3]
             avg_top = _avg(top_vals)
             all_cost_vals = [v for v, _ in ranked]
             avg_all = _avg(all_cost_vals)
+            lines.append("")
+            lines.append("**Executive Summary**")
             if avg_top is not None and avg_all is not None:
-                lines.append(
-                    f"Summary: Top-3 average {cost_col} is {avg_top:.2f} vs overall sampled average {avg_all:.2f}."
-                )
+                lines.append(f"- Top-3 average `{cost_col}`: `{avg_top:.2f}` vs sampled average `{avg_all:.2f}`")
             if discount_col:
                 discounts = [_to_float(r.get(discount_col)) for r in rows if isinstance(r, dict)]
                 avg_disc = _avg(discounts)
                 if avg_disc is not None:
-                    lines.append(f"Discount signal: average {discount_col} across sampled rows is {avg_disc:.4f}.")
+                    lines.append(f"- Average `{discount_col}`: `{avg_disc:.4f}`")
             if tax_col:
                 taxes = [_to_float(r.get(tax_col)) for r in rows if isinstance(r, dict)]
                 avg_tax = _avg(taxes)
                 if avg_tax is not None:
-                    lines.append(f"Tax signal: average {tax_col} across sampled rows is {avg_tax:.4f}.")
+                    lines.append(f"- Average `{tax_col}`: `{avg_tax:.4f}`")
+            lines.append("")
+            lines.append("**Recommended Actions (30/60/90)**")
+            lines.append(f"- 30 days: Validate top `{cost_col}` contributors by supplier/part and flag outliers > sampled average.")
+            lines.append(f"- 60 days: Design cost-control levers for high-value lines (discount policy, quantity thresholds, sourcing shifts).")
+            lines.append(f"- 90 days: Track weekly `{cost_col}` trend and target a measurable reduction against current sampled baseline.")
         else:
             lines.append("I could not compute numeric cost drivers from the returned rows. Try specifying cost columns.")
     else:
