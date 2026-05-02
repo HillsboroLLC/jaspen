@@ -6083,7 +6083,7 @@ if (data?.model_type) {
   }
 
   // === Input handling ===
-  async function onSubmit() {
+  async function onSubmit(options = {}) {
     const now = Date.now();
     if (now - (lastSendAtRef.current || 0) < 500) return;
     lastSendAtRef.current = now;
@@ -6094,13 +6094,14 @@ if (data?.model_type) {
       showToast('Viewers can review shared projects but cannot edit them.', 'info');
       return;
     }
-    if (!text && (!pendingFiles || pendingFiles.length === 0)) return;
+    const optionFiles = Array.isArray(options?.files) ? options.files : null;
+    const selectedFiles = optionFiles ? [...optionFiles] : [...(pendingFiles || [])];
+    if (!text && selectedFiles.length === 0) return;
     if (!sessionId && !canStartOrgProjects) {
       showToast('This role can work inside shared projects but cannot start new ones.', 'info');
       return;
     }
 
-    const selectedFiles = [...(pendingFiles || [])];
     const chatFiles = selectedFiles.filter((item) => isChatAttachmentFile(item));
     const analysisFiles = selectedFiles.filter((item) => !isChatAttachmentFile(item));
     const attachments = selectedFiles.map((item) => ({
@@ -6183,7 +6184,23 @@ if (data?.model_type) {
       file: f,
       preview: f.type?.startsWith('image/') ? URL.createObjectURL(f) : null,
     }));
-    setPendingFiles((prev) => [...prev, ...toAdd]);
+    const hasDraftText = Boolean(String(input || '').trim());
+    const hasPending = Array.isArray(pendingFiles) && pendingFiles.length > 0;
+    const canAutoAnalyze =
+      !busy &&
+      !effectiveIsViewer &&
+      !hasDraftText &&
+      !hasPending &&
+      toAdd.length > 0;
+
+    if (canAutoAnalyze) {
+      setPendingFiles(toAdd);
+      window.setTimeout(() => {
+        void onSubmit({ files: toAdd, auto_upload: true });
+      }, 0);
+    } else {
+      setPendingFiles((prev) => [...prev, ...toAdd]);
+    }
     e.target.value = '';
   }
 
