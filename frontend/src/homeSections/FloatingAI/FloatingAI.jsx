@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import styles from './FloatingAI.module.css';
+import { API_BASE } from '../../config/apiBase';
+import { buildAuthHeaders } from '../../shared/auth/http';
 
 const FloatingAI = ({ 
   isGuidedMode = false, 
@@ -137,211 +139,29 @@ const FloatingAI = ({
     }
   };
 
-  // NEW: Generate statistical analysis response
-  const generateStatisticalResponse = (userInput) => {
-    if (!statisticalContext) {
-      return "I'd love to help with your statistical analysis! Please upload a dataset first so I can provide specific guidance based on your data.";
-    }
-
-    const { dataset, analysis, recommendations } = statisticalContext;
-    const input = userInput.toLowerCase();
-
-    // Handle specific statistical questions
-    if (input.includes('correlation') || input.includes('relationship')) {
-      if (dataset.numericColumns.length >= 2) {
-        return `Perfect! I can see you have ${dataset.numericColumns.length} numeric columns: ${dataset.numericColumns.join(', ')}. For correlation analysis, I recommend running the "Association / Relationships" analysis. This will compute Pearson correlations between all numeric pairs. Would you like me to guide you through setting this up?`;
-      } else {
-        return `For correlation analysis, you need at least 2 numeric variables. I can see you have ${dataset.numericColumns.length} numeric columns. Consider if any categorical variables could be converted to numeric, or upload additional data.`;
+  const requestBackendResponse = async (userInput, mergedFormData) => {
+    const payload = {
+      message: userInput,
+      tool: String(currentTool || 'unknown').toLowerCase(),
+      context: {
+        page: currentPage || 'unknown',
+        formData: mergedFormData || {},
+        statisticalContext: statisticalContext || null
       }
-    }
-
-    if (input.includes('compare') || input.includes('group') || input.includes('difference')) {
-      if (dataset.numericColumns.length >= 1 && dataset.categoricalColumns.length >= 1) {
-        return `Great! For group comparisons, I can see you have numeric variables (${dataset.numericColumns.join(', ')}) and categorical variables (${dataset.categoricalColumns.join(', ')}). Set your analysis goal to "Compare Groups", then select a numeric target variable and a categorical grouping variable. This will perform t-tests or ANOVA depending on the number of groups.`;
-      } else {
-        return `For group comparisons, you need at least one numeric variable (for the outcome) and one categorical variable (for the groups). Currently you have ${dataset.numericColumns.length} numeric and ${dataset.categoricalColumns.length} categorical variables.`;
-      }
-    }
-
-    if (input.includes('describe') || input.includes('summary') || input.includes('overview')) {
-      return `Perfect! For descriptive statistics, set your goal to "Describe / Summarize". This will give you summary statistics for numeric variables (mean, SD, min, max) and frequency tables for categorical variables. With ${dataset.rowCount} rows, you'll get reliable statistics.`;
-    }
-
-    if (input.includes('predict') || input.includes('model') || input.includes('regression')) {
-      return `For predictive modeling, set your goal to "Predictive (beta)". This is still in development, but it will help you build baseline models. Make sure you have a clear target variable you want to predict.`;
-    }
-
-    if (input.includes('help') || input.includes('what') || input.includes('how')) {
-      return getStatisticalHelpResponse();
-    }
-
-    if (input.includes('recommend') || input.includes('suggest') || input.includes('should')) {
-      return getStatisticalRecommendations();
-    }
-
-    // Default response with context
-    if (dataset.hasData) {
-      return `I can help you analyze your dataset "${dataset.fileName}". Based on your ${dataset.numericColumns.length} numeric and ${dataset.categoricalColumns.length} categorical variables, I recommend: ${recommendations.slice(0, 2).join(', ')}. What specific question are you trying to answer with your data?`;
-    }
-
-    return "I'm here to help with your statistical analysis! Upload a dataset and tell me what you're trying to discover or prove with your data.";
-  };
-
-  // NEW: Get statistical help response
-  const getStatisticalHelpResponse = () => {
-    if (!statisticalContext?.dataset.hasData) {
-      return "I can help you with statistical analysis! Here's what I can do:\n\n• Guide you through choosing the right statistical tests\n• Interpret your results and explain what they mean\n• Recommend analysis methods based on your data types\n• Help with hypothesis testing and significance\n\nStart by uploading a CSV file and I'll analyze your data structure!";
-    }
-
-    const { dataset } = statisticalContext;
-    return `I can help you analyze your dataset with ${dataset.rowCount} rows and ${dataset.columnCount} columns:\n\n• **Descriptive Analysis**: Summary statistics and distributions\n• **Correlation Analysis**: Relationships between variables (${dataset.numericColumns.length} numeric variables available)\n• **Group Comparisons**: Compare means across categories (${dataset.categoricalColumns.length} categorical variables available)\n• **Hypothesis Testing**: Test your research questions\n\nWhat type of analysis interests you most?`;
-  };
-
-  // NEW: Get statistical recommendations
-  const getStatisticalRecommendations = () => {
-    if (!statisticalContext?.dataset.hasData) {
-      return "Upload your dataset first and I'll provide specific recommendations based on your data structure and research questions!";
-    }
-
-    const { dataset, recommendations } = statisticalContext;
-    
-    let response = `Based on your data structure, here are my recommendations:\n\n`;
-    
-    if (dataset.numericColumns.length >= 2) {
-      response += `• **Correlation Analysis**: You have ${dataset.numericColumns.length} numeric variables - perfect for exploring relationships\n`;
-    }
-    
-    if (dataset.numericColumns.length >= 1 && dataset.categoricalColumns.length >= 1) {
-      response += `• **Group Comparisons**: Compare ${dataset.numericColumns[0]} across ${dataset.categoricalColumns[0]} groups\n`;
-    }
-    
-    response += `• **Descriptive Statistics**: Always start here to understand your data\n`;
-    
-    if (dataset.rowCount > 100) {
-      response += `\nWith ${dataset.rowCount} rows, you have good statistical power for most analyses!`;
-    }
-    
-    return response;
-  };
-
-  // Generate intelligent follow-up questions
-  const generateFollowUpQuestion = (tool, extractedData, allFormData) => {
-    if (tool === 'statistics') {
-      return generateStatisticalFollowUp();
-    }
-
-    const questions = {
-      a3: [
-        { field: 'projectTitle', question: "Great! Now, who is the problem owner or person responsible for this issue?" },
-        { field: 'problemOwner', question: "Perfect! Who are the team members involved in solving this problem?" },
-        { field: 'teamMembers', question: "Excellent! Can you provide some background context about why this problem is important to solve now?" },
-        { field: 'background', question: "Thanks! Now, can you clearly state the problem without including any solutions?" },
-        { field: 'problemStatement', question: "Good! What's the business impact of this problem?" },
-        { field: 'businessImpact', question: "Now let's analyze the current state. Can you describe the current situation with facts and data?" },
-        { field: 'currentStateDescription', question: "What's your goal or target state for this problem?" },
-        { field: 'goalStatement', question: "Can you describe what the target state will look like in detail?" },
-        { field: 'targetStateDescription', question: "What results have you achieved so far?" },
-        { field: 'results', question: "What lessons have you learned during this process?" },
-        { field: 'lessonsLearned', question: "Finally, what are the next steps or future actions?" }
-      ],
-      finy: [
-        { field: 'projectTitle', question: "Great! What's your current baseline performance or starting point?" },
-        { field: 'baseline', question: "Perfect! What's your target improvement or goal?" },
-        { field: 'target', question: "Excellent! What's the timeframe for this improvement?" },
-        { field: 'timeframe', question: "What's the estimated cost or investment required?" },
-        { field: 'cost', question: "What savings or benefits do you expect to achieve?" }
-      ]
     };
 
-    const toolQuestions = questions[tool.toLowerCase()] || [];
-    
-    // Find the next unanswered field
-    for (const { field, question } of toolQuestions) {
-      if (!allFormData[field] || allFormData[field].trim() === '') {
-        return question;
-      }
+    const response = await fetch(`${API_BASE}/api/v1/chat`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
+      body: JSON.stringify(payload)
+    });
+
+    const json = await response.json().catch(() => ({}));
+    if (!response.ok || !json?.success || typeof json?.response !== 'string') {
+      throw new Error(json?.error || `Chat request failed (${response.status})`);
     }
-
-    return "Great! You've provided comprehensive information. Is there anything else you'd like to add or modify?";
-  };
-
-  // NEW: Generate statistical follow-up questions
-  const generateStatisticalFollowUp = () => {
-    if (!statisticalContext?.dataset.hasData) {
-      return "Upload a dataset and I'll help you choose the right analysis approach!";
-    }
-
-    const { dataset, analysis } = statisticalContext;
-
-    if (!analysis.goal || analysis.goal === 'describe') {
-      return "What's your main research question? Are you looking to describe your data, compare groups, find relationships, or build predictive models?";
-    }
-
-    if (analysis.goal === 'compare' && !analysis.targetCol) {
-      return `For group comparisons, which numeric variable would you like to analyze? Your options are: ${dataset.numericColumns.join(', ')}`;
-    }
-
-    if (analysis.goal === 'compare' && analysis.targetCol && !analysis.groupCol) {
-      return `Great! Now which categorical variable should I use to create the groups? Your options are: ${dataset.categoricalColumns.join(', ')}`;
-    }
-
-    return "What specific aspect of your analysis would you like help with? I can explain results, suggest next steps, or help with interpretation.";
-  };
-
-  // Generate AI response with data extraction and context awareness
-  const generateAIResponse = (userInput, tool) => {
-    // Handle statistics tool specially
-    if (tool.toLowerCase() === 'statistics') {
-      return generateStatisticalResponse(userInput);
-    }
-
-    // Extract data from user input
-    const extracted = extractDataFromMessage(userInput, tool);
-    
-    // Update form data if extraction found anything
-    if (Object.keys(extracted).length > 0) {
-      updateFormData(extracted);
-    }
-
-    // Generate contextual responses based on tool
-    const responses = {
-      a3: [
-        "That's a great start! I've captured that information.",
-        "Perfect! I can see this is an important problem to solve.",
-        "Excellent! That gives me good context about the situation.",
-        "Thanks for that detail. It helps me understand the scope better.",
-        "Good! That's exactly the kind of information we need for the A3."
-      ],
-      finy: [
-        "Great! I've noted that information for your financial analysis.",
-        "Perfect! That will help us calculate the ROI accurately.",
-        "Excellent! Those numbers will be important for the business case.",
-        "Thanks! I can use that to build your financial projections.",
-        "Good data! That helps quantify the business impact."
-      ],
-      sipoc: [
-        "Perfect! I've captured that for your SIPOC diagram.",
-        "Great! That helps define the process boundaries clearly.",
-        "Excellent! Those details will make your SIPOC more comprehensive.",
-        "Thanks! I can use that to complete the process mapping.",
-        "Good input! That adds important context to your SIPOC."
-      ],
-      default: [
-        "Thanks for that information! I've captured it.",
-        "Great! That helps me understand what you're working on.",
-        "Perfect! I can use that to assist you better.",
-        "Excellent! That gives me good context.",
-        "Good! I've noted that for your project."
-      ]
-    };
-
-    const toolResponses = responses[tool.toLowerCase()] || responses.default;
-    const randomResponse = toolResponses[Math.floor(Math.random() * toolResponses.length)];
-
-    // Generate follow-up question
-    const followUp = generateFollowUpQuestion(tool, extracted, { ...formData, ...extractedData });
-
-    return `${randomResponse}\n\n${followUp}`;
+    return json.response.trim();
   };
 
   // Toggle chat window
@@ -353,14 +173,22 @@ const FloatingAI = ({
   };
 
   // Handle sending messages
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     if (!inputMessage.trim() || isTyping) return;
+
+    const outgoingMessage = inputMessage.trim();
+    const extracted = extractDataFromMessage(outgoingMessage, currentTool);
+    if (Object.keys(extracted).length > 0) {
+      updateFormData(extracted);
+    }
+
+    const mergedFormData = { ...(formData || {}), ...(extractedData || {}), ...extracted };
 
     // Add user message
     const userMessage = {
       id: Date.now(),
       type: 'user',
-      content: inputMessage,
+      content: outgoingMessage,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
 
@@ -368,9 +196,8 @@ const FloatingAI = ({
     setInputMessage('');
     setIsTyping(true);
 
-    // Simulate AI response delay
-    setTimeout(() => {
-      const aiResponse = generateAIResponse(inputMessage, currentTool);
+    try {
+      const aiResponse = await requestBackendResponse(outgoingMessage, mergedFormData);
       const aiMessage = {
         id: Date.now() + 1,
         type: 'ai',
@@ -384,7 +211,20 @@ const FloatingAI = ({
       if (!isOpen) {
         setHasNewMessage(true);
       }
-    }, 1000 + Math.random() * 2000); // Random delay between 1-3 seconds
+    } catch (error) {
+      const fallbackMessage = {
+        id: Date.now() + 1,
+        type: 'ai',
+        content: "I'm having trouble reaching the AI service right now. Please try again in a moment.",
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      };
+      setMessages(prev => [...prev, fallbackMessage]);
+      setIsTyping(false);
+      if (!isOpen) {
+        setHasNewMessage(true);
+      }
+      console.error('FloatingAI chat request failed:', error);
+    }
   };
 
   // Handle quick actions
