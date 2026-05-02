@@ -5436,13 +5436,17 @@ const handleScoreCardFieldEdit = useCallback(async (fieldKey, newValue) => {
 
   const FIELD_MAP = {
     executive: 'executive_summary',
+    summary: 'key_insights',
+    financial: 'financial_impact',
     risks: 'top_risks',
     recommendations: 'recommendations',
+    decision: 'decision_framework',
+    investment: 'investment_analysis',
+    npv: 'npv_irr_analysis',
+    valuation: 'valuation',
     assumptions: 'assumptions',
   };
   const fieldName = FIELD_MAP[fieldKey] || fieldKey;
-
-  setAnalysisResult((prev) => (prev ? { ...prev, [fieldName]: newValue } : prev));
 
   try {
     const headers = buildAuthHeaders({ 'Content-Type': 'application/json' }, 'PATCH');
@@ -5452,16 +5456,34 @@ const handleScoreCardFieldEdit = useCallback(async (fieldKey, newValue) => {
         method: 'PATCH',
         headers,
         credentials: 'include',
-        body: JSON.stringify({ [fieldName]: newValue }),
+        body: JSON.stringify({
+          [fieldName]: newValue,
+          selected_scorecard_id: effectiveSelectedScorecardId || activeScorecardId || null,
+        }),
       }
     );
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
+    const payload = await response.json().catch(() => ({}));
+    if (payload?.updated_scorecard && typeof payload.updated_scorecard === 'object') {
+      setAnalysisResult((prev) => (prev ? { ...prev, ...payload.updated_scorecard } : prev));
+      if (payload?.selected_scorecard_id) {
+        setSelectedScorecardId(String(payload.selected_scorecard_id));
+      }
+    }
+    await refreshBundle(tid);
   } catch {
     showToast('Failed to save edit. Changes are local only.', 'warning');
   }
-}, [currentSessionId, sessionId, showToast]);
+}, [
+  activeScorecardId,
+  currentSessionId,
+  effectiveSelectedScorecardId,
+  refreshBundle,
+  sessionId,
+  showToast,
+]);
 
 useEffect(() => {
   if (planCategory !== 'enterprise' && planCategory !== 'team') {

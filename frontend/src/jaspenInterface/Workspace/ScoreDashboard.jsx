@@ -354,20 +354,54 @@ export default function ScoreDashboard({
       : []
   ), []);
 
+  const normalizeObjectDraft = useCallback((value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+    return Object.entries(value).reduce((acc, [key, raw]) => {
+      if (!key || key === '_numeric') return acc;
+      acc[key] = raw === null || raw === undefined ? '' : String(raw);
+      return acc;
+    }, {});
+  }, []);
+
   const getEditInitialValue = useCallback((key) => {
     switch (key) {
       case 'executive':
         return executiveSummary || '';
+      case 'summary':
+        return normalizeListDraft(keyInsights, 'summary');
       case 'risks':
         return normalizeListDraft(risks, 'risk');
       case 'recommendations':
         return normalizeListDraft(recommendations, 'action');
       case 'assumptions':
         return normalizeListDraft(assumptions, 'assumption');
+      case 'financial':
+        return normalizeObjectDraft(financialImpact);
+      case 'decision':
+        return normalizeObjectDraft(decisionFramework || {});
+      case 'investment':
+        return normalizeObjectDraft(investmentAnalysis);
+      case 'npv':
+        return normalizeObjectDraft(npvIrrAnalysis);
+      case 'valuation':
+        return normalizeObjectDraft(valuation);
       default:
         return null;
     }
-  }, [assumptions, executiveSummary, normalizeListDraft, recommendations, risks]);
+  }, [
+    assumptions,
+    decisionFramework,
+    executiveSummary,
+    financialImpact,
+    investmentAnalysis,
+    keyInsights,
+    normalizeListDraft,
+    normalizeObjectDraft,
+    npvIrrAnalysis,
+    recommendations,
+    risks,
+    valuation,
+  ]);
 
   const openEdit = useCallback((key) => {
     setEditingCardKey(key);
@@ -613,17 +647,54 @@ export default function ScoreDashboard({
       populated: hasNarrativeHighlights,
       priority: 2,
       render: () => (
-        <div className="summary-card card-shell card-scroll">
-          {hasNarrativeHighlights ? (
-            <div className="summary-list">
-              {narrativeHighlights.map((item, idx) => (
-                <p key={`summary_${idx}`}>{item}</p>
-              ))}
+        editingCardKey === 'summary' ? (
+          <div className="card-edit-mode card-list-edit">
+            {(Array.isArray(editDraft) ? editDraft : []).map((item, idx) => (
+              <div className="card-edit-list-row" key={idx}>
+                <input
+                  type="text"
+                  className="card-edit-input"
+                  value={typeof item === 'string' ? item : ''}
+                  onChange={(event) => {
+                    const next = [...(Array.isArray(editDraft) ? editDraft : [])];
+                    next[idx] = event.target.value;
+                    setEditDraft(next);
+                  }}
+                />
+                <button
+                  type="button"
+                  className="card-edit-remove"
+                  onClick={() => setEditDraft((Array.isArray(editDraft) ? editDraft : []).filter((_, i) => i !== idx))}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              className="card-edit-add sc-btn sc-btn-ghost sc-btn-sm"
+              onClick={() => setEditDraft([...(Array.isArray(editDraft) ? editDraft : []), ''])}
+            >
+              + Add narrative point
+            </button>
+            <div className="card-edit-actions">
+              <button type="button" className="sc-btn sc-btn-primary sc-btn-sm" onClick={commitEdit}>Save</button>
+              <button type="button" className="sc-btn sc-btn-secondary sc-btn-sm" onClick={cancelEdit}>Cancel</button>
             </div>
-          ) : (
-            <p className="section-fallback-message">Share more about the business context, market, or team - Jaspen will explain what is driving the score.</p>
-          )}
-        </div>
+          </div>
+        ) : (
+          <div className="summary-card card-shell card-scroll">
+            {hasNarrativeHighlights ? (
+              <div className="summary-list">
+                {narrativeHighlights.map((item, idx) => (
+                  <p key={`summary_${idx}`}>{item}</p>
+                ))}
+              </div>
+            ) : (
+              <p className="section-fallback-message">Share more about the business context, market, or team - Jaspen will explain what is driving the score.</p>
+            )}
+          </div>
+        )
       ),
     },
     {
@@ -632,22 +703,45 @@ export default function ScoreDashboard({
       populated: hasFinancialImpact,
       priority: 3,
       render: () => (
-        <div className="financial-card card-shell card-scroll">
-          {hasFinancialImpact ? (
-            <div className="fi-grid">
-              {financialGridItems.map((item, idx) => (
-                <div key={idx} className="fi-item">
-                  <div className="fi-label">{item.label}</div>
-                  <div className="fi-value">{item.value}</div>
-                </div>
-              ))}
+        editingCardKey === 'financial' ? (
+          <div className="card-edit-mode card-list-edit">
+            {Object.entries((editDraft && typeof editDraft === 'object' && !Array.isArray(editDraft)) ? editDraft : {}).map(([key, value]) => (
+              <div className="card-edit-list-row" key={key}>
+                <div className="card-edit-label">{formatLabel(key)}</div>
+                <input
+                  type="text"
+                  className="card-edit-input"
+                  value={typeof value === 'string' ? value : String(value || '')}
+                  onChange={(event) => setEditDraft((prev) => ({
+                    ...((prev && typeof prev === 'object' && !Array.isArray(prev)) ? prev : {}),
+                    [key]: event.target.value,
+                  }))}
+                />
+              </div>
+            ))}
+            <div className="card-edit-actions">
+              <button type="button" className="sc-btn sc-btn-primary sc-btn-sm" onClick={commitEdit}>Save</button>
+              <button type="button" className="sc-btn sc-btn-secondary sc-btn-sm" onClick={cancelEdit}>Cancel</button>
             </div>
-          ) : (
-            <p className="section-fallback-message">
-              Not enough information to estimate financial impact yet.
-            </p>
-          )}
-        </div>
+          </div>
+        ) : (
+          <div className="financial-card card-shell card-scroll">
+            {hasFinancialImpact ? (
+              <div className="fi-grid">
+                {financialGridItems.map((item, idx) => (
+                  <div key={idx} className="fi-item">
+                    <div className="fi-label">{item.label}</div>
+                    <div className="fi-value">{item.value}</div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="section-fallback-message">
+                Not enough information to estimate financial impact yet.
+              </p>
+            )}
+          </div>
+        )
       ),
     },
     {
@@ -837,44 +931,67 @@ export default function ScoreDashboard({
       populated: hasDecisionData,
       priority: 7,
       render: () => (
-        <div className="decision-section">
-          {decisionFramework?.go_no_go && (
-            <div className="decision-row">
-              <span className="dr-criteria">Decision</span>
-              <span className="dr-status">
-                <span className={`badge ${
-                  decisionFramework.go_no_go === 'GO'
-                    ? 'badge-success'
-                    : decisionFramework.go_no_go === 'CONDITIONAL'
-                    ? 'badge-warning'
-                    : 'badge-danger'
-                }`}>
-                  {decisionFramework.go_no_go}
+        editingCardKey === 'decision' ? (
+          <div className="card-edit-mode card-list-edit">
+            {Object.entries((editDraft && typeof editDraft === 'object' && !Array.isArray(editDraft)) ? editDraft : {}).map(([key, value]) => (
+              <div className="card-edit-list-row" key={key}>
+                <div className="card-edit-label">{formatLabel(key)}</div>
+                <input
+                  type="text"
+                  className="card-edit-input"
+                  value={typeof value === 'string' ? value : String(value || '')}
+                  onChange={(event) => setEditDraft((prev) => ({
+                    ...((prev && typeof prev === 'object' && !Array.isArray(prev)) ? prev : {}),
+                    [key]: event.target.value,
+                  }))}
+                />
+              </div>
+            ))}
+            <div className="card-edit-actions">
+              <button type="button" className="sc-btn sc-btn-primary sc-btn-sm" onClick={commitEdit}>Save</button>
+              <button type="button" className="sc-btn sc-btn-secondary sc-btn-sm" onClick={cancelEdit}>Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <div className="decision-section">
+            {decisionFramework?.go_no_go && (
+              <div className="decision-row">
+                <span className="dr-criteria">Decision</span>
+                <span className="dr-status">
+                  <span className={`badge ${
+                    decisionFramework.go_no_go === 'GO'
+                      ? 'badge-success'
+                      : decisionFramework.go_no_go === 'CONDITIONAL'
+                      ? 'badge-warning'
+                      : 'badge-danger'
+                  }`}>
+                    {decisionFramework.go_no_go}
+                  </span>
                 </span>
-              </span>
-              <span className="dr-desc">{decisionFramework.key_condition || 'Decision outcome derived from the current scorecard context.'}</span>
-            </div>
-          )}
-          {decisionFramework?.confidence_level && (
-            <div className="decision-row">
-              <span className="dr-criteria">Confidence</span>
-              <span className="dr-status">{decisionFramework.confidence_level}</span>
-              <span className="dr-desc">Confidence in the current recommendation.</span>
-            </div>
-          )}
-          {decisionFramework?.downside_scenario && (
-            <div className="decision-row">
-              <span className="dr-criteria">Downside</span>
-              <span className="dr-desc">{decisionFramework.downside_scenario}</span>
-            </div>
-          )}
-          {decisionFramework?.upside_scenario && (
-            <div className="decision-row">
-              <span className="dr-criteria">Upside</span>
-              <span className="dr-desc">{decisionFramework.upside_scenario}</span>
-            </div>
-          )}
-        </div>
+                <span className="dr-desc">{decisionFramework.key_condition || 'Decision outcome derived from the current scorecard context.'}</span>
+              </div>
+            )}
+            {decisionFramework?.confidence_level && (
+              <div className="decision-row">
+                <span className="dr-criteria">Confidence</span>
+                <span className="dr-status">{decisionFramework.confidence_level}</span>
+                <span className="dr-desc">Confidence in the current recommendation.</span>
+              </div>
+            )}
+            {decisionFramework?.downside_scenario && (
+              <div className="decision-row">
+                <span className="dr-criteria">Downside</span>
+                <span className="dr-desc">{decisionFramework.downside_scenario}</span>
+              </div>
+            )}
+            {decisionFramework?.upside_scenario && (
+              <div className="decision-row">
+                <span className="dr-criteria">Upside</span>
+                <span className="dr-desc">{decisionFramework.upside_scenario}</span>
+              </div>
+            )}
+          </div>
+        )
       ),
     },
     {
@@ -882,12 +999,34 @@ export default function ScoreDashboard({
       title: 'Investment Analysis',
       populated: hasInvestmentData,
       priority: 8,
-      render: () => renderMetricRows([
+      render: () => (
+        editingCardKey === 'investment' ? (
+          <div className="card-edit-mode card-list-edit">
+            {Object.entries((editDraft && typeof editDraft === 'object' && !Array.isArray(editDraft)) ? editDraft : {}).map(([key, value]) => (
+              <div className="card-edit-list-row" key={key}>
+                <div className="card-edit-label">{formatLabel(key)}</div>
+                <input
+                  type="text"
+                  className="card-edit-input"
+                  value={typeof value === 'string' ? value : String(value || '')}
+                  onChange={(event) => setEditDraft((prev) => ({
+                    ...((prev && typeof prev === 'object' && !Array.isArray(prev)) ? prev : {}),
+                    [key]: event.target.value,
+                  }))}
+                />
+              </div>
+            ))}
+            <div className="card-edit-actions">
+              <button type="button" className="sc-btn sc-btn-primary sc-btn-sm" onClick={commitEdit}>Save</button>
+              <button type="button" className="sc-btn sc-btn-secondary sc-btn-sm" onClick={cancelEdit}>Cancel</button>
+            </div>
+          </div>
+        ) : renderMetricRows([
         { key: 'investment', label: 'Total Investment Required', value: investmentAnalysis.total_investment_required },
         { key: 'annual-return', label: 'Expected Annual Return', value: investmentAnalysis.expected_annual_return },
         { key: 'payback', label: 'Payback Period', value: investmentAnalysis.payback_period },
         { key: 'inaction', label: 'Cost of Inaction', value: investmentAnalysis.cost_of_inaction },
-      ]),
+      ])),
     },
     {
       key: 'before-after',
@@ -908,24 +1047,68 @@ export default function ScoreDashboard({
       title: 'NPV & IRR Analysis',
       populated: hasNpvData,
       priority: 10,
-      render: () => renderMetricRows([
+      render: () => (
+        editingCardKey === 'npv' ? (
+          <div className="card-edit-mode card-list-edit">
+            {Object.entries((editDraft && typeof editDraft === 'object' && !Array.isArray(editDraft)) ? editDraft : {}).map(([key, value]) => (
+              <div className="card-edit-list-row" key={key}>
+                <div className="card-edit-label">{formatLabel(key)}</div>
+                <input
+                  type="text"
+                  className="card-edit-input"
+                  value={typeof value === 'string' ? value : String(value || '')}
+                  onChange={(event) => setEditDraft((prev) => ({
+                    ...((prev && typeof prev === 'object' && !Array.isArray(prev)) ? prev : {}),
+                    [key]: event.target.value,
+                  }))}
+                />
+              </div>
+            ))}
+            <div className="card-edit-actions">
+              <button type="button" className="sc-btn sc-btn-primary sc-btn-sm" onClick={commitEdit}>Save</button>
+              <button type="button" className="sc-btn sc-btn-secondary sc-btn-sm" onClick={cancelEdit}>Cancel</button>
+            </div>
+          </div>
+        ) : renderMetricRows([
         { key: 'npv', label: '3-Year NPV', value: npvIrrAnalysis.npv_3_year },
         { key: 'irr', label: 'Internal Rate of Return (IRR)', value: npvIrrAnalysis.irr },
         { key: 'discount-rate', label: 'Discount Rate', value: npvIrrAnalysis.discount_rate_used },
         { key: 'break-even', label: 'Break-even Month', value: npvIrrAnalysis.break_even_month },
-      ]),
+      ])),
     },
     {
       key: 'valuation',
       title: 'Valuation',
       populated: hasValuationData,
       priority: 11,
-      render: () => renderMetricRows([
+      render: () => (
+        editingCardKey === 'valuation' ? (
+          <div className="card-edit-mode card-list-edit">
+            {Object.entries((editDraft && typeof editDraft === 'object' && !Array.isArray(editDraft)) ? editDraft : {}).map(([key, value]) => (
+              <div className="card-edit-list-row" key={key}>
+                <div className="card-edit-label">{formatLabel(key)}</div>
+                <input
+                  type="text"
+                  className="card-edit-input"
+                  value={typeof value === 'string' ? value : String(value || '')}
+                  onChange={(event) => setEditDraft((prev) => ({
+                    ...((prev && typeof prev === 'object' && !Array.isArray(prev)) ? prev : {}),
+                    [key]: event.target.value,
+                  }))}
+                />
+              </div>
+            ))}
+            <div className="card-edit-actions">
+              <button type="button" className="sc-btn sc-btn-primary sc-btn-sm" onClick={commitEdit}>Save</button>
+              <button type="button" className="sc-btn sc-btn-secondary sc-btn-sm" onClick={cancelEdit}>Cancel</button>
+            </div>
+          </div>
+        ) : renderMetricRows([
         { key: 'enterprise-value', label: 'Enterprise Value', value: valuation.enterprise_value },
         { key: 'multiple', label: 'Multiple', value: valuation.multiple !== null && valuation.multiple !== undefined && valuation.multiple !== '' ? `${valuation.multiple}x` : null },
         { key: 'basis', label: 'Basis', value: valuation.basis },
         { key: 'comparables', label: 'Comparable Range', value: valuation.comparable_range },
-      ]),
+      ])),
     },
     {
       key: 'insights',
@@ -1170,7 +1353,7 @@ export default function ScoreDashboard({
               >
                 <span className="section-card-title">{section.title}</span>
                 <div className="section-card-head-actions">
-                  {editEnabled && onEditField && ['executive', 'risks', 'recommendations', 'assumptions'].includes(section.key) && (
+                  {editEnabled && onEditField && ['executive', 'summary', 'financial', 'risks', 'recommendations', 'decision', 'investment', 'npv', 'valuation', 'assumptions'].includes(section.key) && (
                     <button
                       type="button"
                       className={`card-edit-btn ${editingCardKey === section.key ? 'active' : ''}`}
