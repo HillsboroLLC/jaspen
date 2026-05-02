@@ -68,6 +68,25 @@ const buildContextInstructionPrefix = ({ bundle, scorecard, wbs }) => {
   return `Use this thread context when responding and applying edits.\n${parts.join('\n')}`;
 };
 
+const buildExecutionViewContext = ({ scorecard, wbs }) => {
+  const tasks = Array.isArray(wbs?.tasks) ? wbs.tasks : [];
+  const byStatus = tasks.reduce((acc, task) => {
+    const key = String(task?.status || '').trim().toLowerCase();
+    if (!key) return acc;
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+  return {
+    current_view: 'execution',
+    active_tab: 'execution',
+    active_scorecard_id: String(scorecard?.analysis_id || scorecard?.id || '').trim() || null,
+    wbs_summary: {
+      total_tasks: tasks.length,
+      by_status: byStatus,
+    },
+  };
+};
+
 const buildInitialAssistantMessages = (bundle) => {
   const history = (Array.isArray(bundle?.messages) ? bundle.messages : [])
     .slice(-10)
@@ -436,6 +455,7 @@ export default function ExecutionPlan() {
         instruction: contextPrefix ? `${contextPrefix}\n\nUser request: ${text}` : text,
         scorecard,
         scorecard_id: scorecard?.analysis_id || scorecard?.id || null,
+        view_context: buildExecutionViewContext({ scorecard, wbs: threadWbs }),
       });
 
       const uiActions = parseUIActions(response);

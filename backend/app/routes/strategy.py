@@ -5674,6 +5674,45 @@ def scorecard_assistant(thread_id):
             or snapshot_state['selected_snapshot'].get('strategy_objective')
         )
 
+        view_context = payload.get('view_context') if isinstance(payload.get('view_context'), dict) else {}
+        if not view_context:
+            view_context = {}
+            for key in ('current_view', 'active_tab', 'active_scorecard_id', 'active_scenario_id', 'wbs_summary'):
+                if key in payload:
+                    view_context[key] = payload.get(key)
+        if not isinstance(view_context, dict):
+            view_context = {}
+        view_context = {k: v for k, v in view_context.items() if k in {'current_view', 'active_tab', 'active_scorecard_id', 'active_scenario_id', 'wbs_summary'}}
+
+        view_context_lines = []
+        current_view = str(view_context.get('current_view') or '').strip()
+        if current_view:
+            view_context_lines.append(f"- Current view: {current_view}")
+        active_tab = str(view_context.get('active_tab') or '').strip()
+        if active_tab:
+            view_context_lines.append(f"- Active tab: {active_tab}")
+        active_scorecard_id = str(view_context.get('active_scorecard_id') or '').strip()
+        if active_scorecard_id:
+            view_context_lines.append(f"- Active scorecard ID: {active_scorecard_id}")
+        active_scenario_id = str(view_context.get('active_scenario_id') or '').strip()
+        if active_scenario_id:
+            view_context_lines.append(f"- Active scenario ID: {active_scenario_id}")
+        wbs_summary = view_context.get('wbs_summary') if isinstance(view_context.get('wbs_summary'), dict) else {}
+        total_tasks = wbs_summary.get('total_tasks')
+        by_status = wbs_summary.get('by_status') if isinstance(wbs_summary.get('by_status'), dict) else {}
+        if total_tasks is not None or by_status:
+            status_tokens = []
+            for status_key in ('todo', 'in_progress', 'blocked', 'done'):
+                if status_key in by_status:
+                    status_tokens.append(f"{status_key}:{by_status.get(status_key)}")
+            if total_tasks is not None and status_tokens:
+                view_context_lines.append(f"- Execution summary: {total_tasks} tasks ({', '.join(status_tokens)})")
+            elif total_tasks is not None:
+                view_context_lines.append(f"- Execution summary: {total_tasks} tasks")
+            elif status_tokens:
+                view_context_lines.append(f"- Execution summary by status: {', '.join(status_tokens)}")
+        view_context_text = "\n".join(view_context_lines) if view_context_lines else "- Not provided."
+
         editable_scorecard = {
             'project_name': base_scorecard.get('project_name') or session.get('name') or 'Jaspen Scorecard',
             'jaspen_score': base_scorecard.get('jaspen_score'),
@@ -5714,6 +5753,9 @@ Current scorecard:
 
 Recent thread context:
 {json.dumps(recent_excerpt, indent=2)}
+
+Current workspace view context:
+{view_context_text}
 
 Return one valid JSON object only in this format:
 {{
@@ -5776,6 +5818,7 @@ Rules:
 - Never change numeric scores, category scores, or financial values in the scorecard.
 - Only rewrite wording or organization for text sections.
 - Preserve the original meaning unless the user explicitly asks to change the substance.
+- Use the workspace view context to focus your answer on what the user is currently looking at.
 - If you update a list section, return the full replacement list for that section.
 - If you update an object section, return the full replacement object for that section.
 - Keep the reply crisp and professional.
