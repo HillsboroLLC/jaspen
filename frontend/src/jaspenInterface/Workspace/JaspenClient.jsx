@@ -446,7 +446,7 @@ export const Jaspen = {
   },
 
   // ---------- Conversational intake (Claude via /api/v1/chat) ----------
-async convoStart({ description, project_id, model_type, strategy_objective, intake_context, lever_defaults, starter_id, attachments }) {
+async convoStart({ description, project_id, model_type, strategy_objective, intake_context, view_context, lever_defaults, starter_id, attachments }) {
     // Default project_id for testing - replace with real project selection later
     const pid = project_id || 'default-jas-project';
 
@@ -461,6 +461,7 @@ async convoStart({ description, project_id, model_type, strategy_objective, inta
           model_type: model_type || undefined,
           strategy_objective: strategy_objective || undefined,
           intake_context: intake_context && typeof intake_context === 'object' ? intake_context : undefined,
+          view_context: view_context && typeof view_context === 'object' ? view_context : undefined,
           lever_defaults: lever_defaults && typeof lever_defaults === 'object' ? lever_defaults : undefined,
           starter_id: starter_id || undefined,
         }, attachments),
@@ -475,6 +476,7 @@ async convoStart({ description, project_id, model_type, strategy_objective, inta
           model_type: model_type || undefined,
           strategy_objective: strategy_objective || undefined,
           intake_context: intake_context && typeof intake_context === 'object' ? intake_context : undefined,
+          view_context: view_context && typeof view_context === 'object' ? view_context : undefined,
           lever_defaults: lever_defaults && typeof lever_defaults === 'object' ? lever_defaults : undefined,
           starter_id: starter_id || undefined,
         },
@@ -493,7 +495,7 @@ async convoStart({ description, project_id, model_type, strategy_objective, inta
       status: data.status || 'gathering_info',
     };
   },
-async convoContinue({ session_id, user_message, conversation_history, model_type, strategy_objective, attachments }) {
+async convoContinue({ session_id, user_message, conversation_history, model_type, strategy_objective, view_context, attachments }) {
     const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
     const data = hasAttachments
       ? await postForm(
@@ -503,6 +505,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
           message: user_message,
           model_type: model_type || undefined,
           strategy_objective: strategy_objective || undefined,
+          view_context: view_context && typeof view_context === 'object' ? view_context : undefined,
         }, attachments),
         { withSid: true, retryable: true }
       )
@@ -513,6 +516,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
           message: user_message,
           model_type: model_type || undefined,
           strategy_objective: strategy_objective || undefined,
+          view_context: view_context && typeof view_context === 'object' ? view_context : undefined,
         },
         { withSid: true }
       );
@@ -532,6 +536,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
     model_type,
     strategy_objective,
     intake_context,
+    view_context,
     lever_defaults,
     starter_id,
     attachments,
@@ -552,6 +557,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
         model_type: model_type || undefined,
         strategy_objective: strategy_objective || undefined,
         intake_context: intake_context && typeof intake_context === 'object' ? intake_context : undefined,
+        view_context: view_context && typeof view_context === 'object' ? view_context : undefined,
         lever_defaults: lever_defaults && typeof lever_defaults === 'object' ? lever_defaults : undefined,
         starter_id: starter_id || undefined,
       }, attachments)
@@ -562,6 +568,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
         model_type: model_type || undefined,
         strategy_objective: strategy_objective || undefined,
         intake_context: intake_context && typeof intake_context === 'object' ? intake_context : undefined,
+        view_context: view_context && typeof view_context === 'object' ? view_context : undefined,
         lever_defaults: lever_defaults && typeof lever_defaults === 'object' ? lever_defaults : undefined,
         starter_id: starter_id || undefined,
       });
@@ -619,6 +626,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
     user_message,
     model_type,
     strategy_objective,
+    view_context,
     attachments,
     onDelta,
     onToolUse,
@@ -634,12 +642,14 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
         message: user_message,
         model_type: model_type || undefined,
         strategy_objective: strategy_objective || undefined,
+        view_context: view_context && typeof view_context === 'object' ? view_context : undefined,
       }, attachments)
       : JSON.stringify({
         thread_id: session_id,
         message: user_message,
         model_type: model_type || undefined,
         strategy_objective: strategy_objective || undefined,
+        view_context: view_context && typeof view_context === 'object' ? view_context : undefined,
       });
     const resp = await openRetriedStream(url, {
       sid: getSid(),

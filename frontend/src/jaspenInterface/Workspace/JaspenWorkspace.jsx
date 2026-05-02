@@ -1397,6 +1397,56 @@ const editableThreadId = scoreWorkspace.ownerThreadId;
 const activeScorecardId = scoreWorkspace.scorecardId;
 const scoreWorkspaceMode = scoreWorkspace.mode;
 const hasActiveScorecardContext = scoreWorkspace.hasScorecard;
+const chatViewContext = useMemo(() => {
+  const normalizeToken = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, '_').replace(/-/g, '_');
+  const inferCurrentView = () => {
+    const candidates = [view, activeTab];
+    for (const candidate of candidates) {
+      const token = normalizeToken(candidate);
+      if (!token) continue;
+      if (token === 'intake' || token === 'chat') return 'intake';
+      if (token === 'summary' || token === 'score' || token === 'scorecard') return 'summary';
+      if (token === 'scenario' || token === 'scenarios' || token === 'comparison') return 'scenario';
+      if (token === 'execution' || token === 'execution_plan' || token === 'wbs' || token === 'timeline' || token === 'board' || token === 'list') return 'execution';
+    }
+    return 'intake';
+  };
+
+  const resolvedActiveTab = activeTab === 'scenario'
+    ? normalizeToken(scenarioDrawerView || activeTab)
+    : normalizeToken(activeTab || view || 'intake');
+
+  const rawTasks = Array.isArray(threadWbs?.tasks) ? threadWbs.tasks : [];
+  const byStatus = rawTasks.reduce((acc, task) => {
+    const key = normalizeToken(task?.status || 'todo');
+    if (key === 'todo' || key === 'in_progress' || key === 'blocked' || key === 'done') {
+      acc[key] = (acc[key] || 0) + 1;
+    }
+    return acc;
+  }, {});
+  const wbsSummary = rawTasks.length > 0
+    ? {
+        total_tasks: rawTasks.length,
+        by_status: byStatus,
+      }
+    : null;
+
+  return {
+    current_view: inferCurrentView(),
+    active_tab: resolvedActiveTab || 'intake',
+    active_scorecard_id: String(effectiveSelectedScorecardId || activeScorecardId || '').trim() || undefined,
+    active_scenario_id: String(activeScenarioId || '').trim() || undefined,
+    wbs_summary: wbsSummary || undefined,
+  };
+}, [
+  view,
+  activeTab,
+  scenarioDrawerView,
+  effectiveSelectedScorecardId,
+  activeScorecardId,
+  activeScenarioId,
+  threadWbs,
+]);
 
 // Preserve the original/baseline analysis result for quick switching
 const baselineRef = useRef(null);
@@ -4912,6 +4962,7 @@ useEffect(() => {
     userText,
     modelType,
     objective,
+    viewContext,
     attachments,
   }) => {
     setIsStreamingReply(true);
@@ -4923,6 +4974,7 @@ useEffect(() => {
         user_message: userText,
         model_type: modelType,
         strategy_objective: objective,
+        view_context: viewContext && typeof viewContext === 'object' ? viewContext : undefined,
         attachments,
         onDelta: (text) => appendStreamingAssistantDelta(placeholderId, text),
         onToolUse: (event) => setStreamToolStatus(toolStatusLabel(event?.tool)),
@@ -4965,6 +5017,7 @@ useEffect(() => {
     modelType,
     objective,
     intakeContext,
+    viewContext,
     leverDefaults,
     starterId,
     attachments,
@@ -4978,6 +5031,7 @@ useEffect(() => {
         model_type: modelType,
         strategy_objective: objective,
         intake_context: intakeContext,
+        view_context: viewContext && typeof viewContext === 'object' ? viewContext : undefined,
         lever_defaults: leverDefaults,
         starter_id: starterId,
         attachments,
@@ -5063,6 +5117,7 @@ useEffect(() => {
         modelType: selectedModelType,
         objective: strategyObjective,
         intakeContext,
+        viewContext: chatViewContext,
         leverDefaults,
         starterId: selectedStarter?.id || undefined,
         attachments: Array.isArray(options.attachments) ? options.attachments : [],
@@ -5128,6 +5183,7 @@ async function continueConversation(userText, options = {}) {
       userText,
       modelType: selectedModelType,
       objective: strategyObjective,
+      viewContext: chatViewContext,
       attachments: Array.isArray(options.attachments) ? options.attachments : [],
     });
 
