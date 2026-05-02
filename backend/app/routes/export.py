@@ -240,6 +240,220 @@ def _safe_filename_base(value):
     return slug[:96] or "jaspen-export"
 
 
+def _scorecard_pdf_bytes(scorecard, *, org=None):
+    project_name = scorecard.get("project_name") or "Untitled Idea"
+    markdown_fallback = _scorecard_markdown(scorecard, org=org)
+
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+        from reportlab.lib.units import inch
+        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    except Exception:
+        return _markdown_to_pdf_bytes(project_name, markdown_fallback)
+
+    try:
+        navy = colors.HexColor("#161F3B")
+        magenta = colors.HexColor("#A0036C")
+        ice = colors.HexColor("#EFF9FC")
+        ink = colors.HexColor("#1F2937")
+        slate = colors.HexColor("#475569")
+        border = colors.HexColor("#D7DEE8")
+
+        component_scores = scorecard.get("component_scores") if isinstance(scorecard.get("component_scores"), dict) else {}
+        financial_impact = scorecard.get("financial_impact") if isinstance(scorecard.get("financial_impact"), dict) else {}
+        risks = _list_text_items(scorecard.get("risks"), fallback="No key risks recorded.")
+        recommendations = _list_text_items(scorecard.get("recommendations"), fallback="No recommendations recorded.")
+        generated_at = str(scorecard.get("updated_at") or _iso_now())
+        workspace_name = org.name if org else "Personal Workspace"
+        score_text = _display_value(scorecard.get("jaspen_score"))
+        category_text = _display_value(scorecard.get("score_category"))
+
+        styles = getSampleStyleSheet()
+        title_style = ParagraphStyle(
+            "ScoreTitle",
+            parent=styles["Heading1"],
+            fontName="Helvetica-Bold",
+            fontSize=20,
+            leading=24,
+            textColor=colors.white,
+            spaceAfter=0,
+        )
+        subtitle_style = ParagraphStyle(
+            "ScoreSubtitle",
+            parent=styles["Normal"],
+            fontName="Helvetica",
+            fontSize=9,
+            leading=12,
+            textColor=colors.white,
+            spaceAfter=0,
+        )
+        section_style = ParagraphStyle(
+            "SectionTitle",
+            parent=styles["Heading3"],
+            fontName="Helvetica-Bold",
+            fontSize=12,
+            leading=14,
+            textColor=navy,
+            spaceBefore=2,
+            spaceAfter=6,
+        )
+        body_style = ParagraphStyle(
+            "Body",
+            parent=styles["Normal"],
+            fontName="Helvetica",
+            fontSize=10,
+            leading=14,
+            textColor=ink,
+        )
+        bullet_style = ParagraphStyle(
+            "Bullet",
+            parent=body_style,
+            leftIndent=10,
+            firstLineIndent=-8,
+            spaceBefore=1,
+            spaceAfter=1,
+        )
+
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(
+            buffer,
+            pagesize=letter,
+            leftMargin=0.55 * inch,
+            rightMargin=0.55 * inch,
+            topMargin=0.5 * inch,
+            bottomMargin=0.5 * inch,
+            title=_safe_text(project_name, 200),
+        )
+
+        story = []
+
+        header = Table(
+            [[
+                Paragraph(_safe_text(project_name, 180), title_style),
+                Paragraph(
+                    f"<b>Jaspen Score</b><br/><font color='#A0036C' size='18'><b>{score_text}</b></font>",
+                    ParagraphStyle(
+                        "ScoreChip",
+                        parent=styles["Normal"],
+                        fontName="Helvetica",
+                        fontSize=9,
+                        leading=13,
+                        alignment=2,
+                        textColor=ink,
+                    ),
+                ),
+            ]],
+            colWidths=[4.9 * inch, 2.0 * inch],
+            hAlign="LEFT",
+        )
+        header.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (0, 0), navy),
+                    ("BACKGROUND", (1, 0), (1, 0), ice),
+                    ("BOX", (0, 0), (1, 0), 0.75, border),
+                    ("VALIGN", (0, 0), (1, 0), "MIDDLE"),
+                    ("LEFTPADDING", (0, 0), (0, 0), 14),
+                    ("RIGHTPADDING", (0, 0), (0, 0), 10),
+                    ("TOPPADDING", (0, 0), (1, 0), 12),
+                    ("BOTTOMPADDING", (0, 0), (1, 0), 12),
+                    ("LEFTPADDING", (1, 0), (1, 0), 10),
+                    ("RIGHTPADDING", (1, 0), (1, 0), 12),
+                ]
+            )
+        )
+        story.append(header)
+
+        subtitle = Table(
+            [[Paragraph(
+                f"Generated: {generated_at} &nbsp;&nbsp;•&nbsp;&nbsp; Workspace: {_safe_text(workspace_name, 120)} &nbsp;&nbsp;•&nbsp;&nbsp; Category: {category_text}",
+                subtitle_style,
+            )]],
+            colWidths=[6.9 * inch],
+            hAlign="LEFT",
+        )
+        subtitle.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (0, 0), navy),
+                    ("LEFTPADDING", (0, 0), (0, 0), 14),
+                    ("RIGHTPADDING", (0, 0), (0, 0), 12),
+                    ("TOPPADDING", (0, 0), (0, 0), 6),
+                    ("BOTTOMPADDING", (0, 0), (0, 0), 8),
+                ]
+            )
+        )
+        story.append(subtitle)
+        story.append(Spacer(1, 12))
+
+        story.append(Paragraph("Component Scores", section_style))
+        component_rows = [["Component", "Score"]]
+        for key, value in component_scores.items():
+            component_rows.append([_format_label(key), _display_value(value)])
+        if len(component_rows) == 1:
+            component_rows.append(["No component scores recorded.", "N/A"])
+
+        component_table = Table(component_rows, colWidths=[5.4 * inch, 1.5 * inch], hAlign="LEFT")
+        component_style = [
+            ("BACKGROUND", (0, 0), (1, 0), ice),
+            ("TEXTCOLOR", (0, 0), (1, 0), navy),
+            ("FONTNAME", (0, 0), (1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (1, 0), 10),
+            ("ALIGN", (1, 1), (1, -1), "RIGHT"),
+            ("GRID", (0, 0), (1, -1), 0.5, border),
+            ("FONTNAME", (0, 1), (1, -1), "Helvetica"),
+            ("FONTSIZE", (0, 1), (1, -1), 9),
+            ("TEXTCOLOR", (0, 1), (1, -1), ink),
+            ("ROWBACKGROUNDS", (0, 1), (1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
+            ("LEFTPADDING", (0, 0), (1, -1), 8),
+            ("RIGHTPADDING", (0, 0), (1, -1), 8),
+            ("TOPPADDING", (0, 0), (1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (1, -1), 6),
+        ]
+        component_table.setStyle(TableStyle(component_style))
+        story.append(component_table)
+        story.append(Spacer(1, 12))
+
+        story.append(Paragraph("Financial Impact", section_style))
+        fin_rows = [["Metric", "Value"]]
+        for key, value in list(financial_impact.items())[:12]:
+            fin_rows.append([_format_label(key), _display_value(value)])
+        if len(fin_rows) == 1:
+            fin_rows.append(["No financial impact data recorded.", "N/A"])
+        fin_table = Table(fin_rows, colWidths=[4.7 * inch, 2.2 * inch], hAlign="LEFT")
+        fin_table.setStyle(TableStyle(component_style))
+        story.append(fin_table)
+        story.append(Spacer(1, 12))
+
+        story.append(Paragraph("Top Risks", section_style))
+        for item in risks[:8]:
+            story.append(Paragraph(f"• {_safe_text(item, 500)}", bullet_style))
+        story.append(Spacer(1, 10))
+
+        story.append(Paragraph("Recommendations + Next Steps", section_style))
+        for item in recommendations[:8]:
+            story.append(Paragraph(f"• {_safe_text(item, 500)}", bullet_style))
+
+        footer = ParagraphStyle(
+            "Footer",
+            parent=styles["Normal"],
+            fontName="Helvetica-Oblique",
+            fontSize=8,
+            textColor=slate,
+            spaceBefore=14,
+        )
+        story.append(Spacer(1, 12))
+        story.append(Paragraph("Generated by Jaspen strategic export.", footer))
+
+        doc.build(story)
+        buffer.seek(0)
+        return buffer.read()
+    except Exception:
+        return _markdown_to_pdf_bytes(project_name, markdown_fallback)
+
+
 def _display_chat_role(role):
     normalized = str(role or "").strip().lower()
     if normalized in {"assistant", "ai", "bot"}:
@@ -509,8 +723,7 @@ def export_scorecard_pdf(thread_id):
     if error_response:
         return error_response
 
-    markdown = _scorecard_markdown(scorecard, org=org)
-    payload = _markdown_to_pdf_bytes(scorecard.get("project_name") or "Jaspen Scorecard", markdown)
+    payload = _scorecard_pdf_bytes(scorecard, org=org)
     filename = f"{_safe_filename_base(scorecard.get('project_name'))}-scorecard.pdf"
     return _send_bytes(payload, filename=filename, mimetype=PDF_MIMETYPE)
 
