@@ -5437,6 +5437,7 @@ const handleScoreCardFieldEdit = useCallback(async (fieldKey, newValue) => {
   const FIELD_MAP = {
     executive: 'executive_summary',
     summary: 'key_insights',
+    rationale: 'component_rationale',
     financial: 'financial_impact',
     risks: 'top_risks',
     recommendations: 'recommendations',

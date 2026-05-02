@@ -13,6 +13,7 @@ const DEFAULT_CARD_LAYOUT = {
   score: { colSpan: 4, rowSpan: 1 },
   executive: { colSpan: 4, rowSpan: 1 },
   summary: { colSpan: 4, rowSpan: 1 },
+  rationale: { colSpan: 4, rowSpan: 1 },
   financial: { colSpan: 4, rowSpan: 1 },
   scores: { colSpan: 4, rowSpan: 2 },
   risks: { colSpan: 4, rowSpan: 2 },
@@ -31,6 +32,7 @@ const DEFAULT_CARD_ORDER = [
   'executive',
   'scores',
   'summary',
+  'rationale',
   'financial',
   'risks',
   'recommendations',
@@ -167,6 +169,7 @@ export default function ScoreDashboard({
 
   const hasDecisionData = hasMeaningfulValue(decisionFramework);
   const hasBeforeAfterData = hasMeaningfulValue(before) || hasMeaningfulValue(after);
+  const hasComponentRationale = hasMeaningfulValue(componentRationale);
 
   const cleanNarrativeText = (value) => {
     const text = String(value || '')
@@ -369,6 +372,8 @@ export default function ScoreDashboard({
         return executiveSummary || '';
       case 'summary':
         return normalizeListDraft(keyInsights, 'summary');
+      case 'rationale':
+        return normalizeObjectDraft(componentRationale);
       case 'risks':
         return normalizeListDraft(risks, 'risk');
       case 'recommendations':
@@ -390,6 +395,7 @@ export default function ScoreDashboard({
     }
   }, [
     assumptions,
+    componentRationale,
     decisionFramework,
     executiveSummary,
     financialImpact,
@@ -698,10 +704,48 @@ export default function ScoreDashboard({
       ),
     },
     {
+      key: 'rationale',
+      title: 'Category Rationale',
+      populated: hasComponentRationale,
+      priority: 3,
+      render: () => (
+        editingCardKey === 'rationale' ? (
+          <div className="card-edit-mode card-list-edit">
+            {Object.entries((editDraft && typeof editDraft === 'object' && !Array.isArray(editDraft)) ? editDraft : {}).map(([key, value]) => (
+              <div className="card-edit-list-row" key={key}>
+                <div className="card-edit-label">{formatLabel(key)}</div>
+                <input
+                  type="text"
+                  className="card-edit-input"
+                  value={typeof value === 'string' ? value : String(value || '')}
+                  onChange={(event) => setEditDraft((prev) => ({
+                    ...((prev && typeof prev === 'object' && !Array.isArray(prev)) ? prev : {}),
+                    [key]: event.target.value,
+                  }))}
+                />
+              </div>
+            ))}
+            <div className="card-edit-actions">
+              <button type="button" className="sc-btn sc-btn-primary sc-btn-sm" onClick={commitEdit}>Save</button>
+              <button type="button" className="sc-btn sc-btn-secondary sc-btn-sm" onClick={cancelEdit}>Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <div className="section-bullet-list">
+            {Object.entries(componentRationale || {}).map(([key, value]) => (
+              <div className="section-bullet-item" key={key}>
+                <strong>{formatLabel(key)}:</strong> {String(value || '').trim() || 'Not enough information.'}
+              </div>
+            ))}
+          </div>
+        )
+      ),
+    },
+    {
       key: 'financial',
       title: 'Financial Impact',
       populated: hasFinancialImpact,
-      priority: 3,
+      priority: 4,
       render: () => (
         editingCardKey === 'financial' ? (
           <div className="card-edit-mode card-list-edit">
@@ -748,7 +792,7 @@ export default function ScoreDashboard({
       key: 'scores',
       title: 'Category Scores',
       populated: hasScores,
-      priority: 4,
+      priority: 5,
       render: () => (
         <div className="scores-section scores-accordion">
           {categoryScoreRows.map((row) => (
@@ -785,7 +829,7 @@ export default function ScoreDashboard({
       key: 'recommendations',
       title: 'Recommendations',
       populated: recommendations.length > 0,
-      priority: 5,
+      priority: 6,
       render: () => (
         editingCardKey === 'recommendations' ? (
           <div className="card-edit-mode card-list-edit">
@@ -853,7 +897,7 @@ export default function ScoreDashboard({
       key: 'risks',
       title: 'Top Risks',
       populated: risks.length > 0,
-      priority: 6,
+      priority: 7,
       render: () => (
         editingCardKey === 'risks' ? (
           <div className="card-edit-mode card-list-edit">
@@ -929,7 +973,7 @@ export default function ScoreDashboard({
       key: 'decision',
       title: 'Decision Framework',
       populated: hasDecisionData,
-      priority: 7,
+      priority: 8,
       render: () => (
         editingCardKey === 'decision' ? (
           <div className="card-edit-mode card-list-edit">
@@ -998,7 +1042,7 @@ export default function ScoreDashboard({
       key: 'investment',
       title: 'Investment Analysis',
       populated: hasInvestmentData,
-      priority: 8,
+      priority: 9,
       render: () => (
         editingCardKey === 'investment' ? (
           <div className="card-edit-mode card-list-edit">
@@ -1032,7 +1076,7 @@ export default function ScoreDashboard({
       key: 'before-after',
       title: 'Before vs After',
       populated: hasBeforeAfterData,
-      priority: 9,
+      priority: 10,
       render: () => renderMetricRows([
         { key: 'before-revenue', label: 'Revenue (Before)', value: before.revenue },
         { key: 'after-revenue', label: 'Revenue (After)', value: after.revenue },
@@ -1046,7 +1090,7 @@ export default function ScoreDashboard({
       key: 'npv',
       title: 'NPV & IRR Analysis',
       populated: hasNpvData,
-      priority: 10,
+      priority: 11,
       render: () => (
         editingCardKey === 'npv' ? (
           <div className="card-edit-mode card-list-edit">
@@ -1080,7 +1124,7 @@ export default function ScoreDashboard({
       key: 'valuation',
       title: 'Valuation',
       populated: hasValuationData,
-      priority: 11,
+      priority: 12,
       render: () => (
         editingCardKey === 'valuation' ? (
           <div className="card-edit-mode card-list-edit">
@@ -1114,7 +1158,7 @@ export default function ScoreDashboard({
       key: 'insights',
       title: 'AI Insights',
       populated: hasAiInsights,
-      priority: 12,
+      priority: 13,
       render: () => (
         <div className="insights-section">
           {aiInsights.slice(0, 5).map((entry, idx) => {
@@ -1136,7 +1180,7 @@ export default function ScoreDashboard({
       key: 'assumptions',
       title: 'What Would Sharpen This Score',
       populated: assumptions.length > 0,
-      priority: 13,
+      priority: 14,
       render: () => (
         editingCardKey === 'assumptions' ? (
           <div className="card-edit-mode card-list-edit">
@@ -1186,6 +1230,7 @@ export default function ScoreDashboard({
     assumptions,
     before,
     after,
+    componentRationale,
     categoryScoreRows,
     decisionFramework,
     executiveSummary,
@@ -1195,6 +1240,7 @@ export default function ScoreDashboard({
     hasNarrativeHighlights,
     hasAiInsights,
     hasBeforeAfterData,
+    hasComponentRationale,
     hasDecisionData,
     hasInvestmentData,
     hasNpvData,
@@ -1353,7 +1399,7 @@ export default function ScoreDashboard({
               >
                 <span className="section-card-title">{section.title}</span>
                 <div className="section-card-head-actions">
-                  {editEnabled && onEditField && ['executive', 'summary', 'financial', 'risks', 'recommendations', 'decision', 'investment', 'npv', 'valuation', 'assumptions'].includes(section.key) && (
+                  {editEnabled && onEditField && ['executive', 'summary', 'rationale', 'financial', 'risks', 'recommendations', 'decision', 'investment', 'npv', 'valuation', 'assumptions'].includes(section.key) && (
                     <button
                       type="button"
                       className={`card-edit-btn ${editingCardKey === section.key ? 'active' : ''}`}
