@@ -962,7 +962,15 @@ export default function ConnectorsManage() {
           {renderRequiredField('salesforce_instance_url', 'Instance URL')}
           {renderRequiredField('salesforce_client_id', 'Client ID')}
           {renderRequiredField('salesforce_client_secret', 'Client Secret', { type: 'password', placeholder: 'Enter secret to set or rotate' })}
-          {renderRequiredField('salesforce_refresh_token', 'Refresh Token', { type: 'password', placeholder: 'Enter token to set or rotate' })}
+          <label>
+            Refresh Token <span className="connector-field-optional">(auto-populated after OAuth)</span>
+            <input
+              type="password"
+              value={draft.salesforce_refresh_token}
+              onChange={(event) => updateDraft('salesforce_refresh_token', event.target.value)}
+              placeholder="Auto-populated after connecting via OAuth"
+            />
+          </label>
           <div className="connector-oauth-row">
             <button
               type="button"
