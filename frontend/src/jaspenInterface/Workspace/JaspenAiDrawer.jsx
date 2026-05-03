@@ -49,7 +49,9 @@ export default function JaspenAiDrawer({
       onInputKeyDown(event);
       return;
     }
-    if (event.key === 'Enter' && !event.shiftKey) {
+    const commandSend = event.key === 'Enter' && (event.metaKey || event.ctrlKey);
+    const standardSend = event.key === 'Enter' && !event.shiftKey;
+    if (commandSend || standardSend) {
       event.preventDefault();
       onSend?.();
     }

@@ -6256,7 +6256,9 @@ if (data?.model_type) {
   }
 
   function onKey(e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    const commandSend = e.key === 'Enter' && (e.metaKey || e.ctrlKey);
+    const standardSend = e.key === 'Enter' && !e.shiftKey;
+    if (commandSend || standardSend) {
       e.preventDefault();
       onSubmit();
     }
