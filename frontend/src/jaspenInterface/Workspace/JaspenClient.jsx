@@ -910,20 +910,37 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
       }
     ),
 
-  renameSnapshot: async (threadId, snapshotId, label) =>
+  renameSnapshot: async (threadId, snapshotId, label, options = {}) =>
     patchJSON(
       endpoints.scorecardSnapshot(threadId, snapshotId),
-      { label },
+      {
+        label,
+        ...(options?.expected_selected_scorecard_id ? { expected_selected_scorecard_id: options.expected_selected_scorecard_id } : {}),
+        ...(options?.expected_snapshot_id ? { expected_snapshot_id: options.expected_snapshot_id } : {}),
+        ...(options?.expected_snapshot_revision ? { expected_snapshot_revision: options.expected_snapshot_revision } : {}),
+      },
       { withSid: true }
     ),
 
-  deleteSnapshot: async (threadId, snapshotId) =>
-    del(endpoints.scorecardSnapshot(threadId, snapshotId), { withSid: true }),
+  deleteSnapshot: async (threadId, snapshotId, options = {}) => {
+    const params = new URLSearchParams();
+    if (options?.expected_selected_scorecard_id) params.set('expected_selected_scorecard_id', String(options.expected_selected_scorecard_id));
+    if (options?.expected_snapshot_id) params.set('expected_snapshot_id', String(options.expected_snapshot_id));
+    if (options?.expected_snapshot_revision) params.set('expected_snapshot_revision', String(options.expected_snapshot_revision));
+    const query = params.toString();
+    const url = `${endpoints.scorecardSnapshot(threadId, snapshotId)}${query ? `?${query}` : ''}`;
+    return del(url, { withSid: true });
+  },
 
-  setActiveSnapshot: async (threadId, snapshotId) =>
+  setActiveSnapshot: async (threadId, snapshotId, options = {}) =>
     patchJSON(
       endpoints.scorecardSnapshot(threadId, snapshotId),
-      { active: true },
+      {
+        active: true,
+        ...(options?.expected_selected_scorecard_id ? { expected_selected_scorecard_id: options.expected_selected_scorecard_id } : {}),
+        ...(options?.expected_snapshot_id ? { expected_snapshot_id: options.expected_snapshot_id } : {}),
+        ...(options?.expected_snapshot_revision ? { expected_snapshot_revision: options.expected_snapshot_revision } : {}),
+      },
       { withSid: true }
     ),
 

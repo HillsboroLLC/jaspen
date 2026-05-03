@@ -36,6 +36,12 @@ from .sessions import load_user_sessions, save_user_sessions
 strategy_bp = Blueprint('strategy', __name__)
 
 
+class ScorecardConflictError(Exception):
+    def __init__(self, message, payload=None):
+        super().__init__(message)
+        self.payload = payload if isinstance(payload, dict) else {}
+
+
 def _audit_strategy_event(action, *, user=None, user_id=None, details=None):
     append_user_audit_event(
         actor_user=user,
@@ -1131,6 +1137,107 @@ def _scorecard_snapshot_state(scorecard_result, thread_id):
     }
 
 
+def _snapshot_identity(snapshot, fallback_id=None):
+    if not isinstance(snapshot, dict):
+        return str(fallback_id or '').strip()
+    for key in ('id', 'analysis_id', 'analysisId'):
+        value = str(snapshot.get(key) or '').strip()
+        if value:
+            return value
+    return str(fallback_id or '').strip()
+
+
+def _snapshot_revision_token(snapshot):
+    if not isinstance(snapshot, dict):
+        return ''
+    for key in ('createdAt', 'updated_at', 'timestamp'):
+        value = snapshot.get(key)
+        if value is None:
+            continue
+        token = str(value).strip()
+        if token:
+            return token
+    return ''
+
+
+def _find_snapshot_by_id(snapshot_state, snapshot_id, fallback_thread_id=None):
+    target = str(snapshot_id or '').strip()
+    if not target:
+        return None
+    state = snapshot_state if isinstance(snapshot_state, dict) else {}
+    baseline = state.get('baseline') if isinstance(state.get('baseline'), dict) else None
+    snapshots = state.get('snapshots') if isinstance(state.get('snapshots'), list) else []
+    for snapshot in snapshots:
+        if not isinstance(snapshot, dict):
+            continue
+        if _snapshot_identity(snapshot) == target:
+            return snapshot
+    if baseline is not None:
+        baseline_ids = {
+            _snapshot_identity(baseline, fallback_thread_id),
+            str(fallback_thread_id or '').strip(),
+        }
+        if target in baseline_ids:
+            return baseline
+    return None
+
+
+def _assert_scorecard_write_fresh(
+    snapshot_state,
+    resolved_thread_id,
+    *,
+    expected_selected_scorecard_id=None,
+    expected_snapshot_id=None,
+    expected_snapshot_revision=None,
+):
+    state = snapshot_state if isinstance(snapshot_state, dict) else {}
+    selected_snapshot = state.get('selected_snapshot') if isinstance(state.get('selected_snapshot'), dict) else None
+    baseline = state.get('baseline') if isinstance(state.get('baseline'), dict) else None
+    effective_selected = selected_snapshot or baseline
+    current_selected_id = _snapshot_identity(effective_selected, resolved_thread_id)
+    current_selected_revision = _snapshot_revision_token(effective_selected)
+
+    expected_selected = str(expected_selected_scorecard_id or '').strip()
+    if expected_selected and expected_selected != current_selected_id:
+        raise ScorecardConflictError(
+            "This scorecard changed in another session. Refresh and try again.",
+            payload={
+                'error': "This scorecard changed in another session. Refresh and try again.",
+                'code': 'scorecard_conflict_selected_changed',
+                'current_selected_scorecard_id': current_selected_id,
+                'current_selected_revision': current_selected_revision or None,
+            },
+        )
+
+    expected_revision = str(expected_snapshot_revision or '').strip()
+    if expected_revision:
+        target_id = str(expected_snapshot_id or expected_selected or current_selected_id or '').strip()
+        target_snapshot = _find_snapshot_by_id(state, target_id, resolved_thread_id)
+        if not isinstance(target_snapshot, dict):
+            raise ScorecardConflictError(
+                "That scorecard version no longer exists. Refresh and try again.",
+                payload={
+                    'error': "That scorecard version no longer exists. Refresh and try again.",
+                    'code': 'scorecard_conflict_snapshot_missing',
+                    'snapshot_id': target_id or None,
+                    'current_selected_scorecard_id': current_selected_id,
+                },
+            )
+        current_revision = _snapshot_revision_token(target_snapshot)
+        if current_revision and current_revision != expected_revision:
+            raise ScorecardConflictError(
+                "This scorecard was updated by someone else. Refresh to review their edits before saving.",
+                payload={
+                    'error': "This scorecard was updated by someone else. Refresh to review their edits before saving.",
+                    'code': 'scorecard_conflict_revision_changed',
+                    'snapshot_id': target_id or _snapshot_identity(target_snapshot, resolved_thread_id),
+                    'expected_snapshot_revision': expected_revision,
+                    'current_snapshot_revision': current_revision,
+                    'current_selected_scorecard_id': current_selected_id,
+                },
+            )
+
+
 def _snapshot_meta_from_result(result_payload, thread_id, snapshot=None, deleted_snapshot_id=None):
     snapshot_state = _scorecard_snapshot_state(result_payload, thread_id) if isinstance(result_payload, dict) else None
     if not snapshot_state:
@@ -1317,7 +1424,16 @@ def _persist_scenario_snapshot_to_session(user_id, thread_id, scenario, result, 
     return _snapshot_meta_from_result(next_result, resolved_thread_id, snapshot=snapshot)
 
 
-def _rename_snapshot_in_session(user_id, thread_id, snapshot_id, label):
+def _rename_snapshot_in_session(
+    user_id,
+    thread_id,
+    snapshot_id,
+    label,
+    *,
+    expected_selected_scorecard_id=None,
+    expected_snapshot_id=None,
+    expected_snapshot_revision=None,
+):
     sessions = load_user_sessions(user_id) or {}
     all_data = _load_scenarios(user_id)
     resolved_thread_id, session_key, session = _resolve_strategy_thread_state(sessions, all_data, thread_id)
@@ -1331,6 +1447,13 @@ def _rename_snapshot_in_session(user_id, thread_id, snapshot_id, label):
 
     result_payload = session.get('result') if isinstance(session.get('result'), dict) else {}
     snapshot_state = _scorecard_snapshot_state(result_payload, resolved_thread_id) if result_payload else None
+    _assert_scorecard_write_fresh(
+        snapshot_state,
+        resolved_thread_id,
+        expected_selected_scorecard_id=expected_selected_scorecard_id,
+        expected_snapshot_id=expected_snapshot_id,
+        expected_snapshot_revision=expected_snapshot_revision,
+    )
     snapshots = snapshot_state['snapshots'] if snapshot_state else []
     next_snapshots = []
     renamed_snapshot = None
@@ -1392,7 +1515,15 @@ def _rename_snapshot_in_session(user_id, thread_id, snapshot_id, label):
     return _snapshot_meta_from_result(next_result, resolved_thread_id, snapshot=renamed_snapshot)
 
 
-def _delete_snapshot_from_session(user_id, thread_id, snapshot_id):
+def _delete_snapshot_from_session(
+    user_id,
+    thread_id,
+    snapshot_id,
+    *,
+    expected_selected_scorecard_id=None,
+    expected_snapshot_id=None,
+    expected_snapshot_revision=None,
+):
     sessions = load_user_sessions(user_id) or {}
     all_data = _load_scenarios(user_id)
     resolved_thread_id, session_key, session = _resolve_strategy_thread_state(sessions, all_data, thread_id)
@@ -1404,6 +1535,13 @@ def _delete_snapshot_from_session(user_id, thread_id, snapshot_id):
     snapshot_state = _scorecard_snapshot_state(result_payload, resolved_thread_id) if result_payload else None
     if not snapshot_state:
         return None
+    _assert_scorecard_write_fresh(
+        snapshot_state,
+        resolved_thread_id,
+        expected_selected_scorecard_id=expected_selected_scorecard_id,
+        expected_snapshot_id=expected_snapshot_id,
+        expected_snapshot_revision=expected_snapshot_revision,
+    )
 
     target_id = str(snapshot_id or '').strip()
     baseline_snapshot = snapshot_state.get('baseline') if isinstance(snapshot_state.get('baseline'), dict) else None
@@ -1444,7 +1582,15 @@ def _delete_snapshot_from_session(user_id, thread_id, snapshot_id):
     return _snapshot_meta_from_result(next_result, resolved_thread_id, deleted_snapshot_id=target_id)
 
 
-def _set_selected_snapshot_in_session(user_id, thread_id, snapshot_id):
+def _set_selected_snapshot_in_session(
+    user_id,
+    thread_id,
+    snapshot_id,
+    *,
+    expected_selected_scorecard_id=None,
+    expected_snapshot_id=None,
+    expected_snapshot_revision=None,
+):
     sessions = load_user_sessions(user_id) or {}
     all_data = _load_scenarios(user_id)
     resolved_thread_id, session_key, session = _resolve_strategy_thread_state(sessions, all_data, thread_id)
@@ -1456,6 +1602,13 @@ def _set_selected_snapshot_in_session(user_id, thread_id, snapshot_id):
     snapshot_state = _scorecard_snapshot_state(result_payload, resolved_thread_id) if result_payload else None
     if not snapshot_state:
         return None
+    _assert_scorecard_write_fresh(
+        snapshot_state,
+        resolved_thread_id,
+        expected_selected_scorecard_id=expected_selected_scorecard_id,
+        expected_snapshot_id=expected_snapshot_id,
+        expected_snapshot_revision=expected_snapshot_revision,
+    )
 
     target_id = str(snapshot_id or '').strip()
     def _match_snapshot_id(item, target_value):
@@ -5313,10 +5466,25 @@ def update_scorecard_snapshot(thread_id, snapshot_id):
         payload = request.get_json() or {}
         next_label = str(payload.get('label') or '').strip()
         set_active = bool(payload.get('active'))
+        expected_selected_scorecard_id = str(payload.get('expected_selected_scorecard_id') or '').strip() or None
+        expected_snapshot_id = str(payload.get('expected_snapshot_id') or snapshot_id or '').strip() or None
+        expected_snapshot_revision = str(
+            payload.get('expected_snapshot_revision')
+            or payload.get('expected_snapshot_created_at')
+            or ''
+        ).strip() or None
 
         snapshot_meta = None
         if next_label:
-            snapshot_meta = _rename_snapshot_in_session(user_id, thread_id, snapshot_id, next_label)
+            snapshot_meta = _rename_snapshot_in_session(
+                user_id,
+                thread_id,
+                snapshot_id,
+                next_label,
+                expected_selected_scorecard_id=expected_selected_scorecard_id,
+                expected_snapshot_id=expected_snapshot_id,
+                expected_snapshot_revision=expected_snapshot_revision,
+            )
             if not snapshot_meta:
                 return jsonify({'error': 'Snapshot not found'}), 404
 
@@ -5332,7 +5500,14 @@ def update_scorecard_snapshot(thread_id, snapshot_id):
                 _save_scenarios(user_id, all_data)
 
         if set_active:
-            active_meta = _set_selected_snapshot_in_session(user_id, thread_id, snapshot_id)
+            active_meta = _set_selected_snapshot_in_session(
+                user_id,
+                thread_id,
+                snapshot_id,
+                expected_selected_scorecard_id=expected_selected_scorecard_id,
+                expected_snapshot_id=expected_snapshot_id,
+                expected_snapshot_revision=expected_snapshot_revision,
+            )
             if not active_meta:
                 return jsonify({'error': 'Snapshot not found'}), 404
             snapshot_meta = {
@@ -5349,6 +5524,9 @@ def update_scorecard_snapshot(thread_id, snapshot_id):
             'scorecard_snapshots': snapshot_meta.get('scorecard_snapshots'),
             'selected_scorecard_id': snapshot_meta.get('selected_scorecard_id'),
         }), 200
+    except ScorecardConflictError as conflict:
+        payload = conflict.payload if isinstance(conflict.payload, dict) else {}
+        return jsonify(payload or {'error': str(conflict), 'code': 'scorecard_conflict'}), 409
     except Exception as e:
         current_app.logger.error("[update_scorecard_snapshot] %s", e)
         return jsonify({'error': str(e)}), 500
@@ -5381,6 +5559,29 @@ def patch_thread_scorecard(thread_id):
 
     session_result = session.get('result') if isinstance(session.get('result'), dict) else {}
     snapshot_state = _scorecard_snapshot_state(session_result, resolved_thread_id)
+    expected_selected_scorecard_id = str(payload.get('expected_selected_scorecard_id') or '').strip() or None
+    expected_snapshot_id = str(
+        payload.get('expected_snapshot_id')
+        or payload.get('selected_scorecard_id')
+        or expected_selected_scorecard_id
+        or ''
+    ).strip() or None
+    expected_snapshot_revision = str(
+        payload.get('expected_snapshot_revision')
+        or payload.get('expected_snapshot_created_at')
+        or ''
+    ).strip() or None
+    try:
+        _assert_scorecard_write_fresh(
+            snapshot_state,
+            resolved_thread_id,
+            expected_selected_scorecard_id=expected_selected_scorecard_id,
+            expected_snapshot_id=expected_snapshot_id,
+            expected_snapshot_revision=expected_snapshot_revision,
+        )
+    except ScorecardConflictError as conflict:
+        payload = conflict.payload if isinstance(conflict.payload, dict) else {}
+        return jsonify(payload or {'error': str(conflict), 'code': 'scorecard_conflict'}), 409
     base_scorecard = (
         payload.get('scorecard')
         if isinstance(payload.get('scorecard'), dict)
@@ -5442,12 +5643,27 @@ def patch_thread_scorecard(thread_id):
     }), 200
 
 
+
 @strategy_bp.route('/threads/<thread_id>/scorecard-snapshots/<snapshot_id>', methods=['DELETE'])
 @jwt_required()
 def delete_scorecard_snapshot(thread_id, snapshot_id):
     try:
         user_id = get_jwt_identity()
-        snapshot_meta = _delete_snapshot_from_session(user_id, thread_id, snapshot_id)
+        expected_selected_scorecard_id = str(request.args.get('expected_selected_scorecard_id') or '').strip() or None
+        expected_snapshot_id = str(request.args.get('expected_snapshot_id') or snapshot_id or '').strip() or None
+        expected_snapshot_revision = str(
+            request.args.get('expected_snapshot_revision')
+            or request.args.get('expected_snapshot_created_at')
+            or ''
+        ).strip() or None
+        snapshot_meta = _delete_snapshot_from_session(
+            user_id,
+            thread_id,
+            snapshot_id,
+            expected_selected_scorecard_id=expected_selected_scorecard_id,
+            expected_snapshot_id=expected_snapshot_id,
+            expected_snapshot_revision=expected_snapshot_revision,
+        )
         if not snapshot_meta:
             return jsonify({'error': 'Snapshot not found'}), 404
 
@@ -5466,6 +5682,9 @@ def delete_scorecard_snapshot(thread_id, snapshot_id):
             'scorecard_snapshots': snapshot_meta.get('scorecard_snapshots'),
             'selected_scorecard_id': snapshot_meta.get('selected_scorecard_id'),
         }), 200
+    except ScorecardConflictError as conflict:
+        payload = conflict.payload if isinstance(conflict.payload, dict) else {}
+        return jsonify(payload or {'error': str(conflict), 'code': 'scorecard_conflict'}), 409
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
     except Exception as e:

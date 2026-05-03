@@ -5771,6 +5771,34 @@ const getActiveScorecardSnapshotForHistory = useCallback(() => {
   return null;
 }, [activeScorecard, activeScorecardId, analysisResult, effectiveSelectedScorecardId, scorecardSnapshots]);
 
+const getScorecardSnapshotRevision = useCallback((snapshotIdValue = null) => {
+  const fallbackSelectedId = String(effectiveSelectedScorecardId || activeScorecardId || activeSnapshotId || '').trim();
+  const targetId = String(snapshotIdValue || fallbackSelectedId || '').trim();
+  const snapshots = Array.isArray(scorecardSnapshots) ? scorecardSnapshots : [];
+  let target = null;
+  if (targetId) {
+    target = snapshots.find((snapshot) => String(snapshot?.id || snapshot?.analysis_id || '').trim() === targetId) || null;
+  }
+  if (!target && activeScorecard && typeof activeScorecard === 'object') target = activeScorecard;
+  if (!target && analysisResult && typeof analysisResult === 'object') target = analysisResult;
+  if (!target || typeof target !== 'object') return null;
+  const token = target.createdAt ?? target.updated_at ?? target.timestamp ?? null;
+  if (token == null) return null;
+  const normalized = String(token).trim();
+  return normalized || null;
+}, [activeScorecard, activeScorecardId, activeSnapshotId, analysisResult, effectiveSelectedScorecardId, scorecardSnapshots]);
+
+const buildScorecardConcurrencyGuard = useCallback((snapshotIdValue = null) => {
+  const expectedSelectedId = String(effectiveSelectedScorecardId || activeScorecardId || activeSnapshotId || '').trim() || null;
+  const expectedSnapshotId = String(snapshotIdValue || expectedSelectedId || '').trim() || null;
+  const expectedSnapshotRevision = getScorecardSnapshotRevision(expectedSnapshotId);
+  return {
+    expected_selected_scorecard_id: expectedSelectedId,
+    expected_snapshot_id: expectedSnapshotId,
+    expected_snapshot_revision: expectedSnapshotRevision,
+  };
+}, [activeScorecardId, activeSnapshotId, effectiveSelectedScorecardId, getScorecardSnapshotRevision]);
+
 const applySnapshotViaScorecardPatch = useCallback(async (snapshotToApply) => {
   const tid = String(currentSessionId || sessionId || '').trim();
   if (!tid || !snapshotToApply || typeof snapshotToApply !== 'object') return null;
@@ -5784,6 +5812,7 @@ const applySnapshotViaScorecardPatch = useCallback(async (snapshotToApply) => {
   ).trim() || null;
   const patchPayload = buildScorecardRestorePatch(snapshotToApply);
   if (Object.keys(patchPayload).length === 0) return null;
+  const concurrencyGuard = buildScorecardConcurrencyGuard(selectedId);
 
   const headers = buildAuthHeaders({ 'Content-Type': 'application/json' }, 'PATCH');
   const response = await fetch(
@@ -5795,11 +5824,18 @@ const applySnapshotViaScorecardPatch = useCallback(async (snapshotToApply) => {
       body: JSON.stringify({
         ...patchPayload,
         selected_scorecard_id: selectedId,
+        ...(concurrencyGuard.expected_selected_scorecard_id ? { expected_selected_scorecard_id: concurrencyGuard.expected_selected_scorecard_id } : {}),
+        ...(concurrencyGuard.expected_snapshot_id ? { expected_snapshot_id: concurrencyGuard.expected_snapshot_id } : {}),
+        ...(concurrencyGuard.expected_snapshot_revision ? { expected_snapshot_revision: concurrencyGuard.expected_snapshot_revision } : {}),
       }),
     }
   );
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    const errPayload = await response.json().catch(() => ({}));
+    const message = errPayload?.error || `HTTP ${response.status}`;
+    const err = new Error(message);
+    err.status = response.status;
+    throw err;
   }
   const payload = await response.json().catch(() => ({}));
   if (payload?.updated_scorecard && typeof payload.updated_scorecard === 'object') {
@@ -5814,6 +5850,7 @@ const applySnapshotViaScorecardPatch = useCallback(async (snapshotToApply) => {
   activeScorecardId,
   currentSessionId,
   effectiveSelectedScorecardId,
+  buildScorecardConcurrencyGuard,
   refreshBundle,
   sessionId,
 ]);
@@ -5839,6 +5876,7 @@ const handleScoreCardFieldEdit = useCallback(async (fieldKey, newValue) => {
   const fieldName = FIELD_MAP[fieldKey] || fieldKey;
 
   try {
+    const concurrencyGuard = buildScorecardConcurrencyGuard(effectiveSelectedScorecardId || activeScorecardId || null);
     const headers = buildAuthHeaders({ 'Content-Type': 'application/json' }, 'PATCH');
     const response = await fetch(
       `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(tid)}/scorecard-patch`,
@@ -5849,11 +5887,18 @@ const handleScoreCardFieldEdit = useCallback(async (fieldKey, newValue) => {
         body: JSON.stringify({
           [fieldName]: newValue,
           selected_scorecard_id: effectiveSelectedScorecardId || activeScorecardId || null,
+          ...(concurrencyGuard.expected_selected_scorecard_id ? { expected_selected_scorecard_id: concurrencyGuard.expected_selected_scorecard_id } : {}),
+          ...(concurrencyGuard.expected_snapshot_id ? { expected_snapshot_id: concurrencyGuard.expected_snapshot_id } : {}),
+          ...(concurrencyGuard.expected_snapshot_revision ? { expected_snapshot_revision: concurrencyGuard.expected_snapshot_revision } : {}),
         }),
       }
     );
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+      const errPayload = await response.json().catch(() => ({}));
+      const message = errPayload?.error || `HTTP ${response.status}`;
+      const err = new Error(message);
+      err.status = response.status;
+      throw err;
     }
     const payload = await response.json().catch(() => ({}));
     if (payload?.updated_scorecard && typeof payload.updated_scorecard === 'object') {
@@ -5874,11 +5919,17 @@ const handleScoreCardFieldEdit = useCallback(async (fieldKey, newValue) => {
       }
     }
     await refreshBundle(tid);
-  } catch {
+  } catch (err) {
+    if (Number(err?.status) === 409) {
+      await refreshBundle(tid);
+      showToast(err?.message || 'Scorecard changed elsewhere. Refreshed to latest.', 'warning');
+      return;
+    }
     showToast('Failed to save edit. Changes are local only.', 'warning');
   }
 }, [
   activeScorecardId,
+  buildScorecardConcurrencyGuard,
   currentSessionId,
   effectiveSelectedScorecardId,
   getActiveScorecardSnapshotForHistory,
@@ -8527,7 +8578,8 @@ const handleSnapshotSetActive = useCallback(async (snapshotId, snapshotLabel) =>
   if (!nextId || !tid) return;
 
   try {
-    const response = await Jaspen.setActiveSnapshot(tid, nextId);
+    const concurrencyGuard = buildScorecardConcurrencyGuard(nextId);
+    const response = await Jaspen.setActiveSnapshot(tid, nextId, concurrencyGuard);
     applySnapshotMeta(response, { refresh: true, select: true });
     setActiveTab('summary');
     setView('summary');
@@ -8535,9 +8587,14 @@ const handleSnapshotSetActive = useCallback(async (snapshotId, snapshotLabel) =>
     showToast('Active scorecard updated.', 'success');
   } catch (err) {
     console.error('[handleSnapshotSetActive] failed', err);
+    if (Number(err?.status) === 409) {
+      await refreshBundle(tid);
+      showToast(err?.message || 'Scorecard changed elsewhere. Refreshed to latest.', 'warning');
+      return;
+    }
     showToast(err?.message || 'Failed to set active scorecard.', 'error');
   }
-}, [applySnapshotMeta, currentSessionId, openPlanningReadyAssistant, sessionId, showToast]);
+}, [applySnapshotMeta, buildScorecardConcurrencyGuard, currentSessionId, openPlanningReadyAssistant, refreshBundle, sessionId, showToast]);
 
 const handleSnapshotRename = useCallback(async (snapshotId, currentLabel) => {
   const nextId = String(snapshotId || '').trim();
@@ -8550,14 +8607,20 @@ const handleSnapshotRename = useCallback(async (snapshotId, currentLabel) => {
   if (!nextLabel || nextLabel === String(currentLabel || '').trim()) return;
 
   try {
-    const response = await Jaspen.renameSnapshot(tid, nextId, nextLabel);
+    const concurrencyGuard = buildScorecardConcurrencyGuard(nextId);
+    const response = await Jaspen.renameSnapshot(tid, nextId, nextLabel, concurrencyGuard);
     applySnapshotMeta(response, { refresh: false });
     showToast('Scorecard variant renamed', 'success');
   } catch (err) {
     console.error('[handleSnapshotRename] failed', err);
+    if (Number(err?.status) === 409) {
+      await refreshBundle(tid);
+      showToast(err?.message || 'Scorecard changed elsewhere. Refreshed to latest.', 'warning');
+      return;
+    }
     showToast(err?.message || 'Failed to rename scorecard variant.', 'error');
   }
-}, [applySnapshotMeta, currentSessionId, sessionId]);
+}, [applySnapshotMeta, buildScorecardConcurrencyGuard, currentSessionId, refreshBundle, sessionId]);
 
 const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
   const nextId = String(snapshotId || '').trim();
@@ -8571,16 +8634,22 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
     confirmVariant: 'danger',
     onConfirm: async () => {
       try {
-        const response = await Jaspen.deleteSnapshot(tid, nextId);
+        const concurrencyGuard = buildScorecardConcurrencyGuard(nextId);
+        const response = await Jaspen.deleteSnapshot(tid, nextId, concurrencyGuard);
         applySnapshotMeta(response, { refresh: true });
         showToast('Scorecard variant deleted', 'success');
       } catch (err) {
         console.error('[handleSnapshotDelete] failed', err);
+        if (Number(err?.status) === 409) {
+          await refreshBundle(tid);
+          showToast(err?.message || 'Scorecard changed elsewhere. Refreshed to latest.', 'warning');
+          return;
+        }
         showToast(err?.message || 'Failed to delete scorecard variant.', 'error');
       }
     },
   });
-}, [applySnapshotMeta, currentSessionId, sessionId]);
+}, [applySnapshotMeta, buildScorecardConcurrencyGuard, currentSessionId, refreshBundle, sessionId]);
 
   const handleCompareScenarios = async () => {
     await refreshBundle(currentSessionId || sessionId);
