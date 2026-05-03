@@ -299,6 +299,7 @@ MAX_USER_MESSAGE_LENGTH = 12_000
 MAX_MUTATIONS_PER_TURN = 3
 MAX_CONVERSATION_ATTACHMENTS = 5
 MAX_CONVERSATION_ATTACHMENT_BYTES = 10 * 1024 * 1024
+MAX_CONVERSATION_ATTACHMENT_TEXT_CHARS = 15_000
 USER_MESSAGE_OPEN_TAG = "<user_message>"
 USER_MESSAGE_CLOSE_TAG = "</user_message>"
 _MUTATION_TOOLS = {"create_scenario", "update_wbs_task", "add_wbs_task", "remove_wbs_task", "generate_execution_plan", "rename_thread"}
@@ -1657,11 +1658,20 @@ def _normalize_attachment_media_type(uploaded_file):
         return raw_type
     if raw_type == "application/pdf":
         return raw_type
+    if raw_type in {
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/msword",
+    }:
+        return raw_type
     for ext, media_type in _IMAGE_EXTENSION_MEDIA_TYPES.items():
         if lower_name.endswith(ext):
             return media_type
     if lower_name.endswith(".pdf"):
         return "application/pdf"
+    if lower_name.endswith(".docx"):
+        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    if lower_name.endswith(".doc"):
+        return "application/msword"
     return ""
 
 
@@ -1669,9 +1679,37 @@ def _attachment_kind_for_media_type(media_type):
     media_type = str(media_type or "").strip().lower()
     if media_type == "application/pdf":
         return "pdf"
+    if media_type in {
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/msword",
+    }:
+        return "word"
     if media_type.startswith("image/"):
         return "image"
     return ""
+
+
+def _extract_word_attachment_text(*, content, media_type, filename):
+    media_type = str(media_type or "").strip().lower()
+    safe_name = _safe_attachment_name(filename)
+
+    if media_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+        if not _HAS_DOCX or DocxDocument is None:
+            raise ValueError("Word .docx support requires python-docx.")
+        try:
+            doc = DocxDocument(io.BytesIO(content))
+        except Exception as exc:
+            raise ValueError(f"Could not parse Word file ({safe_name}): {exc}")
+        paragraphs = [
+            str(getattr(paragraph, "text", "") or "").strip()
+            for paragraph in (doc.paragraphs or [])
+        ]
+        return "\n".join([line for line in paragraphs if line]).strip()
+
+    decoded = (content or b"").decode("utf-8", errors="ignore").strip()
+    if decoded:
+        return decoded
+    return (content or b"").decode("latin-1", errors="ignore").strip()
 
 
 def _serialize_chat_attachment(attachment):
@@ -1717,6 +1755,17 @@ def _conversation_attachment_blocks(attachments):
                     "data": encoded,
                 },
             })
+        elif kind == "word":
+            extracted_text = str(attachment.get("text_content") or "").strip()
+            attachment_name = _safe_attachment_name(attachment.get("name") or "document")
+            if extracted_text:
+                blocks.append({
+                    "type": "text",
+                    "text": (
+                        f"[Word Document: {attachment_name}]\n"
+                        f"{extracted_text[:MAX_CONVERSATION_ATTACHMENT_TEXT_CHARS]}"
+                    ),
+                })
     return blocks
 
 
@@ -1756,7 +1805,7 @@ def _extract_conversation_attachments():
         media_type = _normalize_attachment_media_type(uploaded)
         kind = _attachment_kind_for_media_type(media_type)
         if not kind:
-            raise ValueError("Chat attachments currently support images and PDFs only.")
+            raise ValueError("Chat attachments currently support images, PDFs, and Word documents (.doc/.docx).")
 
         uploaded.stream.seek(0, 2)
         file_size = int(uploaded.stream.tell() or 0)
@@ -1772,13 +1821,23 @@ def _extract_conversation_attachments():
         if not content:
             raise ValueError(f"{filename} is empty.")
 
-        attachments.append({
+        attachment_payload = {
             "name": filename,
             "size": len(content),
             "type": media_type,
             "kind": kind,
             "data": base64.b64encode(content).decode("ascii"),
-        })
+        }
+        if kind == "word":
+            text_content = _extract_word_attachment_text(
+                content=content,
+                media_type=media_type,
+                filename=filename,
+            )
+            if not text_content:
+                raise ValueError(f"{filename} does not contain readable text.")
+            attachment_payload["text_content"] = text_content[:MAX_CONVERSATION_ATTACHMENT_TEXT_CHARS]
+        attachments.append(attachment_payload)
     return attachments
 
 

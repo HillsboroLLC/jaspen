@@ -737,6 +737,17 @@ function isPdfLikeFile(fileLike) {
   return type === 'application/pdf' || name.endsWith('.pdf');
 }
 
+function isWordLikeFile(fileLike) {
+  const type = String(fileLike?.type || '').toLowerCase();
+  const name = String(fileLike?.name || '').toLowerCase();
+  return (
+    type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    || type === 'application/msword'
+    || name.endsWith('.docx')
+    || name.endsWith('.doc')
+  );
+}
+
 function isImageLikeFile(fileLike) {
   const type = String(fileLike?.type || '').toLowerCase();
   const name = String(fileLike?.name || '').toLowerCase();
@@ -744,14 +755,19 @@ function isImageLikeFile(fileLike) {
 }
 
 function isChatAttachmentFile(fileLike) {
-  return isImageLikeFile(fileLike) || isPdfLikeFile(fileLike);
+  return isImageLikeFile(fileLike) || isPdfLikeFile(fileLike) || isWordLikeFile(fileLike);
 }
 
 function buildMessageAttachmentMeta(fileLike) {
+  const fallbackType = isPdfLikeFile(fileLike)
+    ? 'application/pdf'
+    : isWordLikeFile(fileLike)
+      ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      : 'application/octet-stream';
   return {
     name: fileLike?.name || 'attachment',
     size: Number(fileLike?.size || 0),
-    type: fileLike?.type || (isPdfLikeFile(fileLike) ? 'application/pdf' : 'application/octet-stream'),
+    type: fileLike?.type || fallbackType,
     preview: fileLike?.preview || null,
     uploading: Boolean(fileLike?.uploading),
   };
