@@ -449,6 +449,8 @@ const OBJECTIVE_ALIAS = {
   expansion: 'growth',
 };
 const ONBOARDING_STORAGE_KEY = 'jaspen_onboarded';
+const GUIDED_FLOW_STORAGE_KEY = 'jaspen_guided_flow_state_v1';
+const GUIDED_FLOW_TEMPLATE_PROMPT = 'I need help evaluating a new initiative. Ask me the essential questions, then generate a scorecard, propose scenarios, and recommend an execution plan.';
 const ONBOARDING_ROLE_LABELS = {
   executive: 'Executive',
   pm: 'PM',
@@ -724,6 +726,34 @@ function writeNamePromptDeferred(user, deferred) {
     localStorage.setItem(NAME_PROMPT_STORAGE_KEY, JSON.stringify(next));
   } catch (error) {
     devWarn('[onboarding] Failed to persist name prompt state', error);
+  }
+}
+
+function readGuidedFlowDismissed(user) {
+  const ownerKey = getOnboardingOwnerKey(user);
+  if (!ownerKey) return false;
+  try {
+    const raw = localStorage.getItem(GUIDED_FLOW_STORAGE_KEY);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
+    return Boolean(parsed?.[ownerKey]?.dismissed);
+  } catch (error) {
+    devWarn('[onboarding] Failed to read guided flow state', error);
+    return false;
+  }
+}
+
+function writeGuidedFlowDismissed(user, dismissed) {
+  const ownerKey = getOnboardingOwnerKey(user);
+  if (!ownerKey) return;
+  try {
+    const raw = localStorage.getItem(GUIDED_FLOW_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    const next = parsed && typeof parsed === 'object' ? { ...parsed } : {};
+    next[ownerKey] = { dismissed: Boolean(dismissed) };
+    localStorage.setItem(GUIDED_FLOW_STORAGE_KEY, JSON.stringify(next));
+  } catch (error) {
+    devWarn('[onboarding] Failed to persist guided flow state', error);
   }
 }
 
@@ -2177,6 +2207,7 @@ useEffect(() => {
   const [onboardingInitialSelection, setOnboardingInitialSelection] = useState(null);
   const [pendingOnboardingContext, setPendingOnboardingContext] = useState(null);
   const [onboardingLaunchLabel, setOnboardingLaunchLabel] = useState('');
+  const [guidedFlowDismissed, setGuidedFlowDismissed] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notificationsMode, setNotificationsMode] = useState('bell');
   const [notificationFeed, setNotificationFeed] = useState(() => buildDefaultNotifications());
@@ -2646,6 +2677,7 @@ useEffect(() => {
     setNameError('');
     setOnboardingMode('entry');
     setOnboardingInitialSelection(readOnboardingState(user)?.selection || null);
+    setGuidedFlowDismissed(readGuidedFlowDismissed(user));
     try {
       if (user?.email) localStorage.setItem('jaspen_last_email', user.email);
     } catch {}
@@ -7657,6 +7689,21 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
 }, [currentSessionId, sessionId, showToast, triggerDownload]);
 
   // === Helpers ===
+  const dismissGuidedFlow = useCallback(() => {
+    writeGuidedFlowDismissed(user, true);
+    setGuidedFlowDismissed(true);
+  }, [user]);
+
+  const launchGuidedFlow = useCallback(() => {
+    const prompt = GUIDED_FLOW_TEMPLATE_PROMPT;
+    writeGuidedFlowDismissed(user, true);
+    setGuidedFlowDismissed(true);
+    setInput(prompt);
+    window.setTimeout(() => {
+      intakeInputRef.current?.focus();
+    }, 0);
+  }, [user]);
+
   const handleOnboardingComplete = useCallback((selection = {}) => {
     const roleKey = String(selection?.role || '').trim().toLowerCase();
     const evaluationKey = String(selection?.evaluation || '').trim().toLowerCase();
@@ -7684,6 +7731,8 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
     };
     setPendingOnboardingContext(nextContext);
     setOnboardingInitialSelection(nextSelection);
+    setGuidedFlowDismissed(false);
+    writeGuidedFlowDismissed(user, false);
     writeOnboardingState(user, { completed: true, deferred: false, selection: nextSelection });
     void persistOnboardingProfileState({ completed: true, deferred: false, selection: nextSelection });
     dismissNotification(SETUP_REMINDER_NOTIFICATION.id);
@@ -9585,6 +9634,17 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       (!onboardingState?.completed && !onboardingState?.deferred)
     )
   );
+  const shouldShowGuidedFlow = Boolean(
+    user &&
+    onboardingState?.completed &&
+    !guidedFlowDismissed &&
+    !showSharedProjectsLanding &&
+    !nameModalOpen &&
+    !onboardingOpen &&
+    messages.length === 0 &&
+    !sessionId &&
+    !currentSessionId
+  );
   const showOnboarding = onboardingOpen && !nameModalOpen && !showSharedProjectsLanding;
   const intakeTabs = [];
   if (!sidebarState.settings) intakeTabs.push('settings');
@@ -10128,6 +10188,36 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                       </button>
                     </div>
                   </div>
+                </div>
+              </div>
+            ) : null}
+            {shouldShowGuidedFlow ? (
+              <div className="jas-guided-flow" role="note" aria-label="Guided walkthrough">
+                <div className="jas-guided-flow-head">
+                  <span className="jas-guided-flow-kicker">First run guide</span>
+                  <h3>Follow this flow once to see how Jaspen works end-to-end.</h3>
+                </div>
+                <ol className="jas-guided-flow-steps">
+                  <li>Describe the initiative in chat and answer intake questions.</li>
+                  <li>Generate a scorecard and review the executive summary.</li>
+                  <li>Open Scenarios to compare leverage options and set one active.</li>
+                  <li>Generate the execution plan and refine tasks, owners, and due dates.</li>
+                </ol>
+                <div className="jas-guided-flow-actions">
+                  <button
+                    type="button"
+                    className="jas-guided-flow-primary"
+                    onClick={launchGuidedFlow}
+                  >
+                    Start guided run
+                  </button>
+                  <button
+                    type="button"
+                    className="jas-guided-flow-secondary"
+                    onClick={dismissGuidedFlow}
+                  >
+                    Hide guide
+                  </button>
                 </div>
               </div>
             ) : null}
