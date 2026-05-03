@@ -1,5 +1,6 @@
 from flask import Blueprint, request, jsonify, current_app, Response, stream_with_context
 from flask_jwt_extended import jwt_required, get_jwt_identity
+from flask_mail import Message
 from datetime import datetime
 import base64
 import copy
@@ -19,7 +20,7 @@ except Exception:
     DocxDocument = None
     _HAS_DOCX = False
 
-from app import db, limiter
+from app import db, limiter, mail
 from app.admin_audit import append_user_audit_event
 from app.models import BatchIdeaUpload, User
 from app.billing_config import (
@@ -61,6 +62,33 @@ def _audit_ai_agent_event(action, *, user=None, target_user_id=None, target_emai
         target_email=target_email or getattr(user, "email", None),
         details=details if isinstance(details, dict) else {},
     )
+
+
+def _send_batch_async_email(user, *, subject, body_lines):
+    if not user or not str(getattr(user, "email", "")).strip():
+        return
+    enabled = bool(current_app.config.get("ASYNC_BATCH_EMAIL_NOTIFICATIONS_ENABLED", True))
+    if not enabled:
+        return
+    sender = (
+        current_app.config.get("MAIL_DEFAULT_SENDER")
+        or os.getenv("MAIL_DEFAULT_SENDER")
+        or os.getenv("DEFAULT_FROM_EMAIL")
+        or "noreply@jaspen.ai"
+    )
+    body = "\n".join([str(line or "").rstrip() for line in (body_lines if isinstance(body_lines, list) else []) if str(line or "").strip()])
+    if not body:
+        return
+    try:
+        msg = Message(
+            subject=str(subject or "Jaspen update"),
+            recipients=[str(user.email).strip()],
+            sender=sender,
+            body=body,
+        )
+        mail.send(msg)
+    except Exception:
+        current_app.logger.exception("Failed sending async batch notification email")
 
 STRATEGY_OBJECTIVE_OPTIONS = ("balanced", "cost", "speed", "growth")
 STRATEGY_OBJECTIVE_ALIASES = {
@@ -8893,6 +8921,18 @@ def rank_batch_ideas(batch_id):
             "model_type": model_selection["model_type"],
         },
     )
+    _send_batch_async_email(
+        user,
+        subject=f"Jaspen: Batch ranking complete ({len(ranked_ideas)} ideas)",
+        body_lines=[
+            f"Your batch ranking is complete for {batch.id}.",
+            f"Ranked ideas: {len(ranked_ideas)}",
+            f"Status: {batch.status}",
+            f"Credits charged: {credits_charged}",
+            "",
+            "Open the workspace to review results and promote ready ideas.",
+        ],
+    )
 
     return jsonify({
         **ranking_record,
@@ -9117,6 +9157,19 @@ def promote_batch_idea(batch_id, idea_id):
             "credits_charged": promoted["credits_charged"],
         },
     )
+    _send_batch_async_email(
+        user,
+        subject=f"Jaspen: Idea promoted ({promoted['project_name']})",
+        body_lines=[
+            f"A batch idea was promoted into a project thread.",
+            f"Batch: {batch.id}",
+            f"Project: {promoted['project_name']}",
+            f"Thread ID: {promoted['thread_id']}",
+            f"Status: {batch.status}",
+            "",
+            "Open Jaspen to review the new project thread and scorecard.",
+        ],
+    )
 
     return jsonify({
         "batch_id": batch.id,
@@ -9245,6 +9298,18 @@ def promote_all_batch_ideas(batch_id):
             "has_more": has_more,
             "remaining_scoreable": max(0, len(eligible_indexes) - len(limited_indexes)),
         },
+    )
+    _send_batch_async_email(
+        user,
+        subject=f"Jaspen: Batch promotion complete ({len(created)} projects)",
+        body_lines=[
+            f"Batch promotion completed for {batch.id}.",
+            f"Projects created: {len(created)}",
+            f"More scoreable ideas remaining: {'Yes' if has_more else 'No'}",
+            f"Status: {batch.status}",
+            "",
+            "Open Jaspen to review promoted projects and continue promotion if needed.",
+        ],
     )
 
     return jsonify({
