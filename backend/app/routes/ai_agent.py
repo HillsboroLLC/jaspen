@@ -414,11 +414,26 @@ _BUSINESS_SIGNALS = [
     "risk", "opportunity", "priority", "roadmap", "quarter", "q1", "q2", "q3", "q4",
     "roi", "okr", "kr", "baseline", "target", "benchmark",
 ]
+_BUSINESS_ADJACENT_SIGNALS = [
+    "morale", "culture", "engagement", "burnout", "retention", "hiring", "staffing",
+    "leadership", "manager", "stakeholder", "workplace", "meeting", "communication",
+    "conflict", "performance", "accountability", "change management", "org design",
+    "organizational", "team dynamic", "employee", "workload",
+]
+_PERSONAL_TOPIC_PATTERNS = [
+    r"\b(my (boyfriend|girlfriend|husband|wife|partner|ex)|dating life|romantic relationship)\b",
+    r"\b(i am|i'm)\s+(lonely|depressed|anxious|anxiety|stressed|heartbroken)\b",
+    r"\b(family drama|personal life|marriage advice|breakup|therapy advice)\b",
+]
 
 _OFF_TOPIC_RESPONSE = (
     "I'm focused on business strategy and analysis — I'm here to help you define initiatives, "
     "analyze data from your connected sources, build execution plans, and track outcomes. "
     "What business objective or idea would you like to work on?"
+)
+_OFF_TOPIC_PERSONAL_RESPONSE = (
+    "I can't advise on personal matters directly, but I can help with the business side of this. "
+    "If this affects your project, team, timeline, or delivery risk, share that context and I'll help you plan next steps."
 )
 _IMAGE_EXTENSION_MEDIA_TYPES = {
     ".png": "image/png",
@@ -542,24 +557,44 @@ def _objective_refocus_reply(strategy_objective):
 def _is_off_topic(message):
     """
     Returns (is_off_topic, reason).
-    Allows anything that has a business signal keyword, even if vague.
-    Blocks only clear non-business requests.
+    Uses lightweight semantic scoring:
+    - allow business and business-adjacent workplace topics
+    - block personal-only requests
+    - block clear non-business requests
     """
     text = str(message or "").strip().lower()
     if not text:
         return False, ""
 
-    if any(signal in text for signal in _BUSINESS_SIGNALS):
+    business_hits = sum(1 for signal in _BUSINESS_SIGNALS if _message_contains_term(text, signal))
+    adjacent_hits = sum(1 for signal in _BUSINESS_ADJACENT_SIGNALS if _message_contains_term(text, signal))
+    if (business_hits + adjacent_hits) > 0:
         return False, ""
 
-    for pattern in _OFF_TOPIC_PATTERNS:
-        if re.search(pattern, text):
-            return True, "off_topic_pattern"
+    personal_hits = sum(1 for pattern in _PERSONAL_TOPIC_PATTERNS if re.search(pattern, text))
+    if personal_hits > 0:
+        return True, "personal_topic"
 
-    if len(text.split()) <= 6:
-        return False, ""
+    off_topic_hits = sum(1 for pattern in _OFF_TOPIC_PATTERNS if re.search(pattern, text))
+    if off_topic_hits > 0:
+        return True, "off_topic_pattern"
+
+    semantic_non_business_terms = [
+        "recipe", "movie", "film", "tv show", "sports", "horoscope", "joke",
+        "poem", "song", "story", "leetcode", "programming challenge", "debug my code",
+        "celebrity", "vacation", "weekend plans",
+    ]
+    semantic_hits = sum(1 for term in semantic_non_business_terms if _message_contains_term(text, term))
+    if len(text.split()) >= 10 and semantic_hits >= 2:
+        return True, "off_topic_semantic"
 
     return False, ""
+
+
+def _off_topic_reply(reason):
+    if str(reason or "").strip() == "personal_topic":
+        return _OFF_TOPIC_PERSONAL_RESPONSE
+    return _OFF_TOPIC_RESPONSE
 
 
 def _classify_turn_complexity(user_message):
@@ -6358,8 +6393,9 @@ def conversation_start():
         chat_history = []
 
     stripped_for_check = re.sub(r"\[[^\]]+context\].*?---\n\n", "", user_message, flags=re.IGNORECASE | re.DOTALL).strip()
-    off_topic, _off_topic_reason = _is_off_topic(stripped_for_check)
+    off_topic, off_topic_reason = _is_off_topic(stripped_for_check)
     if off_topic:
+        guardrail_reply = _off_topic_reply(off_topic_reason)
         current_readiness = session.get("readiness") if isinstance(session.get("readiness"), dict) else _compute_readiness(
             chat_history,
             session.get("strategy_objective"),
@@ -6367,8 +6403,8 @@ def conversation_start():
         payload = {
             "thread_id": thread_id,
             "session_id": thread_id,
-            "reply": _OFF_TOPIC_RESPONSE,
-            "message": _OFF_TOPIC_RESPONSE,
+            "reply": guardrail_reply,
+            "message": guardrail_reply,
             "model_type": model_selection["model_type"],
             "allowed_model_types": model_selection["allowed_model_types"],
             "actions": [],
@@ -6890,8 +6926,9 @@ def conversation_continue():
         chat_history = []
 
     stripped_for_check = re.sub(r"\[[^\]]+context\].*?---\n\n", "", user_message, flags=re.IGNORECASE | re.DOTALL).strip()
-    off_topic, _off_topic_reason = _is_off_topic(stripped_for_check)
+    off_topic, off_topic_reason = _is_off_topic(stripped_for_check)
     if off_topic:
+        guardrail_reply = _off_topic_reply(off_topic_reason)
         current_readiness = session.get("readiness") if isinstance(session.get("readiness"), dict) else _compute_readiness(
             chat_history,
             session.get("strategy_objective"),
@@ -6899,8 +6936,8 @@ def conversation_continue():
         payload = {
             "thread_id": thread_id,
             "session_id": thread_id,
-            "reply": _OFF_TOPIC_RESPONSE,
-            "message": _OFF_TOPIC_RESPONSE,
+            "reply": guardrail_reply,
+            "message": guardrail_reply,
             "model_type": model_selection["model_type"],
             "allowed_model_types": model_selection["allowed_model_types"],
             "actions": [],
