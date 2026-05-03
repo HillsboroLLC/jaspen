@@ -1396,7 +1396,6 @@ const activeScorecard = scoreWorkspace.scorecard;
 const editableThreadId = scoreWorkspace.ownerThreadId;
 const activeScorecardId = scoreWorkspace.scorecardId;
 const scoreWorkspaceMode = scoreWorkspace.mode;
-const hasActiveScorecardContext = scoreWorkspace.hasScorecard;
 const chatViewContext = useMemo(() => {
   const normalizeToken = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, '_').replace(/-/g, '_');
   const inferCurrentView = () => {
@@ -1900,6 +1899,7 @@ const applyMutationRefreshes = async (payload, fallbackThreadId = null) => {
 
   let scenarioChanged = false;
   let wbsChanged = false;
+  let threadRenamed = false;
   mutations.forEach((mutation) => {
     const tool = String(mutation?.tool || '').trim();
     const success = mutation?.success !== false;
@@ -1907,12 +1907,15 @@ const applyMutationRefreshes = async (payload, fallbackThreadId = null) => {
     if (tool === 'create_scenario') {
       scenarioChanged = true;
     }
-    if (['update_wbs_task', 'add_wbs_task', 'remove_wbs_task'].includes(tool)) {
+    if (['update_wbs_task', 'add_wbs_task', 'add_wbs_dependency', 'remove_wbs_task', 'generate_execution_plan'].includes(tool)) {
       wbsChanged = true;
+    }
+    if (tool === 'rename_thread') {
+      threadRenamed = true;
     }
   });
 
-  if (!scenarioChanged && !wbsChanged) return;
+  if (!scenarioChanged && !wbsChanged && !threadRenamed) return;
 
   const threadIdForRefresh = String(
     payload?.thread_id ||
@@ -4945,9 +4948,12 @@ useEffect(() => {
       case 'update_wbs_task':
       case 'add_wbs_dependency':
       case 'remove_wbs_task':
+      case 'generate_execution_plan':
         return 'Updating execution plan…';
       case 'create_scenario':
         return 'Modeling scenario…';
+      case 'rename_thread':
+        return 'Renaming initiative…';
       case 'get_readiness_snapshot':
         return 'Checking readiness…';
       case 'get_data_contract':
@@ -6315,49 +6321,6 @@ if (data?.model_type) {
     );
   };
 
-  const upsertEditedScorecardSnapshot = useCallback((nextScorecard, {
-    scorecardId = null,
-    label = null,
-  } = {}) => {
-    if (!nextScorecard || typeof nextScorecard !== 'object') return null;
-
-    const baseId = scorecardId || effectiveSelectedScorecardId || baselineScorecardId || nextScorecard.id || nextScorecard.analysis_id || sessionId;
-    if (!baseId) return null;
-
-    const source =
-      (Array.isArray(scorecardSnapshots) ? scorecardSnapshots.find((s) => s.id === baseId) : null) ||
-      (analysisResult ? { ...analysisResult, id: baseId } : null) ||
-      null;
-
-    const editedId = String(nextScorecard.id || scorecardId || '').trim() || (
-      String(baseId).endsWith('__edited') ? String(baseId) : `${String(baseId)}__edited`
-    );
-
-    const resolvedLabel =
-      label ||
-      nextScorecard.label ||
-      (source?.label ? `${source.label.replace(/\s+\(Edited\)$/i, '')} (Edited)` : 'Edited Scorecard');
-
-    const editedSnapshot = {
-      ...(source || {}),
-      ...(nextScorecard || {}),
-      id: editedId,
-      label: resolvedLabel,
-      isBaseline: false,
-      createdAt: nextScorecard.createdAt || Date.now(),
-    };
-
-    setScorecardSnapshots((prev) => {
-      const current = Array.isArray(prev) ? prev : [];
-      const exists = current.some((item) => item.id === editedId);
-      return exists
-        ? current.map((item) => (item.id === editedId ? editedSnapshot : item))
-        : [...current, editedSnapshot];
-    });
-    setSelectedScorecardId(editedId);
-    return editedId;
-  }, [analysisResult, baselineScorecardId, effectiveSelectedScorecardId, scorecardSnapshots, sessionId]);
-
   // === Chat Command Handlers ===
   const chatCommandHandlers = {
     [ChatActionTypes.SCORECARD_SELECT]: (payload) => {
@@ -7090,36 +7053,9 @@ const sendAIMessage = async () => {
     // 1) Add the user's message into the ONE shared thread UI
     setMessages(prev => [...prev, { role: 'user', text }]);
 
-    const lower = text.toLowerCase();
     const aiThreadId = editableThreadId || currentSessionId || sessionId;
-    const renameMatch = text.match(/^(?:please\s+)?(?:rename|change|update)\s+(?:the\s+)?(?:idea|initiative|project|title)(?:\s+(?:to|as)\s+)(.+)$/i);
-    const hasScorecardContext = hasActiveScorecardContext;
-    const isScoreWorkspace = scoreWorkspaceMode === 'summary' && hasScorecardContext;
-    const scorecardEditIntent =
-      isScoreWorkspace &&
-      /\b(rewrite|reword|rephrase|shorten|tighten|polish|edit|revise|change the wording|make .*executive|make .*clearer|update (the )?(insight|recommendation|risk|decision)|wording)\b/i.test(text);
-    const scenarioIntent =
-      hasScorecardContext &&
-      (
-        /\bwhat if\b/.test(lower) ||
-        (
-          /\bscenario\b/.test(lower) &&
-          /\b(increase|decrease|reduce|boost|raise|lower|cut|optimiz|adjust|change)\b/.test(lower)
-        )
-      );
-    const wbsIntent =
-      hasScorecardContext &&
-      /\b(wbs|work breakdown|project plan|task plan|task list)\b/.test(lower) &&
-      /\b(generate|create|build|draft|recommend|suggest|regenerate|optimiz)\b/.test(lower);
     const isAffirmativeConfirmation = /^(yes|yep|yeah|confirm|do it|go ahead|generate(?: now)?|create(?: it)?|build(?: it)?|please do|proceed)\b/i.test(text);
     const isNegativeConfirmation = /^(no|not now|cancel|stop|skip|later|don't|do not)\b/i.test(text);
-    const summaryAssistantIntent =
-      isScoreWorkspace &&
-      aiThreadId &&
-      !renameMatch &&
-      !scorecardEditIntent &&
-      !scenarioIntent &&
-      !wbsIntent;
 
     if (pendingWbsConfirmation && aiThreadId && pendingWbsConfirmation.threadId === aiThreadId) {
       if (isNegativeConfirmation) {
@@ -7157,139 +7093,6 @@ const sendAIMessage = async () => {
       const clarificationReply = 'Please confirm with "yes" to generate the project WBS now, or "not now" to skip.';
       setMessages((prev) => [...prev, { role: 'ai', text: clarificationReply }]);
       await persistSidebarExchange(aiThreadId, text, clarificationReply);
-      return;
-    }
-
-    if (renameMatch && aiThreadId) {
-      const nextTitle = String(renameMatch[1] || '').trim().replace(/^["“']|["”']$/g, '');
-      if (nextTitle) {
-        try {
-          let renameSucceeded = false;
-          let renameFailure = null;
-          for (const endpoint of [
-            `/api/v1/ai-agent/threads/${encodeURIComponent(aiThreadId)}`,
-            `/api/v1/strategy/threads/${encodeURIComponent(aiThreadId)}`,
-          ]) {
-            const renameResp = await authFetch(endpoint, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-              body: JSON.stringify({ name: nextTitle }),
-            });
-            const renamePayload = await renameResp.json().catch(() => ({}));
-            if (renameResp.ok) {
-              renameSucceeded = true;
-              break;
-            }
-            renameFailure = new Error(renamePayload?.error || renamePayload?.msg || `Rename failed (HTTP ${renameResp.status})`);
-          }
-
-          if (!renameSucceeded && renameFailure) {
-            throw renameFailure;
-          }
-
-          setAnalysisResult((prev) => (prev ? { ...prev, project_name: nextTitle } : prev));
-          setBundleCurrentScorecard((prev) => (prev ? { ...prev, project_name: nextTitle } : prev));
-          setBundleBaselineScorecard((prev) => (prev ? { ...prev, project_name: nextTitle } : prev));
-          setScorecardSnapshots((prev) => (
-            Array.isArray(prev)
-              ? prev.map((snapshot) => ({ ...snapshot, project_name: nextTitle }))
-              : prev
-          ));
-
-          const renameReplyText = `Updated the initiative title to "${nextTitle}".`;
-          setMessages((prev) => [
-            ...prev,
-            { role: 'ai', text: renameReplyText },
-          ]);
-          await persistSidebarExchange(aiThreadId, text, renameReplyText);
-          showToast('Initiative title updated', 'success');
-          return;
-        } catch (renameErr) {
-          console.error('[sendAIMessage] title rename failed', renameErr);
-          showToast(renameErr?.message || 'Could not update the initiative title.', 'error');
-          return;
-        }
-      }
-    }
-
-    if (scenarioIntent && aiThreadId) {
-      try {
-        const aiScenario = await Jaspen.generateAiScenario(aiThreadId, {
-          instruction: text,
-          commit: false,
-          model_type: selectedModelType,
-          strategy_objective: strategyObjective,
-        });
-        setStrategyObjective(normalizeStrategyObjective(aiScenario?.strategy_objective || strategyObjective));
-        const proposal = buildAiScenarioProposal(aiScenario, text, aiThreadId, strategyObjective);
-        setAiScenarioProposal(proposal);
-        const scenarioReplyText = `I drafted "${proposal.label}". Review, modify, then Accept or Reject.`;
-        setMessages((prev) => [
-          ...prev,
-          { role: 'ai', text: scenarioReplyText },
-        ]);
-        await persistSidebarExchange(aiThreadId, text, scenarioReplyText);
-        showToast('AI scenario draft ready', 'success');
-        return;
-      } catch (scenarioErr) {
-        console.error('[sendAIMessage] AI scenario generation failed', scenarioErr);
-        showToast('Could not auto-generate scenario from that prompt. Continuing in chat.', 'error');
-      }
-    }
-
-    if ((scorecardEditIntent || summaryAssistantIntent) && aiThreadId && hasScorecardContext) {
-      try {
-        const scorecardContext = activeScorecard || analysisResult || bundleCurrentScorecard || bundleBaselineScorecard || null;
-        if (!scorecardContext) {
-          throw new Error('No scorecard context is available for this thread.');
-        }
-        const response = await Jaspen.scorecardAssistant(aiThreadId, {
-          instruction: text,
-          scorecard: scorecardContext,
-          scorecard_id: activeScorecardId || null,
-          model_type: selectedModelType,
-          strategy_objective: strategyObjective,
-        });
-
-        if (response?.updated_scorecard && typeof response.updated_scorecard === 'object') {
-          upsertEditedScorecardSnapshot(response.updated_scorecard, {
-            scorecardId: response.selected_scorecard_id || effectiveSelectedScorecardId || baselineScorecardId,
-            label: response.updated_scorecard.label || undefined,
-          });
-          showToast('Updated scorecard wording', 'success');
-        }
-
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: 'ai',
-            text: response?.reply || (scorecardEditIntent
-              ? 'Updated the scorecard wording.'
-              : 'Here is my read on the current scorecard.'),
-          },
-        ]);
-        return;
-      } catch (scorecardErr) {
-        console.error('[sendAIMessage] scorecard assistant failed', scorecardErr);
-        showToast(scorecardErr?.message || 'Could not update the scorecard wording just now.', 'error');
-        return;
-      }
-    }
-
-    if (isScoreWorkspace && !wbsIntent) {
-      showToast('Jaspen could not route that scorecard request. Please try again.', 'error');
-      return;
-    }
-
-    if (wbsIntent && aiThreadId) {
-      const confirmPrompt = 'I can generate a full execution plan from this scorecard. Reply "yes" to generate now, or "not now" to skip.';
-      setPendingWbsConfirmation({
-        threadId: aiThreadId,
-        instruction: text,
-        scorecardId: effectiveSelectedScorecardId || null,
-      });
-      setMessages((prev) => [...prev, { role: 'ai', text: confirmPrompt }]);
-      await persistSidebarExchange(aiThreadId, text, confirmPrompt);
       return;
     }
 
