@@ -2891,6 +2891,43 @@ useEffect(() => {
     setBellNotificationIds((prev) => (Array.isArray(prev) ? prev.filter((itemId) => itemId !== id) : prev));
   }, []);
 
+  const handleBatchIdeasActivity = useCallback((activity = {}) => {
+    const type = String(activity?.type || '').trim();
+    if (!type) return;
+    const stamp = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    if (type === 'batch_upload_complete') {
+      const total = Number(activity?.totalCount || 0);
+      upsertNotification({
+        id: `notif-batch-upload-${Date.now()}`,
+        title: 'Batch upload complete',
+        body: `Uploaded ${total} idea${total === 1 ? '' : 's'}${activity?.filename ? ` from ${activity.filename}` : ''}.`,
+        stamp,
+      });
+      return;
+    }
+    if (type === 'batch_rank_complete') {
+      const ranked = Number(activity?.rankedCount || 0);
+      upsertNotification({
+        id: `notif-batch-rank-${Date.now()}`,
+        title: 'Batch ranking complete',
+        body: `Jaspen ranked ${ranked} idea${ranked === 1 ? '' : 's'}. Ready ideas can be promoted into project threads.`,
+        stamp,
+      });
+      return;
+    }
+    if (type === 'batch_promote_complete') {
+      const promoted = Number(activity?.promotedCount || 0);
+      upsertNotification({
+        id: `notif-batch-promote-${Date.now()}`,
+        title: 'Batch promotion complete',
+        body: activity?.hasMore
+          ? `Promoted ${promoted} ready idea${promoted === 1 ? '' : 's'}. More ready ideas remain.`
+          : `Promoted ${promoted} ready idea${promoted === 1 ? '' : 's'} into project threads.`,
+        stamp,
+      });
+    }
+  }, [upsertNotification]);
+
   const persistDisplayName = async (value) => {
     const trimmed = String(value || '').trim();
     if (!trimmed) return false;
@@ -10152,6 +10189,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
         canPromoteBatchIdeas={canStartOrgProjects && canUseBatchIdeas}
         showToast={showToast}
         lockReason={batchIdeasLockReason}
+        onBatchActivity={handleBatchIdeasActivity}
       />
       {saveStarterModalOpen && (
         <div className="jas-modal-overlay" role="dialog" aria-modal="true" aria-label="Save starter configuration">

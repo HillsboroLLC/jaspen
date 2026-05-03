@@ -58,6 +58,7 @@ export default function BatchIdeaManager({
   canPromoteBatchIdeas,
   lockReason,
   showToast,
+  onBatchActivity,
 }) {
   const [uploading, setUploading] = useState(false);
   const [ranking, setRanking] = useState(false);
@@ -157,6 +158,12 @@ export default function BatchIdeaManager({
       const payload = await Jaspen.uploadBatchIdeas(selectedFile);
       setBatch(payload);
       showToast?.(`Uploaded ${payload.total_count || 0} ideas`, 'success');
+      onBatchActivity?.({
+        type: 'batch_upload_complete',
+        batchId: payload?.batch_id || '',
+        filename: selectedFile?.name || payload?.filename || '',
+        totalCount: Number(payload?.total_count || 0),
+      });
     } catch (error) {
       showToast?.(error?.message || 'Failed to upload batch ideas.', 'error');
     } finally {
@@ -175,6 +182,11 @@ export default function BatchIdeaManager({
         ideas: payload.ranked_ideas || prev?.ideas || [],
       }));
       showToast?.('Ideas ranked and saved.', 'success');
+      onBatchActivity?.({
+        type: 'batch_rank_complete',
+        batchId: batch?.batch_id || '',
+        rankedCount: Array.isArray(payload?.ranked_ideas) ? payload.ranked_ideas.length : ideas.length,
+      });
     } catch (error) {
       showToast?.(error?.message || 'Failed to rank ideas.', 'error');
     } finally {
@@ -261,6 +273,12 @@ export default function BatchIdeaManager({
           : 'Promoted all ready ideas.',
         'success'
       );
+      onBatchActivity?.({
+        type: 'batch_promote_complete',
+        batchId: batch?.batch_id || '',
+        promotedCount: Array.isArray(payload?.promoted) ? payload.promoted.length : 0,
+        hasMore: Boolean(payload?.has_more),
+      });
     } catch (error) {
       showToast?.(error?.message || 'Failed to promote ready ideas.', 'error');
     } finally {
