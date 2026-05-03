@@ -140,13 +140,16 @@ def _salesforce_callback_url():
     if explicit_api_base:
         return f"{explicit_api_base}/api/v1/connectors/salesforce/oauth/callback"
 
-    # Build API callback URL from forwarded headers to avoid redirecting OAuth
-    # callbacks to the frontend host (which causes a 404 page on /api/v1/...).
+    # Prefer the actual API request host first (this endpoint is served by API).
+    req_host = _text(request.host)
+    req_proto = _text(request.headers.get("X-Forwarded-Proto")) or request.scheme or "https"
+    if req_host:
+        return f"{req_proto}://{req_host}/api/v1/connectors/salesforce/oauth/callback"
+
+    # Fallback to forwarded host only if it looks like an API domain.
     forwarded_host = _text(request.headers.get("X-Forwarded-Host"))
-    forwarded_proto = _text(request.headers.get("X-Forwarded-Proto")) or "https"
-    host = forwarded_host or _text(request.host)
-    if host:
-        return f"{forwarded_proto}://{host}/api/v1/connectors/salesforce/oauth/callback"
+    if forwarded_host and ("api." in forwarded_host or "/api" in forwarded_host):
+        return f"{req_proto}://{forwarded_host}/api/v1/connectors/salesforce/oauth/callback"
 
     return f"{request.url_root.rstrip('/')}/api/v1/connectors/salesforce/oauth/callback"
 
