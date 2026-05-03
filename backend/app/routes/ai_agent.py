@@ -33,7 +33,7 @@ from app.billing_config import (
     normalize_model_type,
     to_public_plan,
 )
-from app.connector_monitor import check_connector_health
+from app.connector_monitor import check_connector_health, generate_connector_insights
 from app.tool_registry import (
     get_active_connector_tools,
     get_context_budget,
@@ -435,6 +435,10 @@ _OFF_TOPIC_PERSONAL_RESPONSE = (
     "I can't advise on personal matters directly, but I can help with the business side of this. "
     "If this affects your project, team, timeline, or delivery risk, share that context and I'll help you plan next steps."
 )
+CONNECTOR_CONTEXT_SNAPSHOT_TTL_SECONDS = 30 * 60
+CONNECTOR_CONTEXT_MAX_CONNECTORS = 4
+CONNECTOR_CONTEXT_MAX_ALERTS = 4
+CONNECTOR_CONTEXT_MAX_INSIGHTS_PER_CONNECTOR = 2
 _IMAGE_EXTENSION_MEDIA_TYPES = {
     ".png": "image/png",
     ".jpg": "image/jpeg",
@@ -830,6 +834,154 @@ def _view_context_prompt_suffix(view_context):
     lines.append(
         "- Use this view context to tailor recommendations to what the user is currently looking at."
     )
+    return "\n" + "\n".join(lines)
+
+
+def _parse_iso_datetime(value):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _connector_snapshot_is_fresh(snapshot):
+    if not isinstance(snapshot, dict):
+        return False
+    generated_at = _parse_iso_datetime(snapshot.get("generated_at"))
+    if not generated_at:
+        return False
+    try:
+        age_seconds = (datetime.utcnow() - generated_at.replace(tzinfo=None)).total_seconds()
+    except Exception:
+        return False
+    return age_seconds >= 0 and age_seconds <= CONNECTOR_CONTEXT_SNAPSHOT_TTL_SECONDS
+
+
+def _build_connector_context_snapshot(user_id, *, thread_id=None, existing_snapshot=None):
+    if not user_id:
+        return {}
+    if _connector_snapshot_is_fresh(existing_snapshot):
+        return existing_snapshot
+
+    try:
+        health_report = check_connector_health(user_id)
+    except Exception:
+        current_app.logger.exception("Failed to build connector context snapshot (health check)")
+        return existing_snapshot if isinstance(existing_snapshot, dict) else {}
+
+    connectors = health_report.get("connectors") if isinstance(health_report, dict) else []
+    connected = []
+    for item in connectors if isinstance(connectors, list) else []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("connection_status") or "").strip().lower() != "connected":
+            continue
+        connector_id = str(item.get("id") or "").strip().lower()
+        if not connector_id:
+            continue
+        connected.append(item)
+        if len(connected) >= CONNECTOR_CONTEXT_MAX_CONNECTORS:
+            break
+
+    connector_summaries = []
+    for entry in connected:
+        connector_id = str(entry.get("id") or "").strip().lower()
+        insight_payload = {}
+        try:
+            insight_payload = generate_connector_insights(user_id, connector_id, thread_id=thread_id)
+        except Exception:
+            current_app.logger.exception("Failed to generate connector insight snapshot for %s", connector_id)
+        raw_insights = insight_payload.get("insights") if isinstance(insight_payload, dict) else []
+        insight_messages = []
+        if isinstance(raw_insights, list):
+            for item in raw_insights:
+                if not isinstance(item, dict):
+                    continue
+                msg = str(item.get("message") or "").strip()
+                if not msg:
+                    continue
+                insight_messages.append(msg)
+                if len(insight_messages) >= CONNECTOR_CONTEXT_MAX_INSIGHTS_PER_CONNECTOR:
+                    break
+
+        connector_summaries.append({
+            "id": connector_id,
+            "label": str(entry.get("label") or connector_id).strip(),
+            "last_sync_at": entry.get("last_sync_at"),
+            "health_status": str(entry.get("health_status") or "unknown").strip().lower(),
+            "alert_count": int(entry.get("alert_count") or 0),
+            "trend_direction": str((insight_payload or {}).get("trend_direction") or "flat").strip().lower() or "flat",
+            "insights": insight_messages,
+        })
+
+    raw_alerts = health_report.get("alerts") if isinstance(health_report, dict) else []
+    alerts = []
+    if isinstance(raw_alerts, list):
+        for item in raw_alerts:
+            if not isinstance(item, dict):
+                continue
+            message = str(item.get("message") or "").strip()
+            connector_id = str(item.get("connector_id") or "").strip().lower()
+            if not connector_id and not message:
+                continue
+            alerts.append({
+                "connector_id": connector_id,
+                "severity": str(item.get("severity") or "info").strip().lower(),
+                "message": message,
+            })
+            if len(alerts) >= CONNECTOR_CONTEXT_MAX_ALERTS:
+                break
+
+    return {
+        "generated_at": _iso_now(),
+        "total_connected": int((health_report or {}).get("total_connected") or len(connected)),
+        "connectors": connector_summaries,
+        "alerts": alerts,
+    }
+
+
+def _connector_context_prompt_suffix(connector_snapshot):
+    if not isinstance(connector_snapshot, dict):
+        return ""
+
+    connectors = connector_snapshot.get("connectors") if isinstance(connector_snapshot.get("connectors"), list) else []
+    alerts = connector_snapshot.get("alerts") if isinstance(connector_snapshot.get("alerts"), list) else []
+    total_connected = int(connector_snapshot.get("total_connected") or len(connectors) or 0)
+    if total_connected <= 0 and not alerts:
+        return ""
+
+    lines = ["Connected data context snapshot:"]
+    lines.append(f"- Connected sources: {total_connected}")
+    for item in connectors:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("label") or item.get("id") or "connector").strip()
+        trend = str(item.get("trend_direction") or "flat").strip().lower() or "flat"
+        last_sync_at = str(item.get("last_sync_at") or "").strip()
+        status = str(item.get("health_status") or "unknown").strip().lower() or "unknown"
+        detail = f"- {label}: trend={trend}, health={status}"
+        if last_sync_at:
+            detail += f", last_sync_at={last_sync_at}"
+        lines.append(detail)
+        insights = item.get("insights") if isinstance(item.get("insights"), list) else []
+        for insight in insights[:CONNECTOR_CONTEXT_MAX_INSIGHTS_PER_CONNECTOR]:
+            text = str(insight or "").strip()
+            if text:
+                lines.append(f"- Note: {text}")
+    if alerts:
+        lines.append("- Active connector alerts:")
+        for alert in alerts[:CONNECTOR_CONTEXT_MAX_ALERTS]:
+            if not isinstance(alert, dict):
+                continue
+            sev = str(alert.get("severity") or "info").strip().upper() or "INFO"
+            cid = str(alert.get("connector_id") or "connector").strip()
+            msg = str(alert.get("message") or "").strip()
+            if msg:
+                lines.append(f"- [{sev}] {cid}: {msg}")
+    lines.append("- Use this snapshot as standing background context for connector-aware answers.")
     return "\n" + "\n".join(lines)
 
 
@@ -1433,6 +1585,7 @@ def _new_session(
         "intake_context": _sanitize_intake_context(intake_context, fallback_objective=normalized_objective),
         "view_context": _sanitize_view_context(view_context),
         "starter_lever_defaults": _sanitize_lever_defaults(starter_lever_defaults),
+        "connector_context_snapshot": {},
         "context_summaries": [],
     }
 
@@ -1915,12 +2068,13 @@ def _guard_mutation_tool(tool_name, *, user_turn_count, mutations_this_turn):
     return None
 
 
-def _build_agent_system_prompt(*, context_summary_text, intake_context, view_context, user_id, thread_id):
+def _build_agent_system_prompt(*, context_summary_text, intake_context, view_context, connector_context_snapshot, user_id, thread_id):
     return (
         f"{_SYSTEM_PROMPT_PREFIX}"
         f"{_context_summary_prompt_suffix(context_summary_text)}"
         f"{_intake_context_prompt_suffix(intake_context)}"
         f"{_view_context_prompt_suffix(view_context)}"
+        f"{_connector_context_prompt_suffix(connector_context_snapshot)}"
         f"{_batch_promotion_prompt_suffix(user_id, thread_id)}"
         f"{_scenario_modeling_prompt_suffix(user_id, thread_id)}"
         f"{_monitoring_prompt_suffix(user_id)}"
@@ -3982,6 +4136,7 @@ def _generate_assistant_reply_anthropic(
         context_summary_text=context_summary_text,
         intake_context=intake_context,
         view_context=view_context,
+        connector_context_snapshot=(session or {}).get("connector_context_snapshot"),
         user_id=user_id,
         thread_id=thread_id,
     )
@@ -4215,6 +4370,7 @@ def _stream_assistant_reply_events_anthropic(
         context_summary_text=context_summary_text,
         intake_context=intake_context,
         view_context=view_context,
+        connector_context_snapshot=(session or {}).get("connector_context_snapshot"),
         user_id=user_id,
         thread_id=thread_id,
     )
@@ -4474,6 +4630,7 @@ def _generate_assistant_reply_gemini(
         context_summary_text=context_summary_text,
         intake_context=intake_context,
         view_context=view_context,
+        connector_context_snapshot=(session or {}).get("connector_context_snapshot"),
         user_id=user_id,
         thread_id=thread_id,
     )
@@ -4675,6 +4832,7 @@ def _stream_assistant_reply_events_gemini(
         context_summary_text=context_summary_text,
         intake_context=intake_context,
         view_context=view_context,
+        connector_context_snapshot=(session or {}).get("connector_context_snapshot"),
         user_id=user_id,
         thread_id=thread_id,
     )
@@ -6387,6 +6545,11 @@ def conversation_start():
         session["starter_lever_defaults"] = starter_lever_defaults
     elif not isinstance(session.get("starter_lever_defaults"), dict):
         session["starter_lever_defaults"] = {}
+    session["connector_context_snapshot"] = _build_connector_context_snapshot(
+        user_id,
+        thread_id=thread_id,
+        existing_snapshot=session.get("connector_context_snapshot"),
+    )
 
     chat_history = session.get("chat_history")
     if not isinstance(chat_history, list):
@@ -6921,6 +7084,11 @@ def conversation_continue():
         session["starter_lever_defaults"] = starter_lever_defaults
     elif not isinstance(session.get("starter_lever_defaults"), dict):
         session["starter_lever_defaults"] = {}
+    session["connector_context_snapshot"] = _build_connector_context_snapshot(
+        user_id,
+        thread_id=thread_id,
+        existing_snapshot=session.get("connector_context_snapshot"),
+    )
     chat_history = session.get("chat_history")
     if not isinstance(chat_history, list):
         chat_history = []
