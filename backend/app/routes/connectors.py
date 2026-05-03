@@ -131,6 +131,15 @@ def _salesforce_callback_url():
     )
     if configured:
         return configured
+    # Use the public-facing base URL when available so the redirect_uri matches
+    # what is registered in the Salesforce Connected App (e.g. https://jaspen.ai).
+    # Falling back to request.url_root produces an internal/http URL in production.
+    public_base = _text(
+        os.getenv("API_BASE_URL")
+        or current_app.config.get("FRONTEND_BASE_URL")
+    ).rstrip("/")
+    if public_base and not public_base.startswith("http://localhost"):
+        return f"{public_base}/api/v1/connectors/salesforce/oauth/callback"
     return f"{request.url_root.rstrip('/')}/api/v1/connectors/salesforce/oauth/callback"
 
 
