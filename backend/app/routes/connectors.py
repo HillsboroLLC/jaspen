@@ -133,12 +133,12 @@ def _salesforce_callback_url():
     )
     if configured:
         return configured
-    # Deterministic fallback: only use explicit API base configuration.
-    # Avoid host/header inference to prevent redirect_uri drift.
-    explicit_api_base = _text(os.getenv("API_BASE_URL")).rstrip("/")
-    if explicit_api_base:
-        return f"{explicit_api_base}/api/v1/connectors/salesforce/oauth/callback"
-
+    public_base = _text(
+        os.getenv("API_BASE_URL")
+        or current_app.config.get("FRONTEND_BASE_URL")
+    ).rstrip("/")
+    if public_base and not public_base.startswith("http://localhost"):
+        return f"{public_base}/api/v1/connectors/salesforce/oauth/callback"
     return f"{request.url_root.rstrip('/')}/api/v1/connectors/salesforce/oauth/callback"
 
 
