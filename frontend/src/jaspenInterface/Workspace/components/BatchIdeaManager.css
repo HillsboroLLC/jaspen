@@ -31,6 +31,13 @@
   border: 1px solid #dbe4ff;
   border-radius: 16px;
   background: linear-gradient(180deg, rgba(239, 246, 255, 0.8) 0%, rgba(248, 250, 252, 0.95) 100%);
+  transition: border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+}
+
+.jas-batch-upload.is-dragging {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+  transform: translateY(-1px);
 }
 
 .jas-batch-file-picker {

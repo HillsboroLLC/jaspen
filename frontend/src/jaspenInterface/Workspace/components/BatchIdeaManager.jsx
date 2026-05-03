@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faArrowUpRightFromSquare,
@@ -13,6 +13,7 @@ import { Jaspen } from '../JaspenClient';
 import './BatchIdeaManager.css';
 
 const LAST_BATCH_KEY = 'jaspen:lastBatchIdeasId';
+const BATCH_UPLOAD_ACCEPTED_EXTENSIONS = ['.csv', '.xlsx', '.xls', '.doc', '.docx'];
 
 function storeLastBatchId(batchId) {
   try {
@@ -41,6 +42,11 @@ function normalizeIdeas(batch) {
   return ideas;
 }
 
+function isAcceptedBatchFile(file) {
+  const name = String(file?.name || '').toLowerCase();
+  return BATCH_UPLOAD_ACCEPTED_EXTENSIONS.some((ext) => name.endsWith(ext));
+}
+
 export default function BatchIdeaManager({
   open,
   onClose,
@@ -61,6 +67,8 @@ export default function BatchIdeaManager({
   const [selectedFile, setSelectedFile] = useState(null);
   const [clarifyDrafts, setClarifyDrafts] = useState({});
   const [busyIdeaId, setBusyIdeaId] = useState('');
+  const [dragActive, setDragActive] = useState(false);
+  const dragDepthRef = useRef(0);
 
   const ideas = useMemo(() => normalizeIdeas(batch), [batch]);
   const readyIdeas = useMemo(
@@ -97,7 +105,46 @@ export default function BatchIdeaManager({
 
   const onFileChange = (event) => {
     const next = event.target.files?.[0] || null;
+    if (next && !isAcceptedBatchFile(next)) {
+      showToast?.('Unsupported file type. Use CSV, Excel, or Word.', 'error');
+      return;
+    }
     setSelectedFile(next);
+  };
+
+  const onDragEnter = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    dragDepthRef.current += 1;
+    setDragActive(true);
+  };
+
+  const onDragOver = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = 'copy';
+  };
+
+  const onDragLeave = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) setDragActive(false);
+  };
+
+  const onDrop = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    dragDepthRef.current = 0;
+    setDragActive(false);
+    const dropped = event.dataTransfer?.files?.[0] || null;
+    if (!dropped) return;
+    if (!isAcceptedBatchFile(dropped)) {
+      showToast?.('Unsupported file type. Use CSV, Excel, or Word.', 'error');
+      return;
+    }
+    setSelectedFile(dropped);
+    showToast?.(`Selected ${dropped.name}`, 'success');
   };
 
   const handleUpload = async () => {
@@ -271,7 +318,13 @@ export default function BatchIdeaManager({
 
         {!isLocked && (
           <div className="jas-batch-body">
-            <div className="jas-batch-upload">
+            <div
+              className={`jas-batch-upload ${dragActive ? 'is-dragging' : ''}`}
+              onDragEnter={onDragEnter}
+              onDragOver={onDragOver}
+              onDragLeave={onDragLeave}
+              onDrop={onDrop}
+            >
               <label className="jas-batch-file-picker">
                 <input type="file" accept=".csv,.xlsx,.xls,.doc,.docx" onChange={onFileChange} />
                 <span><FontAwesomeIcon icon={faCloudArrowUp} /> Choose CSV, Excel, or Word</span>
