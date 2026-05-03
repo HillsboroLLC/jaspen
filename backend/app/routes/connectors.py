@@ -176,6 +176,44 @@ def _salesforce_callback_url():
     return f"{request_root}/api/v1/connectors/salesforce/oauth/callback"
 
 
+def _salesforce_token_expires_at_iso(token_payload):
+    if not isinstance(token_payload, dict):
+        return None
+    try:
+        expires_in = int(token_payload.get("expires_in") or 0)
+    except Exception:
+        expires_in = 0
+    if expires_in <= 0:
+        return None
+    from datetime import datetime, timedelta, timezone
+    return (datetime.now(timezone.utc) + timedelta(seconds=max(0, expires_in - 60))).isoformat()
+
+
+def _safe_salesforce_oauth_error_reason(exc):
+    message = str(exc or "").strip().lower()
+    if "invalid_grant" in message or "expired authorization code" in message:
+        return "authorization_code_invalid_or_expired"
+    if "invalid_client" in message:
+        return "client_configuration_invalid"
+    if "access denied" in message:
+        return "access_denied"
+    if "timeout" in message:
+        return "provider_timeout"
+    return "oauth_exchange_failed"
+
+
+def _safe_salesforce_oauth_error_code(raw_error):
+    code = _text(raw_error).lower()
+    allowed = {
+        "access_denied": "oauth_access_denied",
+        "invalid_scope": "oauth_invalid_scope",
+        "invalid_request": "oauth_invalid_request",
+        "server_error": "oauth_server_error",
+        "temporarily_unavailable": "oauth_temporarily_unavailable",
+    }
+    return allowed.get(code, "oauth_failed")
+
+
 def _runtime_fields(connector_id, settings):
     settings = settings if isinstance(settings, dict) else {}
 
@@ -1014,6 +1052,7 @@ def salesforce_oauth_callback():
     oauth_error = _text(request.args.get("error"))
 
     if oauth_error:
+        safe_reason = _safe_salesforce_oauth_error_code(oauth_error)
         # Best effort parse state for redirect target.
         try:
             state_data = decode_salesforce_oauth_state(
@@ -1023,10 +1062,10 @@ def salesforce_oauth_callback():
             )
             return _frontend_redirect(
                 (state_data or {}).get("next") or "/connectors-manage",
-                {"sf_oauth": "error", "reason": oauth_error},
+                {"sf_oauth": "error", "reason": safe_reason},
             )
         except Exception:
-            return _frontend_redirect("/connectors-manage", {"sf_oauth": "error", "reason": oauth_error})
+            return _frontend_redirect("/connectors-manage", {"sf_oauth": "error", "reason": safe_reason})
 
     if not code or not state_token:
         return _frontend_redirect("/connectors-manage", {"sf_oauth": "error", "reason": "missing_code_or_state"})
@@ -1067,6 +1106,7 @@ def salesforce_oauth_callback():
             "salesforce_instance_url": _text(token_payload.get("instance_url") or config.get("instance_url")),
             "salesforce_access_token": _text(token_payload.get("access_token")),
             "salesforce_token_type": _text(token_payload.get("token_type") or "Bearer") or "Bearer",
+            "salesforce_token_expires_at": _salesforce_token_expires_at_iso(token_payload),
         }
         refresh_token = _text(token_payload.get("refresh_token"))
         if refresh_token:
@@ -1097,15 +1137,17 @@ def salesforce_oauth_callback():
         )
         return _frontend_redirect(next_path, {"sf_oauth": "success"})
     except Exception as exc:
-        mark_connector_sync_result(user.id, "salesforce_insights", "failed", error_message=str(exc))
+        reason = _safe_salesforce_oauth_error_reason(exc)
+        mark_connector_sync_result(user.id, "salesforce_insights", "failed", error_message=reason)
         append_sync_audit_event(
             user.id,
             "salesforce_insights",
             action="oauth_callback",
             status="failed",
-            message=str(exc),
+            message=reason,
         )
-        return _frontend_redirect(next_path, {"sf_oauth": "error", "reason": "token_exchange_failed"})
+        current_app.logger.exception("Salesforce OAuth callback failed")
+        return _frontend_redirect(next_path, {"sf_oauth": "error", "reason": reason})
 
 
 @connectors_bp.route("/salesforce/pipeline/summary", methods=["GET"])

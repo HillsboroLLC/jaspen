@@ -157,12 +157,14 @@ def get_overage_packs(app_config):
     return packs
 
 
-def get_model_catalog(app_config):
+def get_model_catalog(app_config, *, include_backing_ids=False):
     catalog = deepcopy(DEFAULT_MODEL_CATALOG)
-    backing_ids = app_config.get('MODEL_TYPE_BACKING_IDS', {}) or {}
     for key, value in catalog.items():
         value['model_type'] = key
-        value['llm_model'] = backing_ids.get(key) or value.get('default_llm_model')
+        if include_backing_ids:
+            backing_ids = app_config.get('MODEL_TYPE_BACKING_IDS', {}) or {}
+            value['llm_model'] = backing_ids.get(key) or value.get('default_llm_model')
+        value.pop('default_llm_model', None)
     return catalog
 
 

@@ -54,7 +54,15 @@ def request_json_with_backoff(
                 message = f"HTTP {response.status_code}: {data}"
                 retryable = response.status_code in retryable_codes and attempt < max_attempts
                 if retryable:
-                    delay = min(max_delay_seconds, base_delay_seconds * (2 ** (attempt - 1)))
+                    retry_after = response.headers.get("Retry-After")
+                    delay = None
+                    if retry_after:
+                        try:
+                            delay = float(str(retry_after).strip())
+                        except Exception:
+                            delay = None
+                    if delay is None:
+                        delay = min(max_delay_seconds, base_delay_seconds * (2 ** (attempt - 1)))
                     delay = delay + random.uniform(0, delay * 0.15)
                     time.sleep(delay)
                     last_error = RuntimeError(message)

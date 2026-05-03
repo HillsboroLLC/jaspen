@@ -1,17 +1,20 @@
 import os
 import time
+from datetime import datetime
 from urllib.parse import urlparse
 from flask import Blueprint, request, jsonify, current_app, abort
 from flask_jwt_extended import jwt_required, get_jwt_identity
 import stripe
+from sqlalchemy.exc import IntegrityError
 
 from app import db
 from app.admin_policy import is_global_admin
-from app.models import User
+from app.models import StripeWebhookEvent, User
 from app.billing_config import (
     apply_plan_to_user,
     add_credits,
     bootstrap_legacy_credits,
+    consume_credits,
     get_allowed_model_types,
     get_default_model_type,
     get_model_catalog,
@@ -95,6 +98,39 @@ def _ensure_customer_for_user(user):
     return customer.id
 
 
+def _usage_warning_fields(monthly_limit, credits_remaining):
+    if monthly_limit is None or credits_remaining is None:
+        return {"usage_percent": None, "usage_warning_level": "normal"}
+    try:
+        limit = max(0, int(monthly_limit))
+        remaining = max(0, int(credits_remaining))
+    except Exception:
+        return {"usage_percent": None, "usage_warning_level": "normal"}
+    if limit <= 0:
+        return {"usage_percent": None, "usage_warning_level": "normal"}
+
+    used = max(0, limit - remaining)
+    usage_percent = max(0.0, min(100.0, (used / float(limit)) * 100.0))
+    if remaining <= 0:
+        level = "exhausted"
+    elif usage_percent >= 95.0:
+        level = "critical"
+    elif usage_percent >= 80.0:
+        level = "warning"
+    else:
+        level = "normal"
+    return {"usage_percent": round(usage_percent, 2), "usage_warning_level": level}
+
+
+def _find_user_for_billing_event(subscription_id=None, customer_id=None):
+    user = None
+    if subscription_id:
+        user = User.query.filter_by(stripe_subscription_id=subscription_id).first()
+    if not user and customer_id:
+        user = User.query.filter_by(stripe_customer_id=customer_id).first()
+    return user
+
+
 @billing_bp.route('/plans', methods=['GET'])
 def list_plans():
     """Legacy response: plan_key -> Stripe Price ID."""
@@ -167,6 +203,7 @@ def get_billing_status():
         tool['last_sync_at'] = settings.get('last_sync_at')
         tool['auto_sync'] = bool(settings.get('auto_sync', True))
         tool['external_workspace'] = settings.get('external_workspace') or ''
+    usage_meta = _usage_warning_fields(monthly_limit, credits_remaining)
 
     return jsonify({
         'plan_key': plan_key,
@@ -181,14 +218,19 @@ def get_billing_status():
         'tool_entitlements': tool_entitlements,
         'stripe_customer_id': user.stripe_customer_id,
         'stripe_subscription_id': user.stripe_subscription_id,
+        'usage_percent': usage_meta.get('usage_percent'),
+        'usage_warning_level': usage_meta.get('usage_warning_level'),
     }), 200
 
 
 @billing_bp.route('/create-payment-intent', methods=['POST'])
+@jwt_required()
 def create_payment_intent():
     """Legacy one-off PaymentIntent flow (amount in cents)."""
     data = request.get_json() or {}
-    amount = int(data.get('amount', 0))
+    amount = int(data.get('amount', 0) or 0)
+    if amount <= 0:
+        return jsonify({'msg': 'amount must be a positive integer (in cents)'}), 400
     intent = stripe.PaymentIntent.create(
         amount=amount,
         currency='usd',
@@ -377,8 +419,40 @@ def stripe_webhook():
         event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
     except (ValueError, stripe.error.SignatureVerificationError):
         return abort(400)
+    event_id = str(event.get('id') or '').strip()
+    event_type = str(event.get('type') or '').strip()
+    if not event_id:
+        return abort(400)
 
-    if event.get('type') == 'checkout.session.completed':
+    existing_event = StripeWebhookEvent.query.filter_by(stripe_event_id=event_id).first()
+    if existing_event and bool(existing_event.processed):
+        return '', 200
+    event_row = existing_event
+    if event_row is None:
+        event_row = StripeWebhookEvent(
+            stripe_event_id=event_id,
+            event_type=event_type,
+            processed=False,
+        )
+        db.session.add(event_row)
+        try:
+            db.session.flush()
+        except IntegrityError:
+            db.session.rollback()
+            existing_event = StripeWebhookEvent.query.filter_by(stripe_event_id=event_id).first()
+            if existing_event and bool(existing_event.processed):
+                return '', 200
+            event_row = existing_event
+            if event_row is None:
+                event_row = StripeWebhookEvent(
+                    stripe_event_id=event_id,
+                    event_type=event_type,
+                    processed=False,
+                )
+                db.session.add(event_row)
+                db.session.flush()
+
+    if event_type == 'checkout.session.completed':
         sess = event['data']['object']
         metadata = sess.get('metadata') or {}
         user_id = metadata.get('user_id')
@@ -390,45 +464,70 @@ def stripe_webhook():
                 add_credits(user, int(metadata.get('credits') or 0))
                 if sess.get('customer'):
                     user.stripe_customer_id = sess.get('customer')
-                db.session.commit()
             else:
                 plan_key = normalize_plan_key(metadata.get('plan_key'))
                 apply_plan_to_user(user, plan_key, current_app.config, reset_credits=True)
                 user.stripe_customer_id = sess.get('customer')
                 user.stripe_subscription_id = sess.get('subscription')
-                db.session.commit()
 
-    elif event.get('type') == 'invoice.payment_succeeded':
+    elif event_type == 'invoice.payment_succeeded':
         inv = event['data']['object']
-        subscription_id = inv.get('subscription')
-        customer_id = inv.get('customer')
-
-        user = None
-        if subscription_id:
-            user = User.query.filter_by(stripe_subscription_id=subscription_id).first()
-        if not user and customer_id:
-            user = User.query.filter_by(stripe_customer_id=customer_id).first()
-
+        user = _find_user_for_billing_event(
+            subscription_id=inv.get('subscription'),
+            customer_id=inv.get('customer'),
+        )
         if user:
-            if reset_user_monthly_credits(user, current_app.config, force=True):
-                db.session.commit()
+            reset_user_monthly_credits(user, current_app.config, force=True)
 
-    elif event.get('type') == 'customer.subscription.deleted':
+    elif event_type == 'invoice.payment_failed':
+        inv = event['data']['object']
+        user = _find_user_for_billing_event(
+            subscription_id=inv.get('subscription'),
+            customer_id=inv.get('customer'),
+        )
+        if user:
+            current_app.logger.warning(
+                "Stripe payment failed for user=%s subscription=%s",
+                user.id,
+                inv.get('subscription'),
+            )
+
+    elif event_type == 'customer.subscription.deleted':
         sub = event['data']['object']
         user = User.query.filter_by(stripe_subscription_id=sub.get('id')).first()
         if user:
             apply_plan_to_user(user, 'free', current_app.config, reset_credits=True)
             user.stripe_subscription_id = None
-            db.session.commit()
 
-    elif event.get('type') == 'customer.subscription.updated':
+    elif event_type == 'customer.subscription.updated':
         sub = event['data']['object']
         user = User.query.filter_by(stripe_subscription_id=sub.get('id')).first()
         if user and sub.get('status') in {'canceled', 'incomplete_expired', 'unpaid'}:
             apply_plan_to_user(user, 'free', current_app.config, reset_credits=True)
             user.stripe_subscription_id = None
-            db.session.commit()
 
+    elif event_type == 'customer.subscription.paused':
+        sub = event['data']['object']
+        user = User.query.filter_by(stripe_subscription_id=sub.get('id')).first()
+        if user:
+            apply_plan_to_user(user, 'free', current_app.config, reset_credits=True)
+            user.stripe_subscription_id = None
+
+    elif event_type == 'charge.refunded':
+        charge = event['data']['object']
+        user = _find_user_for_billing_event(customer_id=charge.get('customer'))
+        metadata = charge.get('metadata') if isinstance(charge.get('metadata'), dict) else {}
+        if user and str(metadata.get('checkout_type') or '').strip() == 'overage_pack':
+            refund_credits = int(metadata.get('credits') or 0)
+            if refund_credits > 0 and user.credits_remaining is not None:
+                user.credits_remaining = max(0, int(user.credits_remaining or 0) - refund_credits)
+            elif refund_credits > 0 and user.credits_remaining is None:
+                consume_credits(user, refund_credits)
+
+    event_row.event_type = event_type
+    event_row.processed = True
+    event_row.processed_at = datetime.utcnow()
+    db.session.commit()
     return '', 200
 
 

@@ -22,7 +22,7 @@ except Exception:
 
 from app import db, limiter, mail
 from app.admin_audit import append_user_audit_event
-from app.models import BatchIdeaUpload, User
+from app.models import BatchIdeaUpload, UsageEvent, User
 from app.billing_config import (
     add_credits,
     bootstrap_legacy_credits,
@@ -677,7 +677,7 @@ def _apply_turn_complexity_routing(user, model_selection, user_message, *, expli
     if target_model_type == current_model_type:
         return model_selection, complexity
 
-    model_catalog = get_model_catalog(current_app.config)
+    model_catalog = get_model_catalog(current_app.config, include_backing_ids=True)
     model_meta = model_catalog.get(target_model_type, {}) if isinstance(model_catalog, dict) else {}
     adjusted_selection = {
         **model_selection,
@@ -3054,7 +3054,7 @@ def _model_credit_multiplier(model_type):
     return float(multipliers.get(model_type, multipliers["pluto"]))
 
 
-def _estimate_usage_credit_charge(total_tokens, model_type):
+def _estimate_usage_credit_charge(total_tokens, model_type, provider=None):
     total_tokens = int(total_tokens or 0)
     if total_tokens <= 0:
         return 0
@@ -3069,7 +3069,31 @@ def _estimate_usage_credit_charge(total_tokens, model_type):
         or os.getenv("AI_AGENT_MIN_CREDIT_CHARGE")
         or 1
     )
-    raw_credits = (total_tokens / 1000.0) * max(0.01, per_1k) * _model_credit_multiplier(model_type)
+    provider_multipliers = {"anthropic": 1.0, "gemini": 0.6, "heuristic": 1.0, "guardrail": 1.0}
+    raw_provider_multipliers = (
+        current_app.config.get("AI_AGENT_PROVIDER_CREDIT_MULTIPLIERS_JSON")
+        or os.getenv("AI_AGENT_PROVIDER_CREDIT_MULTIPLIERS_JSON")
+        or ""
+    )
+    if raw_provider_multipliers:
+        parsed = raw_provider_multipliers
+        if isinstance(raw_provider_multipliers, str):
+            try:
+                parsed = json.loads(raw_provider_multipliers)
+            except Exception:
+                parsed = {}
+        if isinstance(parsed, dict):
+            for key, value in parsed.items():
+                normalized = str(key or "").strip().lower()
+                if not normalized:
+                    continue
+                try:
+                    provider_multipliers[normalized] = max(0.1, float(value))
+                except Exception:
+                    continue
+    provider = str(provider or "").strip().lower()
+    provider_multiplier = float(provider_multipliers.get(provider or "anthropic", 1.0))
+    raw_credits = (total_tokens / 1000.0) * max(0.01, per_1k) * _model_credit_multiplier(model_type) * provider_multiplier
     return max(min_charge, int(math.ceil(raw_credits)))
 
 
@@ -3087,7 +3111,22 @@ def _rough_token_count_from_text(value):
     text = str(value or "")
     if not text:
         return 0
-    # Conservative heuristic when provider tokenizers are not locally available.
+
+    # Prefer tokenizer-based counts when available; fallback to conservative heuristic.
+    try:
+        import tiktoken
+
+        encoding = getattr(_rough_token_count_from_text, "_encoding", None)
+        if encoding is None:
+            try:
+                encoding = tiktoken.get_encoding("cl100k_base")
+            except Exception:
+                encoding = None
+            _rough_token_count_from_text._encoding = encoding  # type: ignore[attr-defined]
+        if encoding is not None:
+            return int(len(encoding.encode(text)))
+    except Exception:
+        pass
     return int(math.ceil(len(text) / 4.0))
 
 
@@ -5567,6 +5606,104 @@ def _stream_assistant_reply_events(
         )
 
 
+def _model_label_for_type(model_type):
+    normalized = normalize_model_type(model_type) or "pluto"
+    catalog = get_model_catalog(current_app.config)
+    item = catalog.get(normalized) if isinstance(catalog, dict) else {}
+    fallback = normalized.capitalize() if normalized else "Pluto"
+    return str((item or {}).get("label") or fallback)
+
+
+def _public_usage_payload(usage, *, model_type=None, credits_charged=None, credits_remaining=None):
+    usage = usage if isinstance(usage, dict) else {}
+    normalized_model_type = normalize_model_type(model_type or usage.get("model_type") or "pluto") or "pluto"
+    payload = {
+        "model_type": normalized_model_type,
+        "model_label": _model_label_for_type(normalized_model_type),
+        "input_tokens": int(usage.get("input_tokens") or 0),
+        "output_tokens": int(usage.get("output_tokens") or 0),
+        "total_tokens": int(usage.get("total_tokens") or 0),
+    }
+    if credits_charged is not None:
+        payload["credits_charged"] = int(credits_charged or 0)
+    if credits_remaining is not None:
+        payload["credits_remaining"] = None if credits_remaining is None else int(credits_remaining or 0)
+    failover = usage.get("failover")
+    if isinstance(failover, dict):
+        attempted = failover.get("attempted_providers")
+        payload["failover_attempted"] = bool(isinstance(attempted, list) and len(attempted) > 0)
+    return payload
+
+
+def _public_usage_summary_payload(summary, *, fallback_model_type=None):
+    summary = summary if isinstance(summary, dict) else {}
+    model_type = normalize_model_type(summary.get("model_type") or fallback_model_type or "pluto") or "pluto"
+    return {
+        "model_type": model_type,
+        "model_label": _model_label_for_type(model_type),
+        "input_tokens": int(summary.get("input_tokens") or 0),
+        "output_tokens": int(summary.get("output_tokens") or 0),
+        "total_tokens": int(summary.get("total_tokens") or 0),
+        "credits_charged": int(summary.get("credits_charged") or 0),
+        "events": int(summary.get("events") or 0),
+    }
+
+
+def _public_usage_events_payload(events, *, fallback_model_type=None):
+    rows = events if isinstance(events, list) else []
+    out = []
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        model_type = normalize_model_type(item.get("model_type") or fallback_model_type or "pluto") or "pluto"
+        out.append({
+            "timestamp": item.get("timestamp"),
+            "model_type": model_type,
+            "model_label": _model_label_for_type(model_type),
+            "input_tokens": int(item.get("input_tokens") or 0),
+            "output_tokens": int(item.get("output_tokens") or 0),
+            "total_tokens": int(item.get("total_tokens") or 0),
+            "credits_charged": int(item.get("credits_charged") or 0),
+            "failover_attempted": bool(item.get("failover")),
+        })
+    return out
+
+
+def _sanitize_user_visible_payload(payload, *, fallback_model_type=None):
+    hidden_keys = {
+        "provider",
+        "model",
+        "llm_model",
+        "default_llm_model",
+        "final_provider",
+        "final_model",
+        "attempted_providers",
+    }
+    if isinstance(payload, dict):
+        out = {}
+        normalized_fallback = normalize_model_type(
+            payload.get("model_type") if isinstance(payload.get("model_type"), str) else fallback_model_type
+        ) or "pluto"
+        for key, value in payload.items():
+            lowered = str(key or "").strip().lower()
+            if lowered in hidden_keys:
+                continue
+            if lowered == "usage_summary":
+                out[key] = _public_usage_summary_payload(value, fallback_model_type=normalized_fallback)
+                continue
+            if lowered == "usage_events":
+                out[key] = _public_usage_events_payload(value, fallback_model_type=normalized_fallback)
+                continue
+            out[key] = _sanitize_user_visible_payload(value, fallback_model_type=normalized_fallback)
+        return out
+    if isinstance(payload, list):
+        return [
+            _sanitize_user_visible_payload(item, fallback_model_type=fallback_model_type)
+            for item in payload
+        ]
+    return payload
+
+
 def _record_usage(session, usage, credits_charged):
     if not isinstance(session, dict):
         return
@@ -5576,14 +5713,16 @@ def _record_usage(session, usage, credits_charged):
     input_tokens = int(usage.get("input_tokens") or 0)
     output_tokens = int(usage.get("output_tokens") or 0)
     total_tokens = int(usage.get("total_tokens") or (input_tokens + output_tokens))
-    provider = usage.get("provider") or "unknown"
+    provider = str(usage.get("provider") or "unknown").strip().lower() or "unknown"
     model = usage.get("model")
+    model_type = normalize_model_type(usage.get("model_type") or session.get("model_type") or "pluto") or "pluto"
 
     summary = session.get("usage_summary")
     if not isinstance(summary, dict):
         summary = {
             "provider": provider,
             "model": model,
+            "model_type": model_type,
             "input_tokens": 0,
             "output_tokens": 0,
             "total_tokens": 0,
@@ -5592,6 +5731,7 @@ def _record_usage(session, usage, credits_charged):
         }
     summary["provider"] = provider
     summary["model"] = model
+    summary["model_type"] = model_type
     summary["input_tokens"] = int(summary.get("input_tokens") or 0) + input_tokens
     summary["output_tokens"] = int(summary.get("output_tokens") or 0) + output_tokens
     summary["total_tokens"] = int(summary.get("total_tokens") or 0) + total_tokens
@@ -5606,6 +5746,7 @@ def _record_usage(session, usage, credits_charged):
         "timestamp": _iso_now(),
         "provider": provider,
         "model": model,
+        "model_type": model_type,
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "total_tokens": total_tokens,
@@ -5613,6 +5754,25 @@ def _record_usage(session, usage, credits_charged):
         "failover": _clone_json_payload(failover) if failover else None,
     })
     session["usage_events"] = events[-150:]
+
+    try:
+        user_id = str(session.get("user_id") or "").strip()
+        thread_id = str(session.get("session_id") or "").strip() or None
+        if user_id:
+            db.session.add(UsageEvent(
+                user_id=user_id,
+                thread_id=thread_id,
+                model_type=model_type,
+                provider=provider,
+                model=(str(model).strip() or None) if model is not None else None,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=total_tokens,
+                credits_charged=int(credits_charged or 0),
+                is_failover=bool(failover),
+            ))
+    except Exception:
+        current_app.logger.exception("Failed queuing usage event persistence")
 
 
 def _resolve_model_selection(user, requested_model_type=None, fallback_model_type=None):
@@ -5630,7 +5790,7 @@ def _resolve_model_selection(user, requested_model_type=None, fallback_model_typ
             "default_model_type": default_model_type,
         }
 
-    model_catalog = get_model_catalog(current_app.config)
+    model_catalog = get_model_catalog(current_app.config, include_backing_ids=True)
     model_meta = model_catalog.get(normalized, {})
     return {
         "model_type": normalized,
@@ -6068,6 +6228,21 @@ def _visible_batch_payload(batch):
                 columns_detected.append(key_text)
 
     ranking_result = _load_batch_ranking_result(batch)
+    if isinstance(ranking_result, dict):
+        model_type = normalize_model_type(
+            (ranking_result.get("model_type") or ranking_result.get("selected_model_type") or "orbit")
+        ) or "orbit"
+        if isinstance(ranking_result.get("usage"), dict):
+            public_usage = _public_usage_payload(
+                ranking_result.get("usage"),
+                model_type=model_type,
+                credits_charged=((ranking_result.get("credits") or {}).get("charged") if isinstance(ranking_result.get("credits"), dict) else None),
+                credits_remaining=((ranking_result.get("credits") or {}).get("remaining") if isinstance(ranking_result.get("credits"), dict) else None),
+            )
+            ranking_result = {
+                **ranking_result,
+                "usage": public_usage,
+            }
     return {
         "batch_id": batch.id,
         "filename": batch.filename,
@@ -6341,7 +6516,6 @@ def _promote_batch_idea_to_thread(user, batch, idea, model_selection):
             "conversation_turns": 1,
             "generated_at": generated_at,
             "model_type": model_selection["model_type"],
-            "llm_model": model_selection["llm_model"],
             "credits_charged": analysis_credit_cost,
             "credits_remaining": remaining,
             "source": "batch_idea_upload",
@@ -6780,7 +6954,12 @@ def conversation_start():
             "mutations": [],
             "tool_results": [],
             "undo_available": False,
-            "usage": {"provider": "guardrail", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+            "usage": _public_usage_payload(
+                {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+                model_type=model_selection["model_type"],
+                credits_charged=0,
+                credits_remaining=user.credits_remaining,
+            ),
             "context_budget": get_context_budget(to_public_plan(user.subscription_plan)),
             "credits": {
                 "charged": 0,
@@ -6852,7 +7031,12 @@ def conversation_start():
             "mutations": [],
             "tool_results": [],
             "undo_available": False,
-            "usage": {"provider": "guardrail", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+            "usage": _public_usage_payload(
+                {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+                model_type=model_selection["model_type"],
+                credits_charged=0,
+                credits_remaining=user.credits_remaining,
+            ),
             "context_budget": get_context_budget(to_public_plan(user.subscription_plan)),
             "credits": {
                 "charged": 0,
@@ -6944,7 +7128,7 @@ def conversation_start():
                 mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
                 undo_snapshot = state.get("undo_snapshot") if isinstance(state.get("undo_snapshot"), dict) else None
 
-                credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"])
+                credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"], usage.get("provider"))
                 credit_settlement = _settle_reserved_credits(
                     user,
                     reserved_credits=reserved_credits,
@@ -7018,7 +7202,12 @@ def conversation_start():
                     "mutations": mutations,
                     "tool_results": mutations,
                     "undo_available": undo_available,
-                    "usage": usage,
+                    "usage": _public_usage_payload(
+                        usage,
+                        model_type=model_selection["model_type"],
+                        credits_charged=credits_charged,
+                        credits_remaining=remaining,
+                    ),
                     "context_budget": context_budget,
                     "credits": {
                         "charged": credits_charged,
@@ -7077,7 +7266,7 @@ def conversation_start():
         _release_reserved_credits(user, reserved_credits)
         raise
 
-    credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"])
+    credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"], usage.get("provider"))
     credit_settlement = _settle_reserved_credits(
         user,
         reserved_credits=reserved_credits,
@@ -7143,7 +7332,12 @@ def conversation_start():
         "mutations": mutations if isinstance(mutations, list) else [],
         "tool_results": mutations if isinstance(mutations, list) else [],
         "undo_available": undo_available,
-        "usage": usage,
+        "usage": _public_usage_payload(
+            usage,
+            model_type=model_selection["model_type"],
+            credits_charged=credits_charged,
+            credits_remaining=remaining,
+        ),
         "context_budget": context_budget,
         "credits": {
             "charged": credits_charged,
@@ -7318,7 +7512,12 @@ def conversation_continue():
             "mutations": [],
             "tool_results": [],
             "undo_available": False,
-            "usage": {"provider": "guardrail", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+            "usage": _public_usage_payload(
+                {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+                model_type=model_selection["model_type"],
+                credits_charged=0,
+                credits_remaining=user.credits_remaining,
+            ),
             "context_budget": get_context_budget(to_public_plan(user.subscription_plan)),
             "credits": {
                 "charged": 0,
@@ -7375,7 +7574,12 @@ def conversation_continue():
             "mutations": [],
             "tool_results": [],
             "undo_available": False,
-            "usage": {"provider": "guardrail", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+            "usage": _public_usage_payload(
+                {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+                model_type=model_selection["model_type"],
+                credits_charged=0,
+                credits_remaining=user.credits_remaining,
+            ),
             "context_budget": get_context_budget(to_public_plan(user.subscription_plan)),
             "credits": {
                 "charged": 0,
@@ -7467,7 +7671,7 @@ def conversation_continue():
                 mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
                 undo_snapshot = state.get("undo_snapshot") if isinstance(state.get("undo_snapshot"), dict) else None
 
-                credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"])
+                credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"], usage.get("provider"))
                 credit_settlement = _settle_reserved_credits(
                     user,
                     reserved_credits=reserved_credits,
@@ -7540,7 +7744,12 @@ def conversation_continue():
                     "mutations": mutations,
                     "tool_results": mutations,
                     "undo_available": undo_available,
-                    "usage": usage,
+                    "usage": _public_usage_payload(
+                        usage,
+                        model_type=model_selection["model_type"],
+                        credits_charged=credits_charged,
+                        credits_remaining=remaining,
+                    ),
                     "context_budget": context_budget,
                     "credits": {
                         "charged": credits_charged,
@@ -7599,7 +7808,7 @@ def conversation_continue():
         _release_reserved_credits(user, reserved_credits)
         raise
 
-    credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"])
+    credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"], usage.get("provider"))
     credit_settlement = _settle_reserved_credits(
         user,
         reserved_credits=reserved_credits,
@@ -7664,7 +7873,12 @@ def conversation_continue():
         "mutations": mutations if isinstance(mutations, list) else [],
         "tool_results": mutations if isinstance(mutations, list) else [],
         "undo_available": undo_available,
-        "usage": usage,
+        "usage": _public_usage_payload(
+            usage,
+            model_type=model_selection["model_type"],
+            credits_charged=credits_charged,
+            credits_remaining=remaining,
+        ),
         "context_budget": context_budget,
         "credits": {
             "charged": credits_charged,
@@ -7729,12 +7943,9 @@ def tools_entitlements():
 def provider_status():
     api_key = _anthropic_api_key()
     return jsonify({
-        "anthropic_configured": bool(api_key),
-        "anthropic_model": str(
-            current_app.config.get("AI_AGENT_ANTHROPIC_MODEL")
-            or os.getenv("AI_AGENT_ANTHROPIC_MODEL")
-            or "claude-3-7-sonnet-latest"
-        ),
+        "configured": bool(api_key),
+        "available_model_types": ["pluto", "orbit", "titan"],
+        "default_model_type": "pluto",
     }), 200
 
 
@@ -7769,8 +7980,12 @@ def list_threads():
         chat_history = _session_chat_history(candidate)
         readiness = candidate.get("readiness") if isinstance(candidate.get("readiness"), dict) else _compute_readiness(chat_history, candidate.get("strategy_objective"))
 
+        sanitized_candidate = _sanitize_user_visible_payload(
+            candidate,
+            fallback_model_type=normalize_model_type(candidate.get("model_type")) or "pluto",
+        )
         sessions_list.append({
-            **candidate,
+            **sanitized_candidate,
             "session_id": thread_id,
             "name": candidate.get("name") or "Jaspen Intake",
             "model_type": normalize_model_type(candidate.get("model_type")) or None,
@@ -7848,7 +8063,11 @@ def get_thread(thread_id):
     resolved_thread_id = str(session.get("session_id") or session_key or thread_id)
     chat_history = _session_chat_history(session)
     readiness = session.get("readiness") if isinstance(session.get("readiness"), dict) else _compute_readiness(chat_history, session.get("strategy_objective"))
-    analyses = _normalize_analysis_history(session, resolved_thread_id)
+    normalized_model_type = normalize_model_type(session.get("model_type")) or "pluto"
+    analyses = _sanitize_user_visible_payload(
+        _normalize_analysis_history(session, resolved_thread_id),
+        fallback_model_type=normalized_model_type,
+    )
 
     thread_payload = {
         "id": resolved_thread_id,
@@ -7873,8 +8092,12 @@ def get_thread(thread_id):
         "readiness_snapshot": readiness,
     }
 
+    sanitized_session = _sanitize_user_visible_payload(
+        session,
+        fallback_model_type=normalized_model_type,
+    )
     session_payload = {
-        **session,
+        **sanitized_session,
         "session_id": resolved_thread_id,
         "model_type": normalize_model_type(session.get("model_type")) or None,
         "strategy_objective": normalize_strategy_objective(session.get("strategy_objective")),
@@ -8078,9 +8301,15 @@ def update_thread(thread_id):
 
     chat_history = _session_chat_history(session)
     readiness = session.get("readiness") if isinstance(session.get("readiness"), dict) else _compute_readiness(chat_history, session.get("strategy_objective"))
+    normalized_model_type = normalize_model_type(session.get("model_type")) or "pluto"
+    sanitized_session = _sanitize_user_visible_payload(
+        session,
+        fallback_model_type=normalized_model_type,
+    )
     session_payload = {
-        **session,
+        **sanitized_session,
         "session_id": resolved_thread_id,
+        "model_type": normalize_model_type(session.get("model_type")) or None,
         "strategy_objective": normalize_strategy_objective(session.get("strategy_objective")),
         "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
         "intake_context": _sanitize_intake_context(
@@ -8518,7 +8747,7 @@ def conversation_regenerate():
                     "total_tokens": 0,
                 }
 
-                credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"])
+                credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"], usage.get("provider"))
                 credit_settlement = _settle_reserved_credits(
                     user,
                     reserved_credits=reserved_credits,
@@ -8579,7 +8808,12 @@ def conversation_regenerate():
                     "allowed_model_types": model_selection["allowed_model_types"],
                     "mutations": [],
                     "tool_results": [],
-                    "usage": usage,
+                    "usage": _public_usage_payload(
+                        usage,
+                        model_type=model_selection["model_type"],
+                        credits_charged=credits_charged,
+                        credits_remaining=remaining,
+                    ),
                     "context_budget": context_budget,
                     "credits": {"charged": credits_charged, "remaining": remaining},
                     "readiness": {
@@ -8632,7 +8866,7 @@ def conversation_regenerate():
         _release_reserved_credits(user, reserved_credits)
         raise
 
-    credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"])
+    credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"], usage.get("provider"))
     credit_settlement = _settle_reserved_credits(
         user,
         reserved_credits=reserved_credits,
@@ -8686,7 +8920,12 @@ def conversation_regenerate():
         "allowed_model_types": model_selection["allowed_model_types"],
         "mutations": [],
         "tool_results": [],
-        "usage": usage,
+        "usage": _public_usage_payload(
+            usage,
+            model_type=model_selection["model_type"],
+            credits_charged=credits_charged,
+            credits_remaining=remaining,
+        ),
         "context_budget": context_budget,
         "credits": {"charged": credits_charged, "remaining": remaining},
         "readiness": {
@@ -8711,16 +8950,47 @@ def get_thread_usage(thread_id):
     user_id = get_jwt_identity()
     sessions = load_user_sessions(user_id) or {}
     session_key, session = _resolve_user_session(sessions, thread_id)
-    if not isinstance(session, dict):
+    resolved_thread_id = str((session or {}).get("session_id") or session_key or thread_id)
+
+    usage_summary = session.get("usage_summary") if isinstance(session, dict) and isinstance(session.get("usage_summary"), dict) else {}
+    usage_events = session.get("usage_events") if isinstance(session, dict) and isinstance(session.get("usage_events"), list) else []
+    if not usage_events:
+        persisted_events = (
+            UsageEvent.query
+            .filter_by(user_id=str(user_id), thread_id=str(resolved_thread_id))
+            .order_by(UsageEvent.created_at.asc())
+            .all()
+        )
+        if persisted_events:
+            usage_events = [{
+                "timestamp": row.created_at.isoformat() if row.created_at else None,
+                "model_type": row.model_type,
+                "input_tokens": int(row.input_tokens or 0),
+                "output_tokens": int(row.output_tokens or 0),
+                "total_tokens": int(row.total_tokens or 0),
+                "credits_charged": int(row.credits_charged or 0),
+                "failover": {"persisted": True} if bool(row.is_failover) else None,
+            } for row in persisted_events]
+            usage_summary = {
+                "model_type": usage_events[-1].get("model_type") if usage_events else "pluto",
+                "input_tokens": sum(int(item.get("input_tokens") or 0) for item in usage_events),
+                "output_tokens": sum(int(item.get("output_tokens") or 0) for item in usage_events),
+                "total_tokens": sum(int(item.get("total_tokens") or 0) for item in usage_events),
+                "credits_charged": sum(int(item.get("credits_charged") or 0) for item in usage_events),
+                "events": len(usage_events),
+            }
+    if not isinstance(session, dict) and not usage_events:
         return jsonify({"error": "Thread not found"}), 404
 
-    resolved_thread_id = str(session.get("session_id") or session_key or thread_id)
-    usage_summary = session.get("usage_summary") if isinstance(session.get("usage_summary"), dict) else {}
-    usage_events = session.get("usage_events") if isinstance(session.get("usage_events"), list) else []
+    fallback_model_type = normalize_model_type(
+        (session or {}).get("model_type")
+        or usage_summary.get("model_type")
+        or "pluto"
+    ) or "pluto"
     return jsonify({
         "thread_id": resolved_thread_id,
-        "usage_summary": usage_summary,
-        "usage_events": usage_events,
+        "usage_summary": _public_usage_summary_payload(usage_summary, fallback_model_type=fallback_model_type),
+        "usage_events": _public_usage_events_payload(usage_events, fallback_model_type=fallback_model_type),
     }), 200
 
 
@@ -8766,7 +9036,7 @@ def analyze_data():
 
         df, filename = _dataset_from_upload(uploaded)
         summary = _summarize_dataset(df)
-        insight_text, provider = _llm_data_insight_text(summary, user_prompt)
+        insight_text, _provider = _llm_data_insight_text(summary, user_prompt)
 
         try:
             preview_df = df.head(5).copy()
@@ -8779,7 +9049,7 @@ def analyze_data():
             "file_name": filename,
             "dataset_summary": summary,
             "insight_text": insight_text,
-            "provider": provider,
+            "model_type": "pluto",
             "timestamp": _iso_now(),
         }
 
@@ -8918,7 +9188,7 @@ def rank_batch_ideas(batch_id):
         current_app.logger.exception("Failed ranking batch ideas")
         return jsonify({"error": f"Failed to rank ideas: {exc}"}), 500
 
-    credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"])
+    credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"], usage.get("provider"))
     credit_settlement = _settle_reserved_credits(
         user,
         reserved_credits=reserved_credits,
@@ -8932,7 +9202,12 @@ def rank_batch_ideas(batch_id):
     ranked_ideas = ranking_payload.get("ranked_ideas") if isinstance(ranking_payload, dict) else []
     ranking_record = {
         **ranking_payload,
-        "usage": usage,
+        "usage": _public_usage_payload(
+            usage,
+            model_type=model_selection["model_type"],
+            credits_charged=credits_charged,
+            credits_remaining=remaining,
+        ),
         "credits": {"charged": credits_charged, "remaining": remaining},
     }
     _save_batch_state(
@@ -9060,7 +9335,7 @@ def clarify_batch_idea(batch_id, idea_id):
         current_app.logger.exception("Failed reevaluating clarified batch idea")
         return jsonify({"error": f"Failed to reevaluate idea: {exc}"}), 500
 
-    credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"])
+    credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"], usage.get("provider"))
     credit_settlement = _settle_reserved_credits(
         user,
         reserved_credits=reserved_credits,
@@ -9088,7 +9363,12 @@ def clarify_batch_idea(batch_id, idea_id):
         **ranking_record,
         "batch_id": batch.id,
         "ranked_ideas": ideas,
-        "usage": usage,
+        "usage": _public_usage_payload(
+            usage,
+            model_type=model_selection["model_type"],
+            credits_charged=credits_charged,
+            credits_remaining=remaining,
+        ),
         "credits": {"charged": credits_charged, "remaining": remaining},
     }
     _save_batch_state(batch, ideas=ideas, ranking_result=ranking_record, status="clarifying")
@@ -9108,7 +9388,12 @@ def clarify_batch_idea(batch_id, idea_id):
     return jsonify({
         "batch_id": batch.id,
         "idea": updated_idea,
-        "usage": usage,
+        "usage": _public_usage_payload(
+            usage,
+            model_type=model_selection["model_type"],
+            credits_charged=credits_charged,
+            credits_remaining=remaining,
+        ),
         "credits": {"charged": credits_charged, "remaining": remaining},
         "status": batch.status,
     }), 200

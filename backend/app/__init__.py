@@ -194,6 +194,9 @@ def create_app():
     stripe_key = app.config['STRIPE_SECRET_KEY']
     if not stripe_key:
         raise RuntimeError("STRIPE_SECRET_KEY not set in environment")
+    is_production_env = str(os.getenv('FLASK_ENV') or '').strip().lower() == 'production'
+    if is_production_env and str(stripe_key).startswith('sk_test_'):
+        raise RuntimeError("Refusing to start in production with a Stripe test secret key (sk_test_...).")
     stripe.api_key = stripe_key
 
     # —— Map plan_keys to Stripe Price IDs —— #
@@ -209,6 +212,35 @@ def create_app():
         'pack_5000':       os.getenv('PRICE_ID_OVERAGE_5000'),
         'pack_20000':      os.getenv('PRICE_ID_OVERAGE_20000'),
     }
+    required_stripe_values = {
+        'PRICE_ID_ESSENTIAL': app.config['STRIPE_PRICE_IDS'].get('essential'),
+        'PRICE_ID_OVERAGE_1000': app.config['STRIPE_OVERAGE_PACK_PRICE_IDS'].get('pack_1000'),
+        'PRICE_ID_OVERAGE_5000': app.config['STRIPE_OVERAGE_PACK_PRICE_IDS'].get('pack_5000'),
+        'PRICE_ID_OVERAGE_20000': app.config['STRIPE_OVERAGE_PACK_PRICE_IDS'].get('pack_20000'),
+        'STRIPE_WEBHOOK_SECRET': app.config.get('STRIPE_WEBHOOK_SECRET'),
+    }
+    optional_stripe_values = {
+        'PRICE_ID_TEAM': app.config['STRIPE_PRICE_IDS'].get('team'),
+        'PRICE_ID_ENTERPRISE': app.config['STRIPE_PRICE_IDS'].get('enterprise'),
+    }
+    missing_required_stripe = [key for key, value in required_stripe_values.items() if not str(value or '').strip()]
+    missing_optional_stripe = [key for key, value in optional_stripe_values.items() if not str(value or '').strip()]
+    if missing_required_stripe:
+        current_app_logger = logging.getLogger(__name__)
+        current_app_logger.warning(
+            "Stripe configuration warnings: missing %s",
+            ", ".join(missing_required_stripe),
+        )
+        if is_production_env:
+            raise RuntimeError(
+                "Missing required Stripe production configuration: "
+                + ", ".join(missing_required_stripe)
+            )
+    if missing_optional_stripe:
+        logging.getLogger(__name__).warning(
+            "Stripe optional price IDs missing (sales-led plans may be unaffected): %s",
+            ", ".join(missing_optional_stripe),
+        )
     app.config['LLM_PROVIDER_MODELS'] = {
         'claude_haiku': (
             os.getenv('MODEL_CLAUDE_HAIKU')

@@ -2,6 +2,9 @@ import base64
 import hashlib
 import os
 import secrets
+import threading
+import time
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
@@ -11,6 +14,8 @@ from app.connector_store import get_connector_settings, update_connector_setting
 
 
 DEFAULT_SALESFORCE_AUTH_BASE_URL = "https://login.salesforce.com"
+SALESFORCE_PIPELINE_CACHE = {}
+SALESFORCE_PIPELINE_CACHE_LOCK = threading.Lock()
 
 
 
@@ -50,8 +55,52 @@ def salesforce_runtime_config(user_id):
         "refresh_token": _text(settings.get("salesforce_refresh_token") or os.getenv("SALESFORCE_REFRESH_TOKEN")),
         "access_token": _text(settings.get("salesforce_access_token") or os.getenv("SALESFORCE_ACCESS_TOKEN")),
         "token_type": _text(settings.get("salesforce_token_type") or "Bearer") or "Bearer",
+        "token_expires_at": _text(settings.get("salesforce_token_expires_at")),
         "auth_base_url": auth_base,
     }
+
+
+def _salesforce_pipeline_cache_ttl_seconds():
+    try:
+        return max(0, int(os.getenv("SALESFORCE_PIPELINE_CACHE_TTL_SECONDS", "300")))
+    except Exception:
+        return 300
+
+
+def _salesforce_pipeline_cache_key(user_id, config, days, limit):
+    payload = {
+        "user_id": str(user_id),
+        "instance_url": _text(config.get("instance_url")).lower(),
+        "days": int(days or 0),
+        "limit": int(limit or 0),
+    }
+    return hashlib.sha256(str(payload).encode("utf-8")).hexdigest()
+
+
+def _parse_iso_datetime(value):
+    text = _text(value)
+    if not text:
+        return None
+    try:
+        normalized = text.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(normalized)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def _token_expiry_iso(token_data):
+    if not isinstance(token_data, dict):
+        return None
+    try:
+        ttl = int(token_data.get("expires_in") or 0)
+    except Exception:
+        ttl = 0
+    if ttl <= 0:
+        return None
+    return (datetime.now(timezone.utc) + timedelta(seconds=max(0, ttl - 60))).isoformat()
 
 
 
@@ -140,7 +189,11 @@ def refresh_salesforce_access_token(config):
 def _ensure_access_token(user_id):
     config = salesforce_runtime_config(user_id)
     access_token = _text(config.get("access_token"))
-    if access_token:
+    expires_at = _parse_iso_datetime(config.get("token_expires_at"))
+    needs_refresh = False
+    if expires_at is not None:
+        needs_refresh = datetime.now(timezone.utc) >= (expires_at - timedelta(seconds=120))
+    if access_token and not needs_refresh:
         return config, None
 
     if not _text(config.get("refresh_token")):
@@ -154,6 +207,7 @@ def _ensure_access_token(user_id):
     updates = {
         "salesforce_access_token": new_access_token,
         "salesforce_token_type": _text(token_data.get("token_type") or "Bearer") or "Bearer",
+        "salesforce_token_expires_at": _token_expiry_iso(token_data),
     }
     if _text(token_data.get("instance_url")):
         updates["salesforce_instance_url"] = _text(token_data.get("instance_url"))
@@ -194,6 +248,15 @@ def query_salesforce(user_id, soql):
 def fetch_pipeline_summary(user_id, lookback_days=90, max_records=200):
     days = max(1, min(int(lookback_days or 90), 365))
     limit = max(1, min(int(max_records or 200), 2000))
+    config = salesforce_runtime_config(user_id)
+    ttl = _salesforce_pipeline_cache_ttl_seconds()
+    cache_key = _salesforce_pipeline_cache_key(user_id, config, days, limit)
+    now_ts = time.time()
+    if ttl > 0:
+        with SALESFORCE_PIPELINE_CACHE_LOCK:
+            cached = SALESFORCE_PIPELINE_CACHE.get(cache_key)
+            if isinstance(cached, dict) and float(cached.get("expires_at") or 0) > now_ts:
+                return dict(cached.get("payload") or {})
     soql = (
         "SELECT Id, Name, StageName, Amount, CloseDate, Probability, IsClosed "
         "FROM Opportunity "
@@ -260,7 +323,7 @@ def fetch_pipeline_summary(user_id, lookback_days=90, max_records=200):
         "stage_breakdown": stage_breakdown,
     }
 
-    return {
+    result = {
         "summary": summary,
         "records": records,
         "soql": soql,
@@ -268,6 +331,13 @@ def fetch_pipeline_summary(user_id, lookback_days=90, max_records=200):
         "duration_ms": query_meta.get("duration_ms"),
         "token_refreshed": bool(token_refresh_payload),
     }
+    if ttl > 0:
+        with SALESFORCE_PIPELINE_CACHE_LOCK:
+            SALESFORCE_PIPELINE_CACHE[cache_key] = {
+                "expires_at": now_ts + ttl,
+                "payload": result,
+            }
+    return result
 
 
 def probe_salesforce_connection(config):

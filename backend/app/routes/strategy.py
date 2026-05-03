@@ -1891,7 +1891,7 @@ def _resolve_user_model_selection(user, requested_model_type=None):
             'default_model_type': default_model_type,
         }
 
-    model_catalog = get_model_catalog(current_app.config)
+    model_catalog = get_model_catalog(current_app.config, include_backing_ids=True)
     model_meta = model_catalog.get(selected_model_type, {})
     return {
         'model_type': selected_model_type,
@@ -2213,7 +2213,6 @@ def analyze_project():
                 'conversation_turns': len(conversation_history),
                 'generated_at': generated_at,
                 'model_type': model_selection['model_type'],
-                'llm_model': model_selection['llm_model'],
             }
         }
 
@@ -2463,7 +2462,11 @@ RESPONSE RULES
 
         total_tokens = (usage or {}).get('total_tokens') if isinstance(usage, dict) else None
 
-        credits_charged = _estimate_usage_credit_charge(total_tokens, model_selection['model_type'])
+        credits_charged = _estimate_usage_credit_charge(
+            total_tokens,
+            model_selection['model_type'],
+            (usage or {}).get('provider') if isinstance(usage, dict) else None,
+        )
         credit_settlement = _settle_reserved_credits(
             user,
             reserved_credits=reserved_credits,
@@ -2641,6 +2644,7 @@ def portfolio_scores_agent():
         model_selection, model_error = _resolve_user_model_selection(user, requested_model_type=requested_model_type)
         if model_error:
             return jsonify(model_error), 403
+        from .ai_agent import _public_usage_payload
 
         sort_by = str(data.get('sort_by', 'date') or 'date').strip().lower()
         if sort_by not in _SCORES_SORT_BY_OPTIONS:
@@ -2676,7 +2680,12 @@ def portfolio_scores_agent():
                     "I don't have any scored projects in this view yet. "
                     "Broaden the filters or complete a few analyses first, then I can help you prioritize what to do next."
                 ),
-                'usage': {'provider': 'heuristic', 'model': None, 'input_tokens': 0, 'output_tokens': 0, 'total_tokens': 0},
+                'usage': _public_usage_payload(
+                    {},
+                    model_type=model_selection['model_type'],
+                    credits_charged=0,
+                    credits_remaining=int(user.credits_remaining or 0),
+                ),
                 'credits': {'charged': 0, 'remaining': int(user.credits_remaining or 0)},
                 'context': {'total_matching': 0, 'analyzed_count': 0, 'category': category_filter or 'All', 'search': search},
                 'model_type': model_selection['model_type'],
@@ -2758,7 +2767,11 @@ def portfolio_scores_agent():
             db.session.commit()
             raise
 
-        credits_charged = _estimate_usage_credit_charge((usage or {}).get('total_tokens'), model_selection['model_type'])
+        credits_charged = _estimate_usage_credit_charge(
+            (usage or {}).get('total_tokens'),
+            model_selection['model_type'],
+            (usage or {}).get('provider'),
+        )
         credit_settlement = _settle_reserved_credits(
             user,
             reserved_credits=reserved_credits,
@@ -2790,7 +2803,12 @@ def portfolio_scores_agent():
         db.session.commit()
         return jsonify({
             'reply': reply,
-            'usage': usage,
+            'usage': _public_usage_payload(
+                usage,
+                model_type=model_selection['model_type'],
+                credits_charged=credits_charged,
+                credits_remaining=remaining,
+            ),
             'credits': {'charged': credits_charged, 'remaining': remaining},
             'context': {
                 'total_matching': len(scores),

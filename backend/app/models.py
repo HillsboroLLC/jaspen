@@ -781,3 +781,50 @@ class AdminAuditEvent(db.Model):
             'remote_addr': self.remote_addr,
             'user_agent': self.user_agent,
         }
+
+
+class UsageEvent(db.Model):
+    __tablename__ = 'usage_events'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(
+        db.String(36),
+        db.ForeignKey('users.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    thread_id = db.Column(db.String(255), nullable=True, index=True)
+    model_type = db.Column(db.String(16), nullable=True, index=True)
+    provider = db.Column(db.String(32), nullable=True)
+    model = db.Column(db.String(255), nullable=True)
+    input_tokens = db.Column(db.Integer, nullable=False, default=0)
+    output_tokens = db.Column(db.Integer, nullable=False, default=0)
+    total_tokens = db.Column(db.Integer, nullable=False, default=0)
+    credits_charged = db.Column(db.Integer, nullable=False, default=0)
+    is_failover = db.Column(db.Boolean, nullable=False, default=False)
+    created_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        index=True,
+    )
+
+    __table_args__ = (
+        db.Index('ix_usage_events_user_date', 'user_id', 'created_at'),
+    )
+
+
+class StripeWebhookEvent(db.Model):
+    __tablename__ = 'stripe_webhook_events'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    stripe_event_id = db.Column(db.String(255), nullable=False, unique=True, index=True)
+    event_type = db.Column(db.String(100), nullable=False, index=True)
+    processed = db.Column(db.Boolean, nullable=False, default=False, index=True)
+    created_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        index=True,
+    )
+    processed_at = db.Column(db.DateTime, nullable=True, index=True)

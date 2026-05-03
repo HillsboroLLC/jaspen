@@ -3815,7 +3815,11 @@ useEffect(() => {
             <>
               <div className="jas-ud-usage-top">
                 <span className="jas-ud-usage-model">
-                  Model: {String(threadUsage?.usage_summary?.model || selectedModelType || 'unknown')}
+                  Model: {String(
+                    threadUsage?.usage_summary?.model_label
+                    || selectedModelOption?.label
+                    || 'Pluto'
+                  )}
                 </span>
                 <button
                   type="button"

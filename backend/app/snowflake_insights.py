@@ -1,7 +1,11 @@
 import datetime
 import decimal
+import hashlib
+import json
 import os
 import re
+import threading
+import time
 
 from app.connector_store import get_connector_settings
 
@@ -9,6 +13,49 @@ from app.connector_store import get_connector_settings
 IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
 TABLE_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*(?:\.[A-Za-z_][A-Za-z0-9_$]*){0,2}$")
 ALLOWED_FILTER_OPS = {"=", ">", "<", ">=", "<=", "like", "in"}
+SNOWFLAKE_QUERY_CACHE = {}
+SNOWFLAKE_CACHE_LOCK = threading.Lock()
+
+
+def _snowflake_cache_ttl_seconds():
+    try:
+        return max(0, int(os.getenv("SNOWFLAKE_QUERY_CACHE_TTL_SECONDS", "300")))
+    except Exception:
+        return 300
+
+
+def _prune_snowflake_cache(now_ts=None):
+    now_ts = now_ts or time.time()
+    ttl = _snowflake_cache_ttl_seconds()
+    if ttl <= 0:
+        return
+    expired = []
+    for key, item in SNOWFLAKE_QUERY_CACHE.items():
+        if not isinstance(item, dict):
+            expired.append(key)
+            continue
+        if float(item.get("expires_at") or 0) <= now_ts:
+            expired.append(key)
+    for key in expired:
+        SNOWFLAKE_QUERY_CACHE.pop(key, None)
+
+
+def _snowflake_cache_key(user_id, config, query, params, safe_limit):
+    signature_payload = {
+        "user_id": str(user_id),
+        "account": _text(config.get("account")).lower(),
+        "warehouse": _text(config.get("warehouse")).lower(),
+        "database": _text(config.get("database")).lower(),
+        "schema": _text(config.get("schema")).lower(),
+        "role": _text(config.get("role")).lower(),
+        "user": _text(config.get("user")).lower(),
+        "allowlist": list(config.get("table_allowlist") or []),
+        "query": query,
+        "params": params,
+        "limit": int(safe_limit or 0),
+    }
+    raw = json.dumps(signature_payload, sort_keys=True, default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 
@@ -215,6 +262,9 @@ def _connect_snowflake(config):
         "warehouse": config["warehouse"],
         "database": config["database"],
         "schema": config["schema"],
+        "login_timeout": int(os.getenv("SNOWFLAKE_LOGIN_TIMEOUT_SECONDS", "15")),
+        "network_timeout": int(os.getenv("SNOWFLAKE_NETWORK_TIMEOUT_SECONDS", "30")),
+        "socket_timeout": int(os.getenv("SNOWFLAKE_SOCKET_TIMEOUT_SECONDS", "30")),
     }
     if _text(config.get("role")):
         kwargs["role"] = config.get("role")
@@ -232,6 +282,46 @@ def _connect_snowflake(config):
     return snowflake.connector.connect(**kwargs)
 
 
+def _is_retryable_snowflake_error(exc):
+    if isinstance(exc, (ValueError, PermissionError)):
+        return False
+    text = str(exc or "").strip().lower()
+    retryable_markers = (
+        "timeout",
+        "timed out",
+        "temporar",
+        "try again",
+        "connection reset",
+        "connection aborted",
+        "service unavailable",
+        "failed to connect",
+        "could not connect",
+        "network",
+        "eof",
+    )
+    return any(marker in text for marker in retryable_markers)
+
+
+def _with_backoff(operation):
+    max_attempts = max(1, int(os.getenv("SNOWFLAKE_MAX_ATTEMPTS", "3")))
+    base_delay = float(os.getenv("SNOWFLAKE_RETRY_BASE_DELAY_SECONDS", "0.5"))
+    max_delay = float(os.getenv("SNOWFLAKE_RETRY_MAX_DELAY_SECONDS", "8.0"))
+
+    last_exc = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return operation()
+        except Exception as exc:
+            last_exc = exc
+            if attempt >= max_attempts or not _is_retryable_snowflake_error(exc):
+                raise
+            sleep_for = min(max_delay, base_delay * (2 ** (attempt - 1)))
+            time.sleep(max(0.0, sleep_for))
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("Snowflake operation failed")
+
+
 
 def test_snowflake_connection(user_id):
     """
@@ -240,17 +330,18 @@ def test_snowflake_connection(user_id):
     """
     try:
         config = snowflake_runtime_config(user_id)
-        conn = _connect_snowflake(config)
-        try:
-            cur = conn.cursor()
-            cur.execute("SELECT CURRENT_ACCOUNT()")
-            cur.fetchone()
-            cur.close()
-        finally:
+        def _probe_once():
+            conn = _connect_snowflake(config)
             try:
-                conn.close()
-            except Exception:
-                pass
+                with conn.cursor() as cur:
+                    cur.execute("SELECT CURRENT_ACCOUNT()", timeout=int(os.getenv("SNOWFLAKE_QUERY_TIMEOUT_SECONDS", "60")))
+                    cur.fetchone()
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+        _with_backoff(_probe_once)
         return True, ""
     except Exception as exc:
         return False, str(exc)
@@ -280,13 +371,32 @@ def run_allowlisted_query(user_id, table, *, columns=None, date_column=None, dat
         limit=limit,
     )
 
-    conn = _connect_snowflake(config)
-    cursor = None
-    try:
-        cursor = conn.cursor()
-        cursor.execute(query, params)
-        headers = [desc[0] for desc in (cursor.description or [])]
-        raw_rows = cursor.fetchall()
+    cache_key = _snowflake_cache_key(user_id, config, query, params, safe_limit)
+    ttl = _snowflake_cache_ttl_seconds()
+    now_ts = time.time()
+    if ttl > 0:
+        with SNOWFLAKE_CACHE_LOCK:
+            _prune_snowflake_cache(now_ts=now_ts)
+            cached = SNOWFLAKE_QUERY_CACHE.get(cache_key)
+            if isinstance(cached, dict) and float(cached.get("expires_at") or 0) > now_ts:
+                return dict(cached.get("payload") or {})
+
+    def _query_once():
+        conn = _connect_snowflake(config)
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    query,
+                    params,
+                    timeout=int(os.getenv("SNOWFLAKE_QUERY_TIMEOUT_SECONDS", "60")),
+                )
+                headers = [desc[0] for desc in (cursor.description or [])]
+                raw_rows = cursor.fetchall()
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
         rows = []
         for row in raw_rows:
@@ -312,16 +422,15 @@ def run_allowlisted_query(user_id, table, *, columns=None, date_column=None, dat
             "rows": rows,
             "summary": summary,
         }
-    finally:
-        if cursor is not None:
-            try:
-                cursor.close()
-            except Exception:
-                pass
-        try:
-            conn.close()
-        except Exception:
-            pass
+
+    result = _with_backoff(_query_once)
+    if ttl > 0:
+        with SNOWFLAKE_CACHE_LOCK:
+            SNOWFLAKE_QUERY_CACHE[cache_key] = {
+                "expires_at": time.time() + ttl,
+                "payload": result,
+            }
+    return result
 
 
 

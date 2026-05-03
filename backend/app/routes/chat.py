@@ -16,6 +16,28 @@ logger = logging.getLogger(__name__)
 chat_bp = Blueprint('chat', __name__)
 
 
+def _model_type_from_resolved_model(model_name):
+    text = str(model_name or '').strip().lower()
+    if 'opus' in text:
+        return 'titan'
+    if 'sonnet' in text:
+        return 'orbit'
+    return 'pluto'
+
+
+def _public_usage_payload(usage, resolved_model):
+    usage = usage if isinstance(usage, dict) else {}
+    model_type = _model_type_from_resolved_model(resolved_model)
+    label = {'pluto': 'Pluto', 'orbit': 'Orbit', 'titan': 'Titan'}.get(model_type, 'Pluto')
+    return {
+        'model_type': model_type,
+        'model_label': label,
+        'input_tokens': int(usage.get('input_tokens') or 0),
+        'output_tokens': int(usage.get('output_tokens') or 0),
+        'total_tokens': int(usage.get('total_tokens') or 0),
+    }
+
+
 def _anthropic_api_key():
     return (
         current_app.config.get('ANTHROPIC_API_KEY')
@@ -133,7 +155,11 @@ def chat():
             return jsonify({'error': 'No response from AI'}), 500
 
         logger.info('Anthropic response received for user %s via %s', current_user_id, resolved_model)
-        return jsonify({'success': True, 'reply': reply, 'usage': usage})
+        return jsonify({
+            'success': True,
+            'reply': reply,
+            'usage': _public_usage_payload(usage, resolved_model),
+        })
 
     except Exception as e:
         logger.error('Chat endpoint error: %s', e)
@@ -431,8 +457,8 @@ def test_chat():
     """
     return jsonify({
         'message': 'Chat route is working',
-        'anthropic_configured': bool(_anthropic_api_key()),
-        'anthropic_default_model': _anthropic_model_candidates()[0] if _anthropic_model_candidates() else None,
+        'ai_configured': bool(_anthropic_api_key()),
+        'default_model_type': 'pluto',
     })
 
 
@@ -443,7 +469,10 @@ def get_available_models():
     Get available Anthropic model candidates configured for this deployment.
     """
     try:
-        return jsonify({'success': True, 'models': _anthropic_model_candidates()})
+        return jsonify({
+            'success': True,
+            'model_types': ['pluto', 'orbit', 'titan'],
+        })
     except Exception as e:
         logger.error(f'Error fetching models: {e}')
         return jsonify({'error': str(e)}), 500
