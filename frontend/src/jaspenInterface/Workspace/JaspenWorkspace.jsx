@@ -773,6 +773,60 @@ function buildMessageAttachmentMeta(fileLike) {
   };
 }
 
+const SCORE_COMPONENT_PROMPT_ROWS = [
+  { key: 'financial_health', label: 'Financial Health', aliases: ['financial_health', 'financialHealth', 'financial', 'economics'] },
+  { key: 'operational_efficiency', label: 'Operational Efficiency', aliases: ['operational_efficiency', 'operationalEfficiency', 'operations', 'execution'] },
+  { key: 'market_position', label: 'Market Position', aliases: ['market_position', 'marketPosition', 'market', 'strategy'] },
+  { key: 'execution_readiness', label: 'Execution Readiness', aliases: ['execution_readiness', 'executionReadiness', 'readiness', 'team'] },
+];
+
+function extractScoreComponentRows(scorecard) {
+  const comps = scorecard?.component_scores || scorecard?.scores || scorecard?.compat?.components || {};
+  return SCORE_COMPONENT_PROMPT_ROWS.map((row) => {
+    const rawValue = row.aliases
+      .map((alias) => comps?.[alias])
+      .find((value) => value !== undefined && value !== null);
+    const numeric = Number(rawValue);
+    return {
+      key: row.key,
+      label: row.label,
+      value: Number.isFinite(numeric) ? Math.max(0, Math.min(100, Math.round(numeric))) : 0,
+    };
+  });
+}
+
+function scorecardRiskPromptText(scorecard) {
+  const risks = Array.isArray(scorecard?.risks) ? scorecard.risks : (Array.isArray(scorecard?.top_risks) ? scorecard.top_risks : []);
+  if (!risks.length) return '';
+  const first = risks[0];
+  if (typeof first === 'string') return first.trim().slice(0, 120);
+  if (first && typeof first === 'object') {
+    const candidate = String(first.title || first.risk || first.summary || first.description || '').trim();
+    return candidate.slice(0, 120);
+  }
+  return '';
+}
+
+function buildScorecardFollowUpPrompts(scorecard, projectTitle) {
+  if (!scorecard || typeof scorecard !== 'object') return [];
+  const rows = extractScoreComponentRows(scorecard).sort((a, b) => a.value - b.value);
+  const weakest = rows[0];
+  const riskText = scorecardRiskPromptText(scorecard);
+  const safeTitle = String(projectTitle || scorecard?.project_name || 'this initiative').trim() || 'this initiative';
+
+  const prompts = [
+    weakest
+      ? `What are the top 3 actions to lift ${weakest.label} from ${weakest.value} to 70 in the next 90 days?`
+      : 'What are the top 3 actions that would raise this score fastest?',
+    riskText
+      ? `Pressure-test this risk and propose mitigations: "${riskText}"`
+      : 'What assumptions are most likely to fail, and how should we de-risk them?',
+    `Give me an executive-ready 30-60-90 day plan for ${safeTitle}.`,
+  ];
+
+  return prompts.filter(Boolean);
+}
+
 function toUiMessages(history = []) {
   return (Array.isArray(history) ? history : [])
     .map((msg, historyIndex) => ({
@@ -6086,6 +6140,18 @@ if (data?.model_type) {
       setView('summary');
       setActiveTab('summary');
 
+      const suggestedFollowUps = buildScorecardFollowUpPrompts(
+        result,
+        deriveIdeaTitle({ result, messages, fallback: 'this initiative' }),
+      );
+      if (suggestedFollowUps.length > 0) {
+        const followUpText = [
+          'Ask Jaspen next:',
+          ...suggestedFollowUps.slice(0, 3).map((prompt, idx) => `${idx + 1}. ${prompt}`),
+        ].join('\n');
+        setMessages((prev) => [...prev, { role: 'ai', text: followUpText }]);
+      }
+
       // Let the score dashboard render immediately after a successful analysis.
       // Bundle/history refreshes should enrich the summary, not block navigation to it.
       window.setTimeout(() => {
@@ -8277,6 +8343,13 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       : !canStartOrgProjects
       ? 'Only creators and admins can begin a project in a shared workspace.'
       : 'Begin project';
+    const contextualScorePrompts = buildScorecardFollowUpPrompts(activeScorecard, workspaceProjectTitle);
+    const fallbackScorePrompts = [
+      'Explain what drove this score',
+      'Rewrite the top recommendation to sound more executive',
+      'Tighten the wording of the biggest risk',
+      'What would raise this score fastest?',
+    ];
     const scoreDrawerPrompts = scoreWorkspaceMode === 'summary'
       ? [
           ...(sfConnected ? [{
@@ -8286,10 +8359,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
             onClick: handleLoadSalesforcePipeline,
             loading: sfPipelineLoading,
           }] : []),
-          'Explain what drove this score',
-          'Rewrite the top recommendation to sound more executive',
-          'Tighten the wording of the biggest risk',
-          'What would raise this score fastest?',
+          ...(contextualScorePrompts.length > 0 ? contextualScorePrompts : fallbackScorePrompts),
         ]
       : [];
     const aiDrawerPlaceholder = scoreWorkspaceMode === 'summary'
