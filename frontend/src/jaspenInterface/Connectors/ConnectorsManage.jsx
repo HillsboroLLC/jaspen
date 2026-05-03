@@ -98,6 +98,10 @@ function mapConnectors(items) {
   return CONNECTOR_ORDER.map((id) => map.get(id)).filter(Boolean);
 }
 
+function connectorIsImplemented(connector) {
+  return String(connector?.implementation_status || 'implemented').trim().toLowerCase() === 'implemented';
+}
+
 function normalizeDraft(connector) {
   return {
     connection_status: connector?.connected ? 'connected' : 'disconnected',
@@ -492,6 +496,7 @@ export default function ConnectorsManage() {
   const selectedSetupMode = selectedConnector
     ? (setupModeByConnector[selectedConnector.id] || 'automatic')
     : 'automatic';
+  const selectedConnectorImplemented = connectorIsImplemented(selectedConnector);
   const selectedConnectorDirty = useMemo(
     () => connectorDraftChanged(selectedConnector, selectedDraft),
     [selectedConnector, selectedDraft]
@@ -1162,27 +1167,30 @@ export default function ConnectorsManage() {
           {!isFreePlan && (
           <div className="connectors-manage-layout">
             <section className="connectors-card-grid">
-              {visibleConnectors.map((connector) => (
-                <button
-                  key={connector.id}
-                  type="button"
-                  className={`connector-card ${selectedConnectorId === connector.id ? 'is-selected' : ''}`}
-                  onClick={() => setSelectedConnectorId(connector.id)}
-                >
-                  <div className="connector-card-head">
-                    <span className="connector-card-icon"><FontAwesomeIcon icon={connectorIcon(connector.id)} /></span>
-                    <span className={`connector-card-status int-badge ${connector.connected ? 'is-on int-badge-success' : 'is-off int-badge-danger'}`}>
-                      {connector.connected ? 'Connected' : 'Disconnected'}
-                    </span>
-                  </div>
-                  <h3>{connector.label}</h3>
-                  <p>{connector.description}</p>
-                  <div className="connector-card-foot">
-                    <span>{connector.sync_mode || 'import'}</span>
-                    <span>{connector.last_sync_at ? new Date(connector.last_sync_at).toLocaleString() : 'Never synced'}</span>
-                  </div>
-                </button>
-              ))}
+              {visibleConnectors.map((connector) => {
+                const implemented = connectorIsImplemented(connector);
+                return (
+                  <button
+                    key={connector.id}
+                    type="button"
+                    className={`connector-card ${selectedConnectorId === connector.id ? 'is-selected' : ''}`}
+                    onClick={() => setSelectedConnectorId(connector.id)}
+                  >
+                    <div className="connector-card-head">
+                      <span className="connector-card-icon"><FontAwesomeIcon icon={connectorIcon(connector.id)} /></span>
+                      <span className={`connector-card-status int-badge ${implemented ? (connector.connected ? 'is-on int-badge-success' : 'is-off int-badge-danger') : ''}`}>
+                        {implemented ? (connector.connected ? 'Connected' : 'Disconnected') : 'Coming soon'}
+                      </span>
+                    </div>
+                    <h3>{connector.label}</h3>
+                    <p>{connector.description}</p>
+                    <div className="connector-card-foot">
+                      <span>{implemented ? (connector.sync_mode || 'import') : 'Not yet available'}</span>
+                      <span>{implemented ? (connector.last_sync_at ? new Date(connector.last_sync_at).toLocaleString() : 'Never synced') : 'Coming soon'}</span>
+                    </div>
+                  </button>
+                );
+              })}
             </section>
 
             <section className="connector-detail-panel">
@@ -1193,61 +1201,73 @@ export default function ConnectorsManage() {
                     <div>
                       <h2>{selectedConnector.label}</h2>
                       <p>{selectedConnector.description}</p>
-                      {selectedConnectorDirty && (
+                      {selectedConnectorImplemented && selectedConnectorDirty && (
                         <p className="connector-unsaved-note" role="status" aria-live="polite">
                           You have unsaved changes for this connector.
                         </p>
                       )}
                     </div>
                     <div className="connector-detail-actions">
-                      <div className="connector-setup-mode">
-                        <button
-                          type="button"
-                          className={selectedSetupMode === 'automatic' ? 'is-active' : ''}
-                          onClick={() => setSetupModeByConnector((prev) => ({ ...prev, [selectedConnector.id]: 'automatic' }))}
-                        >
-                          Automatic
-                        </button>
-                        <button
-                          type="button"
-                          className={selectedSetupMode === 'manual' ? 'is-active' : ''}
-                          onClick={() => setSetupModeByConnector((prev) => ({ ...prev, [selectedConnector.id]: 'manual' }))}
-                        >
-                          Manual
-                        </button>
-                      </div>
-                      {selectedSetupMode === 'automatic' ? (
-                        <button type="button" onClick={runSetupCheck} disabled={busy} aria-disabled={busy}>
-                          <FontAwesomeIcon icon={faPlugCircleCheck} /> Run Setup Check
-                        </button>
-                      ) : (
+                      {selectedConnectorImplemented ? (
                         <>
-                          <button type="button" onClick={testConnection} disabled={busy} aria-disabled={busy}><FontAwesomeIcon icon={faFlask} /> Test Connection</button>
-                          {selectedConnector.id === 'snowflake_insights' && (
+                          <div className="connector-setup-mode">
                             <button
                               type="button"
-                              onClick={validateSnowflakeDataAccess}
-                              disabled={busy || snowflakeProbeBusy}
-                              aria-disabled={busy || snowflakeProbeBusy}
+                              className={selectedSetupMode === 'automatic' ? 'is-active' : ''}
+                              onClick={() => setSetupModeByConnector((prev) => ({ ...prev, [selectedConnector.id]: 'automatic' }))}
                             >
-                              <FontAwesomeIcon icon={faPlugCircleCheck} />
-                              {snowflakeProbeBusy ? 'Validating data…' : 'Validate Data Access'}
+                              Automatic
                             </button>
+                            <button
+                              type="button"
+                              className={selectedSetupMode === 'manual' ? 'is-active' : ''}
+                              onClick={() => setSetupModeByConnector((prev) => ({ ...prev, [selectedConnector.id]: 'manual' }))}
+                            >
+                              Manual
+                            </button>
+                          </div>
+                          {selectedSetupMode === 'automatic' ? (
+                            <button type="button" onClick={runSetupCheck} disabled={busy} aria-disabled={busy}>
+                              <FontAwesomeIcon icon={faPlugCircleCheck} /> Run Setup Check
+                            </button>
+                          ) : (
+                            <>
+                              <button type="button" onClick={testConnection} disabled={busy} aria-disabled={busy}><FontAwesomeIcon icon={faFlask} /> Test Connection</button>
+                              {selectedConnector.id === 'snowflake_insights' && (
+                                <button
+                                  type="button"
+                                  onClick={validateSnowflakeDataAccess}
+                                  disabled={busy || snowflakeProbeBusy}
+                                  aria-disabled={busy || snowflakeProbeBusy}
+                                >
+                                  <FontAwesomeIcon icon={faPlugCircleCheck} />
+                                  {snowflakeProbeBusy ? 'Validating data…' : 'Validate Data Access'}
+                                </button>
+                              )}
+                              <button type="button" onClick={syncNow} disabled={busy} aria-disabled={busy}><FontAwesomeIcon icon={faRotate} /> Sync Now</button>
+                              <button type="button" onClick={saveConnector} disabled={busy} aria-disabled={busy}><FontAwesomeIcon icon={faServer} /> Save Settings</button>
+                            </>
                           )}
-                          <button type="button" onClick={syncNow} disabled={busy} aria-disabled={busy}><FontAwesomeIcon icon={faRotate} /> Sync Now</button>
-                          <button type="button" onClick={saveConnector} disabled={busy} aria-disabled={busy}><FontAwesomeIcon icon={faServer} /> Save Settings</button>
+                          <button
+                            type="button"
+                            onClick={revertSelectedDraft}
+                            disabled={busy || !selectedConnectorDirty}
+                            aria-disabled={busy || !selectedConnectorDirty}
+                          >
+                            Revert Draft
+                          </button>
                         </>
+                      ) : (
+                        <span className="int-badge">Coming soon</span>
                       )}
-                      <button
-                        type="button"
-                        onClick={revertSelectedDraft}
-                        disabled={busy || !selectedConnectorDirty}
-                        aria-disabled={busy || !selectedConnectorDirty}
-                      >
-                        Revert Draft
-                      </button>
                     </div>
                   </header>
+                  {!selectedConnectorImplemented ? (
+                    <div className="connectors-manage-state">
+                      This connector is marked as coming soon and is currently read-only.
+                    </div>
+                  ) : (
+                    <>
                   <p className="connector-required-legend"><span aria-hidden="true">*</span> Required</p>
 
                   <div className="connector-core-controls">
@@ -1374,6 +1394,8 @@ export default function ConnectorsManage() {
                       </div>
                     )}
                   </section>
+                    </>
+                  )}
                 </>
               )}
             </section>
