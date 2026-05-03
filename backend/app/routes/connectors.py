@@ -138,6 +138,10 @@ def _salesforce_callback_url():
             return explicit
 
     # Canonical production fallback.
+    # Guard against misconfigured API_BASE_URL pointing at frontend host.
+    if "jaspen.ai" in api_base.lower() and "api.jaspen.ai" not in api_base.lower():
+        return "https://api.jaspen.ai/api/v1/connectors/salesforce/oauth/callback"
+
     if api_base:
         return f"{api_base.rstrip('/')}/api/v1/connectors/salesforce/oauth/callback"
 
