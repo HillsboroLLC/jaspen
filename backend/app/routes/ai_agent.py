@@ -986,6 +986,92 @@ def _connector_context_prompt_suffix(connector_snapshot):
     return "\n" + "\n".join(lines)
 
 
+def _session_memory_snippet(session):
+    if not isinstance(session, dict):
+        return ""
+    name = str(session.get("name") or "Untitled Project").strip() or "Untitled Project"
+    objective = normalize_strategy_objective(session.get("strategy_objective"), default="balanced")
+    readiness = session.get("readiness") if isinstance(session.get("readiness"), dict) else {}
+    readiness_percent = int(((readiness.get("overall") or {}).get("percent")) or readiness.get("percent") or 0)
+    intake_context = session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {}
+    industry = str(intake_context.get("industry") or "").strip()
+    company_size = _normalize_company_size(intake_context.get("company_size"))
+
+    chat_history = _session_chat_history(session)
+    last_user_text = ""
+    last_assistant_text = ""
+    for item in reversed(chat_history):
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip().lower()
+        text = _unwrap_user_message_content(_message_text(item))
+        if role == "assistant" and not last_assistant_text:
+            last_assistant_text = text
+        elif role == "user" and not last_user_text:
+            last_user_text = text
+        if last_user_text and last_assistant_text:
+            break
+
+    parts = [
+        f"{name} (objective={objective}, readiness={readiness_percent}%)",
+    ]
+    if industry:
+        parts.append(f"industry={industry}")
+    if company_size:
+        parts.append(f"company_size={company_size}")
+    if last_user_text:
+        parts.append(f"latest_user_focus={last_user_text[:180]}")
+    if last_assistant_text:
+        parts.append(f"latest_assistant_guidance={last_assistant_text[:180]}")
+    return "; ".join(parts)
+
+
+def _cross_session_memory_prompt_suffix(user_id, thread_id):
+    if not user_id:
+        return ""
+    try:
+        sessions = load_user_sessions(user_id)
+    except Exception:
+        current_app.logger.exception("Failed loading user sessions for cross-session memory")
+        return ""
+    if not isinstance(sessions, dict) or not sessions:
+        return ""
+
+    target_thread = str(thread_id or "").strip()
+    candidates = []
+    for key, session in sessions.items():
+        if not isinstance(session, dict):
+            continue
+        session_thread_id = str(session.get("session_id") or key or "").strip()
+        if not session_thread_id or session_thread_id == target_thread:
+            continue
+        ts = _parse_iso_datetime(session.get("timestamp")) or _parse_iso_datetime(session.get("created"))
+        ts_sort = ts or datetime.fromtimestamp(0)
+        candidates.append((ts_sort, session))
+
+    if not candidates:
+        return ""
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    lines = ["Cross-session memory (same user, recent projects):"]
+    added = 0
+    for _, session in candidates:
+        snippet = _session_memory_snippet(session)
+        if not snippet:
+            continue
+        lines.append(f"- {snippet}")
+        added += 1
+        if added >= 3:
+            break
+
+    if added == 0:
+        return ""
+    lines.append(
+        "- Reuse relevant context from these prior projects when helpful, but prioritize the user's current thread and request."
+    )
+    return "\n" + "\n".join(lines)
+
+
 def _format_component_label(key):
     token = str(key or "").replace("_", " ").strip()
     return token.title() if token else "Component"
@@ -2134,6 +2220,7 @@ def _build_agent_system_prompt(*, context_summary_text, intake_context, view_con
         f"{_intake_context_prompt_suffix(intake_context)}"
         f"{_view_context_prompt_suffix(view_context)}"
         f"{_connector_context_prompt_suffix(connector_context_snapshot)}"
+        f"{_cross_session_memory_prompt_suffix(user_id, thread_id)}"
         f"{_batch_promotion_prompt_suffix(user_id, thread_id)}"
         f"{_scenario_modeling_prompt_suffix(user_id, thread_id)}"
         f"{_monitoring_prompt_suffix(user_id)}"
