@@ -942,6 +942,72 @@ function normalizeSearchableText(value) {
     .trim();
 }
 
+function extractHistoryScoreMetrics(item) {
+  const result = item?.result && typeof item.result === 'object' ? item.result : {};
+  const componentScores = result?.component_scores && typeof result.component_scores === 'object'
+    ? result.component_scores
+    : {};
+  const toNumber = (value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+  };
+  const overallScore = toNumber(result?.jaspen_score);
+  return {
+    overall_score: overallScore,
+    risk_score: Number.isFinite(overallScore) ? Math.max(0, 100 - overallScore) : null,
+    financial_health: toNumber(componentScores?.financial_health),
+    operational_efficiency: toNumber(componentScores?.operational_efficiency),
+    market_position: toNumber(componentScores?.market_position),
+    execution_readiness: toNumber(componentScores?.execution_readiness),
+  };
+}
+
+function parseHistorySemanticFilter(query = '') {
+  const normalized = normalizeSearchableText(query).toLowerCase();
+  if (!normalized) return null;
+
+  const pattern = /\b((?:risk(?:\s+score)?|overall(?:\s+score)?|jaspen(?:\s+score)?|financial(?:\s+health)?|operational(?:\s+efficiency)?|market(?:\s+position)?|execution(?:\s+readiness)?|readiness))\b\s*(?:score\s*)?(below|under|less than|at most|<=|above|over|greater than|at least|>=)\s*(\d{1,3}(?:\.\d+)?)/i;
+  const match = normalized.match(pattern);
+  if (!match) return null;
+
+  const metricText = String(match[1] || '').toLowerCase();
+  const comparatorText = String(match[2] || '').toLowerCase();
+  const threshold = Number(match[3]);
+  if (!Number.isFinite(threshold)) return null;
+
+  const metric = (() => {
+    if (metricText.includes('risk')) return 'risk_score';
+    if (metricText.includes('overall') || metricText.includes('jaspen')) return 'overall_score';
+    if (metricText.includes('financial')) return 'financial_health';
+    if (metricText.includes('operational')) return 'operational_efficiency';
+    if (metricText.includes('market')) return 'market_position';
+    if (metricText.includes('execution') || metricText.includes('readiness')) return 'execution_readiness';
+    return null;
+  })();
+  if (!metric) return null;
+
+  const comparator = ['below', 'under', 'less than', 'at most', '<='].includes(comparatorText)
+    ? 'lte'
+    : 'gte';
+
+  const residualQuery = normalizeSearchableText(
+    normalized.replace(match[0], '').replace(/\s+/g, ' ')
+  ).toLowerCase();
+
+  return { metric, comparator, threshold, residualQuery };
+}
+
+function metricLabelForHistory(metricKey = '') {
+  const key = String(metricKey || '').toLowerCase();
+  if (key === 'risk_score') return 'Risk Score';
+  if (key === 'overall_score') return 'Jaspen Score';
+  if (key === 'financial_health') return 'Financial Health';
+  if (key === 'operational_efficiency') return 'Operational Efficiency';
+  if (key === 'market_position') return 'Market Position';
+  if (key === 'execution_readiness') return 'Execution Readiness';
+  return 'Score';
+}
+
 function buildHistorySearchRecord(item, query = '') {
   const normalizedQuery = normalizeSearchableText(query).toLowerCase();
   const rawHistory = Array.isArray(item?.result?.chat_history) ? item.result.chat_history : [];
@@ -956,9 +1022,52 @@ function buildHistorySearchRecord(item, query = '') {
     })),
     fallback: `Analysis ${item?.id?.slice(-8) || ''}`.trim(),
   });
+  const result = item?.result && typeof item.result === 'object' ? item.result : {};
+  const auxiliaryText = [
+    ...((Array.isArray(result?.key_insights) ? result.key_insights : []).map((value) => normalizeSearchableText(value))),
+    ...((Array.isArray(result?.recommendations) ? result.recommendations : []).map((value) => {
+      if (typeof value === 'string') return normalizeSearchableText(value);
+      if (value && typeof value === 'object') {
+        return normalizeSearchableText(value?.action || value?.recommendation || value?.title || value?.summary || '');
+      }
+      return '';
+    })),
+    ...((Array.isArray(result?.top_risks) ? result.top_risks : Array.isArray(result?.risks) ? result.risks : []).map((value) => {
+      if (typeof value === 'string') return normalizeSearchableText(value);
+      if (value && typeof value === 'object') {
+        return normalizeSearchableText(value?.risk || value?.title || value?.summary || value?.description || '');
+      }
+      return '';
+    })),
+  ].filter(Boolean);
+  const searchableCorpus = [title, ...messages, ...auxiliaryText];
 
   if (!normalizedQuery) {
     return { item, title, matchSnippet: '' };
+  }
+
+  const semanticFilter = parseHistorySemanticFilter(normalizedQuery);
+  const metrics = extractHistoryScoreMetrics(item);
+  if (semanticFilter) {
+    const metricValue = Number(metrics?.[semanticFilter.metric]);
+    if (!Number.isFinite(metricValue)) return null;
+    const passesNumeric = semanticFilter.comparator === 'lte'
+      ? metricValue <= semanticFilter.threshold
+      : metricValue >= semanticFilter.threshold;
+    if (!passesNumeric) return null;
+
+    const residual = normalizeSearchableText(semanticFilter.residualQuery).toLowerCase();
+    if (residual) {
+      const hasResidualMatch = searchableCorpus.some((segment) =>
+        String(segment || '').toLowerCase().includes(residual)
+      );
+      if (!hasResidualMatch) return null;
+    }
+    return {
+      item,
+      title,
+      matchSnippet: `${metricLabelForHistory(semanticFilter.metric)}: ${Math.round(metricValue)}`,
+    };
   }
 
   const titleLower = title.toLowerCase();
@@ -966,7 +1075,7 @@ function buildHistorySearchRecord(item, query = '') {
     return { item, title, matchSnippet: title };
   }
 
-  const matchedMessage = messages.find((message) => message.toLowerCase().includes(normalizedQuery));
+  const matchedMessage = searchableCorpus.find((message) => message.toLowerCase().includes(normalizedQuery));
   if (!matchedMessage) return null;
 
   const lowerMessage = matchedMessage.toLowerCase();
