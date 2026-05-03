@@ -127,21 +127,8 @@ def _salesforce_state_secret():
 
 
 def _salesforce_callback_url():
-    configured = _text(
-        current_app.config.get("SALESFORCE_REDIRECT_URI")
-        or os.getenv("SALESFORCE_REDIRECT_URI")
-    )
-    if configured:
-        return configured
-    public_base = _text(
-        os.getenv("API_BASE_URL")
-        or current_app.config.get("FRONTEND_BASE_URL")
-    ).rstrip("/")
-    if public_base and not public_base.startswith("http://localhost"):
-        # Strip www. — the API is served on the apex domain, not www
-        public_base = public_base.replace("://www.", "://")
-        return f"{public_base}/api/v1/connectors/salesforce/oauth/callback"
-    return f"{request.url_root.rstrip('/')}/api/v1/connectors/salesforce/oauth/callback"
+    return _text(current_app.config.get("SALESFORCE_REDIRECT_URI")) or \
+        f"{request.url_root.rstrip('/')}/api/v1/connectors/salesforce/oauth/callback"
 
 
 def _runtime_fields(connector_id, settings):

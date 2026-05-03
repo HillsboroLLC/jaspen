@@ -261,7 +261,12 @@ def create_app():
     app.config['SMARTSHEET_API_TOKEN'] = os.getenv('SMARTSHEET_API_TOKEN', '')
     app.config['SMARTSHEET_WEBHOOK_SECRET'] = os.getenv('SMARTSHEET_WEBHOOK_SECRET', '')
     app.config['SALESFORCE_AUTH_BASE_URL'] = os.getenv('SALESFORCE_AUTH_BASE_URL', 'https://login.salesforce.com')
-    app.config['SALESFORCE_REDIRECT_URI'] = os.getenv('SALESFORCE_REDIRECT_URI', '')
+    _sf_redirect = os.getenv('SALESFORCE_REDIRECT_URI', '').strip()
+    if not _sf_redirect:
+        _api_base = frontend_base.replace('://www.', '://').rstrip('/')
+        if _api_base and not _api_base.startswith('http://localhost'):
+            _sf_redirect = f"{_api_base}/api/v1/connectors/salesforce/oauth/callback"
+    app.config['SALESFORCE_REDIRECT_URI'] = _sf_redirect
     app.config['SNOWFLAKE_PRIVATE_KEY_PASSPHRASE'] = os.getenv('SNOWFLAKE_PRIVATE_KEY_PASSPHRASE', '')
     app.config['CONNECTOR_ENCRYPTION_KEY'] = os.getenv('CONNECTOR_ENCRYPTION_KEY', '')
     app.config['CONNECTOR_CREDENTIALS_SECRET'] = os.getenv('CONNECTOR_CREDENTIALS_SECRET', '')
