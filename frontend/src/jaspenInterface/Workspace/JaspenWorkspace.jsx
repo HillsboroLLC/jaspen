@@ -827,6 +827,44 @@ function buildScorecardFollowUpPrompts(scorecard, projectTitle) {
   return prompts.filter(Boolean);
 }
 
+const SCORECARD_PATCHABLE_FIELDS = [
+  'executive_summary',
+  'executive_narrative',
+  'top_risks',
+  'risks',
+  'recommendations',
+  'assumptions',
+  'key_insights',
+  'component_rationale',
+  'decision_framework',
+  'financial_impact',
+  'investment_analysis',
+  'npv_irr_analysis',
+  'valuation',
+];
+
+function buildScorecardRestorePatch(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return {};
+  const payload = {};
+  SCORECARD_PATCHABLE_FIELDS.forEach((key) => {
+    if (snapshot[key] !== undefined) payload[key] = snapshot[key];
+  });
+  if (payload.risks !== undefined && payload.top_risks === undefined) {
+    payload.top_risks = payload.risks;
+  }
+  delete payload.risks;
+  return payload;
+}
+
+function cloneScorecardSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return null;
+  try {
+    return JSON.parse(JSON.stringify(snapshot));
+  } catch {
+    return { ...snapshot };
+  }
+}
+
 function toUiMessages(history = []) {
   return (Array.isArray(history) ? history : [])
     .map((msg, historyIndex) => ({
@@ -1325,9 +1363,16 @@ const [pendingWbsConfirmation, setPendingWbsConfirmation] = useState(null);
   const [selectedScorecardId, setSelectedScorecardId] = useState(null);
   const [activeSnapshotId, setActiveSnapshotId] = useState(null);
   const [baselineScorecardId, setBaselineScorecardId] = useState(null);
+  const [scorecardUndoStack, setScorecardUndoStack] = useState([]);
+  const [scorecardRedoStack, setScorecardRedoStack] = useState([]);
+  const [scorecardEditHistoryBusy, setScorecardEditHistoryBusy] = useState(false);
 
   useEffect(() => {
     setPendingWbsConfirmation(null);
+  }, [currentSessionId, sessionId]);
+  useEffect(() => {
+    setScorecardUndoStack([]);
+    setScorecardRedoStack([]);
   }, [currentSessionId, sessionId]);
   // Ensure we always have a baseline scorecard id + snapshot once analysisResult exists
   useEffect(() => {
@@ -5506,9 +5551,68 @@ const liveStatusMessage = useMemo(() => {
   return sessionId ? 'Jaspen is thinking.' : 'Jaspen is starting the conversation.';
 }, [beginBusy, busy, isStreamingReply, streamToolStatus, sessionId]);
 
+const getActiveScorecardSnapshotForHistory = useCallback(() => {
+  const selectedId = String(effectiveSelectedScorecardId || activeScorecardId || '').trim();
+  if (selectedId && Array.isArray(scorecardSnapshots)) {
+    const selected = scorecardSnapshots.find((item) => String(item?.id || '') === selectedId);
+    if (selected && typeof selected === 'object') return cloneScorecardSnapshot(selected);
+  }
+  if (activeScorecard && typeof activeScorecard === 'object') return cloneScorecardSnapshot(activeScorecard);
+  if (analysisResult && typeof analysisResult === 'object') return cloneScorecardSnapshot(analysisResult);
+  return null;
+}, [activeScorecard, activeScorecardId, analysisResult, effectiveSelectedScorecardId, scorecardSnapshots]);
+
+const applySnapshotViaScorecardPatch = useCallback(async (snapshotToApply) => {
+  const tid = String(currentSessionId || sessionId || '').trim();
+  if (!tid || !snapshotToApply || typeof snapshotToApply !== 'object') return null;
+
+  const selectedId = String(
+    effectiveSelectedScorecardId
+    || activeScorecardId
+    || snapshotToApply.id
+    || snapshotToApply.analysis_id
+    || ''
+  ).trim() || null;
+  const patchPayload = buildScorecardRestorePatch(snapshotToApply);
+  if (Object.keys(patchPayload).length === 0) return null;
+
+  const headers = buildAuthHeaders({ 'Content-Type': 'application/json' }, 'PATCH');
+  const response = await fetch(
+    `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(tid)}/scorecard-patch`,
+    {
+      method: 'PATCH',
+      headers,
+      credentials: 'include',
+      body: JSON.stringify({
+        ...patchPayload,
+        selected_scorecard_id: selectedId,
+      }),
+    }
+  );
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  const payload = await response.json().catch(() => ({}));
+  if (payload?.updated_scorecard && typeof payload.updated_scorecard === 'object') {
+    setAnalysisResult((prev) => (prev ? { ...prev, ...payload.updated_scorecard } : prev));
+    if (payload?.selected_scorecard_id) {
+      setSelectedScorecardId(String(payload.selected_scorecard_id));
+    }
+  }
+  await refreshBundle(tid);
+  return payload;
+}, [
+  activeScorecardId,
+  currentSessionId,
+  effectiveSelectedScorecardId,
+  refreshBundle,
+  sessionId,
+]);
+
 const handleScoreCardFieldEdit = useCallback(async (fieldKey, newValue) => {
   const tid = String(currentSessionId || sessionId || '').trim();
   if (!tid) return;
+  const beforeSnapshot = getActiveScorecardSnapshotForHistory();
 
   const FIELD_MAP = {
     executive: 'executive_summary',
@@ -5548,6 +5652,17 @@ const handleScoreCardFieldEdit = useCallback(async (fieldKey, newValue) => {
       if (payload?.selected_scorecard_id) {
         setSelectedScorecardId(String(payload.selected_scorecard_id));
       }
+      if (beforeSnapshot) {
+        setScorecardUndoStack((prev) => [
+          ...prev,
+          {
+            before: beforeSnapshot,
+            after: cloneScorecardSnapshot(payload.updated_scorecard),
+            timestamp: Date.now(),
+          },
+        ].slice(-30));
+        setScorecardRedoStack([]);
+      }
     }
     await refreshBundle(tid);
   } catch {
@@ -5557,10 +5672,62 @@ const handleScoreCardFieldEdit = useCallback(async (fieldKey, newValue) => {
   activeScorecardId,
   currentSessionId,
   effectiveSelectedScorecardId,
+  getActiveScorecardSnapshotForHistory,
   refreshBundle,
   sessionId,
   showToast,
 ]);
+
+const undoScorecardManualEdit = useCallback(async () => {
+  if (scorecardEditHistoryBusy || scorecardUndoStack.length === 0) return;
+  const entry = scorecardUndoStack[scorecardUndoStack.length - 1];
+  if (!entry?.before) return;
+  setScorecardEditHistoryBusy(true);
+  try {
+    await applySnapshotViaScorecardPatch(entry.before);
+    setScorecardUndoStack((prev) => prev.slice(0, -1));
+    setScorecardRedoStack((prev) => [
+      ...prev,
+      {
+        before: cloneScorecardSnapshot(entry.before),
+        after: cloneScorecardSnapshot(entry.after),
+        timestamp: Date.now(),
+      },
+    ].slice(-30));
+    showToast('Reverted scorecard edit.', 'success');
+  } catch {
+    showToast('Could not undo scorecard edit right now.', 'error');
+  } finally {
+    setScorecardEditHistoryBusy(false);
+  }
+}, [applySnapshotViaScorecardPatch, scorecardEditHistoryBusy, scorecardUndoStack, showToast]);
+
+const redoScorecardManualEdit = useCallback(async () => {
+  if (scorecardEditHistoryBusy || scorecardRedoStack.length === 0) return;
+  const entry = scorecardRedoStack[scorecardRedoStack.length - 1];
+  if (!entry?.after) return;
+  setScorecardEditHistoryBusy(true);
+  try {
+    await applySnapshotViaScorecardPatch(entry.after);
+    setScorecardRedoStack((prev) => prev.slice(0, -1));
+    setScorecardUndoStack((prev) => [
+      ...prev,
+      {
+        before: cloneScorecardSnapshot(entry.before),
+        after: cloneScorecardSnapshot(entry.after),
+        timestamp: Date.now(),
+      },
+    ].slice(-30));
+    showToast('Reapplied scorecard edit.', 'success');
+  } catch {
+    showToast('Could not redo scorecard edit right now.', 'error');
+  } finally {
+    setScorecardEditHistoryBusy(false);
+  }
+}, [applySnapshotViaScorecardPatch, scorecardEditHistoryBusy, scorecardRedoStack, showToast]);
+
+const canUndoScorecardManualEdit = scorecardUndoStack.length > 0 && !scorecardEditHistoryBusy;
+const canRedoScorecardManualEdit = scorecardRedoStack.length > 0 && !scorecardEditHistoryBusy;
 
 useEffect(() => {
   if (planCategory !== 'enterprise' && planCategory !== 'team') {
@@ -9260,6 +9427,11 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
         onExportWbsCsv={handleExportWbsCsv}
         onExportConversationPdf={handleExportConversationPdf}
         onExportConversationMarkdown={handleExportConversationMarkdown}
+        canUndoManualEdits={canUndoScorecardManualEdit}
+        canRedoManualEdits={canRedoScorecardManualEdit}
+        onUndoManualEdit={undoScorecardManualEdit}
+        onRedoManualEdit={redoScorecardManualEdit}
+        manualEditHistoryBusy={scorecardEditHistoryBusy}
 
         onBackToMain={handleNewAnalysis}
         onOpenScenario={() => { setActiveTab('scenario'); setView('scenario'); }}

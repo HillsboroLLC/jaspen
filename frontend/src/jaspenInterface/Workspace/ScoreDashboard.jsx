@@ -5,7 +5,7 @@
 // ============================================================================
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faChevronDown, faDownload, faGripVertical, faPencil, faPrint, faSpinner, faTimes } from '@fortawesome/free-solid-svg-icons';
+import { faChevronDown, faDownload, faGripVertical, faPencil, faPrint, faRedo, faSpinner, faTimes, faUndo } from '@fortawesome/free-solid-svg-icons';
 import { ScoreDashboardSkeleton } from '../../shared/components/SkeletonLoader';
 import './ScoreDashboard.css';
 
@@ -69,6 +69,11 @@ export default function ScoreDashboard({
   onExportWbsCsv = null,
   onExportConversationPdf = null,
   onExportConversationMarkdown = null,
+  canUndoManualEdits = false,
+  canRedoManualEdits = false,
+  onUndoManualEdit = null,
+  onRedoManualEdit = null,
+  manualEditHistoryBusy = false,
   loading = false,
   drawerOpen = false,
   onEditField = null,
@@ -1303,8 +1308,35 @@ export default function ScoreDashboard({
             <span className="score-toolbar-kicker">{selectedSnapshot ? 'Selected scorecard' : 'Current scorecard'}</span>
             <span className="score-toolbar-title">{selectedScorecardLabel}</span>
           </div>
-          {hasExportMenu && (
-            <div className="sc-export-wrap score-toolbar-actions" ref={exportMenuRef}>
+          <div className="score-toolbar-actions">
+            {(onUndoManualEdit || onRedoManualEdit) && (
+              <div className="score-history-actions">
+                <button
+                  type="button"
+                  className="sc-btn sc-btn-secondary sc-btn-sm"
+                  onClick={() => onUndoManualEdit && onUndoManualEdit()}
+                  disabled={!canUndoManualEdits || manualEditHistoryBusy}
+                  aria-disabled={!canUndoManualEdits || manualEditHistoryBusy}
+                  title="Undo latest scorecard edit"
+                >
+                  <FontAwesomeIcon icon={faUndo} />
+                  Undo
+                </button>
+                <button
+                  type="button"
+                  className="sc-btn sc-btn-secondary sc-btn-sm"
+                  onClick={() => onRedoManualEdit && onRedoManualEdit()}
+                  disabled={!canRedoManualEdits || manualEditHistoryBusy}
+                  aria-disabled={!canRedoManualEdits || manualEditHistoryBusy}
+                  title="Redo latest scorecard edit"
+                >
+                  <FontAwesomeIcon icon={faRedo} />
+                  Redo
+                </button>
+              </div>
+            )}
+            {hasExportMenu && (
+              <div className="sc-export-wrap" ref={exportMenuRef}>
               <button
                 type="button"
                 className="sc-btn sc-btn-secondary sc-btn-sm"
@@ -1342,7 +1374,8 @@ export default function ScoreDashboard({
                 </div>
               )}
             </div>
-          )}
+            )}
+          </div>
         </div>
         <div className={`score-body-grid unified-layout ${drawerOpen ? 'drawer-open' : ''}`} ref={dashboardGridRef}>
           {orderedSectionCards.map((section) => (
