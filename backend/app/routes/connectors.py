@@ -109,7 +109,7 @@ def _frontend_base_url():
 def _safe_next_path(candidate):
     path = str(candidate or "").strip()
     if not path or not path.startswith("/") or path.startswith("//"):
-        return "/account?tab=connectors"
+        return "/connectors-manage"
     return path
 
 
@@ -127,8 +127,21 @@ def _salesforce_state_secret():
 
 
 def _salesforce_callback_url():
-    return _text(current_app.config.get("SALESFORCE_REDIRECT_URI")) or \
-        f"{request.url_root.rstrip('/')}/api/v1/connectors/salesforce/oauth/callback"
+    explicit = _text(current_app.config.get("SALESFORCE_REDIRECT_URI") or os.getenv("SALESFORCE_REDIRECT_URI"))
+    api_base = _text(current_app.config.get("API_BASE_URL") or os.getenv("API_BASE_URL"))
+    request_root = _text(request.url_root).rstrip("/")
+
+    # Prefer explicit redirect when it clearly targets the API host.
+    if explicit:
+        lowered = explicit.lower()
+        if "api.jaspen.ai" in lowered or "/api/v1/connectors/salesforce/oauth/callback" in lowered:
+            return explicit
+
+    # Canonical production fallback.
+    if api_base:
+        return f"{api_base.rstrip('/')}/api/v1/connectors/salesforce/oauth/callback"
+
+    return f"{request_root}/api/v1/connectors/salesforce/oauth/callback"
 
 
 def _runtime_fields(connector_id, settings):
@@ -933,7 +946,7 @@ def salesforce_oauth_start():
             "required_min_tier": salesforce_view.get("required_min_tier"),
         }), 403
 
-    next_path = _safe_next_path(request.args.get("next") or "/account?tab=connectors")
+    next_path = _safe_next_path(request.args.get("next") or "/connectors-manage")
     config = salesforce_runtime_config(user.id)
     missing = salesforce_missing_oauth_config(config)
     if missing:
@@ -977,14 +990,14 @@ def salesforce_oauth_callback():
                 max_age_seconds=int(os.getenv("SALESFORCE_OAUTH_STATE_TTL_SECONDS", "900")),
             )
             return _frontend_redirect(
-                (state_data or {}).get("next") or "/account?tab=connectors",
+                (state_data or {}).get("next") or "/connectors-manage",
                 {"sf_oauth": "error", "reason": oauth_error},
             )
         except Exception:
-            return _frontend_redirect("/account?tab=connectors", {"sf_oauth": "error", "reason": oauth_error})
+            return _frontend_redirect("/connectors-manage", {"sf_oauth": "error", "reason": oauth_error})
 
     if not code or not state_token:
-        return _frontend_redirect("/account?tab=connectors", {"sf_oauth": "error", "reason": "missing_code_or_state"})
+        return _frontend_redirect("/connectors-manage", {"sf_oauth": "error", "reason": "missing_code_or_state"})
 
     try:
         state_data = decode_salesforce_oauth_state(
@@ -993,14 +1006,14 @@ def salesforce_oauth_callback():
             max_age_seconds=int(os.getenv("SALESFORCE_OAUTH_STATE_TTL_SECONDS", "900")),
         )
     except SalesforceStateExpired:
-        return _frontend_redirect("/account?tab=connectors", {"sf_oauth": "error", "reason": "state_expired"})
+        return _frontend_redirect("/connectors-manage", {"sf_oauth": "error", "reason": "state_expired"})
     except SalesforceBadSignature:
-        return _frontend_redirect("/account?tab=connectors", {"sf_oauth": "error", "reason": "invalid_state"})
+        return _frontend_redirect("/connectors-manage", {"sf_oauth": "error", "reason": "invalid_state"})
     except Exception:
-        return _frontend_redirect("/account?tab=connectors", {"sf_oauth": "error", "reason": "invalid_state"})
+        return _frontend_redirect("/connectors-manage", {"sf_oauth": "error", "reason": "invalid_state"})
 
     user_id = _text((state_data or {}).get("user_id"))
-    next_path = _safe_next_path((state_data or {}).get("next") or "/account?tab=connectors")
+    next_path = _safe_next_path((state_data or {}).get("next") or "/connectors-manage")
     if not user_id:
         return _frontend_redirect(next_path, {"sf_oauth": "error", "reason": "missing_user_context"})
 
