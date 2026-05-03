@@ -197,8 +197,27 @@
 }
 
 @media print {
+  @page {
+    margin: 0.6in 0.55in 0.7in;
+  }
+
   body * {
     visibility: hidden !important;
+  }
+
+  body::after {
+    content: "Jaspen Strategic Intelligence • jaspen.ai";
+    position: fixed;
+    left: 0.55in;
+    right: 0.55in;
+    bottom: 0.22in;
+    font-size: 9px;
+    color: #4b5563;
+    border-top: 1px solid #d7dee8;
+    padding-top: 6px;
+    text-align: right;
+    visibility: visible !important;
+    z-index: 9999;
   }
 
   .score-dashboard-container,

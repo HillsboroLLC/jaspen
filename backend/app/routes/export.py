@@ -13,7 +13,7 @@ from app.orgs import active_membership_for_user, resolve_active_org_for_user
 from .ai_agent import _normalize_analysis_history
 from .reports import _markdown_to_pdf_bytes, _safe_text
 from .sessions import load_user_sessions
-from .strategy import _load_scenarios
+from .strategy import _load_scenarios, _scorecard_snapshot_state
 
 export_bp = Blueprint("export", __name__)
 
@@ -165,6 +165,7 @@ def _scorecard_record_for_export(session, thread_id, scorecard_id=None):
         "risks": risks,
         "recommendations": recommendations,
         "updated_at": selected.get("created_at") or result.get("timestamp") or session.get("timestamp"),
+        "scenario_variants": _scorecard_variants_for_export(session, thread_id, selected_scorecard_id=scorecard_id),
     }
     return payload, None
 
@@ -175,6 +176,70 @@ def _display_value(value):
     if isinstance(value, float):
         return f"{value:,.2f}"
     return str(value)
+
+
+def _safe_float(value):
+    try:
+        numeric = float(value)
+        if numeric == numeric:
+            return numeric
+    except Exception:
+        return None
+    return None
+
+
+def _scorecard_variants_for_export(session, thread_id, selected_scorecard_id=None):
+    if not isinstance(session, dict):
+        return []
+
+    result_blob = session.get("result") if isinstance(session.get("result"), dict) else {}
+    if not result_blob:
+        return []
+
+    try:
+        snapshot_state = _scorecard_snapshot_state(result_blob, thread_id)
+    except Exception:
+        return []
+
+    snapshots = snapshot_state.get("snapshots") if isinstance(snapshot_state.get("snapshots"), list) else []
+    if len(snapshots) <= 1:
+        return []
+
+    selected_id = str(selected_scorecard_id or snapshot_state.get("selected_id") or "").strip()
+    baseline_score = None
+    for snap in snapshots:
+        if not isinstance(snap, dict):
+            continue
+        if bool(snap.get("isBaseline")):
+            baseline_score = _safe_float(
+                snap.get("jaspen_score") or snap.get("overall_score") or snap.get("score")
+            )
+            break
+
+    variants = []
+    for snap in snapshots:
+        if not isinstance(snap, dict):
+            continue
+        snap_id = str(snap.get("id") or snap.get("analysis_id") or "").strip()
+        if not snap_id:
+            continue
+        score = _safe_float(snap.get("jaspen_score") or snap.get("overall_score") or snap.get("score"))
+        delta = None
+        if baseline_score is not None and score is not None:
+            delta = round(score - baseline_score, 2)
+        variants.append(
+            {
+                "id": snap_id,
+                "label": _safe_text(snap.get("label") or ("Baseline" if snap.get("isBaseline") else "Scenario"), 120),
+                "is_baseline": bool(snap.get("isBaseline")),
+                "is_selected": bool(selected_id and snap_id == selected_id),
+                "jaspen_score": score,
+                "score_category": _safe_text(snap.get("score_category"), 64) or None,
+                "delta_vs_baseline": delta,
+            }
+        )
+
+    return variants[:12]
 
 
 def _list_text_items(items, *, fallback):
@@ -416,6 +481,61 @@ def _scorecard_pdf_bytes(scorecard, *, org=None):
         story.append(component_table)
         story.append(Spacer(1, 12))
 
+        variants = scorecard.get("scenario_variants") if isinstance(scorecard.get("scenario_variants"), list) else []
+        if len(variants) > 1:
+            story.append(Paragraph("Scenario Comparison", section_style))
+            variant_rows = [["Variant", "Score", "Category", "Delta vs Baseline"]]
+            for item in variants[:10]:
+                if not isinstance(item, dict):
+                    continue
+                label = str(item.get("label") or "Scenario").strip() or "Scenario"
+                if item.get("is_selected"):
+                    label = f"{label} (Selected)"
+                if item.get("is_baseline"):
+                    label = f"{label} (Baseline)"
+                delta = item.get("delta_vs_baseline")
+                if delta is None:
+                    delta_text = "N/A"
+                else:
+                    delta_text = f"{delta:+.2f}"
+                variant_rows.append(
+                    [
+                        _safe_text(label, 80),
+                        _display_value(item.get("jaspen_score")),
+                        _display_value(item.get("score_category")),
+                        delta_text,
+                    ]
+                )
+            if len(variant_rows) == 1:
+                variant_rows.append(["No scenario variants recorded.", "N/A", "N/A", "N/A"])
+            variant_table = Table(
+                variant_rows,
+                colWidths=[2.8 * inch, 1.0 * inch, 1.4 * inch, 1.7 * inch],
+                hAlign="LEFT",
+            )
+            variant_table.setStyle(
+                TableStyle(
+                    [
+                        ("BACKGROUND", (0, 0), (3, 0), ice),
+                        ("TEXTCOLOR", (0, 0), (3, 0), navy),
+                        ("FONTNAME", (0, 0), (3, 0), "Helvetica-Bold"),
+                        ("FONTSIZE", (0, 0), (3, 0), 9),
+                        ("GRID", (0, 0), (3, -1), 0.5, border),
+                        ("FONTNAME", (0, 1), (3, -1), "Helvetica"),
+                        ("FONTSIZE", (0, 1), (3, -1), 8.5),
+                        ("ALIGN", (1, 1), (1, -1), "RIGHT"),
+                        ("ALIGN", (3, 1), (3, -1), "RIGHT"),
+                        ("ROWBACKGROUNDS", (0, 1), (3, -1), [colors.white, colors.HexColor("#F8FAFC")]),
+                        ("LEFTPADDING", (0, 0), (3, -1), 6),
+                        ("RIGHTPADDING", (0, 0), (3, -1), 6),
+                        ("TOPPADDING", (0, 0), (3, -1), 5),
+                        ("BOTTOMPADDING", (0, 0), (3, -1), 5),
+                    ]
+                )
+            )
+            story.append(variant_table)
+            story.append(Spacer(1, 12))
+
         story.append(Paragraph("Financial Impact", section_style))
         fin_rows = [["Metric", "Value"]]
         for key, value in list(financial_impact.items())[:12]:
@@ -568,6 +688,7 @@ def _pptx_bytes(scorecard, *, org=None):
     project_name = scorecard.get("project_name") or "Untitled Idea"
     generated_at = scorecard.get("updated_at") or _iso_now()
     component_scores = scorecard.get("component_scores") or {}
+    variants = scorecard.get("scenario_variants") if isinstance(scorecard.get("scenario_variants"), list) else []
     score_pairs = list(component_scores.items())[:4]
     while len(score_pairs) < 4:
         score_pairs.append((f"Metric {len(score_pairs) + 1}", "N/A"))
@@ -620,6 +741,24 @@ def _pptx_bytes(scorecard, *, org=None):
         p2.font.size = Pt(24)
         p2.font.bold = True
         p2.font.color.rgb = magenta
+
+    if len(variants) > 1:
+        slide = prs.slides.add_slide(prs.slide_layouts[6])
+        add_title(slide, "Scenario Comparison", "Baseline vs scenario score outcomes")
+        rows = ["Variant | Score | Delta vs Baseline"]
+        for item in variants[:8]:
+            if not isinstance(item, dict):
+                continue
+            label = str(item.get("label") or "Scenario").strip() or "Scenario"
+            if item.get("is_baseline"):
+                label = f"{label} (Baseline)"
+            elif item.get("is_selected"):
+                label = f"{label} (Selected)"
+            score_text = _display_value(item.get("jaspen_score"))
+            delta = item.get("delta_vs_baseline")
+            delta_text = "N/A" if delta is None else f"{float(delta):+,.2f}"
+            rows.append(f"{label} | {score_text} | {delta_text}")
+        add_bullets(slide, rows, left=0.7, top=1.7, width=8.8, height=4.9)
 
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     add_title(slide, "Financial Impact")
