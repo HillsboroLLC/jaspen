@@ -131,6 +131,7 @@ def _salesforce_callback_url():
     explicit = _text(current_app.config.get("SALESFORCE_REDIRECT_URI") or os.getenv("SALESFORCE_REDIRECT_URI"))
     api_base = _text(current_app.config.get("API_BASE_URL") or os.getenv("API_BASE_URL"))
     request_root = _text(request.url_root).rstrip("/")
+    force_public_api = _to_bool(current_app.config.get("SALESFORCE_FORCE_PUBLIC_API_CALLBACK"), True)
 
     def _normalize_salesforce_callback_host(url_value):
         value = _text(url_value)
@@ -159,6 +160,10 @@ def _salesforce_callback_url():
         lowered = normalized.lower()
         if "api.jaspen.ai" in lowered and "/api/v1/connectors/salesforce/oauth/callback" in lowered:
             return normalized
+
+    # Production-safe default: always use api.jaspen.ai callback to avoid frontend 404 callback loops.
+    if force_public_api:
+        return "https://api.jaspen.ai/api/v1/connectors/salesforce/oauth/callback"
 
     # Canonical production fallback.
     # Guard against misconfigured API_BASE_URL pointing at frontend host.

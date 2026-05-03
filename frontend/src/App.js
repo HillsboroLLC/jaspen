@@ -21,6 +21,7 @@ import Terms         from './pages/Terms/terms';
 import Support       from './pages/Support/Support';
 import AuthCallback  from './shared/components/AuthCallback';
 import ResetPasswordPage from './pages/Auth/ResetPasswordPage';
+import SalesforceOAuthBridge from './pages/Auth/SalesforceOAuthBridge';
 import JaspenScorePage from './pages/Marketing/JaspenScorePage';
 import SolutionsPage from './pages/Marketing/SolutionsPage';
 import PricingPage from './pages/Marketing/PricingPage';
@@ -85,6 +86,7 @@ function AnimatedAppRoutes({ withShell }) {
             <Route path="/pages/resources/connectors" element={withShell(<ConnectorsPage />, { title: 'Connectors', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/pages/resources/plugins" element={withShell(<PluginsPage />, { title: 'Plugins', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/auth/callback"  element={withShell(<AuthCallback />, { title: 'Authentication', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/api/v1/connectors/salesforce/oauth/callback" element={<SalesforceOAuthBridge />} />
             <Route path="/reset-password" element={withShell(<ResetPasswordPage />, { title: 'Reset password', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/server-error" element={withShell(<ServerErrorPage />, { title: 'Server error', showHeader: false, fullBleed: true, noPadding: true })} />
 
