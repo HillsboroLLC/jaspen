@@ -1,5 +1,7 @@
 from copy import deepcopy
 from datetime import datetime
+import math
+import os
 
 PLAN_ALIASES = {
     'growth': 'team',
@@ -22,7 +24,7 @@ DEFAULT_PLAN_CATALOG = {
     'free': {
         'label': 'Free',
         'monthly_price_usd': 0,
-        'monthly_credits': 300,
+        'monthly_credits': 500,
         'self_serve': True,
         'sales_only': False,
         'description': 'Individual access for exploring core workflows.',
@@ -30,7 +32,7 @@ DEFAULT_PLAN_CATALOG = {
     'essential': {
         'label': 'Essential',
         'monthly_price_usd': 20,
-        'monthly_credits': 3000,
+        'monthly_credits': 4000,
         'self_serve': True,
         'sales_only': False,
         'description': 'Individual plan with higher monthly usage limits.',
@@ -40,8 +42,8 @@ DEFAULT_PLAN_CATALOG = {
         'monthly_price_usd': 49,
         'price_model': 'per_seat',
         'min_seats': 5,
-        'monthly_credits_base': 5000,
-        'monthly_credits_per_seat': 500,
+        'monthly_credits_base': 8000,
+        'monthly_credits_per_seat': 1000,
         'monthly_credits': None,
         'self_serve': True,
         'sales_only': False,
@@ -102,7 +104,7 @@ DEFAULT_MODEL_CATALOG = {
         'label': 'Orbit',
         'version': '1.0',
         'description': 'Balanced depth and speed for broader cross-functional synthesis.',
-        'min_plan': 'team',
+        'min_plan': 'essential',
         'default_llm_model': 'claude-sonnet-4-20250514',
     },
     'titan': {
@@ -261,15 +263,31 @@ def is_credit_reset_due(user, now=None):
     return last_reset.year != now.year or last_reset.month != now.month
 
 
-def reset_user_monthly_credits(user, app_config, now=None):
+def _credit_rollover_cap_percent(app_config):
+    raw = app_config.get("CREDIT_ROLLOVER_CAP_PERCENT")
+    if raw is None:
+        raw = os.getenv("CREDIT_ROLLOVER_CAP_PERCENT", "0.25")
+    try:
+        return max(0.0, min(1.0, float(raw)))
+    except Exception:
+        return 0.25
+
+
+def reset_user_monthly_credits(user, app_config, now=None, force=False):
     now = now or datetime.utcnow()
     plan_key = normalize_plan_key(user.subscription_plan)
     monthly_limit = get_monthly_credit_limit(plan_key, app_config)
     if monthly_limit is None:
         return False
-    if not is_credit_reset_due(user, now):
+    if not force and not is_credit_reset_due(user, now):
         return False
-    user.credits_remaining = monthly_limit
+    try:
+        remaining_before_reset = max(0, int(user.credits_remaining or 0))
+    except Exception:
+        remaining_before_reset = 0
+    rollover_cap = int(math.floor(int(monthly_limit) * _credit_rollover_cap_percent(app_config)))
+    rollover = min(remaining_before_reset, max(0, rollover_cap))
+    user.credits_remaining = int(monthly_limit) + int(rollover)
     user.credits_reset_at = now
     return True
 

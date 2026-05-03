@@ -20,6 +20,7 @@ from app.billing_config import (
     get_plan_catalog,
     is_sales_only_plan,
     normalize_plan_key,
+    reset_user_monthly_credits,
     to_public_plan,
 )
 from app.connector_store import get_all_connector_settings
@@ -409,9 +410,7 @@ def stripe_webhook():
             user = User.query.filter_by(stripe_customer_id=customer_id).first()
 
         if user:
-            monthly_limit = get_monthly_credit_limit(user.subscription_plan, current_app.config)
-            if monthly_limit is not None:
-                user.credits_remaining = monthly_limit
+            if reset_user_monthly_credits(user, current_app.config, force=True):
                 db.session.commit()
 
     elif event.get('type') == 'customer.subscription.deleted':

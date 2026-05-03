@@ -61,7 +61,7 @@ class User(db.Model):
     credits_remaining = db.Column(
         db.Integer,
         nullable=True,
-        default=300
+        default=500
     )
     credits_reset_at = db.Column(
         db.DateTime,

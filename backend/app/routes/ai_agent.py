@@ -3178,6 +3178,54 @@ def _preflight_token_hint_for_batch_ideas(ideas, *, include_metadata=False):
     return max(default_tokens, total_tokens + output_tokens)
 
 
+def _max_output_tokens_for_plan(plan_key):
+    default_free = int(
+        current_app.config.get("AI_AGENT_MAX_OUTPUT_TOKENS")
+        or os.getenv("AI_AGENT_MAX_OUTPUT_TOKENS")
+        or 1500
+    )
+    caps = {
+        "free": default_free,
+        "essential": 4000,
+        "team": 4000,
+        "enterprise": 8000,
+    }
+
+    raw_caps = (
+        current_app.config.get("AI_AGENT_MAX_OUTPUT_TOKENS_BY_PLAN")
+        or os.getenv("AI_AGENT_MAX_OUTPUT_TOKENS_BY_PLAN")
+    )
+    if raw_caps:
+        parsed_caps = raw_caps
+        if isinstance(raw_caps, str):
+            try:
+                parsed_caps = json.loads(raw_caps)
+            except Exception:
+                parsed_caps = {}
+        if isinstance(parsed_caps, dict):
+            for key, value in parsed_caps.items():
+                normalized = to_public_plan(key)
+                if normalized not in caps:
+                    continue
+                try:
+                    caps[normalized] = max(256, int(value))
+                except Exception:
+                    continue
+
+    for plan in ("free", "essential", "team", "enterprise"):
+        env_key = f"AI_AGENT_MAX_OUTPUT_TOKENS_{plan.upper()}"
+        raw = current_app.config.get(env_key) or os.getenv(env_key)
+        if raw is None:
+            continue
+        try:
+            caps[plan] = max(256, int(raw))
+        except Exception:
+            continue
+
+    normalized_plan = to_public_plan(plan_key)
+    return int(max(256, caps.get(normalized_plan, caps["free"])))
+
+
 def _insufficient_credits_payload(user, required_credits):
     return {
         "error": "Insufficient credits",
@@ -4290,11 +4338,8 @@ def _generate_assistant_reply_anthropic(
         return fallback_reply, {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, [], [], None
 
     model_name = _anthropic_model_for_selection(model_selection)
-    max_tokens = int(
-        current_app.config.get("AI_AGENT_MAX_OUTPUT_TOKENS")
-        or os.getenv("AI_AGENT_MAX_OUTPUT_TOKENS")
-        or 260
-    )
+    plan_key = to_public_plan(user.subscription_plan) if user else "free"
+    max_tokens = _max_output_tokens_for_plan(plan_key)
     temperature = float(
         current_app.config.get("AI_AGENT_TEMPERATURE")
         or os.getenv("AI_AGENT_TEMPERATURE")
@@ -4326,7 +4371,6 @@ def _generate_assistant_reply_anthropic(
         messages = [{"role": "user", "content": user_content}]
 
     client = anthropic.Anthropic(api_key=api_key, timeout=_anthropic_request_timeout_seconds())
-    plan_key = to_public_plan(user.subscription_plan) if user else "free"
     can_mutate = (
         not disable_mutations
         and bool(thread_id)
@@ -4524,11 +4568,8 @@ def _stream_assistant_reply_events_anthropic(
         return
 
     model_name = _anthropic_model_for_selection(model_selection)
-    max_tokens = int(
-        current_app.config.get("AI_AGENT_MAX_OUTPUT_TOKENS")
-        or os.getenv("AI_AGENT_MAX_OUTPUT_TOKENS")
-        or 260
-    )
+    plan_key = to_public_plan(user.subscription_plan) if user else "free"
+    max_tokens = _max_output_tokens_for_plan(plan_key)
     temperature = float(
         current_app.config.get("AI_AGENT_TEMPERATURE")
         or os.getenv("AI_AGENT_TEMPERATURE")
@@ -4560,7 +4601,6 @@ def _stream_assistant_reply_events_anthropic(
         messages = [{"role": "user", "content": user_content}]
 
     client = anthropic.Anthropic(api_key=api_key, timeout=_anthropic_request_timeout_seconds())
-    plan_key = to_public_plan(user.subscription_plan) if user else "free"
     can_mutate = (
         not disable_mutations
         and bool(thread_id)
@@ -4816,17 +4856,13 @@ def _generate_assistant_reply_gemini(
     if not messages:
         messages = [{"role": "user", "content": _wrap_user_message_content(user_message)}]
 
-    max_tokens = int(
-        current_app.config.get("AI_AGENT_MAX_OUTPUT_TOKENS")
-        or os.getenv("AI_AGENT_MAX_OUTPUT_TOKENS")
-        or 260
-    )
+    plan_key = to_public_plan(user.subscription_plan) if user else "free"
+    max_tokens = _max_output_tokens_for_plan(plan_key)
     temperature = float(
         current_app.config.get("AI_AGENT_TEMPERATURE")
         or os.getenv("AI_AGENT_TEMPERATURE")
         or 0.2
     )
-    plan_key = to_public_plan(user.subscription_plan) if user else "free"
     can_mutate = (
         not disable_mutations
         and bool(thread_id)
@@ -5018,17 +5054,13 @@ def _stream_assistant_reply_events_gemini(
     if not messages:
         messages = [{"role": "user", "content": _wrap_user_message_content(user_message)}]
 
-    max_tokens = int(
-        current_app.config.get("AI_AGENT_MAX_OUTPUT_TOKENS")
-        or os.getenv("AI_AGENT_MAX_OUTPUT_TOKENS")
-        or 260
-    )
+    plan_key = to_public_plan(user.subscription_plan) if user else "free"
+    max_tokens = _max_output_tokens_for_plan(plan_key)
     temperature = float(
         current_app.config.get("AI_AGENT_TEMPERATURE")
         or os.getenv("AI_AGENT_TEMPERATURE")
         or 0.2
     )
-    plan_key = to_public_plan(user.subscription_plan) if user else "free"
     can_mutate = (
         not disable_mutations
         and bool(thread_id)
