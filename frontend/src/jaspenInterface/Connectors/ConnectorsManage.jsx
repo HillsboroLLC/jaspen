@@ -360,8 +360,8 @@ export default function ConnectorsManage() {
 
     if (sfOauth === 'success') {
       setMessage('Salesforce connected successfully.');
-      // Refresh connector list so status badge updates immediately
-      loadConnectors();
+      // Refresh connector list (with short retries) so badge flips reliably.
+      waitForSalesforceConnected();
       // Auto-select Salesforce in the sidebar so user sees the updated status
       setSelectedConnectorId('salesforce_insights');
     } else {
@@ -411,6 +411,38 @@ export default function ConnectorsManage() {
       setSelectedConnectorId(ordered[0].id);
     }
   }, [selectedConnectorId]);
+
+  const waitForSalesforceConnected = useCallback(async () => {
+    const maxAttempts = 8;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      let connected = false;
+      try {
+        const res = await authFetch(`${API_BASE}/api/v1/connectors/status`, {
+          credentials: 'include',
+          headers: authHeaders(false, 'GET'),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok) {
+          const ordered = mapConnectors(data?.connectors || []);
+          setConnectors(ordered);
+          setDrafts((prev) => {
+            const next = { ...prev };
+            ordered.forEach((item) => {
+              next[item.id] = normalizeDraft(item);
+            });
+            return next;
+          });
+          connected = Boolean(ordered.find((item) => item.id === 'salesforce_insights')?.connected);
+        }
+      } catch {
+        // best effort retries
+      }
+      if (connected) return true;
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    }
+    return false;
+  }, []);
 
   const loadThreads = useCallback(async () => {
     const res = await authFetch(`${API_BASE}/api/v1/ai-agent/threads`, {

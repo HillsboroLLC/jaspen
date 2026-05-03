@@ -297,6 +297,22 @@ def _merge_connector_view(connector_id, entitlement, settings):
         connection_status = "disconnected"
 
     connected = connection_status == "connected"
+    # Salesforce OAuth may successfully return tokens before the explicit
+    # connection_status flag is observed by a subsequent UI refresh. Treat a
+    # valid token-bearing config as connected to avoid a false "disconnected"
+    # badge after OAuth success.
+    if not connected and connector_id == "salesforce_insights":
+        has_oauth_token = bool(
+            _text(settings.get("salesforce_refresh_token"))
+            or _text(settings.get("salesforce_access_token"))
+        )
+        has_identity = bool(
+            _text(settings.get("salesforce_client_id"))
+            and _text(settings.get("salesforce_instance_url"))
+        )
+        if has_oauth_token and has_identity:
+            connected = True
+            connection_status = "connected"
     status = "locked" if not enabled else "connected" if connected else "available"
     sync_mode = str(settings.get("sync_mode") or "import").lower()
     if sync_mode not in modes:
