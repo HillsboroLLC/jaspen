@@ -852,6 +852,30 @@ export default function ConnectorsManage() {
 
   async function connectWithSalesforce() {
     try {
+      // Save credentials first so the backend has them before starting OAuth
+      if (selectedConnector?.id === 'salesforce_insights' && selectedDraft) {
+        const validationErrors = validateRequiredFields('salesforce_insights', selectedDraft);
+        if (Object.keys(validationErrors).length > 0) {
+          setDraftErrors((prev) => ({ ...prev, salesforce_insights: validationErrors }));
+          setError('Please fill in all required Salesforce fields before connecting.');
+          return;
+        }
+        setBusy(true);
+        setError('');
+        setMessage('');
+        const savePayload = buildUpdatePayload('salesforce_insights', selectedDraft);
+        const saveRes = await authFetch(`${API_BASE}/api/v1/connectors/salesforce_insights`, {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: authHeaders(true, 'PATCH'),
+          body: JSON.stringify(savePayload),
+        });
+        const saveData = await saveRes.json().catch(() => ({}));
+        if (!saveRes.ok) throw new Error(saveData?.error || 'Failed to save Salesforce credentials.');
+        await loadConnectors();
+        setBusy(false);
+      }
+
       const nextPath = window.location.pathname + window.location.search;
       const response = await fetch(
         `${API_BASE}/api/v1/connectors/salesforce/oauth/start?next=${encodeURIComponent(nextPath)}`,
@@ -867,6 +891,7 @@ export default function ConnectorsManage() {
       }
       window.location.href = data.auth_url;
     } catch (err) {
+      setBusy(false);
       setError(err?.message || 'Failed to connect to Salesforce. Try again.');
     }
   }
