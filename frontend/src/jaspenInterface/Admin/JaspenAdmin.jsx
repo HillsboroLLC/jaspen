@@ -18,7 +18,7 @@ const CREDIT_MODE_OPTIONS = [
 const ROLE_EXPERIENCE_OPTIONS = [
   {
     label: 'Individual · Free',
-    description: 'Personal workspace, 300 credits, Pluto only. No org features or shared dashboards.',
+    description: 'Personal workspace, 500 credits, Pluto only. No org features or shared dashboards.',
     path: '/new?admin_preview=workspace&plan_key=free',
   },
   {

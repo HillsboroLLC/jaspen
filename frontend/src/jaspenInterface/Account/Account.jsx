@@ -52,7 +52,7 @@ const FALLBACK_MODEL_TYPES = {
     label: 'Orbit',
     version: '1.0',
     description: 'Balanced depth and speed for broader cross-functional synthesis.',
-    min_plan: 'team',
+    min_plan: 'essential',
   },
   titan: {
     model_type: 'titan',

@@ -2984,6 +2984,48 @@ useEffect(() => {
     loadBilling();
   }, [loadBilling, user?.id, user?.email]);
 
+  const syncCreditsFromPayload = useCallback((payload, { refresh = false } = {}) => {
+    if (adminWorkspacePreviewPlan) return;
+    const remainingCandidates = [
+      payload?.credits?.remaining,
+      payload?.credits_remaining,
+      payload?.remaining_credits,
+      payload?.analysis?.meta?.credits_remaining,
+    ];
+    const limitCandidates = [
+      payload?.monthly_credit_limit,
+      payload?.credits?.monthly_limit,
+    ];
+
+    const remaining = remainingCandidates.find((value) => Number.isFinite(Number(value)));
+    const monthlyLimit = limitCandidates.find((value) => Number.isFinite(Number(value)));
+    if (remaining == null && monthlyLimit == null) {
+      if (refresh) void loadBilling();
+      return;
+    }
+
+    setBillingStatus((prev) => {
+      const next = (prev && typeof prev === 'object') ? { ...prev } : {};
+      if (remaining != null) {
+        next.credits_remaining = Number(remaining);
+      }
+      if (monthlyLimit != null) {
+        next.monthly_credit_limit = Number(monthlyLimit);
+      }
+      if (
+        Number.isFinite(Number(next.monthly_credit_limit))
+        && Number.isFinite(Number(next.credits_remaining))
+      ) {
+        next.credits_used = Math.max(0, Number(next.monthly_credit_limit) - Number(next.credits_remaining));
+      }
+      return next;
+    });
+
+    if (refresh) {
+      void loadBilling();
+    }
+  }, [adminWorkspacePreviewPlan, loadBilling]);
+
   useEffect(() => {
     if (!canUseScenarios && activeTab === 'scenario') {
       setActiveTab('summary');
@@ -5456,6 +5498,7 @@ useEffect(() => {
       // Let the placeholder stream render instead of showing a blocking overlay.
       setBusy(false);
       const data = await dataPromise;
+      syncCreditsFromPayload(data, { refresh: true });
 
       // Step 2: Set sessionId (must use real thread_id/session_id from backend)
       const sid = data.thread_id || data.session_id;
@@ -5516,6 +5559,7 @@ async function continueConversation(userText, options = {}) {
       viewContext: chatViewContext,
       attachments: Array.isArray(options.attachments) ? options.attachments : [],
     });
+    syncCreditsFromPayload(data, { refresh: true });
 
     if (data?.model_type) {
       setSelectedModelType(String(data.model_type).toLowerCase());
@@ -5612,6 +5656,7 @@ async function regenerateLastResponse() {
         });
       },
     });
+    syncCreditsFromPayload(data, { refresh: true });
 
     finalizeStreamingAssistant(messageId, data?.reply || data?.message || '', {
       historyIndex: Number.isInteger(data?.assistant_message_index) ? data.assistant_message_index : null,

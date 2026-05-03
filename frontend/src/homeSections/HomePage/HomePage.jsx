@@ -537,14 +537,14 @@ export default function HomePage() {
                 {
                   name: 'Free',
                   price: '$0',
-                  summary: '300 credits/month for individual entry.',
+                  summary: '500 credits/month for individual entry.',
                   ctaLabel: 'Sign up',
                   ctaHref: '/?auth=1',
                 },
                 {
                   name: 'Essential',
                   price: '$20 / month',
-                  summary: '3,000 credits/month with overage packs.',
+                  summary: '4,000 credits/month with overage packs.',
                   ctaLabel: 'Sign up',
                   ctaHref: '/?auth=1',
                 },

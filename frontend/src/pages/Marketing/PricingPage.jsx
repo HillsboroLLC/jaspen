@@ -11,14 +11,14 @@ const FALLBACK_PLANS = [
     plan_key: 'free',
     label: 'Free',
     price: '$0',
-    detail: '300 credits/month for individual exploration and light usage.',
+    detail: '500 credits/month for individual exploration and light usage.',
     sales_only: false,
   },
   {
     plan_key: 'essential',
     label: 'Essential',
     price: '$20 / month',
-    detail: '3,000 credits/month for individual daily execution workflows.',
+    detail: '4,000 credits/month for individual daily execution workflows.',
     sales_only: false,
   },
   {
@@ -56,7 +56,7 @@ const FALLBACK_MODEL_TYPES = {
     label: 'Orbit',
     version: '1.0',
     description: 'Balanced depth and speed for broader cross-functional synthesis.',
-    min_plan: 'team',
+    min_plan: 'essential',
   },
   titan: {
     model_type: 'titan',
@@ -250,8 +250,8 @@ export default function PricingPage() {
           </p>
         </div>
         <div className="hero-abstract pricing-abstract">
-          <div className="floating-price">Free 300 credits</div>
-          <div className="floating-price">Essential 3,000 credits</div>
+          <div className="floating-price">Free 500 credits</div>
+          <div className="floating-price">Essential 4,000 credits</div>
           <div className="floating-price">Team (Sales)</div>
           <div className="floating-price">Enterprise (Sales)</div>
         </div>
@@ -270,8 +270,8 @@ export default function PricingPage() {
           <article className="marketing-card pricing-summary">
             <h3>Usage policy</h3>
             <ul className="pricing-checks">
-              <li>Free: 300 credits/month</li>
-              <li>Essential: 3,000 credits/month</li>
+              <li>Free: 500 credits/month</li>
+              <li>Essential: 4,000 credits/month</li>
               <li>Team and Enterprise: contract-based pooled usage</li>
               <li>Overage packs available now for self-serve growth</li>
             </ul>
