@@ -39,6 +39,7 @@ from app.salesforce_sync import (
     encode_salesforce_oauth_state,
     exchange_salesforce_code,
     fetch_pipeline_summary,
+    generate_pkce_pair,
     salesforce_authorize_url,
     salesforce_missing_oauth_config,
     salesforce_runtime_config,
@@ -942,12 +943,18 @@ def salesforce_oauth_start():
     if not secret:
         return jsonify({"error": "Missing SECRET_KEY/JWT_SECRET_KEY for Salesforce OAuth state signing"}), 500
 
-    state = encode_salesforce_oauth_state(secret, {"user_id": str(user.id), "next": next_path})
+    code_verifier, code_challenge = generate_pkce_pair()
+    state = encode_salesforce_oauth_state(secret, {
+        "user_id": str(user.id),
+        "next": next_path,
+        "code_verifier": code_verifier,
+    })
     auth_url = salesforce_authorize_url(
         config=config,
         state_token=state,
         redirect_uri=_salesforce_callback_url(),
         scope=request.args.get("scope"),
+        code_challenge=code_challenge,
     )
     return jsonify({"success": True, "auth_url": auth_url, "next": next_path}), 200
 
@@ -1000,10 +1007,12 @@ def salesforce_oauth_callback():
 
     try:
         config = salesforce_runtime_config(user.id)
+        code_verifier = _text((state_data or {}).get("code_verifier"))
         token_payload, token_meta = exchange_salesforce_code(
             config=config,
             code=code,
             redirect_uri=_salesforce_callback_url(),
+            code_verifier=code_verifier or None,
         )
         updates = {
             "connection_status": "connected",

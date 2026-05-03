@@ -1,4 +1,7 @@
+import base64
+import hashlib
 import os
+import secrets
 from urllib.parse import urlencode
 
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
@@ -61,7 +64,15 @@ def salesforce_missing_oauth_config(config):
 
 
 
-def salesforce_authorize_url(config, state_token, redirect_uri, scope=None):
+def generate_pkce_pair():
+    """Return (code_verifier, code_challenge) for OAuth PKCE."""
+    code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b"=").decode("utf-8")
+    digest = hashlib.sha256(code_verifier.encode("utf-8")).digest()
+    code_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("utf-8")
+    return code_verifier, code_challenge
+
+
+def salesforce_authorize_url(config, state_token, redirect_uri, scope=None, code_challenge=None):
     base = _text(config.get("auth_base_url") or DEFAULT_SALESFORCE_AUTH_BASE_URL).rstrip("/")
     query = {
         "response_type": "code",
@@ -72,24 +83,31 @@ def salesforce_authorize_url(config, state_token, redirect_uri, scope=None):
     requested_scope = _text(scope) or "refresh_token api offline_access"
     if requested_scope:
         query["scope"] = requested_scope
+    if code_challenge:
+        query["code_challenge"] = code_challenge
+        query["code_challenge_method"] = "S256"
     return f"{base}/services/oauth2/authorize?{urlencode(query)}"
 
 
 
-def exchange_salesforce_code(config, code, redirect_uri):
+def exchange_salesforce_code(config, code, redirect_uri, code_verifier=None):
     base = _text(config.get("auth_base_url") or DEFAULT_SALESFORCE_AUTH_BASE_URL).rstrip("/")
     token_url = f"{base}/services/oauth2/token"
+
+    payload = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "client_id": config.get("client_id"),
+        "client_secret": config.get("client_secret"),
+        "redirect_uri": redirect_uri,
+    }
+    if code_verifier:
+        payload["code_verifier"] = code_verifier
 
     result = request_json_with_backoff(
         "POST",
         token_url,
-        data_payload={
-            "grant_type": "authorization_code",
-            "code": code,
-            "client_id": config.get("client_id"),
-            "client_secret": config.get("client_secret"),
-            "redirect_uri": redirect_uri,
-        },
+        data_payload=payload,
         headers={"Accept": "application/json"},
         timeout=20,
         max_attempts=3,
