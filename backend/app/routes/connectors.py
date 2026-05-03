@@ -2,6 +2,7 @@ import hmac
 import json
 import os
 from urllib.parse import urlencode
+from urllib.parse import urlparse, urlunparse
 
 from flask import Blueprint, current_app, jsonify, redirect, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
@@ -131,11 +132,33 @@ def _salesforce_callback_url():
     api_base = _text(current_app.config.get("API_BASE_URL") or os.getenv("API_BASE_URL"))
     request_root = _text(request.url_root).rstrip("/")
 
+    def _normalize_salesforce_callback_host(url_value):
+        value = _text(url_value)
+        if not value:
+            return ""
+        try:
+            parsed = urlparse(value)
+            host = (parsed.hostname or "").lower()
+            # Force production callback host to API domain (frontend host 404s this path).
+            if host.endswith("jaspen.ai") and host != "api.jaspen.ai":
+                port = f":{parsed.port}" if parsed.port else ""
+                netloc = f"api.jaspen.ai{port}"
+                if parsed.username:
+                    auth = parsed.username
+                    if parsed.password:
+                        auth += f":{parsed.password}"
+                    netloc = f"{auth}@{netloc}"
+                return urlunparse(parsed._replace(netloc=netloc))
+        except Exception:
+            return value
+        return value
+
     # Prefer explicit redirect when it clearly targets the API host.
     if explicit:
-        lowered = explicit.lower()
-        if "api.jaspen.ai" in lowered or "/api/v1/connectors/salesforce/oauth/callback" in lowered:
-            return explicit
+        normalized = _normalize_salesforce_callback_host(explicit)
+        lowered = normalized.lower()
+        if "api.jaspen.ai" in lowered and "/api/v1/connectors/salesforce/oauth/callback" in lowered:
+            return normalized
 
     # Canonical production fallback.
     # Guard against misconfigured API_BASE_URL pointing at frontend host.
