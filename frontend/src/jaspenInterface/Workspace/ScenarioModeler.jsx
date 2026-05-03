@@ -3,7 +3,7 @@
 // Purpose: DYNAMIC - Extracts fields from baseline, displays in 3 columns
 //          NOW WIRED to backend scenario endpoints (no mockResult / no delays)
 // ============================================================================
-import React, { useState, useMemo, useEffect, forwardRef, useImperativeHandle } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef, forwardRef, useImperativeHandle } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faSpinner, faPlay, faCheck } from '@fortawesome/free-solid-svg-icons';
 import { Jaspen } from './JaspenClient';
@@ -253,6 +253,13 @@ const SCENARIO_RESULT_METRICS = [
   { key: 'cost_of_inaction', label: 'Cost of Inaction', type: 'currency' },
   { key: 'time_to_market_impact', label: 'Time to Market Impact', type: 'months' },
   { key: 'jaspen_score', label: 'Jaspen Score', type: 'number' },
+];
+
+const SCENARIO_RUN_STAGES = [
+  'Validating lever updates…',
+  'Saving scenario draft…',
+  'Running financial model…',
+  'Building projected scorecard…',
 ];
 
 function parseMetricNumber(value) {
@@ -508,6 +515,7 @@ function ScenarioColumn({
   result,
   disabled,
   running,
+  progressMessage,
 }) {
   const scenarioMetricRows = useMemo(
     () => buildScenarioMetricRows(result),
@@ -525,6 +533,12 @@ function ScenarioColumn({
       <div className="jas-scenario-body jas-scenario-body-rich">
         <div className="jas-scenario-section">
           <div className="jas-scenario-section-title">Projected Outcomes</div>
+          {running && progressMessage ? (
+            <div className="jas-scenario-run-status" role="status" aria-live="polite">
+              <FontAwesomeIcon icon={faSpinner} spin />
+              <span>{progressMessage}</span>
+            </div>
+          ) : null}
           {result ? (
             <div className="results-box">
               {scenarioMetricRows.map((metric) => {
@@ -692,11 +706,60 @@ const ScenarioModeler = forwardRef(function ScenarioModeler({
 
   const [busy, setBusy] = useState(false);
   const [activeScenario, setActiveScenario] = useState(null);
+  const [scenarioProgress, setScenarioProgress] = useState({});
   const [aiSuggestOpen, setAiSuggestOpen] = useState(false);
   const [aiSuggestPrompt, setAiSuggestPrompt] = useState('');
   const [aiSuggestBusy, setAiSuggestBusy] = useState(false);
   const [aiSuggestDraft, setAiSuggestDraft] = useState(null);
   const [aiSuggestError, setAiSuggestError] = useState('');
+  const progressIntervalRef = useRef({});
+
+  const clearScenarioProgress = useCallback((label) => {
+    const key = String(label || '').trim();
+    if (!key) return;
+    if (progressIntervalRef.current[key]) {
+      window.clearInterval(progressIntervalRef.current[key]);
+      delete progressIntervalRef.current[key];
+    }
+    setScenarioProgress((prev) => {
+      if (!prev[key]) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  }, []);
+
+  const setScenarioProgressStage = useCallback((label, stageMessage) => {
+    const key = String(label || '').trim();
+    const message = String(stageMessage || '').trim();
+    if (!key || !message) return;
+    setScenarioProgress((prev) => ({ ...prev, [key]: message }));
+  }, []);
+
+  const startScenarioProgress = useCallback((label) => {
+    const key = String(label || '').trim();
+    if (!key) return;
+    clearScenarioProgress(key);
+    setScenarioProgressStage(key, SCENARIO_RUN_STAGES[0]);
+    let stageIndex = 0;
+    progressIntervalRef.current[key] = window.setInterval(() => {
+      stageIndex = Math.min(stageIndex + 1, SCENARIO_RUN_STAGES.length - 1);
+      setScenarioProgressStage(key, SCENARIO_RUN_STAGES[stageIndex]);
+    }, 1500);
+  }, [clearScenarioProgress, setScenarioProgressStage]);
+
+  const completeScenarioProgress = useCallback((label) => {
+    const key = String(label || '').trim();
+    if (!key) return;
+    setScenarioProgressStage(key, 'Scenario ready.');
+    if (progressIntervalRef.current[key]) {
+      window.clearInterval(progressIntervalRef.current[key]);
+      delete progressIntervalRef.current[key];
+    }
+    window.setTimeout(() => {
+      clearScenarioProgress(key);
+    }, 1100);
+  }, [clearScenarioProgress, setScenarioProgressStage]);
 
   const savedScenarioByLabel = useMemo(() => {
     const entries = Array.isArray(savedScenarios) ? savedScenarios : [];
@@ -739,6 +802,14 @@ const ScenarioModeler = forwardRef(function ScenarioModeler({
     setScenarioIdA(savedScenarioByLabel.a?.id || null);
     setScenarioIdB(savedScenarioByLabel.b?.id || null);
   }, [hydratedValues, savedScenarioByLabel, refreshVersion]);
+
+  useEffect(() => () => {
+    const timers = progressIntervalRef.current || {};
+    Object.values(timers).forEach((timerId) => {
+      window.clearInterval(timerId);
+    });
+    progressIntervalRef.current = {};
+  }, []);
 
   // Expose imperative controls for interactive chat actions (Score → Scenarios)
   useImperativeHandle(ref, () => ({
@@ -860,6 +931,7 @@ const ScenarioModeler = forwardRef(function ScenarioModeler({
 
   async function runScenario(values, setter, label) {
     if (!threadId) throw new Error('ScenarioModeler: threadId is required');
+    setScenarioProgressStage(label, SCENARIO_RUN_STAGES[0]);
 
     const deltas = buildDeltas(values);
 
@@ -892,6 +964,7 @@ const ScenarioModeler = forwardRef(function ScenarioModeler({
     }
 
     if (!scenarioId) {
+      setScenarioProgressStage(label, SCENARIO_RUN_STAGES[1]);
       // Create new scenario record
       const created = await Jaspen.createScenario(threadId, {
         deltas,
@@ -908,11 +981,15 @@ const ScenarioModeler = forwardRef(function ScenarioModeler({
         throw new Error('ScenarioModeler: createScenario returned no scenario_id');
       }
       setSlotId(scenarioId);
+    } else {
+      setScenarioProgressStage(label, SCENARIO_RUN_STAGES[1]);
     }
 
     // Apply scenario -> derived scorecard snapshot
+    setScenarioProgressStage(label, SCENARIO_RUN_STAGES[2]);
     const applied = await Jaspen.applyScenario(scenarioId, threadId);
     const normalized = normalizeApplied(applied);
+    setScenarioProgressStage(label, SCENARIO_RUN_STAGES[3]);
     const snapshot = normalized && typeof normalized === 'object'
       ? {
           ...normalized,
@@ -940,25 +1017,34 @@ const ScenarioModeler = forwardRef(function ScenarioModeler({
   async function runSingleScenario(values, setter, label) {
     setBusy(true);
     setActiveScenario(label);
+    startScenarioProgress(label);
     try {
       await runScenario(values, setter, label);
+      completeScenarioProgress(label);
     } finally {
       setBusy(false);
       setActiveScenario(null);
+      clearScenarioProgress(label);
     }
   }
 
   async function runAllScenarios() {
     setBusy(true);
     setActiveScenario('all');
+    startScenarioProgress('Scenario A');
+    startScenarioProgress('Scenario B');
     try {
       await Promise.all([
         runScenario(scenarioA, setResultA, 'Scenario A'),
         runScenario(scenarioB, setResultB, 'Scenario B'),
       ]);
+      completeScenarioProgress('Scenario A');
+      completeScenarioProgress('Scenario B');
     } finally {
       setBusy(false);
       setActiveScenario(null);
+      clearScenarioProgress('Scenario A');
+      clearScenarioProgress('Scenario B');
     }
   }
 
@@ -1081,6 +1167,14 @@ const ScenarioModeler = forwardRef(function ScenarioModeler({
     setAiSuggestOpen(false);
   }
 
+  const runAllProgressSummary = useMemo(() => {
+    if (activeScenario !== 'all') return '';
+    const parts = ['Scenario A', 'Scenario B']
+      .map((label) => scenarioProgress[label] ? `${label}: ${scenarioProgress[label]}` : '')
+      .filter(Boolean);
+    return parts.join(' • ');
+  }, [activeScenario, scenarioProgress]);
+
   if (loading) {
     return <ScenarioModelerSkeleton />;
   }
@@ -1121,6 +1215,7 @@ const ScenarioModeler = forwardRef(function ScenarioModeler({
           result={resultA}
           disabled={busy}
           running={activeScenario === 'Scenario A'}
+          progressMessage={scenarioProgress['Scenario A'] || ''}
         />
 
         <ScenarioColumn
@@ -1136,6 +1231,7 @@ const ScenarioModeler = forwardRef(function ScenarioModeler({
           result={resultB}
           disabled={busy}
           running={activeScenario === 'Scenario B'}
+          progressMessage={scenarioProgress['Scenario B'] || ''}
         />
       </div>
 
@@ -1155,6 +1251,12 @@ const ScenarioModeler = forwardRef(function ScenarioModeler({
           </Button>
         )}
       </div>
+      {runAllProgressSummary && (
+        <div className="jas-scenario-runall-status" role="status" aria-live="polite">
+          <FontAwesomeIcon icon={faSpinner} spin />
+          <span>{runAllProgressSummary}</span>
+        </div>
+      )}
 
       <div
         style={{

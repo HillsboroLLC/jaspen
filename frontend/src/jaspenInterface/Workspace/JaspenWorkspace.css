@@ -4332,6 +4332,18 @@
   color: var(--gray-500);
 }
 
+.jas-scenario-run-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(17, 36, 72, 0.08);
+  color: var(--navy);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
 .jas-scenario-field {
   display: flex;
   justify-content: space-between;
@@ -4681,6 +4693,17 @@
   gap: 12px;
   justify-content: center;
   margin-bottom: 20px;
+}
+
+.jas-scenario-runall-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: -8px 0 16px;
+  color: var(--navy);
+  font-size: 0.8125rem;
+  font-weight: 600;
 }
 
 .jas-scenario-hint {

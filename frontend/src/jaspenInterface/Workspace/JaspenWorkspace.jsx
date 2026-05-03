@@ -1241,6 +1241,7 @@ export default function JaspenWorkspace() {
   const [regenerating, setRegenerating] = useState(false);
   const [undoingMutation, setUndoingMutation] = useState(false);
   const [streamToolStatus, setStreamToolStatus] = useState('');
+  const manualProgressTimerRef = useRef(null);
   const [copiedMessageKey, setCopiedMessageKey] = useState(null);
   const [feedbackBusyKey, setFeedbackBusyKey] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
@@ -1258,6 +1259,33 @@ const [readinessSpec, setReadinessSpec] = useState(null);   // full spec payload
 const [specMap, setSpecMap] = useState({});                 // key -> {label, weight}
 const [readinessSource, setReadinessSource] = useState(null); // "ml" or "heuristic"
 const [readinessVersion, setReadinessVersion] = useState(null);
+
+const clearManualProgressStatus = useCallback(() => {
+  if (manualProgressTimerRef.current) {
+    window.clearInterval(manualProgressTimerRef.current);
+    manualProgressTimerRef.current = null;
+  }
+}, []);
+
+const startManualProgressStatus = useCallback((steps = [], intervalMs = 2200) => {
+  clearManualProgressStatus();
+  const normalizedSteps = (Array.isArray(steps) ? steps : [])
+    .map((step) => String(step || '').trim())
+    .filter(Boolean);
+  if (normalizedSteps.length === 0) {
+    setStreamToolStatus('');
+    return () => {};
+  }
+  let index = 0;
+  setStreamToolStatus(normalizedSteps[index]);
+  if (normalizedSteps.length > 1) {
+    manualProgressTimerRef.current = window.setInterval(() => {
+      index = Math.min(index + 1, normalizedSteps.length - 1);
+      setStreamToolStatus(normalizedSteps[index]);
+    }, Math.max(900, Number(intervalMs) || 2200));
+  }
+  return clearManualProgressStatus;
+}, [clearManualProgressStatus]);
 
 const applyPersistedReadinessSnapshot = useCallback((snapshot) => {
   const normalized = normalizeReadiness(snapshot);
@@ -1304,6 +1332,9 @@ useEffect(() => {
   const stillExists = opts.some(o => o.id === selectedVariantId);
   if (!stillExists) setSelectedVariantId('baseline');
 }, [analysisResult, resultA, resultB, resultC]); 
+useEffect(() => () => {
+  clearManualProgressStatus();
+}, [clearManualProgressStatus]);
 const selectedVariant = useMemo(() => {
   return (
     scoreVariants.find(v => v.id === selectedVariantId)?.result ||
@@ -6197,6 +6228,13 @@ const handleSaveStarter = async () => {
     }
     setBusy(true);
     setError(null);
+    const stopProgress = startManualProgressStatus([
+      'Reviewing conversation context…',
+      'Scoring strategic dimensions…',
+      'Building financial and risk analysis…',
+      'Drafting executive score narrative…',
+      'Preparing scorecard dashboard…',
+    ], 2100);
 
     const normalize = (r = {}) => {
       const compat = r.compat || {};
@@ -6250,16 +6288,17 @@ const handleSaveStarter = async () => {
       const sid  = currentSessionId || sessionId;
       const seed = Number(String(sid).replace(/\D/g, '')) % 2147483647 || 123456;
 
-const data = await Jaspen.analyzeFromConversation({
-  session_id: sid,
-  transcript,
-  deterministic: true,
-  seed,
-  model_type: selectedModelType,
-});
-if (data?.model_type) {
-  setSelectedModelType(String(data.model_type).toLowerCase());
-}
+      const data = await Jaspen.analyzeFromConversation({
+        session_id: sid,
+        transcript,
+        deterministic: true,
+        seed,
+        model_type: selectedModelType,
+      });
+      if (data?.model_type) {
+        setSelectedModelType(String(data.model_type).toLowerCase());
+      }
+      setStreamToolStatus('Scoring strategic dimensions…');
 
       const raw = (data && data.analysis) ? data.analysis : (data && data.analysis_result) ? data.analysis_result : (data || {});
 
@@ -6278,6 +6317,7 @@ if (data?.model_type) {
       if (!result || Object.keys(result).length === 0) {
         throw new Error("No analysis_result returned");
       }
+      setStreamToolStatus('Building scorecard narrative and recommendations…');
 
       // Ensure _baseline_scorecard is always set on the analysis result so
       // every downstream consumer (buildMergedScorecardSnapshots, Score tab
@@ -6306,6 +6346,7 @@ if (data?.model_type) {
 
       setView('summary');
       setActiveTab('summary');
+      setStreamToolStatus('Preparing summary dashboard…');
 
       const suggestedFollowUps = buildScorecardFollowUpPrompts(
         result,
@@ -6334,6 +6375,8 @@ if (data?.model_type) {
       }
       console.error(e);
     } finally {
+      stopProgress();
+      setStreamToolStatus('');
       setBusy(false);
     }
   }
