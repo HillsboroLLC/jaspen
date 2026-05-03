@@ -270,6 +270,36 @@ def fetch_pipeline_summary(user_id, lookback_days=90, max_records=200):
     }
 
 
+def probe_salesforce_connection(config):
+    """
+    Lightweight OAuth verification probe.
+    Calls Salesforce limits endpoint to confirm the token and instance are usable.
+    Raises RuntimeError on failure.
+    """
+    instance_url = _text(config.get("instance_url")).rstrip("/")
+    if not instance_url:
+        raise RuntimeError("Salesforce instance URL is not configured.")
+    if not _text(config.get("access_token")):
+        raise RuntimeError("Salesforce access token is missing.")
+
+    probe = request_json_with_backoff(
+        "GET",
+        f"{instance_url}/services/data/v60.0/limits",
+        headers=_authorized_headers(config),
+        timeout=15,
+        max_attempts=2,
+    )
+    payload = probe.get("data")
+    if not isinstance(payload, dict):
+        raise RuntimeError("Salesforce probe returned an unexpected payload.")
+    return {
+        "ok": True,
+        "attempt_count": probe.get("attempt_count"),
+        "duration_ms": probe.get("duration_ms"),
+        "keys": list(payload.keys())[:10],
+    }
+
+
 __all__ = [
     "BadSignature",
     "SignatureExpired",
@@ -277,6 +307,7 @@ __all__ = [
     "encode_salesforce_oauth_state",
     "exchange_salesforce_code",
     "fetch_pipeline_summary",
+    "probe_salesforce_connection",
     "salesforce_authorize_url",
     "salesforce_missing_oauth_config",
     "salesforce_runtime_config",

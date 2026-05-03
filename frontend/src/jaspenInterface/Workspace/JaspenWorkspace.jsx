@@ -6082,6 +6082,23 @@ function formatConnectorContextForAgent(data, connectorType) {
       `DATA:\n${rowsText}`
     );
   }
+  if (connectorType === 'salesforce') {
+    const summary = (data && typeof data.summary === 'object') ? data.summary : {};
+    const records = Array.isArray(data?.records) ? data.records : [];
+    const stageRows = Array.isArray(summary?.stage_breakdown) ? summary.stage_breakdown.slice(0, 8) : [];
+    const stageText = stageRows.length
+      ? stageRows.map((row) => `${row?.stage || 'Unknown'}: count=${Number(row?.count || 0)}, amount=${Number(row?.amount || 0)}`).join('\n')
+      : 'No stage breakdown available.';
+    const preview = records.slice(0, 10).map((row, i) => `Row ${i + 1}: ${JSON.stringify(row)}`).join('\n');
+    return (
+      `Source: Salesforce | Lookback days: ${Number(summary?.lookback_days || 90)}\n` +
+      `Opportunity count: ${Number(summary?.opportunity_count || records.length)}\n` +
+      `Open: ${Number(summary?.open_count || 0)} | Closed: ${Number(summary?.closed_count || 0)}\n` +
+      `Total amount: ${Number(summary?.total_amount || 0)} | Weighted amount: ${Number(summary?.weighted_amount || 0)}\n` +
+      `Stage breakdown:\n${stageText}\n\n` +
+      `DATA:\n${preview || 'No records returned.'}`
+    );
+  }
   if (typeof data?.pipeline_summary === 'string') return data.pipeline_summary;
   if (typeof data?.summary === 'string') return data.summary;
   if (typeof data?.message === 'string') return data.message;

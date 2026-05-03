@@ -40,6 +40,7 @@ from app.salesforce_sync import (
     exchange_salesforce_code,
     fetch_pipeline_summary,
     generate_pkce_pair,
+    probe_salesforce_connection,
     salesforce_authorize_url,
     salesforce_missing_oauth_config,
     salesforce_runtime_config,
@@ -1040,6 +1041,13 @@ def salesforce_oauth_callback():
         if refresh_token:
             updates["salesforce_refresh_token"] = refresh_token
 
+        # Probe Salesforce before persisting "connected" so UI state matches reality.
+        probe_config = dict(config or {})
+        probe_config["instance_url"] = updates.get("salesforce_instance_url") or probe_config.get("instance_url")
+        probe_config["access_token"] = updates.get("salesforce_access_token") or probe_config.get("access_token")
+        probe_config["token_type"] = updates.get("salesforce_token_type") or probe_config.get("token_type") or "Bearer"
+        probe_meta = probe_salesforce_connection(probe_config)
+
         update_connector_settings(user.id, "salesforce_insights", updates)
         mark_connector_sync_result(user.id, "salesforce_insights", "success")
         append_sync_audit_event(
@@ -1047,10 +1055,14 @@ def salesforce_oauth_callback():
             "salesforce_insights",
             action="oauth_callback",
             status="success",
-            attempt_count=token_meta.get("attempt_count"),
-            duration_ms=token_meta.get("duration_ms"),
+            attempt_count=probe_meta.get("attempt_count") or token_meta.get("attempt_count"),
+            duration_ms=probe_meta.get("duration_ms") or token_meta.get("duration_ms"),
             message="Salesforce OAuth connected",
-            metadata={"token_refreshed": bool(refresh_token)},
+            metadata={
+                "token_refreshed": bool(refresh_token),
+                "probe_ok": True,
+                "probe_keys": probe_meta.get("keys") or [],
+            },
         )
         return _frontend_redirect(next_path, {"sf_oauth": "success"})
     except Exception as exc:

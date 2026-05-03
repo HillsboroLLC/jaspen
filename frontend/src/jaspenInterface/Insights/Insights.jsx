@@ -362,13 +362,19 @@ export default function Insights() {
       ].join('\n');
     }
     if (connectorId === 'salesforce_insights') {
-      const summaryText = result?.pipeline_summary || '';
-      const opptyCount = result?.summary?.opportunity_count ?? (Array.isArray(result?.opportunities) ? result.opportunities.length : 0);
+      const summary = result?.summary || {};
+      const records = Array.isArray(result?.records) ? result.records.slice(0, 10) : [];
+      const opptyCount = summary?.opportunity_count ?? records.length;
+      const stageRows = Array.isArray(summary?.stage_breakdown) ? summary.stage_breakdown.slice(0, 6) : [];
       return [
         '[Connector Context]',
         'Source: Salesforce',
         `Opportunity count: ${opptyCount}`,
-        summaryText ? `Summary: ${summaryText}` : '',
+        `Open: ${Number(summary?.open_count || 0)} | Closed: ${Number(summary?.closed_count || 0)}`,
+        `Total amount: ${Number(summary?.total_amount || 0)} | Weighted amount: ${Number(summary?.weighted_amount || 0)}`,
+        stageRows.length ? `Stage breakdown: ${stageRows.map((row) => `${row?.stage || 'Unknown'}(${Number(row?.count || 0)})`).join(', ')}` : '',
+        'Data preview:',
+        ...records.map((row) => JSON.stringify(row)),
         'Use this data context in the strategy analysis.',
       ].filter(Boolean).join('\n');
     }
