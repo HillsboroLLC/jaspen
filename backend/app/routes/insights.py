@@ -54,9 +54,58 @@ def _uploads_root():
 
 
 def _dataset_csv_path(user_id, dataset_id):
-    user_dir = os.path.join(_uploads_root(), str(user_id))
+    base = os.path.realpath(_uploads_root())
+    user_dir = os.path.realpath(os.path.join(base, str(user_id)))
+    if os.path.commonpath([base, user_dir]) != base:
+        raise ValueError('Invalid dataset path')
     os.makedirs(user_dir, exist_ok=True)
-    return os.path.join(user_dir, f'{dataset_id}.csv')
+    path = os.path.realpath(os.path.join(user_dir, f'{dataset_id}.csv'))
+    if os.path.commonpath([base, path]) != base:
+        raise ValueError('Invalid dataset path')
+    return path
+
+
+def _read_excel_dataset(raw, filename):
+    try:
+        from openpyxl import load_workbook
+    except Exception as exc:
+        raise ValueError(f'Could not parse Excel file ({filename}): openpyxl is required ({exc})')
+
+    wb = None
+    try:
+        wb = load_workbook(filename=io.BytesIO(raw), read_only=True, data_only=True)
+        ws = wb.active
+        rows = ws.iter_rows(values_only=True)
+        header_row = next(rows, None)
+        if header_row is None:
+            raise ValueError('Excel file has no header row.')
+
+        normalized_headers = []
+        for idx, cell in enumerate(header_row):
+            label = str(cell).strip() if cell is not None else ''
+            if not label:
+                label = f'column_{idx + 1}'
+            normalized_headers.append(label)
+
+        values = []
+        width = len(normalized_headers)
+        for row in rows:
+            row_values = list(row[:width]) if isinstance(row, tuple) else []
+            if len(row_values) < width:
+                row_values.extend([None] * (width - len(row_values)))
+            values.append(row_values)
+
+        return pd.DataFrame(values, columns=normalized_headers)
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError(f'Could not parse Excel file ({filename}): {exc}')
+    finally:
+        if wb is not None:
+            try:
+                wb.close()
+            except Exception:
+                pass
 
 
 def _parse_uploaded_dataset(uploaded_file):
@@ -75,7 +124,7 @@ def _parse_uploaded_dataset(uploaded_file):
     if ext == '.csv':
         df = pd.read_csv(bio)
     else:
-        df = pd.read_excel(bio)
+        df = _read_excel_dataset(raw, filename)
 
     if df is None or df.empty:
         raise ValueError('Dataset has no rows.')
@@ -335,6 +384,8 @@ def analyze_dataset():
             'risks': analysis.get('risks') if isinstance(analysis.get('risks'), list) else [],
             'charts': analysis.get('charts') if isinstance(analysis.get('charts'), list) else [],
         }), 200
+    except ValueError as err:
+        return jsonify({'error': str(err)}), 400
     except Exception as err:
         current_app.logger.error("[insights.analyze] %s", err)
         return jsonify({'error': 'Failed to analyze dataset'}), 500
@@ -382,6 +433,8 @@ def delete_dataset(dataset_id):
         db.session.delete(dataset)
         db.session.commit()
         return jsonify({'success': True}), 200
+    except ValueError as err:
+        return jsonify({'error': str(err)}), 400
     except Exception as err:
         db.session.rollback()
         current_app.logger.error("[insights.delete] %s", err)

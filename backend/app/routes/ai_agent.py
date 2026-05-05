@@ -6028,7 +6028,37 @@ def _dataset_from_upload(uploaded_file):
         df = pd.read_csv(bio)
     elif ext in ("xlsx", "xls"):
         try:
-            df = pd.read_excel(bio)
+            from openpyxl import load_workbook
+
+            wb = load_workbook(filename=io.BytesIO(content), read_only=True, data_only=True)
+            try:
+                ws = wb.active
+                rows = ws.iter_rows(values_only=True)
+                header_row = next(rows, None)
+                if header_row is None:
+                    raise ValueError("Excel file has no header row.")
+
+                normalized_headers = []
+                for idx, cell in enumerate(header_row):
+                    label = str(cell).strip() if cell is not None else ""
+                    if not label:
+                        label = f"column_{idx + 1}"
+                    normalized_headers.append(label)
+
+                values = []
+                width = len(normalized_headers)
+                for row in rows:
+                    row_values = list(row[:width]) if isinstance(row, tuple) else []
+                    if len(row_values) < width:
+                        row_values.extend([None] * (width - len(row_values)))
+                    values.append(row_values)
+            finally:
+                try:
+                    wb.close()
+                except Exception:
+                    pass
+
+            df = pd.DataFrame(values, columns=normalized_headers)
         except Exception as exc:
             raise ValueError(f"Could not parse Excel file ({filename}): {exc}")
     else:
