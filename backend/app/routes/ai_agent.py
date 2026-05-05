@@ -3267,7 +3267,9 @@ def _max_output_tokens_for_plan(plan_key):
 
 def _insufficient_credits_payload(user, required_credits):
     return {
-        "error": "Insufficient credits",
+        "error": "You've used all your credits for this month.",
+        "code": "credits_exhausted",
+        "upgrade_url": "/account?tab=billing",
         "required_credits": int(required_credits or 0),
         "credits_remaining": user.credits_remaining,
         "plan_key": to_public_plan(user.subscription_plan),
@@ -6476,14 +6478,7 @@ def _promote_batch_idea_to_thread(user, batch, idea, model_selection):
     analysis_credit_cost = int(current_app.config.get("MARKET_IQ_ANALYSIS_CREDIT_COST", 25))
     charged, remaining = consume_credits(user, analysis_credit_cost)
     if not charged:
-        return None, {
-            "error": "Insufficient credits",
-            "required_credits": analysis_credit_cost,
-            "credits_remaining": user.credits_remaining,
-            "plan_key": to_public_plan(user.subscription_plan),
-            "monthly_credit_limit": get_monthly_credit_limit(user.subscription_plan, current_app.config),
-            "suggestion": "Purchase an overage pack or upgrade your plan.",
-        }, 402
+        return None, _insufficient_credits_payload(user, analysis_credit_cost), 402
 
     client = get_llm_client()
     try:

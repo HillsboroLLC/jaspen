@@ -14,7 +14,7 @@ import {
 } from '@fortawesome/free-solid-svg-icons';
 
 import { useAuth } from '../../shared/auth/AuthContext';
-import { buildAuthHeaders } from '../../shared/auth/http';
+import { AUTH_EVENTS, buildAuthHeaders } from '../../shared/auth/http';
 import { API_BASE } from '../../config/apiBase';
 import { buildInviteLink, buildInviteDisplay } from '../../shared/inviteLink';
 import { getPlanConnectorSentence } from '../../shared/billing/planConnectors';
@@ -148,6 +148,16 @@ export default function AppMenu() {
   useEffect(() => {
     loadBilling();
   }, [loadBilling, user?.id, user?.email]);
+
+  useEffect(() => {
+    const onCreditsExhausted = (event) => {
+      const message = String(event?.detail?.message || "You've used all your credits for this month.").trim();
+      setBillingMessage(message);
+      setBillingModalOpen(true);
+    };
+    window.addEventListener(AUTH_EVENTS.CREDITS_EXHAUSTED_EVENT, onCreditsExhausted);
+    return () => window.removeEventListener(AUTH_EVENTS.CREDITS_EXHAUSTED_EVENT, onCreditsExhausted);
+  }, []);
 
   // Toggle body class so CSS can push page content when sidebar is open/closed
   useEffect(() => {

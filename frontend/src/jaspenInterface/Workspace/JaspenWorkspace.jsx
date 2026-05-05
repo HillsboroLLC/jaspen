@@ -14,7 +14,7 @@ import ErrorBoundary from '../../shared/components/ErrorBoundary';
 import ConfirmDialog from '../../shared/components/ConfirmDialog';
 import { useToast, ToastContainer } from '../../shared/components/Toast';
 import { useAuth } from 'shared/auth/AuthContext';
-import { authFetch as cookieAuthFetch, buildAuthHeaders } from '../../shared/auth/http';
+import { AUTH_EVENTS, authFetch as cookieAuthFetch, buildAuthHeaders } from '../../shared/auth/http';
 import { getPlanConnectorSentence } from '../../shared/billing/planConnectors';
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
@@ -2328,6 +2328,16 @@ useEffect(() => {
   const [threadUsageError, setThreadUsageError] = useState('');
   const [scoreShellMenu, setScoreShellMenu] = useState(null);
   const scoreShellMenuRef = useRef(null);
+  useEffect(() => {
+    const onCreditsExhausted = (event) => {
+      const message = String(event?.detail?.message || "You've used all your credits for this month.").trim();
+      setBillingMessage(message);
+      setBillingModalOpen(true);
+      showToast(message, 'warning');
+    };
+    window.addEventListener(AUTH_EVENTS.CREDITS_EXHAUSTED_EVENT, onCreditsExhausted);
+    return () => window.removeEventListener(AUTH_EVENTS.CREDITS_EXHAUSTED_EVENT, onCreditsExhausted);
+  }, [showToast]);
   const savedEmail = (() => {
     try { return localStorage.getItem('jaspen_last_email'); } catch { return null; }
   })();

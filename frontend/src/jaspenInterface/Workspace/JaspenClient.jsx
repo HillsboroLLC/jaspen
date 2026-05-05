@@ -6,10 +6,11 @@
 // ============================================================================
 
 import { API_BASE } from '../../config/apiBase';
-import { buildAuthHeaders } from '../../shared/auth/http';
+import { AUTH_EVENTS, buildAuthHeaders } from '../../shared/auth/http';
 
 const RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
 const RETRY_BACKOFF_MS = [1000, 2000, 4000];
+let lastCreditsExhaustedNoticeAt = 0;
 
 export const endpoints = {
   // AI Agent endpoints (NEW)
@@ -139,6 +140,20 @@ function buildHttpError(status, data) {
   const err = new Error(msg);
   err.status = status;
   err.data = data;
+  if (status === 402) {
+    const code = String(data?.code || '').trim().toLowerCase();
+    if ((code === 'credits_exhausted' || code === 'insufficient_credits') && Date.now() - lastCreditsExhaustedNoticeAt > 1500) {
+      lastCreditsExhaustedNoticeAt = Date.now();
+      window.dispatchEvent(new CustomEvent(AUTH_EVENTS.CREDITS_EXHAUSTED_EVENT, {
+        detail: {
+          status: 402,
+          code,
+          message: data?.error || "You've used all your credits for this month.",
+          upgradeUrl: data?.upgrade_url || '/account?tab=billing',
+        },
+      }));
+    }
+  }
   if (status === 429) {
     err.retryAfterSeconds = Number(data?.retry_after_seconds || 0) || null;
     err.retryAfterHuman = data?.retry_after_human || formatRetryAfter(err.retryAfterSeconds);

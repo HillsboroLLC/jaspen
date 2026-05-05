@@ -2,9 +2,11 @@ import { API_BASE } from '../../config/apiBase';
 
 const SESSION_EXPIRED_EVENT = 'jas:session-expired';
 const SERVER_ERROR_EVENT = 'jas:server-error';
+const CREDITS_EXHAUSTED_EVENT = 'jas:credits-exhausted';
 
 let lastSessionExpiredNoticeAt = 0;
 let lastServerErrorNoticeAt = 0;
+let lastCreditsExhaustedNoticeAt = 0;
 
 function cookieMap() {
   return String(document.cookie || '')
@@ -85,6 +87,23 @@ export function authFetch(pathOrUrl, options = {}) {
         detail: { status: response.status, url },
       }));
     }
+    if (response.status === 402 && now - lastCreditsExhaustedNoticeAt > 1500) {
+      response.clone().json().then((data) => {
+        const code = String(data?.code || '').trim().toLowerCase();
+        if (code === 'credits_exhausted' || code === 'insufficient_credits') {
+          lastCreditsExhaustedNoticeAt = Date.now();
+          window.dispatchEvent(new CustomEvent(CREDITS_EXHAUSTED_EVENT, {
+            detail: {
+              status: 402,
+              url,
+              code,
+              message: data?.error || "You've used all your credits for this month.",
+              upgradeUrl: data?.upgrade_url || '/account?tab=billing',
+            },
+          }));
+        }
+      }).catch(() => {});
+    }
 
     return response;
   });
@@ -93,4 +112,5 @@ export function authFetch(pathOrUrl, options = {}) {
 export const AUTH_EVENTS = {
   SESSION_EXPIRED_EVENT,
   SERVER_ERROR_EVENT,
+  CREDITS_EXHAUSTED_EVENT,
 };
