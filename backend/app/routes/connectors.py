@@ -2,7 +2,6 @@ import hmac
 import json
 import os
 from urllib.parse import urlencode
-from urllib.parse import urlparse, urlunparse
 
 from flask import Blueprint, current_app, jsonify, redirect, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
@@ -129,51 +128,11 @@ def _salesforce_state_secret():
 
 def _salesforce_callback_url():
     explicit = _text(current_app.config.get("SALESFORCE_REDIRECT_URI") or os.getenv("SALESFORCE_REDIRECT_URI"))
-    api_base = _text(current_app.config.get("API_BASE_URL") or os.getenv("API_BASE_URL"))
-    request_root = _text(request.url_root).rstrip("/")
-    force_public_api = _to_bool(current_app.config.get("SALESFORCE_FORCE_PUBLIC_API_CALLBACK"), True)
-
-    def _normalize_salesforce_callback_host(url_value):
-        value = _text(url_value)
-        if not value:
-            return ""
-        try:
-            parsed = urlparse(value)
-            host = (parsed.hostname or "").lower()
-            # Force production callback host to API domain (frontend host 404s this path).
-            if host.endswith("jaspen.ai") and host != "api.jaspen.ai":
-                port = f":{parsed.port}" if parsed.port else ""
-                netloc = f"api.jaspen.ai{port}"
-                if parsed.username:
-                    auth = parsed.username
-                    if parsed.password:
-                        auth += f":{parsed.password}"
-                    netloc = f"{auth}@{netloc}"
-                return urlunparse(parsed._replace(netloc=netloc))
-        except Exception:
-            return value
-        return value
-
-    # Prefer explicit redirect when it clearly targets the API host.
     if explicit:
-        normalized = _normalize_salesforce_callback_host(explicit)
-        lowered = normalized.lower()
-        if "api.jaspen.ai" in lowered and "/api/v1/connectors/salesforce/oauth/callback" in lowered:
-            return normalized
+        return explicit
 
-    # Production-safe default: always use api.jaspen.ai callback to avoid frontend 404 callback loops.
-    if force_public_api:
-        return "https://api.jaspen.ai/api/v1/connectors/salesforce/oauth/callback"
-
-    # Canonical production fallback.
-    # Guard against misconfigured API_BASE_URL pointing at frontend host.
-    if "jaspen.ai" in api_base.lower() and "api.jaspen.ai" not in api_base.lower():
-        return "https://api.jaspen.ai/api/v1/connectors/salesforce/oauth/callback"
-
-    if api_base:
-        return f"{api_base.rstrip('/')}/api/v1/connectors/salesforce/oauth/callback"
-
-    return f"{request_root}/api/v1/connectors/salesforce/oauth/callback"
+    frontend_base = _frontend_base_url().replace("://www.", "://", 1)
+    return f"{frontend_base.rstrip('/')}/api/v1/connectors/salesforce/oauth/callback"
 
 
 def _salesforce_token_expires_at_iso(token_payload):

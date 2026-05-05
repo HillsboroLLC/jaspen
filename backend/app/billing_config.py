@@ -44,7 +44,7 @@ DEFAULT_PLAN_CATALOG = {
         'min_seats': 5,
         'monthly_credits_base': 8000,
         'monthly_credits_per_seat': 1000,
-        'monthly_credits': None,
+        'monthly_credits': 12000,
         'self_serve': True,
         'sales_only': False,
         'description': 'Collaborative workspace for teams with shared projects and pooled credits.',

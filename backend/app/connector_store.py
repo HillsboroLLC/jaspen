@@ -16,7 +16,16 @@ except Exception:  # pragma: no cover - optional import guard for constrained en
     InvalidToken = Exception
 
 
-CONNECTORS_DIR = "connectors_data"
+_CONNECTORS_DIR_ENV = str(os.getenv("CONNECTORS_DATA_DIR") or "").strip()
+_DEFAULT_CONNECTORS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "connectors_data"))
+_LEGACY_CONNECTORS_DIR = os.path.abspath("connectors_data")
+if _CONNECTORS_DIR_ENV:
+    CONNECTORS_DIR = os.path.abspath(os.path.expanduser(_CONNECTORS_DIR_ENV))
+elif os.path.isdir(_DEFAULT_CONNECTORS_DIR) or not os.path.isdir(_LEGACY_CONNECTORS_DIR):
+    CONNECTORS_DIR = _DEFAULT_CONNECTORS_DIR
+else:
+    # Preserve existing deployments that wrote connector files relative to cwd.
+    CONNECTORS_DIR = _LEGACY_CONNECTORS_DIR
 SYNC_MODES = ("import", "push", "two_way")
 CONFLICT_POLICIES = ("latest_wins", "prefer_external", "prefer_jaspen", "manual_review")
 AUDIT_LOG_LIMIT = 500
@@ -51,7 +60,7 @@ def _parse_int(value, default=0):
 
 def _ensure_connectors_dir():
     if not os.path.exists(CONNECTORS_DIR):
-        os.makedirs(CONNECTORS_DIR)
+        os.makedirs(CONNECTORS_DIR, exist_ok=True)
 
 
 def _connector_file(user_id):

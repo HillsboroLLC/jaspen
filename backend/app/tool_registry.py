@@ -20,6 +20,7 @@ CONTEXT_BUDGET_BY_TIER = {
         "recent_turns": 40,
         "include_rolling_summary": True,
         "include_active_scenario_and_wbs_snapshot": True,
+        "include_connector_insight_snapshot": True,
     },
     "enterprise": {
         "recent_turns": 64,
@@ -152,7 +153,7 @@ TOOL_REGISTRY = [
         "type": "connector",
         "access": "read_write",
         "purpose": "Analyze customer and pipeline trends from Salesforce for strategic insights.",
-        "tiers": ["enterprise"],
+        "tiers": ["essential", "team", "enterprise"],
         "preconditions": ["connector_configured", "object_mapping_configured"],
     },
     {
@@ -160,7 +161,7 @@ TOOL_REGISTRY = [
         "type": "connector",
         "access": "read",
         "purpose": "Query governed KPI and financial trend views from Snowflake.",
-        "tiers": ["enterprise"],
+        "tiers": ["essential", "team", "enterprise"],
         "preconditions": ["connector_configured", "query_allowlist_configured"],
     },
     {

@@ -725,6 +725,44 @@ def _sanitize_intake_context(raw_context, fallback_objective="balanced"):
     return cleaned
 
 
+def _apply_user_profile_defaults_to_intake_context(user, raw_context, fallback_objective="balanced"):
+    cleaned = _sanitize_intake_context(raw_context, fallback_objective=fallback_objective)
+    if not isinstance(user, User):
+        return cleaned
+
+    user_industry = str(getattr(user, "industry", "") or "").strip()
+    user_company_size = _normalize_company_size(getattr(user, "company_size", None))
+
+    if user_industry and not cleaned.get("industry"):
+        cleaned["industry"] = user_industry[:120]
+    if user_company_size and not cleaned.get("company_size"):
+        cleaned["company_size"] = user_company_size
+    return cleaned
+
+
+def _sync_user_profile_from_intake_context(user, intake_context):
+    if not isinstance(user, User) or not isinstance(intake_context, dict):
+        return False
+
+    changed = False
+    industry = str(intake_context.get("industry") or "").strip()
+    company_size = _normalize_company_size(intake_context.get("company_size"))
+
+    if industry:
+        industry = industry[:120]
+        if str(getattr(user, "industry", "") or "").strip() != industry:
+            user.industry = industry
+            changed = True
+
+    if company_size:
+        existing_company_size = _normalize_company_size(getattr(user, "company_size", None))
+        if existing_company_size != company_size:
+            user.company_size = company_size
+            changed = True
+
+    return changed
+
+
 def _safe_nonnegative_int(value):
     try:
         parsed = int(value)
@@ -6937,12 +6975,14 @@ def conversation_start():
     elif "objective_explicitly_set" not in session:
         session["objective_explicitly_set"] = False
     if intake_context_supplied:
-        session["intake_context"] = _sanitize_intake_context(
+        session["intake_context"] = _apply_user_profile_defaults_to_intake_context(
+            user,
             intake_context_raw,
             fallback_objective=session.get("strategy_objective"),
         )
     else:
-        session["intake_context"] = _sanitize_intake_context(
+        session["intake_context"] = _apply_user_profile_defaults_to_intake_context(
+            user,
             session.get("intake_context"),
             fallback_objective=session.get("strategy_objective"),
         )
@@ -6950,6 +6990,8 @@ def conversation_start():
         session.get("strategy_objective"),
         default=session["intake_context"].get("objective") or "balanced",
     )
+    if _sync_user_profile_from_intake_context(user, session["intake_context"]):
+        db.session.commit()
     if view_context_supplied:
         merged_view_context = {}
         if isinstance(session.get("view_context"), dict):
@@ -7496,12 +7538,14 @@ def conversation_continue():
     elif "objective_explicitly_set" not in session:
         session["objective_explicitly_set"] = False
     if intake_context_supplied:
-        session["intake_context"] = _sanitize_intake_context(
+        session["intake_context"] = _apply_user_profile_defaults_to_intake_context(
+            user,
             intake_context_raw,
             fallback_objective=session.get("strategy_objective"),
         )
     else:
-        session["intake_context"] = _sanitize_intake_context(
+        session["intake_context"] = _apply_user_profile_defaults_to_intake_context(
+            user,
             session.get("intake_context"),
             fallback_objective=session.get("strategy_objective"),
         )
@@ -7509,6 +7553,8 @@ def conversation_continue():
         session.get("strategy_objective"),
         default=session["intake_context"].get("objective") or "balanced",
     )
+    if _sync_user_profile_from_intake_context(user, session["intake_context"]):
+        db.session.commit()
     if view_context_supplied:
         merged_view_context = {}
         if isinstance(session.get("view_context"), dict):
@@ -8191,6 +8237,9 @@ def update_thread(thread_id):
         ), 400
 
     user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"error": "User not found"}), 404
     sessions = load_user_sessions(user_id) or {}
     session_key, session = _resolve_user_session(sessions, thread_id)
     if not isinstance(session, dict):
@@ -8274,12 +8323,14 @@ def update_thread(thread_id):
     elif "objective_explicitly_set" not in session:
         session["objective_explicitly_set"] = False
     if intake_context_supplied:
-        session["intake_context"] = _sanitize_intake_context(
+        session["intake_context"] = _apply_user_profile_defaults_to_intake_context(
+            user,
             data.get("intake_context"),
             fallback_objective=session.get("strategy_objective"),
         )
     else:
-        session["intake_context"] = _sanitize_intake_context(
+        session["intake_context"] = _apply_user_profile_defaults_to_intake_context(
+            user,
             session.get("intake_context"),
             fallback_objective=session.get("strategy_objective"),
         )
@@ -8287,6 +8338,7 @@ def update_thread(thread_id):
         session.get("strategy_objective"),
         default=session["intake_context"].get("objective") or "balanced",
     )
+    user_profile_changed = _sync_user_profile_from_intake_context(user, session["intake_context"])
     if starter_lever_defaults_supplied:
         incoming_defaults = data.get("starter_lever_defaults")
         if incoming_defaults is None and "lever_defaults" in data:
@@ -8320,8 +8372,9 @@ def update_thread(thread_id):
     session["timestamp"] = _iso_now()
     sessions[session_key or resolved_thread_id] = session
     save_user_sessions(user_id, sessions)
+    if user_profile_changed:
+        db.session.commit()
 
-    user = User.query.get(user_id)
     next_status = str(session.get("status") or "").strip().lower() or None
     if user and status_supplied and next_status != previous_status:
         action = "session.completed" if next_status == "completed" else "session.archived" if next_status == "archived" else "session.updated"
