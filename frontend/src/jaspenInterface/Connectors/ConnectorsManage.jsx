@@ -34,8 +34,8 @@ const CONNECTOR_ORDER = [
 
 const PLAN_CONNECTOR_IDS = {
   free: [],
-  essential: ['jira_sync'],
-  team: ['jira_sync', 'workfront_sync', 'smartsheet_sync'],
+  essential: ['salesforce_insights', 'snowflake_insights'],
+  team: ['salesforce_insights', 'snowflake_insights', 'jira_sync', 'workfront_sync', 'smartsheet_sync'],
   enterprise: CONNECTOR_ORDER,
 };
 const REQUIRED_FIELDS_BY_CONNECTOR = {

@@ -1,8 +1,8 @@
 export const PLAN_CONNECTORS = {
   free: [],
-  essential: ['Jira'],
-  team: ['Jira', 'Workfront', 'Smartsheet'],
-  enterprise: ['Jira', 'Workfront', 'Smartsheet', 'Salesforce', 'Snowflake', 'Oracle Fusion', 'ServiceNow', 'NetSuite'],
+  essential: ['Salesforce', 'Snowflake'],
+  team: ['Salesforce', 'Snowflake', 'Jira', 'Workfront', 'Smartsheet'],
+  enterprise: ['Salesforce', 'Snowflake', 'Jira', 'Workfront', 'Smartsheet', 'Oracle Fusion', 'ServiceNow', 'NetSuite'],
 };
 
 function normalizePlanKey(planKey) {
