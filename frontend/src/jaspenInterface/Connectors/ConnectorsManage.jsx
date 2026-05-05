@@ -38,6 +38,7 @@ const PLAN_CONNECTOR_IDS = {
   team: ['salesforce_insights', 'snowflake_insights', 'jira_sync', 'workfront_sync', 'smartsheet_sync'],
   enterprise: CONNECTOR_ORDER,
 };
+const EXECUTION_SYNC_CONNECTOR_IDS = ['jira_sync', 'workfront_sync', 'smartsheet_sync'];
 const REQUIRED_FIELDS_BY_CONNECTOR = {
   jira_sync: ['jira_base_url', 'jira_project_key', 'jira_email', 'jira_api_token'],
   workfront_sync: ['workfront_base_url', 'workfront_project_id', 'workfront_api_token'],
@@ -258,6 +259,11 @@ function validateRequiredFields(connectorId, draft) {
     }
   }
   return errors;
+}
+
+function isMissingThreadSyncContextError(message) {
+  const text = String(message || '').trim().toLowerCase();
+  return text.includes('thread not found') || text.includes('no wbs found for thread');
 }
 
 function buildUpdatePayload(connectorId, draft) {
@@ -750,7 +756,43 @@ export default function ConnectorsManage() {
         }
       }
 
-      await syncNow();
+      if (EXECUTION_SYNC_CONNECTOR_IDS.includes(selectedConnector.id)) {
+        if (!selectedThreadId) {
+          setMessage('Setup check passed for connector credentials. Select a sync thread with an execution plan (WBS) to validate push sync.');
+          await loadConnectors();
+          await loadAudit(selectedConnector.id);
+          return;
+        }
+
+        let syncEndpoint = '';
+        if (selectedConnector.id === 'jira_sync') {
+          syncEndpoint = `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(selectedThreadId)}/jira/sync`;
+        } else if (selectedConnector.id === 'workfront_sync') {
+          syncEndpoint = `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(selectedThreadId)}/workfront/sync`;
+        } else if (selectedConnector.id === 'smartsheet_sync') {
+          syncEndpoint = `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(selectedThreadId)}/smartsheet/sync`;
+        }
+
+        const syncRes = await authFetch(syncEndpoint, {
+          method: 'POST',
+          credentials: 'include',
+          headers: authHeaders(false, 'POST'),
+        });
+        const syncData = await syncRes.json().catch(() => ({}));
+        if (!syncRes.ok) {
+          const syncError = syncData?.error || `Sync failed (${syncRes.status})`;
+          if (isMissingThreadSyncContextError(syncError)) {
+            setMessage('Setup check passed for connector credentials. The selected sync thread is not available for WBS sync yet; select another thread or generate an execution plan first.');
+            await loadConnectors();
+            await loadAudit(selectedConnector.id);
+            return;
+          }
+          throw new Error(syncError);
+        }
+      }
+
+      await loadConnectors();
+      await loadAudit(selectedConnector.id);
       setMessage('Setup check passed. Connector is ready to use.');
     } catch (err) {
       setError(err?.message || 'Setup check failed.');
@@ -876,7 +918,12 @@ export default function ConnectorsManage() {
       await loadConnectors();
       await loadAudit(selectedConnector.id);
     } catch (err) {
-      setError(err?.message || 'Sync failed.');
+      const syncError = err?.message || 'Sync failed.';
+      if (EXECUTION_SYNC_CONNECTOR_IDS.includes(selectedConnector?.id) && isMissingThreadSyncContextError(syncError)) {
+        setError('Connector is connected, but the selected sync thread is not available for WBS sync yet. Select another thread or generate an execution plan first.');
+      } else {
+        setError(syncError);
+      }
     } finally {
       setBusy(false);
     }
