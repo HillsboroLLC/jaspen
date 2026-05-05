@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuth } from '../../shared/auth/AuthContext';
 import { API_BASE } from '../../config/apiBase';
@@ -22,6 +22,7 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
   const [mfaSecret, setMfaSecret] = useState('');
   const [mfaBackupCodes, setMfaBackupCodes] = useState([]);
   const [mfaOrgName, setMfaOrgName] = useState('');
+  const mfaAutoSubmitRef = useRef({ step: '', code: '' });
 
   const isEmailMode = mode === 'email';
   const isForgotMode = mode === 'forgot';
@@ -44,6 +45,7 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
     setMfaSecret('');
     setMfaBackupCodes([]);
     setMfaOrgName('');
+    mfaAutoSubmitRef.current = { step: '', code: '' };
   };
 
   useEffect(() => {
@@ -88,8 +90,6 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
     if (typeof window === 'undefined') return null;
     return readAuthQueryNotice(window.location.search || '');
   }, []);
-
-  if (!isOpen) return null;
 
   const handleBackdropClick = (event) => {
     if (event.target === event.currentTarget) onClose?.();
@@ -194,9 +194,8 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
     }
   };
 
-  const handleMfaSetupVerify = async (event) => {
-    event.preventDefault();
-    const code = String(mfaCode || '').trim();
+  const submitMfaSetupVerify = async (rawCode) => {
+    const code = String(rawCode || '').trim();
     if (!code || code.length < 6) {
       setFieldErrors((prev) => ({ ...prev, mfa_setup_code: 'Enter the 6-digit code from your authenticator app.' }));
       setError('Please fix the highlighted fields.');
@@ -227,6 +226,11 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
     }
   };
 
+  const handleMfaSetupVerify = async (event) => {
+    event.preventDefault();
+    await submitMfaSetupVerify(mfaCode);
+  };
+
   const handleBackupCodesContinue = async () => {
     // After viewing backup codes, complete login via challenge
     setMfaStep('challenge');
@@ -236,9 +240,8 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
 
   // ---- MFA Challenge (enter code after login) ----
 
-  const handleMfaChallenge = async (event) => {
-    event.preventDefault();
-    const code = String(mfaCode || '').trim();
+  const submitMfaChallenge = async (rawCode) => {
+    const code = String(rawCode || '').trim();
     if (!code) {
       setFieldErrors((prev) => ({ ...prev, mfa_challenge_code: 'Enter your authenticator code or a backup code.' }));
       setError('Please fix the highlighted fields.');
@@ -271,6 +274,34 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
       setStatus('idle');
     }
   };
+
+  const handleMfaChallenge = async (event) => {
+    event.preventDefault();
+    await submitMfaChallenge(mfaCode);
+  };
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    if (status === 'sending' || status === 'sent') return undefined;
+    const code = String(mfaCode || '').trim();
+    const step = String(mfaStep || '').trim().toLowerCase();
+    const shouldAutoSubmit = (
+      (step === 'challenge' && code.length === 6) ||
+      ((step === 'setup' || step === 'setup-verify') && code.length === 6)
+    );
+    if (!shouldAutoSubmit) return undefined;
+    if (mfaAutoSubmitRef.current.step === step && mfaAutoSubmitRef.current.code === code) return undefined;
+
+    mfaAutoSubmitRef.current = { step, code };
+    const timeoutId = window.setTimeout(() => {
+      if (step === 'challenge') {
+        void submitMfaChallenge(code);
+      } else if (step === 'setup' || step === 'setup-verify') {
+        void submitMfaSetupVerify(code);
+      }
+    }, 300);
+    return () => window.clearTimeout(timeoutId);
+  }, [isOpen, mfaCode, mfaStep, status]);
 
   // ---- Forgot Password ----
 
@@ -306,6 +337,8 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
       setStatus('idle');
     }
   };
+
+  if (!isOpen) return null;
 
   // ---- Render ----
 
