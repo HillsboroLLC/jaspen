@@ -302,6 +302,13 @@ def create_app():
     app.config['SNOWFLAKE_PRIVATE_KEY_PASSPHRASE'] = os.getenv('SNOWFLAKE_PRIVATE_KEY_PASSPHRASE', '')
     app.config['CONNECTOR_ENCRYPTION_KEY'] = os.getenv('CONNECTOR_ENCRYPTION_KEY', '')
     app.config['CONNECTOR_CREDENTIALS_SECRET'] = os.getenv('CONNECTOR_CREDENTIALS_SECRET', '')
+    connector_encryption_key = str(app.config.get('CONNECTOR_ENCRYPTION_KEY') or '').strip()
+    if not connector_encryption_key:
+        if is_production_env:
+            raise RuntimeError("CONNECTOR_ENCRYPTION_KEY must be set in production")
+        logging.getLogger(__name__).warning(
+            "CONNECTOR_ENCRYPTION_KEY not set. Connector credentials may not be encrypted with a dedicated key."
+        )
     # —— Frontend base URL for success/cancel links —— #
     app.config['FRONTEND_BASE_URL'] = frontend_base
 
