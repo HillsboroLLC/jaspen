@@ -294,13 +294,25 @@ COMPLEX_TURN_TERMS = (
 )
 
 INTAKE_COMPANY_SIZE_ALIASES = {
+    "1_10": "startup",
+    "1-10": "startup",
+    "1 to 10": "startup",
     "startup": "startup",
     "start-up": "startup",
+    "11_50": "smb",
+    "11-50": "smb",
+    "11 to 50": "smb",
     "small business": "smb",
     "small-business": "smb",
     "smb": "smb",
+    "51_500": "mid-market",
+    "51-500": "mid-market",
+    "51 to 500": "mid-market",
     "mid market": "mid-market",
     "mid-market": "mid-market",
+    "500_plus": "enterprise",
+    "500+": "enterprise",
+    "500 plus": "enterprise",
     "enterprise": "enterprise",
 }
 

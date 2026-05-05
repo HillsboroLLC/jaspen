@@ -8,6 +8,21 @@ const START_OPTIONS = [
   { key: 'batch_ideas', label: 'Upload a list of ideas', description: 'Bring in a CSV or XLSX and rank ideas together.' },
   { key: 'data_upload', label: 'Upload data for analysis', description: 'Attach files first and let Jaspen pull insights from them.' },
 ];
+const INDUSTRY_OPTIONS = [
+  { key: 'technology', label: 'Technology', description: 'Software, infrastructure, and digital products.' },
+  { key: 'financial_services', label: 'Financial services', description: 'Banking, insurance, fintech, and investment firms.' },
+  { key: 'healthcare', label: 'Healthcare', description: 'Providers, payers, life sciences, and health tech.' },
+  { key: 'retail_consumer', label: 'Retail / Consumer', description: 'Consumer products, commerce, and omnichannel operations.' },
+  { key: 'manufacturing', label: 'Manufacturing', description: 'Industrial operations, supply chain, and production.' },
+  { key: 'professional_services', label: 'Professional services', description: 'Consulting, agencies, and service-led businesses.' },
+  { key: 'other', label: 'Other', description: 'A different industry not listed above.' },
+];
+const COMPANY_SIZE_OPTIONS = [
+  { key: '1_10', label: '1-10 employees', description: 'Early team or founder-led operation.' },
+  { key: '11_50', label: '11-50 employees', description: 'Small business with growing team capacity.' },
+  { key: '51_500', label: '51-500 employees', description: 'Scaling organization with cross-functional teams.' },
+  { key: '500_plus', label: '500+ employees', description: 'Large organization with enterprise complexity.' },
+];
 
 export default function Onboarding({
   open,
@@ -24,6 +39,8 @@ export default function Onboarding({
   const [stepIndex, setStepIndex] = useState(0);
   const [role, setRole] = useState('');
   const [evaluation, setEvaluation] = useState('');
+  const [industry, setIndustry] = useState('');
+  const [companySize, setCompanySize] = useState('');
   const [startMode, setStartMode] = useState('');
   const optionRefs = useRef([]);
 
@@ -32,6 +49,8 @@ export default function Onboarding({
     setStepIndex(0);
     setRole(String(initialSelection?.role || '').trim().toLowerCase());
     setEvaluation(String(initialSelection?.evaluation || '').trim().toLowerCase());
+    setIndustry(String(initialSelection?.industry || '').trim().toLowerCase());
+    setCompanySize(String(initialSelection?.company_size || '').trim().toLowerCase());
     setStartMode(String(initialSelection?.startMode || '').trim().toLowerCase());
   }, [open, initialSelection]);
 
@@ -54,6 +73,22 @@ export default function Onboarding({
         onSelect: setEvaluation,
       },
       {
+        title: 'What industry are you in?',
+        subtitle: 'Jaspen will tailor strategy framing to your business context.',
+        helper: 'You can update this anytime from Account settings.',
+        options: INDUSTRY_OPTIONS,
+        value: industry,
+        onSelect: setIndustry,
+      },
+      {
+        title: 'What is your company size?',
+        subtitle: 'This helps calibrate recommendations to your operational scale.',
+        helper: 'Choose the closest fit for your current organization.',
+        options: COMPANY_SIZE_OPTIONS,
+        value: companySize,
+        onSelect: setCompanySize,
+      },
+      {
         title: 'How would you like to start?',
         subtitle: 'Choose the entry point that matches how you want to work today.',
         helper: 'You can keep exploring now and revisit these preferences anytime from Account settings.',
@@ -62,7 +97,7 @@ export default function Onboarding({
         onSelect: setStartMode,
       },
     ],
-    [role, evaluation, startMode]
+    [role, evaluation, industry, companySize, startMode]
   );
 
   const step = steps[stepIndex];
@@ -180,6 +215,8 @@ export default function Onboarding({
                 onComplete?.({
                   role,
                   evaluation,
+                  industry,
+                  company_size: companySize,
                   startMode,
                 })
               }

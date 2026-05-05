@@ -510,7 +510,7 @@ async convoStart({ description, project_id, model_type, strategy_objective, inta
       status: data.status || 'gathering_info',
     };
   },
-async convoContinue({ session_id, user_message, conversation_history, model_type, strategy_objective, view_context, attachments }) {
+async convoContinue({ session_id, user_message, conversation_history, model_type, strategy_objective, intake_context, view_context, attachments }) {
     const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
     const data = hasAttachments
       ? await postForm(
@@ -520,6 +520,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
           message: user_message,
           model_type: model_type || undefined,
           strategy_objective: strategy_objective || undefined,
+          intake_context: intake_context && typeof intake_context === 'object' ? intake_context : undefined,
           view_context: view_context && typeof view_context === 'object' ? view_context : undefined,
         }, attachments),
         { withSid: true, retryable: true }
@@ -531,6 +532,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
           message: user_message,
           model_type: model_type || undefined,
           strategy_objective: strategy_objective || undefined,
+          intake_context: intake_context && typeof intake_context === 'object' ? intake_context : undefined,
           view_context: view_context && typeof view_context === 'object' ? view_context : undefined,
         },
         { withSid: true }
@@ -641,6 +643,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
     user_message,
     model_type,
     strategy_objective,
+    intake_context,
     view_context,
     attachments,
     onDelta,
@@ -657,6 +660,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
         message: user_message,
         model_type: model_type || undefined,
         strategy_objective: strategy_objective || undefined,
+        intake_context: intake_context && typeof intake_context === 'object' ? intake_context : undefined,
         view_context: view_context && typeof view_context === 'object' ? view_context : undefined,
       }, attachments)
       : JSON.stringify({
@@ -664,6 +668,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
         message: user_message,
         model_type: model_type || undefined,
         strategy_objective: strategy_objective || undefined,
+        intake_context: intake_context && typeof intake_context === 'object' ? intake_context : undefined,
         view_context: view_context && typeof view_context === 'object' ? view_context : undefined,
       });
     const resp = await openRetriedStream(url, {
@@ -970,6 +975,16 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
     patchJSON(
       endpoints.updateThread(threadId),
       { strategy_objective, objective_explicitly_set },
+      { withSid: true }
+    ),
+  setThreadIntakeContext: async (threadId, intake_context = {}, strategy_objective = null, objective_explicitly_set = true) =>
+    patchJSON(
+      endpoints.updateThread(threadId),
+      {
+        intake_context: intake_context && typeof intake_context === 'object' ? intake_context : {},
+        ...(strategy_objective ? { strategy_objective } : {}),
+        objective_explicitly_set,
+      },
       { withSid: true }
     ),
 

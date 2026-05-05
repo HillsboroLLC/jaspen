@@ -468,6 +468,27 @@ const ONBOARDING_START_LABELS = {
   batch_ideas: 'Upload a list of ideas',
   data_upload: 'Upload data for analysis',
 };
+const ONBOARDING_INDUSTRY_LABELS = {
+  technology: 'Technology',
+  financial_services: 'Financial services',
+  healthcare: 'Healthcare',
+  retail_consumer: 'Retail / Consumer',
+  manufacturing: 'Manufacturing',
+  professional_services: 'Professional services',
+  other: 'Other',
+};
+const ONBOARDING_COMPANY_SIZE_LABELS = {
+  '1_10': '1-10 employees',
+  '11_50': '11-50 employees',
+  '51_500': '51-500 employees',
+  '500_plus': '500+ employees',
+};
+const ONBOARDING_COMPANY_SIZE_TO_CONTEXT = {
+  '1_10': 'startup',
+  '11_50': 'smb',
+  '51_500': 'mid-market',
+  '500_plus': 'enterprise',
+};
 const ONBOARDING_OBJECTIVE_BY_EVALUATION = {
   new_initiative: 'balanced',
   cost_optimization: 'cost',
@@ -4053,6 +4074,37 @@ const [initialRestorePending, setInitialRestorePending] = useState(() => Boolean
     () => savedStarterConfigs.find((starter) => starter?.id === selectedStarterId) || null,
     [savedStarterConfigs, selectedStarterId]
   );
+  const buildOnboardingIntakeContext = useCallback((selectionLike = null) => {
+    const fallbackSelection = readOnboardingState(user)?.selection || onboardingInitialSelection || {};
+    const selection = (selectionLike && typeof selectionLike === 'object')
+      ? selectionLike
+      : fallbackSelection;
+    const roleKey = String(selection?.role || '').trim().toLowerCase();
+    const evaluationKey = String(selection?.evaluation || '').trim().toLowerCase();
+    const startMode = String(selection?.startMode || '').trim().toLowerCase();
+    const industryKey = String(selection?.industry || '').trim().toLowerCase();
+    const companySizeKey = String(selection?.company_size || '').trim().toLowerCase();
+    const companySizeContext = ONBOARDING_COMPANY_SIZE_TO_CONTEXT[companySizeKey] || '';
+
+    const context = {
+      role: roleKey || 'other',
+      role_label: ONBOARDING_ROLE_LABELS[roleKey] || ONBOARDING_ROLE_LABELS.other,
+      evaluation_focus: evaluationKey || 'new_initiative',
+      evaluation_focus_label: ONBOARDING_EVALUATION_LABELS[evaluationKey] || ONBOARDING_EVALUATION_LABELS.new_initiative,
+      start_preference: startMode || 'conversation',
+      start_preference_label: ONBOARDING_START_LABELS[startMode] || ONBOARDING_START_LABELS.conversation,
+      onboarding_complete: true,
+    };
+    if (industryKey) {
+      context.industry = industryKey;
+      context.industry_label = ONBOARDING_INDUSTRY_LABELS[industryKey] || ONBOARDING_INDUSTRY_LABELS.other;
+    }
+    if (companySizeContext) {
+      context.company_size = companySizeContext;
+      context.company_size_label = ONBOARDING_COMPANY_SIZE_LABELS[companySizeKey] || ONBOARDING_COMPANY_SIZE_LABELS['51_500'];
+    }
+    return context;
+  }, [onboardingInitialSelection, user]);
 
   const applyStrategyObjective = useCallback(async (nextObjective, options = {}) => {
     const normalized = normalizeStrategyObjective(nextObjective);
@@ -5348,6 +5400,7 @@ useEffect(() => {
     userText,
     modelType,
     objective,
+    intakeContext,
     viewContext,
     attachments,
   }) => {
@@ -5360,6 +5413,7 @@ useEffect(() => {
         user_message: userText,
         model_type: modelType,
         strategy_objective: objective,
+        intake_context: intakeContext && typeof intakeContext === 'object' ? intakeContext : undefined,
         view_context: viewContext && typeof viewContext === 'object' ? viewContext : undefined,
         attachments,
         onDelta: (text) => appendStreamingAssistantDelta(placeholderId, text),
@@ -5486,9 +5540,11 @@ useEffect(() => {
       const starterIntakeContext = (selectedStarter && typeof selectedStarter.intake_context === 'object')
         ? selectedStarter.intake_context
         : {};
+      const onboardingIntakeContext = buildOnboardingIntakeContext();
       const selectedObjectiveLabel = OBJECTIVE_LABEL_BY_KEY[strategyObjective] || OBJECTIVE_LABEL_BY_KEY.balanced;
       const intakeContext = {
         ...starterIntakeContext,
+        ...(onboardingIntakeContext && typeof onboardingIntakeContext === 'object' ? onboardingIntakeContext : {}),
         ...(pendingOnboardingContext && typeof pendingOnboardingContext === 'object' ? pendingOnboardingContext : {}),
         ...(options.intake_context && typeof options.intake_context === 'object' ? options.intake_context : {}),
         objective: selectedObjectiveLabel,
@@ -5533,7 +5589,6 @@ useEffect(() => {
       setObjectiveExplicitlySet(Boolean(data?.objective_explicitly_set) || objectiveExplicitlySet);
       await applyMutationRefreshes(data, sid);
       setSelectedStarterId('');
-      setPendingOnboardingContext(null);
 
 
       // REMOVED - AI Agent backend handles persistence automatically
@@ -5565,11 +5620,17 @@ async function continueConversation(userText, options = {}) {
   setError(null);
 
   try {
+    const ongoingIntakeContext = {
+      ...(buildOnboardingIntakeContext() || {}),
+      ...(pendingOnboardingContext && typeof pendingOnboardingContext === 'object' ? pendingOnboardingContext : {}),
+      objective: OBJECTIVE_LABEL_BY_KEY[strategyObjective] || OBJECTIVE_LABEL_BY_KEY.balanced,
+    };
     const data = await streamConversationReply({
       threadId: sessionId,
       userText,
       modelType: selectedModelType,
       objective: strategyObjective,
+      intakeContext: ongoingIntakeContext,
       viewContext: chatViewContext,
       attachments: Array.isArray(options.attachments) ? options.attachments : [],
     });
@@ -7980,6 +8041,8 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
   const handleOnboardingComplete = useCallback((selection = {}) => {
     const roleKey = String(selection?.role || '').trim().toLowerCase();
     const evaluationKey = String(selection?.evaluation || '').trim().toLowerCase();
+    const industryKey = String(selection?.industry || '').trim().toLowerCase();
+    const companySizeKey = String(selection?.company_size || '').trim().toLowerCase();
     const startMode = String(selection?.startMode || 'conversation').trim().toLowerCase();
     const mappedObjective = normalizeStrategyObjective(
       ONBOARDING_OBJECTIVE_BY_EVALUATION[evaluationKey] || 'balanced'
@@ -7991,17 +8054,11 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
     const nextSelection = {
       role: roleKey || 'other',
       evaluation: evaluationKey || 'new_initiative',
+      industry: industryKey || 'other',
+      company_size: companySizeKey || '51_500',
       startMode: startMode || 'conversation',
     };
-    const nextContext = {
-      role: roleKey || 'other',
-      role_label: ONBOARDING_ROLE_LABELS[roleKey] || ONBOARDING_ROLE_LABELS.other,
-      evaluation_focus: evaluationKey || 'new_initiative',
-      evaluation_focus_label: ONBOARDING_EVALUATION_LABELS[evaluationKey] || ONBOARDING_EVALUATION_LABELS.new_initiative,
-      start_preference: startMode || 'conversation',
-      start_preference_label: ONBOARDING_START_LABELS[startMode] || ONBOARDING_START_LABELS.conversation,
-      onboarding_complete: true,
-    };
+    const nextContext = buildOnboardingIntakeContext(nextSelection);
     setPendingOnboardingContext(nextContext);
     setOnboardingInitialSelection(nextSelection);
     setGuidedFlowDismissed(false);
@@ -8010,6 +8067,16 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
     void persistOnboardingProfileState({ completed: true, deferred: false, selection: nextSelection });
     dismissNotification(SETUP_REMINDER_NOTIFICATION.id);
     if (onboardingMode === 'settings') {
+      const activeThreadId = String(currentSessionId || sessionId || '').trim();
+      if (activeThreadId) {
+        void Jaspen.setThreadIntakeContext(activeThreadId, {
+          ...nextContext,
+          objective: OBJECTIVE_LABEL_BY_KEY[mappedObjective] || OBJECTIVE_LABEL_BY_KEY.balanced,
+        }, mappedObjective, nextExplicit).catch((err) => {
+          console.error('[handleOnboardingComplete] intake context sync failed', err);
+          showToast('Saved locally, but could not sync onboarding context to this thread yet.', 'warning');
+        });
+      }
       if (!sessionId && !currentSessionId && (!Array.isArray(messages) || messages.length === 0)) {
         setStrategyObjective(mappedObjective);
         setObjectiveExplicitlySet(nextExplicit);
@@ -8041,7 +8108,7 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
       }
       setOnboardingLaunchLabel('');
     }, 260);
-  }, [user, onboardingMode, sessionId, currentSessionId, messages, showToast, dismissNotification, persistOnboardingProfileState]);
+  }, [user, onboardingMode, sessionId, currentSessionId, messages, showToast, dismissNotification, persistOnboardingProfileState, buildOnboardingIntakeContext]);
 
   const handleNewAnalysis = useCallback((forceNew = false) => {
     clearLastSessionId();
