@@ -346,3 +346,83 @@ def apply_smartsheet_webhook_to_wbs(user_id, payload, enforce_thread_id=None, en
         "task_id": _text(target.get("id")),
         "smartsheet_row_id": row_id,
     }
+
+
+def import_tasks_from_smartsheet(user_id, thread_id):
+    profile = get_thread_sync_profile(user_id, thread_id)
+    config = _runtime_config(user_id)
+    if not _ready(config):
+        return {"success": False, "reason": "smartsheet_config_missing", "tasks": [], "external_id_map": {}}
+
+    mapping = _resolve_smartsheet_to_wbs_mapping(profile)
+    try:
+        sheet_data, meta = _smartsheet_request(config, "GET", f"/2.0/sheets/{config['sheet_id']}")
+    except Exception as exc:
+        return {"success": False, "reason": str(exc), "tasks": [], "external_id_map": {}}
+
+    columns = sheet_data.get("columns") if isinstance(sheet_data.get("columns"), list) else []
+    col_name_by_id = {}
+    for col in columns:
+        if not isinstance(col, dict):
+            continue
+        col_id = _text(col.get("id"))
+        col_name = _text(col.get("title"))
+        if col_id and col_name:
+            col_name_by_id[col_id] = col_name
+
+    rows = sheet_data.get("rows") if isinstance(sheet_data.get("rows"), list) else []
+    tasks = []
+    external_id_map = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        row_id = _text(row.get("id") or row.get("rowId"))
+        if not row_id:
+            continue
+        cells = row.get("cells") if isinstance(row.get("cells"), list) else []
+        values = {}
+        for cell in cells:
+            if not isinstance(cell, dict):
+                continue
+            key = _text(cell.get("columnName") or cell.get("title"))
+            if not key:
+                col_id = _text(cell.get("columnId"))
+                key = col_name_by_id.get(col_id) or col_id
+            if not key:
+                continue
+            value = cell.get("displayValue")
+            if value is None:
+                value = cell.get("value")
+            values[key] = value
+
+        def _value_for(wbs_field, fallback):
+            for external_key, mapped in mapping.items():
+                if _text(mapped) == wbs_field and external_key in values:
+                    return values.get(external_key)
+            return values.get(fallback)
+
+        title = _text(_value_for("title", "Task Name")) or f"Smartsheet Row {row_id}"
+        due_date = _text(_value_for("due_date", "Due Date"))
+        owner = _text(_value_for("owner", "Assigned To"))
+        status = _normalize_status(_value_for("status", "Status"))
+        task_id = f"smartsheet_{row_id}"
+        tasks.append({
+            "id": task_id,
+            "title": title,
+            "status": status,
+            "owner": owner,
+            "due_date": due_date or None,
+            "source": "smartsheet_import",
+            "external_refs": {"smartsheet_row_id": row_id},
+        })
+        external_id_map[task_id] = row_id
+
+    return {
+        "success": True,
+        "thread_id": thread_id,
+        "connector_id": "smartsheet_sync",
+        "attempt_count": meta.get("attempt_count"),
+        "duration_ms": meta.get("duration_ms"),
+        "tasks": tasks,
+        "external_id_map": external_id_map,
+    }

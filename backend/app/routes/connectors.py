@@ -1,6 +1,7 @@
 import hmac
 import json
 import os
+from datetime import datetime
 from urllib.parse import urlencode
 
 from flask import Blueprint, current_app, jsonify, redirect, request
@@ -18,8 +19,11 @@ from app.connector_registry import (
 )
 from app.connector_store import (
     CONFLICT_POLICIES,
+    EXECUTION_PM_CONNECTOR_IDS,
     SYNC_MODES,
     append_sync_audit_event,
+    get_all_thread_sync_profiles,
+    get_thread_sync_status,
     get_all_connector_settings,
     get_connector_settings,
     get_sync_audit_events,
@@ -29,7 +33,12 @@ from app.connector_store import (
     update_connector_settings,
     update_thread_sync_profile,
 )
-from app.jira_sync import apply_jira_webhook_to_wbs, sync_wbs_to_jira
+from app.jira_sync import (
+    apply_jira_webhook_to_wbs,
+    import_tasks_from_jira,
+    jira_check_connection,
+    sync_wbs_to_jira,
+)
 from app.models import User
 from app.scenarios_store import load_scenarios_data, save_scenarios_data
 from app.salesforce_sync import (
@@ -46,10 +55,10 @@ from app.salesforce_sync import (
     salesforce_runtime_config,
 )
 from app.routes.strategy import get_llm_client
-from app.smartsheet_sync import apply_smartsheet_webhook_to_wbs, sync_wbs_to_smartsheet
+from app.smartsheet_sync import apply_smartsheet_webhook_to_wbs, import_tasks_from_smartsheet, sync_wbs_to_smartsheet
 from app.snowflake_insights import extract_kpi_metrics, run_allowlisted_query, test_snowflake_connection
 from app.tool_registry import get_tool_entitlements
-from app.workfront_sync import apply_workfront_webhook_to_wbs, sync_wbs_to_workfront
+from app.workfront_sync import apply_workfront_webhook_to_wbs, import_tasks_from_workfront, sync_wbs_to_workfront
 
 
 connectors_bp = Blueprint("connectors", __name__)
@@ -358,6 +367,7 @@ def _merge_connector_view(connector_id, entitlement, settings):
         "enabled": enabled,
         "connected": connected,
         "connection_status": "connected" if connected else "disconnected",
+        "lifecycle_status": settings.get("lifecycle_status") or ("connected" if connected else "disconnected"),
         "required_min_tier": required_min_tier,
         "access": entitlement.get("access"),
         "allowed_read": bool(entitlement.get("allowed_read")),
@@ -547,13 +557,179 @@ def _load_thread_wbs(user_id, thread_id):
     return scenarios, thread, project_wbs
 
 
+def _error_payload(message, code, **extra):
+    payload = {"error": str(message or "").strip() or "Request failed", "code": str(code or "UNKNOWN_ERROR")}
+    if isinstance(extra, dict):
+        payload.update({k: v for k, v in extra.items() if v is not None})
+    return payload
+
+
+def _thread_sync_readiness_payload(user, thread_id):
+    _, views = _connector_views_for_user(user)
+    execution_views = _execution_connector_views(views)
+    execution_by_id = {str(item.get("id") or "").strip().lower(): item for item in execution_views}
+    connected_execution = [item for item in execution_views if item.get("connected")]
+
+    profile = get_thread_sync_profile(user.id, thread_id)
+    preferred_tool = str(profile.get("preferred_pm_tool") or "").strip().lower() or None
+    if not preferred_tool:
+        connector_ids = profile.get("connector_ids") if isinstance(profile.get("connector_ids"), list) else []
+        connector_ids = [str(item or "").strip().lower() for item in connector_ids if str(item or "").strip()]
+        for candidate in connector_ids:
+            if candidate in EXECUTION_PM_CONNECTOR_IDS:
+                preferred_tool = candidate
+                break
+
+    settings_by_connector = get_all_connector_settings(user.id)
+    preferred_settings = settings_by_connector.get(preferred_tool) if preferred_tool else {}
+    _scenarios, _thread, project_wbs = _load_thread_wbs(user.id, thread_id)
+    resolved_status = get_thread_sync_status(profile, connector_settings=preferred_settings, project_wbs=project_wbs)
+    profile["thread_sync_status"] = resolved_status
+
+    wbs_exists = bool(isinstance(project_wbs, dict) and project_wbs)
+    if preferred_tool in EXECUTION_PM_CONNECTOR_IDS:
+        connected_tool = execution_by_id.get(preferred_tool)
+        sync_enabled = bool(connected_tool and connected_tool.get("connected"))
+    elif preferred_tool == "jaspen":
+        sync_enabled = True
+    else:
+        sync_enabled = False
+
+    if resolved_status == "not_started":
+        message = "No PM tool selected. Choose one when you begin the project."
+    elif resolved_status == "wbs_pending":
+        message = "PM tool selected. Generate an execution plan to start syncing."
+    elif resolved_status == "ready":
+        message = "Thread is ready to sync."
+    elif resolved_status == "degraded":
+        message = "PM connector needs re-verification before sync can continue."
+    elif resolved_status == "syncing":
+        message = "Sync in progress."
+    elif resolved_status == "synced":
+        message = "Thread sync is up to date."
+    elif resolved_status == "error":
+        message = "Last sync failed. Retry to continue."
+    elif resolved_status == "paused":
+        message = "Sync is paused."
+    else:
+        message = "Thread sync status unavailable."
+
+    available_pm_tools = [
+        {
+            "id": "jaspen",
+            "label": "Jaspen only",
+            "connected": True,
+            "lifecycle_status": "connected",
+        }
+    ]
+    for item in execution_views:
+        available_pm_tools.append(
+            {
+                "id": item.get("id"),
+                "label": item.get("label") or item.get("id"),
+                "connected": bool(item.get("connected")),
+                "lifecycle_status": item.get("lifecycle_status") or ("connected" if item.get("connected") else "disconnected"),
+            }
+        )
+
+    payload = {
+        "thread_id": str(thread_id or "").strip(),
+        "preferred_pm_tool": preferred_tool,
+        "thread_sync_status": resolved_status,
+        "wbs_exists": wbs_exists,
+        "sync_enabled": sync_enabled,
+        "connected_pm_tools": [str(item.get("id") or "").strip() for item in connected_execution],
+        "available_pm_tools": available_pm_tools,
+        "message": message,
+    }
+    return payload, profile, execution_views, connected_execution
+
+
+def _find_thread_task_by_external_id(user_id, connector_id, external_id):
+    connector_key = str(connector_id or "").strip().lower()
+    target_external_id = _text(external_id)
+    if not connector_key or not target_external_id:
+        return None, None
+    profiles = get_all_thread_sync_profiles(user_id)
+    for thread_id, profile in profiles.items():
+        ext_map = profile.get("wbs_task_external_ids") if isinstance(profile.get("wbs_task_external_ids"), dict) else {}
+        for task_id, mapped_external_id in ext_map.items():
+            if _text(mapped_external_id) == target_external_id:
+                return _text(thread_id), _text(task_id)
+    return None, None
+
 
 def _sync_thread_with_connector(user, thread_id, connector_id, sync_callable):
+    connector_id = str(connector_id or "").strip().lower()
+    if connector_id not in EXECUTION_PM_CONNECTOR_IDS:
+        return jsonify(_error_payload(
+            f"Connector '{connector_id}' is not supported for execution sync",
+            "CONNECTOR_NOT_FOUND",
+            connector_id=connector_id,
+        )), 404
+
+    settings = get_connector_settings(user.id, connector_id)
+    lifecycle_status = str(settings.get("lifecycle_status") or "").strip().lower() or "disconnected"
+    if lifecycle_status != "connected":
+        return jsonify(_error_payload(
+            f"Connector '{connector_id}' is not connected",
+            "CONNECTOR_NOT_CONNECTED",
+            connector_id=connector_id,
+            lifecycle_status=lifecycle_status,
+        )), 400
+
+    profile = get_thread_sync_profile(user.id, thread_id)
+    preferred_tool = str(profile.get("preferred_pm_tool") or "").strip().lower() or None
+    if not preferred_tool:
+        connector_ids = profile.get("connector_ids") if isinstance(profile.get("connector_ids"), list) else []
+        for candidate in connector_ids:
+            token = str(candidate or "").strip().lower()
+            if token in EXECUTION_PM_CONNECTOR_IDS:
+                preferred_tool = token
+                break
+    if not preferred_tool:
+        return jsonify(_error_payload(
+            "No PM tool selected for this thread",
+            "NO_PM_TOOL_SELECTED",
+            thread_id=thread_id,
+        )), 400
+    if preferred_tool == "jaspen":
+        return jsonify(_error_payload(
+            "Preferred PM tool is Jaspen only. External sync is not enabled.",
+            "NO_PM_TOOL_SELECTED",
+            thread_id=thread_id,
+            preferred_pm_tool="jaspen",
+        )), 400
+    if preferred_tool != connector_id:
+        return jsonify(_error_payload(
+            f"Preferred PM tool for this thread is '{preferred_tool}'",
+            "PM_TOOL_NOT_CONNECTED",
+            thread_id=thread_id,
+            preferred_pm_tool=preferred_tool,
+        )), 400
+
+    lock_ts = str(profile.get("sync_lock_acquired_at") or "").strip()
+    if lock_ts:
+        try:
+            lock_age = (datetime.utcnow() - datetime.fromisoformat(lock_ts.replace("Z", "+00:00")).replace(tzinfo=None)).total_seconds()
+            if 0 <= lock_age < 30:
+                return jsonify(_error_payload(
+                    "Sync is already in progress",
+                    "SYNC_IN_PROGRESS",
+                    thread_id=thread_id,
+                    connector_id=connector_id,
+                )), 409
+        except Exception:
+            pass
+
+    update_thread_sync_profile(user.id, thread_id, {"sync_lock_acquired_at": _iso_now(), "thread_sync_status": "syncing"})
     scenarios, thread, project_wbs = _load_thread_wbs(user.id, thread_id)
     if thread is None:
-        return jsonify({"error": "Thread not found"}), 404
+        update_thread_sync_profile(user.id, thread_id, {"sync_lock_acquired_at": None, "thread_sync_status": "error"})
+        return jsonify(_error_payload("Thread not found", "THREAD_NOT_FOUND", thread_id=thread_id)), 404
     if project_wbs is None:
-        return jsonify({"error": "No WBS found for thread"}), 404
+        update_thread_sync_profile(user.id, thread_id, {"sync_lock_acquired_at": None, "thread_sync_status": "wbs_pending"})
+        return jsonify(_error_payload("No WBS found for thread", "WBS_NOT_FOUND", thread_id=thread_id)), 404
 
     profile = get_thread_sync_profile(user.id, thread_id)
     result = sync_callable(user.id, thread_id, project_wbs, thread_sync_profile=profile)
@@ -571,7 +747,32 @@ def _sync_thread_with_connector(user, thread_id, connector_id, sync_callable):
     elif result.get("reason"):
         error_message = _text(result.get("reason"))
 
+    external_ref_patch = {}
+    if isinstance(next_wbs, dict):
+        for task in next_wbs.get("tasks") if isinstance(next_wbs.get("tasks"), list) else []:
+            if not isinstance(task, dict):
+                continue
+            task_id = _text(task.get("id"))
+            refs = task.get("external_refs") if isinstance(task.get("external_refs"), dict) else {}
+            external_id = ""
+            if connector_id == "jira_sync":
+                external_id = _text(refs.get("jira_issue_key") or task.get("jira_issue_key"))
+            elif connector_id == "workfront_sync":
+                external_id = _text(refs.get("workfront_task_id"))
+            elif connector_id == "smartsheet_sync":
+                external_id = _text(refs.get("smartsheet_row_id"))
+            if task_id and external_id:
+                external_ref_patch[task_id] = external_id
+
     mark_connector_sync_result(user.id, connector_id, status, error_message=error_message)
+    profile_updates = {
+        "sync_lock_acquired_at": None,
+        "last_full_sync_at": _iso_now(),
+        "thread_sync_status": "synced" if status == "success" else "error" if status == "failed" else profile.get("thread_sync_status") or "ready",
+    }
+    if external_ref_patch:
+        profile_updates["wbs_task_external_ids_patch"] = external_ref_patch
+    update_thread_sync_profile(user.id, thread_id, profile_updates)
     append_sync_audit_event(
         user.id,
         connector_id,
@@ -604,6 +805,55 @@ def _sync_thread_with_connector(user, thread_id, connector_id, sync_callable):
         "connector_id": connector_id,
         "sync_result": result,
     }), 200
+
+
+def _normalize_imported_task(task, index=0):
+    task = task if isinstance(task, dict) else {}
+    task_id = _text(task.get("id")) or f"imported_{index + 1}"
+    title = _text(task.get("title")) or f"Imported task {index + 1}"
+    status = _text(task.get("status")).lower() or "todo"
+    if status not in {"todo", "in_progress", "blocked", "done"}:
+        status = "todo"
+    owner = _text(task.get("owner"))
+    due_date = _text(task.get("due_date")) or None
+    refs = task.get("external_refs") if isinstance(task.get("external_refs"), dict) else {}
+    return {
+        "id": task_id,
+        "title": title,
+        "status": status,
+        "owner": owner,
+        "due_date": due_date,
+        "external_refs": refs,
+    }
+
+
+def _merge_imported_tasks(existing_tasks, imported_tasks, *, conflict_policy="prefer_external"):
+    existing_tasks = existing_tasks if isinstance(existing_tasks, list) else []
+    imported_tasks = imported_tasks if isinstance(imported_tasks, list) else []
+    policy = _text(conflict_policy).lower() or "prefer_external"
+
+    by_id = {}
+    for idx, item in enumerate(existing_tasks):
+        normalized = _normalize_imported_task(item, idx)
+        by_id[_text(normalized.get("id"))] = normalized
+
+    for idx, imported in enumerate(imported_tasks):
+        normalized = _normalize_imported_task(imported, idx)
+        task_id = _text(normalized.get("id"))
+        if task_id not in by_id:
+            by_id[task_id] = normalized
+            continue
+        if policy == "prefer_external":
+            merged = dict(by_id[task_id])
+            merged.update({k: v for k, v in normalized.items() if v not in ("", None)})
+            by_id[task_id] = merged
+        else:
+            # prefer_jaspen and all fallback policies preserve local values on collision.
+            merged = dict(normalized)
+            merged.update({k: v for k, v in by_id[task_id].items() if v not in ("", None)})
+            by_id[task_id] = merged
+
+    return list(by_id.values())
 def _require_webhook_secret(connector_id):
     """Validate webhook secret. Returns error response or None if valid."""
     env_key = f"{connector_id.upper().replace('-', '_')}_WEBHOOK_SECRET"
@@ -911,6 +1161,157 @@ def get_connector_health(connector_id):
         },
         "live_status": live_status,
         "recent_events": recent_events,
+    }), 200
+
+
+@connectors_bp.route("/<connector_id>/check", methods=["GET"])
+@jwt_required()
+def check_connector_setup(connector_id):
+    user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    connector_id = str(connector_id or "").strip().lower()
+    if not get_connector_definition(connector_id):
+        return jsonify(_error_payload(f"Unknown connector '{connector_id}'", "CONNECTOR_NOT_FOUND", connector_id=connector_id)), 404
+
+    settings = get_connector_settings(user.id, connector_id)
+    missing_required_fields = _missing_required_fields(connector_id, settings)
+    lifecycle_status = str(settings.get("lifecycle_status") or "").strip().lower() or "disconnected"
+
+    if missing_required_fields:
+        if lifecycle_status == "connected":
+            lifecycle_status = "configured"
+            update_connector_settings(user.id, connector_id, {"lifecycle_status": "configured"})
+        return jsonify({
+            "connector_id": connector_id,
+            "lifecycle_status": lifecycle_status,
+            "missing_fields": missing_required_fields,
+        }), 400
+
+    try:
+        if connector_id == "jira_sync":
+            probe = jira_check_connection(user.id)
+            if not probe.get("ok"):
+                reason = _text(probe.get("error")) or "Unable to validate Jira credentials"
+                update_connector_settings(user.id, connector_id, {"lifecycle_status": "degraded"})
+                mark_connector_sync_result(user.id, connector_id, "failed", error_message=reason)
+                return jsonify({
+                    "connector_id": connector_id,
+                    "lifecycle_status": "degraded",
+                    "error": reason,
+                    "next_retry_at": get_connector_settings(user.id, connector_id).get("next_retry_at"),
+                }), 503
+            update_connector_settings(
+                user.id,
+                connector_id,
+                {
+                    "connection_status": "connected",
+                    "lifecycle_status": "connected",
+                    "last_verified_at": _iso_now(),
+                    "verified_instance_url": _text(settings.get("jira_base_url")),
+                },
+            )
+            mark_connector_sync_result(user.id, connector_id, "success")
+        elif connector_id == "snowflake_insights":
+            ok, err_msg = test_snowflake_connection(user.id)
+            if not ok:
+                update_connector_settings(user.id, connector_id, {"lifecycle_status": "degraded"})
+                mark_connector_sync_result(user.id, connector_id, "failed", error_message=err_msg or "Connection failed")
+                return jsonify({
+                    "connector_id": connector_id,
+                    "lifecycle_status": "degraded",
+                    "error": err_msg or "Connection failed",
+                    "next_retry_at": get_connector_settings(user.id, connector_id).get("next_retry_at"),
+                }), 503
+            update_connector_settings(
+                user.id,
+                connector_id,
+                {
+                    "connection_status": "connected",
+                    "lifecycle_status": "connected",
+                    "last_verified_at": _iso_now(),
+                    "verified_instance_url": _text(settings.get("snowflake_account")),
+                },
+            )
+            mark_connector_sync_result(user.id, connector_id, "success")
+        elif connector_id == "workfront_sync":
+            valid = workfront_connect(settings.get("workfront_base_url"), settings.get("workfront_api_token"))
+            if not valid:
+                update_connector_settings(user.id, connector_id, {"lifecycle_status": "degraded"})
+                mark_connector_sync_result(user.id, connector_id, "failed", error_message="Unable to validate Workfront credentials")
+                return jsonify({
+                    "connector_id": connector_id,
+                    "lifecycle_status": "degraded",
+                    "error": "Unable to validate Workfront credentials",
+                    "next_retry_at": get_connector_settings(user.id, connector_id).get("next_retry_at"),
+                }), 503
+            update_connector_settings(
+                user.id,
+                connector_id,
+                {
+                    "connection_status": "connected",
+                    "lifecycle_status": "connected",
+                    "last_verified_at": _iso_now(),
+                    "verified_instance_url": _text(settings.get("workfront_base_url")),
+                },
+            )
+            mark_connector_sync_result(user.id, connector_id, "success")
+        elif connector_id == "smartsheet_sync":
+            valid = smartsheet_connect(settings.get("smartsheet_api_token"))
+            if not valid:
+                update_connector_settings(user.id, connector_id, {"lifecycle_status": "degraded"})
+                mark_connector_sync_result(user.id, connector_id, "failed", error_message="Unable to validate Smartsheet token")
+                return jsonify({
+                    "connector_id": connector_id,
+                    "lifecycle_status": "degraded",
+                    "error": "Unable to validate Smartsheet token",
+                    "next_retry_at": get_connector_settings(user.id, connector_id).get("next_retry_at"),
+                }), 503
+            update_connector_settings(
+                user.id,
+                connector_id,
+                {
+                    "connection_status": "connected",
+                    "lifecycle_status": "connected",
+                    "last_verified_at": _iso_now(),
+                    "verified_instance_url": _text(settings.get("smartsheet_base_url")),
+                },
+            )
+            mark_connector_sync_result(user.id, connector_id, "success")
+        else:
+            generic_instance_url = ""
+            if connector_id == "salesforce_insights":
+                generic_instance_url = _text(settings.get("salesforce_instance_url") or settings.get("salesforce_auth_base_url"))
+            elif connector_id == "snowflake_insights":
+                generic_instance_url = _text(settings.get("snowflake_account"))
+            update_connector_settings(
+                user.id,
+                connector_id,
+                {
+                    "lifecycle_status": "connected",
+                    "connection_status": "connected",
+                    "last_verified_at": _iso_now(),
+                    "verified_instance_url": generic_instance_url,
+                },
+            )
+            mark_connector_sync_result(user.id, connector_id, "success")
+    except Exception as exc:
+        update_connector_settings(user.id, connector_id, {"lifecycle_status": "degraded"})
+        mark_connector_sync_result(user.id, connector_id, "failed", error_message=str(exc))
+        return jsonify({
+            "connector_id": connector_id,
+            "lifecycle_status": "degraded",
+            "error": str(exc),
+            "next_retry_at": get_connector_settings(user.id, connector_id).get("next_retry_at"),
+        }), 503
+
+    refreshed = get_connector_settings(user.id, connector_id)
+    return jsonify({
+        "connector_id": connector_id,
+        "lifecycle_status": refreshed.get("lifecycle_status") or "connected",
+        "last_verified_at": refreshed.get("last_verified_at"),
+        "verified_instance_url": refreshed.get("verified_instance_url") or "",
     }), 200
 
 
@@ -1425,15 +1826,16 @@ def get_thread_sync(thread_id):
     if not user:
         return jsonify({"error": "User not found"}), 404
 
-    _, views = _connector_views_for_user(user)
-    execution_views = _execution_connector_views(views)
-    connected_execution = [item for item in execution_views if item.get("connected")]
-    profile = get_thread_sync_profile(user.id, thread_id)
-
-    if not profile.get("connector_ids") and connected_execution:
-        profile["connector_ids"] = [connected_execution[0]["id"]]
-
+    readiness, profile, execution_views, connected_execution = _thread_sync_readiness_payload(user, thread_id)
     return jsonify({
+        "thread_id": readiness.get("thread_id"),
+        "preferred_pm_tool": readiness.get("preferred_pm_tool"),
+        "thread_sync_status": readiness.get("thread_sync_status"),
+        "wbs_exists": readiness.get("wbs_exists"),
+        "sync_enabled": readiness.get("sync_enabled"),
+        "connected_pm_tools": readiness.get("connected_pm_tools"),
+        "available_pm_tools": readiness.get("available_pm_tools"),
+        "message": readiness.get("message"),
         "thread_sync": profile,
         "execution_connectors": execution_views,
         "connected_execution_connectors": connected_execution,
@@ -1459,25 +1861,39 @@ def upsert_thread_sync(thread_id):
         if item.get("connected")
     }
 
-    requested_connector_ids = payload.get("connector_ids")
-    if requested_connector_ids is None:
-        requested_connector_ids = get_thread_sync_profile(user.id, thread_id).get("connector_ids") or []
-    if not isinstance(requested_connector_ids, list):
-        return jsonify({"error": "connector_ids must be an array of connector ids"}), 400
-    connector_ids = []
-    for value in requested_connector_ids:
-        key = str(value or "").strip().lower()
-        if key and key not in connector_ids:
-            connector_ids.append(key)
+    preferred_pm_tool = payload.get("preferred_pm_tool")
+    if preferred_pm_tool is None and "connector_ids" in payload:
+        requested_connector_ids = payload.get("connector_ids")
+        if not isinstance(requested_connector_ids, list):
+            return jsonify({"error": "connector_ids must be an array of connector ids"}), 400
+        connector_ids = []
+        for value in requested_connector_ids:
+            key = str(value or "").strip().lower()
+            if key and key not in connector_ids:
+                connector_ids.append(key)
+        preferred_pm_tool = connector_ids[0] if connector_ids else None
+    elif preferred_pm_tool is None:
+        preferred_pm_tool = get_thread_sync_profile(user.id, thread_id).get("preferred_pm_tool")
+    preferred_pm_tool = str(preferred_pm_tool or "").strip().lower() or None
+
+    if preferred_pm_tool and preferred_pm_tool != "jaspen" and preferred_pm_tool not in execution_map:
+        return jsonify(_error_payload(
+            f"Connector '{preferred_pm_tool}' is not a PM execution connector",
+            "CONNECTOR_NOT_FOUND",
+            connector_id=preferred_pm_tool,
+        )), 400
+
+    connector_ids = [preferred_pm_tool] if preferred_pm_tool in execution_map else []
 
     for connector_id in connector_ids:
         if connector_id not in execution_map:
             return jsonify({"error": f"Connector '{connector_id}' is not a PM execution connector"}), 400
         if connector_id not in connected_execution_ids:
-            return jsonify({
-                "error": f"Connector '{connector_id}' must be connected before it can be used for PM sync.",
-                "connector_id": connector_id,
-            }), 400
+            return jsonify(_error_payload(
+                f"Connector '{connector_id}' must be connected before it can be used for PM sync.",
+                "CONNECTOR_NOT_CONNECTED",
+                connector_id=connector_id,
+            )), 400
 
     sync_mode = payload.get("sync_mode")
     if sync_mode is None:
@@ -1500,6 +1916,12 @@ def upsert_thread_sync(thread_id):
         return jsonify({"error": "field_mapping must be an object"}), 400
 
     if sync_mode in ("push", "two_way"):
+        if preferred_pm_tool == "jaspen":
+            return jsonify(_error_payload(
+                "Jaspen-only tool selection does not support external push or two-way sync.",
+                "NO_PM_TOOL_SELECTED",
+                sync_mode=sync_mode,
+            )), 400
         if not connector_ids:
             return jsonify({
                 "error": "connector_ids must include at least one connected execution connector for push/two_way sync.",
@@ -1529,20 +1951,28 @@ def upsert_thread_sync(thread_id):
         thread_id,
         {
             "connector_ids": connector_ids,
+            "preferred_pm_tool": preferred_pm_tool,
+            "pm_tool_bound_at": _iso_now() if "preferred_pm_tool" in payload or "connector_ids" in payload else get_thread_sync_profile(user.id, thread_id).get("pm_tool_bound_at"),
             "sync_mode": sync_mode,
             "conflict_policy": conflict_policy,
             "field_mapping": field_mapping,
             "mirror_external_to_wbs": mirror_external_to_wbs,
             "mirror_wbs_to_external": mirror_wbs_to_external,
             "auto_reconcile": _to_bool(payload.get("auto_reconcile"), default=True),
+            "auto_sync": _to_bool(payload.get("auto_sync"), default=get_thread_sync_profile(user.id, thread_id).get("auto_sync", True)),
+            "thread_sync_status": "not_started" if preferred_pm_tool in (None, "jaspen") else "tool_selected",
         },
     )
+    readiness, _, _, _ = _thread_sync_readiness_payload(user, thread_id)
+    if readiness.get("thread_sync_status"):
+        saved = update_thread_sync_profile(user.id, thread_id, {"thread_sync_status": readiness.get("thread_sync_status")})
     _audit_connector_event(
         "connector.sync_profile_updated",
         user=user,
         details={
             "thread_id": thread_id,
             "connector_ids": connector_ids,
+            "preferred_pm_tool": preferred_pm_tool,
             "sync_mode": sync_mode,
             "conflict_policy": conflict_policy,
         },
@@ -1551,7 +1981,74 @@ def upsert_thread_sync(thread_id):
     return jsonify({
         "success": True,
         "thread_sync": saved,
+        "thread_sync_status": saved.get("thread_sync_status"),
+        "preferred_pm_tool": saved.get("preferred_pm_tool"),
         "execution_connectors": list(execution_map.values()),
+    }), 200
+
+
+@connectors_bp.route("/threads/<thread_id>/preferred-pm-tool", methods=["POST"])
+@jwt_required()
+def set_preferred_pm_tool(thread_id):
+    user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    payload = request.get_json(silent=True) or {}
+    preferred = str(payload.get("preferred_pm_tool") or "").strip().lower() or None
+    if preferred == "null":
+        preferred = None
+    if preferred and preferred != "jaspen" and preferred not in EXECUTION_PM_CONNECTOR_IDS:
+        return jsonify(_error_payload(
+            f"Unsupported PM tool '{preferred}'",
+            "CONNECTOR_NOT_FOUND",
+            preferred_pm_tool=preferred,
+        )), 400
+
+    _, views = _connector_views_for_user(user)
+    execution_views = {str(item.get("id") or "").strip().lower(): item for item in _execution_connector_views(views)}
+    if preferred and preferred != "jaspen":
+        view = execution_views.get(preferred)
+        if not view:
+            return jsonify(_error_payload(
+                f"Connector '{preferred}' is not available on your plan",
+                "CONNECTOR_NOT_FOUND",
+                preferred_pm_tool=preferred,
+            )), 400
+        if not view.get("connected"):
+            return jsonify(_error_payload(
+                f"Connector '{preferred}' is not connected",
+                "CONNECTOR_NOT_CONNECTED",
+                preferred_pm_tool=preferred,
+                lifecycle_status=view.get("lifecycle_status"),
+            )), 400
+
+    sync_mode = _normalize_sync_mode(payload.get("sync_mode") or get_thread_sync_profile(user.id, thread_id).get("sync_mode") or "import")
+    if not sync_mode:
+        return jsonify({"error": f"sync_mode must be one of {', '.join(SYNC_MODES)}"}), 400
+    conflict_policy = _normalize_conflict_policy(payload.get("conflict_policy") or get_thread_sync_profile(user.id, thread_id).get("conflict_policy") or "prefer_external")
+    if not conflict_policy:
+        return jsonify({"error": f"conflict_policy must be one of {', '.join(CONFLICT_POLICIES)}"}), 400
+
+    profile_updates = {
+        "preferred_pm_tool": preferred,
+        "pm_tool_bound_at": _iso_now(),
+        "connector_ids": [preferred] if preferred and preferred != "jaspen" else [],
+        "sync_mode": sync_mode,
+        "conflict_policy": conflict_policy,
+        "thread_sync_status": "not_started" if preferred in (None, "jaspen") else "tool_selected",
+    }
+    saved = update_thread_sync_profile(user.id, thread_id, profile_updates)
+    readiness, _, _, _ = _thread_sync_readiness_payload(user, thread_id)
+    saved = update_thread_sync_profile(user.id, thread_id, {"thread_sync_status": readiness.get("thread_sync_status")})
+
+    return jsonify({
+        "thread_id": str(thread_id),
+        "preferred_pm_tool": saved.get("preferred_pm_tool"),
+        "thread_sync_status": saved.get("thread_sync_status"),
+        "pm_tool_bound_at": saved.get("pm_tool_bound_at"),
+        "sync_mode": saved.get("sync_mode"),
+        "conflict_policy": saved.get("conflict_policy"),
     }), 200
 
 
@@ -1582,6 +2079,105 @@ def sync_thread_to_smartsheet(thread_id):
     return _sync_thread_with_connector(user, thread_id, "smartsheet_sync", sync_wbs_to_smartsheet)
 
 
+@connectors_bp.route("/threads/<thread_id>/<connector_id>/import", methods=["POST"])
+@jwt_required()
+def import_thread_from_pm_tool(thread_id, connector_id):
+    user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    connector_id = str(connector_id or "").strip().lower()
+    if connector_id not in EXECUTION_PM_CONNECTOR_IDS:
+        return jsonify(_error_payload(
+            f"Connector '{connector_id}' is not supported for import",
+            "CONNECTOR_NOT_FOUND",
+            connector_id=connector_id,
+        )), 404
+
+    settings = get_connector_settings(user.id, connector_id)
+    lifecycle_status = _text(settings.get("lifecycle_status")).lower() or "disconnected"
+    if lifecycle_status != "connected":
+        return jsonify(_error_payload(
+            f"Connector '{connector_id}' is not connected",
+            "CONNECTOR_NOT_CONNECTED",
+            connector_id=connector_id,
+            lifecycle_status=lifecycle_status,
+        )), 400
+
+    scenarios, thread, project_wbs = _load_thread_wbs(user.id, thread_id)
+    if thread is None:
+        return jsonify(_error_payload("Thread not found", "THREAD_NOT_FOUND", thread_id=thread_id)), 404
+    if not isinstance(project_wbs, dict):
+        return jsonify(_error_payload("No WBS found for thread", "WBS_NOT_FOUND", thread_id=thread_id)), 404
+
+    profile = get_thread_sync_profile(user.id, thread_id)
+    preferred_tool = _text(profile.get("preferred_pm_tool")).lower() or None
+    if preferred_tool and preferred_tool not in {"jaspen", connector_id}:
+        return jsonify(_error_payload(
+            f"Preferred PM tool is '{preferred_tool}', not '{connector_id}'",
+            "PM_TOOL_NOT_CONNECTED",
+            preferred_pm_tool=preferred_tool,
+            connector_id=connector_id,
+        )), 400
+
+    if connector_id == "jira_sync":
+        imported = import_tasks_from_jira(user.id, thread_id)
+    elif connector_id == "workfront_sync":
+        imported = import_tasks_from_workfront(user.id, thread_id)
+    else:
+        imported = import_tasks_from_smartsheet(user.id, thread_id)
+
+    if not imported.get("success"):
+        reason = _text(imported.get("reason")) or "Import failed"
+        mark_connector_sync_result(user.id, connector_id, "failed", error_message=reason)
+        return jsonify(_error_payload(reason, "IMPORT_FAILED", connector_id=connector_id, thread_id=thread_id)), 400
+
+    conflict_policy = _text(profile.get("conflict_policy") or "prefer_external").lower()
+    merged_tasks = _merge_imported_tasks(
+        project_wbs.get("tasks") if isinstance(project_wbs.get("tasks"), list) else [],
+        imported.get("tasks") if isinstance(imported.get("tasks"), list) else [],
+        conflict_policy=conflict_policy,
+    )
+    project_wbs["tasks"] = merged_tasks
+    project_wbs["updated_at"] = _iso_now()
+    thread["project_wbs"] = project_wbs
+    scenarios[thread_id] = thread
+    save_scenarios_data(user.id, scenarios)
+
+    external_id_map = imported.get("external_id_map") if isinstance(imported.get("external_id_map"), dict) else {}
+    update_thread_sync_profile(
+        user.id,
+        thread_id,
+        {
+            "thread_sync_status": "synced",
+            "last_full_sync_at": _iso_now(),
+            "last_webhook_received_at": _iso_now(),
+            "wbs_task_external_ids_patch": external_id_map,
+        },
+    )
+    mark_connector_sync_result(user.id, connector_id, "success")
+    append_sync_audit_event(
+        user.id,
+        connector_id,
+        action="import",
+        status="success",
+        thread_id=thread_id,
+        attempt_count=imported.get("attempt_count"),
+        duration_ms=imported.get("duration_ms"),
+        message=f"Imported {len(imported.get('tasks') or [])} task(s)",
+        metadata={"imported": len(imported.get("tasks") or [])},
+    )
+
+    return jsonify({
+        "success": True,
+        "thread_id": thread_id,
+        "connector_id": connector_id,
+        "thread_sync_status": "synced",
+        "imported_task_count": len(imported.get("tasks") or []),
+        "project_wbs": project_wbs,
+    }), 200
+
+
 @connectors_bp.route("/jira/webhook", methods=["POST"])
 @limiter.limit("60 per minute")
 def jira_webhook():
@@ -1609,6 +2205,14 @@ def jira_webhook():
     if not user_id:
         return jsonify({"success": True, "ignored": True, "reason": "missing_user_label"}), 200
 
+    issue_key = _text(issue.get("key"))
+    if (not thread_id or not task_id) and issue_key:
+        resolved_thread_id, resolved_task_id = _find_thread_task_by_external_id(user_id, "jira_sync", issue_key)
+        if not thread_id and resolved_thread_id:
+            thread_id = resolved_thread_id
+        if not task_id and resolved_task_id:
+            task_id = resolved_task_id
+
     result = apply_jira_webhook_to_wbs(
         user_id=user_id,
         issue=issue,
@@ -1617,12 +2221,24 @@ def jira_webhook():
     )
     status = "success" if result.get("success") else "skipped" if result.get("ignored") else "failed"
     mark_connector_sync_result(user_id, "jira_sync", status, error_message=result.get("reason") or "")
+    resolved_thread_id = _text(result.get("thread_id") or thread_id)
+    if resolved_thread_id:
+        profile_updates = {"last_webhook_received_at": _iso_now()}
+        if status == "success":
+            profile_updates["thread_sync_status"] = "synced"
+        elif status == "failed":
+            profile_updates["thread_sync_status"] = "error"
+        update_thread_sync_profile(
+            user_id,
+            resolved_thread_id,
+            profile_updates,
+        )
     append_sync_audit_event(
         user_id,
         "jira_sync",
         action="webhook",
         status=status,
-        thread_id=thread_id or None,
+        thread_id=resolved_thread_id or None,
         message=_text(result.get("reason")),
         metadata={"source": "jira"},
     )
@@ -1657,6 +2273,14 @@ def workfront_webhook():
     if not user_id:
         return jsonify({"success": True, "ignored": True, "reason": "missing_user_label"}), 200
 
+    external_id = _text(data.get("id") or data.get("ID") or data.get("objID"))
+    if (not thread_id or not task_id) and external_id:
+        resolved_thread_id, resolved_task_id = _find_thread_task_by_external_id(user_id, "workfront_sync", external_id)
+        if not thread_id and resolved_thread_id:
+            thread_id = resolved_thread_id
+        if not task_id and resolved_task_id:
+            task_id = resolved_task_id
+
     result = apply_workfront_webhook_to_wbs(
         user_id=user_id,
         payload=payload,
@@ -1665,12 +2289,24 @@ def workfront_webhook():
     )
     status = "success" if result.get("success") else "skipped" if result.get("ignored") else "failed"
     mark_connector_sync_result(user_id, "workfront_sync", status, error_message=result.get("reason") or "")
+    resolved_thread_id = _text(result.get("thread_id") or thread_id)
+    if resolved_thread_id:
+        profile_updates = {"last_webhook_received_at": _iso_now()}
+        if status == "success":
+            profile_updates["thread_sync_status"] = "synced"
+        elif status == "failed":
+            profile_updates["thread_sync_status"] = "error"
+        update_thread_sync_profile(
+            user_id,
+            resolved_thread_id,
+            profile_updates,
+        )
     append_sync_audit_event(
         user_id,
         "workfront_sync",
         action="webhook",
         status=status,
-        thread_id=thread_id or None,
+        thread_id=resolved_thread_id or None,
         message=_text(result.get("reason")),
         metadata={"source": "workfront"},
     )
@@ -1705,6 +2341,14 @@ def smartsheet_webhook():
     if not user_id:
         return jsonify({"success": True, "ignored": True, "reason": "missing_user_label"}), 200
 
+    row_id = _text(row.get("id") or row.get("rowId"))
+    if (not thread_id or not task_id) and row_id:
+        resolved_thread_id, resolved_task_id = _find_thread_task_by_external_id(user_id, "smartsheet_sync", row_id)
+        if not thread_id and resolved_thread_id:
+            thread_id = resolved_thread_id
+        if not task_id and resolved_task_id:
+            task_id = resolved_task_id
+
     result = apply_smartsheet_webhook_to_wbs(
         user_id=user_id,
         payload=payload,
@@ -1713,12 +2357,24 @@ def smartsheet_webhook():
     )
     status = "success" if result.get("success") else "skipped" if result.get("ignored") else "failed"
     mark_connector_sync_result(user_id, "smartsheet_sync", status, error_message=result.get("reason") or "")
+    resolved_thread_id = _text(result.get("thread_id") or thread_id)
+    if resolved_thread_id:
+        profile_updates = {"last_webhook_received_at": _iso_now()}
+        if status == "success":
+            profile_updates["thread_sync_status"] = "synced"
+        elif status == "failed":
+            profile_updates["thread_sync_status"] = "error"
+        update_thread_sync_profile(
+            user_id,
+            resolved_thread_id,
+            profile_updates,
+        )
     append_sync_audit_event(
         user_id,
         "smartsheet_sync",
         action="webhook",
         status=status,
-        thread_id=thread_id or None,
+        thread_id=resolved_thread_id or None,
         message=_text(result.get("reason")),
         metadata={"source": "smartsheet"},
     )

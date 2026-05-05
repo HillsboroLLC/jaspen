@@ -45,6 +45,28 @@ SENSITIVE_CONNECTOR_FIELDS = {
     "servicenow_insights": ("servicenow_password",),
     "netsuite_insights": ("netsuite_consumer_secret", "netsuite_token_secret"),
 }
+EXECUTION_PM_CONNECTOR_IDS = {"jira_sync", "workfront_sync", "smartsheet_sync"}
+THREAD_SYNC_STATUS_VALUES = {
+    "not_started",
+    "tool_selected",
+    "wbs_pending",
+    "ready",
+    "syncing",
+    "synced",
+    "error",
+    "paused",
+    "degraded",
+}
+CONNECTOR_REQUIRED_FIELDS = {
+    "jira_sync": ("jira_base_url", "jira_project_key", "jira_email", "jira_api_token"),
+    "workfront_sync": ("workfront_base_url", "workfront_project_id", "workfront_api_token"),
+    "smartsheet_sync": ("smartsheet_base_url", "smartsheet_sheet_id", "smartsheet_api_token"),
+    "salesforce_insights": ("salesforce_auth_base_url", "salesforce_client_id", "salesforce_client_secret"),
+    "snowflake_insights": ("snowflake_account", "snowflake_warehouse", "snowflake_database", "snowflake_schema", "snowflake_role", "snowflake_user"),
+    "oracle_fusion_insights": ("oracle_fusion_base_url", "oracle_fusion_username", "oracle_fusion_password"),
+    "servicenow_insights": ("servicenow_instance_url", "servicenow_username", "servicenow_password"),
+    "netsuite_insights": ("netsuite_account_id", "netsuite_consumer_key", "netsuite_consumer_secret", "netsuite_token_id", "netsuite_token_secret"),
+}
 
 
 def _iso_now():
@@ -80,10 +102,13 @@ def _default_connector_settings(connector_id):
     return {
         "connector_id": connector_id,
         "connection_status": "disconnected",
+        "lifecycle_status": "disconnected",
         "sync_mode": "import",
         "conflict_policy": "prefer_external",
         "auto_sync": True,
         "external_workspace": "",
+        "last_verified_at": None,
+        "verified_instance_url": "",
 
         # Common runtime and reliability metadata
         "last_sync_at": None,
@@ -163,6 +188,13 @@ def _default_thread_sync_profile(thread_id):
     return {
         "thread_id": thread_id,
         "connector_ids": [],
+        "preferred_pm_tool": None,
+        "pm_tool_bound_at": None,
+        "thread_sync_status": "not_started",
+        "wbs_task_external_ids": {},
+        "last_full_sync_at": None,
+        "last_webhook_received_at": None,
+        "sync_lock_acquired_at": None,
         "sync_mode": "import",
         "conflict_policy": "prefer_external",
         "field_mapping": {
@@ -174,8 +206,105 @@ def _default_thread_sync_profile(thread_id):
         "mirror_external_to_wbs": True,
         "mirror_wbs_to_external": False,
         "auto_reconcile": True,
+        "auto_sync": True,
         "updated_at": None,
     }
+
+
+def _connector_has_complete_credentials(connector_id, settings):
+    key = str(connector_id or "").strip().lower()
+    settings = settings if isinstance(settings, dict) else {}
+    required = CONNECTOR_REQUIRED_FIELDS.get(key, ())
+    for field in required:
+        if not str(settings.get(field) or "").strip():
+            return False
+    if key == "snowflake_insights":
+        has_password = bool(str(settings.get("snowflake_password") or "").strip())
+        has_private_key = bool(str(settings.get("snowflake_private_key") or "").strip())
+        if not has_password and not has_private_key:
+            return False
+    if key == "salesforce_insights":
+        has_secret = bool(str(settings.get("salesforce_client_secret") or "").strip())
+        has_refresh = bool(str(settings.get("salesforce_refresh_token") or "").strip())
+        has_access = bool(str(settings.get("salesforce_access_token") or "").strip())
+        if not has_secret and not has_refresh and not has_access:
+            return False
+    return True
+
+
+def _derive_connector_ids_from_preferred_tool(preferred_pm_tool):
+    preferred = str(preferred_pm_tool or "").strip().lower()
+    if preferred and preferred != "jaspen":
+        return [preferred]
+    return []
+
+
+def _normalize_thread_sync_status(value, default="not_started"):
+    status = str(value or "").strip().lower()
+    if status in THREAD_SYNC_STATUS_VALUES:
+        return status
+    return default
+
+
+def _wbs_exists(project_wbs):
+    if not isinstance(project_wbs, dict):
+        return False
+    tasks = project_wbs.get("tasks")
+    if isinstance(tasks, list) and tasks:
+        return True
+    name = str(project_wbs.get("name") or "").strip()
+    return bool(name and name.lower() != "execution wbs")
+
+
+def _compute_connector_lifecycle_status(connector_id, settings):
+    settings = settings if isinstance(settings, dict) else {}
+    connection_status = str(settings.get("connection_status") or "").strip().lower()
+    lifecycle_status = str(settings.get("lifecycle_status") or "").strip().lower()
+    failure_count = _parse_int(settings.get("consecutive_failures"), default=0)
+
+    if lifecycle_status in {"disconnected", "configured", "verifying", "connected", "degraded"}:
+        if lifecycle_status == "connected" and failure_count >= 3:
+            return "degraded"
+        if lifecycle_status == "disconnected" and connection_status == "connected":
+            return "connected"
+        return lifecycle_status
+
+    has_credentials = _connector_has_complete_credentials(connector_id, settings)
+    if failure_count >= 3:
+        return "degraded"
+    if connection_status == "connected":
+        return "connected"
+    if has_credentials:
+        return "configured"
+    return "disconnected"
+
+
+def _compute_thread_sync_status(profile, connector_settings=None, project_wbs=None):
+    profile = profile if isinstance(profile, dict) else {}
+    connector_settings = connector_settings if isinstance(connector_settings, dict) else {}
+    preferred = str(profile.get("preferred_pm_tool") or "").strip().lower()
+    stored = _normalize_thread_sync_status(profile.get("thread_sync_status"), default="not_started")
+
+    if not preferred or preferred == "jaspen":
+        return "not_started"
+    if preferred not in EXECUTION_PM_CONNECTOR_IDS:
+        return "not_started"
+    if not _wbs_exists(project_wbs):
+        return "wbs_pending"
+
+    lifecycle = _compute_connector_lifecycle_status(preferred, connector_settings)
+    if lifecycle != "connected":
+        return "degraded"
+
+    if stored in {"syncing", "synced", "error", "paused"}:
+        return stored
+    if stored == "tool_selected":
+        return "ready"
+    return "ready"
+
+
+def get_thread_sync_status(profile, connector_settings=None, project_wbs=None):
+    return _compute_thread_sync_status(profile, connector_settings=connector_settings, project_wbs=project_wbs)
 
 
 def _sensitive_fields_for(connector_id):
@@ -306,6 +435,7 @@ def _hydrate_connector_settings(connector_id, current):
     base = _default_connector_settings(connector_id)
     if isinstance(current, dict):
         base.update(current)
+    base["lifecycle_status"] = _compute_connector_lifecycle_status(connector_id, base)
     for secret_field in _sensitive_fields_for(connector_id):
         if secret_field in base:
             base[secret_field] = decrypt_token(base.get(secret_field))
@@ -481,8 +611,18 @@ def update_connector_settings(user_id, connector_id, updates):
     if isinstance(updates, dict):
         for field, value in updates.items():
             current[field] = value
+    previous_lifecycle = _compute_connector_lifecycle_status(key, current)
 
     current["connector_id"] = key
+    connection_status = str(current.get("connection_status") or "").strip().lower()
+    if connection_status == "connected":
+        current["last_verified_at"] = _iso_now()
+    if connection_status == "disconnected":
+        current["last_verified_at"] = current.get("last_verified_at")
+
+    current["lifecycle_status"] = _compute_connector_lifecycle_status(key, current)
+    if previous_lifecycle == "connected" and connection_status == "disconnected":
+        current["lifecycle_status"] = "disconnected"
     current["updated_at"] = _iso_now()
     connectors[key] = _persist_connector_settings(key, current)
     save_connector_state(user_id, state)
@@ -506,10 +646,13 @@ def mark_connector_sync_result(user_id, connector_id, status, error_message=""):
             "last_sync_at": now_iso,
             "last_sync_result": "success",
             "health_status": "healthy",
+            "connection_status": "connected",
             "consecutive_failures": 0,
             "next_retry_at": None,
             "last_success_at": now_iso,
             "last_error_message": "",
+            "last_verified_at": now_iso,
+            "lifecycle_status": "connected",
         }
     elif status_key == "skipped":
         updates = {
@@ -528,6 +671,7 @@ def mark_connector_sync_result(user_id, connector_id, status, error_message=""):
             "next_retry_at": _next_retry_at(next_failures),
             "last_error_at": now_iso,
             "last_error_message": str(error_message or "")[:1000],
+            "lifecycle_status": "degraded" if next_failures >= 3 else settings.get("lifecycle_status") or "configured",
         }
 
     if status_key != "failed":
@@ -668,7 +812,47 @@ def get_thread_sync_profile(user_id, thread_id):
     base = _default_thread_sync_profile(key)
     if isinstance(current, dict):
         base.update(current)
+    preferred = str(base.get("preferred_pm_tool") or "").strip().lower() or None
+    if preferred == "jaspen":
+        base["connector_ids"] = []
+    elif preferred and preferred in EXECUTION_PM_CONNECTOR_IDS:
+        base["connector_ids"] = [preferred]
+    elif not isinstance(base.get("connector_ids"), list):
+        base["connector_ids"] = []
+    else:
+        cleaned = []
+        for connector_id in base.get("connector_ids") or []:
+            token = str(connector_id or "").strip().lower()
+            if token and token not in cleaned:
+                cleaned.append(token)
+        base["connector_ids"] = cleaned
+    if not isinstance(base.get("wbs_task_external_ids"), dict):
+        base["wbs_task_external_ids"] = {}
+    base["thread_sync_status"] = _normalize_thread_sync_status(base.get("thread_sync_status"), default="not_started")
     return base
+
+
+def get_all_thread_sync_profiles(user_id):
+    state = load_connector_state(user_id)
+    raw = state.get("thread_sync") if isinstance(state.get("thread_sync"), dict) else {}
+    profiles = {}
+    for key, value in raw.items():
+        thread_id = str(key or "").strip()
+        if not thread_id:
+            continue
+        base = _default_thread_sync_profile(thread_id)
+        if isinstance(value, dict):
+            base.update(value)
+        preferred = str(base.get("preferred_pm_tool") or "").strip().lower()
+        if preferred in EXECUTION_PM_CONNECTOR_IDS:
+            base["connector_ids"] = [preferred]
+        elif preferred == "jaspen" or not preferred:
+            base["connector_ids"] = []
+        if not isinstance(base.get("wbs_task_external_ids"), dict):
+            base["wbs_task_external_ids"] = {}
+        base["thread_sync_status"] = _normalize_thread_sync_status(base.get("thread_sync_status"), default="not_started")
+        profiles[thread_id] = base
+    return profiles
 
 
 def update_thread_sync_profile(user_id, thread_id, updates):
@@ -679,15 +863,45 @@ def update_thread_sync_profile(user_id, thread_id, updates):
     if isinstance(updates, dict):
         for field in (
             "connector_ids",
+            "preferred_pm_tool",
+            "pm_tool_bound_at",
+            "thread_sync_status",
+            "last_full_sync_at",
+            "last_webhook_received_at",
+            "sync_lock_acquired_at",
             "sync_mode",
             "conflict_policy",
             "field_mapping",
             "mirror_external_to_wbs",
             "mirror_wbs_to_external",
             "auto_reconcile",
+            "auto_sync",
         ):
             if field in updates:
                 current[field] = updates.get(field)
+        if "wbs_task_external_ids" in updates and isinstance(updates.get("wbs_task_external_ids"), dict):
+            current["wbs_task_external_ids"] = updates.get("wbs_task_external_ids")
+        if "wbs_task_external_ids_patch" in updates and isinstance(updates.get("wbs_task_external_ids_patch"), dict):
+            merged = dict(current.get("wbs_task_external_ids") if isinstance(current.get("wbs_task_external_ids"), dict) else {})
+            for task_id, external_id in updates.get("wbs_task_external_ids_patch", {}).items():
+                task_key = str(task_id or "").strip()
+                if not task_key:
+                    continue
+                ext_value = str(external_id or "").strip()
+                if ext_value:
+                    merged[task_key] = ext_value
+                elif task_key in merged:
+                    merged.pop(task_key, None)
+            current["wbs_task_external_ids"] = merged
+    preferred = str(current.get("preferred_pm_tool") or "").strip().lower()
+    if preferred in EXECUTION_PM_CONNECTOR_IDS:
+        current["connector_ids"] = [preferred]
+    elif preferred == "jaspen" or not preferred:
+        current["connector_ids"] = []
+    else:
+        current["preferred_pm_tool"] = None
+        current["connector_ids"] = []
+    current["thread_sync_status"] = _normalize_thread_sync_status(current.get("thread_sync_status"), default="not_started")
     current["thread_id"] = key
     current["updated_at"] = _iso_now()
     thread_sync[key] = current

@@ -307,3 +307,53 @@ def apply_workfront_webhook_to_wbs(user_id, payload, enforce_thread_id=None, enf
         "task_id": _text(target.get("id")),
         "workfront_task_id": external_id,
     }
+
+
+def import_tasks_from_workfront(user_id, thread_id):
+    profile = get_thread_sync_profile(user_id, thread_id)
+    config = _workfront_runtime_config(user_id)
+    if not _workfront_ready(config):
+        return {"success": False, "reason": "workfront_config_missing", "tasks": [], "external_id_map": {}}
+
+    mapping = _resolve_workfront_to_wbs_mapping(profile)
+    fields = "ID,name,status,plannedCompletionDate,assignedToName"
+    path = f"/attask/api/v15.0/task/search?projectID={config['project_id']}&fields={fields}"
+    try:
+        data, meta = _workfront_request(config, "GET", path)
+    except Exception as exc:
+        return {"success": False, "reason": str(exc), "tasks": [], "external_id_map": {}}
+
+    rows = data.get("data") if isinstance(data.get("data"), list) else []
+    tasks = []
+    external_id_map = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        external_id = _text(row.get("ID") or row.get("id"))
+        if not external_id:
+            continue
+        title = _text(row.get(next((k for k, v in mapping.items() if v == "title"), "name"))) or f"Workfront Task {external_id}"
+        due = _text(row.get(next((k for k, v in mapping.items() if v == "due_date"), "plannedCompletionDate")))
+        owner = _text(row.get(next((k for k, v in mapping.items() if v == "owner"), "assignedToName")))
+        status = _normalize_status(row.get(next((k for k, v in mapping.items() if v == "status"), "status")))
+        task_id = f"workfront_{external_id}"
+        tasks.append({
+            "id": task_id,
+            "title": title,
+            "status": status,
+            "owner": owner,
+            "due_date": due or None,
+            "source": "workfront_import",
+            "external_refs": {"workfront_task_id": external_id},
+        })
+        external_id_map[task_id] = external_id
+
+    return {
+        "success": True,
+        "thread_id": thread_id,
+        "connector_id": "workfront_sync",
+        "attempt_count": meta.get("attempt_count"),
+        "duration_ms": meta.get("duration_ms"),
+        "tasks": tasks,
+        "external_id_map": external_id_map,
+    }

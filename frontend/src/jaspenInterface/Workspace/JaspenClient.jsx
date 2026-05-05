@@ -81,10 +81,15 @@ export const endpoints = {
   // Connector settings and PM sync profile
   connectorStatus: `${API_BASE}/api/v1/connectors/status`,
   connectorUpdate: (connectorId) => `${API_BASE}/api/v1/connectors/${encodeURIComponent(connectorId)}`,
+  connectorCheck: (connectorId) => `${API_BASE}/api/v1/connectors/${encodeURIComponent(connectorId)}/check`,
   threadPmSync: (threadId) => `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(threadId)}/sync`,
+  threadPreferredPmTool: (threadId) => `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(threadId)}/preferred-pm-tool`,
   threadJiraSync: (threadId) => `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(threadId)}/jira/sync`,
   threadWorkfrontSync: (threadId) => `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(threadId)}/workfront/sync`,
   threadSmartsheetSync: (threadId) => `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(threadId)}/smartsheet/sync`,
+  threadJiraImport: (threadId) => `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(threadId)}/jira_sync/import`,
+  threadWorkfrontImport: (threadId) => `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(threadId)}/workfront_sync/import`,
+  threadSmartsheetImport: (threadId) => `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(threadId)}/smartsheet_sync/import`,
   connectorHealth: (connectorId) => `${API_BASE}/api/v1/connectors/${encodeURIComponent(connectorId)}/health`,
   connectorAudit: (connectorId) => `${API_BASE}/api/v1/connectors/${encodeURIComponent(connectorId)}/audit`,
   salesforceOauthStart: `${API_BASE}/api/v1/connectors/salesforce/oauth/start`,
@@ -1119,11 +1124,17 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
   updateConnectorSettings: async (connectorId, payload = {}) =>
     patchJSON(endpoints.connectorUpdate(connectorId), payload, { withSid: true }),
 
+  checkConnectorSetup: async (connectorId) =>
+    getJSON(endpoints.connectorCheck(connectorId), { withSid: true }),
+
   getThreadPmSync: async (threadId) =>
     getJSON(endpoints.threadPmSync(threadId), { withSid: true }),
 
   updateThreadPmSync: async (threadId, payload = {}) =>
     upsertJSON(endpoints.threadPmSync(threadId), payload, { withSid: true }),
+
+  setPreferredPmTool: async (threadId, payload = {}) =>
+    postJSON(endpoints.threadPreferredPmTool(threadId), payload, { withSid: true }),
 
   syncThreadWbsToJira: async (threadId) =>
     postJSON(endpoints.threadJiraSync(threadId), {}, { withSid: true }),
@@ -1133,6 +1144,15 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
 
   syncThreadWbsToSmartsheet: async (threadId) =>
     postJSON(endpoints.threadSmartsheetSync(threadId), {}, { withSid: true }),
+
+  importThreadFromJira: async (threadId) =>
+    postJSON(endpoints.threadJiraImport(threadId), {}, { withSid: true }),
+
+  importThreadFromWorkfront: async (threadId) =>
+    postJSON(endpoints.threadWorkfrontImport(threadId), {}, { withSid: true }),
+
+  importThreadFromSmartsheet: async (threadId) =>
+    postJSON(endpoints.threadSmartsheetImport(threadId), {}, { withSid: true }),
 };
 
 // Minimal local persistence

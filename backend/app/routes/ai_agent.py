@@ -44,7 +44,10 @@ from app.tool_registry import (
 )
 from app.orgs import normalize_org_role, resolve_active_org_for_user
 from app.scenarios_store import save_scenarios_data
-from app.connector_store import get_connector_settings
+from app.connector_store import get_connector_settings, get_thread_sync_profile, update_thread_sync_profile
+from app.jira_sync import sync_wbs_to_jira
+from app.workfront_sync import sync_wbs_to_workfront
+from app.smartsheet_sync import sync_wbs_to_smartsheet
 
 from .sessions import load_user_sessions, save_user_sessions
 
@@ -1293,6 +1296,14 @@ def _mutation_result_summary(tool_name, result_payload):
             "task_count": len(tasks),
             "wbs_name": project_wbs.get("name") or "Execution WBS",
         })
+        if isinstance(result_payload.get("sync_status"), dict):
+            summary["sync_status"] = result_payload.get("sync_status")
+    elif tool_name == "generate_execution_plan":
+        if isinstance(result_payload.get("project_wbs"), dict):
+            tasks = result_payload["project_wbs"].get("tasks") if isinstance(result_payload["project_wbs"].get("tasks"), list) else []
+            summary["task_count"] = len(tasks)
+        if isinstance(result_payload.get("sync_status"), dict):
+            summary["sync_status"] = result_payload.get("sync_status")
     elif tool_name == "rename_thread":
         summary.update({
             "thread_id": result_payload.get("thread_id"),
@@ -4007,6 +4018,97 @@ def _tool_success(payload):
     return out
 
 
+def _wbs_task_external_ids_patch(project_wbs, connector_id):
+    if not isinstance(project_wbs, dict):
+        return {}
+    connector_key = str(connector_id or "").strip().lower()
+    patch = {}
+    tasks = project_wbs.get("tasks") if isinstance(project_wbs.get("tasks"), list) else []
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        task_id = str(task.get("id") or "").strip()
+        refs = task.get("external_refs") if isinstance(task.get("external_refs"), dict) else {}
+        if connector_key == "jira_sync":
+            external_id = str(refs.get("jira_issue_key") or task.get("jira_issue_key") or "").strip()
+        elif connector_key == "workfront_sync":
+            external_id = str(refs.get("workfront_task_id") or "").strip()
+        elif connector_key == "smartsheet_sync":
+            external_id = str(refs.get("smartsheet_row_id") or "").strip()
+        else:
+            external_id = ""
+        if task_id and external_id:
+            patch[task_id] = external_id
+    return patch
+
+
+def _dispatch_sync_for_preferred_pm_tool(user_id, thread_id, project_wbs, profile):
+    preferred = str((profile or {}).get("preferred_pm_tool") or "").strip().lower()
+    if preferred == "jira_sync":
+        return sync_wbs_to_jira(user_id, thread_id, project_wbs, thread_sync_profile=profile), preferred
+    if preferred == "workfront_sync":
+        return sync_wbs_to_workfront(user_id, thread_id, project_wbs, thread_sync_profile=profile), preferred
+    if preferred == "smartsheet_sync":
+        return sync_wbs_to_smartsheet(user_id, thread_id, project_wbs, thread_sync_profile=profile), preferred
+    return {"success": False, "skipped": True, "reason": "pm_tool_not_syncable", "project_wbs": project_wbs}, preferred
+
+
+def _trigger_post_mutation_sync(user_id, thread_id, project_wbs):
+    profile = get_thread_sync_profile(user_id, thread_id)
+    preferred = str(profile.get("preferred_pm_tool") or "").strip().lower()
+    if not preferred or preferred == "jaspen":
+        return {"status": "skipped", "reason": "no_pm_tool_selected"}
+    if not profile.get("auto_sync", True):
+        return {"status": "skipped", "reason": "auto_sync_disabled", "connector_id": preferred}
+    if str(profile.get("thread_sync_status") or "").strip().lower() not in {"ready", "synced", "error", "syncing"}:
+        return {"status": "skipped", "reason": "thread_not_ready", "connector_id": preferred}
+
+    settings = get_connector_settings(user_id, preferred)
+    lifecycle = str(settings.get("lifecycle_status") or "").strip().lower() or "disconnected"
+    if lifecycle != "connected":
+        update_thread_sync_profile(user_id, thread_id, {"thread_sync_status": "degraded"})
+        return {"status": "error", "reason": "connector_not_connected", "connector_id": preferred}
+
+    update_thread_sync_profile(user_id, thread_id, {"thread_sync_status": "syncing"})
+    try:
+        result, connector_id = _dispatch_sync_for_preferred_pm_tool(user_id, thread_id, project_wbs, profile)
+    except Exception:
+        current_app.logger.exception(
+            "Post-mutation sync failed unexpectedly thread=%s connector=%s",
+            thread_id,
+            preferred,
+        )
+        update_thread_sync_profile(user_id, thread_id, {"thread_sync_status": "error"})
+        return {"status": "error", "reason": "sync_exception", "connector_id": preferred}
+
+    result = result if isinstance(result, dict) else {}
+    synced_wbs = result.get("project_wbs") if isinstance(result.get("project_wbs"), dict) else project_wbs
+    patch = _wbs_task_external_ids_patch(synced_wbs, connector_id)
+    if result.get("success"):
+        next_status = "synced"
+    elif result.get("skipped"):
+        next_status = "ready"
+    else:
+        next_status = "error"
+    profile_updates = {"thread_sync_status": next_status}
+    if patch:
+        profile_updates["wbs_task_external_ids_patch"] = patch
+    update_thread_sync_profile(user_id, thread_id, profile_updates)
+
+    if result.get("success"):
+        return {"status": "synced", "connector_id": connector_id}
+    if result.get("skipped"):
+        return {"status": "skipped", "connector_id": connector_id, "reason": str(result.get("reason") or "sync_skipped")}
+    reason = ""
+    errors = result.get("errors") if isinstance(result.get("errors"), list) else []
+    if errors:
+        first = errors[0]
+        reason = str(first.get("error") if isinstance(first, dict) else first)
+    if not reason:
+        reason = str(result.get("reason") or "sync_failed")
+    return {"status": "error", "connector_id": connector_id, "reason": reason}
+
+
 def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id):
     if not user:
         return _tool_error("User context missing.")
@@ -4202,6 +4304,26 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id):
         thread_data["project_wbs"] = normalized_wbs
         all_data[thread_id] = thread_data
         _save_scenarios(user_id, all_data)
+        sync_status = {"status": "skipped", "reason": "no_pm_tool_selected"}
+        try:
+            profile = get_thread_sync_profile(user_id, thread_id)
+            preferred = str(profile.get("preferred_pm_tool") or "").strip().lower()
+            if preferred and preferred != "jaspen":
+                settings = get_connector_settings(user_id, preferred)
+                lifecycle = str(settings.get("lifecycle_status") or "").strip().lower() or "disconnected"
+                if lifecycle == "connected":
+                    update_thread_sync_profile(user_id, thread_id, {"thread_sync_status": "ready"})
+                    if profile.get("auto_sync", True):
+                        sync_status = _trigger_post_mutation_sync(user_id, thread_id, normalized_wbs)
+                    else:
+                        sync_status = {"status": "ready", "connector_id": preferred, "reason": "auto_sync_disabled"}
+                else:
+                    update_thread_sync_profile(user_id, thread_id, {"thread_sync_status": "degraded"})
+                    sync_status = {"status": "degraded", "connector_id": preferred, "reason": "connector_not_connected"}
+            else:
+                update_thread_sync_profile(user_id, thread_id, {"thread_sync_status": "not_started"})
+        except Exception:
+            current_app.logger.exception("Failed updating thread sync status after execution plan generation")
         return _tool_success({
             "tool": tool_name,
             "confirmation": (
@@ -4209,6 +4331,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id):
                 "Open the Execution view to review list, board, and timeline."
             ),
             "project_wbs": normalized_wbs,
+            "sync_status": sync_status,
         })
 
     if tool_name in {"update_wbs_task", "add_wbs_task", "remove_wbs_task"}:
@@ -4319,6 +4442,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id):
         all_data[thread_id] = td
         if not _save_scenarios(user_id, all_data):
             return _tool_error("Failed to persist WBS changes.", code="persist_failed")
+        sync_status = _trigger_post_mutation_sync(user_id, thread_id, normalized)
 
         if tool_name == "add_wbs_task":
             audit_action = "wbs.task_created"
@@ -4343,6 +4467,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id):
             "tool": tool_name,
             "confirmation": confirmation,
             "project_wbs": normalized,
+            "sync_status": sync_status,
         })
 
     return _tool_error(f"Unsupported tool '{tool_name}'.", code="unknown_tool")

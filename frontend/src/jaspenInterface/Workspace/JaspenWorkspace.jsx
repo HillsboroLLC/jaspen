@@ -6271,6 +6271,73 @@ async function onBeginProject(extraAnswers = null) {
     return;
   }
 
+  const PM_TOOL_LABELS = {
+    jaspen: 'Jaspen only',
+    jira_sync: 'Jira',
+    workfront_sync: 'Workfront',
+    smartsheet_sync: 'Smartsheet',
+  };
+  try {
+    const syncRes = await fetch(
+      `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(tid)}/sync`,
+      {
+        method: 'GET',
+        headers: buildAuthHeaders({}, 'GET'),
+        credentials: 'include',
+      }
+    );
+    const syncJson = await syncRes.json().catch(() => ({}));
+    if (syncRes.ok) {
+      const currentPreferred = String(syncJson?.preferred_pm_tool || '').trim().toLowerCase();
+      if (!currentPreferred) {
+        const availableTools = Array.isArray(syncJson?.available_pm_tools)
+          ? syncJson.available_pm_tools
+          : [];
+        const eligibleTools = availableTools.filter((tool) => {
+          const id = String(tool?.id || '').trim().toLowerCase();
+          if (id === 'jaspen') return true;
+          return Boolean(tool?.connected);
+        });
+        if (eligibleTools.length > 0) {
+          const lines = eligibleTools.map((tool, idx) => {
+            const id = String(tool?.id || '').trim().toLowerCase();
+            const label = PM_TOOL_LABELS[id] || String(tool?.label || id);
+            return `${idx + 1}. ${label}`;
+          });
+          const defaultIndex = Math.max(1, eligibleTools.findIndex((tool) => String(tool?.id || '').trim().toLowerCase() === 'jaspen') + 1);
+          const selected = window.prompt(
+            `Choose the PM tool for this initiative:\n${lines.join('\n')}\n\nEnter the option number:`,
+            String(defaultIndex || 1)
+          );
+          if (selected === null) return;
+          const selectedIndex = Number.parseInt(String(selected || '').trim(), 10);
+          if (!Number.isFinite(selectedIndex) || selectedIndex < 1 || selectedIndex > eligibleTools.length) {
+            showToast('Invalid PM tool selection. Please try Begin Project again.', 'error');
+            return;
+          }
+          const chosenTool = String(eligibleTools[selectedIndex - 1]?.id || 'jaspen').trim().toLowerCase();
+          const bindRes = await fetch(
+            `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(tid)}/preferred-pm-tool`,
+            {
+              method: 'POST',
+              headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
+              credentials: 'include',
+              body: JSON.stringify({ preferred_pm_tool: chosenTool }),
+            }
+          );
+          const bindJson = await bindRes.json().catch(() => ({}));
+          if (!bindRes.ok) {
+            showToast(bindJson?.error || 'Unable to bind PM tool for this thread.', 'error');
+            return;
+          }
+          showToast(`PM tool set to ${PM_TOOL_LABELS[chosenTool] || chosenTool}.`, 'success');
+        }
+      }
+    }
+  } catch (syncErr) {
+    console.warn('[Begin Project] PM tool pre-bind check failed', syncErr);
+  }
+
   const activeScenarioName = activeScenarioProjectLabel;
   const sourceLabel = activeScenarioName
     ? `${activeScenarioName} (Active)`

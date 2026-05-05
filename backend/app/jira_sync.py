@@ -198,6 +198,17 @@ def _jira_request(config, method, path, payload=None, timeout=20):
     return result["data"], result
 
 
+def jira_check_connection(user_id):
+    config = _jira_runtime_config(user_id)
+    if not _jira_ready(config):
+        return {"ok": False, "error": "jira_config_missing", "meta": {}}
+    try:
+        _, meta = _jira_request(config, "GET", "/rest/api/3/myself", timeout=20)
+        return {"ok": True, "error": "", "meta": meta}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "meta": {}}
+
+
 def sync_wbs_to_jira(user_id, thread_id, project_wbs, thread_sync_profile=None):
     profile = thread_sync_profile or get_thread_sync_profile(user_id, thread_id)
     mode = _text(profile.get("sync_mode") or "import").lower()
@@ -283,6 +294,66 @@ def _label_value(labels, prefix):
         if text.startswith(prefix):
             return text[len(prefix):]
     return ""
+
+
+def import_tasks_from_jira(user_id, thread_id):
+    profile = get_thread_sync_profile(user_id, thread_id)
+    config = _jira_runtime_config(user_id)
+    if not _jira_ready(config):
+        return {"success": False, "reason": "jira_config_missing", "tasks": [], "external_id_map": {}}
+
+    jira_to_wbs_map = _resolve_jira_to_wbs_mapping(profile)
+    fields = ["summary", "status", "assignee", "duedate", "labels"]
+    jql = f'project="{config["project_key"]}" ORDER BY updated DESC'
+    try:
+        search_result, meta = _jira_request(
+            config,
+            "GET",
+            f"/rest/api/3/search?jql={jql.replace(' ', '%20')}&maxResults=100&fields={','.join(fields)}",
+        )
+    except Exception as exc:
+        return {"success": False, "reason": str(exc), "tasks": [], "external_id_map": {}}
+
+    issues = search_result.get("issues") if isinstance(search_result.get("issues"), list) else []
+    tasks = []
+    external_id_map = {}
+    for issue in issues:
+        if not isinstance(issue, dict):
+            continue
+        issue_key = _text(issue.get("key"))
+        issue_id = _text(issue.get("id")) or issue_key
+        fields_payload = issue.get("fields") if isinstance(issue.get("fields"), dict) else {}
+        summary_key = _pick_external_key_for_wbs(jira_to_wbs_map, "title", "summary")
+        status_key = _pick_external_key_for_wbs(jira_to_wbs_map, "status", "status.name")
+        owner_key = _pick_external_key_for_wbs(jira_to_wbs_map, "owner", "assignee.displayName")
+        due_key = _pick_external_key_for_wbs(jira_to_wbs_map, "due_date", "duedate")
+        title = _text(_path_get(fields_payload, summary_key)) or f"Jira Issue {issue_key or issue_id}"
+        status_value = _text(_path_get(fields_payload, status_key)).lower()
+        owner_value = _text(_path_get(fields_payload, owner_key))
+        due_value = _text(_path_get(fields_payload, due_key))
+        task_id = f"jira_{issue_id or issue_key}"
+        task = {
+            "id": task_id,
+            "title": title,
+            "status": JIRA_TO_JAS_STATUS.get(status_value, "todo"),
+            "owner": owner_value,
+            "due_date": due_value or None,
+            "source": "jira_import",
+            "external_refs": {"jira_issue_key": issue_key} if issue_key else {},
+        }
+        tasks.append(task)
+        if issue_key:
+            external_id_map[task_id] = issue_key
+
+    return {
+        "success": True,
+        "thread_id": thread_id,
+        "connector_id": "jira_sync",
+        "attempt_count": meta.get("attempt_count"),
+        "duration_ms": meta.get("duration_ms"),
+        "tasks": tasks,
+        "external_id_map": external_id_map,
+    }
 
 
 def _jira_status_to_jaspen(status_name):

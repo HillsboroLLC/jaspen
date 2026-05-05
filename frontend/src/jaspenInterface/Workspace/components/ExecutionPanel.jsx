@@ -110,6 +110,28 @@ function statusSyncLabel(item, selectedConnectorIds) {
   return 'Connected';
 }
 
+function threadSyncStatusLabel(status) {
+  const key = String(status || '').trim().toLowerCase();
+  if (key === 'not_started') return 'No PM tool selected';
+  if (key === 'tool_selected' || key === 'wbs_pending') return 'Waiting for execution plan';
+  if (key === 'ready') return 'Ready to sync';
+  if (key === 'syncing') return 'Syncing…';
+  if (key === 'synced') return 'Synced';
+  if (key === 'error') return 'Sync error';
+  if (key === 'paused') return 'Sync paused';
+  if (key === 'degraded') return 'Connector issue';
+  return 'Sync status unavailable';
+}
+
+function preferredPmToolLabel(toolId) {
+  const key = String(toolId || '').trim().toLowerCase();
+  if (key === 'jaspen') return 'Jaspen';
+  if (key === 'jira_sync') return 'Jira';
+  if (key === 'workfront_sync') return 'Workfront';
+  if (key === 'smartsheet_sync') return 'Smartsheet';
+  return key;
+}
+
 function ownerOptionsFromMembers(members) {
   return (Array.isArray(members) ? members : [])
     .map((member) => {
@@ -198,6 +220,13 @@ export default function ExecutionPanel({
     const connectorIds = syncState?.thread_sync?.connector_ids;
     return Array.isArray(connectorIds) ? connectorIds.map((id) => String(id)) : [];
   }, [syncState]);
+  const threadSyncStatus = String(
+    syncState?.thread_sync_status || syncState?.thread_sync?.thread_sync_status || ''
+  ).trim().toLowerCase();
+  const preferredPmTool = String(
+    syncState?.preferred_pm_tool || syncState?.thread_sync?.preferred_pm_tool || ''
+  ).trim().toLowerCase();
+  const syncStatusMessage = String(syncState?.message || '').trim();
 
   useEffect(() => {
     if (!threadId || typeof authFetch !== 'function') return;
@@ -325,7 +354,18 @@ export default function ExecutionPanel({
       await Promise.all([onRefresh?.(), loadSyncState()]);
       setPanelMessage('');
     } catch (error) {
-      setPanelMessage(error?.message || 'Unable to sync execution plan.');
+      const code = String(error?.data?.code || '').trim().toUpperCase();
+      if (code === 'WBS_NOT_FOUND') {
+        setPanelMessage('Execution plan not generated yet. Generate the WBS first, then sync.');
+      } else if (code === 'NO_PM_TOOL_SELECTED') {
+        setPanelMessage('No PM tool is selected for this thread yet.');
+      } else if (code === 'PM_TOOL_NOT_CONNECTED' || code === 'CONNECTOR_NOT_CONNECTED') {
+        setPanelMessage('Preferred PM connector is not connected. Re-verify it in Data Sources.');
+      } else if (code === 'SYNC_IN_PROGRESS') {
+        setPanelMessage('A sync is already in progress. Please wait a moment and retry.');
+      } else {
+        setPanelMessage(error?.message || 'Unable to sync execution plan.');
+      }
     } finally {
       setSyncAction('');
     }
@@ -715,6 +755,10 @@ export default function ExecutionPanel({
           <div>
             <p className="execution-eyebrow">Execution Sync</p>
             <h4>Connected PM systems</h4>
+            <p className="execution-panel-subcopy">
+              {syncStatusMessage || threadSyncStatusLabel(threadSyncStatus)}
+              {preferredPmTool ? ` · Preferred tool: ${preferredPmToolLabel(preferredPmTool)}` : ''}
+            </p>
           </div>
           <button type="button" className="execution-tertiary-btn" onClick={loadSyncState} disabled={syncLoading} aria-disabled={syncLoading}>
             <FontAwesomeIcon icon={syncLoading ? faSpinner : faRefresh} spin={syncLoading} />

@@ -103,6 +103,26 @@ function connectorIsImplemented(connector) {
   return String(connector?.implementation_status || 'implemented').trim().toLowerCase() === 'implemented';
 }
 
+function normalizeLifecycleStatus(connector) {
+  return String(connector?.lifecycle_status || (connector?.connected ? 'connected' : 'disconnected')).trim().toLowerCase();
+}
+
+function connectorLifecycleLabel(connector) {
+  const lifecycle = normalizeLifecycleStatus(connector);
+  if (lifecycle === 'connected') return 'Connected';
+  if (lifecycle === 'configured') return 'Verify';
+  if (lifecycle === 'verifying') return 'Connecting…';
+  if (lifecycle === 'degraded') return 'Connection issue';
+  return 'Set up';
+}
+
+function connectorLifecycleBadgeClass(connector) {
+  const lifecycle = normalizeLifecycleStatus(connector);
+  if (lifecycle === 'connected') return 'is-on int-badge-success';
+  if (lifecycle === 'degraded') return 'is-off int-badge-danger';
+  return '';
+}
+
 function normalizeDraft(connector) {
   return {
     connection_status: connector?.connected ? 'connected' : 'disconnected',
@@ -721,6 +741,12 @@ export default function ConnectorsManage() {
       });
       const healthData = await healthRes.json().catch(() => ({}));
       if (!healthRes.ok) throw new Error(healthData?.error || `Connection test failed (${healthRes.status})`);
+      const checkRes = await authFetch(`${API_BASE}/api/v1/connectors/${encodeURIComponent(selectedConnector.id)}/check`, {
+        credentials: 'include',
+        headers: authHeaders(false, 'GET'),
+      });
+      const checkData = await checkRes.json().catch(() => ({}));
+      if (!checkRes.ok) throw new Error(checkData?.error || `Setup check failed (${checkRes.status})`);
 
       if (selectedConnector.id === 'snowflake_insights') {
         const tables = parseList(selectedDraft.snowflake_table_allowlist).slice(0, 10);
@@ -781,7 +807,8 @@ export default function ConnectorsManage() {
         const syncData = await syncRes.json().catch(() => ({}));
         if (!syncRes.ok) {
           const syncError = syncData?.error || `Sync failed (${syncRes.status})`;
-          if (isMissingThreadSyncContextError(syncError)) {
+          const syncCode = String(syncData?.code || '').trim().toUpperCase();
+          if (syncCode === 'THREAD_NOT_FOUND' || syncCode === 'WBS_NOT_FOUND' || isMissingThreadSyncContextError(syncError)) {
             setMessage('Setup check passed for connector credentials. The selected sync thread is not available for WBS sync yet; select another thread or generate an execution plan first.');
             await loadConnectors();
             await loadAudit(selectedConnector.id);
@@ -919,7 +946,11 @@ export default function ConnectorsManage() {
       await loadAudit(selectedConnector.id);
     } catch (err) {
       const syncError = err?.message || 'Sync failed.';
-      if (EXECUTION_SYNC_CONNECTOR_IDS.includes(selectedConnector?.id) && isMissingThreadSyncContextError(syncError)) {
+      const syncCode = String(err?.data?.code || '').trim().toUpperCase();
+      if (
+        EXECUTION_SYNC_CONNECTOR_IDS.includes(selectedConnector?.id)
+        && (syncCode === 'THREAD_NOT_FOUND' || syncCode === 'WBS_NOT_FOUND' || isMissingThreadSyncContextError(syncError))
+      ) {
         setError('Connector is connected, but the selected sync thread is not available for WBS sync yet. Select another thread or generate an execution plan first.');
       } else {
         setError(syncError);
@@ -1290,8 +1321,8 @@ export default function ConnectorsManage() {
                   >
                     <div className="connector-card-head">
                       <span className="connector-card-icon"><FontAwesomeIcon icon={connectorIcon(connector.id)} /></span>
-                      <span className={`connector-card-status int-badge ${implemented ? (connector.connected ? 'is-on int-badge-success' : 'is-off int-badge-danger') : ''}`}>
-                        {implemented ? (connector.connected ? 'Connected' : 'Disconnected') : 'Coming soon'}
+                      <span className={`connector-card-status int-badge ${implemented ? connectorLifecycleBadgeClass(connector) : ''}`}>
+                        {implemented ? connectorLifecycleLabel(connector) : 'Coming soon'}
                       </span>
                     </div>
                     <h3>{connector.label}</h3>
@@ -1386,8 +1417,8 @@ export default function ConnectorsManage() {
                     <label>
                       Connection Status
                       <div className="connector-status-readonly">
-                        <span className={`int-badge ${selectedConnector.connected ? 'int-badge-success' : 'int-badge-danger'}`}>
-                          {selectedConnector.connected ? 'Connected' : 'Disconnected'}
+                        <span className={`int-badge ${connectorLifecycleBadgeClass(selectedConnector)}`}>
+                          {connectorLifecycleLabel(selectedConnector)}
                         </span>
                       </div>
                     </label>
