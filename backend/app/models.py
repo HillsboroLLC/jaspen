@@ -23,6 +23,7 @@ class User(db.Model):
     # Stripe integration
     stripe_customer_id = db.Column(db.String(255), nullable=True)
     stripe_subscription_id = db.Column(db.String(255), nullable=True)
+    subscription_status = db.Column(db.String(32), nullable=True)
     active_organization_id = db.Column(
         db.String(36),
         db.ForeignKey('organizations.id', ondelete='SET NULL'),
@@ -229,6 +230,7 @@ class User(db.Model):
             'ui_preferences': self.ui_preferences if isinstance(self.ui_preferences, dict) else {},
             'stripe_customer_id': self.stripe_customer_id,
             'stripe_subscription_id': self.stripe_subscription_id,
+            'subscription_status': self.subscription_status,
             'active_organization_id': self.active_organization_id,
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat(),

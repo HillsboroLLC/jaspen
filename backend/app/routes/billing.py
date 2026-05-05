@@ -209,6 +209,7 @@ def get_billing_status():
         'plan_key': plan_key,
         'plan': current_plan,
         'is_admin': admin_override,
+        'subscription_status': user.subscription_status,
         'credits_remaining': credits_remaining,
         'monthly_credit_limit': monthly_limit,
         'credits_used': credits_used,
@@ -305,6 +306,73 @@ def create_checkout_session():
         allow_promotion_codes=True,
     )
     return jsonify({'sessionId': session.id, 'url': session.url}), 200
+
+
+@billing_bp.route('/modify-subscription', methods=['POST'])
+@jwt_required()
+def modify_subscription():
+    """Modify the logged-in user's active subscription in-place (with Stripe proration)."""
+    user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({'msg': 'User not found'}), 404
+    if not user.stripe_subscription_id:
+        return jsonify({'msg': 'No active subscription to modify'}), 400
+
+    data = request.get_json() or {}
+    raw_plan_key = data.get('plan_key') or data.get('plan')
+    if not raw_plan_key:
+        return jsonify({'msg': 'Missing plan_key'}), 400
+    plan_key = normalize_plan_key(raw_plan_key)
+
+    plan_catalog = get_plan_catalog(current_app.config)
+    if plan_key not in plan_catalog:
+        return jsonify({'msg': f'Unknown plan_key {raw_plan_key}'}), 400
+    if plan_key == 'free':
+        return jsonify({
+            'msg': 'Use cancel-subscription to move to free at period end.',
+            'plan_key': plan_key,
+        }), 400
+    if is_sales_only_plan(plan_key, current_app.config):
+        return jsonify({
+            'msg': f'{plan_catalog[plan_key]["label"]} is sales-led. Please contact sales.',
+            'contact_sales': True,
+            'plan_key': plan_key,
+        }), 400
+
+    price_id = current_app.config.get('STRIPE_PRICE_IDS', {}).get(plan_key)
+    if not price_id:
+        return jsonify({'msg': f"No Stripe price configured for '{plan_key}'"}), 400
+
+    try:
+        subscription = stripe.Subscription.retrieve(user.stripe_subscription_id)
+        items = (subscription.get('items') or {}).get('data') or []
+        if not items:
+            return jsonify({'msg': 'Subscription has no modifiable items'}), 400
+        item_id = items[0].get('id')
+        if not item_id:
+            return jsonify({'msg': 'Subscription item missing id'}), 400
+
+        updated = stripe.Subscription.modify(
+            user.stripe_subscription_id,
+            items=[{'id': item_id, 'price': price_id}],
+            proration_behavior='create_prorations',
+        )
+    except stripe.error.StripeError as exc:
+        return jsonify({'msg': str(exc)}), 400
+
+    apply_plan_to_user(user, plan_key, current_app.config, reset_credits=False)
+    stripe_customer = updated.get('customer')
+    if stripe_customer:
+        user.stripe_customer_id = stripe_customer
+    user.subscription_status = str(updated.get('status') or '').strip().lower() or user.subscription_status
+    db.session.commit()
+
+    return jsonify({
+        'success': True,
+        'plan_key': plan_key,
+        'stripe_subscription_id': user.stripe_subscription_id,
+        'subscription_status': user.subscription_status,
+    }), 200
 
 
 @billing_bp.route('/create-overage-checkout-session', methods=['POST'])
@@ -469,6 +537,7 @@ def stripe_webhook():
                 apply_plan_to_user(user, plan_key, current_app.config, reset_credits=True)
                 user.stripe_customer_id = sess.get('customer')
                 user.stripe_subscription_id = sess.get('subscription')
+                user.subscription_status = 'active'
 
     elif event_type == 'invoice.payment_succeeded':
         inv = event['data']['object']
@@ -478,6 +547,7 @@ def stripe_webhook():
         )
         if user:
             reset_user_monthly_credits(user, current_app.config, force=True)
+            user.subscription_status = 'active'
 
     elif event_type == 'invoice.payment_failed':
         inv = event['data']['object']
@@ -486,6 +556,7 @@ def stripe_webhook():
             customer_id=inv.get('customer'),
         )
         if user:
+            user.subscription_status = 'past_due'
             current_app.logger.warning(
                 "Stripe payment failed for user=%s subscription=%s",
                 user.id,
@@ -498,13 +569,18 @@ def stripe_webhook():
         if user:
             apply_plan_to_user(user, 'free', current_app.config, reset_credits=True)
             user.stripe_subscription_id = None
+            user.subscription_status = 'canceled'
 
     elif event_type == 'customer.subscription.updated':
         sub = event['data']['object']
         user = User.query.filter_by(stripe_subscription_id=sub.get('id')).first()
-        if user and sub.get('status') in {'canceled', 'incomplete_expired', 'unpaid'}:
-            apply_plan_to_user(user, 'free', current_app.config, reset_credits=True)
-            user.stripe_subscription_id = None
+        if user:
+            status = str(sub.get('status') or '').strip().lower()
+            if status:
+                user.subscription_status = status
+            if status in {'canceled', 'incomplete_expired', 'unpaid'}:
+                apply_plan_to_user(user, 'free', current_app.config, reset_credits=True)
+                user.stripe_subscription_id = None
 
     elif event_type == 'customer.subscription.paused':
         sub = event['data']['object']
@@ -512,6 +588,7 @@ def stripe_webhook():
         if user:
             apply_plan_to_user(user, 'free', current_app.config, reset_credits=True)
             user.stripe_subscription_id = None
+            user.subscription_status = 'paused'
 
     elif event_type == 'charge.refunded':
         charge = event['data']['object']
