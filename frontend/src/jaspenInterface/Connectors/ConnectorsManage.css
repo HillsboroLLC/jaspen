@@ -444,7 +444,10 @@
   flex-shrink: 0;
 }
 
-/* JaspenAiDrawer tab is rendered by the shared component — no local styles needed */
+/* Hide Jaspen tab while App Menu is open — prevent both drawers visible at once */
+body.jaspen-sidebar-open .jas-sidebar-tab {
+  display: none;
+}
 
 /* Right column: sticky detail panel, scrolls independently */
 .connector-detail-panel {

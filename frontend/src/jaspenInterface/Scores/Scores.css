@@ -1,6 +1,9 @@
 .scores-container {
   min-height: 100vh;
-  padding: 24px;
+  /* padding-left omitted — .int-page handles it (72px clear of MENU tab) */
+  padding-top: 16px;
+  padding-right: 24px;
+  padding-bottom: 40px;
   color: var(--jas-navy);
   background: var(--jas-bg, var(--int-bg));
   transition: padding-left 0.3s ease;
@@ -10,13 +13,10 @@
   padding-left: 420px;
 }
 
+/* Card wrapper removed — content sits directly on page background (two-layer look) */
 .scores-card {
-  max-width: 1320px;
+  max-width: 1450px;
   margin: 0 auto;
-  background: var(--int-surface);
-  border: 1px solid var(--jas-border, var(--int-border));
-  border-radius: var(--int-radius-lg);
-  padding: 24px;
 }
 
 .scores-agent-tab {
@@ -42,6 +42,11 @@
 
 .scores-agent-tab:hover {
   background: var(--gray-200, #e9ecef);
+}
+
+/* Hide Jaspen tab while App Menu is open — prevent both drawers being visible */
+body.jaspen-sidebar-open .scores-agent-tab {
+  display: none;
 }
 
 .scores-agent-drawer {
@@ -723,16 +728,13 @@
 
 @media (max-width: 1080px) {
   .scores-container {
-    padding: 16px;
+    padding-top: 12px;
+    padding-right: 12px;
+    padding-bottom: 24px;
   }
 
   .scores-container.drawer-open {
     padding-left: 16px;
-  }
-
-  .scores-card {
-    padding: 16px;
-    border-radius: var(--int-radius-md);
   }
 
   .scores-toolbar {

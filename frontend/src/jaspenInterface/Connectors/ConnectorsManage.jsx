@@ -583,6 +583,23 @@ export default function ConnectorsManage() {
     return { connected, degraded, total: allowed.length, staleNames };
   }, [allowedConnectorIds, connectors]);
 
+  // Mutual exclusion: close Jaspen drawer whenever App Menu opens
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      if (document.body.classList.contains('jaspen-sidebar-open')) {
+        setJaspenOpen(false);
+      }
+    });
+    observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+
+  // Open Jaspen drawer and close App Menu if it was open
+  const openJaspen = useCallback(() => {
+    document.body.classList.remove('jaspen-sidebar-open');
+    setJaspenOpen(true);
+  }, []);
+
   const guardUnsavedChanges = useCallback((onProceed, prompt = 'You have unsaved changes. Leave this page and discard them?') => {
     if (!hasUnsavedChanges) {
       onProceed?.();
@@ -1026,7 +1043,7 @@ export default function ConnectorsManage() {
     setJaspenInput('');
     setJaspenBusy(true);
     setJaspenError('');
-    setJaspenOpen(true);
+    openJaspen();
     setJaspenMessages((prev) => [...prev, { role: 'user', text }]);
     const threadId = jaspenThreadRef.current;
     const endpoint = jaspenIsFirstRef.current
@@ -1655,7 +1672,7 @@ export default function ConnectorsManage() {
 
       <JaspenAiDrawer
         isOpen={jaspenOpen}
-        onOpen={() => setJaspenOpen(true)}
+        onOpen={openJaspen}
         onClose={() => setJaspenOpen(false)}
         showSideTab={true}
         sideTabTop={228}
