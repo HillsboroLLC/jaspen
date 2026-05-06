@@ -4,7 +4,7 @@ html,
 body {
   margin: 0;
   /* Blue-gray fills every pixel — no white bleeding through gaps */
-  background: var(--int-bg, #e6ecf5);
+  background: var(--int-bg, #f8fafc);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     sans-serif;
@@ -27,7 +27,7 @@ code {
 /* Full-bleed background for all internal app pages */
 .jas-internal-page-shell {
   min-height: 100vh;
-  background: #e6ecf5;
+  background: #f8fafc;
 }
 
 @media (prefers-reduced-motion: reduce) {
