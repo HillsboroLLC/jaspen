@@ -3,6 +3,9 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faArrowRightArrowLeft,
+  faChevronDown,
+  faChevronRight,
+  faComments,
   faFlask,
   faPlugCircleCheck,
   faRotate,
@@ -17,7 +20,6 @@ import FieldError from '../../shared/components/FieldError';
 import SkeletonBlock from '../../shared/components/SkeletonLoader';
 import { getPlanConnectors } from '../../shared/billing/planConnectors';
 import { PLAN_ORDER, PLAN_RANK } from '../../shared/constants/appConstants';
-import ConnectorMonitor from '../Monitoring/ConnectorMonitor';
 import './ConnectorsManage.css';
 import AppMenu from '../shared/AppMenu';
 
@@ -38,6 +40,12 @@ const PLAN_CONNECTOR_IDS = {
   enterprise: CONNECTOR_ORDER,
 };
 const EXECUTION_SYNC_CONNECTOR_IDS = ['jira_sync', 'smartsheet_sync'];
+
+const CONNECTOR_CATEGORIES = [
+  { id: 'execution', label: 'Execution Sync', connectorIds: ['jira_sync', 'smartsheet_sync'] },
+  { id: 'data', label: 'Data & Insights', connectorIds: ['salesforce_insights', 'snowflake_insights'] },
+  { id: 'enterprise', label: 'Enterprise Sources', connectorIds: ['oracle_fusion_insights', 'servicenow_insights', 'netsuite_insights'] },
+];
 const REQUIRED_FIELDS_BY_CONNECTOR = {
   jira_sync: ['jira_base_url', 'jira_project_key', 'jira_email', 'jira_api_token'],
   smartsheet_sync: ['smartsheet_base_url', 'smartsheet_sheet_id', 'smartsheet_api_token'],
@@ -353,6 +361,7 @@ export default function ConnectorsManage() {
   const [snowflakeProbeBusy, setSnowflakeProbeBusy] = useState(false);
   const [snowflakeProbeResult, setSnowflakeProbeResult] = useState(null);
   const [setupModeByConnector, setSetupModeByConnector] = useState({});
+  const [collapsedGroups, setCollapsedGroups] = useState(() => new Set(['enterprise']));
 
   const adminPreviewPlan = useMemo(() => {
     if (!Boolean(user?.is_admin)) return '';
@@ -548,6 +557,13 @@ export default function ConnectorsManage() {
     () => connectors.some((connector) => connectorDraftChanged(connector, drafts[connector.id] || normalizeDraft(connector))),
     [connectors, drafts]
   );
+
+  const healthSummary = useMemo(() => {
+    const allowed = connectors.filter((c) => allowedConnectorIds.includes(c.id) && connectorIsImplemented(c));
+    const connected = allowed.filter((c) => normalizeLifecycleStatus(c) === 'connected').length;
+    const degraded = allowed.filter((c) => normalizeLifecycleStatus(c) === 'degraded').length;
+    return { connected, degraded, total: allowed.length };
+  }, [allowedConnectorIds, connectors]);
 
   const guardUnsavedChanges = useCallback((onProceed, prompt = 'You have unsaved changes. Leave this page and discard them?') => {
     if (!hasUnsavedChanges) {
@@ -1261,49 +1277,103 @@ export default function ConnectorsManage() {
             </section>
           ) : (
             <>
-              <div className="connectors-plan-note">
-                <strong>{adminPreviewPlan ? 'Preview mode' : 'Current access'}</strong>
-                <span>
-                  {adminPreviewPlan
-                    ? `Viewing Data Sources as ${effectivePlanKey}.`
-                    : `Your ${effectivePlanKey} plan includes: ${planConnectorNames.join(', ')}.`}
-                </span>
+              {/* Slim health + plan bar */}
+              <div className="connectors-health-bar">
+                <div className="connectors-health-bar-stats">
+                  <span className="connectors-health-stat is-connected">
+                    <span className="connectors-health-dot" />
+                    {healthSummary.connected} connected
+                  </span>
+                  {healthSummary.degraded > 0 && (
+                    <span className="connectors-health-stat is-degraded">
+                      <span className="connectors-health-dot" />
+                      {healthSummary.degraded} issue{healthSummary.degraded !== 1 ? 's' : ''}
+                    </span>
+                  )}
+                  <span className="connectors-health-stat is-muted">
+                    {healthSummary.total} available on your {effectivePlanKey} plan
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="int-btn int-btn-ghost connectors-health-refresh"
+                  onClick={refresh}
+                  disabled={loading || busy}
+                  aria-label="Refresh connector status"
+                >
+                  <FontAwesomeIcon icon={faRotate} />
+                  Refresh
+                </button>
               </div>
-              <ConnectorMonitor
-                selectedThreadId={selectedThreadId}
-                onResynced={refresh}
-                allowedConnectorIds={allowedConnectorIds}
-              />
             </>
           )}
           {!isFreePlan && (
           <div className="connectors-manage-layout">
-            <section className="connectors-card-grid">
-              {visibleConnectors.map((connector) => {
-                const implemented = connectorIsImplemented(connector);
+            {/* ── Left sidebar: categorized connector list ── */}
+            <nav className="connectors-sidebar" aria-label="Connector list">
+              {CONNECTOR_CATEGORIES.map((category) => {
+                const categoryConnectors = visibleConnectors.filter((c) =>
+                  category.connectorIds.includes(c.id)
+                );
+                if (categoryConnectors.length === 0) return null;
+                const isCollapsed = collapsedGroups.has(category.id);
+                const toggleCollapsed = () =>
+                  setCollapsedGroups((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(category.id)) next.delete(category.id);
+                    else next.add(category.id);
+                    return next;
+                  });
                 return (
-                  <button
-                    key={connector.id}
-                    type="button"
-                    className={`connector-card ${selectedConnectorId === connector.id ? 'is-selected' : ''}`}
-                    onClick={() => setSelectedConnectorId(connector.id)}
-                  >
-                    <div className="connector-card-head">
-                      <span className="connector-card-icon"><FontAwesomeIcon icon={connectorIcon(connector.id)} /></span>
-                      <span className={`connector-card-status int-badge ${implemented ? connectorLifecycleBadgeClass(connector) : ''}`}>
-                        {implemented ? connectorLifecycleLabel(connector) : 'Coming soon'}
+                  <div key={category.id} className="connector-category-group">
+                    <button
+                      type="button"
+                      className="connector-category-header"
+                      onClick={toggleCollapsed}
+                      aria-expanded={!isCollapsed}
+                    >
+                      <FontAwesomeIcon
+                        icon={isCollapsed ? faChevronRight : faChevronDown}
+                        className="connector-category-chevron"
+                      />
+                      <span>{category.label}</span>
+                      <span className="connector-category-count">
+                        {categoryConnectors.filter((c) => normalizeLifecycleStatus(c) === 'connected').length}/{categoryConnectors.length}
                       </span>
-                    </div>
-                    <h3>{connector.label}</h3>
-                    <p>{connector.description}</p>
-                    <div className="connector-card-foot">
-                      <span>{implemented ? (connector.sync_mode || 'import') : 'Not yet available'}</span>
-                      <span>{implemented ? (connector.last_sync_at ? new Date(connector.last_sync_at).toLocaleString() : 'Never synced') : 'Coming soon'}</span>
-                    </div>
-                  </button>
+                    </button>
+                    {!isCollapsed && (
+                      <ul className="connector-list">
+                        {categoryConnectors.map((connector) => {
+                          const implemented = connectorIsImplemented(connector);
+                          const lifecycle = normalizeLifecycleStatus(connector);
+                          const isSelected = selectedConnectorId === connector.id;
+                          return (
+                            <li key={connector.id}>
+                              <button
+                                type="button"
+                                className={`connector-list-item ${isSelected ? 'is-selected' : ''} ${!implemented ? 'is-coming-soon' : ''}`}
+                                onClick={() => setSelectedConnectorId(connector.id)}
+                                title={!implemented ? 'Coming soon' : connector.description}
+                              >
+                                <span className="connector-list-item-icon">
+                                  <FontAwesomeIcon icon={connectorIcon(connector.id)} />
+                                </span>
+                                <span className="connector-list-item-label">{connector.label}</span>
+                                {implemented ? (
+                                  <span className={`connector-list-item-dot ${lifecycle === 'connected' ? 'is-on' : lifecycle === 'degraded' ? 'is-warn' : ''}`} />
+                                ) : (
+                                  <span className="connector-list-item-soon">Soon</span>
+                                )}
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </div>
                 );
               })}
-            </section>
+            </nav>
 
             <section className="connector-detail-panel">
               {!selectedConnector && <div className="connectors-manage-state">Select a connector.</div>}
@@ -1525,6 +1595,18 @@ export default function ConnectorsManage() {
         onCancel={() => setDiscardDialog(null)}
       />
       </div>
+
+      {/* Jaspen chat floating action button */}
+      <button
+        type="button"
+        className="connectors-jaspen-fab"
+        onClick={() => guardUnsavedChanges(() => navigate('/workspace'))}
+        title="Open Jaspen AI"
+        aria-label="Open Jaspen AI chat"
+      >
+        <FontAwesomeIcon icon={faComments} />
+        <span>Jaspen</span>
+      </button>
     </div>
   );
 }
