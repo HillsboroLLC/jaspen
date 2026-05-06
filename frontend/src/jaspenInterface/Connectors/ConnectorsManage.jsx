@@ -1,11 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faArrowRightArrowLeft,
   faChevronDown,
   faChevronRight,
-  faComments,
   faFlask,
   faPlugCircleCheck,
   faRotate,
@@ -20,6 +19,7 @@ import FieldError from '../../shared/components/FieldError';
 import SkeletonBlock from '../../shared/components/SkeletonLoader';
 import { getPlanConnectors } from '../../shared/billing/planConnectors';
 import { PLAN_ORDER, PLAN_RANK } from '../../shared/constants/appConstants';
+import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
 import './ConnectorsManage.css';
 import AppMenu from '../shared/AppMenu';
 
@@ -363,6 +363,15 @@ export default function ConnectorsManage() {
   const [setupModeByConnector, setSetupModeByConnector] = useState({});
   const [collapsedGroups, setCollapsedGroups] = useState(() => new Set(['enterprise']));
 
+  // Jaspen AI drawer
+  const [jaspenOpen, setJaspenOpen] = useState(false);
+  const [jaspenMessages, setJaspenMessages] = useState([]);
+  const [jaspenInput, setJaspenInput] = useState('');
+  const [jaspenBusy, setJaspenBusy] = useState(false);
+  const [jaspenError, setJaspenError] = useState('');
+  const jaspenThreadRef = useRef(`connectors_${Math.random().toString(36).slice(2, 10)}`);
+  const jaspenIsFirstRef = useRef(true);
+
   const adminPreviewPlan = useMemo(() => {
     if (!Boolean(user?.is_admin)) return '';
     const params = new URLSearchParams(location.search);
@@ -562,7 +571,16 @@ export default function ConnectorsManage() {
     const allowed = connectors.filter((c) => allowedConnectorIds.includes(c.id) && connectorIsImplemented(c));
     const connected = allowed.filter((c) => normalizeLifecycleStatus(c) === 'connected').length;
     const degraded = allowed.filter((c) => normalizeLifecycleStatus(c) === 'degraded').length;
-    return { connected, degraded, total: allowed.length };
+    const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000;
+    const staleNames = allowed
+      .filter((c) => {
+        if (normalizeLifecycleStatus(c) !== 'connected') return false;
+        if (!c.last_sync_at) return false;
+        const age = Date.now() - new Date(c.last_sync_at).getTime();
+        return age > STALE_THRESHOLD_MS;
+      })
+      .map((c) => c.label);
+    return { connected, degraded, total: allowed.length, staleNames };
   }, [allowedConnectorIds, connectors]);
 
   const guardUnsavedChanges = useCallback((onProceed, prompt = 'You have unsaved changes. Leave this page and discard them?') => {
@@ -1002,6 +1020,39 @@ export default function ConnectorsManage() {
     }
   }
 
+  async function submitJaspenMessage(rawText) {
+    const text = String(rawText || jaspenInput || '').trim();
+    if (!text || jaspenBusy) return;
+    setJaspenInput('');
+    setJaspenBusy(true);
+    setJaspenError('');
+    setJaspenOpen(true);
+    setJaspenMessages((prev) => [...prev, { role: 'user', text }]);
+    const threadId = jaspenThreadRef.current;
+    const endpoint = jaspenIsFirstRef.current
+      ? `${API_BASE}/api/v1/ai-agent/conversation/start`
+      : `${API_BASE}/api/v1/ai-agent/conversation/continue`;
+    if (jaspenIsFirstRef.current) jaspenIsFirstRef.current = false;
+    try {
+      const res = await authFetch(endpoint, {
+        method: 'POST',
+        credentials: 'include',
+        headers: buildAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ message: text, thread_id: threadId, name: 'Connectors Advisor' }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
+      const reply = String(data?.reply || data?.message || '').trim() || 'I could not generate a response right now.';
+      setJaspenMessages((prev) => [...prev, { role: 'assistant', text: reply }]);
+    } catch (err) {
+      const msg = err?.message || 'Something went wrong. Please try again.';
+      setJaspenError(msg);
+      setJaspenMessages((prev) => [...prev, { role: 'assistant', text: 'I hit an issue. Please try again.' }]);
+    } finally {
+      setJaspenBusy(false);
+    }
+  }
+
   function renderConnectorSpecificFields(connectorId, draft) {
     if (!draft) return null;
     const fieldError = (field) => selectedDraftErrors?.[field] || '';
@@ -1186,7 +1237,7 @@ export default function ConnectorsManage() {
   }
 
   return (
-    <div className="connectors-manage-page int-page">
+    <div className={`connectors-manage-page int-page${jaspenOpen ? ' drawer-open' : ''}`}>
       <AppMenu />
       <div className="connectors-manage-inner int-page-inner">
       <header className="connectors-manage-header int-page-head">
@@ -1288,6 +1339,12 @@ export default function ConnectorsManage() {
                     <span className="connectors-health-stat is-degraded">
                       <span className="connectors-health-dot" />
                       {healthSummary.degraded} issue{healthSummary.degraded !== 1 ? 's' : ''}
+                    </span>
+                  )}
+                  {healthSummary.staleNames.length > 0 && (
+                    <span className="connectors-health-stat is-stale" title="Last sync was more than 24 hours ago — consider resyncing">
+                      <span className="connectors-health-dot" />
+                      {healthSummary.staleNames.join(', ')} may be outdated
                     </span>
                   )}
                   <span className="connectors-health-stat is-muted">
@@ -1596,17 +1653,27 @@ export default function ConnectorsManage() {
       />
       </div>
 
-      {/* Jaspen chat floating action button */}
-      <button
-        type="button"
-        className="connectors-jaspen-fab"
-        onClick={() => guardUnsavedChanges(() => navigate('/workspace'))}
-        title="Open Jaspen AI"
-        aria-label="Open Jaspen AI chat"
-      >
-        <FontAwesomeIcon icon={faComments} />
-        <span>Jaspen</span>
-      </button>
+      <JaspenAiDrawer
+        isOpen={jaspenOpen}
+        onOpen={() => setJaspenOpen(true)}
+        onClose={() => setJaspenOpen(false)}
+        showSideTab={true}
+        sideTabTop={228}
+        id="connectors-jaspen-drawer"
+        messages={jaspenMessages}
+        renderMessage={(msg) => <span>{msg?.text ?? msg?.content ?? ''}</span>}
+        input={jaspenInput}
+        onInputChange={(e) => setJaspenInput(e.target.value)}
+        onSend={() => submitJaspenMessage()}
+        busy={jaspenBusy}
+        placeholder="Ask about your connectors…"
+        starterPrompts={[
+          'Which of my connectors needs attention?',
+          'How do I set up Salesforce for the first time?',
+          'What does a degraded connection mean?',
+          'What\'s the difference between import and bidirectional sync?',
+        ]}
+      />
     </div>
   );
 }

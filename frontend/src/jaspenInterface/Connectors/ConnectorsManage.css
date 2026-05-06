@@ -2,10 +2,17 @@
    Connectors Manage — full-page anchored layout
    ========================================================= */
 
-/* Remove extra padding; .int-page already applies --int-page-pad */
+/* Remove extra padding; .int-page already applies padding-left for the MENU tab */
 .connectors-manage-page {
-  padding: 16px 24px 40px;
-  position: relative; /* anchor for FAB */
+  padding-top: 16px;
+  padding-right: 24px;
+  padding-bottom: 40px;
+  /* padding-left intentionally omitted — .int-page sets it to clear the fixed MENU tab */
+}
+
+/* Push content right when Jaspen drawer is open */
+.connectors-manage-page.drawer-open {
+  padding-left: calc(var(--int-page-pad, 28px) + 320px + 28px);
 }
 
 .connectors-manage-inner {
@@ -405,6 +412,10 @@
   color: #b45309;
 }
 
+.connectors-health-stat.is-stale {
+  color: #b45309;
+}
+
 .connectors-health-stat.is-muted {
   color: var(--int-text-sub, #64748b);
   font-weight: 400;
@@ -433,40 +444,7 @@
   flex-shrink: 0;
 }
 
-/* =========================================================
-   Jaspen AI floating action button
-   ========================================================= */
-
-.connectors-jaspen-fab {
-  position: fixed;
-  bottom: 28px;
-  right: 28px;
-  z-index: 200;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 18px;
-  height: 46px;
-  border-radius: 999px;
-  border: none;
-  background: #1f3f78;
-  color: #fff;
-  font-size: 0.875rem;
-  font-weight: 700;
-  cursor: pointer;
-  box-shadow: 0 4px 16px rgba(31, 63, 120, 0.32);
-  transition: background 0.15s, box-shadow 0.15s, transform 0.12s;
-}
-
-.connectors-jaspen-fab:hover {
-  background: #163064;
-  box-shadow: 0 6px 20px rgba(31, 63, 120, 0.42);
-  transform: translateY(-1px);
-}
-
-.connectors-jaspen-fab:active {
-  transform: translateY(0);
-}
+/* JaspenAiDrawer tab is rendered by the shared component — no local styles needed */
 
 /* Right column: sticky detail panel, scrolls independently */
 .connector-detail-panel {
@@ -993,13 +971,5 @@
   .connector-auto-sync-row {
     flex-direction: column;
     align-items: flex-start;
-  }
-
-  .connectors-jaspen-fab {
-    bottom: 16px;
-    right: 16px;
-    height: 42px;
-    padding: 0 14px;
-    font-size: 0.8rem;
   }
 }
