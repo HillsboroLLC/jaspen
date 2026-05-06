@@ -675,7 +675,7 @@ export default function Scores() {
   };
 
   return (
-    <div className={`scores-container int-page int-page-inner ${portfolioDrawerOpen ? 'drawer-open' : ''}`}>
+    <div className={`scores-container int-page ${portfolioDrawerOpen ? 'drawer-open' : ''}`}>
       <AppMenu />
       {!portfolioDrawerOpen && (
         <button
@@ -772,7 +772,7 @@ export default function Scores() {
         </div>
       </aside>
 
-      <div className="scores-card">
+      <div className="scores-card int-page-inner">
         <div className="scores-toolbar int-page-head">
           <div>
             <p className="int-eyebrow">Scores</p>

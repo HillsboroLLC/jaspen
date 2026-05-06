@@ -1,6 +1,6 @@
 .knowledge-page {
   min-height: calc(100vh - 72px);
-  background: #f8fafc;
+  background: var(--int-bg);
   padding: 0;
 }
 

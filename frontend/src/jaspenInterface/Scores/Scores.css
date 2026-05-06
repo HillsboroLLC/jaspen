@@ -13,10 +13,9 @@
   padding-left: 420px;
 }
 
-/* Card wrapper removed — content sits directly on page background (two-layer look) */
+/* scores-card is now the int-page-inner centering wrapper only — no card styling */
 .scores-card {
-  max-width: 1450px;
-  margin: 0 auto;
+  /* max-width and margin handled by int-page-inner */
 }
 
 .scores-agent-tab {
