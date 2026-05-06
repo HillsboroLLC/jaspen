@@ -85,10 +85,8 @@ export const endpoints = {
   threadPmSync: (threadId) => `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(threadId)}/sync`,
   threadPreferredPmTool: (threadId) => `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(threadId)}/preferred-pm-tool`,
   threadJiraSync: (threadId) => `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(threadId)}/jira/sync`,
-  threadWorkfrontSync: (threadId) => `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(threadId)}/workfront/sync`,
   threadSmartsheetSync: (threadId) => `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(threadId)}/smartsheet/sync`,
   threadJiraImport: (threadId) => `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(threadId)}/jira_sync/import`,
-  threadWorkfrontImport: (threadId) => `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(threadId)}/workfront_sync/import`,
   threadSmartsheetImport: (threadId) => `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(threadId)}/smartsheet_sync/import`,
   connectorHealth: (connectorId) => `${API_BASE}/api/v1/connectors/${encodeURIComponent(connectorId)}/health`,
   connectorAudit: (connectorId) => `${API_BASE}/api/v1/connectors/${encodeURIComponent(connectorId)}/audit`,
@@ -1139,17 +1137,11 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
   syncThreadWbsToJira: async (threadId) =>
     postJSON(endpoints.threadJiraSync(threadId), {}, { withSid: true }),
 
-  syncThreadWbsToWorkfront: async (threadId) =>
-    postJSON(endpoints.threadWorkfrontSync(threadId), {}, { withSid: true }),
-
   syncThreadWbsToSmartsheet: async (threadId) =>
     postJSON(endpoints.threadSmartsheetSync(threadId), {}, { withSid: true }),
 
   importThreadFromJira: async (threadId) =>
     postJSON(endpoints.threadJiraImport(threadId), {}, { withSid: true }),
-
-  importThreadFromWorkfront: async (threadId) =>
-    postJSON(endpoints.threadWorkfrontImport(threadId), {}, { withSid: true }),
 
   importThreadFromSmartsheet: async (threadId) =>
     postJSON(endpoints.threadSmartsheetImport(threadId), {}, { withSid: true }),

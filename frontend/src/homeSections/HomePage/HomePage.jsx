@@ -51,7 +51,6 @@ const NAV_MENUS = [
         title: 'Features',
         items: [
           { label: 'Jaspen in Jira', sectionId: 'product' },
-          { label: 'Jaspen in Workfront', sectionId: 'product' },
           { label: 'Jaspen in Smartsheets', sectionId: 'product' },
         ],
       },

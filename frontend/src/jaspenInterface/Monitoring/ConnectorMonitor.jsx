@@ -5,7 +5,6 @@ import './ConnectorMonitor.css';
 
 const PM_SYNC_ENDPOINTS = {
   jira_sync: 'jira/sync',
-  workfront_sync: 'workfront/sync',
   smartsheet_sync: 'smartsheet/sync',
 };
 

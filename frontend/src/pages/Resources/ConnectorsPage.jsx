@@ -3,7 +3,6 @@ import MarketingPageLayout from '../Marketing/MarketingPageLayout';
 
 const EXECUTION_CONNECTORS = [
   { name: 'Jira', state: 'Essential' },
-  { name: 'Workfront', state: 'Essential' },
   { name: 'Smartsheet', state: 'Essential' },
 ];
 
@@ -32,7 +31,6 @@ export default function ConnectorsPage() {
         </div>
         <div className="hero-abstract connectors-abstract">
           <span>Jira</span>
-          <span>Workfront</span>
           <span>Smartsheet</span>
           <span>Snowflake</span>
           <span>Salesforce</span>

@@ -157,7 +157,7 @@ const TOPICS = {
       {
         heading: 'Sync Targets',
         body: [
-          'WBS plans can be synced to Jira, Workfront, and Smartsheet when connector credentials and sync settings are configured.',
+          'WBS plans can be synced to Jira and Smartsheet when connector credentials and sync settings are configured.',
         ],
       },
     ],
@@ -222,7 +222,7 @@ const TOPICS = {
       {
         heading: 'Supported Connectors',
         body: [
-          'Execution: Jira, Workfront, Smartsheet. Data/Insights: Salesforce, Snowflake, Oracle Fusion, ServiceNow, NetSuite.',
+          'Execution: Jira, Smartsheet. Data/Insights: Salesforce, Snowflake, Oracle Fusion, ServiceNow, NetSuite.',
         ],
       },
       {
@@ -293,19 +293,6 @@ const TOPICS = {
         body: [
           'Base URL, project key, email, API token, issue type, sync mode, and conflict policy.',
         ],
-      },
-    ],
-    links: [{ label: 'Open Connectors', href: '/connectors-manage' }],
-  },
-  workfront: {
-    short: 'WF',
-    label: 'Workfront',
-    title: 'Workfront Connector (Execution)',
-    summary: 'Milestone and owner synchronization with Workfront projects.',
-    sections: [
-      {
-        heading: 'Required Settings',
-        body: ['Workfront base URL, project ID, API token, sync mode, and conflict policy.'],
       },
     ],
     links: [{ label: 'Open Connectors', href: '/connectors-manage' }],
@@ -445,7 +432,7 @@ const TOPIC_GROUPS = [
   },
   {
     label: 'Connectors',
-    items: ['jira', 'workfront', 'smartsheet', 'salesforce', 'snowflake', 'oracleFusion', 'serviceNow', 'netSuite'],
+    items: ['jira', 'smartsheet', 'salesforce', 'snowflake', 'oracleFusion', 'serviceNow', 'netSuite'],
   },
   { label: 'Platform', items: ['billing', 'api'] },
 ];

@@ -133,14 +133,6 @@ TOOL_REGISTRY = [
         "preconditions": ["connector_configured", "workspace_mapping_configured"],
     },
     {
-        "id": "workfront_sync",
-        "type": "connector",
-        "access": "read_write",
-        "purpose": "Sync portfolio/project milestones, owners, and statuses with Workfront.",
-        "tiers": ["team", "enterprise"],
-        "preconditions": ["connector_configured", "workspace_mapping_configured"],
-    },
-    {
         "id": "smartsheet_sync",
         "type": "connector",
         "access": "read_write",

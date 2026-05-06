@@ -37,7 +37,6 @@ RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 # Per-connector credential fields that must never be stored in plain text.
 SENSITIVE_CONNECTOR_FIELDS = {
     "jira_sync": ("jira_api_token",),
-    "workfront_sync": ("workfront_api_token",),
     "smartsheet_sync": ("smartsheet_api_token",),
     "salesforce_insights": ("salesforce_client_secret", "salesforce_refresh_token", "salesforce_access_token"),
     "snowflake_insights": ("snowflake_password", "snowflake_private_key"),
@@ -45,7 +44,7 @@ SENSITIVE_CONNECTOR_FIELDS = {
     "servicenow_insights": ("servicenow_password",),
     "netsuite_insights": ("netsuite_consumer_secret", "netsuite_token_secret"),
 }
-EXECUTION_PM_CONNECTOR_IDS = {"jira_sync", "workfront_sync", "smartsheet_sync"}
+EXECUTION_PM_CONNECTOR_IDS = {"jira_sync", "smartsheet_sync"}
 THREAD_SYNC_STATUS_VALUES = {
     "not_started",
     "tool_selected",
@@ -59,7 +58,6 @@ THREAD_SYNC_STATUS_VALUES = {
 }
 CONNECTOR_REQUIRED_FIELDS = {
     "jira_sync": ("jira_base_url", "jira_project_key", "jira_email", "jira_api_token"),
-    "workfront_sync": ("workfront_base_url", "workfront_project_id", "workfront_api_token"),
     "smartsheet_sync": ("smartsheet_base_url", "smartsheet_sheet_id", "smartsheet_api_token"),
     "salesforce_insights": ("salesforce_auth_base_url", "salesforce_client_id", "salesforce_client_secret"),
     "snowflake_insights": ("snowflake_account", "snowflake_warehouse", "snowflake_database", "snowflake_schema", "snowflake_role", "snowflake_user"),
@@ -128,12 +126,6 @@ def _default_connector_settings(connector_id):
         "jira_api_token": "",
         "jira_issue_type": "",
         "jira_field_mapping": {},
-
-        # Workfront
-        "workfront_base_url": "",
-        "workfront_project_id": "",
-        "workfront_api_token": "",
-        "workfront_field_mapping": {},
 
         # Smartsheet
         "smartsheet_base_url": "",

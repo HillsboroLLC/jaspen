@@ -485,7 +485,7 @@
   color: var(--int-text-sub, #475569);
 }
 
-/* Generic field grid (used by Jira, Workfront, etc.) */
+/* Generic field grid (used by Jira, etc.) */
 .connector-field-grid {
   margin-top: 14px;
   display: grid;

@@ -11,7 +11,6 @@ from app import limiter
 from app.admin_audit import append_user_audit_event
 from app.billing_config import to_public_plan
 from app.connectors.smartsheet import smartsheet_connect, smartsheet_list_sheets
-from app.connectors.workfront import workfront_connect, workfront_sync_status
 from app.connector_registry import (
     get_connector_catalog,
     get_connector_definition,
@@ -58,7 +57,6 @@ from app.routes.strategy import get_llm_client
 from app.smartsheet_sync import apply_smartsheet_webhook_to_wbs, import_tasks_from_smartsheet, sync_wbs_to_smartsheet
 from app.snowflake_insights import extract_kpi_metrics, run_allowlisted_query, test_snowflake_connection
 from app.tool_registry import get_tool_entitlements
-from app.workfront_sync import apply_workfront_webhook_to_wbs, import_tasks_from_workfront, sync_wbs_to_workfront
 
 
 connectors_bp = Blueprint("connectors", __name__)
@@ -195,17 +193,6 @@ def _runtime_fields(connector_id, settings):
             ),
             "jira_email": _text(settings.get("jira_email") or os.getenv("JIRA_EMAIL")),
             "jira_api_token": _text(settings.get("jira_api_token") or os.getenv("JIRA_API_TOKEN")),
-        }
-
-    if connector_id == "workfront_sync":
-        return {
-            "workfront_base_url": _text(settings.get("workfront_base_url") or os.getenv("WORKFRONT_BASE_URL")),
-            "workfront_project_id": _text(
-                settings.get("workfront_project_id")
-                or settings.get("external_workspace")
-                or os.getenv("WORKFRONT_PROJECT_ID")
-            ),
-            "workfront_api_token": _text(settings.get("workfront_api_token") or os.getenv("WORKFRONT_API_TOKEN")),
         }
 
     if connector_id == "smartsheet_sync":
@@ -404,16 +391,6 @@ def _merge_connector_view(connector_id, entitlement, settings):
             "configuration_complete": len(missing_fields) == 0,
             "missing_required_fields": missing_fields,
             "field_mapping": settings.get("jira_field_mapping") if isinstance(settings.get("jira_field_mapping"), dict) else {},
-        }
-    elif connector_id == "workfront_sync":
-        missing_fields = _missing_required_fields(connector_id, settings)
-        payload["workfront"] = {
-            "base_url": settings.get("workfront_base_url") or "",
-            "project_id": settings.get("workfront_project_id") or settings.get("external_workspace") or "",
-            "has_api_token": bool(settings.get("workfront_api_token")),
-            "configuration_complete": len(missing_fields) == 0,
-            "missing_required_fields": missing_fields,
-            "field_mapping": settings.get("workfront_field_mapping") if isinstance(settings.get("workfront_field_mapping"), dict) else {},
         }
     elif connector_id == "smartsheet_sync":
         missing_fields = _missing_required_fields(connector_id, settings)
@@ -757,8 +734,6 @@ def _sync_thread_with_connector(user, thread_id, connector_id, sync_callable):
             external_id = ""
             if connector_id == "jira_sync":
                 external_id = _text(refs.get("jira_issue_key") or task.get("jira_issue_key"))
-            elif connector_id == "workfront_sync":
-                external_id = _text(refs.get("workfront_task_id"))
             elif connector_id == "smartsheet_sync":
                 external_id = _text(refs.get("smartsheet_row_id"))
             if task_id and external_id:
@@ -969,14 +944,6 @@ def update_connector(connector_id):
             updates["jira_api_token"] = _text(payload.get("jira_api_token"))
         updates["jira_field_mapping"] = jira_mapping if isinstance(jira_mapping, dict) else (persisted_settings.get("jira_field_mapping") or {})
 
-    elif connector_id == "workfront_sync":
-        mapping = payload.get("workfront_field_mapping")
-        for field in ("workfront_base_url", "workfront_project_id"):
-            _apply_field_update(updates, payload, persisted_settings, field)
-        if "workfront_api_token" in payload:
-            updates["workfront_api_token"] = _text(payload.get("workfront_api_token"))
-        updates["workfront_field_mapping"] = mapping if isinstance(mapping, dict) else (persisted_settings.get("workfront_field_mapping") or {})
-
     elif connector_id == "smartsheet_sync":
         mapping = payload.get("smartsheet_field_mapping")
         for field in ("smartsheet_base_url", "smartsheet_sheet_id"):
@@ -1049,16 +1016,6 @@ def update_connector(connector_id):
                 "connector_id": connector_id,
                 "missing_required_fields": missing_required_fields,
             }), 400
-        if connector_id == "workfront_sync":
-            valid = workfront_connect(
-                candidate_settings.get("workfront_base_url"),
-                candidate_settings.get("workfront_api_token"),
-            )
-            if not valid:
-                return jsonify({
-                    "error": "Unable to validate Workfront credentials. Check URL and API token.",
-                    "connector_id": connector_id,
-                }), 400
         if connector_id == "smartsheet_sync":
             valid = smartsheet_connect(candidate_settings.get("smartsheet_api_token"))
             if not valid:
@@ -1113,15 +1070,6 @@ def get_connector_health(connector_id):
     settings = get_connector_settings(user.id, connector_id)
     recent_events = get_sync_audit_events(user.id, connector_id=connector_id, limit=10)
     live_status = None
-    if connector_id == "workfront_sync":
-        live_status = workfront_sync_status(
-            {
-                "base_url": settings.get("workfront_base_url"),
-                "api_key": settings.get("workfront_api_token"),
-                "project_id": settings.get("workfront_project_id"),
-                "last_sync_at": settings.get("last_sync_at"),
-            }
-        )
     if connector_id == "snowflake_insights":
         ok, err_msg = test_snowflake_connection(user.id)
         live_status = {
@@ -1232,28 +1180,6 @@ def check_connector_setup(connector_id):
                     "lifecycle_status": "connected",
                     "last_verified_at": _iso_now(),
                     "verified_instance_url": _text(settings.get("snowflake_account")),
-                },
-            )
-            mark_connector_sync_result(user.id, connector_id, "success")
-        elif connector_id == "workfront_sync":
-            valid = workfront_connect(settings.get("workfront_base_url"), settings.get("workfront_api_token"))
-            if not valid:
-                update_connector_settings(user.id, connector_id, {"lifecycle_status": "degraded"})
-                mark_connector_sync_result(user.id, connector_id, "failed", error_message="Unable to validate Workfront credentials")
-                return jsonify({
-                    "connector_id": connector_id,
-                    "lifecycle_status": "degraded",
-                    "error": "Unable to validate Workfront credentials",
-                    "next_retry_at": get_connector_settings(user.id, connector_id).get("next_retry_at"),
-                }), 503
-            update_connector_settings(
-                user.id,
-                connector_id,
-                {
-                    "connection_status": "connected",
-                    "lifecycle_status": "connected",
-                    "last_verified_at": _iso_now(),
-                    "verified_instance_url": _text(settings.get("workfront_base_url")),
                 },
             )
             mark_connector_sync_result(user.id, connector_id, "success")
@@ -2061,15 +1987,6 @@ def sync_thread_to_jira(thread_id):
     return _sync_thread_with_connector(user, thread_id, "jira_sync", sync_wbs_to_jira)
 
 
-@connectors_bp.route("/threads/<thread_id>/workfront/sync", methods=["POST"])
-@jwt_required()
-def sync_thread_to_workfront(thread_id):
-    user = User.query.get(get_jwt_identity())
-    if not user:
-        return jsonify({"error": "User not found"}), 404
-    return _sync_thread_with_connector(user, thread_id, "workfront_sync", sync_wbs_to_workfront)
-
-
 @connectors_bp.route("/threads/<thread_id>/smartsheet/sync", methods=["POST"])
 @jwt_required()
 def sync_thread_to_smartsheet(thread_id):
@@ -2122,8 +2039,6 @@ def import_thread_from_pm_tool(thread_id, connector_id):
 
     if connector_id == "jira_sync":
         imported = import_tasks_from_jira(user.id, thread_id)
-    elif connector_id == "workfront_sync":
-        imported = import_tasks_from_workfront(user.id, thread_id)
     else:
         imported = import_tasks_from_smartsheet(user.id, thread_id)
 
@@ -2241,74 +2156,6 @@ def jira_webhook():
         thread_id=resolved_thread_id or None,
         message=_text(result.get("reason")),
         metadata={"source": "jira"},
-    )
-    return jsonify(result), 200
-
-
-@connectors_bp.route("/workfront/webhook", methods=["POST"])
-@limiter.limit("60 per minute")
-def workfront_webhook():
-    unauthorized = _require_webhook_secret("workfront")
-    if unauthorized:
-        return unauthorized
-
-    payload = request.get_json(silent=True) or {}
-    data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
-    metadata = data.get("jaspenMetadata") if isinstance(data.get("jaspenMetadata"), dict) else {}
-    labels = data.get("tags") if isinstance(data.get("tags"), list) else []
-
-    user_id = _text(metadata.get("jaspen_user_id"))
-    thread_id = _text(metadata.get("jaspen_thread_id"))
-    task_id = _text(metadata.get("jaspen_task_id"))
-
-    for label in labels:
-        token = _text(label)
-        if not user_id and token.startswith("jaspen_user_"):
-            user_id = token[len("jaspen_user_"):]
-        elif not thread_id and token.startswith("jaspen_thread_"):
-            thread_id = token[len("jaspen_thread_"):]
-        elif not task_id and token.startswith("jaspen_task_"):
-            task_id = token[len("jaspen_task_"):]
-
-    if not user_id:
-        return jsonify({"success": True, "ignored": True, "reason": "missing_user_label"}), 200
-
-    external_id = _text(data.get("id") or data.get("ID") or data.get("objID"))
-    if (not thread_id or not task_id) and external_id:
-        resolved_thread_id, resolved_task_id = _find_thread_task_by_external_id(user_id, "workfront_sync", external_id)
-        if not thread_id and resolved_thread_id:
-            thread_id = resolved_thread_id
-        if not task_id and resolved_task_id:
-            task_id = resolved_task_id
-
-    result = apply_workfront_webhook_to_wbs(
-        user_id=user_id,
-        payload=payload,
-        enforce_thread_id=thread_id or None,
-        enforce_task_id=task_id or None,
-    )
-    status = "success" if result.get("success") else "skipped" if result.get("ignored") else "failed"
-    mark_connector_sync_result(user_id, "workfront_sync", status, error_message=result.get("reason") or "")
-    resolved_thread_id = _text(result.get("thread_id") or thread_id)
-    if resolved_thread_id:
-        profile_updates = {"last_webhook_received_at": _iso_now()}
-        if status == "success":
-            profile_updates["thread_sync_status"] = "synced"
-        elif status == "failed":
-            profile_updates["thread_sync_status"] = "error"
-        update_thread_sync_profile(
-            user_id,
-            resolved_thread_id,
-            profile_updates,
-        )
-    append_sync_audit_event(
-        user_id,
-        "workfront_sync",
-        action="webhook",
-        status=status,
-        thread_id=resolved_thread_id or None,
-        message=_text(result.get("reason")),
-        metadata={"source": "workfront"},
     )
     return jsonify(result), 200
 

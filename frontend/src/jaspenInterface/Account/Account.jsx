@@ -92,14 +92,12 @@ const CONFLICT_POLICY_HELP = {
   manual_review: 'Flag the conflict for manual review before applying.',
 };
 const DEFAULT_JIRA_ISSUE_TYPE = 'Task';
-const DEFAULT_WORKFRONT_BASE_URL = 'https://yourdomain.my.workfront.com';
 const DEFAULT_SMARTSHEET_BASE_URL = 'https://api.smartsheet.com';
 const DEFAULT_ORACLE_FUSION_BASE_URL = 'https://your-company.fa.us2.oraclecloud.com';
 const DEFAULT_SERVICENOW_INSTANCE_URL = 'https://your-instance.service-now.com';
 const DEFAULT_NETSUITE_REST_BASE_URL = 'https://<account>.suitetalk.api.netsuite.com';
 const MODAL_CONNECTOR_IDS = [
   'jira_sync',
-  'workfront_sync',
   'smartsheet_sync',
   'salesforce_insights',
   'snowflake_insights',
@@ -114,7 +112,6 @@ function connectorUsesApiModal(connectorId) {
 
 function connectorApiLabel(connectorId) {
   if (connectorId === 'jira_sync') return 'Jira';
-  if (connectorId === 'workfront_sync') return 'Workfront';
   if (connectorId === 'smartsheet_sync') return 'Smartsheet';
   if (connectorId === 'salesforce_insights') return 'Salesforce';
   if (connectorId === 'snowflake_insights') return 'Snowflake';
@@ -139,9 +136,6 @@ function emptyJiraModalState() {
       jira_email: '',
       jira_api_token: '',
       jira_issue_type: DEFAULT_JIRA_ISSUE_TYPE,
-      workfront_base_url: '',
-      workfront_project_id: '',
-      workfront_api_token: '',
       smartsheet_base_url: DEFAULT_SMARTSHEET_BASE_URL,
       smartsheet_sheet_id: '',
       smartsheet_api_token: '',
@@ -198,11 +192,6 @@ function buildConnectorDraft(connector) {
     jira_email: String(connector?.jira?.email || ''),
     jira_issue_type: String(connector?.jira?.issue_type || DEFAULT_JIRA_ISSUE_TYPE),
     jira_api_token: '',
-
-    // Workfront
-    workfront_base_url: String(connector?.workfront?.base_url || ''),
-    workfront_project_id: String(connector?.workfront?.project_id || ''),
-    workfront_api_token: '',
 
     // Smartsheet
     smartsheet_base_url: String(connector?.smartsheet?.base_url || DEFAULT_SMARTSHEET_BASE_URL),
@@ -275,8 +264,6 @@ function connectorDraftIsDirty(connector, draft) {
     'jira_project_key',
     'jira_email',
     'jira_issue_type',
-    'workfront_base_url',
-    'workfront_project_id',
     'smartsheet_base_url',
     'smartsheet_sheet_id',
     'salesforce_auth_base_url',
@@ -303,7 +290,6 @@ function connectorDraftIsDirty(connector, draft) {
   const hasFieldDiff = fields.some((field) => trim(base[field]) !== trim(current[field]));
   const hasNewToken = [
     'jira_api_token',
-    'workfront_api_token',
     'smartsheet_api_token',
     'salesforce_client_secret',
     'salesforce_refresh_token',
@@ -1086,12 +1072,6 @@ export default function Account() {
       if (String(draft.jira_api_token || '').trim()) {
         payload.jira_api_token = String(draft.jira_api_token || '').trim();
       }
-    } else if (connector.id === 'workfront_sync') {
-      payload.workfront_base_url = String(draft.workfront_base_url || '').trim();
-      payload.workfront_project_id = String(draft.workfront_project_id || '').trim();
-      if (String(draft.workfront_api_token || '').trim()) {
-        payload.workfront_api_token = String(draft.workfront_api_token || '').trim();
-      }
     } else if (connector.id === 'smartsheet_sync') {
       payload.smartsheet_base_url = String(draft.smartsheet_base_url || DEFAULT_SMARTSHEET_BASE_URL).trim();
       payload.smartsheet_sheet_id = String(draft.smartsheet_sheet_id || '').trim();
@@ -1194,11 +1174,6 @@ export default function Account() {
       modalData.jira_email = String(baseDraft.jira_email || connector?.jira?.email || '');
       modalData.jira_api_token = '';
       modalData.jira_issue_type = String(baseDraft.jira_issue_type || connector?.jira?.issue_type || DEFAULT_JIRA_ISSUE_TYPE);
-    } else if (connector.id === 'workfront_sync') {
-      storedFlags.workfront_api_token = Boolean(connector?.workfront?.has_api_token);
-      modalData.workfront_base_url = String(baseDraft.workfront_base_url || connector?.workfront?.base_url || '');
-      modalData.workfront_project_id = String(baseDraft.workfront_project_id || connector?.workfront?.project_id || '');
-      modalData.workfront_api_token = '';
     } else if (connector.id === 'smartsheet_sync') {
       storedFlags.smartsheet_api_token = Boolean(connector?.smartsheet?.has_api_token);
       modalData.smartsheet_base_url = String(baseDraft.smartsheet_base_url || connector?.smartsheet?.base_url || DEFAULT_SMARTSHEET_BASE_URL);
@@ -1363,30 +1338,6 @@ export default function Account() {
       nextDraft.jira_issue_type = trimmed.jira_issue_type;
       nextDraft.external_workspace = trimmed.jira_project_key;
       if (trimmed.jira_api_token) nextDraft.jira_api_token = trimmed.jira_api_token;
-    } else if (modal.connectorId === 'workfront_sync') {
-      const trimmed = {
-        workfront_base_url: String(modal.data.workfront_base_url || '').trim(),
-        workfront_project_id: String(modal.data.workfront_project_id || '').trim(),
-        workfront_api_token: String(modal.data.workfront_api_token || '').trim(),
-      };
-      const tokenAvailable = Boolean(modal.storedFlags?.workfront_api_token) || Boolean(trimmed.workfront_api_token);
-      const nextFieldErrors = {};
-      if (!trimmed.workfront_base_url) nextFieldErrors.workfront_base_url = 'Workfront URL is required.';
-      if (!trimmed.workfront_project_id) nextFieldErrors.workfront_project_id = 'Project ID is required.';
-      if (Object.keys(nextFieldErrors).length > 0) {
-        setJiraConfigFieldErrors(nextFieldErrors);
-        setJiraConfigError('Workfront URL and project id are required.');
-        return;
-      }
-      if (!tokenAvailable) {
-        setJiraConfigFieldErrors({ workfront_api_token: 'Workfront API token is required before enabling Workfront sync.' });
-        setJiraConfigError('Workfront API token is required before enabling Workfront sync.');
-        return;
-      }
-      nextDraft.workfront_base_url = trimmed.workfront_base_url;
-      nextDraft.workfront_project_id = trimmed.workfront_project_id;
-      nextDraft.external_workspace = trimmed.workfront_project_id;
-      if (trimmed.workfront_api_token) nextDraft.workfront_api_token = trimmed.workfront_api_token;
     } else if (modal.connectorId === 'smartsheet_sync') {
       const trimmed = {
         smartsheet_base_url: String(modal.data.smartsheet_base_url || DEFAULT_SMARTSHEET_BASE_URL).trim(),
@@ -1775,7 +1726,6 @@ export default function Account() {
   ];
   const modalConnectorLabel = connectorApiLabel(jiraConfigModal.connectorId);
   const isJiraModal = jiraConfigModal.connectorId === 'jira_sync';
-  const isWorkfrontModal = jiraConfigModal.connectorId === 'workfront_sync';
   const isSmartsheetModal = jiraConfigModal.connectorId === 'smartsheet_sync';
   const isSalesforceModal = jiraConfigModal.connectorId === 'salesforce_insights';
   const isSnowflakeModal = jiraConfigModal.connectorId === 'snowflake_insights';
@@ -2024,7 +1974,6 @@ export default function Account() {
               </div>
               <p className="account-jira-modal-subtext">
                 {isJiraModal && 'Enter Jira credentials and mapping details, then save. Required: URL, project key, Jira email, API token.'}
-                {isWorkfrontModal && 'Enter Workfront credentials and mapping details, then save. Required: URL, project id, API token.'}
                 {isSmartsheetModal && 'Enter Smartsheet credentials and mapping details, then save. Required: URL, sheet id, API token.'}
                 {isSalesforceModal && 'Enter Salesforce OAuth credentials and mapping details, then save. Required: auth base URL, instance URL, client id, client secret, refresh token.'}
                 {isSnowflakeModal && 'Enter Snowflake account configuration, then save. Required: account, warehouse, database, schema, user, and password or private key.'}
@@ -2125,64 +2074,6 @@ export default function Account() {
                         aria-describedby={jiraFieldDescribedBy('jira_api_token')}
 />
                       <FieldError id={"account-connector-jira_api_token-error"} message={jiraConfigFieldErrors.jira_api_token} />
-                    </label>
-                  </>
-                )}
-                {isWorkfrontModal && (
-                  <>
-                    <label htmlFor={"account-connector-workfront_base_url"}>
-                      {requiredFieldLabel('Workfront URL', true)}
-                      <input
-                        type="text"
-                        value={jiraConfigModal.data.workfront_base_url}
-                        id={"account-connector-workfront_base_url"}
-                        placeholder={DEFAULT_WORKFRONT_BASE_URL}
-                        onChange={(e) => setJiraConfigModal((prev) => ({
-                          ...prev,
-                          data: { ...prev.data, workfront_base_url: e.target.value },
-                        }))}
-                        disabled={jiraConfigSaving}
-                        className={jiraConfigFieldErrors.workfront_base_url ? 'account-input-invalid' : ''}
-                        aria-invalid={Boolean(jiraConfigFieldErrors.workfront_base_url)}
-                        aria-describedby={jiraFieldDescribedBy('workfront_base_url')}
-/>
-                      <FieldError id={"account-connector-workfront_base_url-error"} message={jiraConfigFieldErrors.workfront_base_url} />
-                    </label>
-                    <label htmlFor={"account-connector-workfront_project_id"}>
-                      {requiredFieldLabel('Project ID', true)}
-                      <input
-                        type="text"
-                        value={jiraConfigModal.data.workfront_project_id}
-                        id={"account-connector-workfront_project_id"}
-                        placeholder="Project or portfolio id"
-                        onChange={(e) => setJiraConfigModal((prev) => ({
-                          ...prev,
-                          data: { ...prev.data, workfront_project_id: e.target.value },
-                        }))}
-                        disabled={jiraConfigSaving}
-                        className={jiraConfigFieldErrors.workfront_project_id ? 'account-input-invalid' : ''}
-                        aria-invalid={Boolean(jiraConfigFieldErrors.workfront_project_id)}
-                        aria-describedby={jiraFieldDescribedBy('workfront_project_id')}
-/>
-                      <FieldError id={"account-connector-workfront_project_id-error"} message={jiraConfigFieldErrors.workfront_project_id} />
-                    </label>
-                    <label className="account-jira-modal-token-field" htmlFor={"account-connector-workfront_api_token"}>
-                      {requiredFieldLabel('Workfront API token', true)}
-                      <input
-                        type="password"
-                        value={jiraConfigModal.data.workfront_api_token}
-                        id={"account-connector-workfront_api_token"}
-                        placeholder={jiraConfigModal.storedFlags?.workfront_api_token ? 'Token exists. Enter to rotate token.' : 'Enter Workfront API token'}
-                        onChange={(e) => setJiraConfigModal((prev) => ({
-                          ...prev,
-                          data: { ...prev.data, workfront_api_token: e.target.value },
-                        }))}
-                        disabled={jiraConfigSaving}
-                        className={jiraConfigFieldErrors.workfront_api_token ? 'account-input-invalid' : ''}
-                        aria-invalid={Boolean(jiraConfigFieldErrors.workfront_api_token)}
-                        aria-describedby={jiraFieldDescribedBy('workfront_api_token')}
-/>
-                      <FieldError id={"account-connector-workfront_api_token-error"} message={jiraConfigFieldErrors.workfront_api_token} />
                     </label>
                   </>
                 )}

@@ -30,12 +30,6 @@ const CONNECTOR_TYPES = [
         settings: 'Jira URL, project key, email, API token, issue type, sync mode, conflict policy.',
       },
       {
-        connector: 'Workfront',
-        on: 'Milestone and ownership alignment with Workfront project structures.',
-        off: 'No Workfront milestone or ownership synchronization.',
-        settings: 'External workspace/account id, sync mode, conflict policy.',
-      },
-      {
         connector: 'Smartsheet',
         on: 'Sheet row progress, dates, and execution state mapping.',
         off: 'No Smartsheet timeline or status ingestion.',

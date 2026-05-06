@@ -3,7 +3,6 @@ from copy import deepcopy
 
 CONNECTOR_ORDER = [
     "jira_sync",
-    "workfront_sync",
     "smartsheet_sync",
     "salesforce_insights",
     "snowflake_insights",
@@ -19,15 +18,6 @@ CONNECTOR_REGISTRY = {
         "label": "Jira",
         "group": "execution",
         "description": "Sync epics, stories, assignees, and sprint status with Jaspen WBS plans.",
-        "supports_pm_sync": True,
-        "required_min_tier": "team",
-        "implementation_status": "implemented",
-    },
-    "workfront_sync": {
-        "id": "workfront_sync",
-        "label": "Workfront",
-        "group": "execution",
-        "description": "Sync milestones, owners, and schedule changes between Workfront and Jaspen.",
         "supports_pm_sync": True,
         "required_min_tier": "team",
         "implementation_status": "implemented",

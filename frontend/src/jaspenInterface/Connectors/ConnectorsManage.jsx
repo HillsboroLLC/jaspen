@@ -23,7 +23,6 @@ import AppMenu from '../shared/AppMenu';
 
 const CONNECTOR_ORDER = [
   'jira_sync',
-  'workfront_sync',
   'smartsheet_sync',
   'salesforce_insights',
   'snowflake_insights',
@@ -35,13 +34,12 @@ const CONNECTOR_ORDER = [
 const PLAN_CONNECTOR_IDS = {
   free: [],
   essential: ['salesforce_insights', 'snowflake_insights'],
-  team: ['salesforce_insights', 'snowflake_insights', 'jira_sync', 'workfront_sync', 'smartsheet_sync'],
+  team: ['salesforce_insights', 'snowflake_insights', 'jira_sync', 'smartsheet_sync'],
   enterprise: CONNECTOR_ORDER,
 };
-const EXECUTION_SYNC_CONNECTOR_IDS = ['jira_sync', 'workfront_sync', 'smartsheet_sync'];
+const EXECUTION_SYNC_CONNECTOR_IDS = ['jira_sync', 'smartsheet_sync'];
 const REQUIRED_FIELDS_BY_CONNECTOR = {
   jira_sync: ['jira_base_url', 'jira_project_key', 'jira_email', 'jira_api_token'],
-  workfront_sync: ['workfront_base_url', 'workfront_project_id', 'workfront_api_token'],
   smartsheet_sync: ['smartsheet_base_url', 'smartsheet_sheet_id', 'smartsheet_api_token'],
   salesforce_insights: [
     'salesforce_auth_base_url',
@@ -85,7 +83,7 @@ function highestPlanKey(...plans) {
 }
 
 function connectorIcon(connectorId) {
-  if (connectorId === 'jira_sync' || connectorId === 'workfront_sync' || connectorId === 'smartsheet_sync') return faSitemap;
+  if (connectorId === 'jira_sync' || connectorId === 'smartsheet_sync') return faSitemap;
   if (connectorId === 'snowflake_insights') return faServer;
   if (connectorId === 'salesforce_insights') return faArrowRightArrowLeft;
   return faPlugCircleCheck;
@@ -136,10 +134,6 @@ function normalizeDraft(connector) {
     jira_issue_type: String(connector?.jira?.issue_type || 'Task'),
     jira_api_token: '',
     jira_field_mapping: JSON.stringify(connector?.jira?.field_mapping || {}, null, 2),
-    workfront_base_url: String(connector?.workfront?.base_url || ''),
-    workfront_project_id: String(connector?.workfront?.project_id || ''),
-    workfront_api_token: '',
-    workfront_field_mapping: JSON.stringify(connector?.workfront?.field_mapping || {}, null, 2),
     smartsheet_base_url: String(connector?.smartsheet?.base_url || 'https://api.smartsheet.com'),
     smartsheet_sheet_id: String(connector?.smartsheet?.sheet_id || ''),
     smartsheet_api_token: '',
@@ -209,9 +203,6 @@ function connectorDraftChanged(connector, draft) {
     'jira_email',
     'jira_issue_type',
     'jira_field_mapping',
-    'workfront_base_url',
-    'workfront_project_id',
-    'workfront_field_mapping',
     'smartsheet_base_url',
     'smartsheet_sheet_id',
     'smartsheet_field_mapping',
@@ -239,7 +230,6 @@ function connectorDraftChanged(connector, draft) {
   const differs = fields.some((field) => String(base[field] ?? '') !== String(draft[field] ?? ''));
   const hasSecretUpdates = [
     'jira_api_token',
-    'workfront_api_token',
     'smartsheet_api_token',
     'salesforce_client_secret',
     'salesforce_refresh_token',
@@ -301,11 +291,6 @@ function buildUpdatePayload(connectorId, draft) {
     payload.jira_issue_type = draft.jira_issue_type;
     payload.jira_field_mapping = parseObject(draft.jira_field_mapping);
     if (String(draft.jira_api_token || '').trim()) payload.jira_api_token = draft.jira_api_token.trim();
-  } else if (connectorId === 'workfront_sync') {
-    payload.workfront_base_url = draft.workfront_base_url;
-    payload.workfront_project_id = draft.workfront_project_id;
-    payload.workfront_field_mapping = parseObject(draft.workfront_field_mapping);
-    if (String(draft.workfront_api_token || '').trim()) payload.workfront_api_token = draft.workfront_api_token.trim();
   } else if (connectorId === 'smartsheet_sync') {
     payload.smartsheet_base_url = draft.smartsheet_base_url;
     payload.smartsheet_sheet_id = draft.smartsheet_sheet_id;
@@ -793,8 +778,6 @@ export default function ConnectorsManage() {
         let syncEndpoint = '';
         if (selectedConnector.id === 'jira_sync') {
           syncEndpoint = `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(selectedThreadId)}/jira/sync`;
-        } else if (selectedConnector.id === 'workfront_sync') {
-          syncEndpoint = `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(selectedThreadId)}/workfront/sync`;
         } else if (selectedConnector.id === 'smartsheet_sync') {
           syncEndpoint = `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(selectedThreadId)}/smartsheet/sync`;
         }
@@ -898,9 +881,6 @@ export default function ConnectorsManage() {
       if (selectedConnector.id === 'jira_sync') {
         if (!selectedThreadId) throw new Error('Select a thread for Jira sync.');
         endpoint = `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(selectedThreadId)}/jira/sync`;
-      } else if (selectedConnector.id === 'workfront_sync') {
-        if (!selectedThreadId) throw new Error('Select a thread for Workfront sync.');
-        endpoint = `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(selectedThreadId)}/workfront/sync`;
       } else if (selectedConnector.id === 'smartsheet_sync') {
         if (!selectedThreadId) throw new Error('Select a thread for Smartsheet sync.');
         endpoint = `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(selectedThreadId)}/smartsheet/sync`;
@@ -1039,17 +1019,6 @@ export default function ConnectorsManage() {
           <label>Issue Type<input value={draft.jira_issue_type} onChange={(event) => updateDraft('jira_issue_type', event.target.value)} /></label>
           {renderRequiredField('jira_api_token', 'API Token', { type: 'password', placeholder: 'Enter token to set or rotate' })}
           <label>Field Mapping JSON<textarea value={draft.jira_field_mapping} onChange={(event) => updateDraft('jira_field_mapping', event.target.value)} /></label>
-        </>
-      );
-    }
-
-    if (connectorId === 'workfront_sync') {
-      return (
-        <>
-          {renderRequiredField('workfront_base_url', 'Workfront URL')}
-          {renderRequiredField('workfront_project_id', 'Project ID')}
-          {renderRequiredField('workfront_api_token', 'API Token', { type: 'password', placeholder: 'Enter token to set or rotate' })}
-          <label>Field Mapping JSON<textarea value={draft.workfront_field_mapping} onChange={(event) => updateDraft('workfront_field_mapping', event.target.value)} /></label>
         </>
       );
     }
@@ -1442,7 +1411,7 @@ export default function ConnectorsManage() {
                       External Workspace
                       <input value={selectedDraft.external_workspace} onChange={(event) => updateDraft('external_workspace', event.target.value)} />
                     </label>
-                    {(selectedConnector.id === 'jira_sync' || selectedConnector.id === 'workfront_sync' || selectedConnector.id === 'smartsheet_sync') && (
+                    {(selectedConnector.id === 'jira_sync' || selectedConnector.id === 'smartsheet_sync') && (
                       <label>
                         Sync Thread
                         <select value={selectedThreadId} onChange={(event) => setSelectedThreadId(event.target.value)}>

@@ -46,7 +46,6 @@ from app.orgs import normalize_org_role, resolve_active_org_for_user
 from app.scenarios_store import save_scenarios_data
 from app.connector_store import get_connector_settings, get_thread_sync_profile, update_thread_sync_profile
 from app.jira_sync import sync_wbs_to_jira
-from app.workfront_sync import sync_wbs_to_workfront
 from app.smartsheet_sync import sync_wbs_to_smartsheet
 
 from .sessions import load_user_sessions, save_user_sessions
@@ -4031,8 +4030,6 @@ def _wbs_task_external_ids_patch(project_wbs, connector_id):
         refs = task.get("external_refs") if isinstance(task.get("external_refs"), dict) else {}
         if connector_key == "jira_sync":
             external_id = str(refs.get("jira_issue_key") or task.get("jira_issue_key") or "").strip()
-        elif connector_key == "workfront_sync":
-            external_id = str(refs.get("workfront_task_id") or "").strip()
         elif connector_key == "smartsheet_sync":
             external_id = str(refs.get("smartsheet_row_id") or "").strip()
         else:
@@ -4046,8 +4043,6 @@ def _dispatch_sync_for_preferred_pm_tool(user_id, thread_id, project_wbs, profil
     preferred = str((profile or {}).get("preferred_pm_tool") or "").strip().lower()
     if preferred == "jira_sync":
         return sync_wbs_to_jira(user_id, thread_id, project_wbs, thread_sync_profile=profile), preferred
-    if preferred == "workfront_sync":
-        return sync_wbs_to_workfront(user_id, thread_id, project_wbs, thread_sync_profile=profile), preferred
     if preferred == "smartsheet_sync":
         return sync_wbs_to_smartsheet(user_id, thread_id, project_wbs, thread_sync_profile=profile), preferred
     return {"success": False, "skipped": True, "reason": "pm_tool_not_syncable", "project_wbs": project_wbs}, preferred

@@ -6,7 +6,7 @@
 - **WBS CRUD:** `GET/PUT /api/v1/strategy/threads/{threadId}/wbs` — read and write full WBS
 - **AI WBS generation:** `POST /api/v1/strategy/threads/{threadId}/ai-wbs` — generates WBS from scorecard with Claude, falls back to heuristic
 - **AI agent tools:** `update_wbs_task`, `add_wbs_task`, `remove_wbs_task` — chat-driven mutations with plan enforcement
-- **External sync:** Jira, Workfront, Smartsheet — bidirectional with webhooks, field mapping, conflict policies
+- **External sync:** Jira and Smartsheet — bidirectional with webhooks, field mapping, conflict policies
 - **Tool registry:** Plan-gated limits (Essential: 75 tasks/150 deps, Team: 300/1000, Enterprise: unlimited)
 - **Task model:** id, title, description, status (todo/in_progress/blocked/done), priority (high/medium/low), owner, suggested_role, due_date, timeline_days, estimated_days, order, phase, depends_on[], rationale, risk_area, external_refs
 
@@ -813,7 +813,7 @@ Pass both to ExecutionPanel:
 
 ## Step 10: Sync indicator and connector status
 
-If the thread has an active sync profile (Jira/Workfront/Smartsheet), show a sync status bar at the top of the Execution tab.
+If the thread has an active sync profile (Jira/Smartsheet), show a sync status bar at the top of the Execution tab.
 
 ### Data source
 
@@ -1043,18 +1043,18 @@ Key layout rules:
 
 ## What this achieves vs PM competitors
 
-| Capability | Jira | Smartsheet | Workfront | Jaspen (after this) |
-|---|---|---|---|---|
-| Task list with phases | ✓ | ✓ | ✓ | ✓ |
-| Kanban board | ✓ | ✗ | ✓ | ✓ |
-| Timeline/Gantt | ✗ (plugin) | ✓ | ✓ | ✓ (basic) |
+| Capability | Jira | Smartsheet | Jaspen (after this) |
+|---|---|---|---|
+| Task list with phases | ✓ | ✓ | ✓ |
+| Kanban board | ✓ | ✗ | ✓ |
+| Timeline/Gantt | ✗ (plugin) | ✓ | ✓ (basic) |
 | AI-generated plan | ✗ | ✗ | ✗ | ✓ |
 | Chat-driven task edits | ✗ | ✗ | ✗ | ✓ |
 | Strategic → Execution link | ✗ | ✗ | ✗ | ✓ (scorecard → WBS) |
-| External PM sync | N/A | N/A | N/A | ✓ (Jira, Workfront, Smartsheet) |
-| Inline editable | ✓ | ✓ | ✓ | ✓ |
-| Dependency tracking | ✓ | ✓ | ✓ | ✓ |
-| Role-based access | ✓ | ✓ | ✓ | ✓ |
+| External PM sync | N/A | N/A | ✓ (Jira, Smartsheet) |
+| Inline editable | ✓ | ✓ | ✓ |
+| Dependency tracking | ✓ | ✓ | ✓ |
+| Role-based access | ✓ | ✓ | ✓ |
 
 ---
 

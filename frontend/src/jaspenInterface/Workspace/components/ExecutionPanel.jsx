@@ -127,7 +127,6 @@ function preferredPmToolLabel(toolId) {
   const key = String(toolId || '').trim().toLowerCase();
   if (key === 'jaspen') return 'Jaspen';
   if (key === 'jira_sync') return 'Jira';
-  if (key === 'workfront_sync') return 'Workfront';
   if (key === 'smartsheet_sync') return 'Smartsheet';
   return key;
 }
@@ -346,8 +345,6 @@ export default function ExecutionPanel({
     try {
       if (connectorId === 'jira_sync') {
         await Jaspen.syncThreadWbsToJira(threadId);
-      } else if (connectorId === 'workfront_sync') {
-        await Jaspen.syncThreadWbsToWorkfront(threadId);
       } else if (connectorId === 'smartsheet_sync') {
         await Jaspen.syncThreadWbsToSmartsheet(threadId);
       }

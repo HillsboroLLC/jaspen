@@ -2472,7 +2472,6 @@ useEffect(() => {
     wbs_read: 'essential',
     wbs_write: 'essential',
     jira_sync: 'team',
-    workfront_sync: 'team',
     smartsheet_sync: 'team',
     salesforce_insights: 'enterprise',
     snowflake_insights: 'enterprise',
@@ -6274,7 +6273,6 @@ async function onBeginProject(extraAnswers = null) {
   const PM_TOOL_LABELS = {
     jaspen: 'Jaspen only',
     jira_sync: 'Jira',
-    workfront_sync: 'Workfront',
     smartsheet_sync: 'Smartsheet',
   };
   try {
