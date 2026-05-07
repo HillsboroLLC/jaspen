@@ -618,18 +618,10 @@ export default function Knowledge() {
 
       {/* Main content */}
       <main className="knowledge-main">
-        <header className="knowledge-header">
-          <p className="knowledge-eyebrow">Knowledge</p>
-          <h1>Internal Product Documentation</h1>
-          <p className="knowledge-header-summary">
-            Contextual documentation for scoring, AI workflows, team collaboration, connectors, and operational setup.
-          </p>
-        </header>
-
         {activeTopic ? (
           <article className="knowledge-topic" aria-live="polite">
             <header className="knowledge-topic-head">
-              <h2>{activeTopic.title}</h2>
+              <h1>{activeTopic.title}</h1>
               <p>{activeTopic.summary}</p>
             </header>
 
