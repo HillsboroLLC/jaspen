@@ -10073,9 +10073,11 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
   if (!sidebarState.settings) intakeTabs.push('settings');
   if (hasHistory && !sidebarState.history) intakeTabs.push('history');
   if (intakeHasReadinessTab) intakeTabs.push('readiness');
+  const intakeSideTabBase = 128;
+  const intakeSideTabGap = 136;
   const intakeTabTop = (key) => {
     const idx = intakeTabs.indexOf(key);
-    return `${128 + idx * 130}px`;
+    return `${intakeSideTabBase + idx * intakeSideTabGap}px`;
   };
   return (
     <div className={`jas jas-shell ${intakeShellOpen ? 'drawer-open' : ''}`}>
