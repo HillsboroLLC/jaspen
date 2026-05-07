@@ -8,7 +8,7 @@ export default function JaspenAiDrawer({
   onClose,
   onOpen,
   showSideTab = true,
-  sideTabTop = 200,
+  sideTabTop = 228,
   id = 'jas-ai-drawer-panel',
   panelRef = null,
   messagesContainerRef = null,

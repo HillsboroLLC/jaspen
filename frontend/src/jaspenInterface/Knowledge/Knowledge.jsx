@@ -495,18 +495,29 @@ export default function Knowledge() {
     return TOPICS[activeTopicId] || TOPICS[visibleTopicIds[0]];
   }, [activeTopicId, visibleTopicIds]);
 
+  // Mutual exclusion: close Jaspen + Knowledge when Menu opens
   useEffect(() => {
     const observer = new MutationObserver(() => {
       if (document.body.classList.contains('jaspen-sidebar-open')) {
         setJaspenOpen(false);
+        setKnowledgeDrawerOpen(false);
       }
     });
     observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
     return () => observer.disconnect();
   }, []);
 
+  // Open Knowledge drawer — close Menu and Jaspen first
+  const openKnowledgeDrawer = () => {
+    document.body.classList.remove('jaspen-sidebar-open');
+    setJaspenOpen(false);
+    setKnowledgeDrawerOpen(true);
+  };
+
+  // Open Jaspen — close Menu and Knowledge first
   const openJaspen = () => {
     document.body.classList.remove('jaspen-sidebar-open');
+    setKnowledgeDrawerOpen(false);
     setJaspenOpen(true);
   };
 
@@ -529,7 +540,7 @@ export default function Knowledge() {
       className={[
         'knowledge-page int-page',
         knowledgeDrawerOpen ? 'knowledge-drawer-open' : '',
-        jaspenOpen ? 'jaspen-drawer-open' : '',
+        jaspenOpen ? 'jaspen-ai-open' : '',
       ].filter(Boolean).join(' ')}
     >
       <AppMenu />
@@ -539,7 +550,7 @@ export default function Knowledge() {
         <button
           type="button"
           className="knowledge-tab"
-          onClick={() => setKnowledgeDrawerOpen(true)}
+          onClick={openKnowledgeDrawer}
           aria-label="Open docs index"
           aria-expanded={false}
           aria-controls="knowledge-drawer"
@@ -590,10 +601,7 @@ export default function Knowledge() {
                       key={topicId}
                       type="button"
                       className={`knowledge-index-item${activeTopicId === topicId ? ' is-active' : ''}`}
-                      onClick={() => {
-                        setActiveTopicId(topicId);
-                        setKnowledgeDrawerOpen(false);
-                      }}
+                      onClick={() => setActiveTopicId(topicId)}
                     >
                       <span className="knowledge-index-text">{topic.label}</span>
                     </button>

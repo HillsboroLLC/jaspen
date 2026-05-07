@@ -674,6 +674,22 @@ export default function Scores() {
     );
   };
 
+  // Mutual exclusion: close portfolio drawer when Menu opens
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      if (document.body.classList.contains('jaspen-sidebar-open')) {
+        setPortfolioDrawerOpen(false);
+      }
+    });
+    observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+
+  const openPortfolioDrawer = () => {
+    document.body.classList.remove('jaspen-sidebar-open');
+    setPortfolioDrawerOpen(true);
+  };
+
   return (
     <div className={`scores-container int-page ${portfolioDrawerOpen ? 'drawer-open' : ''}`}>
       <AppMenu />
@@ -681,7 +697,7 @@ export default function Scores() {
         <button
           type="button"
           className="scores-agent-tab"
-          onClick={() => setPortfolioDrawerOpen(true)}
+          onClick={openPortfolioDrawer}
           aria-label="Open Jaspen drawer"
           aria-expanded={portfolioDrawerOpen}
           aria-controls="scores-portfolio-agent-drawer"

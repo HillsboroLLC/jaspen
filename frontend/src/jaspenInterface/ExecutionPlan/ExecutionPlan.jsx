@@ -649,7 +649,7 @@ export default function ExecutionPlan() {
         onOpen={() => openAssistant('Edit this execution plan using the current context.')}
         onClose={() => setAssistantOpen(false)}
         showSideTab={true}
-        sideTabTop={258}
+        sideTabTop={228}
         messages={assistantMessages}
         renderMessage={(message) => <>{message?.text || ''}</>}
         renderActions={(message, messageKey, index, total) => renderMessageActions(message, messageKey, index, total)}

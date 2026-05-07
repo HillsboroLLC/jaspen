@@ -16,12 +16,12 @@
 }
 
 /* Jaspen AI drawer shifts the main content when open */
-.account-page.drawer-open .account-main-content {
+.account-page.jaspen-ai-open .account-main-content {
   margin-left: 320px;
 }
 
 @media (max-width: 1080px) {
-  .account-page.drawer-open .account-main-content {
+  .account-page.jaspen-ai-open .account-main-content {
     margin-left: 0;
   }
 
@@ -135,7 +135,7 @@
   -webkit-appearance: none;
   position: fixed;
   left: 0;
-  top: 328px;
+  top: 340px;
   writing-mode: vertical-rl;
   text-orientation: mixed;
   background: #161f3b;
@@ -164,6 +164,17 @@
 
 body.jaspen-sidebar-open .billing-tab {
   left: 320px;
+}
+
+/* ── Mutual exclusion: hide other tabs when Billing drawer is open ── */
+.account-page.billing-drawer-open .app-menu-host .jas-drawer-tab,
+.account-page.billing-drawer-open .jas-sidebar-tab {
+  display: none;
+}
+
+/* Hide Billing tab when Jaspen is open */
+.account-page.jaspen-ai-open .billing-tab {
+  display: none;
 }
 
 /* ── BILLING drawer ───────────────────────────────────────── */

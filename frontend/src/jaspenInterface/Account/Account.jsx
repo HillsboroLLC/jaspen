@@ -1690,18 +1690,29 @@ export default function Account() {
     }
   };
 
+  // Mutual exclusion: close Jaspen + Billing when Menu opens
   useEffect(() => {
     const observer = new MutationObserver(() => {
       if (document.body.classList.contains('jaspen-sidebar-open')) {
         setJaspenOpen(false);
+        setBillingDrawerOpen(false);
       }
     });
     observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
     return () => observer.disconnect();
   }, []);
 
+  // Open Billing drawer — close Menu and Jaspen first
+  const openBillingDrawer = () => {
+    document.body.classList.remove('jaspen-sidebar-open');
+    setJaspenOpen(false);
+    setBillingDrawerOpen(true);
+  };
+
+  // Open Jaspen — close Menu and Billing first
   const openJaspen = () => {
     document.body.classList.remove('jaspen-sidebar-open');
+    setBillingDrawerOpen(false);
     setJaspenOpen(true);
   };
 
@@ -1819,7 +1830,7 @@ export default function Account() {
       className={[
         'account-page int-page',
         billingDrawerOpen ? 'billing-drawer-open' : '',
-        jaspenOpen ? 'drawer-open' : '',
+        jaspenOpen ? 'jaspen-ai-open' : '',
       ].filter(Boolean).join(' ')}
     >
       <AppMenu />
@@ -1829,7 +1840,7 @@ export default function Account() {
         <button
           type="button"
           className="billing-tab"
-          onClick={() => setBillingDrawerOpen(true)}
+          onClick={openBillingDrawer}
           aria-label="Open billing menu"
           aria-expanded={false}
           aria-controls="billing-drawer"
@@ -1861,12 +1872,7 @@ export default function Account() {
               key={item.key}
               type="button"
               className={`account-sidebar-item${activeTab === item.key ? ' is-active' : ''}`}
-              onClick={() => {
-                guardUnsavedChanges(() => {
-                  setActiveTab(item.key);
-                  setBillingDrawerOpen(false);
-                });
-              }}
+              onClick={() => guardUnsavedChanges(() => setActiveTab(item.key))}
               aria-label={item.label}
             >
               <span className="account-sidebar-icon">

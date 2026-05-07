@@ -9,7 +9,7 @@
   -webkit-appearance: none;
   position: fixed;
   left: 0;
-  top: 328px;
+  top: 340px;
   writing-mode: vertical-rl;
   text-orientation: mixed;
   background: #161f3b;
@@ -39,6 +39,17 @@
 /* Shift tab right when Menu drawer is open */
 body.jaspen-sidebar-open .knowledge-tab {
   left: 320px;
+}
+
+/* ── Mutual exclusion: hide other tabs when Knowledge drawer is open ── */
+.knowledge-page.knowledge-drawer-open .app-menu-host .jas-drawer-tab,
+.knowledge-page.knowledge-drawer-open .jas-sidebar-tab {
+  display: none;
+}
+
+/* Hide Knowledge tab when Jaspen is open */
+.knowledge-page.jaspen-ai-open .knowledge-tab {
+  display: none;
 }
 
 /* ── KNOWLEDGE drawer ─────────────────────────────────────── */
@@ -221,7 +232,7 @@ body.jaspen-sidebar-open .knowledge-page.knowledge-drawer-open {
 }
 
 /* ── Jaspen drawer interaction ────────────────────────────── */
-.knowledge-page.jaspen-drawer-open .knowledge-main {
+.knowledge-page.jaspen-ai-open .knowledge-main {
   margin-left: 320px;
 }
 
