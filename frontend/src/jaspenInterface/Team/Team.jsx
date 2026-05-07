@@ -8,6 +8,7 @@ import FieldError from '../../shared/components/FieldError';
 import { ROLE_OPTIONS, INVITE_ROLE_OPTIONS } from '../../shared/constants/appConstants';
 import './Team.css';
 import AppMenu from '../shared/AppMenu';
+import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
 
 const VISIBILITY_OPTIONS = ['private', 'team', 'specific'];
 const SEAT_EDITABLE_ROLES = ROLE_OPTIONS.filter((role) => role !== 'owner');
@@ -160,6 +161,14 @@ export default function Team({ mode = 'team' }) {
   const [seatDraft, setSeatDraft] = useState({});
   const [savedSeatDraft, setSavedSeatDraft] = useState({});
   const [confirmDialog, setConfirmDialog] = useState(null);
+  const [jaspenOpen, setJaspenOpen] = useState(false);
+  const [assistantInput, setAssistantInput] = useState('');
+  const [assistantMessages, setAssistantMessages] = useState([
+    {
+      role: 'assistant',
+      text: 'I can help with seat policy, role assignments, and project-sharing decisions on this page.',
+    },
+  ]);
 
   const isEnterpriseMode = String(mode || '').toLowerCase() === 'enterprise';
   const routePlanForCopy = isEnterpriseMode ? 'enterprise' : 'team';
@@ -295,6 +304,35 @@ export default function Team({ mode = 'team' }) {
       cancelled = true;
     };
   }, [loadAll, teamLabelLower]);
+
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      if (document.body.classList.contains('jaspen-sidebar-open')) {
+        setJaspenOpen(false);
+      }
+    });
+    observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+
+  const openJaspen = useCallback(() => {
+    document.body.classList.remove('jaspen-sidebar-open');
+    setJaspenOpen(true);
+  }, []);
+
+  const sendAssistant = useCallback(() => {
+    const text = String(assistantInput || '').trim();
+    if (!text) return;
+    setAssistantMessages((prev) => ([
+      ...prev,
+      { role: 'user', text },
+      {
+        role: 'assistant',
+        text: 'Use this page to set seats, member roles, and sharing policies. I can help you pick the safest defaults before saving.',
+      },
+    ]));
+    setAssistantInput('');
+  }, [assistantInput]);
 
   const onSwitchOrganization = async (orgId) => {
     if (!orgId) return;
@@ -632,11 +670,26 @@ export default function Team({ mode = 'team' }) {
 
   if (loading) {
     return (
-      <div className="team-page jas-internal-page jas-internal-page-shell int-page">
+      <div className={`team-page jas-internal-page jas-internal-page-shell int-page${jaspenOpen ? ' drawer-open' : ''}`}>
         <AppMenu />
         <div className="team-inner int-page-inner">
           <div className="team-state">Loading team data…</div>
         </div>
+        <JaspenAiDrawer
+          isOpen={jaspenOpen}
+          onOpen={openJaspen}
+          onClose={() => setJaspenOpen(false)}
+          messages={assistantMessages}
+          input={assistantInput}
+          onInputChange={setAssistantInput}
+          onSend={sendAssistant}
+          busy={false}
+          starterPrompts={[
+            'Who should have admin access?',
+            'How should I set seat limits?',
+          ]}
+          placeholder="Ask Jaspen about team management..."
+        />
       </div>
     );
   }
@@ -665,7 +718,7 @@ export default function Team({ mode = 'team' }) {
     : `${routePlanForCopy.charAt(0).toUpperCase() + routePlanForCopy.slice(1)} defaults: ${planSeatSummary(routePlanForCopy)}.`;
 
   return (
-    <div className="team-page jas-internal-page jas-internal-page-shell int-page">
+    <div className={`team-page jas-internal-page jas-internal-page-shell int-page${jaspenOpen ? ' drawer-open' : ''}`}>
       <AppMenu />
       <div className="team-inner int-page-inner">
       <header className="team-head int-page-head">
@@ -1245,6 +1298,21 @@ export default function Team({ mode = 'team' }) {
         onConfirm={() => confirmDialog?.onConfirm?.()}
       />
       </div>
+      <JaspenAiDrawer
+        isOpen={jaspenOpen}
+        onOpen={openJaspen}
+        onClose={() => setJaspenOpen(false)}
+        messages={assistantMessages}
+        input={assistantInput}
+        onInputChange={setAssistantInput}
+        onSend={sendAssistant}
+        busy={false}
+        starterPrompts={[
+          'Who should have admin access?',
+          'How should I set seat limits?',
+        ]}
+        placeholder="Ask Jaspen about team management..."
+      />
     </div>
   );
 }

@@ -7,19 +7,18 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import ConfirmDialog from '../../shared/components/ConfirmDialog';
 import {
   faBookOpen,
-  faBars,
   faBolt,
   faChartLine,
   faGear,
   faLayerGroup,
   faPlug,
   faShieldHalved,
-  faTimes,
 } from '@fortawesome/free-solid-svg-icons';
 import FieldError from '../../shared/components/FieldError';
 import { PLAN_ORDER, PLAN_RANK } from '../../shared/constants/appConstants';
 import './Account.css';
 import AppMenu from '../shared/AppMenu';
+import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
 
 function authHeaders(extra = {}, method = 'GET') {
   return buildAuthHeaders(extra, method);
@@ -354,10 +353,18 @@ export default function Account() {
   const [jiraConfigFieldErrors, setJiraConfigFieldErrors] = useState({});
   const [jiraConfigSaving, setJiraConfigSaving] = useState(false);
   const [message, setMessage] = useState('');
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [billingDrawerOpen, setBillingDrawerOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('overview');
   const [userProfile, setUserProfile] = useState(null);
   const [discardDialog, setDiscardDialog] = useState(null);
+  const [jaspenOpen, setJaspenOpen] = useState(false);
+  const [assistantInput, setAssistantInput] = useState('');
+  const [assistantMessages, setAssistantMessages] = useState([
+    {
+      role: 'assistant',
+      text: 'I can help you interpret plan limits, credits, and connector access from this account view.',
+    },
+  ]);
   const [mfaState, setMfaState] = useState({
     loading: false,
     verifying: false,
@@ -1683,11 +1690,56 @@ export default function Account() {
     }
   };
 
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      if (document.body.classList.contains('jaspen-sidebar-open')) {
+        setJaspenOpen(false);
+      }
+    });
+    observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+
+  const openJaspen = () => {
+    document.body.classList.remove('jaspen-sidebar-open');
+    setJaspenOpen(true);
+  };
+
+  const sendAssistant = () => {
+    const text = String(assistantInput || '').trim();
+    if (!text) return;
+    setAssistantMessages((prev) => ([
+      ...prev,
+      { role: 'user', text },
+      {
+        role: 'assistant',
+        text: 'Update plan, credits, or connector settings here, then return to workspace to continue project execution.',
+      },
+    ]));
+    setAssistantInput('');
+  };
+
   if (loading) {
     return (
-      <div className="account-page int-page">
+      <div className={`account-page int-page${jaspenOpen ? ' drawer-open' : ''}`}>
         <AppMenu />
         <div className="account-loading-state">Loading account details...</div>
+        <JaspenAiDrawer
+          isOpen={jaspenOpen}
+          onOpen={openJaspen}
+          onClose={() => setJaspenOpen(false)}
+          sideTabTop={228}
+          messages={assistantMessages}
+          input={assistantInput}
+          onInputChange={setAssistantInput}
+          onSend={sendAssistant}
+          busy={false}
+          starterPrompts={[
+            'How close am I to my credit limit?',
+            'Which plan best fits heavier usage?',
+          ]}
+          placeholder="Ask Jaspen about billing and account settings..."
+        />
       </div>
     );
   }
@@ -1763,59 +1815,84 @@ export default function Account() {
   ].filter(Boolean).join(' ') || undefined;
 
   return (
-    <div className="account-page int-page">
+    <div
+      className={[
+        'account-page int-page',
+        billingDrawerOpen ? 'billing-drawer-open' : '',
+        jaspenOpen ? 'drawer-open' : '',
+      ].filter(Boolean).join(' ')}
+    >
       <AppMenu />
-      <div>
-        <div className={`account-content-layout ${sidebarCollapsed ? 'is-sidebar-collapsed' : ''}`}>
-          <aside className={`account-sidebar ${sidebarCollapsed ? 'is-collapsed' : ''}`}>
-            <div className="account-sidebar-head">
-              {!sidebarCollapsed && <p className="account-sidebar-title">Billing menu</p>}
-              <button
-                type="button"
-                className="account-sidebar-toggle"
-                onClick={() => setSidebarCollapsed((prev) => !prev)}
-                aria-expanded={!sidebarCollapsed}
-                aria-label={sidebarCollapsed ? 'Expand billing menu' : 'Collapse billing menu'}
-              >
-                <FontAwesomeIcon icon={sidebarCollapsed ? faBars : faTimes} />
-              </button>
-            </div>
-            <nav className="account-sidebar-nav" aria-label="Billing sections">
-              {sidebarItems.map((item) => (
-                <button
-                  key={item.key}
-                  type="button"
-                  className={`account-sidebar-item ${activeTab === item.key ? 'is-active' : ''}`}
-                  onClick={() => guardUnsavedChanges(() => setActiveTab(item.key))}
-                  aria-label={item.label}
-                  title={sidebarCollapsed ? item.label : undefined}
-                >
-                  <span className="account-sidebar-icon">
-                    <FontAwesomeIcon icon={item.icon} />
-                  </span>
-                  {!sidebarCollapsed && <span className="account-sidebar-label">{item.label}</span>}
-                </button>
-              ))}
-            </nav>
-            {!sidebarCollapsed && (
-              <div className="account-sidebar-footer">
-                <section className="account-sidebar-footer-group">
-                  <p className="account-sidebar-footer-label">Account usage (this month)</p>
-                  <p className="account-sidebar-footer-value">
-                    {status?.monthly_credit_limit == null
-                      ? 'Contracted pooled credits'
-                      : `${Number(status.monthly_credit_limit || 0).toLocaleString()} credit limit`}
-                  </p>
-                </section>
-                <section className="account-sidebar-footer-group">
-                  <p className="account-sidebar-footer-label">Current thread usage</p>
-                  <p className="account-sidebar-footer-value">Open a thread to see usage details.</p>
-                </section>
-              </div>
-            )}
-          </aside>
 
-          <div className="account-main-content">
+      {/* BILLING vertical tab — visible only when drawer is closed */}
+      {!billingDrawerOpen && (
+        <button
+          type="button"
+          className="billing-tab"
+          onClick={() => setBillingDrawerOpen(true)}
+          aria-label="Open billing menu"
+          aria-expanded={false}
+          aria-controls="billing-drawer"
+        >
+          Billing
+        </button>
+      )}
+
+      {/* BILLING drawer */}
+      <div
+        id="billing-drawer"
+        className={`account-drawer${billingDrawerOpen ? ' is-open' : ''}`}
+        aria-label="Billing navigation"
+      >
+        <div className="account-drawer-head">
+          <p className="account-drawer-title">Billing menu</p>
+          <button
+            type="button"
+            className="account-drawer-close"
+            onClick={() => setBillingDrawerOpen(false)}
+            aria-label="Close billing menu"
+          >
+            ✕
+          </button>
+        </div>
+        <nav className="account-drawer-nav" aria-label="Billing sections">
+          {sidebarItems.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              className={`account-sidebar-item${activeTab === item.key ? ' is-active' : ''}`}
+              onClick={() => {
+                guardUnsavedChanges(() => {
+                  setActiveTab(item.key);
+                  setBillingDrawerOpen(false);
+                });
+              }}
+              aria-label={item.label}
+            >
+              <span className="account-sidebar-icon">
+                <FontAwesomeIcon icon={item.icon} />
+              </span>
+              <span className="account-sidebar-label">{item.label}</span>
+            </button>
+          ))}
+        </nav>
+        <div className="account-drawer-footer">
+          <section className="account-sidebar-footer-group">
+            <p className="account-sidebar-footer-label">Account usage (this month)</p>
+            <p className="account-sidebar-footer-value">
+              {status?.monthly_credit_limit == null
+                ? 'Contracted pooled credits'
+                : `${Number(status.monthly_credit_limit || 0).toLocaleString()} credit limit`}
+            </p>
+          </section>
+          <section className="account-sidebar-footer-group">
+            <p className="account-sidebar-footer-label">Current thread usage</p>
+            <p className="account-sidebar-footer-value">Open a thread to see usage details.</p>
+          </section>
+        </div>
+      </div>
+
+      <div className="account-main-content">
         <div className="account-header-row">
           <div className="account-title-wrap">
             <p className="account-eyebrow">Account</p>
@@ -3173,9 +3250,23 @@ export default function Account() {
           onConfirm={discardDialog?.onConfirm}
           onCancel={() => setDiscardDialog(null)}
         />
-          </div>
-        </div>
       </div>
+      <JaspenAiDrawer
+        isOpen={jaspenOpen}
+        onOpen={openJaspen}
+        onClose={() => setJaspenOpen(false)}
+        sideTabTop={228}
+        messages={assistantMessages}
+        input={assistantInput}
+        onInputChange={setAssistantInput}
+        onSend={sendAssistant}
+        busy={false}
+        starterPrompts={[
+          'How close am I to my credit limit?',
+          'Which plan best fits heavier usage?',
+        ]}
+        placeholder="Ask Jaspen about billing and account settings..."
+      />
     </div>
   );
 }

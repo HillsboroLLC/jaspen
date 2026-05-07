@@ -3,7 +3,7 @@
   --jas-ui-muted: var(--color-text-secondary);
   --jas-ui-border: var(--color-border-default);
   --jas-ui-surface: var(--color-surface-default);
-  --jas-ui-bg: var(--color-surface-subtle);
+  --jas-ui-bg: #f8fafc;
   --jas-ui-radius-control: var(--radius-sm);
   --jas-ui-radius-card: var(--radius-lg);
   --jas-ui-heading-size: var(--font-size-2xl);
@@ -20,7 +20,11 @@
   .activity-page,
   .reports-page,
   .scores-container,
-  .knowledge-page
+  .knowledge-page,
+  .projects-page,
+  .insights-page,
+  .execution-plan-page,
+  .dash-page
 ) {
   background: var(--jas-ui-bg);
   color: var(--jas-ui-ink);

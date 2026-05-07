@@ -5,6 +5,7 @@ import FieldError from '../../shared/components/FieldError';
 import Team from '../Team/Team';
 import './EnterpriseAdmin.css';
 import AppMenu from '../shared/AppMenu';
+import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
 
 const TAB_TEAM = 'team';
 const TAB_SSO = 'sso';
@@ -138,6 +139,14 @@ export default function EnterpriseAdmin() {
   const [auditFilterType, setAuditFilterType] = useState('');
   const [auditFilterDateStart, setAuditFilterDateStart] = useState('');
   const [auditFilterDateEnd, setAuditFilterDateEnd] = useState('');
+  const [jaspenOpen, setJaspenOpen] = useState(false);
+  const [assistantInput, setAssistantInput] = useState('');
+  const [assistantMessages, setAssistantMessages] = useState([
+    {
+      role: 'assistant',
+      text: 'I can help with enterprise governance, SSO policy, and audit-readiness decisions on this page.',
+    },
+  ]);
 
   const redirectUri = useMemo(() => {
     if (!org?.id) return '';
@@ -355,18 +364,65 @@ export default function EnterpriseAdmin() {
     await loadAuditEvents(org.id, { userId: auditFilterUserId, actionType: auditFilterType });
   }, [auditFilterType, auditFilterUserId, loadAuditEvents, org?.id]);
 
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      if (document.body.classList.contains('jaspen-sidebar-open')) {
+        setJaspenOpen(false);
+      }
+    });
+    observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+
+  const openJaspen = useCallback(() => {
+    document.body.classList.remove('jaspen-sidebar-open');
+    setJaspenOpen(true);
+  }, []);
+
+  const sendAssistant = useCallback(() => {
+    const text = String(assistantInput || '').trim();
+    if (!text) return;
+    setAssistantMessages((prev) => ([
+      ...prev,
+      { role: 'user', text },
+      {
+        role: 'assistant',
+        text: 'Use these tabs to set SSO, governance, and audit settings; I can help evaluate tradeoffs before you apply changes.',
+      },
+    ]));
+    setAssistantInput('');
+  }, [assistantInput]);
+
   if (loading) {
     return (
-      <div className="enterprise-admin-page">
+      <div className={`enterprise-admin-page int-page${jaspenOpen ? ' drawer-open' : ''}`}>
         <AppMenu />
-        <div className="enterprise-admin-card">Loading enterprise admin...</div>
+        <div className="enterprise-admin-inner int-page-inner">
+          <div className="enterprise-admin-card">Loading enterprise admin...</div>
+        </div>
+        <JaspenAiDrawer
+          isOpen={jaspenOpen}
+          onOpen={openJaspen}
+          onClose={() => setJaspenOpen(false)}
+          messages={assistantMessages}
+          input={assistantInput}
+          onInputChange={setAssistantInput}
+          onSend={sendAssistant}
+          busy={false}
+          starterPrompts={[
+            'How should we set retention policy?',
+            'What should we audit first?',
+          ]}
+          placeholder="Ask Jaspen about enterprise controls..."
+        />
       </div>
     );
   }
 
   return (
-    <div className="enterprise-admin-page int-page int-page-inner">
+    <div className={`enterprise-admin-page int-page${jaspenOpen ? ' drawer-open' : ''}`}>
       <AppMenu />
+      <div className="enterprise-admin-inner int-page-inner">
       <section className="enterprise-admin-card enterprise-admin-header int-page-head">
         <div>
           <p className="enterprise-admin-eyebrow int-eyebrow">Jaspen Enterprise</p>
@@ -685,6 +741,22 @@ export default function EnterpriseAdmin() {
           </div>
         </section>
       )}
+      </div>
+      <JaspenAiDrawer
+        isOpen={jaspenOpen}
+        onOpen={openJaspen}
+        onClose={() => setJaspenOpen(false)}
+        messages={assistantMessages}
+        input={assistantInput}
+        onInputChange={setAssistantInput}
+        onSend={sendAssistant}
+        busy={false}
+        starterPrompts={[
+          'How should we set retention policy?',
+          'What should we audit first?',
+        ]}
+        placeholder="Ask Jaspen about enterprise controls..."
+      />
     </div>
   );
 }

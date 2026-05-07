@@ -1,9 +1,19 @@
 .enterprise-admin-page {
   width: 100%;
+  min-height: 100vh;
+  background: var(--int-bg);
+  color: var(--int-text);
+}
+
+.enterprise-admin-inner {
   max-width: 1320px;
   margin: 0 auto;
   padding: 24px;
-  color: var(--int-text);
+  transition: margin-left 0.28s ease;
+}
+
+.enterprise-admin-page.drawer-open .enterprise-admin-inner {
+  margin-left: 320px;
 }
 
 .enterprise-admin-card {
@@ -388,6 +398,10 @@
 }
 
 @media (max-width: 1100px) {
+  .enterprise-admin-page.drawer-open .enterprise-admin-inner {
+    margin-left: 0;
+  }
+
   .enterprise-admin-header {
     flex-direction: column;
   }
@@ -405,7 +419,7 @@
 }
 
 @media (max-width: 640px) {
-  .enterprise-admin-page {
+  .enterprise-admin-inner {
     padding: 14px;
   }
 

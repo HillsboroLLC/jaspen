@@ -15,6 +15,7 @@ import SkeletonBlock from '../../shared/components/SkeletonLoader';
 import EmptyState from '../../homeSections/homeUi/EmptyState';
 import './Projects.css';
 import AppMenu from '../shared/AppMenu';
+import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
 
 const STATUS_OPTIONS = ['All', 'Active', 'Completed', 'Archived'];
 const GROUP_OPTIONS = ['None', 'Category', 'Status'];
@@ -87,6 +88,14 @@ export default function Projects() {
   const [sortDir, setSortDir] = useState('desc');
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [jaspenOpen, setJaspenOpen] = useState(false);
+  const [assistantInput, setAssistantInput] = useState('');
+  const [assistantMessages, setAssistantMessages] = useState([
+    {
+      role: 'assistant',
+      text: 'I can help prioritize your project portfolio by score, status, and execution risk.',
+    },
+  ]);
 
   const loadProjects = useCallback(async () => {
     setLoading(true);
@@ -287,8 +296,37 @@ export default function Projects() {
 
   const allVisibleSelected = filtered.length > 0 && filtered.every((row) => selectedIds.has(row.threadId));
 
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      if (document.body.classList.contains('jaspen-sidebar-open')) {
+        setJaspenOpen(false);
+      }
+    });
+    observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+
+  const openJaspen = useCallback(() => {
+    document.body.classList.remove('jaspen-sidebar-open');
+    setJaspenOpen(true);
+  }, []);
+
+  const sendAssistant = useCallback(() => {
+    const text = String(assistantInput || '').trim();
+    if (!text) return;
+    setAssistantMessages((prev) => [
+      ...prev,
+      { role: 'user', text },
+      {
+        role: 'assistant',
+        text: 'I can rank these projects for you. Ask me for the top project to execute next and why.',
+      },
+    ]);
+    setAssistantInput('');
+  }, [assistantInput]);
+
   return (
-    <div className="projects-page int-page">
+    <div className={`projects-page int-page${jaspenOpen ? ' drawer-open' : ''}`}>
       <AppMenu />
       <div className="projects-inner">
       <header className="projects-header">
@@ -493,6 +531,21 @@ export default function Projects() {
         </section>
       ))}
       </div>
+      <JaspenAiDrawer
+        isOpen={jaspenOpen}
+        onOpen={openJaspen}
+        onClose={() => setJaspenOpen(false)}
+        messages={assistantMessages}
+        input={assistantInput}
+        onInputChange={setAssistantInput}
+        onSend={sendAssistant}
+        busy={false}
+        starterPrompts={[
+          'Which project should I do first?',
+          'Show me projects with highest execution risk.',
+        ]}
+        placeholder="Ask Jaspen about projects..."
+      />
     </div>
   );
 }

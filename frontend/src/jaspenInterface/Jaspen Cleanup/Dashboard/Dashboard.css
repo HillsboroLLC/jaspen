@@ -1,10 +1,21 @@
 .dash-page {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 24px;
+  min-height: 100vh;
+  background: var(--int-bg, #f8fafc);
+  color: #1e2746;
+}
+
+.dash-inner {
   display: grid;
   gap: 16px;
-  color: #1e2746;
+  transition: margin-left 0.28s ease;
+}
+
+.dash-page.drawer-open .dash-inner {
+  margin-left: 320px;
+}
+
+body.jaspen-sidebar-open .dash-page.drawer-open .dash-inner {
+  margin-left: 320px;
 }
 
 .dash-card {
@@ -19,6 +30,8 @@
   justify-content: space-between;
   align-items: flex-start;
   gap: 16px;
+  padding: 8px 0 10px;
+  border-bottom: 1px solid #dce4f4;
 }
 
 .dash-eyebrow {
@@ -96,6 +109,11 @@
   gap: 14px;
 }
 
+.dash-metric-item {
+  padding: 10px 0 12px;
+  border-bottom: 1px solid #dce4f4;
+}
+
 .dash-metrics h3 {
   margin: 0;
   font-size: 14px;
@@ -118,12 +136,16 @@
 .dash-insights-widget {
   display: grid;
   gap: 14px;
+  padding: 14px 0 0;
+  border-top: 1px solid #dce4f4;
 }
 
 .dash-insights-chart-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
+  align-items: start;
+  grid-auto-rows: min-content;
 }
 
 .dash-chart-card {
@@ -131,19 +153,33 @@
   border-radius: 12px;
   padding: 12px;
   background: #fcfdff;
-  min-height: 260px;
   display: flex;
   flex-direction: column;
+  gap: 8px;
+  align-self: start;
+  max-height: 320px;
+  overflow: hidden;
 }
 
 .dash-chart-card h3 {
-  margin: 0 0 8px;
+  margin: 0;
   font-size: 15px;
   color: #22325a;
 }
 
+.dash-chart-frame {
+  position: relative;
+  width: 100%;
+  height: 240px;
+  min-height: 240px;
+  max-height: 240px;
+  flex: 0 0 240px;
+  overflow: hidden;
+}
+
 .dash-chart-card canvas {
-  flex: 1;
+  width: 100% !important;
+  height: 100% !important;
 }
 
 .dash-insight-card-grid {
@@ -350,6 +386,11 @@
 }
 
 @media (max-width: 1080px) {
+  .dash-page.drawer-open .dash-inner,
+  body.jaspen-sidebar-open .dash-page.drawer-open .dash-inner {
+    margin-left: 0;
+  }
+
   .dash-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -365,8 +406,9 @@
 }
 
 @media (max-width: 700px) {
-  .dash-page {
-    padding: 14px;
+  .dash-inner {
+    gap: 12px;
+    margin-left: 0 !important;
   }
 
   .dash-hero {

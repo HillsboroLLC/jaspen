@@ -7,6 +7,7 @@ import FieldError from '../../shared/components/FieldError';
 import Feedback from './Feedback';
 import './JaspenAdmin.css';
 import AppMenu from '../shared/AppMenu';
+import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
 
 
 const PLAN_OPTIONS = ['free', 'essential', 'team', 'enterprise'];
@@ -170,6 +171,14 @@ export default function JaspenAdmin() {
   const [accessReview, setAccessReview] = useState(null);
   const [accessLoading, setAccessLoading] = useState(false);
   const [accessPending, setAccessPending] = useState(false);
+  const [jaspenOpen, setJaspenOpen] = useState(false);
+  const [assistantInput, setAssistantInput] = useState('');
+  const [assistantMessages, setAssistantMessages] = useState([
+    {
+      role: 'assistant',
+      text: 'I can help review access controls and admin operations before you apply changes.',
+    },
+  ]);
 
   const [creditOp, setCreditOp] = useState({
     mode: 'adjust',
@@ -676,28 +685,88 @@ export default function JaspenAdmin() {
     }
   };
 
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      if (document.body.classList.contains('jaspen-sidebar-open')) {
+        setJaspenOpen(false);
+      }
+    });
+    observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+
+  const openJaspen = () => {
+    document.body.classList.remove('jaspen-sidebar-open');
+    setJaspenOpen(true);
+  };
+
+  const sendAssistant = () => {
+    const text = String(assistantInput || '').trim();
+    if (!text) return;
+    setAssistantMessages((prev) => ([
+      ...prev,
+      { role: 'user', text },
+      {
+        role: 'assistant',
+        text: 'Use this page to manage user access, credits, and controls; I can help sanity-check before saving.',
+      },
+    ]));
+    setAssistantInput('');
+  };
+
   if (isLoading) {
     return (
-      <div className="jas-admin-page jas-internal-page jas-internal-page-shell int-page">
+      <div className={`jas-admin-page jas-internal-page jas-internal-page-shell int-page${jaspenOpen ? ' drawer-open' : ''}`}>
         <AppMenu />
         <p className="jas-admin-empty">Loading Jaspen Admin...</p>
+        <JaspenAiDrawer
+          isOpen={jaspenOpen}
+          onOpen={openJaspen}
+          onClose={() => setJaspenOpen(false)}
+          messages={assistantMessages}
+          input={assistantInput}
+          onInputChange={setAssistantInput}
+          onSend={sendAssistant}
+          busy={false}
+          starterPrompts={[
+            'Which access controls should be enabled?',
+            'How should I handle pending approvals?',
+          ]}
+          placeholder="Ask Jaspen about admin operations..."
+        />
       </div>
     );
   }
 
   if (!isAdmin) {
     return (
-      <div className="jas-admin-page jas-internal-page jas-internal-page-shell int-page">
+      <div className={`jas-admin-page jas-internal-page jas-internal-page-shell int-page${jaspenOpen ? ' drawer-open' : ''}`}>
         <AppMenu />
         <h1>Jaspen Admin</h1>
         <p>You do not have global admin access on this environment.</p>
+        <JaspenAiDrawer
+          isOpen={jaspenOpen}
+          onOpen={openJaspen}
+          onClose={() => setJaspenOpen(false)}
+          messages={assistantMessages}
+          input={assistantInput}
+          onInputChange={setAssistantInput}
+          onSend={sendAssistant}
+          busy={false}
+          starterPrompts={[
+            'Which access controls should be enabled?',
+            'How should I handle pending approvals?',
+          ]}
+          placeholder="Ask Jaspen about admin operations..."
+        />
       </div>
     );
   }
 
   return (
-    <div className="jas-admin-page jas-internal-page jas-internal-page-shell int-page">
+    <div className={`jas-admin-page jas-internal-page jas-internal-page-shell int-page${jaspenOpen ? ' drawer-open' : ''}`}>
       <AppMenu />
+      <div className="jas-admin-inner">
         <div className="jas-admin-head int-page-head">
           <div>
             <p className="jas-admin-eyebrow int-eyebrow">Jaspen Internal</p>
@@ -1259,6 +1328,22 @@ export default function JaspenAdmin() {
           onCancel={() => setConfirmDialog(null)}
           onConfirm={() => confirmDialog?.onConfirm?.()}
         />
+      </div>
+      <JaspenAiDrawer
+        isOpen={jaspenOpen}
+        onOpen={openJaspen}
+        onClose={() => setJaspenOpen(false)}
+        messages={assistantMessages}
+        input={assistantInput}
+        onInputChange={setAssistantInput}
+        onSend={sendAssistant}
+        busy={false}
+        starterPrompts={[
+          'Which access controls should be enabled?',
+          'How should I handle pending approvals?',
+        ]}
+        placeholder="Ask Jaspen about admin operations..."
+      />
     </div>
   );
 }

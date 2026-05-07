@@ -8,6 +8,15 @@
 .projects-inner {
   max-width: 1320px;
   margin: 0 auto;
+  transition: margin-left 0.28s ease;
+}
+
+.projects-page.drawer-open .projects-inner {
+  margin-left: 320px;
+}
+
+body.jaspen-sidebar-open .projects-page.drawer-open .projects-inner {
+  margin-left: 320px;
 }
 
 .projects-header {
@@ -325,6 +334,11 @@
 }
 
 @media (max-width: 960px) {
+  .projects-page.drawer-open .projects-inner,
+  body.jaspen-sidebar-open .projects-page.drawer-open .projects-inner {
+    margin-left: 0;
+  }
+
   .projects-page {
     width: 100%;
     padding: 18px 16px 28px;

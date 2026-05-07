@@ -52,27 +52,28 @@ body.jaspen-sidebar-open .int-page {
   top: 128px;
   writing-mode: vertical-rl;
   text-orientation: mixed;
-  background: var(--light-bg);
-  border: 1px solid var(--border);
+  background: var(--navy);
+  border: 1px solid var(--navy);
   border-left: none;
   padding: 14px 8px;
   font-size: 0.6875rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--navy);
+  color: var(--white);
   cursor: pointer;
   z-index: 100;
   display: flex;
   align-items: center;
   gap: 8px;
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-  transition: background var(--transition);
+  transition: background var(--transition), transform var(--transition);
   font-family: var(--font);
 }
 
 .app-menu-host .jas-drawer-tab:hover {
-  background: var(--gray-200);
+  background: #0f1629;
+  transform: translateX(1px);
 }
 
 .app-menu-host .jas-drawer-tab svg {

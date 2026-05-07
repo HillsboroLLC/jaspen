@@ -8,6 +8,15 @@
 .reports-inner {
   max-width: 1280px;
   margin: 0 auto;
+  transition: margin-left 0.28s ease;
+}
+
+.reports-page.drawer-open .reports-inner {
+  margin-left: 320px;
+}
+
+body.jaspen-sidebar-open .reports-page.drawer-open .reports-inner {
+  margin-left: 320px;
 }
 
 .reports-header h1 {
@@ -161,6 +170,11 @@
 }
 
 @media (max-width: 900px) {
+  .reports-page.drawer-open .reports-inner,
+  body.jaspen-sidebar-open .reports-page.drawer-open .reports-inner {
+    margin-left: 0;
+  }
+
   .reports-page {
     width: 100%;
     padding: 18px 14px 24px;

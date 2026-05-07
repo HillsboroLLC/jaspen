@@ -131,25 +131,25 @@
   left: 0;
   writing-mode: vertical-rl;
   text-orientation: mixed;
-  background: var(--jas-light-bg);
-  border: 1px solid var(--jas-border);
+  background: var(--jas-navy);
+  border: 1px solid var(--jas-navy);
   border-left: none;
   padding: 14px 8px;
   font-size: var(--jas-text-sm);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--jas-navy);
+  color: var(--jas-white, #ffffff);
   cursor: pointer;
   z-index: 100;
   display: flex;
   align-items: center;
   gap: var(--jas-space-2);
   border-radius: 0 var(--jas-radius-sm) var(--jas-radius-sm) 0;
-  transition: background var(--jas-transition);
+  transition: background var(--jas-transition), transform var(--jas-transition);
   font-family: var(--jas-font);
 }
-.jas-drawer-tab:hover { background: var(--jas-gray-200); }
+.jas-drawer-tab:hover { background: #0f1629; transform: translateX(1px); }
 .jas-drawer-tab i { writing-mode: horizontal-tb; font-size: var(--jas-text-sm); }
 
 /* Drawer panel */

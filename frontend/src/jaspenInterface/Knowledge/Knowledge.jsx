@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import './Knowledge.css';
 import AppMenu from '../shared/AppMenu';
+import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
 
 const TOPICS = {
   gettingStarted: {
@@ -451,9 +452,17 @@ function toSearchBlob(topic) {
 }
 
 export default function Knowledge() {
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [knowledgeDrawerOpen, setKnowledgeDrawerOpen] = useState(false);
   const [activeTopicId, setActiveTopicId] = useState('gettingStarted');
   const [query, setQuery] = useState('');
+  const [jaspenOpen, setJaspenOpen] = useState(false);
+  const [assistantInput, setAssistantInput] = useState('');
+  const [assistantMessages, setAssistantMessages] = useState([
+    {
+      role: 'assistant',
+      text: 'I can answer questions about Jaspen workflows, connectors, and execution patterns.',
+    },
+  ]);
 
   const normalizedQuery = query.trim().toLowerCase();
 
@@ -486,129 +495,202 @@ export default function Knowledge() {
     return TOPICS[activeTopicId] || TOPICS[visibleTopicIds[0]];
   }, [activeTopicId, visibleTopicIds]);
 
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      if (document.body.classList.contains('jaspen-sidebar-open')) {
+        setJaspenOpen(false);
+      }
+    });
+    observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+
+  const openJaspen = () => {
+    document.body.classList.remove('jaspen-sidebar-open');
+    setJaspenOpen(true);
+  };
+
+  const sendAssistant = () => {
+    const text = String(assistantInput || '').trim();
+    if (!text) return;
+    setAssistantMessages((prev) => [
+      ...prev,
+      { role: 'user', text },
+      {
+        role: 'assistant',
+        text: 'Try searching the topic index, then I can clarify steps and suggest the exact next action.',
+      },
+    ]);
+    setAssistantInput('');
+  };
+
   return (
-    <div className="knowledge-page int-page">
+    <div
+      className={[
+        'knowledge-page int-page',
+        knowledgeDrawerOpen ? 'knowledge-drawer-open' : '',
+        jaspenOpen ? 'jaspen-drawer-open' : '',
+      ].filter(Boolean).join(' ')}
+    >
       <AppMenu />
-      <div className={`knowledge-layout ${sidebarCollapsed ? 'is-sidebar-collapsed' : ''}`}>
-        <aside className={`knowledge-sidebar ${sidebarCollapsed ? 'is-collapsed' : ''}`}>
-          <div className="knowledge-sidebar-head">
-            {!sidebarCollapsed && <p className="knowledge-sidebar-title">Docs index</p>}
-            <button
-              type="button"
-              className="knowledge-sidebar-toggle"
-              onClick={() => setSidebarCollapsed((prev) => !prev)}
-              aria-label={sidebarCollapsed ? 'Expand docs index' : 'Collapse docs index'}
-              aria-expanded={!sidebarCollapsed}
-            >
-              {sidebarCollapsed ? '=' : 'x'}
-            </button>
-          </div>
-          <div className="knowledge-sidebar-scroll">
-            {filteredGroups.map((group) => (
-              <section key={group.label} className="knowledge-index-group">
-                {!sidebarCollapsed && <p className="knowledge-index-label">{group.label}</p>}
-                <div className="knowledge-index-items">
-                  {group.items.map((topicId) => {
-                    const topic = TOPICS[topicId];
-                    if (!topic) return null;
-                    return (
-                      <button
-                        key={topicId}
-                        type="button"
-                        className={`knowledge-index-item ${activeTopicId === topicId ? 'is-active' : ''}`}
-                        onClick={() => setActiveTopicId(topicId)}
-                        title={sidebarCollapsed ? topic.label : undefined}
-                      >
-                        <span className="knowledge-index-icon">{topic.short}</span>
-                        {!sidebarCollapsed && <span className="knowledge-index-text">{topic.label}</span>}
-                      </button>
-                    );
-                  })}
-                </div>
-              </section>
-            ))}
-            {!filteredGroups.length && !sidebarCollapsed && (
-              <p className="knowledge-index-empty">No topics match your search.</p>
-            )}
-          </div>
-        </aside>
 
-        <main className="knowledge-main">
-          <header className="knowledge-header">
-            <p className="knowledge-eyebrow">Knowledge</p>
-            <h1>Internal Product Documentation</h1>
-            <p className="knowledge-header-summary">
-              Contextual documentation for scoring, AI workflows, team collaboration, connectors, and operational setup.
-            </p>
-            <div className="knowledge-search-wrap">
-              <input
-                type="search"
-                className="knowledge-search-input"
-                placeholder="Search topics, summaries, and section content..."
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                aria-label="Search knowledge topics"
-              />
-            </div>
-          </header>
+      {/* KNOWLEDGE vertical tab — visible only when drawer is closed */}
+      {!knowledgeDrawerOpen && (
+        <button
+          type="button"
+          className="knowledge-tab"
+          onClick={() => setKnowledgeDrawerOpen(true)}
+          aria-label="Open docs index"
+          aria-expanded={false}
+          aria-controls="knowledge-drawer"
+        >
+          Knowledge
+        </button>
+      )}
 
-          {activeTopic ? (
-            <article className="knowledge-topic" aria-live="polite">
-              <header className="knowledge-topic-head">
-                <h2>{activeTopic.title}</h2>
-                <p>{activeTopic.summary}</p>
-              </header>
+      {/* KNOWLEDGE drawer */}
+      <div
+        id="knowledge-drawer"
+        className={`knowledge-drawer${knowledgeDrawerOpen ? ' is-open' : ''}`}
+        aria-label="Docs index"
+      >
+        <div className="knowledge-drawer-head">
+          <p className="knowledge-drawer-title">Docs Index</p>
+          <button
+            type="button"
+            className="knowledge-drawer-close"
+            onClick={() => setKnowledgeDrawerOpen(false)}
+            aria-label="Close docs index"
+          >
+            ✕
+          </button>
+        </div>
 
-              {(activeTopic.sections || []).map((section) => (
-                <section key={`${activeTopic.title}-${section.heading}`} className="knowledge-doc-section">
-                  <h3>{section.heading}</h3>
-                  {(Array.isArray(section.body) ? section.body : [section.body])
-                    .filter(Boolean)
-                    .map((paragraph) => (
-                      <p key={`${section.heading}-${paragraph}`}>{paragraph}</p>
+        <div className="knowledge-drawer-search">
+          <input
+            type="search"
+            className="knowledge-search-input"
+            placeholder="Search topics..."
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            aria-label="Search knowledge topics"
+          />
+        </div>
+
+        <div className="knowledge-drawer-scroll">
+          {filteredGroups.map((group) => (
+            <section key={group.label} className="knowledge-index-group">
+              <p className="knowledge-index-label">{group.label}</p>
+              <div className="knowledge-index-items">
+                {group.items.map((topicId) => {
+                  const topic = TOPICS[topicId];
+                  if (!topic) return null;
+                  return (
+                    <button
+                      key={topicId}
+                      type="button"
+                      className={`knowledge-index-item${activeTopicId === topicId ? ' is-active' : ''}`}
+                      onClick={() => {
+                        setActiveTopicId(topicId);
+                        setKnowledgeDrawerOpen(false);
+                      }}
+                    >
+                      <span className="knowledge-index-text">{topic.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
+          {!filteredGroups.length && (
+            <p className="knowledge-index-empty">No topics match your search.</p>
+          )}
+        </div>
+      </div>
+
+      {/* Main content */}
+      <main className="knowledge-main">
+        <header className="knowledge-header">
+          <p className="knowledge-eyebrow">Knowledge</p>
+          <h1>Internal Product Documentation</h1>
+          <p className="knowledge-header-summary">
+            Contextual documentation for scoring, AI workflows, team collaboration, connectors, and operational setup.
+          </p>
+        </header>
+
+        {activeTopic ? (
+          <article className="knowledge-topic" aria-live="polite">
+            <header className="knowledge-topic-head">
+              <h2>{activeTopic.title}</h2>
+              <p>{activeTopic.summary}</p>
+            </header>
+
+            {(activeTopic.sections || []).map((section) => (
+              <section key={`${activeTopic.title}-${section.heading}`} className="knowledge-doc-section">
+                <h3>{section.heading}</h3>
+                {(Array.isArray(section.body) ? section.body : [section.body])
+                  .filter(Boolean)
+                  .map((paragraph) => (
+                    <p key={`${section.heading}-${paragraph}`}>{paragraph}</p>
+                  ))}
+                {Array.isArray(section.steps) && section.steps.length > 0 && (
+                  <ol>
+                    {section.steps.map((step) => (
+                      <li key={step}>{step}</li>
                     ))}
-                  {Array.isArray(section.steps) && section.steps.length > 0 && (
-                    <ol>
-                      {section.steps.map((step) => (
-                        <li key={step}>{step}</li>
-                      ))}
-                    </ol>
-                  )}
-                  {Array.isArray(section.list) && section.list.length > 0 && (
-                    <ul>
-                      {section.list.map((item) => (
-                        <li key={item}>{item}</li>
-                      ))}
-                    </ul>
-                  )}
-                </section>
-              ))}
-
-              {Array.isArray(activeTopic.links) && activeTopic.links.length > 0 && (
-                <section className="knowledge-doc-section knowledge-links">
-                  <h3>Related links</h3>
-                  <ul className="knowledge-link-list">
-                    {activeTopic.links.map((link) => (
-                      <li key={`${activeTopic.title}-${link.href}`}>
-                        <a href={link.href} className="knowledge-link">
-                          {link.label}
-                        </a>
-                      </li>
+                  </ol>
+                )}
+                {Array.isArray(section.list) && section.list.length > 0 && (
+                  <ul>
+                    {section.list.map((item) => (
+                      <li key={item}>{item}</li>
                     ))}
                   </ul>
-                </section>
-              )}
-            </article>
-          ) : (
-            <div className="knowledge-topic">
-              <section className="knowledge-doc-section">
-                <h3>No topics found</h3>
-                <p>Try a broader keyword or clear the search field.</p>
+                )}
               </section>
-            </div>
-          )}
-        </main>
-      </div>
+            ))}
+
+            {Array.isArray(activeTopic.links) && activeTopic.links.length > 0 && (
+              <section className="knowledge-doc-section knowledge-links">
+                <h3>Related links</h3>
+                <ul className="knowledge-link-list">
+                  {activeTopic.links.map((link) => (
+                    <li key={`${activeTopic.title}-${link.href}`}>
+                      <a href={link.href} className="knowledge-link">
+                        {link.label}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+          </article>
+        ) : (
+          <div className="knowledge-topic">
+            <section className="knowledge-doc-section">
+              <h3>No topics found</h3>
+              <p>Try a broader keyword or clear the search field.</p>
+            </section>
+          </div>
+        )}
+      </main>
+
+      <JaspenAiDrawer
+        isOpen={jaspenOpen}
+        onOpen={openJaspen}
+        onClose={() => setJaspenOpen(false)}
+        sideTabTop={228}
+        messages={assistantMessages}
+        input={assistantInput}
+        onInputChange={setAssistantInput}
+        onSend={sendAssistant}
+        busy={false}
+        starterPrompts={[
+          'How do I go from scorecard to execution?',
+          'What is the connector setup order?',
+        ]}
+        placeholder="Ask Jaspen about documentation..."
+      />
     </div>
   );
 }

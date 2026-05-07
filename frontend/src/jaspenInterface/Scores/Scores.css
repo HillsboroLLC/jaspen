@@ -24,11 +24,11 @@
   top: 228px;
   writing-mode: vertical-rl;
   text-orientation: mixed;
-  background: var(--int-bg);
-  border: 1px solid var(--int-border);
+  background: var(--int-navy, #161f3b);
+  border: 1px solid var(--int-navy, #161f3b);
   border-left: none;
   border-radius: 0 4px 4px 0;
-  color: var(--int-text);
+  color: #ffffff;
   padding: 14px 8px;
   font-size: 0.6875rem;
   font-weight: 600;
@@ -36,11 +36,12 @@
   text-transform: uppercase;
   cursor: pointer;
   z-index: 99;
-  transition: background 0.2s ease;
+  transition: background 0.2s ease, transform 0.2s ease;
 }
 
 .scores-agent-tab:hover {
-  background: var(--gray-200, #e9ecef);
+  background: #0f1629;
+  transform: translateX(1px);
 }
 
 /* Hide Jaspen tab while App Menu is open — prevent both drawers being visible */

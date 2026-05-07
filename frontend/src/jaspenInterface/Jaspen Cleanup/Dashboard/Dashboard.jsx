@@ -4,6 +4,8 @@ import { useAuth } from '../../../shared/auth/AuthContext';
 import { API_BASE } from '../../../config/apiBase';
 import { authFetch, buildAuthHeaders } from '../../../shared/auth/http';
 import Seo from '../../../shared/components/Seo';
+import AppMenu from '../../shared/AppMenu';
+import JaspenAiDrawer from '../../Workspace/JaspenAiDrawer';
 import {
   ArcElement,
   BarElement,
@@ -102,6 +104,14 @@ export default function Dashboard() {
   const [error, setError] = useState('');
   const [data, setData] = useState(null);
   const [themeVersion, setThemeVersion] = useState(0);
+  const [jaspenOpen, setJaspenOpen] = useState(false);
+  const [assistantInput, setAssistantInput] = useState('');
+  const [assistantMessages, setAssistantMessages] = useState([
+    {
+      role: 'assistant',
+      text: 'I can help you interpret dashboard signals. Ask what needs attention, and I will point you to the right thread to act.',
+    },
+  ]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -193,6 +203,35 @@ export default function Dashboard() {
     fetchDashboard();
   }, [fetchDashboard]);
 
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      if (document.body.classList.contains('jaspen-sidebar-open')) {
+        setJaspenOpen(false);
+      }
+    });
+    observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+
+  const openJaspen = useCallback(() => {
+    document.body.classList.remove('jaspen-sidebar-open');
+    setJaspenOpen(true);
+  }, []);
+
+  const sendAssistant = useCallback(() => {
+    const text = String(assistantInput || '').trim();
+    if (!text) return;
+    setAssistantMessages((prev) => ([
+      ...prev,
+      { role: 'user', text },
+      {
+        role: 'assistant',
+        text: 'Use Project Snapshot -> Open to jump into a thread and apply changes. I can also summarize score and status trends here before you move into execution.',
+      },
+    ]));
+    setAssistantInput('');
+  }, [assistantInput]);
+
   const organization = data?.organization || {};
   const membership = data?.membership || {};
   const metrics = data?.metrics || {};
@@ -210,20 +249,40 @@ export default function Dashboard() {
 
   if (loading) {
     return (
-      <div className="dash-page">
-        <div className="dash-card dash-loading">Loading dashboard...</div>
+      <div className={`dash-page int-page${jaspenOpen ? ' drawer-open' : ''}`}>
+        <AppMenu />
+        <div className="dash-inner int-page-inner">
+          <div className="dash-card dash-loading">Loading dashboard...</div>
+        </div>
+        <JaspenAiDrawer
+          isOpen={jaspenOpen}
+          onOpen={openJaspen}
+          onClose={() => setJaspenOpen(false)}
+          messages={assistantMessages}
+          input={assistantInput}
+          onInputChange={setAssistantInput}
+          onSend={sendAssistant}
+          busy={false}
+          starterPrompts={[
+            'What should leadership focus on first?',
+            'Which projects are at risk right now?',
+          ]}
+          placeholder="Ask Jaspen about this dashboard..."
+        />
       </div>
     );
   }
 
   return (
-    <div className="dash-page">
+    <div className={`dash-page int-page${jaspenOpen ? ' drawer-open' : ''}`}>
+      <AppMenu />
+      <div className="dash-inner int-page-inner">
       <Seo
         title="Dashboard"
         description="Track project health, score trends, team activity, and execution progress in your Jaspen dashboard."
         canonicalPath="/dashboard"
       />
-      <section className="dash-hero dash-card">
+      <section className="dash-hero">
         <div>
           <p className="dash-eyebrow">Team Workspace</p>
           <h1>{organization?.name || 'Dashboard'}</h1>
@@ -254,29 +313,29 @@ export default function Dashboard() {
       {!error && (
         <>
           <section className="dash-metrics">
-            <article className="dash-card">
+            <article className="dash-metric-item">
               <h3>Projects</h3>
               <p>{metrics.projects_total ?? 0}</p>
               <small>{metrics.projects_active ?? 0} active</small>
             </article>
-            <article className="dash-card">
+            <article className="dash-metric-item">
               <h3>Completed</h3>
               <p>{metrics.projects_completed ?? 0}</p>
               <small>{metrics.projects_archived ?? 0} archived</small>
             </article>
-            <article className="dash-card">
+            <article className="dash-metric-item">
               <h3>Average Score</h3>
               <p>{metrics.avg_score == null ? '—' : `${metrics.avg_score}`}</p>
               <small>{metrics.scored_projects ?? 0} scored projects</small>
             </article>
-            <article className="dash-card">
+            <article className="dash-metric-item">
               <h3>Team Members</h3>
               <p>{metrics.team_members ?? 0}</p>
               <small>{metrics.collaborator_viewer_activity ?? 0} collaborator/viewer actions</small>
             </article>
           </section>
 
-          <section className="dash-card dash-insights-widget">
+          <section className="dash-insights-widget">
             <div className="dash-section-header">
               <h2>Insights Snapshot</h2>
               <span>{widgetCards.length} recent cards</span>
@@ -291,9 +350,13 @@ export default function Dashboard() {
                     <article className="dash-chart-card" key={`dash_chart_${idx}_${themeVersion}`}>
                       <h3>{chart?.title || `Chart ${idx + 1}`}</h3>
                       {!valid && <p className="dash-empty">No chart data available.</p>}
-                      {valid && chartType === 'bar' && <Bar data={dataPayload} options={chartOptions} />}
-                      {valid && chartType === 'line' && <Line data={dataPayload} options={chartOptions} />}
-                      {valid && chartType === 'pie' && <Pie data={dataPayload} options={chartOptions} />}
+                      {valid && (
+                        <div className="dash-chart-frame">
+                          {chartType === 'bar' && <Bar data={dataPayload} options={chartOptions} />}
+                          {chartType === 'line' && <Line data={dataPayload} options={chartOptions} />}
+                          {chartType === 'pie' && <Pie data={dataPayload} options={chartOptions} />}
+                        </div>
+                      )}
                       {valid && !['bar', 'line', 'pie'].includes(chartType) && (
                         <p className="dash-empty">Unsupported chart type: {chartType || 'unknown'}.</p>
                       )}
@@ -410,6 +473,22 @@ export default function Dashboard() {
           </section>
         </>
       )}
+      </div>
+      <JaspenAiDrawer
+        isOpen={jaspenOpen}
+        onOpen={openJaspen}
+        onClose={() => setJaspenOpen(false)}
+        messages={assistantMessages}
+        input={assistantInput}
+        onInputChange={setAssistantInput}
+        onSend={sendAssistant}
+        busy={false}
+        starterPrompts={[
+          'What should leadership focus on first?',
+          'Which projects are at risk right now?',
+        ]}
+        placeholder="Ask Jaspen about this dashboard..."
+      />
     </div>
   );
 }

@@ -6,27 +6,28 @@
   top: var(--side-tab-top, 200px);
   writing-mode: vertical-rl;
   text-orientation: mixed;
-  background: var(--light-bg, #f8fafc);
-  border: 1px solid var(--border, #e9ecef);
+  background: var(--navy, #161f3b);
+  border: 1px solid var(--navy, #161f3b);
   border-left: none;
   padding: 14px 8px;
   font-size: 0.6875rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--navy, #161f3b);
+  color: var(--white, #ffffff);
   cursor: pointer;
   z-index: 100;
   display: flex;
   align-items: center;
   gap: 8px;
   border-radius: 0 var(--radius-sm, 4px) var(--radius-sm, 4px) 0;
-  transition: background var(--transition, 0.2s ease);
+  transition: background var(--transition, 0.2s ease), transform var(--transition, 0.2s ease);
   font-family: var(--font, 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
 }
 
 .jas-sidebar-tab:hover {
-  background: var(--gray-200, #e9ecef);
+  background: #0f1629;
+  transform: translateX(1px);
 }
 
 .jas-sidebar-tab svg {

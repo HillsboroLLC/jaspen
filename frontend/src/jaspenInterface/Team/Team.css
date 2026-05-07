@@ -8,6 +8,11 @@
 .team-inner {
   max-width: 1320px;
   margin: 0 auto;
+  transition: margin-left 0.28s ease;
+}
+
+.team-page.drawer-open .team-inner {
+  margin-left: 320px;
 }
 
 .team-head {
@@ -467,6 +472,10 @@
 }
 
 @media (max-width: 1080px) {
+  .team-page.drawer-open .team-inner {
+    margin-left: 0;
+  }
+
   .team-page {
     padding: 18px;
   }

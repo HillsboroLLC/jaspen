@@ -15,6 +15,42 @@
   font-weight: 600;
 }
 
+/* Jaspen AI drawer shifts the main content when open */
+.account-page.drawer-open .account-main-content {
+  margin-left: 320px;
+}
+
+@media (max-width: 1080px) {
+  .account-page.drawer-open .account-main-content {
+    margin-left: 0;
+  }
+
+  .billing-tab {
+    top: auto !important;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 160px);
+    writing-mode: horizontal-tb;
+    border-left: 1px solid #161f3b;
+    border-radius: 999px;
+    padding: 8px 12px;
+  }
+
+  body.jaspen-sidebar-open .billing-tab {
+    left: 0;
+  }
+
+  .account-page.billing-drawer-open {
+    padding-left: var(--int-page-pad, 28px);
+  }
+
+  .account-drawer {
+    width: min(90vw, 300px);
+  }
+
+  body.jaspen-sidebar-open .account-drawer.is-open {
+    transform: translateX(0);
+  }
+}
+
 .account-header-row {
   display: flex;
   align-items: flex-start;
@@ -93,53 +129,79 @@
   font-size: 0.87rem;
 }
 
-.account-content-layout {
-  margin-top: 0;
-  display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
-  gap: 0;
-  align-items: stretch;
-  min-height: calc(100vh - 72px);
+/* ── BILLING fixed vertical tab ───────────────────────────── */
+.billing-tab {
+  appearance: none;
+  -webkit-appearance: none;
+  position: fixed;
+  left: 0;
+  top: 328px;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  background: #161f3b;
+  border: 1px solid #161f3b;
+  border-left: none;
+  padding: 14px 8px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #ffffff;
+  cursor: pointer;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 0 4px 4px 0;
+  transition: background 0.2s ease, transform 0.2s ease;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
-.account-content-layout.is-sidebar-collapsed {
-  grid-template-columns: 72px minmax(0, 1fr);
+.billing-tab:hover {
+  background: #0f1629;
+  transform: translateX(1px);
 }
 
-.account-main-content {
-  min-width: 0;
-  display: grid;
-  align-content: start;
-  gap: 12px;
-  padding: 18px 26px 28px;
+body.jaspen-sidebar-open .billing-tab {
+  left: 320px;
 }
 
-.account-sidebar {
-  position: sticky;
+/* ── BILLING drawer ───────────────────────────────────────── */
+.account-drawer {
+  position: fixed;
   top: 0;
-  width: 320px;
-  height: calc(100vh - 72px);
-  border-right: 1px solid #e1e6ef;
-  border-top: 0;
-  border-left: 0;
-  border-bottom: 0;
-  border-radius: 0;
+  left: 0;
+  width: 300px;
+  height: 100vh;
   background: #f7f9fb;
-  padding: 12px 12px 10px;
+  border-right: 1px solid #e1e6ef;
+  z-index: 150;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  overflow: hidden;
+  transform: translateX(-100%);
+  transition: transform 0.28s ease;
+  box-shadow: 4px 0 12px rgba(22, 31, 59, 0.08);
+  box-sizing: border-box;
 }
 
-.account-sidebar-head {
+.account-drawer.is-open {
+  transform: translateX(0);
+}
+
+body.jaspen-sidebar-open .account-drawer.is-open {
+  transform: translateX(320px);
+}
+
+.account-drawer-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
+  padding: 16px 14px 12px;
+  border-bottom: 1px solid #e1e6ef;
+  flex-shrink: 0;
 }
 
-.account-sidebar-title {
+.account-drawer-title {
   margin: 0;
   font-size: 0.68rem;
   text-transform: uppercase;
@@ -148,73 +210,76 @@
   font-weight: 700;
 }
 
-.account-sidebar-toggle {
+.account-drawer-close {
   border: 0;
   background: transparent;
-  color: rgba(22, 31, 59, 0.65);
-  width: 22px;
-  height: 22px;
-  border-radius: 0;
+  color: rgba(22, 31, 59, 0.55);
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  font-size: 1rem;
+  line-height: 1;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0;
+  border-radius: 4px;
 }
 
-.account-sidebar-toggle:hover {
-  color: var(--account-ink);
+.account-drawer-close:hover {
+  color: #161f3b;
+  background: rgba(22, 31, 59, 0.06);
 }
 
-.account-sidebar-nav {
-  display: grid;
-  gap: 3px;
-  align-content: start;
-  grid-auto-rows: min-content;
+.account-drawer-nav {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding-right: 2px;
+  padding: 10px 10px;
+  display: grid;
+  gap: 2px;
+  align-content: start;
 }
 
 .account-sidebar-item {
   border: 0;
   background: transparent;
-  color: rgba(22, 31, 59, 0.9);
+  color: rgba(22, 31, 59, 0.85);
   border-left: 2px solid transparent;
-  border-radius: 0;
-  padding: 9px 8px 9px 10px;
+  border-radius: 0 4px 4px 0;
+  padding: 9px 10px;
   text-align: left;
   display: flex;
   align-items: center;
   gap: 10px;
   cursor: pointer;
   width: 100%;
-  transition: background 0.14s ease, color 0.14s ease;
+  font-family: inherit;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 
 .account-sidebar-item:hover {
-  background: transparent;
-  color: var(--account-ink);
+  background: rgba(22, 31, 59, 0.05);
+  color: #161f3b;
 }
 
 .account-sidebar-item.is-active {
-  background: transparent;
-  box-shadow: none;
-  border-left-color: var(--int-text);
-  color: var(--int-text);
+  border-left-color: #161f3b;
+  background: rgba(22, 31, 59, 0.07);
+  color: #161f3b;
 }
 
 .account-sidebar-icon {
   width: 14px;
-  color: rgba(22, 31, 59, 0.82);
+  color: rgba(22, 31, 59, 0.65);
   display: inline-flex;
   justify-content: center;
   font-size: 0.78rem;
+  flex-shrink: 0;
 }
 
 .account-sidebar-item.is-active .account-sidebar-icon {
-  color: var(--int-text);
+  color: #161f3b;
 }
 
 .account-sidebar-label {
@@ -222,36 +287,22 @@
   font-weight: 500;
 }
 
-.account-sidebar.is-collapsed {
-  width: 72px;
-  padding: 10px 8px;
-}
-
-.account-sidebar.is-collapsed .account-sidebar-head {
-  justify-content: center;
-}
-
-.account-sidebar.is-collapsed .account-sidebar-item {
-  justify-content: center;
-  padding: 9px 6px;
-  border-left-color: transparent;
-}
-
-.account-sidebar-footer {
+.account-drawer-footer {
   border-top: 1px solid #e3e8f1;
-  padding-top: 10px;
+  padding: 12px 14px;
   display: grid;
-  gap: 12px;
+  gap: 10px;
+  flex-shrink: 0;
 }
 
 .account-sidebar-footer-group {
   display: grid;
-  gap: 6px;
+  gap: 4px;
 }
 
 .account-sidebar-footer-label {
   margin: 0;
-  font-size: 0.66rem;
+  font-size: 0.64rem;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -263,6 +314,27 @@
   color: rgba(22, 31, 59, 0.72);
   font-size: 0.79rem;
   line-height: 1.4;
+}
+
+/* ── Page padding when Billing drawer is open ─────────────── */
+.account-page.billing-drawer-open {
+  padding-left: calc(300px + var(--int-page-pad, 28px));
+  transition: padding-left 0.28s ease;
+}
+
+body.jaspen-sidebar-open .account-page.billing-drawer-open {
+  padding-left: calc(300px + 320px + var(--int-page-pad, 28px));
+}
+
+/* ── Main content area ────────────────────────────────────── */
+.account-main-content {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 18px 26px 28px;
+  max-width: var(--int-max-w-md, 1320px);
+  margin: 0 auto;
 }
 
 .account-section {
@@ -1266,38 +1338,15 @@
 }
 
 @media (max-width: 860px) {
-  .account-content-layout {
-    grid-template-columns: 1fr;
-    min-height: 0;
-  }
-
-  .account-sidebar {
-    position: static;
-    width: 100%;
-    height: auto;
-    border-right: 0;
-    border-bottom: 1px solid #e2e6ef;
-    background: var(--int-bg);
-    padding: 8px;
-  }
-
-  .account-sidebar.is-collapsed {
-    width: 100%;
-  }
-
   .account-main-content {
     padding: 14px 14px 22px;
   }
 
-  .account-sidebar-footer {
-    display: none;
+  .account-drawer {
+    width: min(90vw, 300px);
   }
 
-  .account-sidebar-head {
-    justify-content: space-between;
-  }
-
-  .account-sidebar.is-collapsed .account-sidebar-item {
+  .account-sidebar-item {
     justify-content: flex-start;
     padding: 8px 10px;
   }

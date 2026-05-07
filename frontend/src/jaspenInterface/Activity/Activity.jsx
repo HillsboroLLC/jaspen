@@ -9,6 +9,7 @@ import SkeletonBlock from '../../shared/components/SkeletonLoader';
 import EmptyState from '../../homeSections/homeUi/EmptyState';
 import './Activity.css';
 import AppMenu from '../shared/AppMenu';
+import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
 
 const TYPE_OPTIONS = [
   { value: '', label: 'All activity' },
@@ -82,6 +83,14 @@ export default function Activity() {
   const [toDate, setToDate] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [jaspenOpen, setJaspenOpen] = useState(false);
+  const [assistantInput, setAssistantInput] = useState('');
+  const [assistantMessages, setAssistantMessages] = useState([
+    {
+      role: 'assistant',
+      text: 'I can summarize this activity feed and highlight where execution is drifting.',
+    },
+  ]);
 
   const loadActivity = useCallback(async () => {
     setLoading(true);
@@ -136,6 +145,35 @@ export default function Activity() {
     []
   );
 
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      if (document.body.classList.contains('jaspen-sidebar-open')) {
+        setJaspenOpen(false);
+      }
+    });
+    observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+
+  const openJaspen = useCallback(() => {
+    document.body.classList.remove('jaspen-sidebar-open');
+    setJaspenOpen(true);
+  }, []);
+
+  const sendAssistant = useCallback(() => {
+    const text = String(assistantInput || '').trim();
+    if (!text) return;
+    setAssistantMessages((prev) => [
+      ...prev,
+      { role: 'user', text },
+      {
+        role: 'assistant',
+        text: 'I can group events by risk level and tell you which threads need intervention first.',
+      },
+    ]);
+    setAssistantInput('');
+  }, [assistantInput]);
+
   function goToPage(rawValue) {
     if (totalPages <= 0) return;
     const parsed = Number.parseInt(String(rawValue || '').trim(), 10);
@@ -146,7 +184,7 @@ export default function Activity() {
   }
 
   return (
-    <div className="activity-page int-page">
+    <div className={`activity-page int-page${jaspenOpen ? ' drawer-open' : ''}`}>
       <AppMenu />
       <div className="activity-inner int-page-inner">
       <header className="activity-header int-page-head">
@@ -300,6 +338,21 @@ export default function Activity() {
         </footer>
       )}
       </div>
+      <JaspenAiDrawer
+        isOpen={jaspenOpen}
+        onOpen={openJaspen}
+        onClose={() => setJaspenOpen(false)}
+        messages={assistantMessages}
+        input={assistantInput}
+        onInputChange={setAssistantInput}
+        onSend={sendAssistant}
+        busy={false}
+        starterPrompts={[
+          'Where is execution getting blocked?',
+          'Which thread needs attention first?',
+        ]}
+        placeholder="Ask Jaspen about activity..."
+      />
     </div>
   );
 }

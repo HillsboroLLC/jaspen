@@ -8,6 +8,15 @@
 .activity-inner {
   max-width: 1220px;
   margin: 0 auto;
+  transition: margin-left 0.28s ease;
+}
+
+.activity-page.drawer-open .activity-inner {
+  margin-left: 320px;
+}
+
+body.jaspen-sidebar-open .activity-page.drawer-open .activity-inner {
+  margin-left: 320px;
 }
 
 .activity-header h1 {
@@ -224,6 +233,11 @@
 }
 
 @media (max-width: 900px) {
+  .activity-page.drawer-open .activity-inner,
+  body.jaspen-sidebar-open .activity-page.drawer-open .activity-inner {
+    margin-left: 0;
+  }
+
   .activity-page {
     width: 100%;
     padding: 18px 14px 24px;

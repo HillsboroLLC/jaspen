@@ -29,6 +29,7 @@ import { API_BASE } from '../../config/apiBase';
 import { buildAuthHeaders } from '../../shared/auth/http';
 import './Insights.css';
 import AppMenu from '../shared/AppMenu';
+import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
 
 ChartJS.register(
   CategoryScale,
@@ -116,6 +117,14 @@ export default function Insights() {
   const [queryBusy, setQueryBusy] = useState(false);
   const [queryError, setQueryError] = useState('');
   const [queryResult, setQueryResult] = useState(null);
+  const [jaspenOpen, setJaspenOpen] = useState(false);
+  const [assistantInput, setAssistantInput] = useState('');
+  const [assistantMessages, setAssistantMessages] = useState([
+    {
+      role: 'assistant',
+      text: 'I can interpret these insights and suggest what to score next.',
+    },
+  ]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -423,9 +432,39 @@ export default function Insights() {
     }
   }, [queryConnectorId, queryLimit, queryTable]);
 
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      if (document.body.classList.contains('jaspen-sidebar-open')) {
+        setJaspenOpen(false);
+      }
+    });
+    observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+
+  const openJaspen = useCallback(() => {
+    document.body.classList.remove('jaspen-sidebar-open');
+    setJaspenOpen(true);
+  }, []);
+
+  const sendAssistant = useCallback(() => {
+    const text = String(assistantInput || '').trim();
+    if (!text) return;
+    setAssistantMessages((prev) => [
+      ...prev,
+      { role: 'user', text },
+      {
+        role: 'assistant',
+        text: 'Use "Score this opportunity" when you are ready. I can help frame the strongest scoring prompt first.',
+      },
+    ]);
+    setAssistantInput('');
+  }, [assistantInput]);
+
   return (
-    <div className="insights-page int-page">
+    <div className={`insights-page int-page${jaspenOpen ? ' drawer-open' : ''}`}>
       <AppMenu />
+      <div className="insights-inner int-page-inner">
       <header className="insights-header int-page-head">
         <div>
           <p className="int-eyebrow">Insights</p>
@@ -839,11 +878,15 @@ export default function Insights() {
                       <div key={`chart_${idx}_${themeVersion}`} className="insights-chart-card">
                         <h4>{chart?.title || `Chart ${idx + 1}`}</h4>
                         {!canRender && <div className="insights-chart-empty">No chart data available.</div>}
-                        {canRender && chartType === 'bar' && <Bar data={data} options={chartOptions} />}
-                        {canRender && chartType === 'line' && <Line data={data} options={chartOptions} />}
-                        {canRender && chartType === 'pie' && <Pie data={data} options={chartOptions} />}
-                        {canRender && !['bar', 'line', 'pie'].includes(chartType) && (
-                          <div className="insights-chart-empty">Unsupported chart type: {chartType || 'unknown'}.</div>
+                        {canRender && (
+                          <div className="insights-chart-frame">
+                            {chartType === 'bar' && <Bar data={data} options={chartOptions} />}
+                            {chartType === 'line' && <Line data={data} options={chartOptions} />}
+                            {chartType === 'pie' && <Pie data={data} options={chartOptions} />}
+                            {!['bar', 'line', 'pie'].includes(chartType) && (
+                              <div className="insights-chart-empty">Unsupported chart type: {chartType || 'unknown'}.</div>
+                            )}
+                          </div>
                         )}
                       </div>
                     );
@@ -900,6 +943,22 @@ export default function Insights() {
         pending={Boolean(deletingDatasetId)}
         onCancel={() => setConfirmDialog(null)}
         onConfirm={() => confirmDialog?.onConfirm?.()}
+      />
+      </div>
+      <JaspenAiDrawer
+        isOpen={jaspenOpen}
+        onOpen={openJaspen}
+        onClose={() => setJaspenOpen(false)}
+        messages={assistantMessages}
+        input={assistantInput}
+        onInputChange={setAssistantInput}
+        onSend={sendAssistant}
+        busy={false}
+        starterPrompts={[
+          'What are the top risks in this dataset?',
+          'What opportunity should I score next?',
+        ]}
+        placeholder="Ask Jaspen about insights..."
       />
     </div>
   );

@@ -8,6 +8,7 @@ import SkeletonBlock from '../../shared/components/SkeletonLoader';
 import EmptyState from '../../homeSections/homeUi/EmptyState';
 import './Reports.css';
 import AppMenu from '../shared/AppMenu';
+import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
 
 const REPORT_TYPES = [
   { value: 'executive_summary', label: 'Executive Summary' },
@@ -44,6 +45,14 @@ export default function Reports() {
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [confirmDialog, setConfirmDialog] = useState(null);
+  const [jaspenOpen, setJaspenOpen] = useState(false);
+  const [assistantInput, setAssistantInput] = useState('');
+  const [assistantMessages, setAssistantMessages] = useState([
+    {
+      role: 'assistant',
+      text: 'I can help choose the right report format based on your audience.',
+    },
+  ]);
 
   const loadThreads = useCallback(async () => {
     const res = await authFetch(`${API_BASE}/api/v1/ai-agent/threads`, {
@@ -104,6 +113,35 @@ export default function Reports() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      if (document.body.classList.contains('jaspen-sidebar-open')) {
+        setJaspenOpen(false);
+      }
+    });
+    observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+
+  const openJaspen = useCallback(() => {
+    document.body.classList.remove('jaspen-sidebar-open');
+    setJaspenOpen(true);
+  }, []);
+
+  const sendAssistant = useCallback(() => {
+    const text = String(assistantInput || '').trim();
+    if (!text) return;
+    setAssistantMessages((prev) => [
+      ...prev,
+      { role: 'user', text },
+      {
+        role: 'assistant',
+        text: 'Use Executive Summary for leadership and Detailed Analysis for operator reviews.',
+      },
+    ]);
+    setAssistantInput('');
+  }, [assistantInput]);
 
   const selectedThread = useMemo(
     () => threads.find((item) => item.threadId === selectedThreadId) || null,
@@ -168,7 +206,7 @@ export default function Reports() {
   }
 
   return (
-    <div className="reports-page int-page">
+    <div className={`reports-page int-page${jaspenOpen ? ' drawer-open' : ''}`}>
       <AppMenu />
       <div className="reports-inner int-page-inner">
       <header className="reports-header int-page-head">
@@ -308,6 +346,21 @@ export default function Reports() {
         pending={busy}
         onCancel={() => setConfirmDialog(null)}
         onConfirm={() => confirmDialog?.onConfirm?.()}
+      />
+      <JaspenAiDrawer
+        isOpen={jaspenOpen}
+        onOpen={openJaspen}
+        onClose={() => setJaspenOpen(false)}
+        messages={assistantMessages}
+        input={assistantInput}
+        onInputChange={setAssistantInput}
+        onSend={sendAssistant}
+        busy={false}
+        starterPrompts={[
+          'Which report format should I use for leadership?',
+          'What should I include in the narrative summary?',
+        ]}
+        placeholder="Ask Jaspen about reports..."
       />
     </div>
   );
