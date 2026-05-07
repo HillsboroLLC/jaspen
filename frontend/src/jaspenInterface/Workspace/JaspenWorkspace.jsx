@@ -10074,7 +10074,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
   if (hasHistory && !sidebarState.history) intakeTabs.push('history');
   if (intakeHasReadinessTab) intakeTabs.push('readiness');
   const intakeSideTabBase = 128;
-  const intakeSideTabGap = 136;
+  const intakeSideTabGap = 100;
   const intakeTabTop = (key) => {
     const idx = intakeTabs.indexOf(key);
     return `${intakeSideTabBase + idx * intakeSideTabGap}px`;
