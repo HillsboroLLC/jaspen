@@ -19,7 +19,7 @@ CONNECTOR_REGISTRY = {
         "group": "execution",
         "description": "Sync epics, stories, assignees, and sprint status with Jaspen WBS plans.",
         "supports_pm_sync": True,
-        "required_min_tier": "team",
+        "required_min_tier": "free",
         "implementation_status": "implemented",
     },
     "smartsheet_sync": {
@@ -28,7 +28,7 @@ CONNECTOR_REGISTRY = {
         "group": "execution",
         "description": "Sync task rows, dates, and delivery statuses with Jaspen execution plans.",
         "supports_pm_sync": True,
-        "required_min_tier": "team",
+        "required_min_tier": "free",
         "implementation_status": "implemented",
     },
     "salesforce_insights": {
@@ -37,7 +37,7 @@ CONNECTOR_REGISTRY = {
         "group": "data",
         "description": "Analyze customer and pipeline patterns for delivery and prioritization insights.",
         "supports_pm_sync": False,
-        "required_min_tier": "essential",
+        "required_min_tier": "free",
         "implementation_status": "implemented",
     },
     "snowflake_insights": {
@@ -46,7 +46,7 @@ CONNECTOR_REGISTRY = {
         "group": "data",
         "description": "Read governed KPI and financial trend tables to enrich Jaspen recommendations.",
         "supports_pm_sync": False,
-        "required_min_tier": "essential",
+        "required_min_tier": "free",
         "implementation_status": "implemented",
     },
     "oracle_fusion_insights": {
@@ -55,7 +55,7 @@ CONNECTOR_REGISTRY = {
         "group": "data",
         "description": "Coming soon: Oracle Fusion ERP operational and finance insights.",
         "supports_pm_sync": False,
-        "required_min_tier": "enterprise",
+        "required_min_tier": "free",
         "implementation_status": "coming_soon",
     },
     "servicenow_insights": {
@@ -64,7 +64,7 @@ CONNECTOR_REGISTRY = {
         "group": "data",
         "description": "Coming soon: ServiceNow service and change metrics for execution risk insights.",
         "supports_pm_sync": False,
-        "required_min_tier": "enterprise",
+        "required_min_tier": "free",
         "implementation_status": "coming_soon",
     },
     "netsuite_insights": {
@@ -73,7 +73,7 @@ CONNECTOR_REGISTRY = {
         "group": "data",
         "description": "Coming soon: NetSuite operating and finance trend insights.",
         "supports_pm_sync": False,
-        "required_min_tier": "enterprise",
+        "required_min_tier": "free",
         "implementation_status": "coming_soon",
     },
 }

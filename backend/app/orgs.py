@@ -37,7 +37,7 @@ DEFAULT_SEAT_POLICIES = {
     },
     "enterprise": {
         ORG_ROLE_OWNER: 1,
-        ORG_ROLE_ADMIN: 10,
+        ORG_ROLE_ADMIN: 5,
         ORG_ROLE_CREATOR: None,
         ORG_ROLE_COLLABORATOR: None,
         ORG_ROLE_VIEWER: None,

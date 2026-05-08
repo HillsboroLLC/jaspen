@@ -17,7 +17,6 @@ import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import ConfirmDialog from '../../shared/components/ConfirmDialog';
 import FieldError from '../../shared/components/FieldError';
 import SkeletonBlock from '../../shared/components/SkeletonLoader';
-import { getPlanConnectors } from '../../shared/billing/planConnectors';
 import { PLAN_ORDER, PLAN_RANK } from '../../shared/constants/appConstants';
 import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
 import './ConnectorsManage.css';
@@ -34,9 +33,9 @@ const CONNECTOR_ORDER = [
 ];
 
 const PLAN_CONNECTOR_IDS = {
-  free: [],
-  essential: ['salesforce_insights', 'snowflake_insights'],
-  team: ['salesforce_insights', 'snowflake_insights', 'jira_sync', 'smartsheet_sync'],
+  free: CONNECTOR_ORDER,
+  essential: CONNECTOR_ORDER,
+  team: CONNECTOR_ORDER,
   enterprise: CONNECTOR_ORDER,
 };
 const EXECUTION_SYNC_CONNECTOR_IDS = ['jira_sync', 'smartsheet_sync'];
@@ -416,8 +415,6 @@ export default function ConnectorsManage() {
     PLAN_CONNECTOR_IDS[effectivePlanKey] || []
   ), [effectivePlanKey]);
 
-  const planConnectorNames = useMemo(() => getPlanConnectors(effectivePlanKey), [effectivePlanKey]);
-  const isFreePlan = effectivePlanKey === 'free';
 
   const loadConnectors = useCallback(async () => {
     const res = await authFetch(`${API_BASE}/api/v1/connectors/status`, {
@@ -513,16 +510,6 @@ export default function ConnectorsManage() {
   }, []);
 
   const refresh = useCallback(async () => {
-    if (isFreePlan) {
-      setConnectors([]);
-      setDrafts({});
-      setAuditRows([]);
-      setThreads([]);
-      setSelectedConnectorId('');
-      setLoading(false);
-      setError('');
-      return;
-    }
     setLoading(true);
     setError('');
     try {
@@ -532,7 +519,7 @@ export default function ConnectorsManage() {
     } finally {
       setLoading(false);
     }
-  }, [isFreePlan, loadConnectors, loadThreads]);
+  }, [loadConnectors, loadThreads]);
 
   useEffect(() => {
     refresh();
@@ -599,23 +586,6 @@ export default function ConnectorsManage() {
     document.body.classList.remove('jaspen-sidebar-open');
     setJaspenOpen(true);
   }, []);
-
-  const guardUnsavedChanges = useCallback((onProceed, prompt = 'You have unsaved changes. Leave this page and discard them?') => {
-    if (!hasUnsavedChanges) {
-      onProceed?.();
-      return;
-    }
-    setDiscardDialog({
-      title: 'Discard unsaved changes?',
-      message: prompt,
-      confirmLabel: 'Discard changes',
-      confirmVariant: 'danger',
-      onConfirm: () => {
-        setDiscardDialog(null);
-        onProceed?.();
-      },
-    });
-  }, [hasUnsavedChanges]);
 
   useEffect(() => {
     if (!visibleConnectors.length) {
@@ -1313,75 +1283,40 @@ export default function ConnectorsManage() {
 
       {!loading && !error && (
         <>
-          {isFreePlan ? (
-            <section className="connectors-plan-gate">
-              <p className="connectors-plan-gate-kicker">Free plan</p>
-              <h2>Upgrade to Essential to unlock data sources</h2>
-              <p>
-                Free accounts can preview the category, but setup, monitoring, and sync controls start on paid plans.
-                Essential unlocks starter integrations, Team expands execution sync, and Enterprise unlocks business-system sources.
-              </p>
-              <div className="connectors-plan-gate-grid">
-                <article>
-                  <strong>Essential</strong>
-                  <span>{getPlanConnectors('essential').join(', ') || 'Starter connectors'}</span>
-                </article>
-                <article>
-                  <strong>Team</strong>
-                  <span>{getPlanConnectors('team').join(', ')}</span>
-                </article>
-                <article>
-                  <strong>Enterprise</strong>
-                  <span>{getPlanConnectors('enterprise').join(', ')}</span>
-                </article>
-              </div>
-              <button
-                type="button"
-                className="connectors-plan-gate-btn"
-                onClick={() => guardUnsavedChanges(() => navigate('/account'))}
-              >
-                Upgrade in Account
-              </button>
-            </section>
-          ) : (
-            <>
-              {/* Slim health + plan bar */}
-              <div className="connectors-health-bar">
-                <div className="connectors-health-bar-stats">
-                  <span className="connectors-health-stat is-connected">
-                    <span className="connectors-health-dot" />
-                    {healthSummary.connected} connected
-                  </span>
-                  {healthSummary.degraded > 0 && (
-                    <span className="connectors-health-stat is-degraded">
-                      <span className="connectors-health-dot" />
-                      {healthSummary.degraded} issue{healthSummary.degraded !== 1 ? 's' : ''}
-                    </span>
-                  )}
-                  {healthSummary.staleNames.length > 0 && (
-                    <span className="connectors-health-stat is-stale" title="Last sync was more than 24 hours ago — consider resyncing">
-                      <span className="connectors-health-dot" />
-                      {healthSummary.staleNames.join(', ')} may be outdated
-                    </span>
-                  )}
-                  <span className="connectors-health-stat is-muted">
-                    {healthSummary.total} available on your {effectivePlanKey} plan
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  className="int-btn int-btn-ghost connectors-health-refresh"
-                  onClick={refresh}
-                  disabled={loading || busy}
-                  aria-label="Refresh connector status"
-                >
-                  <FontAwesomeIcon icon={faRotate} />
-                  Refresh
-                </button>
-              </div>
-            </>
-          )}
-          {!isFreePlan && (
+          {/* Slim health + plan bar */}
+          <div className="connectors-health-bar">
+            <div className="connectors-health-bar-stats">
+              <span className="connectors-health-stat is-connected">
+                <span className="connectors-health-dot" />
+                {healthSummary.connected} connected
+              </span>
+              {healthSummary.degraded > 0 && (
+                <span className="connectors-health-stat is-degraded">
+                  <span className="connectors-health-dot" />
+                  {healthSummary.degraded} issue{healthSummary.degraded !== 1 ? 's' : ''}
+                </span>
+              )}
+              {healthSummary.staleNames.length > 0 && (
+                <span className="connectors-health-stat is-stale" title="Last sync was more than 24 hours ago — consider resyncing">
+                  <span className="connectors-health-dot" />
+                  {healthSummary.staleNames.join(', ')} may be outdated
+                </span>
+              )}
+              <span className="connectors-health-stat is-muted">
+                {healthSummary.total} available on your {effectivePlanKey} plan
+              </span>
+            </div>
+            <button
+              type="button"
+              className="int-btn int-btn-ghost connectors-health-refresh"
+              onClick={refresh}
+              disabled={loading || busy}
+              aria-label="Refresh connector status"
+            >
+              <FontAwesomeIcon icon={faRotate} />
+              Refresh
+            </button>
+          </div>
           <div className="connectors-manage-layout">
             {/* ── Left sidebar: categorized connector list ── */}
             <nav className="connectors-sidebar" aria-label="Connector list">
@@ -1656,7 +1591,6 @@ export default function ConnectorsManage() {
               )}
             </section>
           </div>
-          )}
         </>
       )}
       <ConfirmDialog

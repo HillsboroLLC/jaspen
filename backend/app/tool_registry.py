@@ -129,7 +129,7 @@ TOOL_REGISTRY = [
         "type": "connector",
         "access": "read_write",
         "purpose": "Sync epics/stories/status/owners/sprints with Jira.",
-        "tiers": ["team", "enterprise"],
+        "tiers": ["free", "essential", "team", "enterprise"],
         "preconditions": ["connector_configured", "workspace_mapping_configured"],
     },
     {
@@ -137,7 +137,7 @@ TOOL_REGISTRY = [
         "type": "connector",
         "access": "read_write",
         "purpose": "Sync sheet rows, task statuses, and timeline updates with Smartsheet.",
-        "tiers": ["team", "enterprise"],
+        "tiers": ["free", "essential", "team", "enterprise"],
         "preconditions": ["connector_configured", "sheet_mapping_configured"],
     },
     {
@@ -145,7 +145,7 @@ TOOL_REGISTRY = [
         "type": "connector",
         "access": "read_write",
         "purpose": "Analyze customer and pipeline trends from Salesforce for strategic insights.",
-        "tiers": ["essential", "team", "enterprise"],
+        "tiers": ["free", "essential", "team", "enterprise"],
         "preconditions": ["connector_configured", "object_mapping_configured"],
     },
     {
@@ -153,7 +153,7 @@ TOOL_REGISTRY = [
         "type": "connector",
         "access": "read",
         "purpose": "Query governed KPI and financial trend views from Snowflake.",
-        "tiers": ["essential", "team", "enterprise"],
+        "tiers": ["free", "essential", "team", "enterprise"],
         "preconditions": ["connector_configured", "query_allowlist_configured"],
     },
     {
@@ -161,7 +161,7 @@ TOOL_REGISTRY = [
         "type": "connector",
         "access": "read_write",
         "purpose": "Use Oracle Fusion operational and financial signals for execution insights.",
-        "tiers": ["enterprise"],
+        "tiers": ["free", "essential", "team", "enterprise"],
         "preconditions": ["connector_configured"],
     },
     {
@@ -169,7 +169,7 @@ TOOL_REGISTRY = [
         "type": "connector",
         "access": "read_write",
         "purpose": "Track service and change trends impacting delivery confidence.",
-        "tiers": ["enterprise"],
+        "tiers": ["free", "essential", "team", "enterprise"],
         "preconditions": ["connector_configured"],
     },
     {
@@ -177,7 +177,7 @@ TOOL_REGISTRY = [
         "type": "connector",
         "access": "read_write",
         "purpose": "Monitor NetSuite finance and operations trends for decision support.",
-        "tiers": ["enterprise"],
+        "tiers": ["free", "essential", "team", "enterprise"],
         "preconditions": ["connector_configured"],
     },
 ]
