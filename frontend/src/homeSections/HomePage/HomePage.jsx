@@ -575,9 +575,11 @@ export default function HomePage() {
                 },
               ].map((plan, idx) => (
                 <article key={plan.name} className={`home-plan-card scroll-reveal ${idx === 1 ? 'is-emphasized' : ''}`}>
-                  <p className="home-plan-name">{plan.name}</p>
-                  <h3>{plan.headline}</h3>
-                  <p className="home-plan-microcopy">{plan.microcopy}</p>
+                  <div className="home-plan-intro">
+                    <p className="home-plan-name">{plan.name}</p>
+                    <h3>{plan.headline}</h3>
+                    <p className="home-plan-microcopy">{plan.microcopy}</p>
+                  </div>
                   <p className="home-plan-price">{plan.price}</p>
                   <div className="home-plan-usage-row">
                     <span className="home-thinking-power">
@@ -593,7 +595,9 @@ export default function HomePage() {
                     </span>
                     <span className="home-plan-usage">{plan.usage}</span>
                   </div>
-                  <p className="home-plan-description">{plan.description}</p>
+                  <div className="home-plan-description-wrap">
+                    <p className="home-plan-description">{plan.description}</p>
+                  </div>
                   <div className="home-plan-cta-wrap">
                     {plan.subCta ? <p className="home-plan-subcta">{plan.subCta}</p> : <p className="home-plan-subcta home-plan-subcta-empty" aria-hidden="true">&nbsp;</p>}
                     <a href={plan.ctaHref} className="home-plan-link">{plan.ctaLabel}</a>

@@ -1448,6 +1448,12 @@
   height: 100%;
 }
 
+.home-plan-intro {
+  min-height: 166px;
+  display: flex;
+  flex-direction: column;
+}
+
 .home-plan-card::before {
   content: '';
   position: absolute;
@@ -1498,6 +1504,9 @@
   line-height: 1.2;
   font-weight: 800 !important;
   color: var(--navy-deep) !important;
+  min-height: 74px;
+  display: flex;
+  align-items: flex-end;
 }
 
 .home-plan-card p {
@@ -1514,6 +1523,8 @@
   display: grid;
   gap: 4px;
   margin-bottom: 12px;
+  min-height: 106px;
+  align-content: center;
 }
 
 .home-thinking-power {
@@ -1548,9 +1559,12 @@
   font-weight: 700;
 }
 
+.home-plan-description-wrap {
+  min-height: 152px;
+}
+
 .home-plan-description {
-  margin-bottom: 14px !important;
-  min-height: 68px;
+  margin-bottom: 0 !important;
 }
 
 .home-plan-cta-wrap {
@@ -1764,6 +1778,13 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .home-plan-intro,
+  .home-plan-price,
+  .home-plan-usage-row,
+  .home-plan-description-wrap {
+    min-height: unset;
+  }
+
   .jaspen-header-actions {
     display: none;
   }
@@ -1921,3 +1942,6 @@
     align-items: stretch;
   }
 }
+  .home-plan-grid {
+    grid-template-columns: 1fr;
+  }
