@@ -11,6 +11,8 @@ import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
 
 
 const PLAN_OPTIONS = ['free', 'essential', 'team', 'enterprise'];
+const PLAN_ACCESS_ORDER = ['free', 'essential', 'team', 'enterprise'];
+const MODEL_DISPLAY_ORDER = ['pluto', 'orbit', 'titan'];
 const CREDIT_MODE_OPTIONS = [
   { value: 'adjust', label: 'Adjust (+/-)' },
   { value: 'set', label: 'Set exact value' },
@@ -171,6 +173,8 @@ export default function JaspenAdmin() {
   const [accessReview, setAccessReview] = useState(null);
   const [accessLoading, setAccessLoading] = useState(false);
   const [accessPending, setAccessPending] = useState(false);
+  const [modelAccess, setModelAccess] = useState({ plans: [], model_types: {}, plan_order: PLAN_ACCESS_ORDER });
+  const [modelAccessLoading, setModelAccessLoading] = useState(false);
   const [jaspenOpen, setJaspenOpen] = useState(false);
   const [assistantInput, setAssistantInput] = useState('');
   const [assistantMessages, setAssistantMessages] = useState([
@@ -323,6 +327,27 @@ export default function JaspenAdmin() {
     }
   };
 
+  const loadModelAccess = async () => {
+    setModelAccessLoading(true);
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/admin/model-access`, {
+        headers: authHeaders(),
+        credentials: 'include',
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || 'Unable to load model access.');
+      setModelAccess({
+        plans: Array.isArray(data?.plans) ? data.plans : [],
+        model_types: data?.model_types && typeof data.model_types === 'object' ? data.model_types : {},
+        plan_order: Array.isArray(data?.plan_order) ? data.plan_order : PLAN_ACCESS_ORDER,
+      });
+    } catch (error) {
+      setMessage(error.message || 'Unable to load model access.');
+    } finally {
+      setModelAccessLoading(false);
+    }
+  };
+
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -347,6 +372,7 @@ export default function JaspenAdmin() {
           await loadUsers('');
           await loadFeedback({ userId: '', q: '', value: '' });
           await loadAccessControls();
+          await loadModelAccess();
         }
       } catch (error) {
         if (mounted) setMessage(error.message || 'Unable to load admin console.');
@@ -927,6 +953,58 @@ export default function JaspenAdmin() {
                 </button>
               </div>
             ))}
+          </div>
+        </section>
+
+        <section className="jas-admin-subsection">
+          <div className="jas-admin-section-head">
+            <div>
+              <h3>Model Access Matrix (Internal)</h3>
+              <p className="jas-admin-empty">
+                Internal-only view for Support/Jaspen Admin: tier gating and live backbone model links.
+              </p>
+            </div>
+            <div className="jas-admin-actions">
+              <button
+                type="button"
+                className="jas-admin-secondary int-btn int-btn-ghost"
+                onClick={loadModelAccess}
+                disabled={modelAccessLoading}
+                aria-disabled={modelAccessLoading}
+              >
+                {modelAccessLoading ? 'Refreshing...' : 'Refresh'}
+              </button>
+            </div>
+          </div>
+          <div className="jas-admin-model-matrix">
+            {(modelAccess?.plan_order || PLAN_ACCESS_ORDER).map((planKey) => {
+              const plan = (modelAccess?.plans || []).find((item) => item?.plan_key === planKey) || null;
+              const allowedSet = new Set(
+                Array.isArray(plan?.allowed_model_types)
+                  ? plan.allowed_model_types.map((item) => String(item || '').toLowerCase())
+                  : [],
+              );
+              return (
+                <div key={planKey} className="jas-admin-model-row">
+                  <div className="jas-admin-model-plan">{String(planKey || '').toUpperCase()}</div>
+                  <div className="jas-admin-model-cells">
+                    {MODEL_DISPLAY_ORDER.map((modelType) => {
+                      const item = modelAccess?.model_types?.[modelType] || {};
+                      const label = item?.label || modelType;
+                      const linked = String(item?.llm_model || '').trim() || 'not configured';
+                      const enabled = allowedSet.has(modelType);
+                      return (
+                        <div key={`${planKey}-${modelType}`} className={`jas-admin-model-cell ${enabled ? 'is-enabled' : 'is-disabled'}`}>
+                          <strong>{label}</strong>
+                          <span>{enabled ? 'Enabled' : 'Locked'}</span>
+                          <code>{linked}</code>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </section>
 

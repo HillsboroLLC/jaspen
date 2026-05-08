@@ -213,6 +213,73 @@
   margin-top: 14px;
 }
 
+.jas-admin-model-matrix {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.jas-admin-model-row {
+  border: 1px solid var(--int-border);
+  border-radius: var(--int-radius-md);
+  background: #fbfcff;
+  padding: 10px;
+}
+
+.jas-admin-model-plan {
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--int-eyebrow);
+  margin-bottom: 8px;
+}
+
+.jas-admin-model-cells {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.jas-admin-model-cell {
+  border: 1px solid var(--int-border);
+  border-radius: var(--int-radius-sm);
+  background: var(--int-surface);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.jas-admin-model-cell strong {
+  color: var(--int-text);
+}
+
+.jas-admin-model-cell span {
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.jas-admin-model-cell code {
+  font-size: 0.72rem;
+  color: #53658f;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.jas-admin-model-cell.is-enabled {
+  border-color: #9ad7b0;
+}
+
+.jas-admin-model-cell.is-enabled span {
+  color: #1d7b42;
+}
+
+.jas-admin-model-cell.is-disabled {
+  opacity: 0.75;
+}
+
 .jas-admin-access-card {
   display: flex;
   align-items: center;

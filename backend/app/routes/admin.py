@@ -20,6 +20,7 @@ from app.admin_policy import is_global_admin
 from app.billing_config import (
     apply_plan_to_user,
     get_allowed_model_types,
+    get_model_catalog,
     get_default_model_type,
     get_monthly_credit_limit,
     get_plan_catalog,
@@ -403,6 +404,31 @@ def capabilities():
         "email": user.email,
         "admin_scope": "global",
         "org_admin_enabled": False,
+    }), 200
+
+
+@admin_bp.route("/model-access", methods=["GET"])
+@jwt_required()
+def get_model_access_matrix():
+    _, err = _require_admin()
+    if err:
+        return err
+
+    plan_order = ["free", "essential", "team", "enterprise"]
+    model_catalog = get_model_catalog(current_app.config, include_backing_ids=True)
+    plans = []
+    for plan_key in plan_order:
+        allowed = get_allowed_model_types(plan_key, current_app.config)
+        plans.append({
+            "plan_key": plan_key,
+            "default_model_type": get_default_model_type(plan_key, current_app.config),
+            "allowed_model_types": allowed,
+        })
+
+    return jsonify({
+        "plan_order": plan_order,
+        "plans": plans,
+        "model_types": model_catalog,
     }), 200
 
 
