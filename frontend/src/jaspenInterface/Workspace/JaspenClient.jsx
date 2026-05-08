@@ -145,13 +145,16 @@ function buildHttpError(status, data) {
   err.data = data;
   if (status === 402) {
     const code = String(data?.code || '').trim().toLowerCase();
-    if ((code === 'credits_exhausted' || code === 'insufficient_credits') && Date.now() - lastCreditsExhaustedNoticeAt > 1500) {
+    if (
+      (code === 'credits_exhausted' || code === 'insufficient_credits' || code === 'thinking_power_exhausted')
+      && Date.now() - lastCreditsExhaustedNoticeAt > 1500
+    ) {
       lastCreditsExhaustedNoticeAt = Date.now();
       window.dispatchEvent(new CustomEvent(AUTH_EVENTS.CREDITS_EXHAUSTED_EVENT, {
         detail: {
           status: 402,
           code,
-          message: data?.error || "You've used all your credits for this month.",
+          message: data?.error || "You've reached your monthly thinking power.",
           upgradeUrl: data?.upgrade_url || '/account?tab=billing',
         },
       }));
@@ -274,7 +277,7 @@ async function parseErrorResponse(resp) {
       err.retryAfterSeconds = retryAfterSeconds;
       err.retryAfterHuman = formatRetryAfter(retryAfterSeconds);
       if (err.retryAfterHuman) {
-        err.message = `You've hit a temporary request limit. Please try again in about ${err.retryAfterHuman}. If you need higher throughput, you can upgrade your plan or add credits from Account.`;
+        err.message = `You've hit a temporary request limit. Please try again in about ${err.retryAfterHuman}. If you need higher throughput, you can upgrade your plan or add tokens from Account.`;
       }
     }
     throw err;

@@ -31,6 +31,7 @@ from app.billing_config import (
     get_default_model_type,
     get_monthly_credit_limit,
     get_model_catalog,
+    get_usage_meter_state,
     normalize_model_type,
     to_public_plan,
 )
@@ -3088,76 +3089,12 @@ def _execute_local_tool(tool_name, tool_input, *, readiness, user, user_id, thre
     ), next_count
 
 
-def _model_credit_multiplier(model_type):
-    model_type = normalize_model_type(model_type)
-    defaults = {"pluto": 1.0, "orbit": 1.5, "titan": 2.25}
-    raw = (
-        current_app.config.get("AI_AGENT_CREDIT_MULTIPLIERS")
-        or os.getenv("AI_AGENT_CREDIT_MULTIPLIERS_JSON")
-        or {}
-    )
-    multipliers = defaults.copy()
-    if isinstance(raw, str) and raw.strip():
-        try:
-            parsed = json.loads(raw)
-            if isinstance(parsed, dict):
-                for k, v in parsed.items():
-                    try:
-                        multipliers[str(k).strip().lower()] = max(0.1, float(v))
-                    except Exception:
-                        continue
-        except Exception:
-            pass
-    elif isinstance(raw, dict):
-        for k, v in raw.items():
-            try:
-                multipliers[str(k).strip().lower()] = max(0.1, float(v))
-            except Exception:
-                continue
-    return float(multipliers.get(model_type, multipliers["pluto"]))
-
-
 def _estimate_usage_credit_charge(total_tokens, model_type, provider=None):
+    """Token-based charge: 1 billed unit = 1 token, regardless of provider/model."""
     total_tokens = int(total_tokens or 0)
     if total_tokens <= 0:
         return 0
-
-    per_1k = float(
-        current_app.config.get("AI_AGENT_CREDITS_PER_1K_TOKENS")
-        or os.getenv("AI_AGENT_CREDITS_PER_1K_TOKENS")
-        or 1.0
-    )
-    min_charge = int(
-        current_app.config.get("AI_AGENT_MIN_CREDIT_CHARGE")
-        or os.getenv("AI_AGENT_MIN_CREDIT_CHARGE")
-        or 1
-    )
-    provider_multipliers = {"anthropic": 1.0, "gemini": 0.6, "heuristic": 1.0, "guardrail": 1.0}
-    raw_provider_multipliers = (
-        current_app.config.get("AI_AGENT_PROVIDER_CREDIT_MULTIPLIERS_JSON")
-        or os.getenv("AI_AGENT_PROVIDER_CREDIT_MULTIPLIERS_JSON")
-        or ""
-    )
-    if raw_provider_multipliers:
-        parsed = raw_provider_multipliers
-        if isinstance(raw_provider_multipliers, str):
-            try:
-                parsed = json.loads(raw_provider_multipliers)
-            except Exception:
-                parsed = {}
-        if isinstance(parsed, dict):
-            for key, value in parsed.items():
-                normalized = str(key or "").strip().lower()
-                if not normalized:
-                    continue
-                try:
-                    provider_multipliers[normalized] = max(0.1, float(value))
-                except Exception:
-                    continue
-    provider = str(provider or "").strip().lower()
-    provider_multiplier = float(provider_multipliers.get(provider or "anthropic", 1.0))
-    raw_credits = (total_tokens / 1000.0) * max(0.01, per_1k) * _model_credit_multiplier(model_type) * provider_multiplier
-    return max(min_charge, int(math.ceil(raw_credits)))
+    return int(total_tokens)
 
 
 def _preflight_credit_estimate(model_type, token_hint=None):
@@ -3329,15 +3266,24 @@ def _max_output_tokens_for_plan(plan_key):
 
 
 def _insufficient_credits_payload(user, required_credits):
+    usage_state = get_usage_meter_state(user, current_app.config)
+    remaining = usage_state.get("remaining")
+    reset_at = usage_state.get("reset_at")
     return {
-        "error": "You've used all your credits for this month.",
-        "code": "credits_exhausted",
+        "error": "You've reached your monthly thinking power. Add tokens, upgrade, or wait for your reset.",
+        "code": "thinking_power_exhausted",
+        "legacy_code": "credits_exhausted",
         "upgrade_url": "/account?tab=billing",
         "required_credits": int(required_credits or 0),
-        "credits_remaining": user.credits_remaining,
+        "required_tokens": int(required_credits or 0),
+        "credits_remaining": remaining,
+        "tokens_remaining_this_month": remaining,
         "plan_key": to_public_plan(user.subscription_plan),
-        "monthly_credit_limit": get_monthly_credit_limit(user.subscription_plan, current_app.config),
-        "suggestion": "Purchase an overage pack or upgrade your plan.",
+        "monthly_credit_limit": usage_state.get("monthly_limit"),
+        "monthly_token_limit": usage_state.get("monthly_limit"),
+        "cycle_token_limit": usage_state.get("cycle_limit"),
+        "cycle_reset_at": reset_at.isoformat() if reset_at else None,
+        "suggestion": "Add tokens, upgrade your plan, or continue after reset.",
     }
 
 
@@ -5801,8 +5747,10 @@ def _public_usage_payload(usage, *, model_type=None, credits_charged=None, credi
     }
     if credits_charged is not None:
         payload["credits_charged"] = int(credits_charged or 0)
+        payload["tokens_charged"] = int(credits_charged or 0)
     if credits_remaining is not None:
         payload["credits_remaining"] = None if credits_remaining is None else int(credits_remaining or 0)
+        payload["tokens_remaining_this_month"] = None if credits_remaining is None else int(credits_remaining or 0)
     failover = usage.get("failover")
     if isinstance(failover, dict):
         attempted = failover.get("attempted_providers")
@@ -5813,13 +5761,15 @@ def _public_usage_payload(usage, *, model_type=None, credits_charged=None, credi
 def _public_usage_summary_payload(summary, *, fallback_model_type=None):
     summary = summary if isinstance(summary, dict) else {}
     model_type = normalize_model_type(summary.get("model_type") or fallback_model_type or "pluto") or "pluto"
+    charged = int(summary.get("credits_charged") or 0)
     return {
         "model_type": model_type,
         "model_label": _model_label_for_type(model_type),
         "input_tokens": int(summary.get("input_tokens") or 0),
         "output_tokens": int(summary.get("output_tokens") or 0),
         "total_tokens": int(summary.get("total_tokens") or 0),
-        "credits_charged": int(summary.get("credits_charged") or 0),
+        "credits_charged": charged,
+        "tokens_charged": charged,
         "events": int(summary.get("events") or 0),
     }
 
@@ -5839,6 +5789,7 @@ def _public_usage_events_payload(events, *, fallback_model_type=None):
             "output_tokens": int(item.get("output_tokens") or 0),
             "total_tokens": int(item.get("total_tokens") or 0),
             "credits_charged": int(item.get("credits_charged") or 0),
+            "tokens_charged": int(item.get("credits_charged") or 0),
             "failover_attempted": bool(item.get("failover")),
         })
     return out

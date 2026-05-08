@@ -2156,7 +2156,7 @@ def analyze_project():
         analysis_credit_cost = int(current_app.config.get('MARKET_IQ_ANALYSIS_CREDIT_COST', 25))
         if user.credits_remaining is not None and user.credits_remaining < analysis_credit_cost:
             return jsonify({
-                'error': 'Insufficient credits',
+                'error': 'Thinking power limit reached',
                 'required_credits': analysis_credit_cost,
                 'credits_remaining': user.credits_remaining,
                 'plan_key': to_public_plan(user.subscription_plan),
@@ -2219,7 +2219,7 @@ def analyze_project():
         charged, remaining = consume_credits(user, analysis_credit_cost)
         if not charged:
             return jsonify({
-                'error': 'Insufficient credits',
+                'error': 'Thinking power limit reached',
                 'required_credits': analysis_credit_cost,
                 'credits_remaining': user.credits_remaining,
             }), 402
@@ -2400,7 +2400,7 @@ def chat_with_analysis():
         )
         if not credit_reservation.get('ok'):
             payload = dict(credit_reservation.get('payload') or {})
-            payload['code'] = payload.get('code') or 'insufficient_credits'
+            payload['code'] = payload.get('code') or 'thinking_power_exhausted'
             payload['remaining_credits'] = int(user.credits_remaining or 0)
             return jsonify(payload), 402
         reserved_credits = int(
@@ -2475,8 +2475,8 @@ RESPONSE RULES
         if not credit_settlement.get('ok'):
             db.session.rollback()
             return jsonify({
-                'error': 'Insufficient credits.',
-                'code': 'insufficient_credits',
+                'error': 'Thinking power limit reached.',
+                'code': 'thinking_power_exhausted',
                 'required_credits': credits_charged,
                 'remaining_credits': int(user.credits_remaining or 0),
             }), 402
@@ -2744,7 +2744,7 @@ def portfolio_scores_agent():
         )
         if not credit_reservation.get('ok'):
             payload = dict(credit_reservation.get('payload') or {})
-            payload['code'] = payload.get('code') or 'insufficient_credits'
+            payload['code'] = payload.get('code') or 'thinking_power_exhausted'
             payload['remaining_credits'] = int(user.credits_remaining or 0)
             return jsonify(payload), 402
         reserved_credits = int(
@@ -2780,8 +2780,8 @@ def portfolio_scores_agent():
         if not credit_settlement.get('ok'):
             db.session.rollback()
             return jsonify({
-                'error': 'Insufficient credits.',
-                'code': 'insufficient_credits',
+                'error': 'Thinking power limit reached.',
+                'code': 'thinking_power_exhausted',
                 'required_credits': credits_charged,
                 'remaining_credits': int(user.credits_remaining or 0),
             }), 402

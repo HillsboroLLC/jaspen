@@ -11,36 +11,36 @@ const FALLBACK_PLANS = [
     plan_key: 'free',
     label: 'Free',
     price: '$0',
-    detail: '500 credits/month for individual exploration and light usage.',
+    detail: '1,000,000 tokens/month for individual exploration and light usage.',
     sales_only: false,
   },
   {
     plan_key: 'essential',
     label: 'Essential',
     price: '$20 / month',
-    detail: '4,000 credits/month for individual daily execution workflows.',
+    detail: '7,000,000 tokens/month for individual daily execution workflows.',
     sales_only: false,
   },
   {
     plan_key: 'team',
     label: 'Team',
-    price: 'Contact sales',
-    detail: 'Sales-led pooled usage for cross-functional teams.',
-    sales_only: true,
+    price: '$129 / month',
+    detail: '29,000,000 shared tokens/month. Includes 3 seats, +$25 per additional seat.',
+    sales_only: false,
   },
   {
     plan_key: 'enterprise',
     label: 'Enterprise',
-    price: 'Custom',
-    detail: 'Sales-led deployment with governance, security, and rollout support.',
-    sales_only: true,
+    price: '$299 / month',
+    detail: '80,000,000 shared tokens/month. Includes 5 seats + 1 admin, +$30 per additional seat.',
+    sales_only: false,
   },
 ];
 
 const FALLBACK_PACKS = [
-  { pack_key: 'pack_1000', label: '1,000 credits', price_usd: 12, credits: 1000 },
-  { pack_key: 'pack_5000', label: '5,000 credits', price_usd: 50, credits: 5000 },
-  { pack_key: 'pack_20000', label: '20,000 credits', price_usd: 180, credits: 20000 },
+  { pack_key: 'pack_1000', label: '3,000,000 tokens', price_usd: 10, credits: 3000000 },
+  { pack_key: 'pack_5000', label: '8,000,000 tokens', price_usd: 25, credits: 8000000 },
+  { pack_key: 'pack_20000', label: '18,000,000 tokens', price_usd: 50, credits: 18000000 },
 ];
 
 const FALLBACK_MODEL_TYPES = {
@@ -98,7 +98,7 @@ export default function PricingPage() {
                   : 'Custom',
               detail:
                 plan.monthly_credits != null
-                  ? `${plan.monthly_credits.toLocaleString()} credits/month. ${plan.description}`
+                  ? `${plan.monthly_credits.toLocaleString()} tokens/month. ${plan.description}`
                   : plan.description,
               sales_only: !!plan.sales_only,
             }));
@@ -246,14 +246,14 @@ export default function PricingPage() {
           <h1>Clear pricing from individual use to enterprise rollout</h1>
           <p>
             Start free, upgrade to Essential at $20, and scale with Team or Enterprise through sales-led rollout.
-            Need more usage? Add overage credit packs as needed.
+            Need more usage? Add thinking power token packs as needed.
           </p>
         </div>
         <div className="hero-abstract pricing-abstract">
-          <div className="floating-price">Free 500 credits</div>
-          <div className="floating-price">Essential 4,000 credits</div>
-          <div className="floating-price">Team (Sales)</div>
-          <div className="floating-price">Enterprise (Sales)</div>
+          <div className="floating-price">Free 1M tokens</div>
+          <div className="floating-price">Essential 7M tokens</div>
+          <div className="floating-price">Team 29M shared</div>
+          <div className="floating-price">Enterprise 80M shared</div>
         </div>
       </section>
 
@@ -264,16 +264,16 @@ export default function PricingPage() {
             <h3>Structured for modern AI-agent adoption</h3>
             <p>
               Free gets users started. Essential supports everyday use at $20/month. Team and Enterprise are
-              sales-led for pooled usage, governance, and rollout control.
+              pooled thinking power, governance, and rollout control.
             </p>
           </article>
           <article className="marketing-card pricing-summary">
             <h3>Usage policy</h3>
             <ul className="pricing-checks">
-              <li>Free: 500 credits/month</li>
-              <li>Essential: 4,000 credits/month</li>
-              <li>Team and Enterprise: contract-based pooled usage</li>
-              <li>Overage packs available now for self-serve growth</li>
+              <li>Free: 1,000,000 tokens/month</li>
+              <li>Essential: 7,000,000 tokens/month</li>
+              <li>Team: 29,000,000 shared tokens/month + seat pricing</li>
+              <li>Enterprise: 80,000,000 shared tokens/month + Titan access</li>
             </ul>
           </article>
         </div>
@@ -358,11 +358,11 @@ export default function PricingPage() {
       </section>
 
       <section id="api" className="marketing-section">
-        <h2>Overage credit packs</h2>
+        <h2>One-time token packs</h2>
         {isLoggedIn ? (
           <>
             <p className="pricing-pack-copy">
-              For teams staying self-serve, add credits without changing plan tier.
+              Add thinking power without changing plan tier.
             </p>
             <div className="plans-grid pricing-pack-grid">
               {packs.map((pack) => {
@@ -371,17 +371,17 @@ export default function PricingPage() {
                 return (
                   <article key={pack.pack_key} className="marketing-card pricing-plan-card pricing-pack-card">
                     <div className="pricing-plan-head">
-                      <h3>{pack.label || `${pack.credits?.toLocaleString()} credits`}</h3>
+                      <h3>{pack.label || `${pack.credits?.toLocaleString()} tokens`}</h3>
                       <span className="plan-price">${Number.isFinite(price) ? price : pack.price_usd}</span>
                     </div>
-                    <p>{(pack.credits || 0).toLocaleString()} one-time credits added to your balance.</p>
+                    <p>{(pack.credits || 0).toLocaleString()} one-time tokens added to this cycle.</p>
                     <button
                       type="button"
                       className="pricing-cta-button"
                       onClick={() => buyOveragePack(pack.pack_key)}
                       disabled={loading} aria-disabled={loading}
                     >
-                      {loading ? 'Redirecting...' : 'Buy credit pack'}
+                      {loading ? 'Redirecting...' : 'Buy token pack'}
                     </button>
                   </article>
                 );

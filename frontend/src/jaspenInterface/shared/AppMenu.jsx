@@ -151,7 +151,7 @@ export default function AppMenu() {
 
   useEffect(() => {
     const onCreditsExhausted = (event) => {
-      const message = String(event?.detail?.message || "You've used all your credits for this month.").trim();
+      const message = String(event?.detail?.message || "You've reached your monthly thinking power.").trim();
       setBillingMessage(message);
       setBillingModalOpen(true);
     };
@@ -219,14 +219,13 @@ export default function AppMenu() {
   const showRealTeam = !isPlatformAdmin && effectiveCanManageOrg;
   const showLockedTeam =
     previewPlanCategory === 'individual' && !isPlatformAdmin;
-  const showRealConnectors =
-    isPlatformAdmin || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.essential;
-  const showLockedConnectors = !showRealConnectors;
+  const showRealConnectors = true;
+  const showLockedConnectors = false;
 
 
-  const monthlyCreditLimit = billingStatus?.monthly_credit_limit;
-  const creditsRemaining = billingStatus?.credits_remaining;
-  const monthlyCreditsUsed = billingStatus?.credits_used;
+  const monthlyCreditLimit = billingStatus?.monthly_token_limit ?? billingStatus?.monthly_credit_limit;
+  const creditsRemaining = billingStatus?.tokens_remaining_this_month ?? billingStatus?.credits_remaining;
+  const monthlyCreditsUsed = billingStatus?.tokens_used_this_month ?? billingStatus?.credits_used;
 
   const resolvedMonthlyCreditsUsed = useMemo(() => {
     const direct = Number(monthlyCreditsUsed);
@@ -239,10 +238,23 @@ export default function AppMenu() {
     return null;
   }, [monthlyCreditsUsed, monthlyCreditLimit, creditsRemaining]);
 
+  const thinkingPowerRemainingLabel =
+    creditsRemaining == null ? 'Contracted' : Number(creditsRemaining || 0).toLocaleString();
+  const usageResetLabel = useMemo(() => {
+    const value = billingStatus?.cycle_reset_at;
+    if (!value) return 'Your next billing cycle';
+    try {
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return 'Your next billing cycle';
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    } catch {
+      return 'Your next billing cycle';
+    }
+  }, [billingStatus?.cycle_reset_at]);
   const creditsBadge =
-    creditsRemaining == null
-      ? 'Contracted'
-      : Number(creditsRemaining || 0).toLocaleString();
+    monthlyCreditLimit > 0
+      ? `${Math.max(0, Math.round((Math.max(0, Number(creditsRemaining || 0)) / Number(monthlyCreditLimit || 1)) * 100))}% remaining`
+      : 'Usage';
 
   const currentPath = String(location?.pathname || '');
   const isActivePath = useCallback(
@@ -684,7 +696,7 @@ export default function AppMenu() {
           </button>
           <button className="jas-ud-item" onClick={() => setBillingModalOpen(true)}>
             <FontAwesomeIcon icon={faBolt} />
-            <span className="jas-ud-item-label">Credits</span>
+            <span className="jas-ud-item-label">Thinking power</span>
             <span className="jas-ud-item-badge">
               {billingLoading ? '...' : creditsBadge}
             </span>
@@ -692,13 +704,13 @@ export default function AppMenu() {
         </div>
 
         <div className="jas-ud-section">
-          <div className="jas-ud-section-label">Account Usage (This Month)</div>
+          <div className="jas-ud-section-label">THINKING POWER</div>
           {billingLoading && (
             <p className="jas-ud-usage-empty">Loading usage...</p>
           )}
           {!billingLoading && monthlyCreditLimit == null && (
             <p className="jas-ud-usage-note">
-              Monthly limit: Contracted pooled credits on {currentPlanLabel} plan.
+              Thinking power is managed by your contract on {currentPlanLabel}.
             </p>
           )}
           {!billingLoading && monthlyCreditLimit != null && (
@@ -718,9 +730,14 @@ export default function AppMenu() {
                 </div>
               </div>
               <p className="jas-ud-usage-note">
-                Monthly limit: {Number(monthlyCreditLimit || 0).toLocaleString()} credits
-                on {currentPlanLabel}.
+                Monthly limit: {Number(monthlyCreditLimit || 0).toLocaleString()} tokens on {currentPlanLabel}.
               </p>
+              <p className="jas-ud-usage-note">Resets: {usageResetLabel}</p>
+              <p className="jas-ud-usage-note">Current plan: {currentPlanLabel}</p>
+              <div className="jas-ud-usage-actions">
+                <button type="button" className="jas-account-action-link" onClick={() => navigate('/account?tab=billing')}>Add tokens</button>
+                <button type="button" className="jas-account-action-link" onClick={() => navigate('/account?tab=plans')}>Upgrade plan</button>
+              </div>
             </>
           )}
         </div>
@@ -789,8 +806,8 @@ export default function AppMenu() {
               <p className="value">{currentPlanLabel}</p>
             </article>
             <article className="jas-account-summary-card">
-              <p className="label">Credits remaining</p>
-              <p className="value">{creditsBadge}</p>
+              <p className="label">Thinking power remaining</p>
+              <p className="value">{thinkingPowerRemainingLabel}</p>
             </article>
             <article className="jas-account-summary-card">
               <p className="label">Monthly limit</p>
@@ -823,8 +840,8 @@ export default function AppMenu() {
                   </p>
                   <p className="detail">
                     {plan.monthly_credits == null
-                      ? 'Contracted pooled credits'
-                      : `${Number(plan.monthly_credits).toLocaleString()} credits/month`}
+                      ? 'Contracted pooled thinking power'
+                      : `${Number(plan.monthly_credits).toLocaleString()} tokens/month`}
                   </p>
                   <p className="detail jas-account-plan-connectors">
                     Connectors: {getPlanConnectorSentence(key)}

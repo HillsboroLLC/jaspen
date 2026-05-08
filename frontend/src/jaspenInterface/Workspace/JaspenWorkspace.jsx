@@ -603,6 +603,21 @@ function getLastUserMessageTimestamp(chatHistory, fallbackValue = null) {
   return parseHistoryTimestamp(fallbackValue);
 }
 
+function formatSmartDate(value) {
+  if (!value) return 'your reset date';
+  try {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return 'your reset date';
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
+  } catch {
+    return 'your reset date';
+  }
+}
+
 function normalizeStrategyObjective(value, fallback = 'balanced') {
   const text = String(value || '').trim().toLowerCase();
   if (!text) return fallback;
@@ -2351,7 +2366,7 @@ useEffect(() => {
   const scoreShellMenuRef = useRef(null);
   useEffect(() => {
     const onCreditsExhausted = (event) => {
-      const message = String(event?.detail?.message || "You've used all your credits for this month.").trim();
+      const message = String(event?.detail?.message || "You've reached your monthly thinking power.").trim();
       setBillingMessage(message);
       setBillingModalOpen(true);
       showToast(message, 'warning');
@@ -2524,8 +2539,8 @@ useEffect(() => {
   const showLockedReports = !showRealReports;
   const showRealActivity = (isPlatformAdmin && !customerPreviewActive) || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.essential;
   const showLockedActivity = !showRealActivity;
-  const showRealConnectors = (isPlatformAdmin && !customerPreviewActive) || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.essential;
-  const showLockedConnectors = !showRealConnectors;
+  const showRealConnectors = true;
+  const showLockedConnectors = false;
   const canExportScorecardPdf = (isPlatformAdmin && !customerPreviewActive) || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.essential;
   const canExportScorecardPptx = (isPlatformAdmin && !customerPreviewActive) || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.team;
   const canExportWbsCsv = (isPlatformAdmin && !customerPreviewActive) || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.team;
@@ -2545,9 +2560,11 @@ useEffect(() => {
   const connectorsManagePath = adminWorkspacePreviewPlan
     ? `/connectors-manage?admin_preview=workspace&plan_key=${encodeURIComponent(adminWorkspacePreviewPlan)}${adminPreviewRole ? `&role=${encodeURIComponent(adminPreviewRole)}` : ''}`
     : '/connectors-manage';
-  const monthlyCreditLimit = billingStatus?.monthly_credit_limit;
-  const creditsRemaining = billingStatus?.credits_remaining;
-  const monthlyCreditsUsed = billingStatus?.credits_used;
+  const monthlyCreditLimit = billingStatus?.monthly_token_limit ?? billingStatus?.monthly_credit_limit;
+  const creditsRemaining = billingStatus?.tokens_remaining_this_month ?? billingStatus?.credits_remaining;
+  const monthlyCreditsUsed = billingStatus?.tokens_used_this_month ?? billingStatus?.credits_used;
+  const usageWarningLevel = String(billingStatus?.usage_warning_level || 'normal').toLowerCase();
+  const hideThinkingPowerMeter = Boolean(user?.ui_preferences?.hide_thinking_power_meter);
   const resolvedMonthlyCreditsUsed = useMemo(() => {
     const direct = Number(monthlyCreditsUsed);
     if (Number.isFinite(direct)) return Math.max(0, direct);
@@ -2564,12 +2581,6 @@ useEffect(() => {
     if (!Number.isFinite(limitNum) || limitNum <= 0 || resolvedMonthlyCreditsUsed == null) return null;
     return Math.max(0, Math.min(100, Math.round((resolvedMonthlyCreditsUsed / limitNum) * 100)));
   }, [monthlyCreditLimit, resolvedMonthlyCreditsUsed]);
-  const creditDisplayTier = useMemo(() => {
-    if (effectivePlanKey === 'enterprise') return 'enterprise';
-    if (effectivePlanKey === 'team') return 'team';
-    if (effectivePlanKey === 'essential') return 'essential';
-    return 'free';
-  }, [effectivePlanKey]);
   const intakeCreditsValue = useMemo(() => {
     const remaining = Number(creditsRemaining);
     if (Number.isFinite(remaining)) return Math.max(0, Math.round(remaining));
@@ -2579,39 +2590,21 @@ useEffect(() => {
   }, [creditsRemaining, monthlyCreditLimit]);
   const intakeCreditsCompactLabel = useMemo(() => {
     if (billingLoading) return '...';
-    if (creditDisplayTier === 'enterprise') return 'Contracted';
-    if (creditsRemaining == null && monthlyCreditLimit == null) return '∞';
-
-    const remainingNum = Number(intakeCreditsValue);
-    const limitNum = Number(monthlyCreditLimit);
-    const remainingLabel = Number.isFinite(remainingNum) ? Number(remainingNum).toLocaleString() : '--';
-    if (!Number.isFinite(limitNum) || limitNum <= 0) return remainingLabel;
-    const limitLabel = Math.round(limitNum).toLocaleString();
-
-    if (creditDisplayTier === 'team') {
-      return `Pool ${remainingLabel}/${limitLabel}`;
-    }
-    return `${remainingLabel}/${limitLabel}`;
-  }, [billingLoading, creditDisplayTier, creditsRemaining, monthlyCreditLimit, intakeCreditsValue]);
-  const creditsTone = useMemo(() => {
-    if (creditDisplayTier === 'enterprise') return 'normal';
     const remainingNum = Number(creditsRemaining);
     const limitNum = Number(monthlyCreditLimit);
     if (!Number.isFinite(remainingNum) || !Number.isFinite(limitNum) || limitNum <= 0) {
-      return 'normal';
+      return 'Usage';
     }
-    const ratio = Math.max(0, remainingNum / limitNum);
-    if (ratio <= 0.05) return 'critical';
-    if (ratio <= 0.2) return 'warning';
+    const pct = Math.max(0, Math.round((Math.max(0, remainingNum) / limitNum) * 100));
+    return `${pct}% remaining`;
+  }, [billingLoading, creditsRemaining, monthlyCreditLimit, intakeCreditsValue]);
+  const creditsTone = useMemo(() => {
+    if (usageWarningLevel === 'blocked' || usageWarningLevel === 'exhausted') return 'critical';
+    if (usageWarningLevel === 'urgent' || usageWarningLevel === 'critical') return 'critical';
+    if (usageWarningLevel === 'warning') return 'warning';
     return 'normal';
-  }, [creditDisplayTier, creditsRemaining, monthlyCreditLimit]);
-  const creditsTitle = creditDisplayTier === 'enterprise'
-    ? 'View contracted usage'
-    : creditsTone === 'critical'
-      ? 'Critical: credits are below 5%. Open billing.'
-      : creditsTone === 'warning'
-        ? 'Low credits: below 20%. Open billing.'
-        : 'View account credits';
+  }, [usageWarningLevel]);
+  const creditsTitle = 'Thinking power is your monthly usage capacity. It resets each billing cycle.';
   const creditsBadge = creditsRemaining == null ? 'Contracted' : Number(creditsRemaining || 0).toLocaleString();
   const lowCreditsCycleKey = useMemo(() => {
     const now = new Date();
@@ -2627,16 +2620,37 @@ useEffect(() => {
   const lowCreditsBannerEligible = useMemo(() => (
     Boolean(user)
     && !billingLoading
-    && creditDisplayTier !== 'enterprise'
-    && (creditsTone === 'warning' || creditsTone === 'critical')
-  ), [billingLoading, creditDisplayTier, creditsTone, user]);
+    && ['warning', 'urgent', 'critical', 'exhausted', 'blocked'].includes(usageWarningLevel)
+  ), [billingLoading, usageWarningLevel, user]);
   const lowCreditsBannerToneClass = creditsTone === 'critical' ? 'is-critical' : 'is-warning';
-  const lowCreditsHeadline = creditsTone === 'critical'
-    ? 'Credits are critically low'
-    : 'Credits are running low';
-  const lowCreditsBody = creditsTone === 'critical'
-    ? 'You have less than 5% of your monthly credits remaining. Open Billing to review usage and top up if needed.'
-    : 'You have less than 20% of your monthly credits remaining. Open Billing to review usage and avoid interruptions.';
+  const lowCreditsHeadline = usageWarningLevel === 'warning'
+    ? 'Thinking power is running low'
+    : usageWarningLevel === 'urgent'
+      ? 'Thinking power is almost depleted'
+      : usageWarningLevel === 'exhausted'
+        ? 'Monthly thinking power reached'
+        : usageWarningLevel === 'blocked'
+          ? 'Thinking power usage is blocked'
+          : 'Thinking power is running low';
+  const lowCreditsBody = usageWarningLevel === 'warning'
+    ? 'You’re using your thinking power quickly. Add tokens, upgrade, or continue until your reset.'
+    : usageWarningLevel === 'urgent'
+      ? 'You’re almost out of thinking power. Add tokens now to keep working without interruption.'
+      : usageWarningLevel === 'exhausted'
+        ? `You’ve reached your monthly thinking power. Add tokens, upgrade, or wait until your reset on ${formatSmartDate(billingStatus?.cycle_reset_at)}.`
+        : usageWarningLevel === 'blocked'
+          ? 'You have exceeded 105% of monthly thinking power. Add tokens or upgrade to continue.'
+          : 'Review thinking power usage in billing.';
+  const toggleThinkingPowerMeter = useCallback(async () => {
+    if (typeof updateUiPreferences !== 'function') return;
+    const currentPrefs = user?.ui_preferences && typeof user.ui_preferences === 'object'
+      ? user.ui_preferences
+      : {};
+    await updateUiPreferences({
+      ...currentPrefs,
+      hide_thinking_power_meter: !hideThinkingPowerMeter,
+    });
+  }, [hideThinkingPowerMeter, updateUiPreferences, user?.ui_preferences]);
   useEffect(() => {
     if (!lowCreditsDismissStorageKey || !lowCreditsBannerEligible) {
       setLowCreditsBannerDismissed(false);
@@ -3017,12 +3031,15 @@ useEffect(() => {
   const syncCreditsFromPayload = useCallback((payload, { refresh = false } = {}) => {
     if (adminWorkspacePreviewPlan) return;
     const remainingCandidates = [
+      payload?.tokens?.remaining,
+      payload?.tokens_remaining_this_month,
       payload?.credits?.remaining,
       payload?.credits_remaining,
       payload?.remaining_credits,
       payload?.analysis?.meta?.credits_remaining,
     ];
     const limitCandidates = [
+      payload?.monthly_token_limit,
       payload?.monthly_credit_limit,
       payload?.credits?.monthly_limit,
     ];
@@ -3038,9 +3055,11 @@ useEffect(() => {
       const next = (prev && typeof prev === 'object') ? { ...prev } : {};
       if (remaining != null) {
         next.credits_remaining = Number(remaining);
+        next.tokens_remaining_this_month = Number(remaining);
       }
       if (monthlyLimit != null) {
         next.monthly_credit_limit = Number(monthlyLimit);
+        next.monthly_token_limit = Number(monthlyLimit);
       }
       if (
         Number.isFinite(Number(next.monthly_credit_limit))
@@ -3343,13 +3362,13 @@ useEffect(() => {
               <p className="value">{currentPlanLabel}</p>
             </article>
             <article className="jas-account-summary-card">
-              <p className="label">Credits remaining</p>
-              <p className="value">{creditsBadge}</p>
+              <p className="label">Thinking power remaining</p>
+              <p className="value">{creditsRemaining == null ? 'Contracted' : Number(creditsRemaining || 0).toLocaleString()}</p>
             </article>
             <article className="jas-account-summary-card">
               <p className="label">Monthly limit</p>
               <p className="value">
-                {monthlyCreditLimit == null ? 'Contracted' : Number(monthlyCreditLimit).toLocaleString()}
+                {monthlyCreditLimit == null ? 'Contracted' : `${Number(monthlyCreditLimit).toLocaleString()} tokens`}
               </p>
             </article>
           </div>
@@ -3370,8 +3389,8 @@ useEffect(() => {
                   </p>
                   <p className="detail">
                     {plan.monthly_credits == null
-                      ? 'Contracted pooled credits'
-                      : `${Number(plan.monthly_credits).toLocaleString()} credits/month`}
+                      ? 'Contracted pooled thinking power'
+                      : `${Number(plan.monthly_credits).toLocaleString()} tokens/month`}
                   </p>
                   <p className="detail jas-account-plan-connectors">
                     Connectors: {getPlanConnectorSentence(key)}
@@ -3794,18 +3813,22 @@ useEffect(() => {
           </button>
           <button className="jas-ud-item" onClick={() => { setBillingModalOpen(true); }}>
             <FontAwesomeIcon icon={faBolt} />
-            <span className="jas-ud-item-label">Credits</span>
+            <span className="jas-ud-item-label">Thinking power</span>
             <span className="jas-ud-item-badge">{billingLoading ? '...' : creditsBadge}</span>
+          </button>
+          <button className="jas-ud-item" onClick={toggleThinkingPowerMeter}>
+            <FontAwesomeIcon icon={faGaugeHigh} />
+            <span className="jas-ud-item-label">{hideThinkingPowerMeter ? 'Show usage meter' : 'Hide usage meter'}</span>
           </button>
         </div>
 
         <div className="jas-ud-section">
-          <div className="jas-ud-section-label">Account Usage (This Month)</div>
+          <div className="jas-ud-section-label">THINKING POWER</div>
           {billingLoading && (
             <p className="jas-ud-usage-empty">Loading usage...</p>
           )}
           {!billingLoading && monthlyCreditLimit == null && (
-            <p className="jas-ud-usage-note">Monthly limit: Contracted pooled credits on {currentPlanLabel} plan.</p>
+            <p className="jas-ud-usage-note">Thinking power is managed by your contract on {currentPlanLabel}.</p>
           )}
           {!billingLoading && monthlyCreditLimit != null && (
             <>
@@ -3820,8 +3843,18 @@ useEffect(() => {
                 </div>
               </div>
               <p className="jas-ud-usage-note">
-                Monthly limit: {Number(monthlyCreditLimit || 0).toLocaleString()} credits on {currentPlanLabel}.
+                Monthly limit: {Number(monthlyCreditLimit || 0).toLocaleString()} tokens on {currentPlanLabel}.
               </p>
+              <p className="jas-ud-usage-note">Resets: {formatSmartDate(billingStatus?.cycle_reset_at)}</p>
+              <p className="jas-ud-usage-note">Current plan: {currentPlanLabel}</p>
+              <div className="jas-account-actions">
+                <button type="button" className="jas-account-plan-cta" onClick={() => navigate('/account?tab=billing')}>
+                  Add tokens
+                </button>
+                <button type="button" className="jas-account-plan-cta jas-account-plan-cta-secondary" onClick={() => navigate('/account?tab=plans')}>
+                  Upgrade plan
+                </button>
+              </div>
             </>
           )}
         </div>
@@ -3865,8 +3898,8 @@ useEffect(() => {
                   <strong>{Number(threadUsage?.usage_summary?.total_tokens || 0).toLocaleString()}</strong>
                 </div>
                 <div className="jas-ud-usage-stat">
-                  <span>Credits charged</span>
-                  <strong>{Number(threadUsage?.usage_summary?.credits_charged || 0).toLocaleString()}</strong>
+                  <span>Thinking power used</span>
+                  <strong>{Number(threadUsage?.usage_summary?.tokens_charged || threadUsage?.usage_summary?.credits_charged || 0).toLocaleString()}</strong>
                 </div>
                 <div className="jas-ud-usage-stat">
                   <span>Input tokens</span>
@@ -3883,7 +3916,7 @@ useEffect(() => {
                     <div key={`${event?.timestamp || 'usage'}-${idx}`} className="jas-ud-usage-event">
                       <span>{new Date(event?.timestamp || Date.now()).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
                       <span>{Number(event?.total_tokens || 0).toLocaleString()} tok</span>
-                      <span>{Number(event?.credits_charged || 0).toLocaleString()} cr</span>
+                      <span>{Number(event?.tokens_charged || event?.credits_charged || 0).toLocaleString()} tokens</span>
                     </div>
                   ))}
                 </div>
@@ -9576,15 +9609,22 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                   <button
                     type="button"
                     className="jas-low-credits-banner-link"
-                    onClick={() => setBillingModalOpen(true)}
+                    onClick={() => navigate('/account?tab=billing')}
                   >
-                    Open Billing
+                    Add tokens
+                  </button>
+                  <button
+                    type="button"
+                    className="jas-low-credits-banner-link"
+                    onClick={() => navigate('/account?tab=plans')}
+                  >
+                    Upgrade plan
                   </button>
                   <button
                     type="button"
                     className="jas-low-credits-banner-dismiss"
                     onClick={dismissLowCreditsBanner}
-                    aria-label="Dismiss low credits reminder"
+                    aria-label="Dismiss low thinking power reminder"
                   >
                     <FontAwesomeIcon icon={faTimes} />
                   </button>
@@ -10041,7 +10081,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
   const intakeShellOpen = sidebarState.history || sidebarState.readiness || sidebarState.settings;
   const intakeHasReadinessTab = sessionId && messages.length > 0 && !sidebarState.readiness;
   const showIntakeTopbarUtilities = !sessionId && messages.length === 0;
-  const showTopbarCredits = Boolean(user);
+  const showTopbarCredits = Boolean(user) && !hideThinkingPowerMeter;
   const showSharedProjectsLanding = !sessionId && messages.length === 0 && planCategory !== 'individual' && (effectiveIsCollaborator || effectiveIsViewer);
   const onboardingState = readOnboardingState(user);
   const shouldShowSetupPrompt = Boolean(
@@ -10365,7 +10405,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               className={`jas-topbar-credits ${creditsTone === 'warning' ? 'is-warning' : ''} ${creditsTone === 'critical' ? 'is-critical' : ''}`.trim()}
               onClick={() => setBillingModalOpen(true)}
               title={creditsTitle}
-              aria-label="View credits"
+              aria-label="View thinking power usage"
             >
               <FontAwesomeIcon icon={faBolt} />
               <span>{intakeCreditsCompactLabel}</span>

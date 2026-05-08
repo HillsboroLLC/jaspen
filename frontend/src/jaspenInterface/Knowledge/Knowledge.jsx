@@ -386,7 +386,7 @@ const TOPICS = {
     short: 'BL',
     label: 'Billing and Usage',
     title: 'Billing and Usage',
-    summary: 'Plan entitlement, credits, and access governance.',
+    summary: 'Plan entitlement, thinking power, and access governance.',
     sections: [
       {
         heading: 'Scope',

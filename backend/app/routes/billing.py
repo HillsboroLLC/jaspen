@@ -1,5 +1,6 @@
 import os
 import time
+import math
 from datetime import datetime
 from urllib.parse import urlparse
 from flask import Blueprint, request, jsonify, current_app, abort
@@ -25,6 +26,7 @@ from app.billing_config import (
     normalize_plan_key,
     reset_user_monthly_credits,
     to_public_plan,
+    get_usage_meter_state,
 )
 from app.connector_store import get_all_connector_settings
 from app.tool_registry import get_context_budget, get_tool_entitlements
@@ -98,23 +100,24 @@ def _ensure_customer_for_user(user):
     return customer.id
 
 
-def _usage_warning_fields(monthly_limit, credits_remaining):
-    if monthly_limit is None or credits_remaining is None:
+def _usage_warning_fields(cycle_limit, tokens_used):
+    if cycle_limit is None or tokens_used is None:
         return {"usage_percent": None, "usage_warning_level": "normal"}
     try:
-        limit = max(0, int(monthly_limit))
-        remaining = max(0, int(credits_remaining))
+        limit = max(0, int(cycle_limit))
+        used = max(0, int(tokens_used))
     except Exception:
         return {"usage_percent": None, "usage_warning_level": "normal"}
     if limit <= 0:
         return {"usage_percent": None, "usage_warning_level": "normal"}
 
-    used = max(0, limit - remaining)
-    usage_percent = max(0.0, min(100.0, (used / float(limit)) * 100.0))
-    if remaining <= 0:
+    usage_percent = max(0.0, (used / float(limit)) * 100.0)
+    if usage_percent >= 105.0:
+        level = "blocked"
+    elif usage_percent >= 100.0:
         level = "exhausted"
     elif usage_percent >= 95.0:
-        level = "critical"
+        level = "urgent"
     elif usage_percent >= 80.0:
         level = "warning"
     else:
@@ -179,11 +182,13 @@ def get_billing_status():
     plan_key = to_public_plan(user.subscription_plan)
     plan_catalog = get_plan_catalog(current_app.config)
     current_plan = plan_catalog.get(plan_key) or {}
-    monthly_limit = get_monthly_credit_limit(plan_key, current_app.config)
-    credits_remaining = user.credits_remaining
-    credits_used = 0 if admin_override else None
-    if not admin_override and monthly_limit is not None and credits_remaining is not None:
-        credits_used = max(0, int(monthly_limit) - int(credits_remaining))
+    usage_state = get_usage_meter_state(user, current_app.config)
+    monthly_limit = usage_state.get('monthly_limit')
+    cycle_limit = usage_state.get('cycle_limit')
+    credits_remaining = usage_state.get('remaining')
+    credits_used = usage_state.get('used')
+    if admin_override:
+        credits_used = 0
     allowed_model_types = get_allowed_model_types(plan_key, current_app.config)
     default_model_type = get_default_model_type(plan_key, current_app.config)
     tool_entitlements = get_tool_entitlements(plan_key)
@@ -203,7 +208,7 @@ def get_billing_status():
         tool['last_sync_at'] = settings.get('last_sync_at')
         tool['auto_sync'] = bool(settings.get('auto_sync', True))
         tool['external_workspace'] = settings.get('external_workspace') or ''
-    usage_meta = _usage_warning_fields(monthly_limit, credits_remaining)
+    usage_meta = _usage_warning_fields(cycle_limit, credits_used)
 
     return jsonify({
         'plan_key': plan_key,
@@ -213,6 +218,15 @@ def get_billing_status():
         'credits_remaining': credits_remaining,
         'monthly_credit_limit': monthly_limit,
         'credits_used': credits_used,
+        'tokens_remaining_this_month': credits_remaining,
+        'monthly_token_limit': monthly_limit,
+        'tokens_used_this_month': credits_used,
+        'usage_scope': usage_state.get('scope'),
+        'cycle_token_limit': cycle_limit,
+        'cycle_reset_at': usage_state.get('reset_at').isoformat() if usage_state.get('reset_at') else None,
+        'overage_tokens_this_cycle': usage_state.get('overage_tokens'),
+        'token_soft_stop_limit': None if cycle_limit is None else int(cycle_limit),
+        'token_block_limit': None if cycle_limit is None else int(math.floor(int(cycle_limit) * 1.05)),
         'allowed_model_types': allowed_model_types,
         'default_model_type': default_model_type,
         'context_budget': get_context_budget(plan_key),
@@ -378,7 +392,7 @@ def modify_subscription():
 @billing_bp.route('/create-overage-checkout-session', methods=['POST'])
 @jwt_required()
 def create_overage_checkout_session():
-    """Create a one-time Checkout session for overage credit packs."""
+    """Create a one-time Checkout session for overage thinking-power packs."""
     user = User.query.get(get_jwt_identity())
     if not user:
         return jsonify({'msg': 'User not found'}), 404
@@ -420,6 +434,7 @@ def create_overage_checkout_session():
             'user_id': str(user.id),
             'pack_key': pack_key,
             'credits': str(pack.get('credits', 0)),
+            'tokens': str(pack.get('credits', 0)),
             'checkout_type': 'overage_pack',
         },
         success_url=success_url,
@@ -474,7 +489,7 @@ def get_checkout_session():
 
 @billing_bp.route('/webhook', methods=['POST'])
 def stripe_webhook():
-    """Receive Stripe events and keep user subscription/credits in sync."""
+    """Receive Stripe events and keep user subscription and thinking power in sync."""
     payload = request.data
     sig_header = request.headers.get('Stripe-Signature')
     webhook_secret = current_app.config.get('STRIPE_WEBHOOK_SECRET') or os.getenv('STRIPE_WEBHOOK_SECRET')
@@ -529,7 +544,8 @@ def stripe_webhook():
         if user:
             checkout_type = metadata.get('checkout_type')
             if checkout_type == 'overage_pack':
-                add_credits(user, int(metadata.get('credits') or 0))
+                tokens = int(metadata.get('tokens') or metadata.get('credits') or 0)
+                add_credits(user, tokens)
                 if sess.get('customer'):
                     user.stripe_customer_id = sess.get('customer')
             else:
@@ -595,7 +611,7 @@ def stripe_webhook():
         user = _find_user_for_billing_event(customer_id=charge.get('customer'))
         metadata = charge.get('metadata') if isinstance(charge.get('metadata'), dict) else {}
         if user and str(metadata.get('checkout_type') or '').strip() == 'overage_pack':
-            refund_credits = int(metadata.get('credits') or 0)
+            refund_credits = int(metadata.get('tokens') or metadata.get('credits') or 0)
             if refund_credits > 0 and user.credits_remaining is not None:
                 user.credits_remaining = max(0, int(user.credits_remaining or 0) - refund_credits)
             elif refund_credits > 0 and user.credits_remaining is None:

@@ -2,7 +2,7 @@ import { API_BASE } from '../../config/apiBase';
 
 const SESSION_EXPIRED_EVENT = 'jas:session-expired';
 const SERVER_ERROR_EVENT = 'jas:server-error';
-const CREDITS_EXHAUSTED_EVENT = 'jas:credits-exhausted';
+const CREDITS_EXHAUSTED_EVENT = 'jas:thinking-power-exhausted';
 
 let lastSessionExpiredNoticeAt = 0;
 let lastServerErrorNoticeAt = 0;
@@ -90,14 +90,18 @@ export function authFetch(pathOrUrl, options = {}) {
     if (response.status === 402 && now - lastCreditsExhaustedNoticeAt > 1500) {
       response.clone().json().then((data) => {
         const code = String(data?.code || '').trim().toLowerCase();
-        if (code === 'credits_exhausted' || code === 'insufficient_credits') {
+        if (
+          code === 'credits_exhausted'
+          || code === 'insufficient_credits'
+          || code === 'thinking_power_exhausted'
+        ) {
           lastCreditsExhaustedNoticeAt = Date.now();
           window.dispatchEvent(new CustomEvent(CREDITS_EXHAUSTED_EVENT, {
             detail: {
               status: 402,
               url,
               code,
-              message: data?.error || "You've used all your credits for this month.",
+              message: data?.error || "You've reached your monthly thinking power.",
               upgradeUrl: data?.upgrade_url || '/account?tab=billing',
             },
           }));

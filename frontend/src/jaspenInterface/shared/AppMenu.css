@@ -441,6 +441,13 @@ body.jaspen-sidebar-open .int-page {
   color: var(--navy);
 }
 
+.app-menu-host .jas-ud-usage-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 18px 10px;
+}
+
 /* Footer (SidebarIdentityFooter) */
 .app-menu-host .jas-ud-footer {
   border-top: 1px solid var(--border);

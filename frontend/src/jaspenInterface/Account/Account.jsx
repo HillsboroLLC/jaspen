@@ -362,7 +362,7 @@ export default function Account() {
   const [assistantMessages, setAssistantMessages] = useState([
     {
       role: 'assistant',
-      text: 'I can help you interpret plan limits, credits, and connector access from this account view.',
+      text: 'I can help you interpret plan limits, thinking power, and connector access from this account view.',
     },
   ]);
   const [mfaState, setMfaState] = useState({
@@ -1724,7 +1724,7 @@ export default function Account() {
       { role: 'user', text },
       {
         role: 'assistant',
-        text: 'Update plan, credits, or connector settings here, then return to workspace to continue project execution.',
+        text: 'Update plan, thinking power, or connector settings here, then return to workspace to continue project execution.',
       },
     ]));
     setAssistantInput('');
@@ -1746,7 +1746,7 @@ export default function Account() {
           onSend={sendAssistant}
           busy={false}
           starterPrompts={[
-            'How close am I to my credit limit?',
+            'How close am I to my thinking power limit?',
             'Which plan best fits heavier usage?',
           ]}
           placeholder="Ask Jaspen about billing and account settings..."
@@ -1758,12 +1758,14 @@ export default function Account() {
   const currentPlan = status?.plan_key || 'free';
   const plans = catalog?.plans || {};
   const packs = catalog?.overage_packs || {};
-  const creditsRemainingLabel = status?.credits_remaining == null
+  const remainingTokensValue = status?.tokens_remaining_this_month ?? status?.credits_remaining;
+  const monthlyLimitValue = status?.monthly_token_limit ?? status?.monthly_credit_limit;
+  const creditsRemainingLabel = remainingTokensValue == null
     ? 'Contracted'
-    : Number(status?.credits_remaining || 0).toLocaleString();
-  const monthlyLimitLabel = status?.monthly_credit_limit == null
+    : Number(remainingTokensValue || 0).toLocaleString();
+  const monthlyLimitLabel = monthlyLimitValue == null
     ? 'Contracted'
-    : Number(status?.monthly_credit_limit || 0).toLocaleString();
+    : Number(monthlyLimitValue || 0).toLocaleString();
   const modelTypes = catalog?.model_types || FALLBACK_MODEL_TYPES;
   const orderedModelTypes = MODEL_ORDER.map((key) => modelTypes?.[key]).filter(Boolean);
   const formatModelDisplayName = (model) => {
@@ -1781,7 +1783,7 @@ export default function Account() {
     { key: 'overview', label: 'Overview', icon: faChartLine },
     { key: 'plans', label: 'Plans', icon: faLayerGroup },
     { key: 'connectors', label: 'Connectors', icon: faPlug },
-    { key: 'packs', label: 'Credit packs', icon: faBolt },
+    { key: 'packs', label: 'Token packs', icon: faBolt },
     { key: 'security', label: 'Security', icon: faShieldHalved },
     { key: 'models', label: 'Models', icon: faLayerGroup },
     ...(isAdminUser ? [{ key: 'admin', label: 'System admin', icon: faGear }] : []),
@@ -1884,11 +1886,11 @@ export default function Account() {
         </nav>
         <div className="account-drawer-footer">
           <section className="account-sidebar-footer-group">
-            <p className="account-sidebar-footer-label">Account usage (this month)</p>
+            <p className="account-sidebar-footer-label">THINKING POWER</p>
             <p className="account-sidebar-footer-value">
-              {status?.monthly_credit_limit == null
-                ? 'Contracted pooled credits'
-                : `${Number(status.monthly_credit_limit || 0).toLocaleString()} credit limit`}
+              {monthlyLimitValue == null
+                ? 'Contracted pooled thinking power'
+                : `${Number(monthlyLimitValue || 0).toLocaleString()} token limit`}
             </p>
           </section>
           <section className="account-sidebar-footer-group">
@@ -1904,7 +1906,7 @@ export default function Account() {
             <p className="account-eyebrow">Account</p>
             <h1>Billing & Usage</h1>
             <p className="account-subtext">
-              Manage plan access, credit usage, and available connectors for your workspace.
+              Manage plan access, thinking power usage, and available connectors for your workspace.
             </p>
           </div>
           <div className="account-header-actions">
@@ -1933,7 +1935,7 @@ export default function Account() {
             <strong>{(plans[currentPlan]?.label || currentPlan).toString()}</strong>
           </span>
           <span className="account-status-chip">
-            <span className="label">Credits remaining</span>
+            <span className="label">Thinking power remaining</span>
             <strong>{creditsRemainingLabel}</strong>
           </span>
           <span className="account-status-chip">
@@ -1953,7 +1955,7 @@ export default function Account() {
               <p>{(plans[currentPlan]?.label || currentPlan).toString()}</p>
             </article>
             <article className="account-overview-card">
-              <h3>Credits remaining</h3>
+              <h3>Thinking power remaining</h3>
               <p>{creditsRemainingLabel}</p>
             </article>
             <article className="account-overview-card">
@@ -1987,10 +1989,10 @@ export default function Account() {
                   </p>
                   <p className="account-plan-meta">
                     {key === 'team'
-                      ? '5 seat minimum · pooled credits scale with team size'
-                      : plan.monthly_credits == null
+                      ? 'Includes 3 seats · shared thinking power pool'
+                      : (plan.monthly_credits == null)
                       ? 'Contracted pooled usage'
-                      : `${Number(plan.monthly_credits).toLocaleString()} credits/month`}
+                      : `${Number(plan.monthly_credits).toLocaleString()} tokens/month`}
                   </p>
                   <div className="account-plan-features">
                     <p className="account-plan-connectors">
@@ -2763,7 +2765,7 @@ export default function Account() {
 
         {activeTab === 'packs' && (
         <section className="account-section">
-          <h2 className="account-tab-title">One-time credit packs</h2>
+          <h2 className="account-tab-title">One-time token packs</h2>
           <div className="account-pack-grid">
             {PACK_ORDER.map((key) => {
               const pack = packs[key];
@@ -2772,7 +2774,7 @@ export default function Account() {
               return (
                 <article className="account-pack-card" key={key}>
                   <h3>{pack.label}</h3>
-                  <p>{Number(pack.credits || 0).toLocaleString()} one-time credits</p>
+                  <p>{Number(pack.credits || 0).toLocaleString()} one-time tokens</p>
                   <button
                     type="button"
                     className="account-primary-btn"
@@ -3034,7 +3036,7 @@ export default function Account() {
           <section className="account-section">
             <div className="account-admin-header">
               <h2 className="account-tab-title">System admin</h2>
-              <p>Search users, adjust plan, credits, and account controls without billing flow.</p>
+              <p>Search users, adjust plan, thinking power, and account controls without billing flow.</p>
             </div>
             <div className="account-admin-search">
               <input
@@ -3221,7 +3223,7 @@ export default function Account() {
                         onClick={forceEssential}
                         disabled={adminState.pending} aria-disabled={adminState.pending}
                       >
-                        Force Essential + reset credits
+                        Force Essential + reset thinking power
                       </button>
                     </div>
                   </>
@@ -3268,7 +3270,7 @@ export default function Account() {
         onSend={sendAssistant}
         busy={false}
         starterPrompts={[
-          'How close am I to my credit limit?',
+          'How close am I to my thinking power limit?',
           'Which plan best fits heavier usage?',
         ]}
         placeholder="Ask Jaspen about billing and account settings..."
