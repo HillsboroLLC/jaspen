@@ -594,8 +594,10 @@ export default function HomePage() {
                     <span className="home-plan-usage">{plan.usage}</span>
                   </div>
                   <p className="home-plan-description">{plan.description}</p>
-                  <a href={plan.ctaHref} className="home-plan-link">{plan.ctaLabel}</a>
-                  {plan.subCta ? <p className="home-plan-subcta">{plan.subCta}</p> : null}
+                  <div className="home-plan-cta-wrap">
+                    {plan.subCta ? <p className="home-plan-subcta">{plan.subCta}</p> : <p className="home-plan-subcta home-plan-subcta-empty" aria-hidden="true">&nbsp;</p>}
+                    <a href={plan.ctaHref} className="home-plan-link">{plan.ctaLabel}</a>
+                  </div>
                 </article>
               ))}
             </div>

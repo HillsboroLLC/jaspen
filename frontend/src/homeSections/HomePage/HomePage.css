@@ -1434,6 +1434,7 @@
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 14px;
+  align-items: stretch;
 }
 
 .home-plan-card {
@@ -1444,6 +1445,7 @@
   position: relative;
   display: flex;
   flex-direction: column;
+  height: 100%;
 }
 
 .home-plan-card::before {
@@ -1551,15 +1553,26 @@
   min-height: 68px;
 }
 
+.home-plan-cta-wrap {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .home-plan-subcta {
-  margin-top: 10px !important;
+  margin: 0 !important;
   font-size: 0.8rem !important;
   color: var(--gray-500) !important;
   line-height: 1.45;
 }
 
+.home-plan-subcta-empty {
+  visibility: hidden;
+  min-height: 36px;
+}
+
 .home-plan-link {
-  margin-top: auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
