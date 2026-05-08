@@ -566,7 +566,7 @@ export default function HomePage() {
                   name: 'Enterprise',
                   headline: 'Scale decision-making across your organization',
                   microcopy: 'For organizations and large-scale execution',
-                  price: 'Starting at $299/month',
+                  price: '$299/month+',
                   usage: '80,000 shared credits/month',
                   description: 'Bring structure, speed, and consistency to how your business operates.',
                   ctaLabel: 'Start Enterprise',
