@@ -369,21 +369,24 @@ _SYSTEM_PROMPT_LEAK_FRAGMENTS = [
 _GEMINI_OPENAI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 _ROUTING_MATRIX = {
     "pluto": {
+        # Keep Pluto anchored to its linked backbone model first, then fallback.
         "balanced": [("anthropic", "claude_haiku"), ("gemini", "gemini_flash")],
-        "cost": [("gemini", "gemini_flash"), ("anthropic", "claude_haiku")],
-        "speed": [("gemini", "gemini_flash"), ("anthropic", "claude_haiku")],
+        "cost": [("anthropic", "claude_haiku"), ("gemini", "gemini_flash")],
+        "speed": [("anthropic", "claude_haiku"), ("gemini", "gemini_flash")],
         "growth": [("anthropic", "claude_haiku"), ("gemini", "gemini_flash")],
     },
     "orbit": {
+        # Keep Orbit anchored to its linked backbone model first, then fallbacks.
         "balanced": [("anthropic", "claude_sonnet"), ("gemini", "gemini_pro"), ("gemini", "gemini_flash")],
-        "cost": [("gemini", "gemini_flash"), ("anthropic", "claude_sonnet"), ("gemini", "gemini_pro")],
-        "speed": [("anthropic", "claude_sonnet"), ("gemini", "gemini_flash"), ("gemini", "gemini_pro")],
+        "cost": [("anthropic", "claude_sonnet"), ("gemini", "gemini_pro"), ("gemini", "gemini_flash")],
+        "speed": [("anthropic", "claude_sonnet"), ("gemini", "gemini_pro"), ("gemini", "gemini_flash")],
         "growth": [("anthropic", "claude_sonnet"), ("gemini", "gemini_pro"), ("gemini", "gemini_flash")],
     },
     "titan": {
+        # Keep Titan anchored to its linked backbone model first, then fallbacks.
         "balanced": [("anthropic", "claude_opus"), ("anthropic", "claude_sonnet"), ("gemini", "gemini_pro")],
-        "cost": [("gemini", "gemini_pro"), ("anthropic", "claude_sonnet"), ("anthropic", "claude_opus")],
-        "speed": [("anthropic", "claude_sonnet"), ("gemini", "gemini_pro"), ("anthropic", "claude_opus")],
+        "cost": [("anthropic", "claude_opus"), ("anthropic", "claude_sonnet"), ("gemini", "gemini_pro")],
+        "speed": [("anthropic", "claude_opus"), ("anthropic", "claude_sonnet"), ("gemini", "gemini_pro")],
         "growth": [("anthropic", "claude_opus"), ("anthropic", "claude_sonnet"), ("gemini", "gemini_pro")],
     },
 }
