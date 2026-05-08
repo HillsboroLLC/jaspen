@@ -1942,6 +1942,3 @@
     align-items: stretch;
   }
 }
-  .home-plan-grid {
-    grid-template-columns: 1fr;
-  }
