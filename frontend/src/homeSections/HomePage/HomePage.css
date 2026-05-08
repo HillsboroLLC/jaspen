@@ -1427,13 +1427,7 @@
   line-height: 1.08;
   letter-spacing: -0.035em;
   color: var(--navy-deep);
-  margin-bottom: 10px;
-}
-
-.home-pricing-header p {
-  margin: 0;
-  color: var(--gray-500);
-  font-size: 1.06rem;
+  margin-bottom: 0;
 }
 
 .home-plan-grid {
@@ -1473,15 +1467,35 @@
 }
 
 .home-plan-card h3 {
-  margin: 4px 0 6px;
+  margin: 6px 0 6px;
   color: var(--navy-deep);
-  font-size: 1.22rem;
+  font-size: 1.34rem;
+  line-height: 1.24;
+  letter-spacing: -0.02em;
+}
+
+.home-plan-name {
+  margin: 0;
+  color: var(--gray-500) !important;
+  font-size: 0.73rem !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.home-plan-microcopy {
+  margin: 0 0 12px !important;
+  color: var(--gray-500) !important;
+  font-size: 0.9rem !important;
+  min-height: 40px;
 }
 
 .home-plan-price {
-  margin: 0 0 8px;
-  font-weight: 700;
-  color: var(--gray-700) !important;
+  margin: 0 0 12px;
+  font-size: 1.5rem !important;
+  line-height: 1.2;
+  font-weight: 800 !important;
+  color: var(--navy-deep) !important;
 }
 
 .home-plan-card p {
@@ -1490,8 +1504,58 @@
   font-size: 0.97rem;
 }
 
-.home-plan-card p:last-of-type {
-  margin-bottom: 14px;
+.home-plan-usage-row {
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  background: #f8fafc;
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: grid;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.home-thinking-power {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--gray-600);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.home-thinking-power-info {
+  width: 16px;
+  height: 16px;
+  border: 1px solid rgba(22, 31, 59, 0.35);
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #161f3b;
+  cursor: help;
+  line-height: 1;
+}
+
+.home-plan-usage {
+  color: #161f3b;
+  font-size: 1.03rem;
+  font-weight: 700;
+}
+
+.home-plan-description {
+  margin-bottom: 14px !important;
+  min-height: 68px;
+}
+
+.home-plan-subcta {
+  margin-top: 10px !important;
+  font-size: 0.8rem !important;
+  color: var(--gray-500) !important;
+  line-height: 1.45;
 }
 
 .home-plan-link {
