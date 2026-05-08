@@ -25,6 +25,7 @@ from app.billing_config import (
     is_sales_only_plan,
     normalize_plan_key,
     reset_user_monthly_credits,
+    tokens_to_credits,
     to_public_plan,
     get_usage_meter_state,
 )
@@ -142,9 +143,23 @@ def list_plans():
 
 @billing_bp.route('/catalog', methods=['GET'])
 def get_billing_catalog():
-    plan_catalog = get_plan_catalog(current_app.config)
-    pack_catalog = get_overage_packs(current_app.config)
+    raw_plan_catalog = get_plan_catalog(current_app.config)
+    raw_pack_catalog = get_overage_packs(current_app.config)
     model_catalog = get_model_catalog(current_app.config)
+
+    plan_catalog = {}
+    for key, plan in (raw_plan_catalog or {}).items():
+        row = dict(plan or {})
+        monthly_tokens = row.get('monthly_credits')
+        row['monthly_credits'] = tokens_to_credits(monthly_tokens, precision=0) if monthly_tokens is not None else None
+        plan_catalog[key] = row
+
+    pack_catalog = {}
+    for key, pack in (raw_pack_catalog or {}).items():
+        row = dict(pack or {})
+        pack_tokens = row.get('credits')
+        row['credits'] = tokens_to_credits(pack_tokens, precision=0) if pack_tokens is not None else None
+        pack_catalog[key] = row
 
     return jsonify({
         'plans': plan_catalog,
@@ -185,8 +200,10 @@ def get_billing_status():
     usage_state = get_usage_meter_state(user, current_app.config)
     monthly_limit = usage_state.get('monthly_limit')
     cycle_limit = usage_state.get('cycle_limit')
-    credits_remaining = usage_state.get('remaining')
-    credits_used = usage_state.get('used')
+    tokens_remaining = usage_state.get('remaining')
+    tokens_used = usage_state.get('used')
+    credits_remaining = tokens_to_credits(tokens_remaining, precision=1)
+    credits_used = tokens_to_credits(tokens_used, precision=1)
     if admin_override:
         credits_used = 0
     allowed_model_types = get_allowed_model_types(plan_key, current_app.config)
@@ -208,7 +225,7 @@ def get_billing_status():
         tool['last_sync_at'] = settings.get('last_sync_at')
         tool['auto_sync'] = bool(settings.get('auto_sync', True))
         tool['external_workspace'] = settings.get('external_workspace') or ''
-    usage_meta = _usage_warning_fields(cycle_limit, credits_used)
+    usage_meta = _usage_warning_fields(cycle_limit, tokens_used)
 
     return jsonify({
         'plan_key': plan_key,
@@ -216,17 +233,14 @@ def get_billing_status():
         'is_admin': admin_override,
         'subscription_status': user.subscription_status,
         'credits_remaining': credits_remaining,
-        'monthly_credit_limit': monthly_limit,
+        'monthly_credit_limit': tokens_to_credits(monthly_limit, precision=0),
         'credits_used': credits_used,
-        'tokens_remaining_this_month': credits_remaining,
-        'monthly_token_limit': monthly_limit,
-        'tokens_used_this_month': credits_used,
         'usage_scope': usage_state.get('scope'),
-        'cycle_token_limit': cycle_limit,
+        'cycle_credit_limit': tokens_to_credits(cycle_limit, precision=0),
         'cycle_reset_at': usage_state.get('reset_at').isoformat() if usage_state.get('reset_at') else None,
-        'overage_tokens_this_cycle': usage_state.get('overage_tokens'),
-        'token_soft_stop_limit': None if cycle_limit is None else int(cycle_limit),
-        'token_block_limit': None if cycle_limit is None else int(math.floor(int(cycle_limit) * 1.05)),
+        'overage_credits_this_cycle': tokens_to_credits(usage_state.get('overage_tokens'), precision=0),
+        'credit_soft_stop_limit': tokens_to_credits(cycle_limit, precision=0),
+        'credit_block_limit': tokens_to_credits(None if cycle_limit is None else int(math.floor(int(cycle_limit) * 1.05)), precision=0),
         'allowed_model_types': allowed_model_types,
         'default_model_type': default_model_type,
         'context_budget': get_context_budget(plan_key),
@@ -433,7 +447,7 @@ def create_overage_checkout_session():
         metadata={
             'user_id': str(user.id),
             'pack_key': pack_key,
-            'credits': str(pack.get('credits', 0)),
+            'credits': str(int(tokens_to_credits(pack.get('credits', 0), precision=0) or 0)),
             'tokens': str(pack.get('credits', 0)),
             'checkout_type': 'overage_pack',
         },

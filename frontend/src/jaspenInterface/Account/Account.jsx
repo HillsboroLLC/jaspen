@@ -1758,14 +1758,21 @@ export default function Account() {
   const currentPlan = status?.plan_key || 'free';
   const plans = catalog?.plans || {};
   const packs = catalog?.overage_packs || {};
-  const remainingTokensValue = status?.tokens_remaining_this_month ?? status?.credits_remaining;
-  const monthlyLimitValue = status?.monthly_token_limit ?? status?.monthly_credit_limit;
+  const remainingTokensValue = status?.credits_remaining;
+  const monthlyLimitValue = status?.monthly_credit_limit;
   const creditsRemainingLabel = remainingTokensValue == null
     ? 'Contracted'
     : Number(remainingTokensValue || 0).toLocaleString();
   const monthlyLimitLabel = monthlyLimitValue == null
     ? 'Contracted'
     : Number(monthlyLimitValue || 0).toLocaleString();
+  const thinkingPowerPercentLabel = (() => {
+    const remaining = Number(remainingTokensValue);
+    const monthly = Number(monthlyLimitValue);
+    if (!Number.isFinite(remaining) || !Number.isFinite(monthly) || monthly <= 0) return 'Usage-based';
+    const pct = Math.max(0, Math.min(100, Math.round((Math.max(0, remaining) / monthly) * 100)));
+    return `${pct}% remaining`;
+  })();
   const modelTypes = catalog?.model_types || FALLBACK_MODEL_TYPES;
   const orderedModelTypes = MODEL_ORDER.map((key) => modelTypes?.[key]).filter(Boolean);
   const formatModelDisplayName = (model) => {
@@ -1783,7 +1790,7 @@ export default function Account() {
     { key: 'overview', label: 'Overview', icon: faChartLine },
     { key: 'plans', label: 'Plans', icon: faLayerGroup },
     { key: 'connectors', label: 'Connectors', icon: faPlug },
-    { key: 'packs', label: 'Token packs', icon: faBolt },
+    { key: 'packs', label: 'Credit packs', icon: faBolt },
     { key: 'security', label: 'Security', icon: faShieldHalved },
     { key: 'models', label: 'Models', icon: faLayerGroup },
     ...(isAdminUser ? [{ key: 'admin', label: 'System admin', icon: faGear }] : []),
@@ -1890,7 +1897,7 @@ export default function Account() {
             <p className="account-sidebar-footer-value">
               {monthlyLimitValue == null
                 ? 'Contracted pooled thinking power'
-                : `${Number(monthlyLimitValue || 0).toLocaleString()} token limit`}
+                : `${Number(monthlyLimitValue || 0).toLocaleString()} credit limit`}
             </p>
           </section>
           <section className="account-sidebar-footer-group">
@@ -1942,6 +1949,10 @@ export default function Account() {
             <span className="label">Monthly limit</span>
             <strong>{monthlyLimitLabel}</strong>
           </span>
+          <span className="account-status-chip">
+            <span className="label">Thinking power</span>
+            <strong>{thinkingPowerPercentLabel}</strong>
+          </span>
         </div>
 
         {message && <p className="account-message" role="status" aria-live="polite">{message}</p>}
@@ -1992,7 +2003,7 @@ export default function Account() {
                       ? 'Includes 3 seats · shared thinking power pool'
                       : (plan.monthly_credits == null)
                       ? 'Contracted pooled usage'
-                      : `${Number(plan.monthly_credits).toLocaleString()} tokens/month`}
+                      : `${Number(plan.monthly_credits).toLocaleString()} credits/month`}
                   </p>
                   <div className="account-plan-features">
                     <p className="account-plan-connectors">
@@ -2765,7 +2776,7 @@ export default function Account() {
 
         {activeTab === 'packs' && (
         <section className="account-section">
-          <h2 className="account-tab-title">One-time token packs</h2>
+          <h2 className="account-tab-title">One-time credit packs</h2>
           <div className="account-pack-grid">
             {PACK_ORDER.map((key) => {
               const pack = packs[key];
@@ -2774,7 +2785,7 @@ export default function Account() {
               return (
                 <article className="account-pack-card" key={key}>
                   <h3>{pack.label}</h3>
-                  <p>{Number(pack.credits || 0).toLocaleString()} one-time tokens</p>
+                  <p>{Number(pack.credits || 0).toLocaleString()} one-time credits</p>
                   <button
                     type="button"
                     className="account-primary-btn"

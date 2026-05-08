@@ -223,9 +223,9 @@ export default function AppMenu() {
   const showLockedConnectors = false;
 
 
-  const monthlyCreditLimit = billingStatus?.monthly_token_limit ?? billingStatus?.monthly_credit_limit;
-  const creditsRemaining = billingStatus?.tokens_remaining_this_month ?? billingStatus?.credits_remaining;
-  const monthlyCreditsUsed = billingStatus?.tokens_used_this_month ?? billingStatus?.credits_used;
+  const monthlyCreditLimit = billingStatus?.monthly_credit_limit;
+  const creditsRemaining = billingStatus?.credits_remaining;
+  const monthlyCreditsUsed = billingStatus?.credits_used;
 
   const resolvedMonthlyCreditsUsed = useMemo(() => {
     const direct = Number(monthlyCreditsUsed);
@@ -729,13 +729,14 @@ export default function AppMenu() {
                   </strong>
                 </div>
               </div>
+              <p className="jas-ud-usage-note">Thinking power remaining: {creditsBadge}</p>
               <p className="jas-ud-usage-note">
-                Monthly limit: {Number(monthlyCreditLimit || 0).toLocaleString()} tokens on {currentPlanLabel}.
+                Monthly limit: {Number(monthlyCreditLimit || 0).toLocaleString()} credits on {currentPlanLabel}.
               </p>
               <p className="jas-ud-usage-note">Resets: {usageResetLabel}</p>
               <p className="jas-ud-usage-note">Current plan: {currentPlanLabel}</p>
               <div className="jas-ud-usage-actions">
-                <button type="button" className="jas-account-action-link" onClick={() => navigate('/account?tab=billing')}>Add tokens</button>
+                <button type="button" className="jas-account-action-link" onClick={() => navigate('/account?tab=billing')}>Add credits</button>
                 <button type="button" className="jas-account-action-link" onClick={() => navigate('/account?tab=plans')}>Upgrade plan</button>
               </div>
             </>
@@ -841,7 +842,7 @@ export default function AppMenu() {
                   <p className="detail">
                     {plan.monthly_credits == null
                       ? 'Contracted pooled thinking power'
-                      : `${Number(plan.monthly_credits).toLocaleString()} tokens/month`}
+                      : `${Number(plan.monthly_credits).toLocaleString()} credits/month`}
                   </p>
                   <p className="detail jas-account-plan-connectors">
                     Connectors: {getPlanConnectorSentence(key)}

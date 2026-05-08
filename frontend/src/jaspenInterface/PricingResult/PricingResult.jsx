@@ -28,7 +28,7 @@ export default function PricingResult() {
             <>
               {session?.metadata?.checkout_type === 'overage_pack' ? (
                 <p>
-                  Tokens added: <strong>{Number(session?.metadata?.tokens || session?.metadata?.credits || 0).toLocaleString()}</strong>
+                  Credits added: <strong>{Number(session?.metadata?.credits || 0).toLocaleString()}</strong>
                 </p>
               ) : (
                 <p>

@@ -277,7 +277,7 @@ async function parseErrorResponse(resp) {
       err.retryAfterSeconds = retryAfterSeconds;
       err.retryAfterHuman = formatRetryAfter(retryAfterSeconds);
       if (err.retryAfterHuman) {
-        err.message = `You've hit a temporary request limit. Please try again in about ${err.retryAfterHuman}. If you need higher throughput, you can upgrade your plan or add tokens from Account.`;
+        err.message = `You've hit a temporary request limit. Please try again in about ${err.retryAfterHuman}. If you need higher throughput, you can upgrade your plan or add credits from Account.`;
       }
     }
     throw err;

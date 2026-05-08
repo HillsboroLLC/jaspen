@@ -76,17 +76,17 @@ DEFAULT_PLAN_CATALOG = {
 
 DEFAULT_OVERAGE_PACKS = {
     'pack_1000': {
-        'label': '3,000,000 tokens',
+        'label': '3,000 credits',
         'credits': 3_000_000,
         'price_usd': 10,
     },
     'pack_5000': {
-        'label': '8,000,000 tokens',
+        'label': '8,000 credits',
         'credits': 8_000_000,
         'price_usd': 25,
     },
     'pack_20000': {
-        'label': '18,000,000 tokens',
+        'label': '18,000 credits',
         'credits': 18_000_000,
         'price_usd': 50,
     },
@@ -94,6 +94,7 @@ DEFAULT_OVERAGE_PACKS = {
 
 SHARED_POOL_PLANS = {'team', 'enterprise'}
 SOFT_STOP_GRACE_MULTIPLIER = 1.05
+TOKENS_PER_CREDIT = 1000
 
 MODEL_TYPE_ALIASES = {
     'pluto-1': 'pluto',
@@ -207,6 +208,31 @@ def get_monthly_credit_limit(plan_key, app_config):
     plan_key = normalize_plan_key(plan_key)
     catalog = get_plan_catalog(app_config)
     return (catalog.get(plan_key) or {}).get('monthly_credits')
+
+
+def tokens_to_credits(token_value, *, precision=1):
+    if token_value is None:
+        return None
+    try:
+        credits = float(token_value) / float(TOKENS_PER_CREDIT)
+    except Exception:
+        return None
+    if precision is None:
+        return credits
+    precision = int(precision)
+    rounded = round(credits, precision)
+    if precision <= 0:
+        return int(rounded)
+    return rounded
+
+
+def credits_to_tokens(credit_value):
+    if credit_value is None:
+        return None
+    try:
+        return int(round(float(credit_value) * float(TOKENS_PER_CREDIT)))
+    except Exception:
+        return None
 
 
 def _coerce_non_negative_int(value, default=0):

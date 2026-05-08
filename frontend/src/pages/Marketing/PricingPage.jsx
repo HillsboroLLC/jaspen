@@ -11,36 +11,36 @@ const FALLBACK_PLANS = [
     plan_key: 'free',
     label: 'Free',
     price: '$0',
-    detail: '1,000,000 tokens/month for individual exploration and light usage.',
+    detail: 'Unlock exploration · 1,000 credits/month · ~10–20 decisions.',
     sales_only: false,
   },
   {
     plan_key: 'essential',
     label: 'Essential',
     price: '$20 / month',
-    detail: '7,000,000 tokens/month for individual daily execution workflows.',
+    detail: 'Onboard your strategy partner · 7,000 credits/month · ~100–200 decisions.',
     sales_only: false,
   },
   {
     plan_key: 'team',
     label: 'Team',
     price: '$129 / month',
-    detail: '29,000,000 shared tokens/month. Includes 3 seats, +$25 per additional seat.',
+    detail: 'Empower your team with shared execution power · 29,000 shared credits/month · ~500–800 decisions.',
     sales_only: false,
   },
   {
     plan_key: 'enterprise',
     label: 'Enterprise',
     price: '$299 / month',
-    detail: '80,000,000 shared tokens/month. Includes 5 seats + 1 admin, +$30 per additional seat.',
+    detail: 'Scale decision-making across your organization · 80,000 shared credits/month · 1,500+ decisions.',
     sales_only: false,
   },
 ];
 
 const FALLBACK_PACKS = [
-  { pack_key: 'pack_1000', label: '3,000,000 tokens', price_usd: 10, credits: 3000000 },
-  { pack_key: 'pack_5000', label: '8,000,000 tokens', price_usd: 25, credits: 8000000 },
-  { pack_key: 'pack_20000', label: '18,000,000 tokens', price_usd: 50, credits: 18000000 },
+  { pack_key: 'pack_1000', label: '3,000 credits', price_usd: 10, credits: 3000 },
+  { pack_key: 'pack_5000', label: '8,000 credits', price_usd: 25, credits: 8000 },
+  { pack_key: 'pack_20000', label: '18,000 credits', price_usd: 50, credits: 18000 },
 ];
 
 const FALLBACK_MODEL_TYPES = {
@@ -98,7 +98,7 @@ export default function PricingPage() {
                   : 'Custom',
               detail:
                 plan.monthly_credits != null
-                  ? `${plan.monthly_credits.toLocaleString()} tokens/month. ${plan.description}`
+                  ? `${plan.monthly_credits.toLocaleString()} credits/month. ${plan.description}`
                   : plan.description,
               sales_only: !!plan.sales_only,
             }));
@@ -246,14 +246,14 @@ export default function PricingPage() {
           <h1>Clear pricing from individual use to enterprise rollout</h1>
           <p>
             Start free, upgrade to Essential at $20, and scale with Team or Enterprise through sales-led rollout.
-            Need more usage? Add thinking power token packs as needed.
+            Need more usage? Add thinking power credit packs as needed.
           </p>
         </div>
         <div className="hero-abstract pricing-abstract">
-          <div className="floating-price">Free 1M tokens</div>
-          <div className="floating-price">Essential 7M tokens</div>
-          <div className="floating-price">Team 29M shared</div>
-          <div className="floating-price">Enterprise 80M shared</div>
+          <div className="floating-price">Free 1,000 credits</div>
+          <div className="floating-price">Essential 7,000 credits</div>
+          <div className="floating-price">Team 29,000 shared</div>
+          <div className="floating-price">Enterprise 80,000 shared</div>
         </div>
       </section>
 
@@ -270,10 +270,10 @@ export default function PricingPage() {
           <article className="marketing-card pricing-summary">
             <h3>Usage policy</h3>
             <ul className="pricing-checks">
-              <li>Free: 1,000,000 tokens/month</li>
-              <li>Essential: 7,000,000 tokens/month</li>
-              <li>Team: 29,000,000 shared tokens/month + seat pricing</li>
-              <li>Enterprise: 80,000,000 shared tokens/month + Titan access</li>
+              <li>Free: 1,000 credits/month</li>
+              <li>Essential: 7,000 credits/month</li>
+              <li>Team: 29,000 shared credits/month + seat pricing</li>
+              <li>Enterprise: 80,000 shared credits/month + Titan access</li>
             </ul>
           </article>
         </div>
@@ -358,7 +358,7 @@ export default function PricingPage() {
       </section>
 
       <section id="api" className="marketing-section">
-        <h2>One-time token packs</h2>
+        <h2>One-time credit packs</h2>
         {isLoggedIn ? (
           <>
             <p className="pricing-pack-copy">
@@ -371,17 +371,17 @@ export default function PricingPage() {
                 return (
                   <article key={pack.pack_key} className="marketing-card pricing-plan-card pricing-pack-card">
                     <div className="pricing-plan-head">
-                      <h3>{pack.label || `${pack.credits?.toLocaleString()} tokens`}</h3>
+                      <h3>{pack.label || `${pack.credits?.toLocaleString()} credits`}</h3>
                       <span className="plan-price">${Number.isFinite(price) ? price : pack.price_usd}</span>
                     </div>
-                    <p>{(pack.credits || 0).toLocaleString()} one-time tokens added to this cycle.</p>
+                    <p>{(pack.credits || 0).toLocaleString()} one-time credits added to this cycle.</p>
                     <button
                       type="button"
                       className="pricing-cta-button"
                       onClick={() => buyOveragePack(pack.pack_key)}
                       disabled={loading} aria-disabled={loading}
                     >
-                      {loading ? 'Redirecting...' : 'Buy token pack'}
+                      {loading ? 'Redirecting...' : 'Buy credit pack'}
                     </button>
                   </article>
                 );

@@ -33,6 +33,7 @@ from app.billing_config import (
     get_model_catalog,
     get_usage_meter_state,
     normalize_model_type,
+    tokens_to_credits,
     to_public_plan,
 )
 from app.connector_monitor import check_connector_health, generate_connector_insights
@@ -3267,23 +3268,21 @@ def _max_output_tokens_for_plan(plan_key):
 
 def _insufficient_credits_payload(user, required_credits):
     usage_state = get_usage_meter_state(user, current_app.config)
-    remaining = usage_state.get("remaining")
+    remaining_tokens = usage_state.get("remaining")
+    remaining_credits = tokens_to_credits(remaining_tokens, precision=1)
     reset_at = usage_state.get("reset_at")
     return {
-        "error": "You've reached your monthly thinking power. Add tokens, upgrade, or wait for your reset.",
+        "error": "You've reached your monthly thinking power. Add credits, upgrade, or wait for your reset.",
         "code": "thinking_power_exhausted",
         "legacy_code": "credits_exhausted",
         "upgrade_url": "/account?tab=billing",
-        "required_credits": int(required_credits or 0),
-        "required_tokens": int(required_credits or 0),
-        "credits_remaining": remaining,
-        "tokens_remaining_this_month": remaining,
+        "required_credits": tokens_to_credits(int(required_credits or 0), precision=1),
+        "credits_remaining": remaining_credits,
         "plan_key": to_public_plan(user.subscription_plan),
-        "monthly_credit_limit": usage_state.get("monthly_limit"),
-        "monthly_token_limit": usage_state.get("monthly_limit"),
-        "cycle_token_limit": usage_state.get("cycle_limit"),
+        "monthly_credit_limit": tokens_to_credits(usage_state.get("monthly_limit"), precision=0),
+        "cycle_credit_limit": tokens_to_credits(usage_state.get("cycle_limit"), precision=0),
         "cycle_reset_at": reset_at.isoformat() if reset_at else None,
-        "suggestion": "Add tokens, upgrade your plan, or continue after reset.",
+        "suggestion": "Add credits, upgrade your plan, or continue after reset.",
     }
 
 
@@ -5741,16 +5740,11 @@ def _public_usage_payload(usage, *, model_type=None, credits_charged=None, credi
     payload = {
         "model_type": normalized_model_type,
         "model_label": _model_label_for_type(normalized_model_type),
-        "input_tokens": int(usage.get("input_tokens") or 0),
-        "output_tokens": int(usage.get("output_tokens") or 0),
-        "total_tokens": int(usage.get("total_tokens") or 0),
     }
     if credits_charged is not None:
-        payload["credits_charged"] = int(credits_charged or 0)
-        payload["tokens_charged"] = int(credits_charged or 0)
+        payload["credits_charged"] = tokens_to_credits(int(credits_charged or 0), precision=1)
     if credits_remaining is not None:
-        payload["credits_remaining"] = None if credits_remaining is None else int(credits_remaining or 0)
-        payload["tokens_remaining_this_month"] = None if credits_remaining is None else int(credits_remaining or 0)
+        payload["credits_remaining"] = tokens_to_credits(int(credits_remaining or 0), precision=1)
     failover = usage.get("failover")
     if isinstance(failover, dict):
         attempted = failover.get("attempted_providers")
@@ -5765,11 +5759,7 @@ def _public_usage_summary_payload(summary, *, fallback_model_type=None):
     return {
         "model_type": model_type,
         "model_label": _model_label_for_type(model_type),
-        "input_tokens": int(summary.get("input_tokens") or 0),
-        "output_tokens": int(summary.get("output_tokens") or 0),
-        "total_tokens": int(summary.get("total_tokens") or 0),
-        "credits_charged": charged,
-        "tokens_charged": charged,
+        "credits_charged": tokens_to_credits(charged, precision=1),
         "events": int(summary.get("events") or 0),
     }
 
@@ -5785,14 +5775,17 @@ def _public_usage_events_payload(events, *, fallback_model_type=None):
             "timestamp": item.get("timestamp"),
             "model_type": model_type,
             "model_label": _model_label_for_type(model_type),
-            "input_tokens": int(item.get("input_tokens") or 0),
-            "output_tokens": int(item.get("output_tokens") or 0),
-            "total_tokens": int(item.get("total_tokens") or 0),
-            "credits_charged": int(item.get("credits_charged") or 0),
-            "tokens_charged": int(item.get("credits_charged") or 0),
+            "credits_charged": tokens_to_credits(int(item.get("credits_charged") or 0), precision=1),
             "failover_attempted": bool(item.get("failover")),
         })
     return out
+
+
+def _public_credits_payload(*, charged=None, remaining=None):
+    return {
+        "charged": tokens_to_credits(charged, precision=1),
+        "remaining": tokens_to_credits(remaining, precision=1),
+    }
 
 
 def _sanitize_user_visible_payload(payload, *, fallback_model_type=None):
@@ -7114,10 +7107,7 @@ def conversation_start():
                 credits_remaining=user.credits_remaining,
             ),
             "context_budget": get_context_budget(to_public_plan(user.subscription_plan)),
-            "credits": {
-                "charged": 0,
-                "remaining": user.credits_remaining,
-            },
+            "credits": _public_credits_payload(charged=0, remaining=user.credits_remaining),
             "readiness": {
                 "percent": ((current_readiness.get("overall") or {}).get("percent")) if isinstance(current_readiness, dict) else 0,
                 "categories": current_readiness.get("categories", []) if isinstance(current_readiness, dict) else [],
@@ -7191,10 +7181,7 @@ def conversation_start():
                 credits_remaining=user.credits_remaining,
             ),
             "context_budget": get_context_budget(to_public_plan(user.subscription_plan)),
-            "credits": {
-                "charged": 0,
-                "remaining": user.credits_remaining,
-            },
+            "credits": _public_credits_payload(charged=0, remaining=user.credits_remaining),
             "readiness": {
                 "percent": readiness["overall"]["percent"],
                 "categories": readiness["categories"],
@@ -7362,10 +7349,7 @@ def conversation_start():
                         credits_remaining=remaining,
                     ),
                     "context_budget": context_budget,
-                    "credits": {
-                        "charged": credits_charged,
-                        "remaining": remaining,
-                    },
+                    "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
                     "readiness": {
                         "percent": final_readiness["overall"]["percent"],
                         "categories": final_readiness["categories"],
@@ -7492,10 +7476,7 @@ def conversation_start():
             credits_remaining=remaining,
         ),
         "context_budget": context_budget,
-        "credits": {
-            "charged": credits_charged,
-            "remaining": remaining,
-        },
+        "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
         "readiness": {
             "percent": final_readiness_non_stream["overall"]["percent"],
             "categories": final_readiness_non_stream["categories"],
@@ -7676,10 +7657,7 @@ def conversation_continue():
                 credits_remaining=user.credits_remaining,
             ),
             "context_budget": get_context_budget(to_public_plan(user.subscription_plan)),
-            "credits": {
-                "charged": 0,
-                "remaining": user.credits_remaining,
-            },
+            "credits": _public_credits_payload(charged=0, remaining=user.credits_remaining),
             "readiness": {
                 "percent": ((current_readiness.get("overall") or {}).get("percent")) if isinstance(current_readiness, dict) else 0,
                 "categories": current_readiness.get("categories", []) if isinstance(current_readiness, dict) else [],
@@ -7738,10 +7716,7 @@ def conversation_continue():
                 credits_remaining=user.credits_remaining,
             ),
             "context_budget": get_context_budget(to_public_plan(user.subscription_plan)),
-            "credits": {
-                "charged": 0,
-                "remaining": user.credits_remaining,
-            },
+            "credits": _public_credits_payload(charged=0, remaining=user.credits_remaining),
             "readiness": {
                 "percent": readiness["overall"]["percent"],
                 "categories": readiness["categories"],
@@ -7908,10 +7883,7 @@ def conversation_continue():
                         credits_remaining=remaining,
                     ),
                     "context_budget": context_budget,
-                    "credits": {
-                        "charged": credits_charged,
-                        "remaining": remaining,
-                    },
+                    "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
                     "readiness": {
                         "percent": final_readiness["overall"]["percent"],
                         "categories": final_readiness["categories"],
@@ -8037,10 +8009,7 @@ def conversation_continue():
             credits_remaining=remaining,
         ),
         "context_budget": context_budget,
-        "credits": {
-            "charged": credits_charged,
-            "remaining": remaining,
-        },
+        "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
         "readiness": {
             "percent": final_readiness_non_stream["overall"]["percent"],
             "categories": final_readiness_non_stream["categories"],
@@ -8979,7 +8948,7 @@ def conversation_regenerate():
                         credits_remaining=remaining,
                     ),
                     "context_budget": context_budget,
-                    "credits": {"charged": credits_charged, "remaining": remaining},
+                    "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
                     "readiness": {
                         "percent": final_readiness["overall"]["percent"],
                         "categories": final_readiness["categories"],
@@ -9091,7 +9060,7 @@ def conversation_regenerate():
             credits_remaining=remaining,
         ),
         "context_budget": context_budget,
-        "credits": {"charged": credits_charged, "remaining": remaining},
+        "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
         "readiness": {
             "percent": final_readiness["overall"]["percent"],
             "categories": final_readiness["categories"],
@@ -9372,7 +9341,7 @@ def rank_batch_ideas(batch_id):
             credits_charged=credits_charged,
             credits_remaining=remaining,
         ),
-        "credits": {"charged": credits_charged, "remaining": remaining},
+        "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
     }
     _save_batch_state(
         batch,
@@ -9533,7 +9502,7 @@ def clarify_batch_idea(batch_id, idea_id):
             credits_charged=credits_charged,
             credits_remaining=remaining,
         ),
-        "credits": {"charged": credits_charged, "remaining": remaining},
+        "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
     }
     _save_batch_state(batch, ideas=ideas, ranking_result=ranking_record, status="clarifying")
     db.session.commit()
@@ -9558,7 +9527,7 @@ def clarify_batch_idea(batch_id, idea_id):
             credits_charged=credits_charged,
             credits_remaining=remaining,
         ),
-        "credits": {"charged": credits_charged, "remaining": remaining},
+        "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
         "status": batch.status,
     }), 200
 
@@ -9658,10 +9627,10 @@ def promote_batch_idea(batch_id, idea_id):
         "thread_id": promoted["thread_id"],
         "analysis_id": promoted["analysis_id"],
         "project_name": promoted["project_name"],
-        "credits": {
-            "charged": promoted["credits_charged"],
-            "remaining": promoted["credits_remaining"],
-        },
+        "credits": _public_credits_payload(
+            charged=promoted["credits_charged"],
+            remaining=promoted["credits_remaining"],
+        ),
         "status": batch.status,
     }), 200
 

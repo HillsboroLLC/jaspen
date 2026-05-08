@@ -2560,9 +2560,9 @@ useEffect(() => {
   const connectorsManagePath = adminWorkspacePreviewPlan
     ? `/connectors-manage?admin_preview=workspace&plan_key=${encodeURIComponent(adminWorkspacePreviewPlan)}${adminPreviewRole ? `&role=${encodeURIComponent(adminPreviewRole)}` : ''}`
     : '/connectors-manage';
-  const monthlyCreditLimit = billingStatus?.monthly_token_limit ?? billingStatus?.monthly_credit_limit;
-  const creditsRemaining = billingStatus?.tokens_remaining_this_month ?? billingStatus?.credits_remaining;
-  const monthlyCreditsUsed = billingStatus?.tokens_used_this_month ?? billingStatus?.credits_used;
+  const monthlyCreditLimit = billingStatus?.monthly_credit_limit;
+  const creditsRemaining = billingStatus?.credits_remaining;
+  const monthlyCreditsUsed = billingStatus?.credits_used;
   const usageWarningLevel = String(billingStatus?.usage_warning_level || 'normal').toLowerCase();
   const hideThinkingPowerMeter = Boolean(user?.ui_preferences?.hide_thinking_power_meter);
   const resolvedMonthlyCreditsUsed = useMemo(() => {
@@ -2633,13 +2633,13 @@ useEffect(() => {
           ? 'Thinking power usage is blocked'
           : 'Thinking power is running low';
   const lowCreditsBody = usageWarningLevel === 'warning'
-    ? 'You’re using your thinking power quickly. Add tokens, upgrade, or continue until your reset.'
+    ? 'You’re using your thinking power quickly. Add credits, upgrade, or continue until your reset.'
     : usageWarningLevel === 'urgent'
-      ? 'You’re almost out of thinking power. Add tokens now to keep working without interruption.'
+      ? 'You’re almost out of thinking power. Add credits now to keep working without interruption.'
       : usageWarningLevel === 'exhausted'
-        ? `You’ve reached your monthly thinking power. Add tokens, upgrade, or wait until your reset on ${formatSmartDate(billingStatus?.cycle_reset_at)}.`
+        ? `You’ve reached your monthly thinking power. Add credits, upgrade, or wait until your reset on ${formatSmartDate(billingStatus?.cycle_reset_at)}.`
         : usageWarningLevel === 'blocked'
-          ? 'You have exceeded 105% of monthly thinking power. Add tokens or upgrade to continue.'
+          ? 'You have exceeded 105% of monthly thinking power. Add credits or upgrade to continue.'
           : 'Review thinking power usage in billing.';
   const toggleThinkingPowerMeter = useCallback(async () => {
     if (typeof updateUiPreferences !== 'function') return;
@@ -3031,17 +3031,17 @@ useEffect(() => {
   const syncCreditsFromPayload = useCallback((payload, { refresh = false } = {}) => {
     if (adminWorkspacePreviewPlan) return;
     const remainingCandidates = [
-      payload?.tokens?.remaining,
-      payload?.tokens_remaining_this_month,
       payload?.credits?.remaining,
       payload?.credits_remaining,
       payload?.remaining_credits,
       payload?.analysis?.meta?.credits_remaining,
+      payload?.tokens?.remaining,
+      payload?.tokens_remaining_this_month,
     ];
     const limitCandidates = [
-      payload?.monthly_token_limit,
       payload?.monthly_credit_limit,
       payload?.credits?.monthly_limit,
+      payload?.monthly_token_limit,
     ];
 
     const remaining = remainingCandidates.find((value) => Number.isFinite(Number(value)));
@@ -3368,7 +3368,7 @@ useEffect(() => {
             <article className="jas-account-summary-card">
               <p className="label">Monthly limit</p>
               <p className="value">
-                {monthlyCreditLimit == null ? 'Contracted' : `${Number(monthlyCreditLimit).toLocaleString()} tokens`}
+                {monthlyCreditLimit == null ? 'Contracted' : `${Number(monthlyCreditLimit).toLocaleString()} credits`}
               </p>
             </article>
           </div>
@@ -3390,7 +3390,7 @@ useEffect(() => {
                   <p className="detail">
                     {plan.monthly_credits == null
                       ? 'Contracted pooled thinking power'
-                      : `${Number(plan.monthly_credits).toLocaleString()} tokens/month`}
+                      : `${Number(plan.monthly_credits).toLocaleString()} credits/month`}
                   </p>
                   <p className="detail jas-account-plan-connectors">
                     Connectors: {getPlanConnectorSentence(key)}
@@ -3842,14 +3842,15 @@ useEffect(() => {
                   <strong>{Number(creditsRemaining || 0).toLocaleString()}</strong>
                 </div>
               </div>
+              <p className="jas-ud-usage-note">Thinking power remaining: {intakeCreditsCompactLabel}</p>
               <p className="jas-ud-usage-note">
-                Monthly limit: {Number(monthlyCreditLimit || 0).toLocaleString()} tokens on {currentPlanLabel}.
+                Monthly limit: {Number(monthlyCreditLimit || 0).toLocaleString()} credits on {currentPlanLabel}.
               </p>
               <p className="jas-ud-usage-note">Resets: {formatSmartDate(billingStatus?.cycle_reset_at)}</p>
               <p className="jas-ud-usage-note">Current plan: {currentPlanLabel}</p>
               <div className="jas-account-actions">
                 <button type="button" className="jas-account-plan-cta" onClick={() => navigate('/account?tab=billing')}>
-                  Add tokens
+                  Add credits
                 </button>
                 <button type="button" className="jas-account-plan-cta jas-account-plan-cta-secondary" onClick={() => navigate('/account?tab=plans')}>
                   Upgrade plan
@@ -3894,20 +3895,20 @@ useEffect(() => {
               </div>
               <div className="jas-ud-usage-grid">
                 <div className="jas-ud-usage-stat">
-                  <span>Total tokens</span>
-                  <strong>{Number(threadUsage?.usage_summary?.total_tokens || 0).toLocaleString()}</strong>
-                </div>
-                <div className="jas-ud-usage-stat">
                   <span>Thinking power used</span>
-                  <strong>{Number(threadUsage?.usage_summary?.tokens_charged || threadUsage?.usage_summary?.credits_charged || 0).toLocaleString()}</strong>
+                  <strong>{Number(threadUsage?.usage_summary?.credits_charged || 0).toLocaleString()}</strong>
                 </div>
                 <div className="jas-ud-usage-stat">
-                  <span>Input tokens</span>
-                  <strong>{Number(threadUsage?.usage_summary?.input_tokens || 0).toLocaleString()}</strong>
+                  <span>Interactions</span>
+                  <strong>{Number(threadUsage?.usage_summary?.events || 0).toLocaleString()}</strong>
                 </div>
                 <div className="jas-ud-usage-stat">
-                  <span>Output tokens</span>
-                  <strong>{Number(threadUsage?.usage_summary?.output_tokens || 0).toLocaleString()}</strong>
+                  <span>Model</span>
+                  <strong>{String(threadUsage?.usage_summary?.model_label || selectedModelOption?.label || 'Pluto')}</strong>
+                </div>
+                <div className="jas-ud-usage-stat">
+                  <span>Latest remaining</span>
+                  <strong>{creditsRemaining == null ? 'Contracted' : Number(creditsRemaining || 0).toLocaleString()}</strong>
                 </div>
               </div>
               {Array.isArray(threadUsage?.usage_events) && threadUsage.usage_events.length > 0 && (
@@ -3915,8 +3916,8 @@ useEffect(() => {
                   {threadUsage.usage_events.slice(-4).reverse().map((event, idx) => (
                     <div key={`${event?.timestamp || 'usage'}-${idx}`} className="jas-ud-usage-event">
                       <span>{new Date(event?.timestamp || Date.now()).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
-                      <span>{Number(event?.total_tokens || 0).toLocaleString()} tok</span>
-                      <span>{Number(event?.tokens_charged || event?.credits_charged || 0).toLocaleString()} tokens</span>
+                      <span>{String(event?.model_label || 'Model')}</span>
+                      <span>{Number(event?.credits_charged || 0).toLocaleString()} credits</span>
                     </div>
                   ))}
                 </div>
@@ -9611,7 +9612,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                     className="jas-low-credits-banner-link"
                     onClick={() => navigate('/account?tab=billing')}
                   >
-                    Add tokens
+                    Add credits
                   </button>
                   <button
                     type="button"
