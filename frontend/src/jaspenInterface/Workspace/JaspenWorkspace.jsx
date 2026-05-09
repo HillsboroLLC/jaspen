@@ -2547,7 +2547,7 @@ useEffect(() => {
   );
   const canEditExecutionDependencies = canEditExecutionStructure;
   const showRealTeam = !isPlatformAdmin && effectiveCanManageOrg;
-  const showLockedTeam = previewPlanCategory === 'individual' && (!isPlatformAdmin || customerPreviewActive);
+  const showLockedTeam = !showRealTeam && previewPlanCategory === 'individual' && (!isPlatformAdmin || customerPreviewActive);
   const showRealDashboard = previewPlanCategory !== 'individual' || (isPlatformAdmin && !customerPreviewActive);
   const showLockedDashboard = previewPlanCategory === 'individual' && (!isPlatformAdmin || customerPreviewActive);
   const showRealInsights = (isPlatformAdmin && !customerPreviewActive) || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.team;
