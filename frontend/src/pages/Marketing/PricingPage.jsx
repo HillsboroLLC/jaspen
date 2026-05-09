@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import MarketingPageLayout from './MarketingPageLayout';
 import { API_BASE } from '../../config/apiBase';
 import { useAuth } from '../../shared/auth/AuthContext';
@@ -17,22 +17,22 @@ const FALLBACK_PLANS = [
   {
     plan_key: 'essential',
     label: 'Essential',
-    price: '$20 / month',
-    detail: 'Onboard your strategy partner · 7,000 credits/month · ~100–200 decisions.',
+    price: '$39 / month',
+    detail: 'Turn ideas into clear decisions and walk away with execution plans · 7,000 credits/month.',
     sales_only: false,
   },
   {
     plan_key: 'team',
     label: 'Team',
     price: '$129 / month',
-    detail: 'Empower your team with shared execution power · 29,000 shared credits/month · ~500–800 decisions.',
+    detail: 'Align your team, pressure-test decisions, and execute with clarity · 29,000 shared credits/month.',
     sales_only: false,
   },
   {
     plan_key: 'enterprise',
     label: 'Enterprise',
-    price: '$299 / month',
-    detail: 'Scale decision-making across your organization · 80,000 shared credits/month · 1,500+ decisions.',
+    price: '$299 / month+',
+    detail: 'Bring structure, speed, and consistency to how your business operates · 80,000 shared credits/month.',
     sales_only: false,
   },
 ];
@@ -76,6 +76,7 @@ export default function PricingPage() {
   const [modelTypes, setModelTypes] = useState(FALLBACK_MODEL_TYPES);
   const [pendingKey, setPendingKey] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
+  const autoCheckoutFiredRef = useRef(false);
 
   useEffect(() => {
     fetch(`${API_BASE}/api/v1/billing/catalog`)
@@ -121,6 +122,27 @@ export default function PricingPage() {
         // Keep fallback content if catalog fetch fails.
       });
   }, []);
+
+  // Auto-start checkout if user arrived with ?plan=essential (frictionless flow)
+  useEffect(() => {
+    if (loading || !user || autoCheckoutFiredRef.current) return;
+    const params = new URLSearchParams(window.location.search || '');
+    const planParam = (params.get('plan') || params.get('plan_key') || '').trim().toLowerCase();
+    if (!planParam || planParam === 'free') return;
+    autoCheckoutFiredRef.current = true;
+    // Remove the param from the URL so a refresh doesn't re-trigger
+    params.delete('plan');
+    params.delete('plan_key');
+    const newSearch = params.toString();
+    window.history.replaceState(
+      {},
+      document.title,
+      `${window.location.pathname}${newSearch ? `?${newSearch}` : ''}#plans`,
+    );
+    // Small delay so the page renders before redirecting to Stripe
+    setTimeout(() => beginCheckout(planParam), 400);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, user]);
 
   const planByKey = useMemo(
     () => plans.reduce((acc, plan) => ({ ...acc, [plan.plan_key]: plan }), {}),
@@ -246,7 +268,7 @@ export default function PricingPage() {
           <p className="hero-kicker">Pricing</p>
           <h1>Clear pricing from individual use to enterprise rollout</h1>
           <p>
-            Start free, upgrade to Essential at $20, and scale with Team or Enterprise through sales-led rollout.
+            Start free, upgrade to Essential at $39/month, and scale with Team or Enterprise.
             Need more usage? Add thinking power credit packs as needed.
           </p>
         </div>
@@ -264,7 +286,7 @@ export default function PricingPage() {
           <article className="marketing-card pricing-highlight">
             <h3>Structured for modern AI-agent adoption</h3>
             <p>
-              Free gets users started. Essential supports everyday use at $20/month. Team and Enterprise are
+              Free gets users started. Essential supports everyday use at $39/month. Team and Enterprise add
               pooled thinking power, governance, and rollout control.
             </p>
           </article>
@@ -301,9 +323,18 @@ export default function PricingPage() {
                 </div>
                 <p>{plan.detail}</p>
                 {plan.sales_only ? (
-                  <a className="pricing-cta-link" href="/login">Talk to sales</a>
+                  <a className="pricing-cta-link" href="/pages/pricing#plans">Talk to sales</a>
                 ) : !isLoggedIn ? (
-                  <span className="pricing-cta-muted">Sign in to manage this plan</span>
+                  <a
+                    className="pricing-cta-button"
+                    href={
+                      isFree
+                        ? '/?auth=1'
+                        : `/?auth=1&plan=${plan.plan_key}`
+                    }
+                  >
+                    {isFree ? 'Start for free' : `Get ${plan.label}`}
+                  </a>
                 ) : (
                   <button
                     type="button"
@@ -315,7 +346,7 @@ export default function PricingPage() {
                       ? 'Redirecting...'
                       : isFree
                       ? 'Stay on Free'
-                      : 'Upgrade to Essential'}
+                      : `Get ${plan.label}`}
                   </button>
                 )}
               </article>
@@ -424,8 +455,8 @@ export default function PricingPage() {
           <article className="lydia-content">
             <h3>Upgrade path</h3>
             <p>
-              Start with individual usage, move to Essential as volume grows, then shift to Team or Enterprise when
-              governance and shared deployment requirements appear.
+              Start free, upgrade to Essential ($39/month) as volume grows, then move to Team or Enterprise when
+              governance, shared thinking power, and cross-functional deployment become the priority.
             </p>
           </article>
         </div>

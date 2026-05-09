@@ -103,10 +103,23 @@ export default function StrategyAccessCard() {
           ? 'strategy-card-disclaimer is-success'
       : 'strategy-card-disclaimer';
 
+  /** Determine where to redirect after successful auth. */
+  const getPostAuthRedirect = () => {
+    try {
+      const current = new URLSearchParams(window.location.search || '');
+      const planKey = (current.get('plan') || current.get('plan_key') || '').trim().toLowerCase();
+      if (planKey && planKey !== 'free') {
+        return `/pages/pricing?plan=${encodeURIComponent(planKey)}#plans`;
+      }
+    } catch (e) { /* ignore */ }
+    return '/new';
+  };
+
   const handleGoogleClick = () => {
     setAuthError('');
     setAuthErrorDetail('');
-    const params = new URLSearchParams({ next: '/new' });
+    const redirect = getPostAuthRedirect();
+    const params = new URLSearchParams({ next: redirect });
     try {
       const current = new URLSearchParams(window.location.search || '');
       const referralCode = current.get('referral_code') || current.get('invite_code') || current.get('ref') || current.get('invite');
@@ -181,7 +194,7 @@ export default function StrategyAccessCard() {
 
       if (loginAttempt?.success) {
         setAuthStatus('sent');
-        window.location.href = '/new';
+        window.location.href = getPostAuthRedirect();
         return;
       }
 
@@ -189,7 +202,7 @@ export default function StrategyAccessCard() {
       const signupAttempt = await signup(normalizedEmail, password, inferredName);
       if (signupAttempt?.success) {
         setAuthStatus('sent');
-        window.location.href = '/new';
+        window.location.href = getPostAuthRedirect();
         return;
       }
 

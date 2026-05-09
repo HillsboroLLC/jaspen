@@ -95,10 +95,23 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
     if (event.target === event.currentTarget) onClose?.();
   };
 
+  /** Return the correct post-auth destination, preserving any plan intent. */
+  const getPostAuthRedirect = () => {
+    try {
+      const current = new URLSearchParams(window.location.search || '');
+      const planKey = (current.get('plan') || current.get('plan_key') || '').trim().toLowerCase();
+      if (planKey && planKey !== 'free') {
+        return `/pages/pricing?plan=${encodeURIComponent(planKey)}#plans`;
+      }
+    } catch (e) { /* ignore */ }
+    return '/new';
+  };
+
   const handleGoogle = async () => {
     setError('');
     setErrorDetail('');
-    const params = new URLSearchParams({ next: '/new' });
+    const redirect = getPostAuthRedirect();
+    const params = new URLSearchParams({ next: redirect });
     try {
       const current = new URLSearchParams(window.location.search || '');
       const referralCode = current.get('referral_code') || current.get('invite_code') || current.get('ref') || current.get('invite');
@@ -145,7 +158,7 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
 
       if (loginAttempt?.success) {
         setStatus('sent');
-        window.location.href = '/new';
+        window.location.href = getPostAuthRedirect();
         return;
       }
 
@@ -154,7 +167,7 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
       const signupAttempt = await signup(normalizedEmail, password, inferredName);
       if (signupAttempt?.success) {
         setStatus('sent');
-        window.location.href = '/new';
+        window.location.href = getPostAuthRedirect();
         return;
       }
 
@@ -268,7 +281,7 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
         setUser(data.user);
       }
       setStatus('sent');
-      window.location.href = '/new';
+      window.location.href = getPostAuthRedirect();
     } catch (err) {
       setError(err?.message || 'Invalid code. Please try again.');
       setStatus('idle');

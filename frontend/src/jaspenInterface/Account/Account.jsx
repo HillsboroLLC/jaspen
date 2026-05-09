@@ -1964,14 +1964,48 @@ export default function Account() {
             <article className="account-overview-card">
               <h3>Current plan</h3>
               <p>{(plans[currentPlan]?.label || currentPlan).toString()}</p>
+              {currentPlan !== 'enterprise' && (
+                <button
+                  type="button"
+                  className="account-secondary-btn"
+                  onClick={() => guardUnsavedChanges(() => setActiveTab('plans'))}
+                >
+                  {currentPlan === 'free' ? 'Upgrade plan' : 'Manage plan'}
+                </button>
+              )}
             </article>
             <article className="account-overview-card">
               <h3>Thinking power remaining</h3>
               <p>{creditsRemainingLabel}</p>
+              {Number(status?.credits_remaining) < Number(status?.monthly_credit_limit) * 0.2 && (
+                <button
+                  type="button"
+                  className="account-secondary-btn"
+                  onClick={() => guardUnsavedChanges(() => setActiveTab('packs'))}
+                >
+                  Add credits
+                </button>
+              )}
             </article>
             <article className="account-overview-card">
               <h3>Monthly limit</h3>
               <p>{monthlyLimitLabel}</p>
+            </article>
+            <article className="account-overview-card">
+              <h3>Next reset</h3>
+              <p style={{ fontSize: '1rem' }}>
+                {(() => {
+                  const v = status?.cycle_reset_at;
+                  if (!v) return 'Next billing cycle';
+                  try {
+                    const last = new Date(v);
+                    if (Number.isNaN(last.getTime())) return 'Next billing cycle';
+                    const next = new Date(last);
+                    next.setMonth(next.getMonth() + 1);
+                    return next.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                  } catch { return 'Next billing cycle'; }
+                })()}
+              </p>
             </article>
           </div>
         </section>
@@ -1987,10 +2021,27 @@ export default function Account() {
               const isCurrent = currentPlan === key;
               const isSalesOnly = !!plan.sales_only;
               const isPending = pendingAction === key;
+              const PLAN_HEADLINES = {
+                free: 'Unlock exploration',
+                essential: 'Onboard your strategy partner',
+                team: 'Move faster together',
+                enterprise: 'Scale decision-making across your organization',
+              };
+              const PLAN_AUDIENCE = {
+                free: 'Start without commitment',
+                essential: 'For individual operators and builders',
+                team: 'For small teams and cross-functional work',
+                enterprise: 'For organizations and large-scale execution',
+              };
+              const isUpgrade = key !== 'free' && (
+                (key === 'essential' && currentPlan === 'free') ||
+                (key === 'team' && ['free', 'essential'].includes(currentPlan)) ||
+                (key === 'enterprise' && ['free', 'essential', 'team'].includes(currentPlan))
+              );
               return (
                 <article className={`account-plan-card ${isCurrent ? 'is-current' : ''}`} key={key}>
                   <div className="account-plan-head">
-                    <h3>{plan.label}</h3>
+                    <h3>{PLAN_HEADLINES[key] || plan.label}</h3>
                     {isCurrent && (
                       <span className="account-pill">Current</span>
                     )}
@@ -1998,13 +2049,23 @@ export default function Account() {
                   <p className="account-plan-price">
                     {priceDisplay(plan)}
                   </p>
+                  <p className="account-plan-meta" style={{ fontStyle: 'italic', color: 'rgba(22,31,59,0.6)', fontSize: '0.78rem' }}>
+                    {PLAN_AUDIENCE[key]}
+                  </p>
                   <p className="account-plan-meta">
                     {key === 'team'
-                      ? 'Includes 3 seats · shared thinking power pool'
+                      ? '29,000 shared credits/month · 3 seats included'
+                      : key === 'enterprise'
+                      ? '80,000 shared credits/month · 5 seats included'
                       : (plan.monthly_credits == null)
                       ? 'Contracted pooled usage'
                       : `${Number(plan.monthly_credits).toLocaleString()} credits/month`}
                   </p>
+                  {plan.description && (
+                    <p className="account-plan-connectors" style={{ color: 'rgba(22,31,59,0.72)' }}>
+                      {plan.description}
+                    </p>
+                  )}
                   <div className="account-plan-features">
                     <p className="account-plan-connectors">
                       Connectors: {getPlanConnectorSentence(key)}
@@ -2021,7 +2082,9 @@ export default function Account() {
                         onClick={() => startPlanChange(key)}
                         disabled={isPending} aria-disabled={isPending}
                       >
-                        {isPending ? 'Redirecting...' : key === 'essential' ? 'Upgrade' : 'Switch'}
+                        {isPending ? 'Redirecting...'
+                          : isUpgrade ? `Upgrade to ${plan.label}`
+                          : `Switch to ${plan.label}`}
                       </button>
                     )}
                   </div>

@@ -540,6 +540,7 @@ export default function HomePage() {
                   usage: '1,000 credits/month',
                   description: 'Explore ideas, validate direction, and see how Jaspen thinks.',
                   ctaLabel: 'Start exploring',
+                  // Free plan → sign up / log in, land on the workspace
                   ctaHref: '/?auth=1',
                 },
                 {
@@ -550,7 +551,8 @@ export default function HomePage() {
                   usage: '7,000 credits/month',
                   description: 'Turn ideas into clear decisions and walk away with execution plans.',
                   ctaLabel: 'Upgrade to Essential',
-                  ctaHref: '/?auth=1',
+                  // Paid plan → log in then auto-start checkout on the pricing page
+                  ctaHref: '/pages/pricing?plan=essential#plans',
                 },
                 {
                   name: 'Team',
@@ -560,7 +562,7 @@ export default function HomePage() {
                   usage: '29,000 shared credits/month',
                   description: 'Align your team, pressure-test decisions, and execute with clarity.',
                   ctaLabel: 'Start Team workspace',
-                  ctaHref: '/?auth=1',
+                  ctaHref: '/pages/pricing?plan=team#plans',
                 },
                 {
                   name: 'Enterprise',
@@ -570,7 +572,7 @@ export default function HomePage() {
                   usage: '80,000 shared credits/month',
                   description: 'Bring structure, speed, and consistency to how your business operates.',
                   ctaLabel: 'Start Enterprise',
-                  ctaHref: '/pages/pricing#plans',
+                  ctaHref: '/pages/pricing?plan=enterprise#plans',
                   subCta: 'Need more capacity or custom pricing? Contact sales.',
                 },
               ].map((plan, idx) => (

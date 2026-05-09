@@ -5,8 +5,18 @@
   --account-border: #d9deea;
   --account-muted: #5e6a84;
   min-height: calc(100vh - 72px);
-  padding: 0;
+  /* Use individual properties instead of shorthand so the
+     padding-left from .int-page (AppMenu.css) isn't wiped out. */
+  padding-top: 0;
+  padding-right: 0;
+  padding-bottom: 0;
+  padding-left: calc(var(--int-page-pad, 28px) + 44px);
   background: var(--int-bg);
+}
+
+/* When the App Menu sidebar is open, push further right */
+body.jaspen-sidebar-open .account-page {
+  padding-left: calc(var(--int-page-pad, 28px) + 320px);
 }
 
 .account-loading-state {

@@ -244,9 +244,12 @@ export default function AppMenu() {
     const value = billingStatus?.cycle_reset_at;
     if (!value) return 'Your next billing cycle';
     try {
-      const date = new Date(value);
-      if (Number.isNaN(date.getTime())) return 'Your next billing cycle';
-      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      const last = new Date(value);
+      if (Number.isNaN(last.getTime())) return 'Your next billing cycle';
+      // Show the NEXT reset date, not the last reset date
+      const next = new Date(last);
+      next.setMonth(next.getMonth() + 1);
+      return next.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     } catch {
       return 'Your next billing cycle';
     }

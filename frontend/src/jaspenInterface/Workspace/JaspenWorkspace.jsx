@@ -618,6 +618,23 @@ function formatSmartDate(value) {
   }
 }
 
+/**
+ * Given the last credit-cycle reset timestamp, compute and format the NEXT
+ * reset date (one calendar month forward).
+ */
+function formatNextResetDate(lastResetValue) {
+  if (!lastResetValue) return 'your next billing date';
+  try {
+    const last = new Date(lastResetValue);
+    if (Number.isNaN(last.getTime())) return 'your next billing date';
+    const next = new Date(last);
+    next.setMonth(next.getMonth() + 1);
+    return next.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch {
+    return 'your next billing date';
+  }
+}
+
 function normalizeStrategyObjective(value, fallback = 'balanced') {
   const text = String(value || '').trim().toLowerCase();
   if (!text) return fallback;
@@ -2637,7 +2654,7 @@ useEffect(() => {
     : usageWarningLevel === 'urgent'
       ? 'You’re almost out of thinking power. Add credits now to keep working without interruption.'
       : usageWarningLevel === 'exhausted'
-        ? `You’ve reached your monthly thinking power. Add credits, upgrade, or wait until your reset on ${formatSmartDate(billingStatus?.cycle_reset_at)}.`
+        ? `You’ve reached your monthly thinking power. Add credits, upgrade, or wait until your reset on ${formatNextResetDate(billingStatus?.cycle_reset_at)}.`
         : usageWarningLevel === 'blocked'
           ? 'You have exceeded 105% of monthly thinking power. Add credits or upgrade to continue.'
           : 'Review thinking power usage in billing.';
@@ -3846,7 +3863,7 @@ useEffect(() => {
               <p className="jas-ud-usage-note">
                 Monthly limit: {Number(monthlyCreditLimit || 0).toLocaleString()} credits on {currentPlanLabel}.
               </p>
-              <p className="jas-ud-usage-note">Resets: {formatSmartDate(billingStatus?.cycle_reset_at)}</p>
+              <p className="jas-ud-usage-note">Resets: {formatNextResetDate(billingStatus?.cycle_reset_at)}</p>
               <p className="jas-ud-usage-note">Current plan: {currentPlanLabel}</p>
               <div className="jas-account-actions">
                 <button type="button" className="jas-account-plan-cta" onClick={() => navigate('/account?tab=billing')}>
