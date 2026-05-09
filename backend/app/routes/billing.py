@@ -571,6 +571,18 @@ def stripe_webhook():
         user_id = metadata.get('user_id')
         user = User.query.get(user_id) if user_id else None
 
+        if not user_id:
+            current_app.logger.warning(
+                "checkout.session.completed event %s has no user_id in metadata — skipping credit reset",
+                event_id,
+            )
+        elif not user:
+            current_app.logger.error(
+                "checkout.session.completed event %s: user_id=%s not found in DB — skipping credit reset",
+                event_id,
+                user_id,
+            )
+
         if user:
             checkout_type = metadata.get('checkout_type')
             if checkout_type in {'credit_pack', 'overage_pack'}:
@@ -578,12 +590,20 @@ def stripe_webhook():
                 add_credits(user, tokens)
                 if sess.get('customer'):
                     user.stripe_customer_id = sess.get('customer')
+                current_app.logger.info(
+                    "checkout.session.completed: added %s credit-pack tokens for user=%s",
+                    tokens, user_id,
+                )
             else:
                 plan_key = normalize_plan_key(metadata.get('plan_key'))
                 apply_plan_to_user(user, plan_key, current_app.config, reset_credits=True)
                 user.stripe_customer_id = sess.get('customer')
                 user.stripe_subscription_id = sess.get('subscription')
                 user.subscription_status = 'active'
+                current_app.logger.info(
+                    "checkout.session.completed: applied plan=%s and reset credits for user=%s (credits_remaining=%s, credits_reset_at=%s)",
+                    plan_key, user_id, user.credits_remaining, user.credits_reset_at,
+                )
 
     elif event_type == 'invoice.payment_succeeded':
         inv = event['data']['object']
@@ -591,9 +611,18 @@ def stripe_webhook():
             subscription_id=inv.get('subscription'),
             customer_id=inv.get('customer'),
         )
+        if not user:
+            current_app.logger.warning(
+                "invoice.payment_succeeded event %s: could not resolve user for subscription=%s customer=%s",
+                event_id, inv.get('subscription'), inv.get('customer'),
+            )
         if user:
             reset_user_monthly_credits(user, current_app.config, force=True)
             user.subscription_status = 'active'
+            current_app.logger.info(
+                "invoice.payment_succeeded: reset credits for user=%s (credits_remaining=%s, credits_reset_at=%s)",
+                user.id, user.credits_remaining, user.credits_reset_at,
+            )
 
     elif event_type == 'invoice.payment_failed':
         inv = event['data']['object']

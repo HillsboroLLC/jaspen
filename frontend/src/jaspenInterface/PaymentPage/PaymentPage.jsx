@@ -5,7 +5,7 @@ import './PaymentPage.css';
 
 const PLAN_INFO = {
   free: { label: 'Free', price: '$0' },
-  essential: { label: 'Essential', price: '$20/month' },
+  essential: { label: 'Essential', price: '$39/month' },
   team: { label: 'Team', price: 'Sales-led' },
   enterprise: { label: 'Enterprise', price: 'Sales-led' },
 };

@@ -811,8 +811,12 @@ def adjust_user_credits(user_id):
                 return jsonify({"error": "value cannot be negative"}), 400
             user.credits_remaining = next_value
     elif mode == "reset_plan":
+        # Fully reset the user's credit meter to their plan's monthly limit.
+        # This updates credits_remaining, credits_reset_at, AND the thinking_power meter
+        # inside ui_preferences — necessary for the billing status endpoint to reflect
+        # the new balance correctly.
         current_plan = to_public_plan(user.subscription_plan)
-        user.credits_remaining = get_monthly_credit_limit(current_plan, current_app.config)
+        apply_plan_to_user(user, current_plan, current_app.config, reset_credits=True)
     else:
         return jsonify({"error": "mode must be one of adjust, set, reset_plan"}), 400
 
