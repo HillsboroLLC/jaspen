@@ -2626,7 +2626,11 @@ useEffect(() => {
     return 'normal';
   }, [usageWarningLevel]);
   const creditsTitle = 'Thinking power is your monthly usage capacity. It resets each billing cycle.';
-  const creditsBadge = creditsRemaining == null ? 'Contracted' : Number(creditsRemaining || 0).toLocaleString();
+  const creditsBadge = creditsRemaining == null
+    ? 'Contracted'
+    : monthlyCreditLimit > 0
+      ? `${Math.max(0, Math.round((Math.max(0, Number(creditsRemaining || 0)) / Number(monthlyCreditLimit || 1)) * 100))}%`
+      : 'Usage';
   const lowCreditsCycleKey = useMemo(() => {
     const now = new Date();
     const y = now.getUTCFullYear();

@@ -218,7 +218,7 @@ export default function AppMenu() {
   const showLockedActivity = !showRealActivity;
   const showRealTeam = !isPlatformAdmin && effectiveCanManageOrg;
   const showLockedTeam =
-    previewPlanCategory === 'individual' && !isPlatformAdmin;
+    !showRealTeam && previewPlanCategory === 'individual' && !isPlatformAdmin;
   const showRealConnectors = true;
   const showLockedConnectors = false;
 
