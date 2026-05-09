@@ -4,6 +4,12 @@ from datetime import datetime
 import math
 import os
 
+try:
+    from sqlalchemy.orm.attributes import flag_modified as _flag_modified
+except ImportError:
+    def _flag_modified(obj, key):
+        pass
+
 PLAN_ALIASES = {
     'growth': 'team',
     'transform': 'enterprise',
@@ -332,7 +338,8 @@ def _resolve_org_pool(user, app_config, now=None, force_reset=False):
             meter["cycle_reset_at"] = now.isoformat()
 
     settings["thinking_power"] = meter
-    org.settings = settings
+    org.settings = deepcopy(settings)
+    _flag_modified(org, "settings")
 
     return {
         "organization": org,
@@ -374,7 +381,8 @@ def _resolve_user_pool(user, app_config, now=None, force_reset=False):
     meter["tokens_used_this_month"] = max(0, cycle_limit - remaining)
     meter["cycle_reset_at"] = reset_at.isoformat() if isinstance(reset_at, datetime) else now.isoformat()
     prefs["thinking_power"] = meter
-    user.ui_preferences = prefs
+    user.ui_preferences = deepcopy(prefs)
+    _flag_modified(user, "ui_preferences")
     user.credits_remaining = remaining
     user.credits_reset_at = reset_at if isinstance(reset_at, datetime) else now
     return {
@@ -436,7 +444,8 @@ def add_credits(user, amount):
     meter["tokens_used_this_month"] = max(0, int(meter.get("cycle_limit", 0)) - int(meter.get("remaining", 0)))
     prefs = user.ui_preferences if isinstance(user.ui_preferences, dict) else {}
     prefs["thinking_power"] = meter
-    user.ui_preferences = prefs
+    user.ui_preferences = deepcopy(prefs)
+    _flag_modified(user, "ui_preferences")
     user.credits_remaining = int(meter.get("remaining", 0))
 
 
@@ -569,7 +578,8 @@ def consume_credits(user, amount):
     if not meter.get("cycle_reset_at"):
         meter["cycle_reset_at"] = now.isoformat()
     prefs["thinking_power"] = meter
-    user.ui_preferences = prefs
+    user.ui_preferences = deepcopy(prefs)
+    _flag_modified(user, "ui_preferences")
     return True, user.credits_remaining
 
 
