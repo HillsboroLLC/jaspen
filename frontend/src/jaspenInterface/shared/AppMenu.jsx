@@ -259,14 +259,17 @@ export default function AppMenu() {
       ? `${Math.max(0, Math.round((Math.max(0, Number(creditsRemaining || 0)) / Number(monthlyCreditLimit || 1)) * 100))}% remaining`
       : 'Usage';
 
-  const hideThinkingPowerMeter = Boolean(user?.ui_preferences?.hide_thinking_power_meter);
+  const [meterHidden, setMeterHidden] = useState(Boolean(user?.ui_preferences?.hide_thinking_power_meter));
+  useEffect(() => {
+    setMeterHidden(Boolean(user?.ui_preferences?.hide_thinking_power_meter));
+  }, [user?.ui_preferences?.hide_thinking_power_meter]);
 
   const toggleThinkingPowerMeter = useCallback(async () => {
+    const next = !meterHidden;
+    setMeterHidden(next);
     if (typeof updateUiPreferences !== 'function') return;
-    const currentPrefs = user?.ui_preferences && typeof user.ui_preferences === 'object'
-      ? user.ui_preferences : {};
-    await updateUiPreferences({ ...currentPrefs, hide_thinking_power_meter: !hideThinkingPowerMeter });
-  }, [hideThinkingPowerMeter, updateUiPreferences, user?.ui_preferences]);
+    await updateUiPreferences({ hide_thinking_power_meter: next });
+  }, [meterHidden, updateUiPreferences]);
 
   const creditsTone = useMemo(() => {
     const level = String(billingStatus?.usage_warning_level || 'normal').toLowerCase();
@@ -722,11 +725,12 @@ export default function AppMenu() {
             </span>
           </button>
           <button className="jas-ud-item" onClick={toggleThinkingPowerMeter}>
-            <span className="jas-ud-item-label">{hideThinkingPowerMeter ? 'Show usage meter' : 'Hide usage meter'}</span>
+            <FontAwesomeIcon icon={faGaugeHigh} />
+            <span className="jas-ud-item-label">{meterHidden ? 'Show usage meter' : 'Hide usage meter'}</span>
           </button>
         </div>
 
-        {!hideThinkingPowerMeter && (
+        {!meterHidden && (
           <div className="jas-ud-section">
             <div className="jas-ud-section-label">THINKING POWER</div>
             {billingLoading && (

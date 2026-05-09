@@ -1559,7 +1559,20 @@ def update_current_user():
                 next_onboarding['updated_at'] = datetime.now(timezone.utc).isoformat()
                 next_prefs['onboarding'] = next_onboarding
 
-        user.ui_preferences = next_prefs
+        if 'hide_thinking_power_meter' in incoming:
+            val = incoming.get('hide_thinking_power_meter')
+            if val is None:
+                next_prefs.pop('hide_thinking_power_meter', None)
+            else:
+                next_prefs['hide_thinking_power_meter'] = bool(val)
+
+        from copy import deepcopy
+        try:
+            from sqlalchemy.orm.attributes import flag_modified
+            user.ui_preferences = deepcopy(next_prefs)
+            flag_modified(user, 'ui_preferences')
+        except Exception:
+            user.ui_preferences = next_prefs
 
     db.session.commit()
 

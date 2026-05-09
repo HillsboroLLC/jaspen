@@ -2581,7 +2581,11 @@ useEffect(() => {
   const creditsRemaining = billingStatus?.credits_remaining;
   const monthlyCreditsUsed = billingStatus?.credits_used;
   const usageWarningLevel = String(billingStatus?.usage_warning_level || 'normal').toLowerCase();
-  const hideThinkingPowerMeter = Boolean(user?.ui_preferences?.hide_thinking_power_meter);
+  const [meterHiddenWS, setMeterHiddenWS] = useState(Boolean(user?.ui_preferences?.hide_thinking_power_meter));
+  useEffect(() => {
+    setMeterHiddenWS(Boolean(user?.ui_preferences?.hide_thinking_power_meter));
+  }, [user?.ui_preferences?.hide_thinking_power_meter]);
+  const hideThinkingPowerMeter = meterHiddenWS;
   const resolvedMonthlyCreditsUsed = useMemo(() => {
     const direct = Number(monthlyCreditsUsed);
     if (Number.isFinite(direct)) return Math.max(0, direct);
@@ -2659,15 +2663,11 @@ useEffect(() => {
           ? 'You have exceeded 105% of monthly thinking power. Add credits or upgrade to continue.'
           : 'Review thinking power usage in billing.';
   const toggleThinkingPowerMeter = useCallback(async () => {
+    const next = !meterHiddenWS;
+    setMeterHiddenWS(next);
     if (typeof updateUiPreferences !== 'function') return;
-    const currentPrefs = user?.ui_preferences && typeof user.ui_preferences === 'object'
-      ? user.ui_preferences
-      : {};
-    await updateUiPreferences({
-      ...currentPrefs,
-      hide_thinking_power_meter: !hideThinkingPowerMeter,
-    });
-  }, [hideThinkingPowerMeter, updateUiPreferences, user?.ui_preferences]);
+    await updateUiPreferences({ hide_thinking_power_meter: next });
+  }, [meterHiddenWS, updateUiPreferences]);
   useEffect(() => {
     if (!lowCreditsDismissStorageKey || !lowCreditsBannerEligible) {
       setLowCreditsBannerDismissed(false);
