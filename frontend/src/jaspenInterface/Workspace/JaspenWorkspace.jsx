@@ -44,6 +44,7 @@ import JaspenAiDrawer from './JaspenAiDrawer';
 import ThreadEditModal from '../components/ThreadEditModal';
 import { buildInviteDisplay, buildInviteLink } from '../../shared/inviteLink';
 import { PLAN_ORDER, PLAN_RANK } from '../../shared/constants/appConstants';
+import { formatSmartDate as fmtSmartDate, formatNextResetDate as fmtNextResetDate } from '../../shared/utils/dateUtils';
 
 // Styles - Single source of truth
 import "./JaspenWorkspace.css";
@@ -603,37 +604,8 @@ function getLastUserMessageTimestamp(chatHistory, fallbackValue = null) {
   return parseHistoryTimestamp(fallbackValue);
 }
 
-function formatSmartDate(value) {
-  if (!value) return 'your reset date';
-  try {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return 'your reset date';
-    return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    });
-  } catch {
-    return 'your reset date';
-  }
-}
-
-/**
- * Given the last credit-cycle reset timestamp, compute and format the NEXT
- * reset date (one calendar month forward).
- */
-function formatNextResetDate(lastResetValue) {
-  if (!lastResetValue) return 'your next billing date';
-  try {
-    const last = new Date(lastResetValue);
-    if (Number.isNaN(last.getTime())) return 'your next billing date';
-    const next = new Date(last);
-    next.setMonth(next.getMonth() + 1);
-    return next.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  } catch {
-    return 'your next billing date';
-  }
-}
+const formatSmartDate = fmtSmartDate;
+const formatNextResetDate = fmtNextResetDate;
 
 function normalizeStrategyObjective(value, fallback = 'balanced') {
   const text = String(value || '').trim().toLowerCase();

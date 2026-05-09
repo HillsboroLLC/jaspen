@@ -230,6 +230,26 @@ export function AuthProvider({ children }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Auto-detect and persist the user's browser timezone so the backend
+  // can use it for emails, notifications, and scheduled reports.
+  useEffect(() => {
+    if (!user) return;
+    try {
+      const detectedTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (!detectedTz) return;
+      const storedTz = user?.ui_preferences?.timezone;
+      if (storedTz === detectedTz) return;
+      authFetch('/api/v1/auth/me', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ui_preferences: { timezone: detectedTz } }),
+      }).then((res) => {
+        if (res.ok) res.json().then((data) => setUser(normalizeUser(data))).catch(() => {});
+      }).catch(() => {});
+    } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
   // Re-check auth quietly so UI does not remain in a stale "looks logged in" state.
   useEffect(() => {
     const onVisible = () => {

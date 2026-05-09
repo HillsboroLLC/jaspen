@@ -1566,6 +1566,16 @@ def update_current_user():
             else:
                 next_prefs['hide_thinking_power_meter'] = bool(val)
 
+        if 'timezone' in incoming:
+            tz = incoming.get('timezone')
+            if tz is None:
+                next_prefs.pop('timezone', None)
+            else:
+                import re
+                tz = str(tz).strip()
+                if tz and len(tz) <= 64 and re.match(r'^[A-Za-z0-9/_+-]+$', tz):
+                    next_prefs['timezone'] = tz
+
         from copy import deepcopy
         try:
             from sqlalchemy.orm.attributes import flag_modified

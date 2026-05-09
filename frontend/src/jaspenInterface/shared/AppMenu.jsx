@@ -19,6 +19,7 @@ import { API_BASE } from '../../config/apiBase';
 import { buildInviteLink, buildInviteDisplay } from '../../shared/inviteLink';
 import { getPlanConnectorSentence } from '../../shared/billing/planConnectors';
 import { PLAN_ORDER, PLAN_RANK } from '../../shared/constants/appConstants';
+import { formatNextResetDate } from '../../shared/utils/dateUtils';
 import SidebarIdentityFooter from '../Workspace/components/SidebarIdentityFooter';
 import './AppMenu.css';
 
@@ -242,17 +243,8 @@ export default function AppMenu() {
     creditsRemaining == null ? 'Contracted' : Number(creditsRemaining || 0).toLocaleString();
   const usageResetLabel = useMemo(() => {
     const value = billingStatus?.cycle_reset_at;
-    if (!value) return 'Your next billing cycle';
-    try {
-      const last = new Date(value);
-      if (Number.isNaN(last.getTime())) return 'Your next billing cycle';
-      // Show the NEXT reset date, not the last reset date
-      const next = new Date(last);
-      next.setMonth(next.getMonth() + 1);
-      return next.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-    } catch {
-      return 'Your next billing cycle';
-    }
+    const label = formatNextResetDate(value);
+    return label || 'Your next billing cycle';
   }, [billingStatus?.cycle_reset_at]);
   const creditsBadge =
     monthlyCreditLimit > 0
