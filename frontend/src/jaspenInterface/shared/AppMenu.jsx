@@ -724,9 +724,9 @@ export default function AppMenu() {
               {billingLoading ? '...' : creditsBadge}
             </span>
           </button>
-          <button className="jas-ud-item" onClick={toggleThinkingPowerMeter}>
+          <button className="jas-ud-meter-toggle" onClick={toggleThinkingPowerMeter}>
             <FontAwesomeIcon icon={faGaugeHigh} />
-            <span className="jas-ud-item-label">{meterHidden ? 'Show usage meter' : 'Hide usage meter'}</span>
+            {meterHidden ? 'Show usage meter' : 'Hide usage meter'}
           </button>
         </div>
 

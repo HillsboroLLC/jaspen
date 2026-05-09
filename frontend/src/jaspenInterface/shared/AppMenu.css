@@ -393,6 +393,36 @@ body.jaspen-sidebar-open .int-page {
   height: 10px;
 }
 
+.app-menu-host .jas-ud-meter-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 18px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--gray-500);
+  background: none;
+  border: none;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+  font-family: var(--font);
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  transition: color 0.15s, text-decoration-color 0.15s;
+}
+
+.app-menu-host .jas-ud-meter-toggle:hover {
+  color: var(--navy);
+  text-decoration-color: var(--navy);
+}
+
+.app-menu-host .jas-ud-meter-toggle svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
 /* Usage stats */
 .app-menu-host .jas-ud-usage-empty,
 .app-menu-host .jas-ud-usage-error {
@@ -443,9 +473,9 @@ body.jaspen-sidebar-open .int-page {
 
 .app-menu-host .jas-ud-usage-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 0 18px 10px;
+  flex-direction: column;
+  gap: 7px;
+  margin: 6px 18px 12px;
 }
 
 /* Footer (SidebarIdentityFooter) */
@@ -853,24 +883,33 @@ body.jaspen-sidebar-open .int-page {
 
 .app-menu-host .jas-account-action-btn,
 .app-menu-host .jas-account-action-link {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 10px;
-  border: 1px solid var(--gray-300);
-  background: var(--white);
-  color: var(--navy);
-  font-size: 0.75rem;
+  width: 100%;
+  border-radius: 8px;
+  border: none;
+  background: var(--navy);
+  color: #fff;
+  font-size: 0.8rem;
   font-weight: 600;
-  padding: 7px 10px;
+  padding: 9px 14px;
   cursor: pointer;
   text-decoration: none;
   font-family: var(--font);
+  letter-spacing: 0.01em;
+  transition: opacity 0.15s;
+}
+
+.app-menu-host .jas-account-action-link:last-child {
+  background: transparent;
+  border: 1.5px solid var(--navy);
+  color: var(--navy);
 }
 
 .app-menu-host .jas-account-action-btn:hover,
 .app-menu-host .jas-account-action-link:hover {
-  border-color: var(--navy);
+  opacity: 0.85;
 }
 
 .app-menu-host .jas-account-modal-actions {
