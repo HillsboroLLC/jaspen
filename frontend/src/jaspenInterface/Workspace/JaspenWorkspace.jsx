@@ -3839,43 +3839,47 @@ useEffect(() => {
           </button>
         </div>
 
-        <div className="jas-ud-section">
-          <div className="jas-ud-section-label">THINKING POWER</div>
-          {billingLoading && (
-            <p className="jas-ud-usage-empty">Loading usage...</p>
-          )}
-          {!billingLoading && monthlyCreditLimit == null && (
-            <p className="jas-ud-usage-note">Thinking power is managed by your contract on {currentPlanLabel}.</p>
-          )}
-          {!billingLoading && monthlyCreditLimit != null && (
-            <>
-              <div className="jas-ud-usage-grid jas-ud-usage-grid-compact">
-                <div className="jas-ud-usage-stat">
-                  <span>Used</span>
-                  <strong>{Number(resolvedMonthlyCreditsUsed || 0).toLocaleString()}</strong>
+        {!hideThinkingPowerMeter && (
+          <div className="jas-ud-section">
+            <div className="jas-ud-section-label">THINKING POWER</div>
+            {billingLoading && (
+              <p className="jas-ud-usage-empty">Loading usage...</p>
+            )}
+            {!billingLoading && monthlyCreditLimit == null && (
+              <p className="jas-ud-usage-note">Thinking power is managed by your contract on {currentPlanLabel}.</p>
+            )}
+            {!billingLoading && monthlyCreditLimit != null && (
+              <>
+                <div className="jas-ud-usage-grid jas-ud-usage-grid-compact">
+                  <div className="jas-ud-usage-stat">
+                    <span>Used</span>
+                    <strong>{Number(resolvedMonthlyCreditsUsed || 0).toLocaleString()}</strong>
+                  </div>
+                  <div className="jas-ud-usage-stat">
+                    <span>Remaining</span>
+                    <strong>{Number(creditsRemaining || 0).toLocaleString()}</strong>
+                  </div>
                 </div>
-                <div className="jas-ud-usage-stat">
-                  <span>Remaining</span>
-                  <strong>{Number(creditsRemaining || 0).toLocaleString()}</strong>
-                </div>
-              </div>
-              <p className="jas-ud-usage-note">Thinking power remaining: {intakeCreditsCompactLabel}</p>
-              <p className="jas-ud-usage-note">
-                Monthly limit: {Number(monthlyCreditLimit || 0).toLocaleString()} credits on {currentPlanLabel}.
-              </p>
-              <p className="jas-ud-usage-note">Resets: {formatNextResetDate(billingStatus?.cycle_reset_at)}</p>
-              <p className="jas-ud-usage-note">Current plan: {currentPlanLabel}</p>
-              <div className="jas-account-actions">
-                <button type="button" className="jas-account-plan-cta" onClick={() => navigate('/account?tab=billing')}>
-                  Add credits
-                </button>
-                <button type="button" className="jas-account-plan-cta jas-account-plan-cta-secondary" onClick={() => navigate('/account?tab=plans')}>
-                  Upgrade plan
-                </button>
-              </div>
-            </>
-          )}
-        </div>
+                <p className="jas-ud-usage-note">Thinking power remaining: {intakeCreditsCompactLabel}</p>
+                <p className="jas-ud-usage-note">
+                  Monthly limit: {Number(monthlyCreditLimit || 0).toLocaleString()} credits on {currentPlanLabel}.
+                </p>
+                <p className="jas-ud-usage-note">Resets: {formatNextResetDate(billingStatus?.cycle_reset_at)}</p>
+                <p className="jas-ud-usage-note">Current plan: {currentPlanLabel}</p>
+                {creditsTone !== 'normal' && (
+                  <div className="jas-account-actions">
+                    <button type="button" className="jas-account-plan-cta" onClick={() => navigate('/account?tab=billing')}>
+                      Add credits
+                    </button>
+                    <button type="button" className="jas-account-plan-cta jas-account-plan-cta-secondary" onClick={() => navigate('/account?tab=plans')}>
+                      Upgrade plan
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
 
         <div className="jas-ud-section">
           <div className="jas-ud-section-label">Current Thread Usage</div>

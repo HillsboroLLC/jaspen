@@ -259,6 +259,23 @@ export default function AppMenu() {
       ? `${Math.max(0, Math.round((Math.max(0, Number(creditsRemaining || 0)) / Number(monthlyCreditLimit || 1)) * 100))}% remaining`
       : 'Usage';
 
+  const hideThinkingPowerMeter = Boolean(user?.ui_preferences?.hide_thinking_power_meter);
+
+  const toggleThinkingPowerMeter = useCallback(async () => {
+    if (typeof updateUiPreferences !== 'function') return;
+    const currentPrefs = user?.ui_preferences && typeof user.ui_preferences === 'object'
+      ? user.ui_preferences : {};
+    await updateUiPreferences({ ...currentPrefs, hide_thinking_power_meter: !hideThinkingPowerMeter });
+  }, [hideThinkingPowerMeter, updateUiPreferences, user?.ui_preferences]);
+
+  const creditsTone = useMemo(() => {
+    const level = String(billingStatus?.usage_warning_level || 'normal').toLowerCase();
+    if (level === 'blocked' || level === 'exhausted') return 'critical';
+    if (level === 'urgent' || level === 'critical') return 'critical';
+    if (level === 'warning') return 'warning';
+    return 'normal';
+  }, [billingStatus?.usage_warning_level]);
+
   const currentPath = String(location?.pathname || '');
   const isActivePath = useCallback(
     (paths) => (Array.isArray(paths) ? paths : [paths]).some((path) => currentPath === String(path || '')),
@@ -704,47 +721,54 @@ export default function AppMenu() {
               {billingLoading ? '...' : creditsBadge}
             </span>
           </button>
+          <button className="jas-ud-item" onClick={toggleThinkingPowerMeter}>
+            <span className="jas-ud-item-label">{hideThinkingPowerMeter ? 'Show usage meter' : 'Hide usage meter'}</span>
+          </button>
         </div>
 
-        <div className="jas-ud-section">
-          <div className="jas-ud-section-label">THINKING POWER</div>
-          {billingLoading && (
-            <p className="jas-ud-usage-empty">Loading usage...</p>
-          )}
-          {!billingLoading && monthlyCreditLimit == null && (
-            <p className="jas-ud-usage-note">
-              Thinking power is managed by your contract on {currentPlanLabel}.
-            </p>
-          )}
-          {!billingLoading && monthlyCreditLimit != null && (
-            <>
-              <div className="jas-ud-usage-grid jas-ud-usage-grid-compact">
-                <div className="jas-ud-usage-stat">
-                  <span>Used</span>
-                  <strong>
-                    {Number(resolvedMonthlyCreditsUsed || 0).toLocaleString()}
-                  </strong>
-                </div>
-                <div className="jas-ud-usage-stat">
-                  <span>Remaining</span>
-                  <strong>
-                    {Number(creditsRemaining || 0).toLocaleString()}
-                  </strong>
-                </div>
-              </div>
-              <p className="jas-ud-usage-note">Thinking power remaining: {creditsBadge}</p>
+        {!hideThinkingPowerMeter && (
+          <div className="jas-ud-section">
+            <div className="jas-ud-section-label">THINKING POWER</div>
+            {billingLoading && (
+              <p className="jas-ud-usage-empty">Loading usage...</p>
+            )}
+            {!billingLoading && monthlyCreditLimit == null && (
               <p className="jas-ud-usage-note">
-                Monthly limit: {Number(monthlyCreditLimit || 0).toLocaleString()} credits on {currentPlanLabel}.
+                Thinking power is managed by your contract on {currentPlanLabel}.
               </p>
-              <p className="jas-ud-usage-note">Resets: {usageResetLabel}</p>
-              <p className="jas-ud-usage-note">Current plan: {currentPlanLabel}</p>
-              <div className="jas-ud-usage-actions">
-                <button type="button" className="jas-account-action-link" onClick={() => navigate('/account?tab=billing')}>Add credits</button>
-                <button type="button" className="jas-account-action-link" onClick={() => navigate('/account?tab=plans')}>Upgrade plan</button>
-              </div>
-            </>
-          )}
-        </div>
+            )}
+            {!billingLoading && monthlyCreditLimit != null && (
+              <>
+                <div className="jas-ud-usage-grid jas-ud-usage-grid-compact">
+                  <div className="jas-ud-usage-stat">
+                    <span>Used</span>
+                    <strong>
+                      {Number(resolvedMonthlyCreditsUsed || 0).toLocaleString()}
+                    </strong>
+                  </div>
+                  <div className="jas-ud-usage-stat">
+                    <span>Remaining</span>
+                    <strong>
+                      {Number(creditsRemaining || 0).toLocaleString()}
+                    </strong>
+                  </div>
+                </div>
+                <p className="jas-ud-usage-note">Thinking power remaining: {creditsBadge}</p>
+                <p className="jas-ud-usage-note">
+                  Monthly limit: {Number(monthlyCreditLimit || 0).toLocaleString()} credits on {currentPlanLabel}.
+                </p>
+                <p className="jas-ud-usage-note">Resets: {usageResetLabel}</p>
+                <p className="jas-ud-usage-note">Current plan: {currentPlanLabel}</p>
+                {creditsTone !== 'normal' && (
+                  <div className="jas-ud-usage-actions">
+                    <button type="button" className="jas-account-action-link" onClick={() => navigate('/account?tab=billing')}>Add credits</button>
+                    <button type="button" className="jas-account-action-link" onClick={() => navigate('/account?tab=plans')}>Upgrade plan</button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
 
         <div className="jas-ud-section">
           <button
