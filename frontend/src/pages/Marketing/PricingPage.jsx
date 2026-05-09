@@ -38,9 +38,9 @@ const FALLBACK_PLANS = [
 ];
 
 const FALLBACK_PACKS = [
-  { pack_key: 'pack_1000', label: '3,000 credits', price_usd: 10, credits: 3000 },
-  { pack_key: 'pack_5000', label: '8,000 credits', price_usd: 25, credits: 8000 },
-  { pack_key: 'pack_20000', label: '18,000 credits', price_usd: 50, credits: 18000 },
+  { pack_key: 'credits_3000', label: '3,000 credits', price_usd: 10, credits: 3000 },
+  { pack_key: 'credits_8000', label: '8,000 credits', price_usd: 25, credits: 8000 },
+  { pack_key: 'credits_18000', label: '18,000 credits', price_usd: 50, credits: 18000 },
 ];
 
 const FALLBACK_MODEL_TYPES = {
@@ -105,9 +105,10 @@ export default function PricingPage() {
           if (ordered.length) setPlans(ordered);
         }
 
-        if (data?.overage_packs) {
-          const orderedPacks = ['pack_1000', 'pack_5000', 'pack_20000']
-            .map((key) => data.overage_packs[key])
+        const packCatalog = data?.credit_packs || data?.overage_packs;
+        if (packCatalog) {
+          const orderedPacks = ['credits_3000', 'credits_8000', 'credits_18000', 'pack_1000', 'pack_5000', 'pack_20000']
+            .map((key) => packCatalog[key])
             .filter(Boolean);
           if (orderedPacks.length) setPacks(orderedPacks);
         }
@@ -179,7 +180,7 @@ export default function PricingPage() {
     }
   };
 
-  const buyOveragePack = async (packKey) => {
+  const buyCreditPack = async (packKey) => {
     if (!user) {
       window.location.href = '/?auth=1';
       return;
@@ -188,7 +189,7 @@ export default function PricingPage() {
     setPendingKey(packKey);
     setStatusMessage('');
     try {
-      const response = await authFetch(`${API_BASE}/api/v1/billing/create-overage-checkout-session`, {
+      const response = await authFetch(`${API_BASE}/api/v1/billing/create-credit-pack-checkout-session`, {
         method: 'POST',
         headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
         body: JSON.stringify({ pack_key: packKey }),
@@ -196,12 +197,12 @@ export default function PricingPage() {
 
       const data = await response.json();
       if (!response.ok || !data?.url) {
-        throw new Error(data?.msg || 'Unable to open overage checkout.');
+        throw new Error(data?.msg || 'Unable to open credit pack checkout.');
       }
 
       window.location.href = data.url;
     } catch (err) {
-      setStatusMessage(err.message || 'Unable to open overage checkout.');
+      setStatusMessage(err.message || 'Unable to open credit pack checkout.');
     } finally {
       setPendingKey('');
     }
@@ -378,7 +379,7 @@ export default function PricingPage() {
                     <button
                       type="button"
                       className="pricing-cta-button"
-                      onClick={() => buyOveragePack(pack.pack_key)}
+                      onClick={() => buyCreditPack(pack.pack_key)}
                       disabled={loading} aria-disabled={loading}
                     >
                       {loading ? 'Redirecting...' : 'Buy credit pack'}
@@ -389,7 +390,7 @@ export default function PricingPage() {
             </div>
           </>
         ) : (
-          <p className="pricing-pack-copy">Overage packs are available after sign-in, inside Account settings.</p>
+          <p className="pricing-pack-copy">Credit packs are available after sign-in, inside Account settings.</p>
         )}
       </section>
 

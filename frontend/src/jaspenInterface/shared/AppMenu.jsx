@@ -76,7 +76,7 @@ export default function AppMenu() {
 
   // Billing
   const [billingStatus, setBillingStatus] = useState(null);
-  const [billingCatalog, setBillingCatalog] = useState({ plans: {}, overage_packs: {}, model_types: {} });
+  const [billingCatalog, setBillingCatalog] = useState({ plans: {}, credit_packs: {}, overage_packs: {}, model_types: {} });
   const [billingLoading, setBillingLoading] = useState(true);
   const [billingMessage, setBillingMessage] = useState('');
   const [billingModalOpen, setBillingModalOpen] = useState(false);
@@ -133,7 +133,7 @@ export default function AppMenu() {
       const catalogData = await catalogRes.json().catch(() => ({}));
       if (statusRes.ok) {
         setBillingStatus(statusData || null);
-        setBillingCatalog(catalogData || { plans: {}, overage_packs: {}, model_types: {} });
+        setBillingCatalog(catalogData || { plans: {}, credit_packs: {}, overage_packs: {}, model_types: {} });
         setBillingMessage('');
       } else {
         setBillingMessage(statusData?.msg || 'Unable to load plan details.');

@@ -2337,7 +2337,7 @@ useEffect(() => {
   const [nameSaving, setNameSaving] = useState(false);
   const [nameError, setNameError] = useState('');
   const [billingStatus, setBillingStatus] = useState(null);
-  const [billingCatalog, setBillingCatalog] = useState({ plans: {}, overage_packs: {}, model_types: {} });
+  const [billingCatalog, setBillingCatalog] = useState({ plans: {}, credit_packs: {}, overage_packs: {}, model_types: {} });
   const [selectedModelType, setSelectedModelType] = useState('pluto');
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [billingLoading, setBillingLoading] = useState(true);
@@ -3015,7 +3015,7 @@ useEffect(() => {
         throw new Error(statusData?.msg || 'Unable to load plan details.');
       }
       setBillingStatus(statusData || null);
-      setBillingCatalog(catalogData || { plans: {}, overage_packs: {}, model_types: {} });
+      setBillingCatalog(catalogData || { plans: {}, credit_packs: {}, overage_packs: {}, model_types: {} });
       setBillingMessage('');
     } catch (error) {
       setBillingMessage(error.message || 'Unable to load plan details.');

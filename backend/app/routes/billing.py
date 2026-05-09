@@ -16,11 +16,12 @@ from app.billing_config import (
     add_credits,
     bootstrap_legacy_credits,
     consume_credits,
+    get_credit_packs,
     get_allowed_model_types,
     get_default_model_type,
     get_model_catalog,
     get_monthly_credit_limit,
-    get_overage_packs,
+    normalize_credit_pack_key,
     get_plan_catalog,
     is_sales_only_plan,
     normalize_plan_key,
@@ -144,7 +145,7 @@ def list_plans():
 @billing_bp.route('/catalog', methods=['GET'])
 def get_billing_catalog():
     raw_plan_catalog = get_plan_catalog(current_app.config)
-    raw_pack_catalog = get_overage_packs(current_app.config)
+    raw_pack_catalog = get_credit_packs(current_app.config)
     model_catalog = get_model_catalog(current_app.config)
 
     plan_catalog = {}
@@ -163,6 +164,8 @@ def get_billing_catalog():
 
     return jsonify({
         'plans': plan_catalog,
+        'credit_packs': pack_catalog,
+        # Backward-compatible alias for older clients.
         'overage_packs': pack_catalog,
         'model_types': model_catalog,
     }), 200
@@ -238,6 +241,8 @@ def get_billing_status():
         'usage_scope': usage_state.get('scope'),
         'cycle_credit_limit': tokens_to_credits(cycle_limit, precision=0),
         'cycle_reset_at': usage_state.get('reset_at').isoformat() if usage_state.get('reset_at') else None,
+        'purchased_credits_this_cycle': tokens_to_credits(usage_state.get('overage_tokens'), precision=0),
+        # Backward-compatible alias for older clients.
         'overage_credits_this_cycle': tokens_to_credits(usage_state.get('overage_tokens'), precision=0),
         'credit_soft_stop_limit': tokens_to_credits(cycle_limit, precision=0),
         'credit_block_limit': tokens_to_credits(None if cycle_limit is None else int(math.floor(int(cycle_limit) * 1.05)), precision=0),
@@ -403,20 +408,17 @@ def modify_subscription():
     }), 200
 
 
-@billing_bp.route('/create-overage-checkout-session', methods=['POST'])
-@jwt_required()
-def create_overage_checkout_session():
-    """Create a one-time Checkout session for overage thinking-power packs."""
+def _create_credit_pack_checkout_session():
     user = User.query.get(get_jwt_identity())
     if not user:
         return jsonify({'msg': 'User not found'}), 404
 
     data = request.get_json() or {}
-    pack_key = str(data.get('pack_key') or '').strip()
+    pack_key = normalize_credit_pack_key(data.get('pack_key'))
     if not pack_key:
         return jsonify({'msg': 'Missing pack_key'}), 400
 
-    packs = get_overage_packs(current_app.config)
+    packs = get_credit_packs(current_app.config)
     pack = packs.get(pack_key)
     if not pack:
         return jsonify({'msg': f'Unknown pack_key {pack_key}'}), 400
@@ -449,7 +451,7 @@ def create_overage_checkout_session():
             'pack_key': pack_key,
             'credits': str(int(tokens_to_credits(pack.get('credits', 0), precision=0) or 0)),
             'tokens': str(pack.get('credits', 0)),
-            'checkout_type': 'overage_pack',
+            'checkout_type': 'credit_pack',
         },
         success_url=success_url,
         cancel_url=cancel_url,
@@ -457,6 +459,20 @@ def create_overage_checkout_session():
     )
 
     return jsonify({'sessionId': session.id, 'url': session.url}), 200
+
+
+@billing_bp.route('/create-credit-pack-checkout-session', methods=['POST'])
+@jwt_required()
+def create_credit_pack_checkout_session():
+    """Create a one-time Checkout session for credit packs."""
+    return _create_credit_pack_checkout_session()
+
+
+@billing_bp.route('/create-overage-checkout-session', methods=['POST'])
+@jwt_required()
+def create_overage_checkout_session():
+    """Backward-compatible alias for legacy clients."""
+    return _create_credit_pack_checkout_session()
 
 
 @billing_bp.route('/create-portal-session', methods=['POST'])
@@ -557,7 +573,7 @@ def stripe_webhook():
 
         if user:
             checkout_type = metadata.get('checkout_type')
-            if checkout_type == 'overage_pack':
+            if checkout_type in {'credit_pack', 'overage_pack'}:
                 tokens = int(metadata.get('tokens') or metadata.get('credits') or 0)
                 add_credits(user, tokens)
                 if sess.get('customer'):
@@ -624,7 +640,7 @@ def stripe_webhook():
         charge = event['data']['object']
         user = _find_user_for_billing_event(customer_id=charge.get('customer'))
         metadata = charge.get('metadata') if isinstance(charge.get('metadata'), dict) else {}
-        if user and str(metadata.get('checkout_type') or '').strip() == 'overage_pack':
+        if user and str(metadata.get('checkout_type') or '').strip() in {'credit_pack', 'overage_pack'}:
             refund_credits = int(metadata.get('tokens') or metadata.get('credits') or 0)
             if refund_credits > 0 and user.credits_remaining is not None:
                 user.credits_remaining = max(0, int(user.credits_remaining or 0) - refund_credits)

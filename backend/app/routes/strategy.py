@@ -2161,7 +2161,7 @@ def analyze_project():
                 'credits_remaining': user.credits_remaining,
                 'plan_key': to_public_plan(user.subscription_plan),
                 'monthly_credit_limit': get_monthly_credit_limit(user.subscription_plan, current_app.config),
-                'suggestion': 'Purchase an overage pack or upgrade your plan.',
+                'suggestion': 'Purchase a credit pack or upgrade your plan.',
             }), 402
 
         model_selection, model_error = _resolve_user_model_selection(

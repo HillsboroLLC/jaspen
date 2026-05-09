@@ -74,23 +74,31 @@ DEFAULT_PLAN_CATALOG = {
     },
 }
 
-DEFAULT_OVERAGE_PACKS = {
-    'pack_1000': {
+CREDIT_PACK_ALIASES = {
+    'pack_1000': 'credits_3000',
+    'pack_5000': 'credits_8000',
+    'pack_20000': 'credits_18000',
+}
+
+DEFAULT_CREDIT_PACKS = {
+    'credits_3000': {
         'label': '3,000 credits',
         'credits': 3_000_000,
         'price_usd': 10,
     },
-    'pack_5000': {
+    'credits_8000': {
         'label': '8,000 credits',
         'credits': 8_000_000,
         'price_usd': 25,
     },
-    'pack_20000': {
+    'credits_18000': {
         'label': '18,000 credits',
         'credits': 18_000_000,
         'price_usd': 50,
     },
 }
+# Backward-compatible alias used by legacy callsites.
+DEFAULT_OVERAGE_PACKS = DEFAULT_CREDIT_PACKS
 
 SHARED_POOL_PLANS = {'team', 'enterprise'}
 SOFT_STOP_GRACE_MULTIPLIER = 1.05
@@ -144,6 +152,13 @@ def normalize_model_type(model_type):
     return MODEL_TYPE_ALIASES.get(normalized, normalized)
 
 
+def normalize_credit_pack_key(pack_key):
+    if not pack_key:
+        return ''
+    normalized = str(pack_key).strip().lower()
+    return CREDIT_PACK_ALIASES.get(normalized, normalized)
+
+
 def _plan_rank(plan_key):
     canonical = normalize_plan_key(plan_key)
     return PLAN_RANK.get(canonical, 0)
@@ -159,14 +174,23 @@ def get_plan_catalog(app_config):
     return catalog
 
 
-def get_overage_packs(app_config):
-    """Overage packs enriched with configured Stripe price ids."""
-    packs = deepcopy(DEFAULT_OVERAGE_PACKS)
-    stripe_pack_ids = app_config.get('STRIPE_OVERAGE_PACK_PRICE_IDS', {}) or {}
+def get_credit_packs(app_config):
+    """Credit packs enriched with configured Stripe price ids."""
+    packs = deepcopy(DEFAULT_CREDIT_PACKS)
+    stripe_pack_ids = (
+        app_config.get('STRIPE_CREDIT_PACK_PRICE_IDS')
+        or app_config.get('STRIPE_OVERAGE_PACK_PRICE_IDS')
+        or {}
+    )
     for key, value in packs.items():
         value['pack_key'] = key
         value['stripe_price_id'] = stripe_pack_ids.get(key)
     return packs
+
+
+def get_overage_packs(app_config):
+    """Backward-compatible alias for legacy references."""
+    return get_credit_packs(app_config)
 
 
 def get_model_catalog(app_config, *, include_backing_ids=False):

@@ -207,16 +207,18 @@ def create_app():
         'team':            os.getenv('PRICE_ID_TEAM') or os.getenv('PRICE_ID_GROWTH'),
         'enterprise':      os.getenv('PRICE_ID_ENTERPRISE') or os.getenv('PRICE_ID_TRANSFORM_BASIC'),
     }
-    app.config['STRIPE_OVERAGE_PACK_PRICE_IDS'] = {
-        'pack_1000':       os.getenv('PRICE_ID_OVERAGE_1000'),
-        'pack_5000':       os.getenv('PRICE_ID_OVERAGE_5000'),
-        'pack_20000':      os.getenv('PRICE_ID_OVERAGE_20000'),
+    app.config['STRIPE_CREDIT_PACK_PRICE_IDS'] = {
+        'credits_3000':    os.getenv('PRICE_ID_CREDITS_3000') or os.getenv('PRICE_ID_OVERAGE_1000'),
+        'credits_8000':    os.getenv('PRICE_ID_CREDITS_8000') or os.getenv('PRICE_ID_OVERAGE_5000'),
+        'credits_18000':   os.getenv('PRICE_ID_CREDITS_18000') or os.getenv('PRICE_ID_OVERAGE_20000'),
     }
+    # Backward-compatible alias used by legacy code paths.
+    app.config['STRIPE_OVERAGE_PACK_PRICE_IDS'] = app.config['STRIPE_CREDIT_PACK_PRICE_IDS']
     required_stripe_values = {
         'PRICE_ID_ESSENTIAL': app.config['STRIPE_PRICE_IDS'].get('essential'),
-        'PRICE_ID_OVERAGE_1000': app.config['STRIPE_OVERAGE_PACK_PRICE_IDS'].get('pack_1000'),
-        'PRICE_ID_OVERAGE_5000': app.config['STRIPE_OVERAGE_PACK_PRICE_IDS'].get('pack_5000'),
-        'PRICE_ID_OVERAGE_20000': app.config['STRIPE_OVERAGE_PACK_PRICE_IDS'].get('pack_20000'),
+        'PRICE_ID_CREDITS_3000': app.config['STRIPE_CREDIT_PACK_PRICE_IDS'].get('credits_3000'),
+        'PRICE_ID_CREDITS_8000': app.config['STRIPE_CREDIT_PACK_PRICE_IDS'].get('credits_8000'),
+        'PRICE_ID_CREDITS_18000': app.config['STRIPE_CREDIT_PACK_PRICE_IDS'].get('credits_18000'),
         'STRIPE_WEBHOOK_SECRET': app.config.get('STRIPE_WEBHOOK_SECRET'),
     }
     optional_stripe_values = {

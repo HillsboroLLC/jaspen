@@ -26,7 +26,7 @@ export default function PricingResult() {
           <h1>🎉 Subscription Confirmed!</h1>
           {session ? (
             <>
-              {session?.metadata?.checkout_type === 'overage_pack' ? (
+              {['credit_pack', 'overage_pack'].includes(String(session?.metadata?.checkout_type || '')) ? (
                 <p>
                   Credits added: <strong>{Number(session?.metadata?.credits || 0).toLocaleString()}</strong>
                 </p>

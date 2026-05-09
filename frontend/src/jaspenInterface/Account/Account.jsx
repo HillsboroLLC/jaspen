@@ -36,7 +36,7 @@ function priceDisplay(plan) {
   }
   return 'Contact sales';
 }
-const PACK_ORDER = ['pack_1000', 'pack_5000', 'pack_20000'];
+const PACK_ORDER = ['credits_3000', 'credits_8000', 'credits_18000'];
 const MODEL_ORDER = ['pluto', 'orbit', 'titan'];
 const FALLBACK_MODEL_TYPES = {
   pluto: {
@@ -338,7 +338,7 @@ function hasJiraModalUnsavedChanges(modalState) {
 export default function Account() {
   const navigate = useNavigate();
   const [status, setStatus] = useState(null);
-  const [catalog, setCatalog] = useState({ plans: {}, overage_packs: {}, model_types: FALLBACK_MODEL_TYPES });
+  const [catalog, setCatalog] = useState({ plans: {}, credit_packs: {}, overage_packs: {}, model_types: FALLBACK_MODEL_TYPES });
   const [connectorState, setConnectorState] = useState({
     loading: true,
     items: [],
@@ -517,7 +517,7 @@ export default function Account() {
         if (mounted) {
           const connectorItems = Array.isArray(connectorsData?.connectors) ? connectorsData.connectors : [];
           setStatus(statusData);
-          setCatalog(catalogData || { plans: {}, overage_packs: {}, model_types: FALLBACK_MODEL_TYPES });
+          setCatalog(catalogData || { plans: {}, credit_packs: {}, overage_packs: {}, model_types: FALLBACK_MODEL_TYPES });
           setConnectorState({
             loading: false,
             items: connectorItems,
@@ -977,7 +977,7 @@ export default function Account() {
     setMessage('');
 
     try {
-      const response = await authFetch(`${API_BASE}/api/v1/billing/create-overage-checkout-session`, {
+      const response = await authFetch(`${API_BASE}/api/v1/billing/create-credit-pack-checkout-session`, {
         method: 'POST',
         headers: authHeaders({ 'Content-Type': 'application/json' }, 'POST'),
         credentials: 'include',
@@ -989,11 +989,11 @@ export default function Account() {
           navigate('/?auth=1', { replace: true });
           return;
         }
-        throw new Error(data?.msg || 'Unable to start overage checkout.');
+        throw new Error(data?.msg || 'Unable to start credit pack checkout.');
       }
       window.location.href = data.url;
     } catch (error) {
-      setMessage(error.message || 'Unable to start overage checkout.');
+      setMessage(error.message || 'Unable to start credit pack checkout.');
     } finally {
       setPendingAction('');
     }
@@ -1757,7 +1757,7 @@ export default function Account() {
 
   const currentPlan = status?.plan_key || 'free';
   const plans = catalog?.plans || {};
-  const packs = catalog?.overage_packs || {};
+  const packs = catalog?.credit_packs || catalog?.overage_packs || {};
   const remainingTokensValue = status?.credits_remaining;
   const monthlyLimitValue = status?.monthly_credit_limit;
   const creditsRemainingLabel = remainingTokensValue == null
