@@ -216,7 +216,7 @@ export default function AppMenu() {
   const showRealActivity =
     isPlatformAdmin || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.essential;
   const showLockedActivity = !showRealActivity;
-  const showRealTeam = !isPlatformAdmin && effectiveCanManageOrg;
+  const showRealTeam = !isPlatformAdmin && effectiveCanManageOrg && PLAN_RANK[effectivePlanKey] >= PLAN_RANK.team;
   const showLockedTeam =
     !showRealTeam && previewPlanCategory === 'individual' && !isPlatformAdmin;
   const showRealConnectors = true;
