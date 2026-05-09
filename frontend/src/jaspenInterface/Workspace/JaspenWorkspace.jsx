@@ -3221,21 +3221,7 @@ useEffect(() => {
     return true;
   }, [hasHistory, view]);
 
-  useEffect(() => {
-    if (!anySidebarOpen) return;
-
-    const onPointerDown = (event) => {
-      if (!(event.target instanceof Element)) return;
-      if (event.target.closest('.jas-ud-submenu-portal')) return;
-      if (event.target.closest('.jas-left-sidebar')) return;
-      if (event.target.closest('.jas-sidebar-tab')) return;
-      if (event.target.closest('.jas-drawer-tab')) return;
-      dismissSidebars();
-    };
-
-    document.addEventListener('pointerdown', onPointerDown);
-    return () => document.removeEventListener('pointerdown', onPointerDown);
-  }, [anySidebarOpen, dismissSidebars]);
+  // Sidebars close only via their explicit X buttons — no click-outside dismissal.
 
   const startPlanChange = async (planKey) => {
     setBillingActionLoading(planKey);
