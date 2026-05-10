@@ -3316,6 +3316,34 @@ def _release_reserved_credits(user, reserved_credits):
     return user.credits_remaining
 
 
+def _persist_credit_deduction(user_id, remaining):
+    """
+    Write the final post-charge credit balance to the database using a fresh
+    user load. Called inside streaming generators where the original SQLAlchemy
+    session state from before the stream may not be reliable.
+    """
+    if remaining is None:
+        return
+    try:
+        fresh_user = User.query.get(user_id)
+        if fresh_user is None:
+            return
+        fresh_user.credits_remaining = int(remaining)
+        prefs = fresh_user.ui_preferences if isinstance(fresh_user.ui_preferences, dict) else {}
+        meter = prefs.get("thinking_power") if isinstance(prefs.get("thinking_power"), dict) else {}
+        meter["remaining"] = int(remaining)
+        cycle_limit = int(meter.get("cycle_limit") or 0)
+        meter["tokens_used_this_month"] = max(0, cycle_limit - int(remaining))
+        prefs["thinking_power"] = meter
+        fresh_user.ui_preferences = copy.deepcopy(prefs)
+        _flag_modified(fresh_user, "ui_preferences")
+        db.session.commit()
+    except Exception:
+        current_app.logger.exception(
+            "Failed to persist credit deduction for user %s (remaining=%s)", user_id, remaining
+        )
+
+
 def _settle_reserved_credits(user, *, reserved_credits, actual_credits):
     reserved = max(0, int(reserved_credits or 0))
     actual = max(0, int(actual_credits or 0))
@@ -7312,10 +7340,7 @@ def conversation_start():
                     yield _sse_payload({"type": "error", "error": "Failed to persist conversation state"})
                     return
 
-                try:
-                    db.session.commit()
-                except Exception:
-                    current_app.logger.exception("conversation_start: failed to commit credit deduction")
+                _persist_credit_deduction(user_id, remaining)
 
                 if session_created:
                     _audit_ai_agent_event(
@@ -7847,10 +7872,7 @@ def conversation_continue():
                     yield _sse_payload({"type": "error", "error": "Failed to persist conversation state"})
                     return
 
-                try:
-                    db.session.commit()
-                except Exception:
-                    current_app.logger.exception("conversation_continue: failed to commit credit deduction")
+                _persist_credit_deduction(user_id, remaining)
 
                 if session_created:
                     _audit_ai_agent_event(
