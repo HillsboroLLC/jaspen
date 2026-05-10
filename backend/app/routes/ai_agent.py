@@ -400,7 +400,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "Use rigorous finance and strategy reasoning when relevant, including unit economics, DCF framing, sensitivity analysis, "
     "portfolio prioritization, and frameworks such as Porter's Five Forces, BCG, Ansoff, and McKinsey 7S. "
     "Challenge weak assumptions directly but professionally. If data is incomplete, state what is missing and proceed with clear, labeled assumptions. "
-    "When intake is incomplete, ask one concise next question that most improves decision quality; do not ask a broad checklist in one turn. "
+    "When intake is in progress (below 85% readiness), ask one concise next question that most improves decision quality; do not ask a broad checklist in one turn. When intake reaches 85%+ readiness, stop asking questions and guide the user toward generating their scorecard instead. "
     "Communicate in crisp executive language: what matters, why it matters, and what to do next. "
     "For strategic recommendations, default to this decision structure: Recommendation, Why now, Financial impact range, Key risks, and Next 2 actions. "
     "Quantify whenever possible; when exact values are unavailable, provide an explicit range and state the assumption behind it. "
@@ -2306,7 +2306,52 @@ def _guard_mutation_tool(tool_name, *, user_turn_count, mutations_this_turn):
     return None
 
 
-def _build_agent_system_prompt(*, context_summary_text, intake_context, view_context, connector_context_snapshot, user_id, thread_id):
+def _readiness_phase_prompt_suffix(readiness):
+    """
+    Inject situational readiness awareness so the agent behaves appropriately
+    at each stage of the intake — especially stopping follow-up questions once
+    the user has provided enough context to generate a scorecard (>= 85%).
+    """
+    if not isinstance(readiness, dict):
+        return ""
+    overall = readiness.get("overall") if isinstance(readiness.get("overall"), dict) else {}
+    pct = int(overall.get("percent") or readiness.get("percent") or 0)
+
+    if pct >= 85:
+        return (
+            f"\n\nREADINESS STATUS ({pct}% — Ready to Analyze):\n"
+            "The user has provided sufficient context for scorecard generation. Apply these rules strictly:\n"
+            "- Do NOT ask any intake follow-up questions in this response.\n"
+            "- Do NOT simultaneously recommend scoring AND ask a follow-up question in the same reply.\n"
+            "- Do NOT repeat or summarize back to the user what they have already told you — they know their own situation.\n"
+            "- Briefly acknowledge what you have heard (1 sentence max), then guide them to click 'Finish & Analyze' in the top right corner of the workspace to generate their scorecard.\n"
+            "- Optionally, name one specific forward-looking insight (a risk, opportunity, or key unknown) that the scorecard will reveal — keep it to one sentence.\n"
+            "- Keep the overall response concise. The user is ready to move forward, not answer more questions."
+        )
+
+    if pct >= 45:
+        categories = readiness.get("categories") if isinstance(readiness.get("categories"), list) else []
+        missing = [c for c in categories if not c.get("completed") and c.get("key")]
+        if missing:
+            label = missing[0].get("label") or missing[0].get("key") or "a key area"
+            return (
+                f"\n\nREADINESS STATUS ({pct}% — In Progress):\n"
+                f"Intake is in progress. The highest-priority missing area is: {label}. "
+                "Ask exactly one focused question to gather this information. Do not ask about multiple topics at once."
+            )
+        return (
+            f"\n\nREADINESS STATUS ({pct}% — In Progress):\n"
+            "Intake is in progress. Ask one focused question that most improves decision quality."
+        )
+
+    return (
+        f"\n\nREADINESS STATUS ({pct}% — Early Stage):\n"
+        "Intake is in early stages. Focus on understanding the user's primary objective, "
+        "the financial metric or KPI they are optimizing, and their timeline. Ask one focused question."
+    )
+
+
+def _build_agent_system_prompt(*, context_summary_text, intake_context, view_context, connector_context_snapshot, user_id, thread_id, readiness=None):
     return (
         f"{_SYSTEM_PROMPT_PREFIX}"
         f"{_context_summary_prompt_suffix(context_summary_text)}"
@@ -2317,6 +2362,7 @@ def _build_agent_system_prompt(*, context_summary_text, intake_context, view_con
         f"{_batch_promotion_prompt_suffix(user_id, thread_id)}"
         f"{_scenario_modeling_prompt_suffix(user_id, thread_id)}"
         f"{_monitoring_prompt_suffix(user_id)}"
+        f"{_readiness_phase_prompt_suffix(readiness)}"
     )
 
 
@@ -4545,6 +4591,7 @@ def _generate_assistant_reply_anthropic(
         connector_context_snapshot=(session or {}).get("connector_context_snapshot"),
         user_id=user_id,
         thread_id=thread_id,
+        readiness=readiness,
     )
     if _message_has_data_context_request(user_message):
         system_prompt += (
@@ -4775,6 +4822,7 @@ def _stream_assistant_reply_events_anthropic(
         connector_context_snapshot=(session or {}).get("connector_context_snapshot"),
         user_id=user_id,
         thread_id=thread_id,
+        readiness=readiness,
     )
     if _message_has_data_context_request(user_message):
         system_prompt += (
@@ -5034,6 +5082,7 @@ def _generate_assistant_reply_gemini(
         connector_context_snapshot=(session or {}).get("connector_context_snapshot"),
         user_id=user_id,
         thread_id=thread_id,
+        readiness=readiness,
     )
     if _message_has_data_context_request(user_message):
         system_prompt += (
@@ -5232,6 +5281,7 @@ def _stream_assistant_reply_events_gemini(
         connector_context_snapshot=(session or {}).get("connector_context_snapshot"),
         user_id=user_id,
         thread_id=thread_id,
+        readiness=readiness,
     )
     if _message_has_data_context_request(user_message):
         system_prompt += (
