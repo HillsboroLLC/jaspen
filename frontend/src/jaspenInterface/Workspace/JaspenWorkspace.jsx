@@ -44,7 +44,7 @@ import JaspenAiDrawer from './JaspenAiDrawer';
 import ThreadEditModal from '../components/ThreadEditModal';
 import { buildInviteDisplay, buildInviteLink } from '../../shared/inviteLink';
 import { PLAN_ORDER, PLAN_RANK } from '../../shared/constants/appConstants';
-import { formatSmartDate as fmtSmartDate, formatNextResetDate as fmtNextResetDate } from '../../shared/utils/dateUtils';
+import { formatSmartDate as fmtSmartDate, formatNextResetDate as fmtNextResetDate, formatTime as fmtTime } from '../../shared/utils/dateUtils';
 
 // Styles - Single source of truth
 import "./JaspenWorkspace.css";
@@ -3898,7 +3898,7 @@ useEffect(() => {
                 <div className="jas-ud-usage-events">
                   {threadUsage.usage_events.slice(-4).reverse().map((event, idx) => (
                     <div key={`${event?.timestamp || 'usage'}-${idx}`} className="jas-ud-usage-event">
-                      <span>{new Date(event?.timestamp || Date.now()).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
+                      <span>{event?.timestamp ? fmtTime(event.timestamp) : fmtTime(new Date())}</span>
                       <span>{String(event?.model_label || 'Model')}</span>
                       <span>{Number(event?.credits_charged || 0).toLocaleString()} credits</span>
                     </div>

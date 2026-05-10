@@ -14,13 +14,36 @@ export function getUserTimezone() {
 }
 
 /**
+ * Parse a date value into a Date object, treating bare datetime strings
+ * (no timezone offset, no Z) as UTC. The backend stores all timestamps via
+ * datetime.utcnow().isoformat() which omits the "Z" — without this fix,
+ * JavaScript incorrectly treats them as local time.
+ */
+function parseUtcDate(value) {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+  const s = String(value).trim();
+  // If already has timezone info (Z, +HH:MM, -HH:MM), parse as-is.
+  if (/[Zz]$/.test(s) || /[+-]\d{2}:\d{2}$/.test(s)) {
+    return new Date(s);
+  }
+  // Bare datetime string (e.g. "2026-05-10T20:02:00" or "2026-05-10T20:02:00.123456"):
+  // treat as UTC by appending Z.
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s)) {
+    return new Date(s + 'Z');
+  }
+  // Fallback for date-only strings or anything else.
+  return new Date(s);
+}
+
+/**
  * Format a date/timestamp as a short date: "May 9, 2026"
  */
 export function formatDate(value, options = {}) {
   if (!value) return '';
   try {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return '';
+    const date = parseUtcDate(value);
+    if (!date || Number.isNaN(date.getTime())) return '';
     return date.toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric',
@@ -39,8 +62,8 @@ export function formatDate(value, options = {}) {
 export function formatDateTime(value, options = {}) {
   if (!value) return '';
   try {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return '';
+    const date = parseUtcDate(value);
+    if (!date || Number.isNaN(date.getTime())) return '';
     return date.toLocaleString('en-US', {
       month: 'short',
       day: 'numeric',
@@ -62,8 +85,8 @@ export function formatDateTime(value, options = {}) {
 export function formatSmartDate(value) {
   if (!value) return '';
   try {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return '';
+    const date = parseUtcDate(value);
+    if (!date || Number.isNaN(date.getTime())) return '';
     const tz = getUserTimezone();
     const now = new Date();
     const todayStr = now.toLocaleDateString('en-US', { timeZone: tz });
@@ -92,8 +115,8 @@ export function formatSmartDate(value) {
 export function formatNextResetDate(lastResetValue) {
   if (!lastResetValue) return 'your next billing date';
   try {
-    const last = new Date(lastResetValue);
-    if (Number.isNaN(last.getTime())) return 'your next billing date';
+    const last = parseUtcDate(lastResetValue);
+    if (!last || Number.isNaN(last.getTime())) return 'your next billing date';
     const next = new Date(last);
     next.setMonth(next.getMonth() + 1);
     return next.toLocaleDateString('en-US', {
@@ -113,8 +136,8 @@ export function formatNextResetDate(lastResetValue) {
 export function formatTime(value, options = {}) {
   if (!value) return '';
   try {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return '';
+    const date = parseUtcDate(value);
+    if (!date || Number.isNaN(date.getTime())) return '';
     return date.toLocaleTimeString('en-US', {
       hour: 'numeric',
       minute: '2-digit',

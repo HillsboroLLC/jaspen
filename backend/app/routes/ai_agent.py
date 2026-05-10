@@ -7312,6 +7312,11 @@ def conversation_start():
                     yield _sse_payload({"type": "error", "error": "Failed to persist conversation state"})
                     return
 
+                try:
+                    db.session.commit()
+                except Exception:
+                    current_app.logger.exception("conversation_start: failed to commit credit deduction")
+
                 if session_created:
                     _audit_ai_agent_event(
                         "session.created",
@@ -7841,6 +7846,11 @@ def conversation_continue():
                 if not save_user_sessions(user_id, sessions):
                     yield _sse_payload({"type": "error", "error": "Failed to persist conversation state"})
                     return
+
+                try:
+                    db.session.commit()
+                except Exception:
+                    current_app.logger.exception("conversation_continue: failed to commit credit deduction")
 
                 if session_created:
                     _audit_ai_agent_event(
