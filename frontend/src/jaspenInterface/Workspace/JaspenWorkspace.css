@@ -974,6 +974,18 @@
   line-height: 1.4;
 }
 
+.jas-ud-usage-credits-line {
+  margin: 4px 18px 6px;
+  font-size: 0.8rem;
+  color: var(--gray-700);
+  line-height: 1.4;
+}
+
+.jas-ud-usage-credits-line strong {
+  color: var(--navy);
+  font-weight: 600;
+}
+
 .jas-ud-usage-top {
   display: flex;
   align-items: center;

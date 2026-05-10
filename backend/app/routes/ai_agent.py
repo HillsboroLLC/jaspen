@@ -7439,6 +7439,7 @@ def conversation_start():
         return jsonify(credit_settlement["payload"] or _insufficient_credits_payload(user, credits_charged)), 402
     remaining = credit_settlement["remaining"]
     credits_charged = credit_settlement["charged"]
+    _persist_credit_deduction(user_id, remaining)
 
     undo_available = _has_successful_mutations(mutations) and isinstance(undo_snapshot, dict)
     chat_history.append(_assistant_chat_entry(
@@ -7971,6 +7972,7 @@ def conversation_continue():
         return jsonify(credit_settlement["payload"] or _insufficient_credits_payload(user, credits_charged)), 402
     remaining = credit_settlement["remaining"]
     credits_charged = credit_settlement["charged"]
+    _persist_credit_deduction(user_id, remaining)
 
     undo_available = _has_successful_mutations(mutations) and isinstance(undo_snapshot, dict)
     chat_history.append(_assistant_chat_entry(
@@ -8919,6 +8921,7 @@ def conversation_regenerate():
                     return
                 remaining = credit_settlement["remaining"]
                 credits_charged = credit_settlement["charged"]
+                _persist_credit_deduction(user_id, remaining)
 
                 alternatives = [old_response, *((last_msg.get("alternatives") or []) if isinstance(last_msg.get("alternatives"), list) else [])]
                 new_msg = _assistant_chat_entry(
@@ -9033,6 +9036,7 @@ def conversation_regenerate():
         return jsonify(credit_settlement["payload"] or _insufficient_credits_payload(user, credits_charged)), 402
     remaining = credit_settlement["remaining"]
     credits_charged = credit_settlement["charged"]
+    _persist_credit_deduction(user_id, remaining)
 
     alternatives = [old_response, *((last_msg.get("alternatives") or []) if isinstance(last_msg.get("alternatives"), list) else [])]
     new_msg = _assistant_chat_entry(
@@ -9355,6 +9359,7 @@ def rank_batch_ideas(batch_id):
         return jsonify(credit_settlement["payload"] or _insufficient_credits_payload(user, credits_charged)), 402
     remaining = credit_settlement["remaining"]
     credits_charged = credit_settlement["charged"]
+    _persist_credit_deduction(user_id, remaining)
 
     ranked_ideas = ranking_payload.get("ranked_ideas") if isinstance(ranking_payload, dict) else []
     ranking_record = {
@@ -9502,6 +9507,7 @@ def clarify_batch_idea(batch_id, idea_id):
         return jsonify(credit_settlement["payload"] or _insufficient_credits_payload(user, credits_charged)), 402
     remaining = credit_settlement["remaining"]
     credits_charged = credit_settlement["charged"]
+    _persist_credit_deduction(user_id, remaining)
 
     updated_idea.update({
         "preliminary_score": _coerce_score_int(reevaluated.get("preliminary_score")),

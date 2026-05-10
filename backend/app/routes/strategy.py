@@ -2387,6 +2387,7 @@ def chat_with_analysis():
 
         from .ai_agent import (
             _estimate_usage_credit_charge,
+            _persist_credit_deduction,
             _release_reserved_credits,
             _reserve_preflight_credits,
             _settle_reserved_credits,
@@ -2482,8 +2483,8 @@ RESPONSE RULES
             }), 402
         remaining = credit_settlement.get('remaining')
         credits_charged = int(credit_settlement.get('charged') or 0)
-        db.session.commit()
-        
+        _persist_credit_deduction(current_user_id, remaining)
+
         return jsonify({
             'response': ai_response,
             'model_type': model_selection['model_type'],
@@ -2731,6 +2732,7 @@ def portfolio_scores_agent():
         from .ai_agent import (
             _estimate_usage_credit_charge,
             _generate_routed_chat_reply,
+            _persist_credit_deduction,
             _release_reserved_credits,
             _reserve_preflight_credits,
             _settle_reserved_credits,
@@ -2787,6 +2789,7 @@ def portfolio_scores_agent():
             }), 402
         remaining = credit_settlement.get('remaining')
         credits_charged = int(credit_settlement.get('charged') or 0)
+        _persist_credit_deduction(current_user_id, remaining)
 
         _audit_strategy_event(
             'scores.portfolio_agent_used',

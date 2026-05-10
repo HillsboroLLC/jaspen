@@ -3812,22 +3812,10 @@ useEffect(() => {
             )}
             {!billingLoading && monthlyCreditLimit != null && (
               <>
-                <div className="jas-ud-usage-grid jas-ud-usage-grid-compact">
-                  <div className="jas-ud-usage-stat">
-                    <span>Used</span>
-                    <strong>{Number(resolvedMonthlyCreditsUsed || 0).toLocaleString()}</strong>
-                  </div>
-                  <div className="jas-ud-usage-stat">
-                    <span>Remaining</span>
-                    <strong>{Number(creditsRemaining || 0).toLocaleString()}</strong>
-                  </div>
-                </div>
-                <p className="jas-ud-usage-note">Thinking power remaining: {intakeCreditsCompactLabel}</p>
-                <p className="jas-ud-usage-note">
-                  Monthly limit: {Number(monthlyCreditLimit || 0).toLocaleString()} credits on {currentPlanLabel}.
+                <p className="jas-ud-usage-credits-line">
+                  Used <strong>{Number(resolvedMonthlyCreditsUsed || 0).toLocaleString()}</strong> of <strong>{Number(monthlyCreditLimit || 0).toLocaleString()}</strong> credits
                 </p>
-                <p className="jas-ud-usage-note">Resets: {formatNextResetDate(billingStatus?.cycle_reset_at)}</p>
-                <p className="jas-ud-usage-note">Current plan: {currentPlanLabel}</p>
+                <p className="jas-ud-usage-note">Resets: {formatNextResetDate(billingStatus?.cycle_reset_at)} · {currentPlanLabel}</p>
                 {creditsTone !== 'normal' && (
                   <div className="jas-account-actions">
                     <button type="button" className="jas-account-plan-cta" onClick={() => navigate('/account?tab=billing')}>
