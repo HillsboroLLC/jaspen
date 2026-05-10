@@ -400,7 +400,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "Use rigorous finance and strategy reasoning when relevant, including unit economics, DCF framing, sensitivity analysis, "
     "portfolio prioritization, and frameworks such as Porter's Five Forces, BCG, Ansoff, and McKinsey 7S. "
     "Challenge weak assumptions directly but professionally. If data is incomplete, state what is missing and proceed with clear, labeled assumptions. "
-    "When intake is in progress (below 85% readiness), ask one concise next question that most improves decision quality; do not ask a broad checklist in one turn. When intake reaches 85%+ readiness, stop asking questions and guide the user toward generating their scorecard instead. "
+    "When intake is in progress, ask one concise next question that most improves decision quality; do not ask a broad checklist in one turn. When intake is ready to analyze (goal defined + measurable baseline provided + sufficient overall coverage), stop asking questions and guide the user toward generating their scorecard instead. "
     "Communicate in crisp executive language: what matters, why it matters, and what to do next. "
     "For strategic recommendations, default to this decision structure: Recommendation, Why now, Financial impact range, Key risks, and Next 2 actions. "
     "Quantify whenever possible; when exact values are unavailable, provide an explicit range and state the assumption behind it. "
@@ -1341,14 +1341,25 @@ READINESS_SPEC_V1 = {
 
 READINESS_SPEC_V2 = {
     "version": "readiness-v2",
+    # required_keys: these categories MUST be complete for ready_to_analyze to trigger,
+    # regardless of overall percent.  Goal + measurable baseline are non-negotiable gates.
+    "required_keys": {"goal_definition", "evidence_baseline"},
+    # min_keywords: how many keyword matches a category needs before it counts as complete.
+    # 2 prevents a single incidental word from marking a category done.
+    "min_keywords": 2,
     "categories": [
-        {"key": "goal_definition", "label": "Goal Definition", "weight": 1 / 7, "step": 1},
-        {"key": "evidence_baseline", "label": "Data Baseline (Financial or KPI)", "weight": 1 / 7, "step": 2},
-        {"key": "sme_drivers", "label": "SME Drivers (Why)", "weight": 1 / 7, "step": 3},
-        {"key": "system_mapping", "label": "System Mapping", "weight": 1 / 7, "step": 4},
-        {"key": "constraint_unlock", "label": "Constraint + Unlock", "weight": 1 / 7, "step": 5},
-        {"key": "execution_sequence", "label": "Execution Sequencing", "weight": 1 / 7, "step": 6},
-        {"key": "replication_plan", "label": "Replication Plan", "weight": 1 / 7, "step": 7},
+        # Required gate: must have a specific outcome + measurable target.
+        {"key": "goal_definition",    "label": "Goal Definition",               "weight": 0.20, "step": 1, "required": True},
+        # Required gate: must have at least one number or financial/KPI metric.
+        # evidence_baseline uses its own quality-score path inside _compute_readiness.
+        {"key": "evidence_baseline",  "label": "Data Baseline (Financial/KPI)", "weight": 0.20, "step": 2, "required": True},
+        # Core operational categories — each carries equal weight of the remaining 60%.
+        {"key": "sme_drivers",        "label": "SME Drivers (Why)",             "weight": 0.15, "step": 3},
+        {"key": "system_mapping",     "label": "System Mapping",                "weight": 0.15, "step": 4},
+        {"key": "constraint_unlock",  "label": "Constraint + Unlock",           "weight": 0.15, "step": 5},
+        {"key": "execution_sequence", "label": "Execution Sequencing",          "weight": 0.15, "step": 6},
+        # Optional — valuable context but not a gate for readiness.
+        {"key": "replication_plan",   "label": "Replication Plan",              "weight": 0.00, "step": 7},
     ],
 }
 
@@ -1372,13 +1383,50 @@ READINESS_KEYWORDS_BY_VERSION = {
         "execution_plan": ["timeline", "team", "resource", "milestone", "launch", "plan"],
     },
     "readiness-v2": {
-        "goal_definition": ["goal", "objective", "north star", "outcome", "deadline", "target date"],
-        "evidence_baseline": ["metric", "kpi", "baseline", "current", "target", "trend", "data"],
-        "sme_drivers": ["sme", "stakeholder", "expert", "root cause", "why", "insight"],
-        "system_mapping": ["process", "workflow", "system", "handoff", "dependency map", "bottleneck"],
-        "constraint_unlock": ["constraint", "bottleneck", "unlock", "gate", "blocker", "critical path"],
-        "execution_sequence": ["sequence", "parallel", "milestone", "dependency", "owner", "timeline"],
-        "replication_plan": ["replicate", "template", "playbook", "standardize", "rollout", "repeat"],
+        # Needs a specific target/metric + time horizon — not just "goal" appearing anywhere.
+        "goal_definition": [
+            "objective", "north star", "target date", "success metric", "desired outcome",
+            "we want to", "we need to", "initiative", "improve", "increase", "decrease",
+            "reduce", "grow", "achieve", "deadline",
+        ],
+        # Needs a real number/metric with context — handled separately via evidence quality score,
+        # but keywords here back up cases where quality scoring doesn't fire.
+        "evidence_baseline": [
+            "baseline", "kpi", "metric", "percent", "rate", "score", "churn",
+            "revenue", "cost", "margin", "conversion", "retention", "throughput",
+            "cycle time", "uptime", "defect", "volume", "budget",
+        ],
+        # Must reference a person/team with domain knowledge or a root cause analysis —
+        # removed "why" (appears in almost every sentence).
+        "sme_drivers": [
+            "stakeholder", "subject matter expert", "sme", "domain expert",
+            "root cause", "root-cause", "because", "driving factor", "contributing factor",
+            "team lead", "ops team", "sales team", "finance team", "product team",
+            "insight", "pattern", "expertise",
+        ],
+        # Needs to describe a workflow or handoff — removed bare "system" (too generic).
+        "system_mapping": [
+            "workflow", "process", "handoff", "hand-off", "end-to-end", "step",
+            "stage", "pipeline", "funnel", "touchpoint", "team owns", "responsible for",
+            "dependencies", "upstream", "downstream", "sequence of",
+        ],
+        # Needs an identified blocker or unlock action.
+        "constraint_unlock": [
+            "constraint", "bottleneck", "blocker", "blocking", "critical path",
+            "unlock", "gate", "dependency blocks", "waiting on", "holding back",
+            "friction", "bandwidth", "capacity", "approval needed",
+        ],
+        # Needs sequencing language or an owner/timeline.
+        "execution_sequence": [
+            "milestone", "timeline", "sequence", "phase", "sprint", "by q",
+            "owner", "responsible", "parallel", "dependency", "first we", "then we",
+            "next step", "week", "month",
+        ],
+        # Optional — scale/replication thinking.
+        "replication_plan": [
+            "replicate", "template", "playbook", "standardize", "rollout",
+            "repeat", "scale", "expand to", "other teams", "other sites",
+        ],
     },
 }
 
@@ -2309,18 +2357,25 @@ def _guard_mutation_tool(tool_name, *, user_turn_count, mutations_this_turn):
 def _readiness_phase_prompt_suffix(readiness):
     """
     Inject situational readiness awareness so the agent behaves appropriately
-    at each stage of the intake — especially stopping follow-up questions once
-    the user has provided enough context to generate a scorecard (>= 85%).
+    at each stage of the intake.
+
+    The ready-to-analyze gate requires both:
+      • Overall >= 85%
+      • All required categories complete (goal_definition + evidence_baseline)
+    Below that threshold we surface the highest-priority missing REQUIRED
+    category first, then the next incomplete non-required one.
     """
     if not isinstance(readiness, dict):
         return ""
     overall = readiness.get("overall") if isinstance(readiness.get("overall"), dict) else {}
     pct = int(overall.get("percent") or readiness.get("percent") or 0)
+    categories = readiness.get("categories") if isinstance(readiness.get("categories"), list) else []
 
-    if pct >= 85:
+    # Use the same gate logic as _is_ready_to_analyze so the prompt stays in sync.
+    if _is_ready_to_analyze(readiness):
         return (
             f"\n\nREADINESS STATUS ({pct}% — Ready to Analyze):\n"
-            "The user has provided sufficient context for scorecard generation. Apply these rules strictly:\n"
+            "The user has provided sufficient context for scorecard generation — goal defined, baseline shared, sufficient coverage. Apply these rules strictly:\n"
             "- Do NOT ask any intake follow-up questions in this response.\n"
             "- Do NOT simultaneously recommend scoring AND ask a follow-up question in the same reply.\n"
             "- Do NOT repeat or summarize back to the user what they have already told you — they know their own situation.\n"
@@ -2329,25 +2384,32 @@ def _readiness_phase_prompt_suffix(readiness):
             "- Keep the overall response concise. The user is ready to move forward, not answer more questions."
         )
 
+    # Surface required categories first, then optional gaps.
+    missing_required = [c for c in categories if bool(c.get("required")) and not c.get("completed")]
+    missing_optional = [c for c in categories if not bool(c.get("required")) and not c.get("completed")]
+    missing = missing_required + missing_optional
+
     if pct >= 45:
-        categories = readiness.get("categories") if isinstance(readiness.get("categories"), list) else []
-        missing = [c for c in categories if not c.get("completed") and c.get("key")]
         if missing:
-            label = missing[0].get("label") or missing[0].get("key") or "a key area"
+            top = missing[0]
+            label = top.get("label") or top.get("key") or "a key area"
+            gate_note = " (required before scoring can begin)" if top.get("required") else ""
             return (
                 f"\n\nREADINESS STATUS ({pct}% — In Progress):\n"
-                f"Intake is in progress. The highest-priority missing area is: {label}. "
+                f"Intake is in progress. The highest-priority missing area is: {label}{gate_note}. "
                 "Ask exactly one focused question to gather this information. Do not ask about multiple topics at once."
             )
         return (
             f"\n\nREADINESS STATUS ({pct}% — In Progress):\n"
-            "Intake is in progress. Ask one focused question that most improves decision quality."
+            "Intake is nearly complete. Ask one focused question that most improves decision quality."
         )
 
     return (
         f"\n\nREADINESS STATUS ({pct}% — Early Stage):\n"
-        "Intake is in early stages. Focus on understanding the user's primary objective, "
-        "the financial metric or KPI they are optimizing, and their timeline. Ask one focused question."
+        "Intake is in early stages. The two most critical things to establish first are: "
+        "(1) a specific, measurable goal with a time horizon, and "
+        "(2) a baseline metric showing current vs target state. "
+        "Ask one focused question to get started."
     )
 
 
@@ -2566,26 +2628,35 @@ def _log_injection_signals(*, user, thread_id, user_message, injection_signals, 
         current_app.logger.exception("Failed to audit injection signal")
 
 
-def _category_is_addressed(key, chat_history, keyword_map, min_word_context=4):
+def _category_is_addressed(key, chat_history, keyword_map, min_word_context=4, min_keyword_count=1):
     """
-    A category is addressed only if a user message contains a keyword
-    and has at least min_word_context surrounding words.
+    A category is addressed only if at least `min_keyword_count` distinct keywords
+    from the category's list appear across all user messages, and each matching message
+    has at least `min_word_context` surrounding words (prevents one-word replies from
+    ticking off categories).
+
+    Increasing min_keyword_count to 2+ prevents incidental single-word matches
+    (e.g. "process", "why") from marking a category complete.
     """
     keywords = keyword_map.get(key, [])
     if not keywords:
         return False
 
+    # Collect all user message text (lowercased, concatenated for multi-turn scanning)
+    all_user_text = ""
     for msg in (chat_history or []):
         if not isinstance(msg, dict) or str(msg.get("role", "")).lower() != "user":
             continue
         content = str(_message_text(msg) or "").strip().lower()
         if len(content.split()) < max(1, int(min_word_context or 4)):
             continue
-        for kw in keywords:
-            kw_norm = str(kw or "").strip().lower()
-            if kw_norm and kw_norm in content:
-                return True
-    return False
+        all_user_text += " " + content
+
+    matched_keywords = sum(
+        1 for kw in keywords
+        if str(kw or "").strip().lower() and str(kw or "").strip().lower() in all_user_text
+    )
+    return matched_keywords >= min_keyword_count
 
 
 def _compute_readiness(chat_history, strategy_objective="balanced"):
@@ -2593,6 +2664,10 @@ def _compute_readiness(chat_history, strategy_objective="balanced"):
     version = spec.get("version", "readiness-v1")
     keyword_map = READINESS_KEYWORDS_BY_VERSION.get(version, {})
     objective = normalize_strategy_objective(strategy_objective, default="balanced")
+    # How many keyword matches are required before a category counts as complete.
+    # Default 1 preserves v1 behavior; v2 spec raises this to 2 to prevent
+    # single incidental words (e.g. "process", "why") from ticking off categories.
+    spec_min_keywords = int(spec.get("min_keywords") or 1)
 
     user_msgs = [
         _message_text(m)
@@ -2610,12 +2685,14 @@ def _compute_readiness(chat_history, strategy_objective="balanced"):
         weight = float(cat.get("weight", 0))
 
         if version == "readiness-v2" and key == "evidence_baseline" and evidence:
-            # Evidence is complete when we have a measurable baseline format that
-            # works for both financial and non-financial KPI metrics.
-            completed = evidence["quality_score"] >= 3
-            percent = min(100, evidence["quality_score"] * 20)
+            # Evidence is complete when the user has shared a measurable baseline
+            # (number + metric type + some timeframe context).  quality_score >= 2
+            # is intentionally lower than the old threshold of 3 because the v2
+            # keyword list is now more specific — fewer false positives.
+            completed = evidence["quality_score"] >= 2
+            percent = min(100, evidence["quality_score"] * 25)
         else:
-            hits = _category_is_addressed(key, chat_history, keyword_map)
+            hits = _category_is_addressed(key, chat_history, keyword_map, min_keyword_count=spec_min_keywords)
             completed = bool(hits)
             percent = 100 if hits else 0
 
@@ -2628,6 +2705,7 @@ def _compute_readiness(chat_history, strategy_objective="balanced"):
             "step": cat.get("step"),
             "percent": int(percent),
             "completed": completed,
+            "required": bool(cat.get("required")),
         }
         if version == "readiness-v2" and key == "evidence_baseline" and evidence:
             category_payload["evidence_checks"] = evidence
@@ -2660,6 +2738,36 @@ def _readiness_completed_keys(readiness_payload):
         for item in (readiness_payload.get("categories") if isinstance(readiness_payload, dict) else [])
         if isinstance(item, dict) and bool(item.get("completed")) and str(item.get("key") or "").strip()
     }
+
+
+def _is_ready_to_analyze(readiness):
+    """
+    True when:
+      1. Overall percent >= 85 (sufficient coverage across scored categories), AND
+      2. Every category marked required=True in the spec is complete.
+
+    This prevents ready_to_analyze from triggering when a user skips a
+    foundational category (e.g. goal_definition or evidence_baseline) but
+    happens to hit 85% via other categories.
+    """
+    if not isinstance(readiness, dict):
+        return False
+    overall = readiness.get("overall") if isinstance(readiness.get("overall"), dict) else {}
+    pct = int(overall.get("percent") or readiness.get("percent") or 0)
+    if pct < 85:
+        return False
+    # Check that all required categories are complete.
+    spec = _active_readiness_spec()
+    required_keys = set(spec.get("required_keys") or set())
+    if not required_keys:
+        return True
+    categories = readiness.get("categories") if isinstance(readiness.get("categories"), list) else []
+    completed_required = {
+        str(c.get("key") or "").strip()
+        for c in categories
+        if isinstance(c, dict) and bool(c.get("completed")) and bool(c.get("required"))
+    }
+    return required_keys.issubset(completed_required)
 
 
 def _clamp_readiness_with_delta(previous_snapshot, current_snapshot):
@@ -7915,7 +8023,7 @@ def conversation_continue():
                     session.pop(PENDING_MUTATION_UNDO_KEY, None)
                 session["model_type"] = model_selection["model_type"]
                 session["timestamp"] = _iso_now()
-                session["status"] = "ready_to_analyze" if final_readiness["overall"]["percent"] >= 85 else "in_progress"
+                session["status"] = "ready_to_analyze" if _is_ready_to_analyze(final_readiness) else "in_progress"
                 session["readiness"] = final_readiness
                 _record_usage(session, usage, credits_charged)
                 sessions[thread_id] = session
@@ -7967,7 +8075,7 @@ def conversation_continue():
                         "version": final_readiness.get("version"),
                         "updated_at": _iso_now(),
                     },
-                    "status": "ready_to_analyze" if final_readiness["overall"]["percent"] >= 85 else "gathering_info",
+                    "status": "ready_to_analyze" if _is_ready_to_analyze(final_readiness) else "gathering_info",
                     "strategy_objective": session.get("strategy_objective") or "balanced",
                     "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
                     "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
@@ -8046,7 +8154,7 @@ def conversation_continue():
         previous_readiness,
         _compute_readiness(chat_history, session.get("strategy_objective")),
     )
-    session["status"] = "ready_to_analyze" if final_readiness_non_stream["overall"]["percent"] >= 85 else "in_progress"
+    session["status"] = "ready_to_analyze" if _is_ready_to_analyze(final_readiness_non_stream) else "in_progress"
     session["readiness"] = final_readiness_non_stream
     _record_usage(session, usage, credits_charged)
     sessions[thread_id] = session
@@ -8094,7 +8202,7 @@ def conversation_continue():
             "version": final_readiness_non_stream.get("version"),
             "updated_at": _iso_now(),
         },
-        "status": "ready_to_analyze" if final_readiness_non_stream["overall"]["percent"] >= 85 else "gathering_info",
+        "status": "ready_to_analyze" if _is_ready_to_analyze(final_readiness_non_stream) else "gathering_info",
         "strategy_objective": session.get("strategy_objective") or "balanced",
         "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
         "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
