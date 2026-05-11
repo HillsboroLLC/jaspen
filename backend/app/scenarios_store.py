@@ -28,7 +28,14 @@ def load_scenarios_data(user_id):
     for row in rows:
         payload = row.scenarios_json if isinstance(row.scenarios_json, dict) else None
         if payload:
-            out[str(row.session_id)] = payload
+            db_sid = str(row.session_id)
+            out[db_sid] = payload
+            # Also alias by the payload's session_id if the session payload uses a different UUID
+            # (e.g. DB key = 'thread_1755649fe585', payload.session_id = '378d472a-...')
+            row_payload = row.payload if isinstance(row.payload, dict) else {}
+            payload_sid = str(row_payload.get('session_id') or '').strip()
+            if payload_sid and payload_sid != db_sid:
+                out[payload_sid] = payload
     return out
 
 

@@ -2872,6 +2872,16 @@ def _safe_float(value):
 def _resolve_thread_baseline(user_id, thread_id):
     all_data = _load_scenarios(user_id)
     thread_data = all_data.get(thread_id)
+
+    sessions = load_user_sessions(user_id) or {}
+    session_key, session = _resolve_session_entry(sessions, thread_id)
+
+    # If the thread_id is an internal UUID alias, fall back to the canonical session key
+    # (e.g. thread_id='378d472a-...' → session stored at key='thread_1755649fe585')
+    canonical_key = str(session_key or thread_id)
+    if not isinstance(thread_data, dict) and canonical_key != str(thread_id):
+        thread_data = all_data.get(canonical_key)
+
     if not isinstance(thread_data, dict):
         thread_data = _thread_entry()
         all_data[thread_id] = thread_data
@@ -2880,8 +2890,6 @@ def _resolve_thread_baseline(user_id, thread_id):
     baseline_inputs = thread_data.get('baseline_inputs') if isinstance(thread_data.get('baseline_inputs'), dict) else {}
     lever_catalog = thread_data.get('lever_catalog') if isinstance(thread_data.get('lever_catalog'), list) else []
 
-    sessions = load_user_sessions(user_id) or {}
-    _, session = _resolve_session_entry(sessions, thread_id)
     session_result = session.get('result') if isinstance(session, dict) and isinstance(session.get('result'), dict) else None
 
     if baseline is None and session_result:
@@ -4775,13 +4783,32 @@ def generate_ai_wbs(thread_id):
             current_scorecard = adopted_scenario.get('result')
         if current_scorecard is None and isinstance(session, dict) and isinstance(session.get('result'), dict):
             current_scorecard = session.get('result')
+        # Fallback: thread_id might be a scorecard analysis_id rather than a session_id.
+        # Scan all sessions to find one whose result.analysis_id matches.
+        if not isinstance(current_scorecard, dict):
+            all_sessions = load_user_sessions(user_id) or {}
+            for _key, _candidate in all_sessions.items():
+                if not isinstance(_candidate, dict):
+                    continue
+                _result = _candidate.get('result')
+                if not isinstance(_result, dict):
+                    continue
+                _aid = str(_result.get('analysis_id') or _result.get('id') or '').strip()
+                if _aid and _aid == str(thread_id):
+                    current_scorecard = _result
+                    _canonical_td = all_data.get(_key)
+                    if isinstance(_canonical_td, dict):
+                        thread_data = _canonical_td
+                        scenarios = thread_data.get('scenarios') if isinstance(thread_data.get('scenarios'), dict) else {}
+                        adopted_id = thread_data.get('adopted_scenario_id')
+                    break
         if not isinstance(current_scorecard, dict):
             return jsonify({'error': 'No scorecard context found for this thread.'}), 404
 
         if not preflight_answers:
             has_exec_summary = bool(str(current_scorecard.get('executive_summary') or '').strip())
             score_value = int(current_scorecard.get('jaspen_score') or 0)
-            if not has_exec_summary or score_value == 0:
+            if not has_exec_summary and score_value == 0:
                 return jsonify({
                     'needs_preflight': True,
                     'questions': [
