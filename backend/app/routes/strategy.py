@@ -3706,6 +3706,15 @@ def _generate_ai_wbs_suggestion(
         top_risks = []
     recommendations = scorecard_payload.get('recommendations') if isinstance(scorecard_payload.get('recommendations'), list) else []
 
+    # Trim scorecard to essential fields to keep the prompt concise
+    scorecard_summary = {
+        k: scorecard_payload[k]
+        for k in ('initiative_name', 'jaspen_score', 'executive_summary', 'strategy_objective',
+                  'component_scores', 'key_insights', 'recommendations', 'top_risks',
+                  'business_description', 'industry', 'company_size')
+        if k in scorecard_payload
+    }
+
     prompt = f"""
 You are generating a project WBS from a strategy scorecard.
 Planning mode: {planning_mode}
@@ -3715,19 +3724,16 @@ Instruction:
 {instruction or "Generate an actionable WBS from this scorecard."}
 
 Scorecard context:
-{json.dumps(scorecard_payload, indent=2)}
-
-Key insights:
-{json.dumps(scorecard_payload.get('key_insights') or [], indent=2)}
+{json.dumps(scorecard_summary, indent=2)}
 
 Top risks:
-{json.dumps(top_risks, indent=2)}
+{json.dumps(top_risks[:5], indent=2)}
 
 Recommendations:
-{json.dumps(recommendations, indent=2)}
+{json.dumps(recommendations[:5], indent=2)}
 
 Scenario context (if provided):
-{json.dumps(scenario_context, indent=2)}
+{json.dumps({k: scenario_context[k] for k in ('name', 'lever_changes', 'rationale', 'result') if k in scenario_context} if scenario_context else {}, indent=2)}
 
 Return JSON only:
 {{
@@ -3756,12 +3762,12 @@ Return JSON only:
 }}
 
 Rules:
-- Return 15-30 tasks total spread across 4-7 meaningful phases.
+- Return 10-18 tasks total spread across 4-6 meaningful phases.
 - Phases must follow a logical sequence: e.g. Discovery -> Planning -> Build/Execute -> Validate -> Launch -> Operate.
 - Every task must have a concrete, specific title (not generic like "Research" - say what is being researched).
 - Assign a realistic suggested_role to every task.
 - Include function and activity_type for every task.
-- Include at least 2 risk-mitigation tasks, 1 change-management task, 1 stakeholder-communication task, and 1 value-capture/measurement task.
+- Include at least 1 risk-mitigation task, 1 change-management task, and 1 value-capture/measurement task.
 - Estimated_days should be realistic for the task complexity (range: 1-15).
 - Dependencies must reference real task IDs in the list; avoid circular references.
 - Use context from key_insights and recommendations to make tasks specific to THIS initiative, not generic templates.
@@ -3771,12 +3777,12 @@ Rules:
     try:
         raw_reply, _usage = _strategy_generate_reply(
             [{"role": "user", "content": prompt}],
-            system_prompt="You are a senior project planning assistant. Generate comprehensive, initiative-specific execution plans with 15-30 tasks across 4-7 phases. Every task title must be specific and actionable. Return strict JSON only.",
+            system_prompt="You are a senior project planning assistant. Generate initiative-specific execution plans with 10-18 tasks across 4-6 phases. Every task title must be specific and actionable. Return strict JSON only.",
             model_selection=model_selection,
             llm_model=llm_model,
             strategy_objective=strategy_objective,
             temperature=0.25,
-            max_tokens=4000,
+            max_tokens=2000,
         )
         parsed = _extract_json_object(raw_reply)
         if not isinstance(parsed, dict):
