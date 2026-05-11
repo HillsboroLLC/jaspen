@@ -131,29 +131,17 @@ export default function HomePage() {
   const [activeDesktopMenu, setActiveDesktopMenu] = useState(null);
   const stepRefs = useRef([]);
   const closeMenuTimer = useRef(null);
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
 
-  // On first mount: scroll to auth card if ?auth=1, then strip all auth-related
-  // params from the URL using React Router (prevents the "flipping" caused by
-  // calling window.history.replaceState directly in a React Router app).
+  // Scroll to auth card when redirected with ?auth=1
   useEffect(() => {
-    const authParamKeys = ['auth', 'error', 'signed_out', 'verified'];
-    const hasAuthParams = authParamKeys.some((k) => searchParams.has(k));
-
     if (searchParams.get('auth') === '1') {
       const card = document.querySelector('.strategy-card-float');
       if (card) {
         card.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
     }
-
-    if (hasAuthParams) {
-      // Replace URL with clean pathname — no re-render loop because we only
-      // run this once on mount via the empty dependency array.
-      setSearchParams({}, { replace: true });
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [searchParams]);
 
   useEffect(() => {
     // Immediately reveal elements that are already in the viewport on mount
