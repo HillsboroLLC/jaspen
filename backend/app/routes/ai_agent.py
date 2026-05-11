@@ -400,7 +400,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "Use rigorous finance and strategy reasoning when relevant, including unit economics, DCF framing, sensitivity analysis, "
     "portfolio prioritization, and frameworks such as Porter's Five Forces, BCG, Ansoff, and McKinsey 7S. "
     "Challenge weak assumptions directly but professionally. If data is incomplete, state what is missing and proceed with clear, labeled assumptions. "
-    "When intake is in progress, ask one concise next question that most improves decision quality; do not ask a broad checklist in one turn. When intake is ready to analyze (goal defined + measurable baseline provided + sufficient overall coverage), stop asking questions and guide the user toward generating their scorecard instead. "
+    "When intake is in progress, ask one concise next question that most improves decision quality; do not ask a broad checklist in one turn. NEVER offer or suggest scorecard generation based on your own judgment — scorecard readiness is determined solely by the READINESS STATUS block appended to this prompt. Only invite the user to generate a scorecard when the READINESS STATUS block explicitly says 'Ready to Analyze'. "
     "Communicate in crisp executive language: what matters, why it matters, and what to do next. "
     "For strategic recommendations, default to this decision structure: Recommendation, Why now, Financial impact range, Key risks, and Next 2 actions. "
     "Quantify whenever possible; when exact values are unavailable, provide an explicit range and state the assumption behind it. "
@@ -2396,20 +2396,24 @@ def _readiness_phase_prompt_suffix(readiness):
             gate_note = " (required before scoring can begin)" if top.get("required") else ""
             return (
                 f"\n\nREADINESS STATUS ({pct}% — In Progress):\n"
-                f"Intake is in progress. The highest-priority missing area is: {label}{gate_note}. "
+                f"Intake is in progress — DO NOT offer or suggest scorecard generation yet. "
+                f"The highest-priority missing area is: {label}{gate_note}. "
                 "Ask exactly one focused question to gather this information. Do not ask about multiple topics at once."
             )
         return (
             f"\n\nREADINESS STATUS ({pct}% — In Progress):\n"
-            "Intake is nearly complete. Ask one focused question that most improves decision quality."
+            "Intake is nearly complete — DO NOT offer or suggest scorecard generation yet. "
+            "Ask one focused question that most improves decision quality."
         )
 
     return (
         f"\n\nREADINESS STATUS ({pct}% — Early Stage):\n"
-        "Intake is in early stages. The two most critical things to establish first are: "
+        "Intake is in early stages — DO NOT offer, suggest, or ask about scorecard generation. "
+        "DO NOT ask 'Would you like me to generate a scorecard?' or any similar prompt. "
+        "The two most critical things to establish first are: "
         "(1) a specific, measurable goal with a time horizon, and "
         "(2) a baseline metric showing current vs target state. "
-        "Ask one focused question to get started."
+        "Ask exactly one focused question to gather whichever of these is still missing."
     )
 
 
