@@ -21,6 +21,15 @@ export default function StrategyAccessCard() {
   const [authModalMode, setAuthModalMode] = useState('email');
   const [mfaData, setMfaData] = useState(null);
 
+  // Capture the URL auth notice ONCE at component creation time (lazy initializer).
+  // This runs before any effects fire, so it always sees the original URL params
+  // even after HomePage cleans them via setSearchParams. Subsequent re-renders
+  // don't re-read window.location.search, eliminating the message flash.
+  const [initialAuthNotice] = useState(() => {
+    if (typeof window === 'undefined') return null;
+    try { return readAuthQueryNotice(window.location.search || ''); } catch { return null; }
+  });
+
   useEffect(() => {
     const prefersReducedMotion =
       typeof window !== 'undefined' &&
@@ -69,27 +78,18 @@ export default function StrategyAccessCard() {
 
   const helperText = useMemo(() => {
     if (authError) return authError;
-    if (authStatus === 'reset_sent') return 'If that account exists, we’ll send a password reset link shortly.';
-    if (authStatus === 'sent') return 'Authenticated. Redirecting...';
-    if (typeof window !== 'undefined') {
-      const authNotice = readAuthQueryNotice(window.location.search || '');
-      if (authNotice?.message) return authNotice.message;
-    }
-    return 'By continuing, you agree to receive product updates.';
-  }, [authError, authStatus]);
+    if (authStatus === ‘reset_sent’) return ‘If that account exists, we’ll send a password reset link shortly.’;
+    if (authStatus === ‘sent’) return ‘Authenticated. Redirecting...’;
+    if (initialAuthNotice?.message) return initialAuthNotice.message;
+    return ‘By continuing, you agree to receive product updates.’;
+  }, [authError, authStatus, initialAuthNotice]);
 
   const helperDetail = useMemo(() => {
     if (authErrorDetail) return authErrorDetail;
-    if (typeof window !== 'undefined') {
-      return readAuthQueryNotice(window.location.search || '')?.detail || '';
-    }
-    return '';
-  }, [authErrorDetail]);
+    return initialAuthNotice?.detail || ‘’;
+  }, [authErrorDetail, initialAuthNotice]);
 
-  const queryNoticeTone = useMemo(() => {
-    if (typeof window === 'undefined') return '';
-    return readAuthQueryNotice(window.location.search || '')?.tone || '';
-  }, []);
+  const queryNoticeTone = initialAuthNotice?.tone || ‘’;
 
   const helperClassName = authError
     ? 'strategy-card-disclaimer is-error'
