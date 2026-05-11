@@ -829,39 +829,7 @@ export default function ConnectorsManage() {
         }
       }
 
-      if (EXECUTION_SYNC_CONNECTOR_IDS.includes(selectedConnector.id)) {
-        if (!selectedThreadId) {
-          setMessage('Setup check passed for connector credentials. Select a sync thread with an execution plan (WBS) to validate push sync.');
-          await loadConnectors();
-          await loadAudit(selectedConnector.id);
-          return;
-        }
-
-        let syncEndpoint = '';
-        if (selectedConnector.id === 'jira_sync') {
-          syncEndpoint = `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(selectedThreadId)}/jira/sync`;
-        } else if (selectedConnector.id === 'smartsheet_sync') {
-          syncEndpoint = `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(selectedThreadId)}/smartsheet/sync`;
-        }
-
-        const syncRes = await authFetch(syncEndpoint, {
-          method: 'POST',
-          credentials: 'include',
-          headers: authHeaders(false, 'POST'),
-        });
-        const syncData = await syncRes.json().catch(() => ({}));
-        if (!syncRes.ok) {
-          const syncError = syncData?.error || `Sync failed (${syncRes.status})`;
-          const syncCode = String(syncData?.code || '').trim().toUpperCase();
-          if (syncCode === 'THREAD_NOT_FOUND' || syncCode === 'WBS_NOT_FOUND' || isMissingThreadSyncContextError(syncError)) {
-            setMessage('Setup check passed for connector credentials. The selected sync thread is not available for WBS sync yet; select another thread or generate an execution plan first.');
-            await loadConnectors();
-            await loadAudit(selectedConnector.id);
-            return;
-          }
-          throw new Error(syncError);
-        }
-      }
+      // Setup check verifies credentials only — actual syncing is done via "Sync Now"
 
       await loadConnectors();
       await loadAudit(selectedConnector.id);
