@@ -55,20 +55,6 @@ export default function StrategyAccessCard() {
     };
   }, []);
 
-  // Clean auth-related URL params (e.g. ?auth=1&error=session_expired) once on mount
-  // so the message doesn't persist if the user refreshes or shares the URL.
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const authParamKeys = ['auth', 'error', 'signed_out', 'verified'];
-      const hasAuthParams = authParamKeys.some((k) => params.has(k));
-      if (hasAuthParams) {
-        window.history.replaceState({}, '', window.location.pathname);
-      }
-    } catch (e) { /* ignore */ }
-  }, []);
-
   // If checkAuthStatus detected MFA enforcement (existing session, org requires MFA),
   // auto-open the AuthModal with MFA data
   useEffect(() => {
