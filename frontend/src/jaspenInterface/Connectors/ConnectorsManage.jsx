@@ -259,20 +259,42 @@ function fieldLabel(text, required = false) {
   );
 }
 
-function validateRequiredFields(connectorId, draft) {
+// Secret fields that are write-only in the UI (never echoed back from the server).
+// The backend provides a has_<field> boolean instead. Validation must consult that
+// flag rather than the always-empty draft value to avoid false "Required field" errors
+// on connectors that already have a saved credential.
+const SAVED_SECRET_FLAG = {
+  jira_api_token:            (connector) => Boolean(connector?.jira?.has_api_token),
+  smartsheet_api_token:      (connector) => Boolean(connector?.smartsheet?.has_api_token),
+  salesforce_client_secret:  (connector) => Boolean(connector?.salesforce?.has_client_secret),
+  salesforce_refresh_token:  (connector) => Boolean(connector?.salesforce?.has_refresh_token),
+  snowflake_password:        (connector) => Boolean(connector?.snowflake?.has_password),
+  snowflake_private_key:     (connector) => Boolean(connector?.snowflake?.has_private_key),
+  oracle_fusion_password:    (connector) => Boolean(connector?.oracle_fusion?.has_password),
+  servicenow_password:       (connector) => Boolean(connector?.servicenow?.has_password),
+  netsuite_consumer_secret:  (connector) => Boolean(connector?.netsuite?.has_consumer_secret),
+  netsuite_token_secret:     (connector) => Boolean(connector?.netsuite?.has_token_secret),
+};
+
+function validateRequiredFields(connectorId, draft, connector) {
   const requiredFields = REQUIRED_FIELDS_BY_CONNECTOR[connectorId] || [];
   const errors = {};
   requiredFields.forEach((field) => {
-    if (!String(draft?.[field] || '').trim()) {
+    const inDraft = Boolean(String(draft?.[field] || '').trim());
+    const alreadySaved = SAVED_SECRET_FLAG[field] ? SAVED_SECRET_FLAG[field](connector) : false;
+    if (!inDraft && !alreadySaved) {
       errors[field] = 'Required field';
     }
   });
   if (connectorId === 'snowflake_insights') {
-    const hasPassword = String(draft?.snowflake_password || '').trim();
-    const hasPrivateKey = String(draft?.snowflake_private_key || '').trim();
+    const hasPassword = String(draft?.snowflake_password || '').trim() || Boolean(connector?.snowflake?.has_password);
+    const hasPrivateKey = String(draft?.snowflake_private_key || '').trim() || Boolean(connector?.snowflake?.has_private_key);
     if (!hasPassword && !hasPrivateKey) {
       errors.snowflake_password = 'Password or private key is required';
       errors.snowflake_private_key = 'Password or private key is required';
+    } else {
+      delete errors.snowflake_password;
+      delete errors.snowflake_private_key;
     }
   }
   return errors;
