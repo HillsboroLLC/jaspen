@@ -4516,6 +4516,8 @@ def _compute_scenario_scorecard(baseline, deltas, baseline_inputs):
     for narrative_key in (
         'project_name',
         'project_description',
+        'executive_summary',
+        'executive_narrative',
         'key_insights',
         'top_risks',
         'recommendations',
