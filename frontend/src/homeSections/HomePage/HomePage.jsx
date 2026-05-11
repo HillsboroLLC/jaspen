@@ -144,25 +144,51 @@ export default function HomePage() {
   }, [searchParams]);
 
   useEffect(() => {
+    // Immediately reveal elements that are already in the viewport on mount
+    // (e.g. the hero section). This prevents a flash when the user presses
+    // the Home key and returns to the top of the page — those elements
+    // already have reveal-visible and stay visible without any observer delay.
+    const revealIfVisible = (el) => {
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      if (rect.top < window.innerHeight && rect.bottom > 0) {
+        el.classList.add('reveal-visible');
+      }
+    };
+
+    const revealElements = document.querySelectorAll('.scroll-reveal');
+    revealElements.forEach(revealIfVisible);
+    stepRefs.current.forEach(revealIfVisible);
+
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
           if (entry.isIntersecting) {
             entry.target.classList.add('reveal-visible');
+            // Stop observing once revealed — prevents any re-animation on
+            // scroll position resets (Home/End keys) and avoids React
+            // reconciliation stripping the class on re-render.
+            observer.unobserve(entry.target);
             if (entry.target.dataset.stepIndex !== undefined) {
               setActiveStep(parseInt(entry.target.dataset.stepIndex));
             }
           }
         });
       },
-      { threshold: 0.2, rootMargin: '-10% 0px -10% 0px' }
+      { threshold: 0.15, rootMargin: '0px 0px -5% 0px' }
     );
 
-    const revealElements = document.querySelectorAll('.scroll-reveal');
-    revealElements.forEach((el) => observer.observe(el));
+    revealElements.forEach((el) => {
+      // Only observe elements not yet revealed
+      if (!el.classList.contains('reveal-visible')) {
+        observer.observe(el);
+      }
+    });
 
     stepRefs.current.forEach((el) => {
-      if (el) observer.observe(el);
+      if (el && !el.classList.contains('reveal-visible')) {
+        observer.observe(el);
+      }
     });
 
     return () => observer.disconnect();
