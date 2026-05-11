@@ -1,6 +1,7 @@
 import hmac
 import json
 import os
+import threading
 from datetime import datetime
 from urllib.parse import urlencode
 
@@ -713,74 +714,68 @@ def _sync_thread_with_connector(user, thread_id, connector_id, sync_callable):
         return jsonify(_error_payload("No WBS found for thread", "WBS_NOT_FOUND", thread_id=thread_id)), 404
 
     profile = get_thread_sync_profile(user.id, thread_id)
-    try:
-        result = sync_callable(user.id, thread_id, project_wbs, thread_sync_profile=profile)
-    except Exception as _sync_exc:
-        update_thread_sync_profile(user.id, thread_id, {"sync_lock_acquired_at": None, "thread_sync_status": "error"})
-        current_app.logger.error("[sync] %s connector sync failed for thread %s: %s", connector_id, thread_id, _sync_exc)
-        return jsonify(_error_payload("Sync failed unexpectedly", "SYNC_ERROR", connector_id=connector_id)), 500
-    next_wbs = result.get("project_wbs")
-    if isinstance(next_wbs, dict):
-        thread["project_wbs"] = next_wbs
-        scenarios[thread_id] = thread
-        save_scenarios_data(user.id, scenarios)
+    app = current_app._get_current_object()
+    user_id_str = str(user.id)
+    thread_id_str = str(thread_id)
 
-    status = "success" if result.get("success") else "skipped" if result.get("skipped") else "failed"
-    error_message = ""
-    errors = result.get("errors") if isinstance(result.get("errors"), list) else []
-    if errors:
-        error_message = _text(errors[0].get("error")) if isinstance(errors[0], dict) else _text(errors[0])
-    elif result.get("reason"):
-        error_message = _text(result.get("reason"))
+    def _run_sync():
+        with app.app_context():
+            try:
+                _result = sync_callable(user_id_str, thread_id_str, project_wbs, thread_sync_profile=profile)
+            except Exception as _exc:
+                update_thread_sync_profile(user_id_str, thread_id_str, {"sync_lock_acquired_at": None, "thread_sync_status": "error"})
+                app.logger.error("[sync] %s failed for thread %s: %s", connector_id, thread_id_str, _exc)
+                return
 
-    external_ref_patch = {}
-    if isinstance(next_wbs, dict):
-        for task in next_wbs.get("tasks") if isinstance(next_wbs.get("tasks"), list) else []:
-            if not isinstance(task, dict):
-                continue
-            task_id = _text(task.get("id"))
-            refs = task.get("external_refs") if isinstance(task.get("external_refs"), dict) else {}
-            external_id = ""
-            if connector_id == "jira_sync":
-                external_id = _text(refs.get("jira_issue_key") or task.get("jira_issue_key"))
-            elif connector_id == "smartsheet_sync":
-                external_id = _text(refs.get("smartsheet_row_id"))
-            if task_id and external_id:
-                external_ref_patch[task_id] = external_id
+            _next_wbs = _result.get("project_wbs")
+            if isinstance(_next_wbs, dict):
+                thread["project_wbs"] = _next_wbs
+                scenarios[thread_id_str] = thread
+                save_scenarios_data(user_id_str, scenarios)
 
-    mark_connector_sync_result(user.id, connector_id, status, error_message=error_message)
-    profile_updates = {
-        "sync_lock_acquired_at": None,
-        "last_full_sync_at": _iso_now(),
-        "thread_sync_status": "synced" if status == "success" else "error" if status == "failed" else profile.get("thread_sync_status") or "ready",
-    }
-    if external_ref_patch:
-        profile_updates["wbs_task_external_ids_patch"] = external_ref_patch
-    update_thread_sync_profile(user.id, thread_id, profile_updates)
-    append_sync_audit_event(
-        user.id,
-        connector_id,
-        action="thread_sync",
-        status=status,
-        thread_id=thread_id,
-        attempt_count=result.get("attempt_count"),
-        duration_ms=result.get("duration_ms"),
-        message=error_message,
-        metadata={
-            "created": result.get("created_issues") or result.get("created_tasks") or result.get("created_rows") or 0,
-            "updated": result.get("updated_tasks") or 0,
-        },
-    )
-    _audit_connector_event(
-        "connector.sync_triggered",
-        user=user,
-        details={
-            "thread_id": thread_id,
-            "connector_id": connector_id,
-            "status": status,
-            "attempt_count": result.get("attempt_count"),
-        },
-    )
+            _status = "success" if _result.get("success") else "skipped" if _result.get("skipped") else "failed"
+            _errors = _result.get("errors") if isinstance(_result.get("errors"), list) else []
+            _error_msg = ""
+            if _errors:
+                _error_msg = _text(_errors[0].get("error")) if isinstance(_errors[0], dict) else _text(_errors[0])
+            elif _result.get("reason"):
+                _error_msg = _text(_result.get("reason"))
+
+            _ext_patch = {}
+            if isinstance(_next_wbs, dict):
+                for _task in (_next_wbs.get("tasks") if isinstance(_next_wbs.get("tasks"), list) else []):
+                    if not isinstance(_task, dict):
+                        continue
+                    _tid = _text(_task.get("id"))
+                    _refs = _task.get("external_refs") if isinstance(_task.get("external_refs"), dict) else {}
+                    _ext_id = ""
+                    if connector_id == "jira_sync":
+                        _ext_id = _text(_refs.get("jira_issue_key") or _task.get("jira_issue_key"))
+                    elif connector_id == "smartsheet_sync":
+                        _ext_id = _text(_refs.get("smartsheet_row_id"))
+                    if _tid and _ext_id:
+                        _ext_patch[_tid] = _ext_id
+
+            mark_connector_sync_result(user_id_str, connector_id, _status, error_message=_error_msg)
+            _prof_updates = {
+                "sync_lock_acquired_at": None,
+                "last_full_sync_at": _iso_now(),
+                "thread_sync_status": "synced" if _status == "success" else "error" if _status == "failed" else profile.get("thread_sync_status") or "ready",
+            }
+            if _ext_patch:
+                _prof_updates["wbs_task_external_ids_patch"] = _ext_patch
+            update_thread_sync_profile(user_id_str, thread_id_str, _prof_updates)
+
+    bg = threading.Thread(target=_run_sync, daemon=True)
+    bg.start()
+
+    return jsonify({
+        "success": True,
+        "status": "syncing",
+        "message": "Sync started. Poll /sync for status.",
+        "thread_id": thread_id_str,
+        "connector_id": connector_id,
+    }), 202
 
     return jsonify({
         "success": bool(result.get("success")),

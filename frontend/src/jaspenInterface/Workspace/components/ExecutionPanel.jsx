@@ -348,8 +348,22 @@ export default function ExecutionPanel({
       } else if (connectorId === 'smartsheet_sync') {
         await Jaspen.syncThreadWbsToSmartsheet(threadId);
       }
-      await Promise.all([onRefresh?.(), loadSyncState()]);
-      setPanelMessage('');
+      // Backend returns 202 immediately; poll until status leaves "syncing"
+      let attempts = 0;
+      const maxAttempts = 40; // 2 minutes max
+      const poll = async () => {
+        if (attempts++ >= maxAttempts) return;
+        const state = await Jaspen.getThreadPmSync(threadId).catch(() => null);
+        const status = String(state?.thread_sync_status || state?.thread_sync?.thread_sync_status || '').trim().toLowerCase();
+        setSyncState(state || null);
+        if (status === 'syncing') {
+          setTimeout(poll, 3000);
+        } else {
+          await onRefresh?.();
+          setPanelMessage('');
+        }
+      };
+      await poll();
     } catch (error) {
       const code = String(error?.data?.code || '').trim().toUpperCase();
       if (code === 'WBS_NOT_FOUND') {
