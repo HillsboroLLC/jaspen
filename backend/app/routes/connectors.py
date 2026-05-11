@@ -777,15 +777,6 @@ def _sync_thread_with_connector(user, thread_id, connector_id, sync_callable):
         "connector_id": connector_id,
     }), 202
 
-    return jsonify({
-        "success": bool(result.get("success")),
-        "status": status,
-        "thread_id": thread_id,
-        "connector_id": connector_id,
-        "sync_result": result,
-    }), 200
-
-
 def _normalize_imported_task(task, index=0):
     task = task if isinstance(task, dict) else {}
     task_id = _text(task.get("id")) or f"imported_{index + 1}"

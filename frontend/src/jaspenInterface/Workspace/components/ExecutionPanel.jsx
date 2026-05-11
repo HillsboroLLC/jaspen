@@ -789,7 +789,7 @@ export default function ExecutionPanel({
                 </div>
                 <p>{connector?.description || 'Execution sync connector'}</p>
                 <div className="execution-sync-card-meta">
-                  <span>{connector?.health_status || 'unknown'}</span>
+                  <span>{connector?.health?.status || 'unknown'}</span>
                   <span>{connector?.last_sync_at ? formatDateLabel(connector.last_sync_at) : 'Never synced'}</span>
                 </div>
                 {connected && canEditStructure && (
