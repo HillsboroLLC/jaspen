@@ -713,7 +713,12 @@ def _sync_thread_with_connector(user, thread_id, connector_id, sync_callable):
         return jsonify(_error_payload("No WBS found for thread", "WBS_NOT_FOUND", thread_id=thread_id)), 404
 
     profile = get_thread_sync_profile(user.id, thread_id)
-    result = sync_callable(user.id, thread_id, project_wbs, thread_sync_profile=profile)
+    try:
+        result = sync_callable(user.id, thread_id, project_wbs, thread_sync_profile=profile)
+    except Exception as _sync_exc:
+        update_thread_sync_profile(user.id, thread_id, {"sync_lock_acquired_at": None, "thread_sync_status": "error"})
+        current_app.logger.error("[sync] %s connector sync failed for thread %s: %s", connector_id, thread_id, _sync_exc)
+        return jsonify(_error_payload("Sync failed unexpectedly", "SYNC_ERROR", connector_id=connector_id)), 500
     next_wbs = result.get("project_wbs")
     if isinstance(next_wbs, dict):
         thread["project_wbs"] = next_wbs
