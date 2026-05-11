@@ -1630,6 +1630,32 @@ def logout_all_sessions():
     return resp, 200
 
 
+@auth_bp.route('/refresh', methods=['POST'])
+@jwt_required()
+def refresh_access_token():
+    """
+    Silently renew the access token cookie while the current token is still valid.
+    Called proactively by the frontend before the token expires to prevent mid-session
+    logouts. Issues a fresh access token with the same identity and token_version.
+    """
+    try:
+        user_id = get_jwt_identity()
+        user = User.query.get(user_id)
+        if not user:
+            return jsonify(error='User not found'), 404
+        if user.deactivated_at is not None:
+            return jsonify(_deactivated_account_payload()), 403
+        # Issue a fresh token with the same version — no session re-registration needed
+        # since we're extending an already-authenticated session.
+        new_token = _create_user_access_token(user)
+        resp = jsonify(message='Token refreshed', user_id=str(user.id))
+        _attach_auth_cookie(resp, new_token)
+        return resp, 200
+    except Exception as exc:
+        current_app.logger.warning('Token refresh failed: %s', exc)
+        return jsonify(error='Unable to refresh token'), 401
+
+
 @auth_bp.route('/me-cookie', methods=['GET'])
 def get_current_user_from_cookie():
     token = request.cookies.get('jaspen_access')

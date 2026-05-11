@@ -251,15 +251,26 @@ export function AuthProvider({ children }) {
   }, [user?.id]);
 
   // Re-check auth quietly so UI does not remain in a stale "looks logged in" state.
+  // Also silently renews the access token cookie on each tick so the session stays
+  // alive throughout the work session without mid-session logouts.
   useEffect(() => {
+    const silentRefresh = async () => {
+      try {
+        await authFetch('/api/v1/auth/refresh', { method: 'POST' });
+      } catch {
+        // Refresh failures are silent — the next checkAuthStatus will handle expiry.
+      }
+    };
+
     const onVisible = () => {
       if (document.visibilityState === 'visible') {
-        checkAuthStatus({ silent: true });
+        silentRefresh().then(() => checkAuthStatus({ silent: true })).catch(() => {});
       }
     };
     document.addEventListener('visibilitychange', onVisible);
 
-    const intervalId = window.setInterval(() => {
+    const intervalId = window.setInterval(async () => {
+      await silentRefresh();
       checkAuthStatus({ silent: true });
     }, 5 * 60 * 1000);
 
