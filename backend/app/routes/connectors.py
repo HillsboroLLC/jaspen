@@ -108,6 +108,10 @@ def _text(value):
     return str(value or "").strip()
 
 
+def _iso_now():
+    return datetime.utcnow().isoformat()
+
+
 
 def _frontend_base_url():
     return (current_app.config.get("FRONTEND_BASE_URL") or "http://localhost:3000").rstrip("/")
