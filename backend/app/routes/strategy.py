@@ -2901,7 +2901,10 @@ def _resolve_thread_baseline(user_id, thread_id):
     if isinstance(baseline, dict):
         baseline_inputs, generated_catalog = _build_scenario_lever_catalog(baseline, baseline_inputs)
         thread_data['baseline_inputs'] = baseline_inputs
-        if not lever_catalog:
+        # Regenerate if stored catalog is missing any standard levers (not just when completely empty)
+        stored_keys = {row.get('key') for row in lever_catalog if isinstance(row, dict)}
+        std_keys = set(_STANDARD_SCENARIO_LEVERS.keys())
+        if not lever_catalog or not std_keys.issubset(stored_keys):
             thread_data['lever_catalog'] = generated_catalog
 
     session_objective = _normalize_strategy_objective(session.get('strategy_objective')) if isinstance(session, dict) else 'balanced'
@@ -5437,7 +5440,10 @@ def get_thread_bundle(thread_id):
             baseline_inputs = {}
         if isinstance(baseline, dict):
             baseline_inputs, generated_catalog = _build_scenario_lever_catalog(baseline, baseline_inputs)
-            if not lever_catalog:
+            # Regenerate if stored catalog is missing any standard levers (not just when completely empty)
+            stored_keys = {row.get('key') for row in lever_catalog if isinstance(row, dict)}
+            std_keys = set(_STANDARD_SCENARIO_LEVERS.keys())
+            if not lever_catalog or not std_keys.issubset(stored_keys):
                 lever_catalog = generated_catalog
             td['baseline_inputs'] = baseline_inputs
             td['lever_catalog'] = lever_catalog
