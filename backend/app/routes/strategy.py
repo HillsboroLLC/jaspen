@@ -3393,14 +3393,22 @@ Return JSON only in this shape:
   }},
   "rationale": "short explanation of why the combined lever changes satisfy the request",
   "reasons": {{
-    "lever_id": "why this specific lever changed"
+    "lever_id": "why this specific lever changed and what the new value achieves"
   }}
 }}
 
+CRITICAL — delta values are ABSOLUTE NEW TARGET VALUES, not change amounts:
+- If team_size current=3 and you want it to become 5, set "team_size": 5 (not 2).
+- If target_adoption_rate current=70 and you want it to reach 85, set "target_adoption_rate": 85 (not 15).
+- If implementation_timeline current=6 and you want it shortened to 4, set "implementation_timeline": 4 (not -2).
+- Always set the value you want the lever to BE, not the amount to change by.
+
 Rules:
 - Suggest 1-6 lever changes.
-- Keep values realistic relative to current levels.
+- Keep values within realistic bounds (use the min/max/step from the lever catalog).
+- Values must be numeric and represent the absolute new state of the lever.
 - Always include rationale for every lever inside reasons.
+- Reasons should describe the lever's change: e.g. "Increased from 3 to 5 to support faster rollout".
 - Do not invent new lever ids.
 - Align the recommendation with the objective profile while still honoring the user's request.
 """.strip()

@@ -1132,6 +1132,21 @@ const ScenarioModeler = forwardRef(function ScenarioModeler({
       const createdScenario = resp?.scenario || null;
       const newScenarioId = resp?.scenario_id || createdScenario?.scenario_id || null;
       const scorecard = normalizeApplied(createdScenario?.result || resp?.preview_scorecard || {});
+
+      // Apply the AI-suggested deltas to the visible lever inputs so the user
+      // can see exactly what values were used (mirrors modifyAiSuggest logic).
+      if (aiSuggestDraft.deltas && typeof aiSuggestDraft.deltas === 'object') {
+        const nextValues = { ...scenarioA };
+        Object.entries(aiSuggestDraft.deltas).forEach(([leverId, rawValue]) => {
+          const lever = levers.find((item) => String(item?.key || '') === String(leverId));
+          const multiplier = Number(lever?.display_multiplier) || 1;
+          const numeric = Number(rawValue);
+          if (!Number.isFinite(numeric)) return;
+          nextValues[leverId] = numeric * multiplier;
+        });
+        setScenarioA(nextValues);
+      }
+
       if (scorecard && typeof scorecard === 'object') {
         setResultA(scorecard);
         if (newScenarioId) setScenarioIdA(newScenarioId);
