@@ -649,7 +649,7 @@ export default function ConnectorsManage() {
 
   async function saveConnector() {
     if (!selectedConnector || !selectedDraft) return;
-    const validationErrors = validateRequiredFields(selectedConnector.id, selectedDraft);
+    const validationErrors = validateRequiredFields(selectedConnector.id, selectedDraft, selectedConnector);
     if (Object.keys(validationErrors).length > 0) {
       setDraftErrors((prev) => ({
         ...prev,
@@ -733,7 +733,7 @@ export default function ConnectorsManage() {
 
   async function runSetupCheck() {
     if (!selectedConnector || !selectedDraft) return;
-    const validationErrors = validateRequiredFields(selectedConnector.id, selectedDraft);
+    const validationErrors = validateRequiredFields(selectedConnector.id, selectedDraft, selectedConnector);
     if (Object.keys(validationErrors).length > 0) {
       setDraftErrors((prev) => ({
         ...prev,
@@ -987,7 +987,7 @@ export default function ConnectorsManage() {
     try {
       // Save credentials first so the backend has them before starting OAuth
       if (selectedConnector?.id === 'salesforce_insights' && selectedDraft) {
-        const validationErrors = validateRequiredFields('salesforce_insights', selectedDraft);
+        const validationErrors = validateRequiredFields('salesforce_insights', selectedDraft, selectedConnector);
         if (Object.keys(validationErrors).length > 0) {
           setDraftErrors((prev) => ({ ...prev, salesforce_insights: validationErrors }));
           setError('Please fill in all required Salesforce fields before connecting.');
