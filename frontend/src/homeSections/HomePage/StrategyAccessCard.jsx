@@ -78,18 +78,18 @@ export default function StrategyAccessCard() {
 
   const helperText = useMemo(() => {
     if (authError) return authError;
-    if (authStatus === ‘reset_sent’) return "If that account exists, we’ll send a password reset link shortly.";
-    if (authStatus === ‘sent’) return ‘Authenticated. Redirecting...’;
+    if (authStatus === 'reset_sent') return "If that account exists, we'll send a password reset link shortly.";
+    if (authStatus === 'sent') return 'Authenticated. Redirecting...';
     if (initialAuthNotice?.message) return initialAuthNotice.message;
-    return ‘By continuing, you agree to receive product updates.’;
+    return 'By continuing, you agree to receive product updates.';
   }, [authError, authStatus, initialAuthNotice]);
 
   const helperDetail = useMemo(() => {
     if (authErrorDetail) return authErrorDetail;
-    return initialAuthNotice?.detail || ‘’;
+    return initialAuthNotice?.detail || '';
   }, [authErrorDetail, initialAuthNotice]);
 
-  const queryNoticeTone = initialAuthNotice?.tone || ‘’;
+  const queryNoticeTone = initialAuthNotice?.tone || '';
 
   const helperClassName = authError
     ? 'strategy-card-disclaimer is-error'
