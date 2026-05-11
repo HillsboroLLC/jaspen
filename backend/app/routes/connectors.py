@@ -1070,7 +1070,33 @@ def get_connector_health(connector_id):
     settings = get_connector_settings(user.id, connector_id)
     recent_events = get_sync_audit_events(user.id, connector_id=connector_id, limit=10)
     live_status = None
-    if connector_id == "snowflake_insights":
+    if connector_id == "jira_sync":
+        probe = jira_check_connection(user.id)
+        ok = bool(probe.get("ok"))
+        err_msg = _text(probe.get("error")) if not ok else ""
+        live_status = {
+            "status": "healthy" if ok else "error",
+            "message": "Connection successful" if ok else (err_msg or "Connection failed"),
+        }
+        if ok:
+            mark_connector_sync_result(user.id, connector_id, "success")
+            append_sync_audit_event(
+                user.id,
+                connector_id,
+                action="health_check",
+                status="success",
+                message="Live connection test passed",
+            )
+        else:
+            mark_connector_sync_result(user.id, connector_id, "failed", error_message=err_msg)
+            append_sync_audit_event(
+                user.id,
+                connector_id,
+                action="health_check",
+                status="failed",
+                message=err_msg or "Connection failed",
+            )
+    elif connector_id == "snowflake_insights":
         ok, err_msg = test_snowflake_connection(user.id)
         live_status = {
             "status": "healthy" if ok else "error",
