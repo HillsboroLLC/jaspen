@@ -78,7 +78,7 @@ export default function StrategyAccessCard() {
 
   const helperText = useMemo(() => {
     if (authError) return authError;
-    if (authStatus === ‘reset_sent’) return ‘If that account exists, we’ll send a password reset link shortly.’;
+    if (authStatus === ‘reset_sent’) return "If that account exists, we’ll send a password reset link shortly.";
     if (authStatus === ‘sent’) return ‘Authenticated. Redirecting...’;
     if (initialAuthNotice?.message) return initialAuthNotice.message;
     return ‘By continuing, you agree to receive product updates.’;
