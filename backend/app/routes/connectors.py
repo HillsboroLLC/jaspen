@@ -1142,7 +1142,10 @@ def check_connector_setup(connector_id):
             probe = jira_check_connection(user.id)
             if not probe.get("ok"):
                 reason = _text(probe.get("error")) or "Unable to validate Jira credentials"
-                update_connector_settings(user.id, connector_id, {"lifecycle_status": "degraded"})
+                update_connector_settings(user.id, connector_id, {
+                    "lifecycle_status": "degraded",
+                    "connection_status": "disconnected",
+                })
                 mark_connector_sync_result(user.id, connector_id, "failed", error_message=reason)
                 return jsonify({
                     "connector_id": connector_id,
@@ -1164,7 +1167,10 @@ def check_connector_setup(connector_id):
         elif connector_id == "snowflake_insights":
             ok, err_msg = test_snowflake_connection(user.id)
             if not ok:
-                update_connector_settings(user.id, connector_id, {"lifecycle_status": "degraded"})
+                update_connector_settings(user.id, connector_id, {
+                    "lifecycle_status": "degraded",
+                    "connection_status": "disconnected",
+                })
                 mark_connector_sync_result(user.id, connector_id, "failed", error_message=err_msg or "Connection failed")
                 return jsonify({
                     "connector_id": connector_id,
@@ -1186,7 +1192,10 @@ def check_connector_setup(connector_id):
         elif connector_id == "smartsheet_sync":
             valid = smartsheet_connect(settings.get("smartsheet_api_token"))
             if not valid:
-                update_connector_settings(user.id, connector_id, {"lifecycle_status": "degraded"})
+                update_connector_settings(user.id, connector_id, {
+                    "lifecycle_status": "degraded",
+                    "connection_status": "disconnected",
+                })
                 mark_connector_sync_result(user.id, connector_id, "failed", error_message="Unable to validate Smartsheet token")
                 return jsonify({
                     "connector_id": connector_id,
@@ -1223,7 +1232,10 @@ def check_connector_setup(connector_id):
             )
             mark_connector_sync_result(user.id, connector_id, "success")
     except Exception as exc:
-        update_connector_settings(user.id, connector_id, {"lifecycle_status": "degraded"})
+        update_connector_settings(user.id, connector_id, {
+            "lifecycle_status": "degraded",
+            "connection_status": "disconnected",
+        })
         mark_connector_sync_result(user.id, connector_id, "failed", error_message=str(exc))
         return jsonify({
             "connector_id": connector_id,

@@ -1,10 +1,13 @@
 import copy
+import logging
 import os
 from datetime import datetime
 
 from app.connector_runtime import request_json_with_backoff
 from app.connector_store import get_connector_settings, get_thread_sync_profile
 from app.scenarios_store import load_scenarios_data, save_scenarios_data
+
+logger = logging.getLogger(__name__)
 
 
 JAS_TO_JIRA_STATUS = {
@@ -100,17 +103,52 @@ def _resolve_jira_to_wbs_mapping(profile):
     return mapping
 
 
+def _normalize_jira_base_url(raw_url):
+    """Normalize a user-supplied Jira base URL.
+
+    Handles common entry mistakes:
+    - Missing https:// scheme → prepended automatically
+    - Trailing /jira path segment (Jira Server legacy path) → stripped for Cloud API
+    - Trailing slashes → stripped
+    """
+    url = _text(raw_url)
+    if not url:
+        return ""
+    # Add scheme if missing
+    if not url.startswith("http://") and not url.startswith("https://"):
+        url = "https://" + url
+    # Strip trailing slashes
+    url = url.rstrip("/")
+    # Strip a trailing /jira suffix (Jira Server path not needed for Cloud REST API)
+    if url.lower().endswith("/jira"):
+        url = url[:-5].rstrip("/")
+    return url
+
+
 def _jira_runtime_config(user_id):
     settings = get_connector_settings(user_id, "jira_sync")
+    raw_base_url = _text(settings.get("jira_base_url") or os.getenv("JIRA_BASE_URL"))
+    base_url = _normalize_jira_base_url(raw_base_url)
+    api_token = _text(settings.get("jira_api_token") or os.getenv("JIRA_API_TOKEN"))
+    email = _text(settings.get("jira_email") or os.getenv("JIRA_EMAIL"))
+    project_key = _text(
+        settings.get("jira_project_key")
+        or settings.get("external_workspace")
+        or os.getenv("JIRA_DEFAULT_PROJECT_KEY")
+    )
+    logger.debug(
+        "jira_runtime_config user=%s base_url=%r project_key=%r email=%r has_token=%s",
+        user_id,
+        base_url,
+        project_key,
+        email,
+        bool(api_token),
+    )
     return {
-        "base_url": _text(settings.get("jira_base_url") or os.getenv("JIRA_BASE_URL")).rstrip("/"),
-        "project_key": _text(
-            settings.get("jira_project_key")
-            or settings.get("external_workspace")
-            or os.getenv("JIRA_DEFAULT_PROJECT_KEY")
-        ),
-        "email": _text(settings.get("jira_email") or os.getenv("JIRA_EMAIL")),
-        "api_token": _text(settings.get("jira_api_token") or os.getenv("JIRA_API_TOKEN")),
+        "base_url": base_url,
+        "project_key": project_key,
+        "email": email,
+        "api_token": api_token,
         "issue_type": _text(settings.get("jira_issue_type") or os.getenv("JIRA_DEFAULT_ISSUE_TYPE") or "Task"),
     }
 
@@ -201,11 +239,18 @@ def _jira_request(config, method, path, payload=None, timeout=20):
 def jira_check_connection(user_id):
     config = _jira_runtime_config(user_id)
     if not _jira_ready(config):
-        return {"ok": False, "error": "jira_config_missing", "meta": {}}
+        missing = [k for k in ("base_url", "project_key", "email", "api_token") if not config.get(k)]
+        reason = "Missing required Jira fields: " + ", ".join(missing)
+        logger.warning("jira_check_connection user=%s config_incomplete missing=%s", user_id, missing)
+        return {"ok": False, "error": reason, "meta": {}}
+    target_url = f"{config['base_url']}/rest/api/3/myself"
+    logger.info("jira_check_connection user=%s url=%r email=%r", user_id, target_url, config["email"])
     try:
         _, meta = _jira_request(config, "GET", "/rest/api/3/myself", timeout=20)
+        logger.info("jira_check_connection user=%s SUCCESS", user_id)
         return {"ok": True, "error": "", "meta": meta}
     except Exception as exc:
+        logger.warning("jira_check_connection user=%s FAILED url=%r error=%s", user_id, target_url, exc)
         return {"ok": False, "error": str(exc), "meta": {}}
 
 

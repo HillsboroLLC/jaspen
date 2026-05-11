@@ -774,7 +774,26 @@ export default function ConnectorsManage() {
         headers: authHeaders(false, 'GET'),
       });
       const checkData = await checkRes.json().catch(() => ({}));
-      if (!checkRes.ok) throw new Error(checkData?.error || `Setup check failed (${checkRes.status})`);
+      if (!checkRes.ok) {
+        let checkErr = checkData?.error || `Setup check failed (${checkRes.status})`;
+        // Provide actionable guidance for common Jira errors
+        if (selectedConnector.id === 'jira_sync') {
+          if (checkErr.includes('401') || checkErr.toLowerCase().includes('unauthorized')) {
+            checkErr = `Jira authentication failed (401). Verify your email and API token are correct. ${checkErr}`;
+          } else if (checkErr.includes('403')) {
+            checkErr = `Jira access denied (403). Ensure your account has API access and the token has the right scopes. ${checkErr}`;
+          } else if (checkErr.includes('404') || checkErr.includes('Not Found')) {
+            checkErr = `Jira URL not found (404). Check that your Base URL is in the format https://yourcompany.atlassian.net with no /jira suffix. ${checkErr}`;
+          } else if (checkErr.includes('missing') || checkErr.toLowerCase().includes('config')) {
+            checkErr = `Jira configuration incomplete. Ensure all fields (Base URL, Project Key, Email, API Token) are filled in. ${checkErr}`;
+          } else if (checkErr.includes('timed out') || checkErr.includes('timeout') || checkErr.includes('ConnectTimeout')) {
+            checkErr = `Could not reach Jira (connection timed out). Check that your Base URL is correct: https://yourcompany.atlassian.net. ${checkErr}`;
+          } else if (checkErr.includes('attempts')) {
+            checkErr = `Could not reach Jira after multiple attempts. Verify the Base URL is correct (e.g. https://yourcompany.atlassian.net). ${checkErr}`;
+          }
+        }
+        throw new Error(checkErr);
+      }
 
       if (selectedConnector.id === 'snowflake_insights') {
         const tables = parseList(selectedDraft.snowflake_table_allowlist).slice(0, 10);
@@ -1089,10 +1108,10 @@ export default function ConnectorsManage() {
     if (connectorId === 'jira_sync') {
       return (
         <>
-          {renderRequiredField('jira_base_url', 'Jira Base URL')}
-          {renderRequiredField('jira_project_key', 'Project Key')}
-          {renderRequiredField('jira_email', 'Email')}
-          <label>Issue Type<input value={draft.jira_issue_type} onChange={(event) => updateDraft('jira_issue_type', event.target.value)} /></label>
+          {renderRequiredField('jira_base_url', 'Jira Base URL', { placeholder: 'https://yourcompany.atlassian.net' })}
+          {renderRequiredField('jira_project_key', 'Project Key', { placeholder: 'e.g. PROJ' })}
+          {renderRequiredField('jira_email', 'Email', { placeholder: 'you@yourcompany.com' })}
+          <label>Issue Type<input value={draft.jira_issue_type} onChange={(event) => updateDraft('jira_issue_type', event.target.value)} placeholder="Task" /></label>
           {renderRequiredField('jira_api_token', 'API Token', { type: 'password', placeholder: 'Enter token to set or rotate' })}
           <label>Field Mapping JSON<textarea value={draft.jira_field_mapping} onChange={(event) => updateDraft('jira_field_mapping', event.target.value)} /></label>
         </>
