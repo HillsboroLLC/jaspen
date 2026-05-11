@@ -1763,11 +1763,21 @@ const baselineRef = useRef(null);
   const hydratedScorecardRef = useRef(new Set());
 
   // Pull messages, latest analysis id, and saved scenarios from backend
-const refreshBundle = async (tid) => {
+const refreshBundle = async (tid, { fallbackTid } = {}) => {
   if (!tid) return;
   setBundleLoading(true);
   try {
-    const bundle = await Jaspen.getThreadBundle(tid, { msg_limit: 50, scn_limit: 50 });
+    let bundle = await Jaspen.getThreadBundle(tid, { msg_limit: 50, scn_limit: 50 });
+    // If this session has no baseline (e.g. orphan session from a hard-reload), try
+    // the fallback thread — the actual analysis data lives on the original thread.
+    if (!bundle?.baseline_scorecard && fallbackTid && fallbackTid !== tid) {
+      try {
+        const fallback = await Jaspen.getThreadBundle(fallbackTid, { msg_limit: 50, scn_limit: 50 });
+        if (fallback?.baseline_scorecard) {
+          bundle = fallback;
+        }
+      } catch { /* fallback failed silently */ }
+    }
 
     // scenarios -> normalize to local shape used by ComparisonView / list
     const serverScenarios = Array.isArray(bundle.scenarios) ? bundle.scenarios : [];
@@ -4810,9 +4820,11 @@ if (rawHistory.length > 0) {
         setView('intake');
       }
 
-      // Always refresh readiness + scenarios from backend truth
+      // Always refresh readiness + scenarios from backend truth.
+      // Pass the analysis result's thread_id as a fallback in case restoredOwnerThreadId
+      // is an orphan session (e.g. created by a hard-reload) that has no baseline stored.
       fetchReadinessFor(restoredOwnerThreadId);
-      refreshBundle(restoredOwnerThreadId);
+      refreshBundle(restoredOwnerThreadId, { fallbackTid: restoreBaseResult?.thread_id });
       setInitialRestorePending(false);
     })();
 
@@ -6606,7 +6618,10 @@ const handleSaveStarter = async () => {
     }
 
     if (refresh) {
-      const tid = currentSessionId || sessionId;
+      // Prefer the analysis result's canonical thread_id when available —
+      // the current sessionId may be an orphan (e.g. created by a hard-reload)
+      // whose bundle has no baseline, while the real data lives on the owner thread.
+      const tid = analysisResult?.thread_id || currentSessionId || sessionId;
       if (tid) {
         refreshBundle(tid).catch(() => {});
       }
