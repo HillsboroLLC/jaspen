@@ -918,9 +918,31 @@ def _view_context_prompt_suffix(view_context):
         else:
             lines.append(f"- Execution summary by status: {breakdown}")
 
-    lines.append(
-        "- Use this view context to tailor recommendations to what the user is currently looking at."
-    )
+    # View-specific behavioral overrides
+    if current_view == "summary":
+        lines.append(
+            "- IMPORTANT: The user is on the Score/Scorecard tab viewing a completed scorecard. "
+            "Do NOT ask intake questions. Do NOT ask for baseline data. "
+            "If the user asks to edit, update, rewrite, or add to any part of the scorecard, "
+            "call patch_scorecard immediately with the new content — never describe the change instead of making it. "
+            "If the user asks a question about the scorecard, answer it directly."
+        )
+    elif current_view == "scenario":
+        lines.append(
+            "- IMPORTANT: The user is on the Scenarios tab. Focus on scenario analysis and comparison. "
+            "If they ask to create or adjust a scenario, call create_scenario. "
+            "Do NOT ask intake questions."
+        )
+    elif current_view == "execution":
+        lines.append(
+            "- IMPORTANT: The user is on the Execution Plan tab. Focus on tasks, owners, deadlines, and dependencies. "
+            "Use add_wbs_task, update_wbs_task, remove_wbs_task, or generate_execution_plan as needed. "
+            "Do NOT ask intake questions."
+        )
+    else:
+        lines.append(
+            "- Use this view context to tailor recommendations to what the user is currently looking at."
+        )
     return "\n" + "\n".join(lines)
 
 
