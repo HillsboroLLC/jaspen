@@ -12,6 +12,8 @@ import RequireTeamAccess from './shared/auth/RequireTeamAccess';
 import RequireDashboardAccess from './shared/auth/RequireDashboardAccess';
 import { useAuth } from './shared/auth/AuthContext';
 import { AppShell } from './jaspenInterface/layout';
+import { JaspenAIProvider } from './jaspenInterface/shared/JaspenAIContext';
+import PersistentAiSidebar from './jaspenInterface/shared/PersistentAiSidebar';
 
 // Shared
 import HomePage      from './homeSections/HomePage/HomePage';
@@ -279,8 +281,11 @@ export default function App() {
 
   return (
     <BrowserRouter>
-      <OfflineBanner />
-      <AnimatedAppRoutes withShell={withShell} />
+      <JaspenAIProvider>
+        <OfflineBanner />
+        <AnimatedAppRoutes withShell={withShell} />
+        <PersistentAiSidebar />
+      </JaspenAIProvider>
     </BrowserRouter>
   );
 }
