@@ -232,6 +232,7 @@ def _collect_completed_scores(
     search='',
 ):
     sessions = load_user_sessions(user_id) or {}
+    all_scenarios = _load_scenarios(user_id)
 
     scores = []
     for key, session in (sessions.items() if isinstance(sessions, dict) else []):
@@ -247,6 +248,24 @@ def _collect_completed_scores(
 
         # Get the session result which contains _baseline_scorecard and scorecard_snapshots
         analyses = _scores_analysis_entries(session, thread_id)
+
+        # Fall back to scenarios_json baseline when payload has no analysis entries
+        if not analyses:
+            thread_data = all_scenarios.get(thread_id) or all_scenarios.get(key)
+            if isinstance(thread_data, dict):
+                baseline = thread_data.get('baseline')
+                if isinstance(baseline, dict) and (
+                    baseline.get('jaspen_score') is not None
+                    or baseline.get('project_name')
+                    or session_completed
+                ):
+                    analyses = [{
+                        'analysis_id': thread_id,
+                        'created_at': baseline.get('timestamp') or session.get('created') or session.get('timestamp'),
+                        'updated_at': baseline.get('timestamp') or session.get('timestamp'),
+                        'result': baseline,
+                    }]
+
         if not analyses:
             continue
 
