@@ -785,53 +785,56 @@ export default function ExecutionPanel({
         </div>
       </header>
 
-      <section className="execution-sync-strip">
-        <div className="execution-sync-strip-head">
-          <div>
-            <p className="execution-eyebrow">Execution Sync</p>
-            <h4>Connected PM systems</h4>
-            <p className="execution-panel-subcopy">
+      <div className="execution-sync-bar">
+        <div className="execution-sync-bar-head">
+          <span className="execution-sync-bar-label">
+            PM Sync
+            <span className="execution-sync-bar-status">
               {syncStatusMessage || threadSyncStatusLabel(threadSyncStatus)}
-              {preferredPmTool ? ` · Preferred tool: ${preferredPmToolLabel(preferredPmTool)}` : ''}
-            </p>
-          </div>
+              {preferredPmTool ? ` · ${preferredPmToolLabel(preferredPmTool)}` : ''}
+            </span>
+          </span>
           <button type="button" className="execution-tertiary-btn" onClick={loadSyncState} disabled={syncLoading} aria-disabled={syncLoading}>
             <FontAwesomeIcon icon={syncLoading ? faSpinner : faRefresh} spin={syncLoading} />
             Refresh
           </button>
         </div>
-        <div className="execution-sync-grid">
+        <div className="execution-sync-connectors">
           {(syncState?.execution_connectors || []).map((connector) => {
             const connectorId = String(connector?.id || '');
             const connected = Boolean(connector?.connected);
-            const selected = selectedConnectorIds.includes(connectorId);
+            const healthStatus = String(connector?.health?.status || '').toLowerCase();
+            const chipClass = connected && healthStatus === 'healthy' ? 'healthy' : connected ? 'error' : 'disconnected';
+            const chipLabel = connected ? (healthStatus || 'connected') : 'disconnected';
             return (
-              <article key={connectorId} className={`execution-sync-card ${connected ? 'is-connected' : 'is-disconnected'} ${selected ? 'is-selected' : ''}`}>
-                <div className="execution-sync-card-top">
-                  <strong>{connector?.label || connectorId}</strong>
-                  <span>{statusSyncLabel(connector, selectedConnectorIds)}</span>
+              <div key={connectorId} className={`execution-sync-row ${connected ? 'is-connected' : 'is-disconnected'}`}>
+                <span className="execution-sync-dot" />
+                <span className="execution-sync-row-name">{connector?.label || connectorId}</span>
+                <div className="execution-sync-row-meta">
+                  <span className={`execution-sync-chip ${chipClass}`}>{chipLabel}</span>
                 </div>
-                <p>{connector?.description || 'Execution sync connector'}</p>
-                <div className="execution-sync-card-meta">
-                  <span>{connector?.health?.status || 'unknown'}</span>
-                  <span>{connector?.last_sync_at ? formatDateLabel(connector.last_sync_at) : 'Never synced'}</span>
+                <span className="execution-sync-row-date">
+                  {connector?.last_sync_at ? formatDateLabel(connector.last_sync_at) : 'Never synced'}
+                </span>
+                <div className="execution-sync-row-actions">
+                  {connected && canEditStructure && (
+                    <button
+                      type="button"
+                      className="execution-secondary-btn"
+                      onClick={() => runManualSync(connectorId)}
+                      disabled={syncAction === connectorId}
+                      aria-disabled={syncAction === connectorId}
+                    >
+                      <FontAwesomeIcon icon={syncAction === connectorId ? faSpinner : faRefresh} spin={syncAction === connectorId} />
+                      Sync now
+                    </button>
+                  )}
                 </div>
-                {connected && canEditStructure && (
-                  <button
-                    type="button"
-                    className="execution-secondary-btn"
-                    onClick={() => runManualSync(connectorId)}
-                    disabled={syncAction === connectorId} aria-disabled={syncAction === connectorId}
-                  >
-                    <FontAwesomeIcon icon={syncAction === connectorId ? faSpinner : faRefresh} spin={syncAction === connectorId} />
-                    Sync now
-                  </button>
-                )}
-              </article>
+              </div>
             );
           })}
         </div>
-      </section>
+      </div>
 
       {panelMessage && <div className="execution-inline-message">{panelMessage}</div>}
       {isViewer && (
