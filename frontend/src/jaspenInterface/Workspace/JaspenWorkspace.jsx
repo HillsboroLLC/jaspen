@@ -2220,6 +2220,7 @@ const applyMutationRefreshes = async (payload, fallbackThreadId = null) => {
   let scenarioChanged = false;
   let wbsChanged = false;
   let threadRenamed = false;
+  let scorecardPatched = false;
   mutations.forEach((mutation) => {
     const tool = String(mutation?.tool || '').trim();
     const success = mutation?.success !== false;
@@ -2233,9 +2234,12 @@ const applyMutationRefreshes = async (payload, fallbackThreadId = null) => {
     if (tool === 'rename_thread') {
       threadRenamed = true;
     }
+    if (tool === 'patch_scorecard') {
+      scorecardPatched = true;
+    }
   });
 
-  if (!scenarioChanged && !wbsChanged && !threadRenamed) return;
+  if (!scenarioChanged && !wbsChanged && !threadRenamed && !scorecardPatched) return;
 
   const threadIdForRefresh = String(
     payload?.thread_id ||
@@ -2252,6 +2256,7 @@ const applyMutationRefreshes = async (payload, fallbackThreadId = null) => {
   if (wbsChanged) setWbsMutationVersion((prev) => prev + 1);
 
   await refreshBundle(threadIdForRefresh);
+  if (scorecardPatched) setScenarioMutationVersion((prev) => prev + 1);
 };
 
 useEffect(() => {

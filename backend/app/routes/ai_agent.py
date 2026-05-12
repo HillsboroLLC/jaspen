@@ -346,7 +346,7 @@ MAX_CONVERSATION_ATTACHMENT_BYTES = 10 * 1024 * 1024
 MAX_CONVERSATION_ATTACHMENT_TEXT_CHARS = 15_000
 USER_MESSAGE_OPEN_TAG = "<user_message>"
 USER_MESSAGE_CLOSE_TAG = "</user_message>"
-_MUTATION_TOOLS = {"create_scenario", "update_wbs_task", "add_wbs_task", "remove_wbs_task", "generate_execution_plan", "rename_thread"}
+_MUTATION_TOOLS = {"create_scenario", "update_wbs_task", "add_wbs_task", "remove_wbs_task", "generate_execution_plan", "rename_thread", "patch_scorecard"}
 _INJECTION_PATTERNS = [
     re.compile(r"ignore\s+(all\s+)?(previous|prior|above)\s+(instructions|prompts|rules)", re.I),
     re.compile(r"you\s+are\s+now\s+(a|an)\s+", re.I),
@@ -419,6 +419,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "If query_connector_data tool is available and the user asks to query or analyze connector data without "
     "a pre-attached context block, call the tool immediately — do not ask for the data first. "
     "When the user asks to modify scenarios or WBS tasks, call the relevant tools instead of only describing steps. "
+    "When the user asks to edit, rewrite, update, or add to any part of the scorecard (executive summary, risks, recommendations, key insights, assumptions, rationale), call patch_scorecard immediately with the new content — do not just describe the change or ask a clarifying question first. "
     "When the user asks to rename the initiative, project, or title, call rename_thread with the requested new name. "
     "The workspace includes an Execution tab with three views: a List view grouped by phase, "
     "a Board view showing a Kanban grouped by status (To Do / In Progress / Blocked / Done), "
@@ -4103,6 +4104,53 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                     "additionalProperties": False,
                 },
             },
+            {
+                "name": "patch_scorecard",
+                "description": (
+                    "Update one or more text fields on the active scorecard. "
+                    "Use this when the user asks to edit, rewrite, update, or add content to the scorecard — "
+                    "such as the executive summary, recommendations, risks, key insights, or assumptions. "
+                    "Always call this tool instead of just describing what the change would be."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "executive_summary": {
+                            "type": "string",
+                            "description": "Full replacement text for the executive summary.",
+                        },
+                        "key_insights": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Full replacement list of key insights.",
+                        },
+                        "assumptions": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Full replacement list of assumptions.",
+                        },
+                        "top_risks": {
+                            "type": "array",
+                            "items": {"type": "object"},
+                            "description": "Full replacement list of risk objects.",
+                        },
+                        "recommendations": {
+                            "type": "array",
+                            "items": {"type": "object"},
+                            "description": "Full replacement list of recommendation objects.",
+                        },
+                        "component_rationale": {
+                            "type": "object",
+                            "description": "Map of component key to rationale text.",
+                        },
+                        "decision_framework": {
+                            "type": "object",
+                            "description": "Updated decision framework fields.",
+                        },
+                    },
+                    "additionalProperties": False,
+                },
+            },
         ])
     return tools
 
@@ -4392,6 +4440,85 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id):
             "confirmation": f"Renamed this initiative to '{next_name}'.",
             "thread_id": thread_id,
             "new_name": next_name,
+        })
+
+    if tool_name == "patch_scorecard":
+        from .strategy import (
+            _scorecard_snapshot_state,
+            _merge_scorecard_patch,
+            _normalize_scorecard_payload,
+        )
+        patchable = {
+            "executive_summary", "key_insights", "assumptions",
+            "top_risks", "recommendations", "component_rationale", "decision_framework",
+        }
+        patch = {k: v for k, v in tool_input.items() if k in patchable and v is not None}
+        if not patch:
+            return _tool_error("No patchable scorecard fields provided.", code="no_fields")
+
+        sessions = load_user_sessions(user_id) or {}
+        target_key = thread_id if thread_id in sessions else None
+        target_session = sessions.get(thread_id) if target_key else None
+        if not isinstance(target_session, dict):
+            for ck, cs in sessions.items():
+                if isinstance(cs, dict) and str(cs.get("session_id") or "") == str(thread_id):
+                    target_key, target_session = ck, cs
+                    break
+        if not isinstance(target_session, dict):
+            return _tool_error("Thread not found.", code="thread_not_found")
+
+        session_result = target_session.get("result") if isinstance(target_session.get("result"), dict) else {}
+        snapshot_state = _scorecard_snapshot_state(session_result, thread_id)
+        base_scorecard = _normalize_scorecard_payload(snapshot_state.get("selected_snapshot") or snapshot_state.get("baseline") or {})
+        if not base_scorecard:
+            return _tool_error("No scorecard found for this thread.", code="missing_scorecard")
+
+        updated_scorecard = _merge_scorecard_patch(base_scorecard, patch)
+        current_selected = snapshot_state.get("selected_snapshot") or snapshot_state.get("baseline") or {}
+        current_id = str(current_selected.get("id") or snapshot_state.get("selected_id") or thread_id)
+        edited_id = current_id if current_id.endswith("__edited") else f"{current_id}__edited"
+        edited_label = current_selected.get("label") or ("Baseline" if current_selected.get("isBaseline") else "Edited")
+        if not edited_label.endswith("(Edited)"):
+            edited_label = f"{edited_label} (Edited)"
+        import time as _time
+        edited_snapshot = {
+            **updated_scorecard,
+            "id": edited_id,
+            "label": edited_label,
+            "isBaseline": False,
+            "createdAt": int(_time.time() * 1000),
+        }
+
+        next_snapshots = []
+        replaced = False
+        for snap in snapshot_state.get("snapshots") or []:
+            if str(snap.get("id") or "") == edited_id:
+                next_snapshots.append(edited_snapshot)
+                replaced = True
+            else:
+                next_snapshots.append(snap)
+        if not replaced:
+            next_snapshots.append(edited_snapshot)
+
+        next_result = {
+            **session_result,
+            "_baseline_scorecard": session_result.get("_baseline_scorecard") or snapshot_state.get("baseline"),
+            "scorecard_snapshots": next_snapshots,
+            "selected_scorecard_id": edited_id,
+        }
+        target_session["result"] = next_result
+        target_session["analysis_result"] = next_result
+        target_session["timestamp"] = datetime.utcnow().isoformat()
+        sessions[target_key or thread_id] = target_session
+        if not save_user_sessions(user_id, sessions):
+            return _tool_error("Failed to persist scorecard patch.", code="persist_failed")
+
+        changed_fields = list(patch.keys())
+        return _tool_success({
+            "tool": tool_name,
+            "confirmation": f"Updated {', '.join(changed_fields)} on the scorecard.",
+            "updated_scorecard": edited_snapshot,
+            "selected_scorecard_id": edited_id,
         })
 
     if tool_name == "generate_execution_plan":
