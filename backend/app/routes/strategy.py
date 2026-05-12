@@ -3869,21 +3869,28 @@ def _generate_ai_wbs_suggestion(
     # Trim scorecard to essential fields to keep the prompt concise
     scorecard_summary = {
         k: scorecard_payload[k]
-        for k in ('initiative_name', 'jaspen_score', 'executive_summary', 'strategy_objective',
-                  'component_scores', 'key_insights', 'recommendations', 'top_risks',
-                  'business_description', 'industry', 'company_size')
+        for k in ('initiative_name', 'project_name', 'jaspen_score', 'executive_summary',
+                  'strategy_objective', 'component_scores', 'key_insights', 'recommendations',
+                  'top_risks', 'business_description', 'industry', 'company_size')
         if k in scorecard_payload
     }
+    # Derive the canonical initiative name so the AI uses it in every task title
+    _initiative_name = str(
+        scorecard_payload.get('initiative_name')
+        or scorecard_payload.get('project_name')
+        or ''
+    ).strip()
 
     conversation_block = ''
     if isinstance(chat_history, list) and chat_history:
         conversation_block = '\nConversation context (use this to make tasks specific to this initiative):\n' + '\n'.join(chat_history) + '\n'
 
+    _initiative_label = f'Initiative name: {_initiative_name}\n' if _initiative_name else ''
     prompt = f"""
 You are generating a project WBS from a live strategy session.
 Planning mode: {planning_mode}
 Planning guidance: {planning_brief}
-
+{_initiative_label}
 Instruction:
 {instruction or "Generate an actionable WBS from this scorecard and conversation."}
 {conversation_block}
@@ -3928,7 +3935,7 @@ Return JSON only:
 Rules:
 - Return 10-18 tasks total spread across 4-6 meaningful phases.
 - Phases must follow a logical sequence: Discovery -> Planning -> Build/Execute -> Validate -> Launch -> Operate.
-- CRITICAL: Every task title must be specific to THIS initiative — no generic titles like "Research" or "Planning". Use the conversation and scorecard to name exactly what is being done, by whom, for what outcome.
+- CRITICAL: Every task title must be specific to THIS initiative — no generic titles like "Research" or "Planning". Use the conversation, scorecard, and the initiative name above to name exactly what is being done, by whom, for what outcome. Never use "Baseline Analysis" in a task title; use the actual initiative or project name.
 - Assign a realistic suggested_role to every task.
 - Include function and activity_type for every task.
 - Include at least 1 risk-mitigation task, 1 change-management task, and 1 value-capture/measurement task.
@@ -5037,11 +5044,17 @@ def generate_ai_wbs(thread_id):
                 label = 'User' if role == 'user' else 'Jaspen'
                 chat_turns.append(f"{label}: {text[:400]}")
 
+        # Ensure initiative name is available for WBS task naming
+        session_name = str(session.get('name') or '').strip() if isinstance(session, dict) else ''
+        wbs_scorecard = dict(current_scorecard) if isinstance(current_scorecard, dict) else {}
+        if not wbs_scorecard.get('project_name') and session_name:
+            wbs_scorecard['project_name'] = session_name
+
         client = get_llm_client()
         raw_wbs = _generate_ai_wbs_suggestion(
             client,
             model_selection['llm_model'],
-            scorecard=current_scorecard,
+            scorecard=wbs_scorecard,
             instruction=instruction,
             scenario_payload=adopted_scenario,
             model_selection=model_selection,

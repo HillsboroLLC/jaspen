@@ -651,10 +651,14 @@
 }
 
 .score-dashboard-container .executive-summary-text {
-  margin: 0;
+  margin: 0 0 0.75em;
   font-size: 0.875rem;
   line-height: 1.6;
   color: var(--text-secondary);
+}
+
+.score-dashboard-container .executive-summary-text:last-child {
+  margin-bottom: 0;
 }
 
 .score-dashboard-container .score-body-grid {

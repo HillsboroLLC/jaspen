@@ -265,10 +265,17 @@ const SCENARIO_RUN_STAGES = [
 function parseMetricNumber(value) {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value !== 'string') return null;
-  const cleaned = value.replace(/[^\d.-]/g, '');
+  const trimmed = value.trim();
+  let multiplier = 1;
+  let stripped = trimmed;
+  const upper = trimmed.toUpperCase();
+  if (upper.endsWith('B')) { multiplier = 1e9; stripped = trimmed.slice(0, -1); }
+  else if (upper.endsWith('M')) { multiplier = 1e6; stripped = trimmed.slice(0, -1); }
+  else if (upper.endsWith('K')) { multiplier = 1e3; stripped = trimmed.slice(0, -1); }
+  const cleaned = stripped.replace(/[^\d.-]/g, '');
   if (!cleaned) return null;
   const parsed = Number(cleaned);
-  return Number.isFinite(parsed) ? parsed : null;
+  return Number.isFinite(parsed) ? parsed * multiplier : null;
 }
 
 function metricContainers(result = {}) {

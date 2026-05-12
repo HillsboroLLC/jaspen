@@ -645,9 +645,12 @@ export default function ScoreDashboard({
           </div>
         ) : (
           <div className="executive-summary-card card-shell card-scroll">
-            <p className="executive-summary-text">
-              {executiveSummary || 'Keep describing your idea in the chat. The more context you share, the sharper this summary gets.'}
-            </p>
+            {executiveSummary
+              ? executiveSummary.split(/\n\n+/).map((para, i) => (
+                  <p key={i} className="executive-summary-text">{para.trim()}</p>
+                ))
+              : <p className="executive-summary-text">Keep describing your idea in the chat. The more context you share, the sharper this summary gets.</p>
+            }
           </div>
         )
       ),
