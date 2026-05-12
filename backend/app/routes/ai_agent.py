@@ -2440,9 +2440,10 @@ def _readiness_phase_prompt_suffix(readiness):
     )
 
 
-def _build_agent_system_prompt(*, context_summary_text, intake_context, view_context, connector_context_snapshot, user_id, thread_id, readiness=None):
+def _build_agent_system_prompt(*, context_summary_text, intake_context, view_context, connector_context_snapshot, user_id, thread_id, chat_history=None, readiness=None):
     return (
         f"{_SYSTEM_PROMPT_PREFIX}"
+        f"{_original_intake_prompt_suffix(chat_history)}"
         f"{_context_summary_prompt_suffix(context_summary_text)}"
         f"{_intake_context_prompt_suffix(intake_context)}"
         f"{_view_context_prompt_suffix(view_context)}"
@@ -3730,6 +3731,18 @@ def _context_summary_prompt_suffix(summary_text):
     return f" Earlier conversation summary for continuity: {text}"
 
 
+def _original_intake_prompt_suffix(chat_history):
+    """Pin the first user message verbatim so the AI never loses the original problem statement."""
+    for msg in (chat_history or []):
+        role = str(msg.get("role") or msg.get("sender") or "").lower()
+        content = str(msg.get("content") or msg.get("text") or "").strip()
+        if role in ("user", "human") and content:
+            return (
+                f"\n\n[ORIGINAL PROJECT CONTEXT — always keep this in mind]\n{content}"
+            )
+    return ""
+
+
 def _prepare_context_window(session, chat_history, context_budget, model_selection):
     max_turns = int((context_budget or {}).get("recent_turns") or 16)
     max_turns = max(8, min(80, max_turns))
@@ -4852,6 +4865,7 @@ def _generate_assistant_reply_anthropic(
         connector_context_snapshot=(session or {}).get("connector_context_snapshot"),
         user_id=user_id,
         thread_id=thread_id,
+        chat_history=chat_history,
         readiness=readiness,
     )
     if _message_has_data_context_request(user_message):
@@ -5083,6 +5097,7 @@ def _stream_assistant_reply_events_anthropic(
         connector_context_snapshot=(session or {}).get("connector_context_snapshot"),
         user_id=user_id,
         thread_id=thread_id,
+        chat_history=chat_history,
         readiness=readiness,
     )
     if _message_has_data_context_request(user_message):
@@ -5343,6 +5358,7 @@ def _generate_assistant_reply_gemini(
         connector_context_snapshot=(session or {}).get("connector_context_snapshot"),
         user_id=user_id,
         thread_id=thread_id,
+        chat_history=chat_history,
         readiness=readiness,
     )
     if _message_has_data_context_request(user_message):
@@ -5542,6 +5558,7 @@ def _stream_assistant_reply_events_gemini(
         connector_context_snapshot=(session or {}).get("connector_context_snapshot"),
         user_id=user_id,
         thread_id=thread_id,
+        chat_history=chat_history,
         readiness=readiness,
     )
     if _message_has_data_context_request(user_message):
