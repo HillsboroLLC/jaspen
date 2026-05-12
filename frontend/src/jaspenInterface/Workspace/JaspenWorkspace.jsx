@@ -4619,7 +4619,6 @@ useEffect(() => {
   const skipPingRef = useRef(false);
   // Auto-restore previous session on refresh (URL sid > localStorage sid)
   const didAutoRestoreRef = useRef(false);
-  const restoredFromSessionRef = useRef(false);
   // (moved above to avoid TDZ / ReferenceError)
 
   useEffect(() => {
@@ -4723,7 +4722,6 @@ const rawHistory =
       : [];
 
 if (rawHistory.length > 0) {
-  restoredFromSessionRef.current = true;
   setMessages(toUiMessages(rawHistory));
 }
       applyPersistedReadinessSnapshot(session?.readiness || null);
@@ -4845,14 +4843,6 @@ if (rawHistory.length > 0) {
     const node = aiMessagesRef.current;
     const endNode = aiMessagesEndRef.current;
     if (!node || !endNode) return () => {};
-    // On initial session restore, scroll to top so user sees the beginning of the conversation
-    if (restoredFromSessionRef.current) {
-      restoredFromSessionRef.current = false;
-      const run = () => { node.scrollTo({ top: 0, behavior: 'auto' }); };
-      const rafA = window.requestAnimationFrame(run);
-      const timeoutA = window.setTimeout(run, 60);
-      return () => { window.cancelAnimationFrame(rafA); window.clearTimeout(timeoutA); };
-    }
     const run = () => {
       endNode.scrollIntoView({ block: 'end' });
       node.scrollTo({ top: node.scrollHeight, behavior: 'auto' });
