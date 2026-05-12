@@ -170,6 +170,7 @@ export default function ExecutionPanel({
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [members, setMembers] = useState([]);
   const [membersLoaded, setMembersLoaded] = useState(false);
+  const [expandedTasks, setExpandedTasks] = useState({});
   const [syncState, setSyncState] = useState(null);
   const [syncLoading, setSyncLoading] = useState(false);
   const [syncAction, setSyncAction] = useState('');
@@ -389,6 +390,10 @@ export default function ExecutionPanel({
     }));
   }, []);
 
+  const toggleTaskExpand = useCallback((taskId) => {
+    setExpandedTasks((prev) => ({ ...prev, [taskId]: !prev[taskId] }));
+  }, []);
+
   const renderOwnerField = (task) => {
     const draftValue = drafts?.[task.id]?.owner;
     const value = draftValue != null ? draftValue : String(task?.owner || '');
@@ -426,45 +431,49 @@ export default function ExecutionPanel({
     <div className="execution-phase-stack">
       {phases.map((phase) => {
         const items = tasksByPhase[phase] || [];
-        const expanded = expandedPhases[phase] !== false;
+        const phaseOpen = expandedPhases[phase] !== false;
         return (
-          <section key={phase} className="execution-phase-card">
+          <section key={phase} className="execution-phase-group">
             <button
               type="button"
               className="execution-phase-toggle"
               onClick={() => togglePhase(phase)}
             >
-              <span className="execution-phase-toggle-icon">
-                <FontAwesomeIcon icon={expanded ? faChevronDown : faChevronRight} />
-              </span>
+              <FontAwesomeIcon icon={phaseOpen ? faChevronDown : faChevronRight} className="execution-phase-toggle-icon" />
               <span className="execution-phase-name">{phase}</span>
               <span className="execution-phase-count">{items.length}</span>
             </button>
 
-            {expanded && (
-              <div className="execution-phase-body">
+            {phaseOpen && (
+              <div className="execution-task-list">
                 {items.length === 0 && (
                   <div className="execution-phase-empty">No tasks in this phase yet.</div>
                 )}
                 {items.map((task) => {
                   const status = normalizeStatus(task?.status);
                   const priority = normalizePriority(task?.priority);
+                  const isTaskOpen = Boolean(expandedTasks[task.id]);
+                  const draftStatus = drafts?.[task.id]?.status;
+                  const statusValue = draftStatus != null ? draftStatus : status;
                   const draftTitle = drafts?.[task.id]?.title;
                   const titleValue = draftTitle != null ? draftTitle : String(task?.title || '');
                   const draftDueDate = drafts?.[task.id]?.due_date;
                   const dueDateValue = draftDueDate != null ? draftDueDate : String(task?.due_date || '');
-                  const draftStatus = drafts?.[task.id]?.status;
-                  const statusValue = draftStatus != null ? draftStatus : status;
                   const draftPhase = drafts?.[task.id]?.phase;
                   const phaseValue = draftPhase != null ? draftPhase : extractPhaseName(task?.phase);
+                  const ownerLabel = String(task?.owner || '').trim();
+                  const ownerInitials = ownerLabel ? ownerLabel.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase() : null;
+                  const depCount = Array.isArray(task?.depends_on) ? task.depends_on.length : 0;
 
                   return (
-                    <article key={task.id} className="execution-task-row">
-                      <div className="execution-task-row-main">
+                    <article key={task.id} className={`execution-task-item${isTaskOpen ? ' is-open' : ''}`}>
+                      <div className="execution-task-item-row">
                         <select
                           value={statusValue}
                           disabled={!canEditFields}
-                          className="execution-status-select"
+                          className="execution-status-chip"
+                          style={{ '--status-color': STATUS_CONFIG[statusValue]?.color || '#94a3b8' }}
+                          onClick={(e) => e.stopPropagation()}
                           onChange={(event) => {
                             const nextValue = event.target.value;
                             setDraftValue(task.id, 'status', nextValue);
@@ -475,88 +484,109 @@ export default function ExecutionPanel({
                             <option key={value} value={value}>{STATUS_CONFIG[value].label}</option>
                           ))}
                         </select>
-                        <input
-                          type="text"
-                          value={titleValue}
-                          className="execution-task-title"
-                          disabled={!canEditFields}
-                          onChange={(event) => setDraftValue(task.id, 'title', event.target.value)}
-                          onBlur={(event) => commitTaskField(task.id, 'title', event.target.value, task?.title || '')}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter') {
-                              event.preventDefault();
-                              event.currentTarget.blur();
-                            }
-                          }}
-                        />
+
                         <span
-                          className="execution-priority-pill"
-                          style={{ '--execution-priority-color': PRIORITY_CONFIG[priority].color }}
+                          className="execution-task-item-title"
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => toggleTaskExpand(task.id)}
+                          onKeyDown={(e) => e.key === 'Enter' && toggleTaskExpand(task.id)}
                         >
-                          {PRIORITY_CONFIG[priority].label}
+                          {titleValue}
                         </span>
+
+                        <div className="execution-task-item-meta">
+                          <span
+                            className="execution-priority-chip"
+                            style={{ '--execution-priority-color': PRIORITY_CONFIG[priority].color }}
+                          >
+                            {PRIORITY_CONFIG[priority].label}
+                          </span>
+                          {ownerInitials && (
+                            <span className="execution-owner-avatar" title={ownerLabel}>{ownerInitials}</span>
+                          )}
+                          {dueDateValue && (
+                            <span className="execution-due-chip">{formatDateLabel(dueDateValue)}</span>
+                          )}
+                          {depCount > 0 && (
+                            <span className="execution-dep-chip">{depCount} dep{depCount !== 1 ? 's' : ''}</span>
+                          )}
+                        </div>
+
+                        <button
+                          type="button"
+                          className="execution-task-expand-btn"
+                          onClick={() => toggleTaskExpand(task.id)}
+                          aria-label={isTaskOpen ? 'Collapse task' : 'Expand task'}
+                        >
+                          <FontAwesomeIcon icon={isTaskOpen ? faChevronDown : faChevronRight} />
+                        </button>
                       </div>
 
-                      <div className="execution-task-row-fields">
-                        <label>
-                          <span>Owner</span>
-                          {renderOwnerField(task)}
-                        </label>
-                        <label>
-                          <span>Due date</span>
-                          <input
-                            type="date"
-                            value={dueDateValue ? String(dueDateValue).slice(0, 10) : ''}
-                            disabled={!canEditFields}
-                            onChange={(event) => {
-                              const nextValue = event.target.value || null;
-                              setDraftValue(task.id, 'due_date', nextValue);
-                              commitTaskField(task.id, 'due_date', nextValue, task?.due_date || '');
-                            }}
-                          />
-                        </label>
-                        <label>
-                          <span>Phase</span>
-                          <select
-                            value={phaseValue}
-                            disabled={!canEditStructure}
-                            onChange={(event) => {
-                              const nextValue = event.target.value;
-                              setDraftValue(task.id, 'phase', nextValue);
-                              commitTaskField(task.id, 'phase', nextValue, extractPhaseName(task?.phase));
-                            }}
-                          >
-                            {phases.map((option) => (
-                              <option key={option} value={option}>{option}</option>
-                            ))}
-                          </select>
-                        </label>
-                        <label>
-                          <span>Depends on</span>
-                          <select
-                            value=""
-                            disabled={!canEditDependencies}
-                            onChange={(event) => {
-                              const dependsOnId = event.target.value;
-                              if (!dependsOnId) return;
-                              onAddDependency?.(task.id, dependsOnId);
-                              event.target.value = '';
-                            }}
-                          >
-                            <option value="">Add dependency…</option>
-                            {tasks
-                              .filter((candidate) => candidate.id !== task.id && !(Array.isArray(task?.depends_on) && task.depends_on.includes(candidate.id)))
-                              .map((candidate) => (
-                                <option key={candidate.id} value={candidate.id}>{candidate.title}</option>
+                      {isTaskOpen && (
+                        <div className="execution-task-detail">
+                          <label className="execution-detail-field">
+                            <span>Title</span>
+                            <input
+                              type="text"
+                              value={titleValue}
+                              disabled={!canEditFields}
+                              onChange={(event) => setDraftValue(task.id, 'title', event.target.value)}
+                              onBlur={(event) => commitTaskField(task.id, 'title', event.target.value, task?.title || '')}
+                              onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }}
+                            />
+                          </label>
+                          <label className="execution-detail-field">
+                            <span>Owner</span>
+                            {renderOwnerField(task)}
+                          </label>
+                          <label className="execution-detail-field">
+                            <span>Due date</span>
+                            <input
+                              type="date"
+                              value={dueDateValue ? String(dueDateValue).slice(0, 10) : ''}
+                              disabled={!canEditFields}
+                              onChange={(event) => {
+                                const nextValue = event.target.value || null;
+                                setDraftValue(task.id, 'due_date', nextValue);
+                                commitTaskField(task.id, 'due_date', nextValue, task?.due_date || '');
+                              }}
+                            />
+                          </label>
+                          <label className="execution-detail-field">
+                            <span>Phase</span>
+                            <select
+                              value={phaseValue}
+                              disabled={!canEditStructure}
+                              onChange={(event) => {
+                                const nextValue = event.target.value;
+                                setDraftValue(task.id, 'phase', nextValue);
+                                commitTaskField(task.id, 'phase', nextValue, extractPhaseName(task?.phase));
+                              }}
+                            >
+                              {phases.map((option) => (
+                                <option key={option} value={option}>{option}</option>
                               ))}
-                          </select>
-                        </label>
-                        <div className="execution-task-row-actions">
-                          <span className="execution-task-deps">
-                            {Array.isArray(task?.depends_on) && task.depends_on.length > 0
-                              ? `${task.depends_on.length} dep`
-                              : 'No deps'}
-                          </span>
+                            </select>
+                          </label>
+                          <label className="execution-detail-field">
+                            <span>Depends on</span>
+                            <select
+                              value=""
+                              disabled={!canEditDependencies}
+                              onChange={(event) => {
+                                const dependsOnId = event.target.value;
+                                if (!dependsOnId) return;
+                                onAddDependency?.(task.id, dependsOnId);
+                                event.target.value = '';
+                              }}
+                            >
+                              <option value="">Add dependency…</option>
+                              {tasks
+                                .filter((c) => c.id !== task.id && !(Array.isArray(task?.depends_on) && task.depends_on.includes(c.id)))
+                                .map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
+                            </select>
+                          </label>
                           {canEditStructure && (
                             <button
                               type="button"
@@ -568,7 +598,7 @@ export default function ExecutionPanel({
                             </button>
                           )}
                         </div>
-                      </div>
+                      )}
                     </article>
                   );
                 })}
@@ -580,24 +610,18 @@ export default function ExecutionPanel({
                         <input
                           type="text"
                           value={newTaskTitle}
-                          placeholder={`Add a task to ${phase}`}
+                          placeholder={`New task in ${phase}…`}
                           onChange={(event) => setNewTaskTitle(event.target.value)}
                           onKeyDown={(event) => {
-                            if (event.key === 'Enter') {
-                              event.preventDefault();
-                              submitNewTask(phase);
-                            }
+                            if (event.key === 'Enter') { event.preventDefault(); submitNewTask(phase); }
                           }}
+                          autoFocus
                         />
-                        <button type="button" className="execution-secondary-btn" onClick={() => submitNewTask(phase)}>
-                          Save
-                        </button>
-                        <button type="button" className="execution-tertiary-btn" onClick={() => { setAddingPhase(null); setNewTaskTitle(''); }}>
-                          Cancel
-                        </button>
+                        <button type="button" className="execution-secondary-btn" onClick={() => submitNewTask(phase)}>Save</button>
+                        <button type="button" className="execution-tertiary-btn" onClick={() => { setAddingPhase(null); setNewTaskTitle(''); }}>Cancel</button>
                       </>
                     ) : (
-                      <button type="button" className="execution-secondary-btn" onClick={() => setAddingPhase(phase)}>
+                      <button type="button" className="execution-add-task-btn" onClick={() => setAddingPhase(phase)}>
                         <FontAwesomeIcon icon={faPlus} />
                         Add task
                       </button>

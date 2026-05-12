@@ -6367,7 +6367,9 @@ async function onBeginProject(extraAnswers = null) {
   setBeginMsg('Building your project plan…');
 
   try {
+    const activeScenarioId = String(activeScenarioForProject?.id || activeScenarioForProject?.analysis_id || '').trim() || null;
     const body = { commit: true };
+    if (activeScenarioId) body.scenario_id = activeScenarioId;
     if (extraAnswers && Object.keys(extraAnswers).length > 0) {
       body.preflight_answers = extraAnswers;
     }
