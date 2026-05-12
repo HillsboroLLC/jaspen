@@ -1343,7 +1343,7 @@ READINESS_SPEC_V2 = {
     "version": "readiness-v2",
     # required_keys: these categories MUST be complete for ready_to_analyze to trigger,
     # regardless of overall percent.  Goal + measurable baseline are non-negotiable gates.
-    "required_keys": {"goal_definition", "evidence_baseline"},
+    "required_keys": ["goal_definition", "evidence_baseline"],
     # min_keywords: how many keyword matches a category needs before it counts as complete.
     # 2 prevents a single incidental word from marking a category done.
     "min_keywords": 2,

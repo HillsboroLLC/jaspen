@@ -3548,11 +3548,15 @@ def _heuristic_wbs_suggestion(scorecard, instruction, scenario_payload=None):
     comps = comps if isinstance(comps, dict) else {}
     planning_mode = _infer_wbs_planning_mode(scorecard, instruction, scenario_payload=scenario_payload)
     is_program_mode = planning_mode == 'program'
-    tasks = [
+
+    initiative = str((scorecard or {}).get('initiative_name', '') or 'the initiative').strip()
+
+    # Phase 1: Discovery & Alignment
+    discovery_tasks = [
         {
             'id': 'kickoff_alignment',
-            'title': 'Kickoff alignment and success criteria',
-            'description': 'Align stakeholders on scope, objectives, and measurable outcomes.',
+            'title': f'Kickoff alignment and success criteria for {initiative}',
+            'description': 'Align stakeholders on scope, objectives, and measurable outcomes. Define RACI and communication cadence.',
             'priority': 'high',
             'estimated_days': 5,
             'suggested_role': 'Project Manager',
@@ -3562,12 +3566,12 @@ def _heuristic_wbs_suggestion(scorecard, instruction, scenario_payload=None):
             'risk_area': 'execution_readiness',
         },
         {
-            'id': 'dependency_map',
-            'title': 'Create execution cadence and dependency map',
-            'description': 'Map workstream dependencies and establish execution cadence.',
+            'id': 'current_state_assessment',
+            'title': 'Current state assessment and gap analysis',
+            'description': 'Document as-is state, identify gaps against target, and validate assumptions from the scorecard.',
             'priority': 'high',
             'estimated_days': 7,
-            'suggested_role': 'Program Manager' if is_program_mode else 'Project Manager',
+            'suggested_role': 'Business Analyst',
             'function': 'PMO',
             'activity_type': 'planning',
             'depends_on': ['kickoff_alignment'],
@@ -3575,11 +3579,50 @@ def _heuristic_wbs_suggestion(scorecard, instruction, scenario_payload=None):
         },
     ]
 
+    # Phase 2: Planning & Design
+    planning_tasks = [
+        {
+            'id': 'dependency_map',
+            'title': 'Create execution roadmap and dependency map',
+            'description': 'Map workstream dependencies, establish execution cadence, and sequence deliverables.',
+            'priority': 'high',
+            'estimated_days': 5,
+            'suggested_role': 'Program Manager' if is_program_mode else 'Project Manager',
+            'function': 'PMO',
+            'activity_type': 'planning',
+            'depends_on': ['current_state_assessment'],
+            'risk_area': 'execution_readiness',
+        },
+        {
+            'id': 'resource_plan',
+            'title': 'Resource and budget allocation plan',
+            'description': 'Identify required resources, assign owners, and validate budget against execution roadmap.',
+            'priority': 'high',
+            'estimated_days': 6,
+            'suggested_role': 'Finance Analyst',
+            'function': 'Finance',
+            'activity_type': 'financial_modeling',
+            'depends_on': ['dependency_map'],
+            'risk_area': 'financial_health',
+        },
+        {
+            'id': 'risk_register',
+            'title': 'Build risk register and mitigation playbook',
+            'description': 'Catalog top risks from the scorecard, assign owners, and define mitigation actions.',
+            'priority': 'high',
+            'estimated_days': 4,
+            'suggested_role': 'Risk Manager',
+            'function': 'PMO',
+            'activity_type': 'risk_management',
+            'depends_on': ['current_state_assessment'],
+            'risk_area': 'execution_readiness',
+        },
+    ]
     if is_program_mode:
-        tasks.append({
+        planning_tasks.append({
             'id': 'governance_rhythm',
-            'title': 'Establish program governance rhythm',
-            'description': 'Set up steering committee cadence, workstream leads, and escalation paths.',
+            'title': 'Establish program governance and steering committee rhythm',
+            'description': 'Set up steering committee cadence, workstream leads, escalation paths, and decision rights.',
             'priority': 'high',
             'estimated_days': 6,
             'suggested_role': 'Program Director',
@@ -3589,91 +3632,157 @@ def _heuristic_wbs_suggestion(scorecard, instruction, scenario_payload=None):
             'risk_area': 'execution_readiness',
         })
 
-    if float(comps.get('financial_health') or 0) < 70:
-        tasks.append({
-            'id': 'financial_guardrails',
-            'title': 'Run budget guardrail and ROI checkpoint',
-            'description': 'Validate investment assumptions and define financial checkpoints.',
-            'priority': 'high',
-            'estimated_days': 7,
-            'suggested_role': 'Finance Analyst',
-            'function': 'Finance',
-            'activity_type': 'financial_modeling',
-            'depends_on': ['kickoff_alignment'],
-            'risk_area': 'financial_health',
-        })
-    if float(comps.get('market_position') or 0) < 70:
-        tasks.append({
+    # Phase 3: Execution (score-driven tasks)
+    execution_tasks = []
+    if float(comps.get('market_position') or 0) < 75:
+        execution_tasks.append({
             'id': 'market_validation',
-            'title': 'Validate customer value and market assumptions',
-            'description': 'Run customer and market validation to sharpen value proposition.',
-            'priority': 'medium',
+            'title': 'Customer and market assumption validation',
+            'description': 'Run structured customer interviews and market tests to sharpen value proposition.',
+            'priority': 'high',
             'estimated_days': 10,
             'suggested_role': 'Product Marketing',
             'function': 'Marketing',
             'activity_type': 'market_validation',
-            'depends_on': ['kickoff_alignment'],
+            'depends_on': ['dependency_map'],
             'risk_area': 'market_position',
         })
-    if float(comps.get('operational_efficiency') or 0) < 70:
-        tasks.append({
+    if float(comps.get('operational_efficiency') or 0) < 75:
+        execution_tasks.append({
             'id': 'process_optimization',
-            'title': 'Map process bottlenecks and automate handoffs',
-            'description': 'Identify bottlenecks and improve process handoffs.',
+            'title': 'Process bottleneck mapping and handoff automation',
+            'description': 'Identify and remediate top process bottlenecks; automate manual handoffs.',
             'priority': 'medium',
-            'estimated_days': 14,
+            'estimated_days': 12,
             'suggested_role': 'Operations Lead',
             'function': 'Operations',
             'activity_type': 'process_optimization',
             'depends_on': ['dependency_map'],
             'risk_area': 'operational_efficiency',
         })
-    if float(comps.get('execution_readiness') or 0) < 70:
-        tasks.append({
+    if float(comps.get('execution_readiness') or 0) < 75:
+        execution_tasks.append({
             'id': 'staffing_plan',
-            'title': 'Staff critical roles and contingency owners',
-            'description': 'Assign owners and contingency coverage for critical tasks.',
+            'title': 'Staff critical roles and contingency coverage',
+            'description': 'Confirm owners and contingency coverage for all critical path tasks.',
             'priority': 'high',
             'estimated_days': 6,
-            'suggested_role': 'Project Manager',
+            'suggested_role': 'HR Business Partner',
             'function': 'HR',
             'activity_type': 'staffing',
-            'depends_on': ['dependency_map'],
+            'depends_on': ['resource_plan'],
             'risk_area': 'execution_readiness',
         })
-
-    tasks.append({
-        'id': 'weekly_risk_review',
-        'title': 'Weekly risk review and mitigation updates',
-        'description': 'Review risk register and update mitigations weekly.',
-        'priority': 'medium',
-        'estimated_days': 30,
-        'suggested_role': 'PMO',
-        'function': 'PMO',
-        'activity_type': 'risk_management',
-        'depends_on': ['dependency_map'],
+    # Always include a core delivery task
+    execution_tasks.append({
+        'id': 'core_delivery',
+        'title': f'Core delivery and implementation sprint for {initiative}',
+        'description': 'Execute primary deliverables per the roadmap; track against milestones weekly.',
+        'priority': 'high',
+        'estimated_days': 21,
+        'suggested_role': 'Project Lead',
+        'function': 'Operations',
+        'activity_type': 'delivery',
+        'depends_on': ['dependency_map', 'resource_plan'],
         'risk_area': 'execution_readiness',
     })
+
+    # Phase 4: Change Management & Enablement
+    change_tasks = [
+        {
+            'id': 'change_management',
+            'title': 'Stakeholder change management and communication plan',
+            'description': 'Develop and execute change management plan covering training, comms, and adoption milestones.',
+            'priority': 'medium',
+            'estimated_days': 14,
+            'suggested_role': 'Change Manager',
+            'function': 'HR',
+            'activity_type': 'change_management',
+            'depends_on': ['core_delivery'],
+            'risk_area': 'execution_readiness',
+        },
+        {
+            'id': 'training_rollout',
+            'title': 'Training and enablement rollout',
+            'description': 'Deliver training sessions, job aids, and knowledge base for impacted teams.',
+            'priority': 'medium',
+            'estimated_days': 10,
+            'suggested_role': 'Training Lead',
+            'function': 'HR',
+            'activity_type': 'training',
+            'depends_on': ['change_management'],
+            'risk_area': 'execution_readiness',
+        },
+    ]
+
+    # Phase 5: Validation & Launch
+    validation_tasks = [
+        {
+            'id': 'uat_validation',
+            'title': 'User acceptance testing and quality validation',
+            'description': 'Run UAT with key stakeholders, document findings, and close critical gaps before launch.',
+            'priority': 'high',
+            'estimated_days': 8,
+            'suggested_role': 'QA Lead',
+            'function': 'Operations',
+            'activity_type': 'quality',
+            'depends_on': ['core_delivery'],
+            'risk_area': 'execution_readiness',
+        },
+        {
+            'id': 'launch_readiness',
+            'title': 'Launch readiness review and go/no-go checkpoint',
+            'description': 'Conduct formal readiness review with sponsors; confirm all launch criteria are met.',
+            'priority': 'high',
+            'estimated_days': 3,
+            'suggested_role': 'Project Manager',
+            'function': 'PMO',
+            'activity_type': 'governance',
+            'depends_on': ['uat_validation', 'training_rollout'],
+            'risk_area': 'execution_readiness',
+        },
+    ]
+
+    # Phase 6: Measurement & Value Capture
+    measurement_tasks = [
+        {
+            'id': 'kpi_baseline',
+            'title': 'Establish KPI baseline and value-capture tracking',
+            'description': 'Define measurement framework, baseline current KPIs, and set up tracking dashboards.',
+            'priority': 'medium',
+            'estimated_days': 7,
+            'suggested_role': 'Analytics Lead',
+            'function': 'Finance',
+            'activity_type': 'reporting',
+            'depends_on': ['launch_readiness'],
+            'risk_area': 'financial_health',
+        },
+        {
+            'id': 'post_launch_review',
+            'title': '30-day post-launch review and lessons learned',
+            'description': 'Assess adoption, value realization, and document lessons learned for continuous improvement.',
+            'priority': 'medium',
+            'estimated_days': 5,
+            'suggested_role': 'Program Manager',
+            'function': 'PMO',
+            'activity_type': 'reporting',
+            'depends_on': ['kpi_baseline'],
+            'risk_area': 'execution_readiness',
+        },
+    ]
 
     scenario_note = ''
     if isinstance(scenario_payload, dict) and scenario_payload.get('label'):
         scenario_note = f" using scenario '{scenario_payload.get('label')}'"
 
     phases = [
-        {
-            'name': 'Initiation',
-            'tasks': tasks[:2],
-        },
-        {
-            'name': 'Program Mobilization' if is_program_mode else 'Execution',
-            'tasks': tasks[2:3] if is_program_mode else tasks[2:],
-        },
+        {'name': 'Discovery & Alignment', 'tasks': discovery_tasks},
+        {'name': 'Planning & Design', 'tasks': planning_tasks},
+        {'name': 'Execution', 'tasks': execution_tasks},
+        {'name': 'Change Management', 'tasks': change_tasks},
+        {'name': 'Validation & Launch', 'tasks': validation_tasks},
+        {'name': 'Measurement', 'tasks': measurement_tasks},
     ]
-    if is_program_mode:
-        phases.append({
-            'name': 'Execution',
-            'tasks': tasks[3:],
-        })
 
     return {
         'name': 'AI Generated Program Plan' if is_program_mode else 'AI Generated Project Plan',
@@ -3782,7 +3891,7 @@ Rules:
             llm_model=llm_model,
             strategy_objective=strategy_objective,
             temperature=0.25,
-            max_tokens=2000,
+            max_tokens=4096,
         )
         parsed = _extract_json_object(raw_reply)
         if not isinstance(parsed, dict):
