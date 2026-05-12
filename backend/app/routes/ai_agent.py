@@ -2625,6 +2625,30 @@ def _build_agent_system_prompt(*, context_summary_text, intake_context, view_con
     )
 
 
+def _scorecard_content_prompt_suffix(session, view_context):
+    """Inject current scorecard fields when user is on the summary/score view."""
+    current_view = str((view_context or {}).get("current_view") or "").lower()
+    if current_view != "summary":
+        return ""
+    result_blob = (session or {}).get("result") if isinstance((session or {}).get("result"), dict) else {}
+    if not result_blob:
+        return ""
+    sc_fields = {
+        k: result_blob[k] for k in (
+            "executive_summary", "key_insights", "top_risks", "recommendations",
+            "component_rationale", "financial_impact", "jaspen_score", "score_category",
+            "project_name", "initiative_name", "industry",
+        ) if k in result_blob and result_blob[k]
+    }
+    if not sc_fields:
+        return ""
+    return (
+        "\n\n[CURRENT SCORECARD CONTENT — reference these exact values when the user asks to edit, "
+        "quote, or query any part of the scorecard; call patch_scorecard with updated content when asked to make changes]\n"
+        + json.dumps(sc_fields, indent=2)
+    )
+
+
 def _message_has_data_context_request(user_message):
     text = str(user_message or "").strip().lower()
     if not text:
@@ -5037,6 +5061,7 @@ def _generate_assistant_reply_anthropic(
         chat_history=chat_history,
         readiness=readiness,
     )
+    system_prompt += _scorecard_content_prompt_suffix(session, view_context)
     if _message_has_data_context_request(user_message):
         system_prompt += (
             "\nConnector-priority instruction: because the user attached data context or requested connector analysis, "
@@ -5269,6 +5294,7 @@ def _stream_assistant_reply_events_anthropic(
         chat_history=chat_history,
         readiness=readiness,
     )
+    system_prompt += _scorecard_content_prompt_suffix(session, view_context)
     if _message_has_data_context_request(user_message):
         system_prompt += (
             "\nConnector-priority instruction: because the user attached data context or requested connector analysis, "
