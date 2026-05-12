@@ -3543,13 +3543,18 @@ def _infer_wbs_planning_mode(scorecard, instruction, scenario_payload=None):
     return 'program' if any(marker in haystack for marker in program_markers) else 'project'
 
 
-def _heuristic_wbs_suggestion(scorecard, instruction, scenario_payload=None):
+def _heuristic_wbs_suggestion(scorecard, instruction, scenario_payload=None, chat_history=None):
     comps = (scorecard or {}).get('component_scores') if isinstance(scorecard, dict) else {}
     comps = comps if isinstance(comps, dict) else {}
     planning_mode = _infer_wbs_planning_mode(scorecard, instruction, scenario_payload=scenario_payload)
     is_program_mode = planning_mode == 'program'
 
-    initiative = str((scorecard or {}).get('initiative_name', '') or 'the initiative').strip()
+    initiative = str(
+        (scorecard or {}).get('initiative_name')
+        or (scorecard or {}).get('project_name')
+        or (scorecard or {}).get('business_description', '')[:60]
+        or 'the initiative'
+    ).strip()
 
     # Phase 1: Discovery & Alignment
     discovery_tasks = [
@@ -3801,6 +3806,7 @@ def _generate_ai_wbs_suggestion(
     scenario_payload=None,
     model_selection=None,
     strategy_objective='balanced',
+    chat_history=None,
 ):
     scorecard_payload = scorecard if isinstance(scorecard, dict) else {}
     scenario_context = scenario_payload if isinstance(scenario_payload, dict) else {}
@@ -3824,14 +3830,18 @@ def _generate_ai_wbs_suggestion(
         if k in scorecard_payload
     }
 
+    conversation_block = ''
+    if isinstance(chat_history, list) and chat_history:
+        conversation_block = '\nConversation context (use this to make tasks specific to this initiative):\n' + '\n'.join(chat_history) + '\n'
+
     prompt = f"""
-You are generating a project WBS from a strategy scorecard.
+You are generating a project WBS from a live strategy session.
 Planning mode: {planning_mode}
 Planning guidance: {planning_brief}
 
 Instruction:
-{instruction or "Generate an actionable WBS from this scorecard."}
-
+{instruction or "Generate an actionable WBS from this scorecard and conversation."}
+{conversation_block}
 Scorecard context:
 {json.dumps(scorecard_summary, indent=2)}
 
@@ -3872,35 +3882,53 @@ Return JSON only:
 
 Rules:
 - Return 10-18 tasks total spread across 4-6 meaningful phases.
-- Phases must follow a logical sequence: e.g. Discovery -> Planning -> Build/Execute -> Validate -> Launch -> Operate.
-- Every task must have a concrete, specific title (not generic like "Research" - say what is being researched).
+- Phases must follow a logical sequence: Discovery -> Planning -> Build/Execute -> Validate -> Launch -> Operate.
+- CRITICAL: Every task title must be specific to THIS initiative — no generic titles like "Research" or "Planning". Use the conversation and scorecard to name exactly what is being done, by whom, for what outcome.
 - Assign a realistic suggested_role to every task.
 - Include function and activity_type for every task.
 - Include at least 1 risk-mitigation task, 1 change-management task, and 1 value-capture/measurement task.
 - Estimated_days should be realistic for the task complexity (range: 1-15).
 - Dependencies must reference real task IDs in the list; avoid circular references.
-- Use context from key_insights and recommendations to make tasks specific to THIS initiative, not generic templates.
+- Use context from the conversation turns, key_insights, and recommendations to name tasks after REAL work items from this session.
 - If a scenario was provided, weight tasks toward the scenario's adopted assumptions and lever changes.
+- MINIMUM 10 tasks. If you return fewer than 10 the response will be rejected.
 """.strip()
 
     try:
-        raw_reply, _usage = _strategy_generate_reply(
-            [{"role": "user", "content": prompt}],
-            system_prompt="You are a senior project planning assistant. Generate initiative-specific execution plans with 10-18 tasks across 4-6 phases. Every task title must be specific and actionable. Return strict JSON only.",
-            model_selection=model_selection,
-            llm_model=llm_model,
-            strategy_objective=strategy_objective,
-            temperature=0.25,
-            max_tokens=4096,
-        )
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FuturesTimeout
+        def _call_llm():
+            return _strategy_generate_reply(
+                [{"role": "user", "content": prompt}],
+                system_prompt="You are a senior project planning assistant. Generate initiative-specific execution plans with 10-18 tasks across 4-6 phases. Every task title must be specific and actionable. Return strict JSON only.",
+                model_selection=model_selection,
+                llm_model=llm_model,
+                strategy_objective=strategy_objective,
+                temperature=0.25,
+                max_tokens=4096,
+            )
+        with ThreadPoolExecutor(max_workers=1) as _pool:
+            _future = _pool.submit(_call_llm)
+            try:
+                raw_reply, _usage = _future.result(timeout=55)
+            except _FuturesTimeout:
+                raise ValueError('wbs_ai_timeout')
         parsed = _extract_json_object(raw_reply)
         if not isinstance(parsed, dict):
             raise ValueError('invalid_wbs_response')
         if not isinstance(parsed.get('phases'), list) and not isinstance(parsed.get('tasks'), list):
             raise ValueError('invalid_wbs_response')
+        # Reject thin plans — AI must return at least 6 tasks or we use the heuristic
+        all_tasks = []
+        if isinstance(parsed.get('phases'), list):
+            for phase in parsed['phases']:
+                all_tasks.extend(phase.get('tasks') or [])
+        elif isinstance(parsed.get('tasks'), list):
+            all_tasks = parsed['tasks']
+        if len(all_tasks) < 6:
+            raise ValueError('wbs_too_thin')
         return parsed
     except Exception:
-        return _heuristic_wbs_suggestion(scorecard, instruction, scenario_payload=scenario_context)
+        return _heuristic_wbs_suggestion(scorecard, instruction, scenario_payload=scenario_context, chat_history=chat_history)
 
 
 def _materialize_ai_wbs(wbs_payload):
@@ -4946,6 +4974,24 @@ def generate_ai_wbs(thread_id):
                     f"{instruction or ''}"
                 ).strip()
 
+        # Pull conversation history from the session so the AI can build a specific plan
+        raw_chat = None
+        if isinstance(session, dict):
+            raw_chat = session.get('chat_history')
+            if not isinstance(raw_chat, list):
+                result_blob = session.get('result')
+                raw_chat = result_blob.get('chat_history') if isinstance(result_blob, dict) else None
+        if not isinstance(raw_chat, list):
+            raw_chat = []
+        # Keep the last 20 turns and trim to text-only for the prompt
+        chat_turns = []
+        for msg in raw_chat[-20:]:
+            role = str(msg.get('role') or msg.get('sender') or '').strip().lower()
+            text = str(msg.get('content') or msg.get('text') or msg.get('message') or '').strip()
+            if text and role in ('user', 'assistant', 'jaspen'):
+                label = 'User' if role == 'user' else 'Jaspen'
+                chat_turns.append(f"{label}: {text[:400]}")
+
         client = get_llm_client()
         raw_wbs = _generate_ai_wbs_suggestion(
             client,
@@ -4955,6 +5001,7 @@ def generate_ai_wbs(thread_id):
             scenario_payload=adopted_scenario,
             model_selection=model_selection,
             strategy_objective=_strategy_objective,
+            chat_history=chat_turns,
         )
         materialized = _materialize_ai_wbs(raw_wbs)
         normalized_wbs = _normalize_project_wbs({'project_wbs': materialized}, existing=None)
