@@ -4,6 +4,7 @@ import anthropic
 import json
 import os
 import re
+import threading
 import time
 from datetime import datetime, timedelta
 import uuid
@@ -2327,6 +2328,31 @@ def analyze_project():
 
         sessions[session_key or resolved_thread_id] = session
         persisted_session = save_user_sessions(current_user_id, sessions)
+
+        # Fire-and-forget: extract business facts from this score into persistent user memory.
+        try:
+            from app.routes.ai_agent import extract_and_update_user_memory
+            _score_val = analysis_result.get('jaspen_score')
+            _industry_val = str(
+                (session.get('intake_context') or {}).get('industry')
+                or (session.get('result') or {}).get('industry')
+                or ''
+            ).strip()
+            _mem_thread = threading.Thread(
+                target=extract_and_update_user_memory,
+                args=(
+                    current_user_id,
+                    project_name,
+                    effective_description,
+                    _score_val,
+                    _industry_val,
+                    model_selection,
+                ),
+                daemon=True,
+            )
+            _mem_thread.start()
+        except Exception:
+            current_app.logger.exception("Failed to start user memory extraction thread")
 
         # Ensure scenario-thread storage exists, even before any scenario/WBS is created.
         all_data = _load_scenarios(current_user_id)

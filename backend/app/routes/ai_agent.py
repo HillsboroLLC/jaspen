@@ -650,6 +650,41 @@ def _off_topic_reply(reason):
     return _OFF_TOPIC_RESPONSE
 
 
+_PROCESSING_INTENT_TERMS = frozenset([
+    "scan", "monitor", "detect trend", "ingest", "upload document",
+    "data source", "connected data", "recurring", "background analysis",
+    "summarize all", "churn insight", "sync data", "run analysis on",
+    "large dataset", "export data", "pull data",
+])
+_JUDGMENT_VIEWS = frozenset(["summary", "scenario"])
+_PROCESSING_VIEWS = frozenset(["monitoring"])
+
+
+def _classify_turn_intent(view_context, user_message):
+    """Return 'judgment' (Claude preferred) | 'processing' (Gemini preferred) | 'standard'."""
+    current_view = str((view_context or {}).get("current_view") or "").lower()
+    text = str(user_message or "").strip().lower()
+
+    if "[data context attached:" in text or "[snowflake context]" in text or "[salesforce context]" in text:
+        return "processing"
+    if current_view in _PROCESSING_VIEWS:
+        return "processing"
+    if any(term in text for term in _PROCESSING_INTENT_TERMS):
+        return "processing"
+    if current_view in _JUDGMENT_VIEWS:
+        return "judgment"
+    return "standard"
+
+
+def _apply_intent_to_routes(routes, intent):
+    """For processing turns, prefer Gemini. For judgment/standard, keep Anthropic first."""
+    if intent != "processing":
+        return routes
+    gemini = [r for r in routes if r["provider"] == "gemini"]
+    anthropic = [r for r in routes if r["provider"] == "anthropic"]
+    return (gemini + anthropic) if gemini else routes
+
+
 def _classify_turn_complexity(user_message):
     text = str(user_message or "").strip().lower()
     if not text:
@@ -1134,16 +1169,129 @@ def _session_memory_snippet(session):
     return "; ".join(parts)
 
 
+_USER_MEMORY_SESSION_KEY = "__user_memory__"
+_MEMORY_EXTRACT_PROMPT = (
+    "You are a memory extraction assistant. Given a completed business strategy project, "
+    "extract 3-5 concise facts about this user's business that would be useful context in future conversations. "
+    "Focus on: business type, industry, company size, key challenges, strategic decisions made, "
+    "and any pivots or strong preferences expressed. "
+    "Return ONLY a JSON object with keys: business_summary, industry, company_size, key_challenges (list), decisions_made (list). "
+    "Be specific and brief. No preamble."
+)
+
+
+def _load_user_memory(user_id):
+    """Load persistent cross-session user memory from the sentinel session."""
+    try:
+        sessions = load_user_sessions(str(user_id))
+        sentinel = sessions.get(_USER_MEMORY_SESSION_KEY) if isinstance(sessions, dict) else None
+        if isinstance(sentinel, dict):
+            return sentinel.get("memory_facts") if isinstance(sentinel.get("memory_facts"), dict) else {}
+    except Exception:
+        pass
+    return {}
+
+
+def _save_user_memory(user_id, facts):
+    """Persist cross-session user memory into the sentinel session."""
+    if not isinstance(facts, dict) or not facts:
+        return
+    try:
+        from app.routes.sessions import save_user_sessions as _sav
+        sessions = load_user_sessions(str(user_id)) or {}
+        sentinel = sessions.get(_USER_MEMORY_SESSION_KEY) or {}
+        sentinel["session_id"] = _USER_MEMORY_SESSION_KEY
+        sentinel["name"] = "__user_memory__"
+        sentinel["document_type"] = "memory"
+        sentinel["status"] = "in_progress"
+        sentinel["user_id"] = str(user_id)
+        sentinel["memory_facts"] = facts
+        sentinel["timestamp"] = datetime.utcnow().isoformat()
+        sessions[_USER_MEMORY_SESSION_KEY] = sentinel
+        _sav(str(user_id), sessions)
+    except Exception:
+        current_app.logger.exception("Failed saving user memory for user %s", user_id)
+
+
+def extract_and_update_user_memory(user_id, project_name, problem_statement, score, industry, model_selection=None):
+    """
+    Extract key business facts from a completed project and persist them to user memory.
+    Designed to be called in a background thread — does not raise.
+    """
+    try:
+        if not user_id or not problem_statement:
+            return
+        content = (
+            f"Project: {project_name or 'Untitled'}\n"
+            f"Industry: {industry or 'unknown'}\n"
+            f"Jaspen Score: {score}\n"
+            f"Problem statement: {str(problem_statement)[:1200]}"
+        )
+        import json as _json
+        model_key = "claude_haiku"
+        model_id = _provider_model_id(model_key) or "claude-haiku-4-5-20251001"
+        api_key = _anthropic_api_key()
+        if not api_key:
+            return
+        import anthropic as _anthropic
+        client = _anthropic.Anthropic(api_key=api_key, timeout=15.0)
+        response, _ = _anthropic_message_create(
+            client,
+            model_name=model_id,
+            max_tokens=300,
+            temperature=0.1,
+            system=_MEMORY_EXTRACT_PROMPT,
+            messages=[{"role": "user", "content": content}],
+        )
+        raw = _anthropic_text(response.content).strip()
+        if raw.startswith("```"):
+            raw = re.sub(r"^```(?:json)?\s*", "", raw)
+            raw = re.sub(r"\s*```$", "", raw)
+        facts = _json.loads(raw)
+        if isinstance(facts, dict) and facts:
+            existing = _load_user_memory(user_id)
+            merged = {**existing, **facts, "last_updated": datetime.utcnow().isoformat()}
+            # Merge list fields rather than overwrite
+            for list_key in ("key_challenges", "decisions_made"):
+                old = existing.get(list_key) if isinstance(existing.get(list_key), list) else []
+                new = facts.get(list_key) if isinstance(facts.get(list_key), list) else []
+                combined = list(dict.fromkeys(old + new))[:10]
+                if combined:
+                    merged[list_key] = combined
+            _save_user_memory(user_id, merged)
+    except Exception:
+        current_app.logger.exception("extract_and_update_user_memory failed for user %s", user_id)
+
+
 def _cross_session_memory_prompt_suffix(user_id, thread_id):
     if not user_id:
         return ""
+
+    # Inject persistent user memory first
+    user_memory = _load_user_memory(user_id)
+    memory_lines = []
+    if isinstance(user_memory, dict) and user_memory:
+        memory_lines.append("Persistent user memory (what I know about this user across all projects):")
+        if user_memory.get("business_summary"):
+            memory_lines.append(f"- Business: {user_memory['business_summary']}")
+        if user_memory.get("industry"):
+            memory_lines.append(f"- Industry: {user_memory['industry']}")
+        if user_memory.get("company_size"):
+            memory_lines.append(f"- Company size: {user_memory['company_size']}")
+        challenges = user_memory.get("key_challenges")
+        if isinstance(challenges, list) and challenges:
+            memory_lines.append(f"- Key challenges: {'; '.join(str(c) for c in challenges[:4])}")
+        decisions = user_memory.get("decisions_made")
+        if isinstance(decisions, list) and decisions:
+            memory_lines.append(f"- Prior decisions: {'; '.join(str(d) for d in decisions[:4])}")
+
     try:
         sessions = load_user_sessions(user_id)
     except Exception:
         current_app.logger.exception("Failed loading user sessions for cross-session memory")
-        return ""
+        return ("\n" + "\n".join(memory_lines)) if memory_lines else ""
     if not isinstance(sessions, dict) or not sessions:
-        return ""
+        return ("\n" + "\n".join(memory_lines)) if memory_lines else ""
 
     target_thread = str(thread_id or "").strip()
     candidates = []
@@ -1157,26 +1305,47 @@ def _cross_session_memory_prompt_suffix(user_id, thread_id):
         ts_sort = ts or datetime.fromtimestamp(0)
         candidates.append((ts_sort, session))
 
-    if not candidates:
+    # Skip sentinel session — it holds internal memory metadata, not a real project
+    candidates = [
+        (ts, s) for ts, s in (
+            (
+                _parse_iso_datetime(session.get("timestamp")) or _parse_iso_datetime(session.get("created")) or datetime.fromtimestamp(0),
+                session,
+            )
+            for key, session in sessions.items()
+            if isinstance(session, dict)
+            and str(session.get("session_id") or key or "").strip() not in ("", target_thread, _USER_MEMORY_SESSION_KEY)
+            and key != _USER_MEMORY_SESSION_KEY
+        )
+    ]
+
+    if not candidates and not memory_lines:
         return ""
 
     candidates.sort(key=lambda item: item[0], reverse=True)
-    lines = ["Cross-session memory (same user, recent projects):"]
+    lines = []
+    if memory_lines:
+        lines.extend(memory_lines)
+
+    recent_lines = ["Cross-session memory (same user, recent projects):"]
     added = 0
     for _, session in candidates:
         snippet = _session_memory_snippet(session)
         if not snippet:
             continue
-        lines.append(f"- {snippet}")
+        recent_lines.append(f"- {snippet}")
         added += 1
         if added >= 3:
             break
 
-    if added == 0:
+    if added > 0:
+        recent_lines.append(
+            "- Reuse relevant context from these prior projects when helpful, but prioritize the current thread."
+        )
+        lines.extend(recent_lines)
+
+    if not lines:
         return ""
-    lines.append(
-        "- Reuse relevant context from these prior projects when helpful, but prioritize the user's current thread and request."
-    )
     return "\n" + "\n".join(lines)
 
 
@@ -2916,7 +3085,7 @@ def _provider_model_id(key):
     return str(models.get(key) or "").strip()
 
 
-def _resolve_generation_routes(model_selection, strategy_objective="balanced"):
+def _resolve_generation_routes(model_selection, strategy_objective="balanced", intent="standard"):
     model_type = normalize_model_type((model_selection or {}).get("model_type")) or "pluto"
     objective = normalize_strategy_objective(strategy_objective, default="balanced")
     plan = _ROUTING_MATRIX.get(model_type, _ROUTING_MATRIX["pluto"])
@@ -2939,7 +3108,7 @@ def _resolve_generation_routes(model_selection, strategy_objective="balanced"):
         })
 
     if routes:
-        return routes
+        return _apply_intent_to_routes(routes, intent)
 
     fallback_model = str((model_selection or {}).get("llm_model") or "").strip()
     if fallback_model:
@@ -5806,7 +5975,8 @@ def _generate_assistant_reply(
     objective = normalize_strategy_objective(
         ((intake_context or {}).get("objective") if isinstance(intake_context, dict) else None) or "balanced"
     )
-    routes = _resolve_generation_routes(model_selection, objective)
+    intent = _classify_turn_intent(view_context, user_message)
+    routes = _resolve_generation_routes(model_selection, objective, intent=intent)
     last_error = None
     failover_log = []
     for route in routes:
@@ -5957,7 +6127,8 @@ def _stream_assistant_reply_events(
     objective = normalize_strategy_objective(
         ((intake_context or {}).get("objective") if isinstance(intake_context, dict) else None) or "balanced"
     )
-    routes = _resolve_generation_routes(model_selection, objective)
+    intent = _classify_turn_intent(view_context, user_message)
+    routes = _resolve_generation_routes(model_selection, objective, intent=intent)
     failover_log = []
     for route in routes:
         routed_selection = {**(model_selection or {}), "llm_model": route["model"]}
