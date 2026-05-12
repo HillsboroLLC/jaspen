@@ -6566,8 +6566,14 @@ Return one valid JSON object only:
 If no plan changes are needed, return "uiActions": [].
 """.strip()
 
-        client = anthropic.Anthropic(api_key=os.environ.get('ANTHROPIC_API_KEY'))
-        model_id = model_selection.get('model_id') or 'claude-3-5-haiku-20241022'
+        api_key = (
+            current_app.config.get('ANTHROPIC_API_KEY')
+            or os.environ.get('ANTHROPIC_API_KEY')
+        )
+        if not api_key:
+            return jsonify({'error': 'AI service unavailable'}), 503
+        client = anthropic.Anthropic(api_key=api_key)
+        model_id = model_selection.get('llm_model') or 'claude-haiku-4-5-20251001'
 
         try:
             response = client.messages.create(
