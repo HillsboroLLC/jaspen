@@ -6402,6 +6402,176 @@ Rules:
 
 
 # ============================================================
+# EXECUTION ASSISTANT  (execution plan sidebar)
+# ============================================================
+
+@strategy_bp.route('/threads/<thread_id>/execution-assistant', methods=['POST'])
+@jwt_required()
+@limiter.limit("20 per minute")
+def execution_assistant(thread_id):
+    try:
+        user_id = get_jwt_identity()
+        user = User.query.get(user_id)
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+
+        payload = request.get_json() or {}
+        instruction = str(payload.get('instruction') or '').strip()
+        if not instruction:
+            return jsonify({'error': 'instruction is required'}), 400
+
+        model_selection, model_error = _resolve_user_model_selection(
+            user,
+            requested_model_type=payload.get('model_type'),
+        )
+        if model_error:
+            return model_error
+
+        # Load session + WBS
+        sessions = load_user_sessions(user_id) or {}
+        session_key, session = _resolve_session_entry(sessions, thread_id)
+        if not isinstance(session, dict):
+            return jsonify({'error': 'Thread not found'}), 404
+
+        all_data = _load_scenarios(user_id)
+        td = all_data.get(thread_id, {}) if isinstance(all_data, dict) else {}
+        project_wbs = td.get('project_wbs') if isinstance(td, dict) else None
+        tasks = project_wbs.get('tasks') if isinstance(project_wbs, dict) else []
+        if not isinstance(tasks, list):
+            tasks = []
+
+        # Build compact task list for context
+        task_lines = []
+        for t in tasks:
+            tid_str = str(t.get('id') or '')
+            title = str(t.get('title') or '')
+            phase = str(t.get('phase') or '')
+            status = str(t.get('status') or 'todo')
+            owner = str(t.get('owner') or '')
+            due = str(t.get('due_date') or '')
+            line = f"  - id={tid_str} | {title} | phase={phase} | status={status}"
+            if owner:
+                line += f" | owner={owner}"
+            if due:
+                line += f" | due={due}"
+            task_lines.append(line)
+        task_block = "\n".join(task_lines) if task_lines else "  (no tasks yet)"
+
+        # Full conversation history from this session
+        full_history = _load_thread_conversation(user_id, thread_id)
+        history_lines = []
+        for item in full_history[-30:]:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get('role') or '').strip()
+            role_label = 'User' if 'user' in role.lower() else 'Jaspen'
+            content = str(item.get('content') or item.get('text') or '').strip()
+            if content:
+                history_lines.append(f"{role_label}: {content[:500]}")
+        history_block = "\n".join(history_lines) if history_lines else "(no prior conversation)"
+
+        # Project identity
+        project_name = str(
+            session.get('name') or
+            (session.get('result') or {}).get('project_name') or
+            'this project'
+        ).strip()
+
+        system_prompt = (
+            "You are the Jaspen execution plan assistant. "
+            "You help users manage tasks in their execution plan. "
+            "You have full context of the project from intake through scorecard, scenarios, and execution. "
+            "Return valid JSON only."
+        )
+
+        editor_prompt = f"""You are reviewing the execution plan for: {project_name}
+
+Full conversation history (intake → scorecard → scenarios → execution):
+{history_block}
+
+User request:
+{instruction}
+
+Current execution plan tasks:
+{task_block}
+
+You can modify the plan by returning uiActions. Each action has a "type" and "payload".
+
+Supported action types:
+- WBS_ADD_TASK: add a new task. payload fields: title (required), phase, status (todo/in_progress/done/blocked), owner, due_date (YYYY-MM-DD), description, priority (low/medium/high), estimated_days, depends_on (array of task IDs)
+- WBS_UPDATE_TASK: update an existing task. payload fields: id (required, must match an existing task id), plus any fields to change
+- WBS_REMOVE_TASK: remove a task. payload fields: id (required)
+- WBS_ADD_DEPENDENCY: add a dependency. payload fields: task_id (the task that depends), depends_on (the task it depends on)
+
+Rules:
+- Use exact task IDs from the task list above when referencing existing tasks
+- Only return uiActions when the user explicitly asks to modify the plan
+- If the user is asking a question, return a helpful reply with empty uiActions
+- Use the full conversation history to give context-aware answers (not generic responses)
+- Keep the reply concise and professional
+
+Return one valid JSON object only:
+{{
+  "reply": "<short, direct response to the user>",
+  "uiActions": [
+    {{"type": "<action_type>", "payload": {{...}}}}
+  ]
+}}
+
+If no plan changes are needed, return "uiActions": [].
+""".strip()
+
+        client = anthropic.Anthropic(api_key=os.environ.get('ANTHROPIC_API_KEY'))
+        model_id = model_selection.get('model_id') or 'claude-3-5-haiku-20241022'
+
+        try:
+            response = client.messages.create(
+                model=model_id,
+                max_tokens=1500,
+                system=system_prompt,
+                messages=[{"role": "user", "content": editor_prompt}],
+            )
+            raw = response.content[0].text if response.content else '{}'
+        except Exception as llm_err:
+            current_app.logger.error("[execution_assistant] LLM error: %s", llm_err)
+            return jsonify({'error': 'AI service unavailable'}), 503
+
+        # Parse JSON response
+        result = {}
+        try:
+            cleaned = raw.strip()
+            if cleaned.startswith("```"):
+                cleaned = re.sub(r'^```[a-zA-Z]*\n?', '', cleaned)
+                cleaned = re.sub(r'\n?```$', '', cleaned)
+            result = json.loads(cleaned)
+        except Exception:
+            result = {'reply': raw, 'uiActions': []}
+
+        reply = str(result.get('reply') or '').strip() or 'Done.'
+        ui_actions = result.get('uiActions') or result.get('actions') or []
+        if not isinstance(ui_actions, list):
+            ui_actions = []
+
+        # Persist the turn to conversation history
+        try:
+            _persist_scorecard_assistant_turn(session, session.get('result') or {}, instruction, reply)
+            sessions[session_key] = session
+            save_user_sessions(user_id, sessions)
+        except Exception as persist_err:
+            current_app.logger.warning("[execution_assistant] persist failed: %s", persist_err)
+
+        return jsonify({
+            'success': True,
+            'reply': reply,
+            'uiActions': ui_actions,
+        }), 200
+
+    except Exception as e:
+        current_app.logger.error("[execution_assistant] %s", e)
+        return jsonify({'error': str(e)}), 500
+
+
+# ============================================================
 # THREAD-LEVEL ADOPT  (used by ThreadEditModal)
 # ============================================================
 

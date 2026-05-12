@@ -9507,7 +9507,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
         onClose={() => setThreadEditOpen(false)}
         sessionId={editableThreadId || sessionId}
         threadId={editableThreadId || sessionId}
-        threadMode="auto"
+        threadMode="strategy"
         initialName={activeScorecard?.project_name || analysisResult?.project_name || ''}
         initialAdoptedAnalysisId={analysisResult?.analysis_id || ''}
         authFetch={authFetch}

@@ -63,6 +63,7 @@ export const endpoints = {
   exportConversationMarkdown: (threadId) => `${API_BASE}/api/v1/export/threads/${encodeURIComponent(threadId)}/conversation/markdown`,
   exportConversationPdf: (threadId) => `${API_BASE}/api/v1/export/threads/${encodeURIComponent(threadId)}/conversation/pdf`,
   scorecardAssistant: (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/scorecard-assistant`,
+  executionAssistant: (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/execution-assistant`,
   appendMessages:     (threadId) => `${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(threadId)}/messages`,
   batchIdeasUpload: `${API_BASE}/api/v1/ai-agent/batch-ideas/upload`,
   batchIdeasById:   (batchId) => `${API_BASE}/api/v1/ai-agent/batch-ideas/${encodeURIComponent(batchId)}`,
@@ -1114,6 +1115,9 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
 
   scorecardAssistant: async (threadId, payload = {}) =>
     postJSON(endpoints.scorecardAssistant(threadId), payload, { withSid: true }),
+
+  executionAssistant: async (threadId, payload = {}) =>
+    postJSON(endpoints.executionAssistant(threadId), payload, { withSid: true }),
 
   appendMessages: async (threadId, messages = []) =>
     postJSON(endpoints.appendMessages(threadId), { messages }, { withSid: true }),

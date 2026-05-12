@@ -451,10 +451,8 @@ export default function ExecutionPlan() {
         wbs: threadWbs,
       });
 
-      const response = await Jaspen.scorecardAssistant(tid, {
-        instruction: contextPrefix ? `${contextPrefix}\n\nUser request: ${text}` : text,
-        scorecard,
-        scorecard_id: scorecard?.analysis_id || scorecard?.id || null,
+      const response = await Jaspen.executionAssistant(tid, {
+        instruction: text,
         view_context: buildExecutionViewContext({ scorecard, wbs: threadWbs }),
       });
 
