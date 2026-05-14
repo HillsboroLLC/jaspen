@@ -9249,7 +9249,6 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
           style={{ top: `${sideTabBase}px` }}
         >
           <FontAwesomeIcon icon={faBars} />
-          <span className="jas-tab-label">Menu</span>
         </button>
       )}
 
@@ -10140,7 +10139,6 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
           aria-controls="jas-intake-settings-panel"
         >
           <FontAwesomeIcon icon={faBars} />
-          MENU
         </button>
       )}
       {hasHistory && !sidebarState.history && (
@@ -10149,12 +10147,11 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
           className="jas-drawer-tab jas-drawer-tab-history"
           style={{ top: intakeTabTop('history') }}
           onClick={() => dispatchSidebar({ type: 'TOGGLE_HISTORY' })}
-          aria-label="Open analysis history"
+          aria-label="Open session history"
           aria-expanded={sidebarState.history}
           aria-controls="jas-intake-history-panel"
         >
           <FontAwesomeIcon icon={faClockRotateLeft} />
-          HISTORY
         </button>
       )}
       {intakeHasReadinessTab && (

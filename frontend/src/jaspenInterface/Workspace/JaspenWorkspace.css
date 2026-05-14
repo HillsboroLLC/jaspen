@@ -106,22 +106,17 @@
   position: fixed;
   left: 0;
   top: var(--side-tab-top);
-  writing-mode: vertical-rl;
-  text-orientation: mixed;
+  writing-mode: horizontal-tb;
   background: var(--navy);
   border: 1px solid var(--navy);
   border-left: none;
-  padding: 14px 8px;
-  font-size: 0.6875rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  padding: 10px 9px;
   color: var(--white);
   cursor: pointer;
   z-index: 100;
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   transition: background var(--transition), transform var(--transition);
 }
@@ -130,10 +125,9 @@
   transform: translateX(1px);
 }
 .jas-drawer-tab svg {
-  writing-mode: horizontal-tb;
-  font-size: 0.75rem;
-  width: 12px;
-  height: 12px;
+  font-size: 0.875rem;
+  width: 14px;
+  height: 14px;
 }
 
 .jas-drawer-tab-readiness {
@@ -3601,22 +3595,17 @@
   position: fixed;
   left: 0;
   top: var(--side-tab-top);
-  writing-mode: vertical-rl;
-  text-orientation: mixed;
+  writing-mode: horizontal-tb;
   background: var(--light-bg);
   border: 1px solid var(--border);
   border-left: none;
-  padding: 14px 8px;
-  font-size: 0.6875rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  padding: 10px 9px;
   color: var(--navy);
   cursor: pointer;
   z-index: 100;
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   transition: background var(--transition);
   font-family: inherit;
@@ -3627,15 +3616,9 @@
 }
 
 .jas-sidebar-tab svg {
-  writing-mode: horizontal-tb;
-  font-size: 0.75rem;
-  width: 12px;
-  height: 12px;
-}
-
-.jas-tab-label {
-  writing-mode: vertical-rl;
-  text-orientation: mixed;
+  font-size: 0.875rem;
+  width: 14px;
+  height: 14px;
 }
 
 /* Close button in drawer header */
