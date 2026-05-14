@@ -652,6 +652,42 @@
   margin: 0;
 }
 
+/* Readiness checklist inside Insights panel */
+.jas-insights-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.jas-insights-checklist .jas-readiness-group {
+  background: var(--white);
+  border: 1px solid #d0e8ef;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.jas-insights-checklist .jas-readiness-group-title {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--navy);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0 0 8px;
+}
+.jas-insights-checklist .jas-readiness-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  font-size: 0.75rem;
+  color: var(--gray-700);
+  padding: 3px 0;
+  line-height: 1.4;
+}
+.jas-insights-checklist .jas-readiness-item svg,
+.jas-insights-checklist .jas-readiness-item .jas-ri-icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+  font-size: 0.65rem;
+}
+
 /* Offset content when insights panel is open */
 .jas-chat-content.has-insights-panel {
   padding-right: 316px;

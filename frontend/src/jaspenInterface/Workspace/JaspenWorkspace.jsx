@@ -10105,7 +10105,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
   const intakeTabs = [];
   if (!sidebarState.settings) intakeTabs.push('settings');
   if (hasHistory && !sidebarState.history) intakeTabs.push('history');
-  if (intakeHasReadinessTab) intakeTabs.push('readiness');
+  // readiness tab removed — info lives in Jaspen Insights panel
   const intakeSideTabBase = 128;
   const intakeSideTabGap = 100;
   const intakeTabTop = (key) => {
@@ -10154,96 +10154,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
           <FontAwesomeIcon icon={faClockRotateLeft} />
         </button>
       )}
-      {intakeHasReadinessTab && (
-        <button
-          type="button"
-          className={`jas-drawer-tab jas-drawer-tab-readiness ${sessionId && messages.length > 0 ? 'active' : ''}`}
-          style={{ top: intakeTabTop('readiness') }}
-          onClick={() => dispatchSidebar({ type: 'OPEN_READINESS' })}
-          aria-label="Open analysis readiness"
-          aria-expanded={sidebarState.readiness}
-          aria-controls="jas-intake-readiness-panel"
-        >
-          <FontAwesomeIcon icon={faGaugeHigh} />
-          READINESS
-        </button>
-      )}
-
-      {/* Drawer Overlay - non-blocking, just visual dimming */}
-
-      {/* LEFT SIDEBAR - Readiness */}
-      <aside
-        id="jas-intake-readiness-panel"
-        className={`jas-left-sidebar jas-readiness-sidebar ${sidebarState.readiness ? 'sidebar-open' : ''}`}
-        aria-labelledby="jas-intake-readiness-title"
-      >
-        <div className="jas-sidebar-header">
-          <h3 id="jas-intake-readiness-title">Analysis Readiness</h3>
-          <button
-            className="jas-sidebar-close"
-            onClick={() => dispatchSidebar({ type: 'CLOSE_READINESS' })}
-            aria-label="Close analysis readiness"
-          >
-            <FontAwesomeIcon icon={faTimes} />
-          </button>
-        </div>
-        <div className="jas-sidebar-content">
-          <div className="jas-readiness-display">
-            <div className="jas-readiness-circle">
-              <svg className="jas-progress-ring" width="120" height="120">
-                <circle className="jas-progress-ring-bg" stroke="var(--color-border-default)" strokeWidth="8" fill="transparent" r="52" cx="60" cy="60" />
-                <circle
-                  className="jas-progress-ring-fill"
-                  stroke="var(--color-status-success)"
-                  strokeWidth="8"
-                  fill="transparent"
-                  r="52"
-                  cx="60" cy="60"
-                  strokeDasharray={`${(uiReadiness / 100) * READINESS_CIRC} ${READINESS_CIRC}`}
-                  strokeDashoffset="0"
-                  transform="rotate(-90 60 60)"
-                />
-              </svg>
-              <div className="jas-readiness-percent">{Math.round(uiReadiness)}%</div>
-            </div>
-<div className="jas-readiness-status">
-  {uiReadiness < 60 ? 'Gathering information...' : uiReadiness < 90 ? 'Almost ready!' : 'Ready to analyze!'}
-</div>
-
-{(readinessSource || readinessVersion) && (
-  <div className="jas-readiness-meta" style={{ marginTop: '6px', fontSize: '12px', color: 'var(--color-text-muted)' }}>
-    {readinessSource && (
-      <span className="jas-chip" style={{
-        display: 'inline-block', padding: '2px 6px', borderRadius: '8px',
-        border: '1px solid var(--color-border-default)', marginRight: '6px'
-      }}>
-        Source: {readinessSource.toUpperCase()}
-      </span>
-    )}
-    {readinessVersion && (
-      <span className="jas-chip" style={{
-        display: 'inline-block', padding: '2px 6px', borderRadius: '8px',
-        border: '1px solid var(--color-border-default)'
-      }}>
-        {readinessVersion}
-      </span>
-    )}
-  </div>
-)}
-          </div>
-
-{renderReadinessChecklist()}
-        </div>
-        <SidebarIdentityFooter
-          displayName={displayName}
-          planLabel={footerPlanLabel}
-          onOpenDisplayNameEditor={openDisplayNameEditor}
-          onOpenOnboardingEditor={openOnboardingEditor}
-          onOpenBilling={() => setBillingModalOpen(true)}
-          onLogout={handleLogout}
-          onClose={() => dispatchSidebar({ type: 'CLOSE_READINESS' })}
-        />
-      </aside>
+      {/* Readiness sidebar removed — info lives in Jaspen Insights panel */}
 
       {/* LEFT SIDEBAR - History */}
       {hasHistory && (
@@ -10800,25 +10711,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
           {renderObjectiveTags('jas-chat-objective-tags')}
           {renderConnectorContextTags()}
 
-          {sessionId && hasConversationMessages && (
-            <div className="agent-chat-footer">
-              <div className="progress-indicator">
-                <div className="progress-bar-container">
-                  <div className="progress-bar-fill" style={{ width: `${uiReadiness}%` }}></div>
-                </div>
-                <span className="progress-text">{Math.round(uiReadiness)}% ready</span>
-              </div>
-              <button
-                className="finish-analyze-btn"
-                onClick={onFinishAnalyze}
-                disabled={!canAnalyze || busy || effectiveIsViewer} aria-disabled={!canAnalyze || busy || effectiveIsViewer}
-                title={effectiveIsViewer ? 'Viewers cannot generate new scorecards' : (canAnalyze ? "Generate your Jaspen score" : "Keep chatting to gather more information")}
-              >
-                <FontAwesomeIcon icon={faCheck} />
-                <span>Finish & Analyze</span>
-              </button>
-            </div>
-          )}
+          {/* Finish & Analyze footer removed — scoring triggered via Jaspen Insights panel CTA */}
         </div>
         )}
       </div>
@@ -10908,9 +10801,9 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
             <div className="jas-insights-body">
               {canAnalyze ? (
                 <div className="jas-insights-card jas-insights-card--action">
-                  <p className="jas-insights-eyebrow">Now might be a good time</p>
-                  <p className="jas-insights-headline">You&apos;re ready to score this idea.</p>
-                  <p className="jas-insights-sub">Hit &ldquo;Finish &amp; Analyze&rdquo; to generate your scorecard and unlock scenario modeling.</p>
+                  <p className="jas-insights-eyebrow">Ready to score</p>
+                  <p className="jas-insights-headline">Jaspen has enough to work with.</p>
+                  <p className="jas-insights-sub">Generate your scorecard and unlock scenario modeling.</p>
                   <button
                     className="jas-insights-cta"
                     onClick={onFinishAnalyze}
@@ -10924,7 +10817,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                 <div className="jas-insights-card">
                   <p className="jas-insights-eyebrow">In progress</p>
                   <p className="jas-insights-headline">Keep the conversation going.</p>
-                  <p className="jas-insights-sub">Answer Jaspen&apos;s questions to build a richer picture before scoring.</p>
+                  <p className="jas-insights-sub">Answer Jaspen&apos;s questions to build a richer picture.</p>
                   <div className="jas-insights-readiness">
                     <div className="jas-insights-readiness-bar">
                       <div className="jas-insights-readiness-fill" style={{ width: `${uiReadiness}%` }} />
@@ -10940,15 +10833,24 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                 </div>
               )}
 
-              <div className="jas-insights-tips">
-                <p className="jas-insights-tips-label">Tips</p>
-                {WORKSPACE_TIPS.slice(1, 4).map((tip) => (
-                  <div key={tip.id} className="jas-insights-tip">
-                    <p className="jas-insights-tip-title">{tip.title}</p>
-                    <p className="jas-insights-tip-body">{tip.body}</p>
-                  </div>
-                ))}
-              </div>
+              {sessionId && (
+                <div className="jas-insights-checklist">
+                  <p className="jas-insights-tips-label">Progress</p>
+                  {renderReadinessChecklist()}
+                </div>
+              )}
+
+              {!sessionId && (
+                <div className="jas-insights-tips">
+                  <p className="jas-insights-tips-label">Tips</p>
+                  {WORKSPACE_TIPS.slice(1, 4).map((tip) => (
+                    <div key={tip.id} className="jas-insights-tip">
+                      <p className="jas-insights-tip-title">{tip.title}</p>
+                      <p className="jas-insights-tip-body">{tip.body}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </aside>
         )}
