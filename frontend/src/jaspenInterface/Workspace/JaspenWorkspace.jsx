@@ -7078,6 +7078,76 @@ const handleSaveStarter = async () => {
     }
   }
 
+  // Auto-version: detects pivot/significant-change signals in a user message
+  const PIVOT_SIGNALS = /\b(pivot|pivoting|completely\s+change|change\s+the\s+model|change\s+the\s+market|change\s+the\s+target|change\s+the\s+concept|change\s+the\s+approach|change\s+the\s+strategy|new\s+direction|different\s+approach|different\s+market|different\s+model|different\s+revenue\s+model|different\s+target|scrap\s+(that|this|the\s+idea|the\s+plan)|start\s+over|throw\s+out|rethink|reimagine|overhaul|fundamentally\s+different|instead\s+of\s+(that|this)|forget\s+(that|this)|actually[\s,]+let'?s|actually[\s,]+I\s+want\s+to|change\s+the\s+business\s+model|change\s+our\s+strategy|change\s+our\s+approach|new\s+business\s+model|new\s+strategy|total\s+rework|completely\s+different|shift\s+to|shift\s+our|let'?s\s+go\s+with\s+(a\s+)?different|what\s+if\s+we\s+(changed|switched|went|moved)|reconsider|restructure\s+the)\b/i;
+
+  function detectsPivot(userText = '') {
+    return PIVOT_SIGNALS.test(String(userText));
+  }
+
+  // Creates a new scored version from the current conversation and appends it to snapshots.
+  // Does NOT replace the baseline — the baseline stays as the first point of comparison.
+  async function triggerAutoVersion(sid) {
+    if (!sid || !analysisResult) return; // need an existing scorecard to version from
+    setScorecardGenerating(true);
+    try {
+      const data = await Jaspen.analyzeFromConversation({
+        session_id: sid,
+        model_type: selectedModelType,
+      });
+
+      const raw = data?.analysis || data?.analysis_result || data || {};
+      const scoreNum = Number.parseInt(Number(raw.overall_score || raw.jaspen_score || 0), 10);
+      const score = Number.isFinite(scoreNum) ? scoreNum : 0;
+
+      // Determine version label (e.g. "Version 2", "Version 3", …)
+      const existingCount = Array.isArray(scorecardSnapshots) ? scorecardSnapshots.length : 0;
+      const versionNum = existingCount + 1;
+      const versionLabel = `Version ${versionNum}`;
+      const versionId = `${sid}-v${versionNum}-${Date.now()}`;
+
+      const newSnapshot = {
+        ...raw,
+        jaspen_score: score,
+        score_category: raw.score_category || (score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : score >= 40 ? 'Fair' : 'At Risk'),
+        component_scores: raw.scores || raw.component_scores || {},
+        project_name: raw.name || raw.project_name || deriveIdeaTitle({ messages, fallback: 'Untitled Idea' }),
+        id: versionId,
+        analysis_id: versionId,
+        label: versionLabel,
+        isBaseline: false,
+        createdAt: Date.now(),
+      };
+
+      // Append new snapshot, preserving all existing ones (including baseline)
+      setScorecardSnapshots((prev) => {
+        const arr = Array.isArray(prev) ? prev : [];
+        return [...arr, newSnapshot];
+      });
+
+      // Also update analysisResult so the scorecard card shows the latest score
+      setAnalysisResult((prev) => ({
+        ...(prev || {}),
+        ...raw,
+        jaspen_score: score,
+        score_category: newSnapshot.score_category,
+        component_scores: newSnapshot.component_scores,
+      }));
+
+      setSelectedScorecardId(versionId);
+      setActivePill('scoring');
+      showToast(`New scorecard version created: ${versionLabel}`, 'success');
+
+      // Background refresh
+      setTimeout(() => { void refreshBundle(sid); void fetchSessions(); }, 0);
+    } catch (e) {
+      console.error('[triggerAutoVersion]', e);
+      showToast('Could not create a new scorecard version right now.', 'error');
+    } finally {
+      setScorecardGenerating(false);
+    }
+  }
+
   // === Input handling ===
   async function onSubmit(options = {}) {
     const now = Date.now();
@@ -8091,6 +8161,15 @@ const sendAIMessage = async () => {
     const resp = await chatWithReadiness(text, currentSessionId || sessionId);
 
     await applyMutationRefreshes(resp, resp?.sessionId || currentSessionId || sessionId);
+
+    // 3) Auto-version: if user signalled a significant pivot AND a baseline scorecard exists, snapshot a new version
+    if (analysisResult && detectsPivot(text)) {
+      const autoSid = resp?.sessionId || currentSessionId || sessionId;
+      if (autoSid) {
+        // Small delay so the AI reply renders first, then the new version appears
+        setTimeout(() => { void triggerAutoVersion(autoSid); }, 1200);
+      }
+    }
 
     // 4) Refresh readiness (authoritative) and persist the full updated thread
     const sidForAudit = resp?.sessionId || currentSessionId || sessionId;
