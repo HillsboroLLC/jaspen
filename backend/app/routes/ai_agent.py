@@ -400,7 +400,13 @@ _SYSTEM_PROMPT_PREFIX = (
     "Use rigorous finance and strategy reasoning when relevant, including unit economics, DCF framing, sensitivity analysis, "
     "portfolio prioritization, and frameworks such as Porter's Five Forces, BCG, Ansoff, and McKinsey 7S. "
     "Challenge weak assumptions directly but professionally. If data is incomplete, state what is missing and proceed with clear, labeled assumptions. "
-    "When intake is in progress, ask one concise next question that most improves decision quality; do not ask a broad checklist in one turn. NEVER mention, suggest, or imply scorecard generation unless the CONFIDENCE STATUS block appended to this prompt explicitly says 'Confident to Score' — not before, not based on your own judgment. Only then inform the user naturally that the scorecard is generating automatically. Do not reference any buttons or UI elements. Until then, keep asking focused intake questions. "
+    "When intake is in progress, ask one concise next question that most improves decision quality; do not ask a broad checklist in one turn. "
+    "CRITICAL SCORING RULES — follow these exactly: "
+    "(1) NEVER say the scorecard is generating, updating, or being built unless the CONFIDENCE STATUS block at the end of this prompt explicitly reads 'Confident to Score'. "
+    "(2) NEVER say 'I am updating the scorecard', 'the scorecard has been updated', or any variation — you do not manage a scorecard during intake. "
+    "(3) NEVER reference a scorecard, summary view, or any analysis output until the CONFIDENCE STATUS block says 'Confident to Score'. "
+    "(4) When CONFIDENCE STATUS does say 'Confident to Score', inform the user in one natural sentence that Jaspen has enough context and is building their scorecard now. Do not reference buttons, tabs, or UI. "
+    "Until then, simply acknowledge what the user shared and ask one focused follow-up question. "
     "When the user asks 'what would make you more confident', 'how can I improve my score', 'what else do you need', or similar: respond with a ranked list of 1–3 specific actions they could take, each naming the scoring dimension it would strengthen, the data or connector that would help, and a brief estimate of the confidence improvement (e.g. 'Connecting your CRM would move Financial Viability from assumed to evidence-backed, likely pushing it from 58 to 75+'). Be specific and actionable — never generic. "
     "Communicate in crisp executive language: what matters, why it matters, and what to do next. "
     "For strategic recommendations, default to this decision structure: Recommendation, Why now, Financial impact range, Key risks, and Next 2 actions. "
@@ -1538,8 +1544,10 @@ READINESS_SPEC_V2 = {
     # regardless of overall percent.  Goal + measurable baseline are non-negotiable gates.
     "required_keys": ["goal_definition", "evidence_baseline"],
     # min_keywords: how many keyword matches a category needs before it counts as complete.
-    # 2 prevents a single incidental word from marking a category done.
-    "min_keywords": 2,
+    # 1 is intentional — each keyword in the v2 lists is already specific enough that a
+    # single match carries real signal (e.g. "domain expert", "constraint", "reduce").
+    # min_word_context=4 in _category_is_addressed already filters one-word replies.
+    "min_keywords": 1,
     "categories": [
         # Required gate: must have a specific outcome + measurable target.
         {"key": "goal_definition",    "label": "Goal Definition",               "weight": 0.20, "step": 1, "required": True},
@@ -1580,7 +1588,9 @@ READINESS_KEYWORDS_BY_VERSION = {
         "goal_definition": [
             "objective", "north star", "target date", "success metric", "desired outcome",
             "we want to", "we need to", "initiative", "improve", "increase", "decrease",
-            "reduce", "grow", "achieve", "deadline",
+            "reduce", "grow", "achieve", "deadline", "goal", "target", "outcome",
+            "profitability", "profitable", "by month", "within", "from", "cut",
+            "lower", "boost", "hit", "reach", "save",
         ],
         # Needs a real number/metric with context — handled separately via evidence quality score,
         # but keywords here back up cases where quality scoring doesn't fire.
@@ -1589,25 +1599,38 @@ READINESS_KEYWORDS_BY_VERSION = {
             "revenue", "cost", "margin", "conversion", "retention", "throughput",
             "cycle time", "uptime", "defect", "volume", "budget",
         ],
-        # Must reference a person/team with domain knowledge or a root cause analysis —
-        # removed "why" (appears in almost every sentence).
+        # Must reference a person/team with domain knowledge, strategic driver, or root cause.
         "sme_drivers": [
             "stakeholder", "subject matter expert", "sme", "domain expert",
             "root cause", "root-cause", "because", "driving factor", "contributing factor",
             "team lead", "ops team", "sales team", "finance team", "product team",
             "insight", "pattern", "expertise",
+            # Strategic "why now" language users naturally use:
+            "why now", "seed round", "funding", "investors", "board", "competitive",
+            "undercutting", "losing", "pressure", "opportunity", "window",
+            "customer demand", "market signal", "proof of concept", "pilot",
+            "loi", "letter of intent", "convert", "close the deal",
+            "cto", "ceo", "vp", "head of", "years experience", "years in",
         ],
-        # Needs to describe a workflow or handoff — removed bare "system" (too generic).
+        # Needs to describe a workflow, handoff, or technical integration.
         "system_mapping": [
             "workflow", "process", "handoff", "hand-off", "end-to-end", "step",
             "stage", "pipeline", "funnel", "touchpoint", "team owns", "responsible for",
             "dependencies", "upstream", "downstream", "sequence of",
+            # Technical/integration language users naturally use:
+            "integrate", "integration", "api", "connector", "data flow", "architecture",
+            "stack", "backend", "database", "infrastructure", "ingest", "sync",
+            "platform", "middleware", "endpoint", "connect", "feed",
         ],
-        # Needs an identified blocker or unlock action.
+        # Needs an identified blocker, risk, or unlock action.
         "constraint_unlock": [
             "constraint", "bottleneck", "blocker", "blocking", "critical path",
             "unlock", "gate", "dependency blocks", "waiting on", "holding back",
             "friction", "bandwidth", "capacity", "approval needed",
+            # Risk and limitation language users naturally use:
+            "risk", "challenge", "limitation", "legacy", "limited", "adapter",
+            "workaround", "delay", "adds", "slower", "complex", "complexity",
+            "difficult", "hard to", "technical debt", "migration",
         ],
         # Needs sequencing language or an owner/timeline.
         "execution_sequence": [
