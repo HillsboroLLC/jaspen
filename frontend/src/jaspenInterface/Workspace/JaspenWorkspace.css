@@ -465,6 +465,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-shrink: 0;
 }
 .jas-project-title {
   font-family: var(--font);
@@ -474,7 +475,6 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 320px;
 }
 
 /* ── Context / Stage Bar (row 2) ───────────────────────────── */

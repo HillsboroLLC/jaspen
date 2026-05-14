@@ -10299,15 +10299,14 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
 
       {/* Row 1: Title bar — session title · notifications · credits */}
       <div className="jas-titlebar">
-        <div className="jas-titlebar-left" />
-
         {sessionId && (
-          <div className="jas-titlebar-center">
+          <div className="jas-titlebar-left" style={{ flex: 1, minWidth: 0 }}>
             <span className="jas-project-title">
               {deriveIdeaTitle({ messages, fallback: '' })}
             </span>
           </div>
         )}
+        {!sessionId && <div className="jas-titlebar-left" />}
 
         <div className="jas-titlebar-right">
           {showIntakeTopbarUtilities && (
@@ -10934,28 +10933,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               )}
             </div>
 
-            {/* ── Pill tabs — switch sidebar context ── */}
-            {sessionId && (
-              <div className="jas-insights-pill-tabs">
-                {[
-                  { key: 'discovery', label: 'Discovery', disabled: false },
-                  { key: 'scoring',   label: 'Scoring',   disabled: !analysisResult },
-                  { key: 'tradeoff',  label: 'Trade-off', disabled: !(analysisResult && scorecardSnapshots?.length > 1) },
-                  { key: 'execution', label: 'Execution', disabled: !analysisResult },
-                ].map(t => (
-                  <button
-                    key={t.key}
-                    className={`jas-insights-pill-tab${activePill === t.key ? ' active' : ''}${t.disabled ? ' disabled' : ''}`}
-                    onClick={() => !t.disabled && setActivePill(t.key)}
-                    disabled={t.disabled}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* ── Dynamic content per pill ── */}
+            {/* ── Dynamic content per pill (driven by header stage pills) ── */}
             <div className="jas-insights-body">
 
               {/* Discovery: What Jaspen knows checklist */}
