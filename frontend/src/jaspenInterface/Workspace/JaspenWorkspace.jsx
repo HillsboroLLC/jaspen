@@ -10372,7 +10372,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                 { key: 'discovery', label: 'Discovery',  disabled: false },
                 { key: 'scoring',   label: 'Scoring',    disabled: !analysisResult },
                 { key: 'tradeoff',  label: 'Trade-off',  disabled: !canTradeoff },
-                { key: 'execution', label: 'Execution',  disabled: !analysisResult },
+                { key: 'execution', label: 'Execution',  disabled: !(Array.isArray(threadWbs?.tasks) && threadWbs.tasks.length > 0) },
               ];
               const handlePillClick = (key, disabled) => {
                 if (disabled) return;
