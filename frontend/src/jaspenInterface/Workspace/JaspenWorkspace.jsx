@@ -961,9 +961,17 @@ function deriveIdeaTitle({ result = null, messages = [], fallback = 'Untitled Id
     // Take first sentence only
     const firstSentence = raw.split(/[.!?\n]/)[0].trim();
     const cleaned = firstSentence.length > 0 ? firstSentence : raw;
-    // Cap at 7 words
+    // Cap at 7 words — find a natural break (before prepositions/conjunctions) rather than hard-cutting
     const words = cleaned.split(/\s+/);
-    return words.length <= 7 ? cleaned : words.slice(0, 7).join(' ') + '…';
+    if (words.length <= 7) return cleaned;
+    // Look backward from word 7 for a natural stopping point (preposition/conjunction)
+    const BREAK_WORDS = new Set(['for','to','that','which','and','or','with','in','on','at','by','from','via','using','through','across','into','of','about','between']);
+    for (let i = Math.min(6, words.length - 1); i >= 3; i--) {
+      if (BREAK_WORDS.has(words[i].toLowerCase().replace(/[^a-z]/g, ''))) {
+        return words.slice(0, i).join(' ');
+      }
+    }
+    return words.slice(0, 7).join(' ');
   }
 
   return fallback;
