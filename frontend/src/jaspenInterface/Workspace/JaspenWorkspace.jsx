@@ -6828,11 +6828,13 @@ const handleSaveStarter = async () => {
   // No busy guard, no navigation, no progress bar — scorecard appears inline in conversation.
   async function triggerInlineScore(sid) {
     if (!sid) return;
+    console.log('[triggerInlineScore] calling analyzeFromConversation for', sid);
     try {
       const data = await Jaspen.analyzeFromConversation({
         session_id: sid,
         model_type: selectedModelType,
       });
+      console.log('[triggerInlineScore] response received', data);
 
       const raw = data?.analysis || data?.analysis_result || data || {};
       const scoreNum = Number.parseInt(Number(raw.overall_score || raw.jaspen_score || 0), 10);
