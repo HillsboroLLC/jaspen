@@ -10071,7 +10071,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
   }
 
   // Default: conversational intake (no tabs)
-  const intakeShellOpen = sidebarState.history || sidebarState.readiness || sidebarState.settings;
+  const intakeShellOpen = sidebarState.history || sidebarState.settings;
   const intakeHasReadinessTab = sessionId && messages.length > 0 && !sidebarState.readiness;
   const showIntakeTopbarUtilities = !sessionId && messages.length === 0;
   const showTopbarCredits = Boolean(user) && !hideThinkingPowerMeter;
