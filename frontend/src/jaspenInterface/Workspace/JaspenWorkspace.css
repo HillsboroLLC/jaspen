@@ -5514,6 +5514,8 @@
   height: 100vh;
   background: transparent;
   position: relative;
+  margin-left: 0;
+  transition: margin-left 0.3s ease;
 }
 
 .agent-chat-messages {

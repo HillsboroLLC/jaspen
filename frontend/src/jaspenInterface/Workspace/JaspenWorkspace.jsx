@@ -10282,8 +10282,8 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
           <div className="jas-context-divider" aria-hidden="true" />
           <div className="jas-context-stages">
             {[
-              { label: 'Discovery', active: !sessionId || messages.length === 0 },
-              { label: 'Scoring',   active: Boolean(sessionId) && messages.length > 0 },
+              { label: 'Discovery', active: true },
+              { label: 'Scoring',   active: false },
               { label: 'Scenarios', active: false },
               { label: 'Execution', active: false },
             ].map((stage, i, arr) => (
