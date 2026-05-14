@@ -5813,15 +5813,16 @@ async function continueConversation(userText, options = {}) {
 
     await fetchSessions();
 
-    // Agentic scoring: auto-trigger scorecard generation when backend says ready,
-    // no user button click required. Guard with ref to prevent duplicate triggers.
+    // Agentic scoring: backend signals ready_to_analyze → inject scorecard inline.
+    // Pass sid directly to avoid stale closure; ref guards against duplicate triggers.
     if (
       data?.status === 'ready_to_analyze' &&
       !analysisResult &&
       !autoScoringTriggeredRef.current
     ) {
       autoScoringTriggeredRef.current = true;
-      setTimeout(() => { void onFinishAnalyze(); }, 1200);
+      const sid = currentSessionId || sessionId;
+      setTimeout(() => { void triggerInlineScore(sid); }, 800);
     }
 
     // Note: AI Agent backend handles persistence automatically
@@ -6810,177 +6811,52 @@ const handleSaveStarter = async () => {
   };
 
   // === Finish & Analyze ===
-  async function onFinishAnalyze() {
-    if (!sessionId || busy) {
-      devWarn('[Finish&Analyze] blocked', { sessionId, currentSessionId, busy, uiReadiness, canAnalyze, msgCount: messages?.length });
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    const stopProgress = startManualProgressStatus([
-      'Reviewing conversation context…',
-      'Scoring strategic dimensions…',
-      'Building financial and risk analysis…',
-      'Drafting executive score narrative…',
-      'Preparing scorecard…',
-    ], 2100);
-
-    const normalize = (r = {}) => {
-      const compat = r.compat || {};
-      const comps  = r.component_scores || compat.components || {};
-      const fin    = r.financial_impact || compat.financials || {};
-
-      let score = Number.parseInt(Number(r.jaspen_score ?? compat.score ?? 0), 10);
-      if (!Number.isFinite(score)) score = 0;
-      const score_category =
-        r.score_category ||
-        (score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : score >= 40 ? 'Fair' : 'At Risk');
-
-      const toInt = (v) => {
-        const n = Number.parseInt(Number(v), 10);
-        return Number.isFinite(n) ? n : 0;
-      };
-      const component_scores = {
-        financial_health:       toInt(comps.financial_health ?? comps.financialHealth ?? comps.financial ?? comps.economics),
-        operational_efficiency: toInt(comps.operational_efficiency ?? comps.operationalEfficiency ?? comps.execution ?? comps.operations),
-        market_position:        toInt(comps.market_position ?? comps.marketPosition ?? comps.market ?? comps.strategy),
-        execution_readiness:    toInt(comps.execution_readiness ?? comps.executionReadiness ?? comps.team ?? comps.readiness),
-      };
-
-      const project_name =
-        r.project_name || compat.title || r.title || 'Untitled Idea';
-
-      const risks = r.risks || r.top_risks || [];
-
-      return {
-        ...r,
-        jaspen_score: score,
-        score_category,
-        component_scores,
-        financial_impact: {
-          ebitda_at_risk:   fin.ebitda_at_risk   ?? fin.ebitdaAtRisk   ?? fin.ebitda ?? fin.risk,
-          potential_loss:   fin.potential_loss   ?? fin.potentialLoss,
-          roi_opportunity:  fin.roi_opportunity  ?? fin.roiOpportunity,
-          projected_ebitda: fin.projected_ebitda ?? fin.projectedEbitda,
-        },
-        project_name,
-        risks,
-      };
-    };
-
+  // Auto-scoring: called when backend signals ready_to_analyze.
+  // No busy guard, no navigation, no progress bar — scorecard appears inline in conversation.
+  async function triggerInlineScore(sid) {
+    if (!sid) return;
     try {
-      const transcript = messages
-        .map(m => `${m.role === 'user' ? 'User' : 'AI'}: ${m.text}`)
-        .join('\n');
-
-      // derive a stable numeric seed from the session id (same inputs => same score)
-      const sid  = currentSessionId || sessionId;
-      const seed = Number(String(sid).replace(/\D/g, '')) % 2147483647 || 123456;
-
       const data = await Jaspen.analyzeFromConversation({
         session_id: sid,
-        transcript,
-        deterministic: true,
-        seed,
         model_type: selectedModelType,
       });
-      if (data?.model_type) {
-        setSelectedModelType(String(data.model_type).toLowerCase());
-      }
-      setStreamToolStatus('Scoring strategic dimensions…');
 
-      const raw = (data && data.analysis) ? data.analysis : (data && data.analysis_result) ? data.analysis_result : (data || {});
+      const raw = data?.analysis || data?.analysis_result || data || {};
+      const scoreNum = Number.parseInt(Number(raw.overall_score || raw.jaspen_score || 0), 10);
+      const score = Number.isFinite(scoreNum) ? scoreNum : 0;
 
-      // Map backend fields to frontend expectations
-      const mapped = {
+      const result = {
         ...raw,
-        jaspen_score: raw.overall_score || raw.jaspen_score || 0,
+        jaspen_score: score,
+        score_category: raw.score_category || (score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : score >= 40 ? 'Fair' : 'At Risk'),
         component_scores: raw.scores || raw.component_scores || {},
         project_name: raw.name || raw.project_name || deriveIdeaTitle({ messages, fallback: 'Untitled Idea' }),
-        inputs: raw.inputs || raw.analysis_result?.inputs || null,
-        compat: raw.compat || raw.analysis_result?.compat || null,
+        analysis_id: sid,
       };
 
-      const result = { ...normalize(mapped), analysis_id: sid };
-
-      if (!result || Object.keys(result).length === 0) {
-        throw new Error("No analysis_result returned");
-      }
-      setStreamToolStatus('Building scorecard narrative and recommendations…');
-
-      // Ensure _baseline_scorecard is always set on the analysis result so
-      // every downstream consumer (buildMergedScorecardSnapshots, Score tab
-      // dropdown, refreshBundle) can find the baseline without fallbacks.
       if (!result._baseline_scorecard || typeof result._baseline_scorecard !== 'object') {
         result._baseline_scorecard = { ...result };
       }
-      result.selected_scorecard_id = result.analysis_id || sid;
+      result.selected_scorecard_id = sid;
 
+      // Wire up scorecard state
       setAnalysisResult(result);
-
-      // Mark baseline scorecard
-      const baselineSnapshot = {
-        ...result._baseline_scorecard,
-        id: result.analysis_id || result.id || sessionId,
-        label: 'Baseline',
-        isBaseline: true,
-        createdAt: Date.now(),
-      };
-
-      // Initialize scorecardSnapshots with baseline
+      const baselineSnapshot = { ...result._baseline_scorecard, id: sid, label: 'Baseline', isBaseline: true, createdAt: Date.now() };
       setScorecardSnapshots([baselineSnapshot]);
-      setSelectedScorecardId(baselineSnapshot.id);
-      setBaselineScorecardId(baselineSnapshot.id);
-      baselineRef.current = result._baseline_scorecard; // Store baseline reference
+      setSelectedScorecardId(sid);
+      setBaselineScorecardId(sid);
+      baselineRef.current = result._baseline_scorecard;
 
-      setStreamToolStatus('Preparing scorecard…');
-
-      // Inject inline scorecard artifact into conversation thread
-      setMessages((prev) => [
+      // Inject scorecard card inline in the conversation thread
+      setMessages(prev => [
         ...prev,
-        {
-          id: `scorecard-${Date.now()}`,
-          role: 'ai',
-          text: '',
-          artifact: { type: 'scorecard', data: result },
-        },
+        { id: `scorecard-${Date.now()}`, role: 'ai', text: '', artifact: { type: 'scorecard', data: result } },
       ]);
 
-      // Stay in conversation — scorecard lives inline in the chat thread.
-      // analysisResult being set activates the Scoring pill visually; no tab navigation.
-      setAnalysisResult(result);
-      setStreamToolStatus('');
-
-      const suggestedFollowUps = buildScorecardFollowUpPrompts(
-        result,
-        deriveIdeaTitle({ result, messages, fallback: 'this initiative' }),
-      );
-      if (suggestedFollowUps.length > 0) {
-        const followUpText = [
-          'Ask Jaspen next:',
-          ...suggestedFollowUps.slice(0, 3).map((prompt, idx) => `${idx + 1}. ${prompt}`),
-        ].join('\n');
-        setMessages((prev) => [...prev, { role: 'ai', text: followUpText }]);
-      }
-
-      // Let the score dashboard render immediately after a successful analysis.
-      // Bundle/history refreshes should enrich the summary, not block navigation to it.
-      window.setTimeout(() => {
-        void refreshBundle(currentSessionId || sessionId);
-        void fetchSessions();
-      }, 0);
+      // Background refresh — don't block the UI
+      setTimeout(() => { void refreshBundle(sid); void fetchSessions(); }, 0);
     } catch (e) {
-      if (e?.status === 403 && e?.data?.code === 'model_type_not_allowed') {
-        handleModelTypeBlocked(e);
-        setError(e?.data?.error || 'This model requires a higher plan.');
-      } else {
-        setError("Could not build the scorecard yet. Try adding one more detail, then Finish again.");
-      }
-      console.error(e);
-    } finally {
-      stopProgress();
-      setStreamToolStatus('');
-      setBusy(false);
+      console.error('[triggerInlineScore]', e);
     }
   }
 
