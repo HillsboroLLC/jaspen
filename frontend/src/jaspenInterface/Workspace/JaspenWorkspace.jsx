@@ -2604,7 +2604,7 @@ useEffect(() => {
       return 'Usage';
     }
     const pct = Math.max(0, Math.round((Math.max(0, remainingNum) / limitNum) * 100));
-    return `${pct}% remaining`;
+    return `${pct}%`;
   }, [billingLoading, creditsRemaining, monthlyCreditLimit, intakeCreditsValue]);
   const creditsTone = useMemo(() => {
     if (usageWarningLevel === 'blocked' || usageWarningLevel === 'exhausted') return 'critical';
@@ -10347,9 +10347,9 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
         </div>
       </aside>
 
-      {/* Header - Manus Style Top Bar */}
-      <div className="jas-chat-topbar">
-        <div className="jas-topbar-left">
+      {/* Unified single-row top bar */}
+      <div className="jas-context-bar">
+        <div className="jas-context-left">
           <button
             type="button"
             className="jas-topbar-title jas-topbar-link"
@@ -10368,27 +10368,39 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               <FontAwesomeIcon icon={faPlus} />
             </button>
           )}
+          <div className="jas-context-divider" aria-hidden="true" />
+          <div className="jas-context-stages">
+            {[
+              { label: 'Discovery', active: !sessionId || messages.length === 0 },
+              { label: 'Scoring',   active: Boolean(sessionId) && messages.length > 0 },
+              { label: 'Scenarios', active: false },
+              { label: 'Execution', active: false },
+            ].map((stage, i, arr) => (
+              <React.Fragment key={stage.label}>
+                <span className={`jas-stage-pill${stage.active ? ' active' : ''}`}>{stage.label}</span>
+                {i < arr.length - 1 && <span className="jas-stage-sep" aria-hidden="true">›</span>}
+              </React.Fragment>
+            ))}
+          </div>
         </div>
 
-        <div className="jas-topbar-right">
+        <div className="jas-context-right">
+          {(objectiveExplicitlySet || sessionId) && (
+            <span className="jas-context-pill">{OBJECTIVE_LABEL_BY_KEY[strategyObjective] || 'Balanced'}</span>
+          )}
           {showIntakeTopbarUtilities && (
-            <>
-              <button
-                type="button"
-                className="jas-topbar-bell"
-                onClick={() => {
-                  setNotificationsMode('bell');
-                  setNotificationsOpen(true);
-                }}
-                title="Notifications"
-                aria-label="Open notifications"
-              >
-                <FontAwesomeIcon icon={faBell} />
-                {unreadNotificationCount > 0 && (
-                  <span className="jas-topbar-bell-count">{unreadNotificationCount}</span>
-                )}
-              </button>
-            </>
+            <button
+              type="button"
+              className="jas-topbar-bell"
+              onClick={() => { setNotificationsMode('bell'); setNotificationsOpen(true); }}
+              title="Notifications"
+              aria-label="Open notifications"
+            >
+              <FontAwesomeIcon icon={faBell} />
+              {unreadNotificationCount > 0 && (
+                <span className="jas-topbar-bell-count">{unreadNotificationCount}</span>
+              )}
+            </button>
           )}
           {showTopbarCredits && (
             <button
@@ -10403,29 +10415,6 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
             </button>
           )}
         </div>
-      </div>
-
-      {/* Context sub-bar: stage progress + intent pill */}
-      <div className="jas-context-bar">
-        <div className="jas-context-stages">
-          {[
-            { label: 'Discovery', active: !sessionId || messages.length === 0 },
-            { label: 'Scoring',   active: Boolean(sessionId) && messages.length > 0 },
-            { label: 'Scenarios', active: false },
-            { label: 'Execution', active: false },
-          ].map((stage, i, arr) => (
-            <React.Fragment key={stage.label}>
-              <span className={`jas-stage-pill${stage.active ? ' active' : ''}`}>{stage.label}</span>
-              {i < arr.length - 1 && <span className="jas-stage-sep" aria-hidden="true">›</span>}
-            </React.Fragment>
-          ))}
-        </div>
-        {(objectiveExplicitlySet || sessionId) && (
-          <div className="jas-context-pills">
-            <span className="jas-context-label">Intent</span>
-            <span className="jas-context-pill">{OBJECTIVE_LABEL_BY_KEY[strategyObjective] || 'Balanced'}</span>
-          </div>
-        )}
       </div>
 
       {renderNotificationsModal()}
