@@ -1431,6 +1431,7 @@ export default function JaspenWorkspace() {
 
   const [analysisResult, setAnalysisResult] = useState(null);
   const [scorecardGenerating, setScorecardGenerating] = useState(false);
+  const [autoVersionGenerating, setAutoVersionGenerating] = useState(false);
   // Tracks which stage pill's content the sidebar is showing
   const [activePill, setActivePill] = useState('discovery');
   const [artifactsOpen, setArtifactsOpen] = useState(false);
@@ -5305,6 +5306,16 @@ async function fetchReadinessFor(sid) {
     void fetchReadinessFor(tid);
   }, [view, sessionId, currentSessionId, readinessAudit]);
 
+  // Fetch readiness whenever the user opens the Discovery pill and it hasn't loaded yet
+  useEffect(() => {
+    if (activePill !== 'discovery') return;
+    const tid = sessionId || currentSessionId;
+    if (!tid) return;
+    if (readinessAudit?.overall?.percent != null) return;
+    void fetchReadinessFor(tid);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePill, sessionId, currentSessionId]);
+
   // --- Upload (UI only) ---
   const fileInputRef = useRef(null);
   const chatTabInputRef = useRef(null);
@@ -7097,7 +7108,7 @@ const handleSaveStarter = async () => {
   // Does NOT replace the baseline — the baseline stays as the first point of comparison.
   async function triggerAutoVersion(sid) {
     if (!sid || !analysisResult) return; // need an existing scorecard to version from
-    setScorecardGenerating(true);
+    setAutoVersionGenerating(true);
     try {
       const data = await Jaspen.analyzeFromConversation({
         session_id: sid,
@@ -7152,7 +7163,7 @@ const handleSaveStarter = async () => {
       console.error('[triggerAutoVersion]', e);
       showToast('Could not create a new scorecard version right now.', 'error');
     } finally {
-      setScorecardGenerating(false);
+      setAutoVersionGenerating(false);
     }
   }
 
@@ -10975,6 +10986,19 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                         <span/><span/><span/>
                       </span>
                       <span className="jas-scorecard-generating-text">Building your scorecard…</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {autoVersionGenerating && (
+                <div className="jas-message ai">
+                  <div className="jas-message-bubble">
+                    <div className="jas-scorecard-generating-bubble">
+                      <span className="jas-scorecard-generating-dots">
+                        <span/><span/><span/>
+                      </span>
+                      <span className="jas-scorecard-generating-text">Scoring your updated idea…</span>
                     </div>
                   </div>
                 </div>
