@@ -10970,6 +10970,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                     <div className="jas-insights-readiness-bar">
                       <div className="jas-insights-readiness-fill" style={{ width: `${uiReadiness}%` }} />
                     </div>
+                    <span className="jas-insights-readiness-label">{Math.round(uiReadiness)}% confident</span>
                   </div>
                 </div>
               ) : (
