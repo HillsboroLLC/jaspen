@@ -1414,6 +1414,7 @@ export default function JaspenWorkspace() {
   const historySearchInputRef = useRef(null);
 
   const [analysisResult, setAnalysisResult] = useState(null);
+  const [scorecardGenerating, setScorecardGenerating] = useState(false);
   // Scenario results kept at the Workspace level (so Score tab can switch)
 const [resultA, setResultA] = useState(null);
 const [resultB, setResultB] = useState(null);
@@ -2001,78 +2002,114 @@ const renderScorecardCard = (result) => {
   const score = Number(result?.jaspen_score || 0);
   const category = score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : score >= 40 ? 'Fair' : 'At Risk';
   const ringColor = score >= 80 ? '#16a34a' : score >= 60 ? '#2563eb' : score >= 40 ? '#d97706' : '#dc2626';
-  const circumference = 2 * Math.PI * 28;
+  const circumference = 2 * Math.PI * 36;
   const offset = circumference - (score / 100) * circumference;
   const dims = result?.dimensions || {};
-  const dimList = [
-    { key: 'market_opportunity',  label: 'Market Opportunity' },
-    { key: 'financial_viability', label: 'Financial Viability' },
-    { key: 'execution_readiness', label: 'Execution Readiness' },
-    { key: 'strategic_alignment', label: 'Strategic Alignment' },
-    { key: 'risk_profile',        label: 'Risk Profile' },
-    { key: 'evidence_quality',    label: 'Evidence Quality' },
+
+  // Primary 4 metrics shown in 2-col grid
+  const primaryDims = [
+    { key: 'strategic_alignment', label: 'Strategic fit',   isRisk: false },
+    { key: 'financial_viability', label: 'Cost efficiency', isRisk: false },
+    { key: 'execution_readiness', label: 'Time-to-value',   isRisk: false },
+    { key: 'risk_profile',        label: 'Execution risk',  isRisk: true  },
   ];
+  const secondaryDims = [
+    { key: 'market_opportunity', label: 'Market Opportunity' },
+    { key: 'evidence_quality',   label: 'Evidence Quality'   },
+  ];
+
   const risks = result?.top_risks || [];
+  const recs = result?.recommendations || [];
+  const nextSteps = result?.next_steps || [];
+  const recommendedScenario = (recs[0] && typeof recs[0] === 'string') ? recs[0]
+    : (recs[0]?.text || recs[0]?.action || null)
+    || (nextSteps[0] && typeof nextSteps[0] === 'string' ? nextSteps[0] : null);
   const title = result?.project_name || deriveIdeaTitle({ result, messages, fallback: 'Initiative' });
+
+  const renderDimBar = ({ key, label, isRisk }) => {
+    const dim = dims[key] || {};
+    const raw = Number(dim.score || result?.component_scores?.[key] || 0);
+    const pct = Math.min(raw, 100);
+    const tenths = (pct / 10).toFixed(1);
+    const flagged = pct < 55;
+    const barColor = (isRisk && pct < 65) ? '#f59e0b' : flagged ? '#f59e0b' : 'var(--navy)';
+    const conf = String(dim.confidence || 'medium').toLowerCase();
+    const isAssumed = conf === 'assumed' || conf === 'low';
+    return (
+      <div key={key} className="jas-dim-col" title={dim.rationale || ''}>
+        <div className="jas-dim-col-header">
+          <span className="jas-dim-label">{label}</span>
+          <span className={`jas-dim-score-tenths${flagged ? ' flagged' : ''}`}>{tenths}<span className="jas-dim-denom">/10</span></span>
+        </div>
+        <div className="jas-dim-bar-track">
+          <div className="jas-dim-bar-fill" style={{ width: `${pct}%`, background: barColor }}/>
+        </div>
+        {isAssumed && <span className="jas-dim-conf-badge" title={dim.what_would_improve || ''}>{conf}</span>}
+      </div>
+    );
+  };
 
   return (
     <div className="jas-scorecard-card">
+      {/* Header: ring + title */}
       <div className="jas-scorecard-header">
-        <svg className="jas-score-ring" viewBox="0 0 64 64" width="64" height="64">
-          <circle cx="32" cy="32" r="28" fill="none" stroke="#e5e7eb" strokeWidth="6"/>
-          <circle cx="32" cy="32" r="28" fill="none" stroke={ringColor} strokeWidth="6"
+        <svg className="jas-score-ring" viewBox="0 0 88 88" width="80" height="80">
+          <circle cx="44" cy="44" r="36" fill="none" stroke="#e5e7eb" strokeWidth="7"/>
+          <circle cx="44" cy="44" r="36" fill="none" stroke={ringColor} strokeWidth="7"
             strokeDasharray={`${circumference}`}
             strokeDashoffset={offset}
             strokeLinecap="round"
-            transform="rotate(-90 32 32)"/>
-          <text x="32" y="37" textAnchor="middle" fontSize="16" fontWeight="700" fill={ringColor}>{score}</text>
+            transform="rotate(-90 44 44)"/>
+          <text x="44" y="49" textAnchor="middle" fontSize="22" fontWeight="700" fill="var(--navy)">{score}</text>
         </svg>
         <div className="jas-scorecard-meta">
           <span className="jas-scorecard-category" style={{ color: ringColor }}>{category}</span>
           <span className="jas-scorecard-title">{title}</span>
+          <span className="jas-scorecard-subtitle">Jaspen Scorecard · Baseline</span>
         </div>
       </div>
 
-      <div className="jas-scorecard-dims">
-        {dimList.map(({ key, label }) => {
-          const dim = dims[key] || {};
-          const val = Number(dim.score || 0);
-          const flagged = val < 55;
-          const conf = String(dim.confidence || 'medium').toLowerCase();
-          const isAssumed = conf === 'assumed' || conf === 'low';
-          return (
-            <div key={key} className="jas-dim-row" title={dim.rationale || ''}>
-              <span className="jas-dim-label">{label}</span>
-              <div className="jas-dim-bar-track">
-                <div className="jas-dim-bar-fill" style={{
-                  width: `${val}%`,
-                  background: flagged ? '#eab67b' : 'var(--navy)',
-                }}/>
-              </div>
-              <span className={`jas-dim-score${flagged ? ' flagged' : ''}`}>{val}</span>
-              {isAssumed && (
-                <span className="jas-dim-conf-badge" title={dim.what_would_improve || 'Ask Jaspen how to improve this'}>
-                  {conf}
-                </span>
-              )}
-            </div>
-          );
-        })}
+      {/* Primary 2×2 dimension grid */}
+      <div className="jas-scorecard-dims-grid">
+        {primaryDims.map(d => renderDimBar(d))}
       </div>
 
+      {/* Secondary dims if populated */}
+      {secondaryDims.some(({ key }) => (dims[key]?.score || result?.component_scores?.[key] || 0) > 0) && (
+        <div className="jas-scorecard-dims-secondary">
+          {secondaryDims.map(d => renderDimBar({ ...d, isRisk: false }))}
+        </div>
+      )}
+
+      {/* Top Risks */}
       {risks.length > 0 && (
         <div className="jas-scorecard-risks">
-          <p className="jas-scorecard-risks-label">Top risks</p>
-          {risks.slice(0, 2).map((r, i) => (
+          <p className="jas-scorecard-risks-label">Top Risks</p>
+          {risks.slice(0, 3).map((r, i) => (
             <p key={i} className="jas-scorecard-risk-item">
-              · {typeof r === 'string' ? r : r.risk}
+              · {typeof r === 'string' ? r : (r.risk || r.text || String(r))}
             </p>
           ))}
         </div>
       )}
 
+      {/* Recommended next step */}
+      {recommendedScenario && (
+        <div className="jas-scorecard-rec">
+          <p className="jas-scorecard-risks-label">Recommended Next Step</p>
+          <p className="jas-scorecard-rec-text">+ {recommendedScenario}</p>
+        </div>
+      )}
+
+      {/* Footer */}
       <div className="jas-scorecard-footer">
-        <span className="jas-scorecard-view-hint">Ask Jaspen about any dimension to dig deeper</span>
+        <button
+          className="jas-scorecard-action-btn"
+          onClick={() => setActiveTab('scenario')}
+        >
+          Open Scenarios
+        </button>
+        <span className="jas-scorecard-view-hint">Ask Jaspen about any dimension →</span>
       </div>
     </div>
   );
@@ -6829,6 +6866,7 @@ const handleSaveStarter = async () => {
   async function triggerInlineScore(sid) {
     if (!sid) return;
     console.log('[triggerInlineScore] calling analyzeFromConversation for', sid);
+    setScorecardGenerating(true);
     try {
       const data = await Jaspen.analyzeFromConversation({
         session_id: sid,
@@ -6872,6 +6910,8 @@ const handleSaveStarter = async () => {
       setTimeout(() => { void refreshBundle(sid); void fetchSessions(); }, 0);
     } catch (e) {
       console.error('[triggerInlineScore]', e);
+    } finally {
+      setScorecardGenerating(false);
     }
   }
 
@@ -10591,6 +10631,19 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
 	                  {renderMessageActions(m, `main:${idx}`, idx, messages.length)}
 	                </div>
 	              ))}
+
+              {scorecardGenerating && !analysisResult && (
+                <div className="jas-message ai">
+                  <div className="jas-message-bubble">
+                    <div className="jas-scorecard-generating-bubble">
+                      <span className="jas-scorecard-generating-dots">
+                        <span/><span/><span/>
+                      </span>
+                      <span className="jas-scorecard-generating-text">Building your scorecard…</span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div ref={endRef} />
             </div>
