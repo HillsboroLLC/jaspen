@@ -958,10 +958,12 @@ function deriveIdeaTitle({ result = null, messages = [], fallback = 'Untitled Id
     let raw = String(firstUserIdea.text).trim();
     // Strip common goal/intent prefixes so the title is the idea itself
     raw = raw.replace(/^(goal\s*[:–-]\s*|my goal\s+(is\s+)?[:–-]?\s*|i want to\s+|we want to\s+|we('re| are) (building|launching|creating)\s+|idea\s*[:–-]\s*)/i, '');
-    // Use first sentence or first 48 chars, whichever is shorter
+    // Take first sentence only
     const firstSentence = raw.split(/[.!?\n]/)[0].trim();
-    const truncated = firstSentence.length > 0 ? firstSentence : raw;
-    return truncated.length > 48 ? truncated.slice(0, 46).trimEnd() + '…' : truncated;
+    const cleaned = firstSentence.length > 0 ? firstSentence : raw;
+    // Cap at 7 words
+    const words = cleaned.split(/\s+/);
+    return words.length <= 7 ? cleaned : words.slice(0, 7).join(' ') + '…';
   }
 
   return fallback;
