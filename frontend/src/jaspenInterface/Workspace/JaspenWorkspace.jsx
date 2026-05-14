@@ -1997,7 +1997,98 @@ const normalizeMutationResults = (payload) => {
   return out;
 };
 
+const renderScorecardCard = (result) => {
+  const score = Number(result?.jaspen_score || 0);
+  const category = score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : score >= 40 ? 'Fair' : 'At Risk';
+  const ringColor = score >= 80 ? '#16a34a' : score >= 60 ? '#2563eb' : score >= 40 ? '#d97706' : '#dc2626';
+  const circumference = 2 * Math.PI * 28;
+  const offset = circumference - (score / 100) * circumference;
+  const dims = result?.dimensions || {};
+  const dimList = [
+    { key: 'market_opportunity',  label: 'Market Opportunity' },
+    { key: 'financial_viability', label: 'Financial Viability' },
+    { key: 'execution_readiness', label: 'Execution Readiness' },
+    { key: 'strategic_alignment', label: 'Strategic Alignment' },
+    { key: 'risk_profile',        label: 'Risk Profile' },
+    { key: 'evidence_quality',    label: 'Evidence Quality' },
+  ];
+  const risks = result?.top_risks || [];
+  const title = result?.project_name || deriveIdeaTitle({ result, messages, fallback: 'Initiative' });
+
+  return (
+    <div className="jas-scorecard-card">
+      <div className="jas-scorecard-header">
+        <svg className="jas-score-ring" viewBox="0 0 64 64" width="64" height="64">
+          <circle cx="32" cy="32" r="28" fill="none" stroke="#e5e7eb" strokeWidth="6"/>
+          <circle cx="32" cy="32" r="28" fill="none" stroke={ringColor} strokeWidth="6"
+            strokeDasharray={`${circumference}`}
+            strokeDashoffset={offset}
+            strokeLinecap="round"
+            transform="rotate(-90 32 32)"/>
+          <text x="32" y="37" textAnchor="middle" fontSize="16" fontWeight="700" fill={ringColor}>{score}</text>
+        </svg>
+        <div className="jas-scorecard-meta">
+          <span className="jas-scorecard-category" style={{ color: ringColor }}>{category}</span>
+          <span className="jas-scorecard-title">{title}</span>
+        </div>
+      </div>
+
+      <div className="jas-scorecard-dims">
+        {dimList.map(({ key, label }) => {
+          const dim = dims[key] || {};
+          const val = Number(dim.score || 0);
+          const flagged = val < 55;
+          const conf = String(dim.confidence || 'medium').toLowerCase();
+          const isAssumed = conf === 'assumed' || conf === 'low';
+          return (
+            <div key={key} className="jas-dim-row" title={dim.rationale || ''}>
+              <span className="jas-dim-label">{label}</span>
+              <div className="jas-dim-bar-track">
+                <div className="jas-dim-bar-fill" style={{
+                  width: `${val}%`,
+                  background: flagged ? '#eab67b' : 'var(--navy)',
+                }}/>
+              </div>
+              <span className={`jas-dim-score${flagged ? ' flagged' : ''}`}>{val}</span>
+              {isAssumed && (
+                <span className="jas-dim-conf-badge" title={dim.what_would_improve || 'Ask Jaspen how to improve this'}>
+                  {conf}
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {risks.length > 0 && (
+        <div className="jas-scorecard-risks">
+          <p className="jas-scorecard-risks-label">Top risks</p>
+          {risks.slice(0, 2).map((r, i) => (
+            <p key={i} className="jas-scorecard-risk-item">
+              · {typeof r === 'string' ? r : r.risk}
+            </p>
+          ))}
+        </div>
+      )}
+
+      <div className="jas-scorecard-footer">
+        <button
+          className="jas-scorecard-view-btn"
+          onClick={() => { setActiveTab('summary'); }}
+          type="button"
+        >
+          View full scorecard →
+        </button>
+      </div>
+    </div>
+  );
+};
+
 const renderConversationMessage = (message) => {
+  // Render scorecard artifact inline
+  if (message?.artifact?.type === 'scorecard') {
+    return renderScorecardCard(message.artifact.data);
+  }
   const text = String(message?.text || '');
   if (message?.role === 'user') return text;
 
@@ -6848,9 +6939,23 @@ const handleSaveStarter = async () => {
       setBaselineScorecardId(baselineSnapshot.id);
       baselineRef.current = result._baseline_scorecard; // Store baseline reference
 
-      setView('summary');
-      setActiveTab('summary');
-      setStreamToolStatus('Preparing summary dashboard…');
+      setStreamToolStatus('Preparing scorecard…');
+
+      // Inject inline scorecard artifact into conversation thread
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `scorecard-${Date.now()}`,
+          role: 'ai',
+          text: '',
+          artifact: { type: 'scorecard', data: result },
+        },
+      ]);
+
+      // Make Summary tab available but don't force navigate — user stays in conversation
+      setAnalysisResult(result);
+      setView('summary'); // enables Summary tab
+      setStreamToolStatus('');
 
       const suggestedFollowUps = buildScorecardFollowUpPrompts(
         result,
@@ -10328,10 +10433,10 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
           <div className="jas-context-divider" aria-hidden="true" />
           <div className="jas-context-stages">
             {[
-              { label: 'Discovery', active: true },
-              { label: 'Scoring',   active: false },
-              { label: 'Scenarios', active: false },
-              { label: 'Execution', active: false },
+              { label: 'Discovery', active: Boolean(sessionId || messages.length > 0) },
+              { label: 'Scoring',   active: Boolean(analysisResult) },
+              { label: 'Scenarios', active: Boolean(analysisResult && scorecardSnapshots?.length > 1) },
+              { label: 'Execution', active: Boolean(analysisResult && activeTab === 'wbs') },
             ].map((stage, i, arr) => (
               <React.Fragment key={stage.label}>
                 <span className={`jas-stage-pill${stage.active ? ' active' : ''}`}>{stage.label}</span>
@@ -10847,39 +10952,37 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
             <div className="jas-insights-body">
               {canAnalyze ? (
                 <div className="jas-insights-card jas-insights-card--action">
-                  <p className="jas-insights-eyebrow">Building scorecard</p>
+                  <p className="jas-insights-eyebrow">Generating scorecard</p>
                   <p className="jas-insights-headline">Jaspen is scoring your initiative.</p>
-                  <p className="jas-insights-sub">Your scorecard will appear inline when ready.</p>
+                  <p className="jas-insights-sub">Your scorecard will appear in the conversation shortly.</p>
                   <div className="jas-insights-readiness">
                     <div className="jas-insights-readiness-bar">
-                      <div className="jas-insights-readiness-fill" style={{ width: '100%' }} />
+                      <div className="jas-insights-readiness-fill jas-readiness-fill--pulse" style={{ width: '100%' }} />
                     </div>
-                    <span className="jas-insights-readiness-label">Ready</span>
                   </div>
                 </div>
               ) : sessionId ? (
                 <div className="jas-insights-card">
-                  <p className="jas-insights-eyebrow">In progress</p>
+                  <p className="jas-insights-eyebrow">Building confidence</p>
                   <p className="jas-insights-headline">Keep the conversation going.</p>
-                  <p className="jas-insights-sub">Answer Jaspen&apos;s questions to build a richer picture.</p>
+                  <p className="jas-insights-sub">Ask Jaspen &ldquo;what would make you more confident&rdquo; for specific suggestions.</p>
                   <div className="jas-insights-readiness">
                     <div className="jas-insights-readiness-bar">
                       <div className="jas-insights-readiness-fill" style={{ width: `${uiReadiness}%` }} />
                     </div>
-                    <span className="jas-insights-readiness-label">{Math.round(uiReadiness)}% ready</span>
                   </div>
                 </div>
               ) : (
                 <div className="jas-insights-card">
                   <p className="jas-insights-eyebrow">Getting started</p>
-                  <p className="jas-insights-headline">Describe your idea clearly.</p>
-                  <p className="jas-insights-sub">Be specific — &ldquo;Launch B2B SaaS for logistics&rdquo; gives Jaspen more to work with than &ldquo;build a startup&rdquo;.</p>
+                  <p className="jas-insights-headline">Describe your idea or initiative.</p>
+                  <p className="jas-insights-sub">Be specific — Jaspen builds scoring confidence from every detail you share.</p>
                 </div>
               )}
 
               {sessionId && (
                 <div className="jas-insights-checklist">
-                  <p className="jas-insights-tips-label">Progress</p>
+                  <p className="jas-insights-tips-label">What Jaspen knows</p>
                   {renderReadinessChecklist()}
                 </div>
               )}

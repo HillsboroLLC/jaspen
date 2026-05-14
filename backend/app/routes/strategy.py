@@ -1954,47 +1954,102 @@ def _generate_jaspen_scorecard(
     strategy_objective='balanced',
 ):
     """Run the existing LLM scoring flow and return parsed scorecard JSON."""
+    # Objective-based dimension weights
+    _DIM_WEIGHTS = {
+        "cost_optimization":  {"market_opportunity": 0.12, "financial_viability": 0.25, "execution_readiness": 0.20, "strategic_alignment": 0.15, "risk_profile": 0.20, "evidence_quality": 0.08},
+        "growth":             {"market_opportunity": 0.25, "financial_viability": 0.18, "execution_readiness": 0.20, "strategic_alignment": 0.15, "risk_profile": 0.12, "evidence_quality": 0.10},
+        "operational":        {"market_opportunity": 0.10, "financial_viability": 0.18, "execution_readiness": 0.28, "strategic_alignment": 0.18, "risk_profile": 0.18, "evidence_quality": 0.08},
+        "innovation":         {"market_opportunity": 0.22, "financial_viability": 0.15, "execution_readiness": 0.18, "strategic_alignment": 0.20, "risk_profile": 0.15, "evidence_quality": 0.10},
+        "balanced":           {"market_opportunity": 0.18, "financial_viability": 0.20, "execution_readiness": 0.18, "strategic_alignment": 0.16, "risk_profile": 0.16, "evidence_quality": 0.12},
+    }
+    obj_key = _normalize_strategy_objective(strategy_objective) or "balanced"
+    weights = _DIM_WEIGHTS.get(obj_key, _DIM_WEIGHTS["balanced"])
+    weights_note = " | ".join(f"{k}: {int(v*100)}%" for k, v in weights.items())
+
     system_prompt = (
         "You are a Jaspen strategy analyst specializing in commercialization strategy. "
-        "Always respond with valid JSON only."
+        "Always respond with valid JSON only. Temperature is 0 — be deterministic and evidence-based."
     )
     analysis_prompt = f"""
-You are a Jaspen strategy analyst specializing in commercialization strategy and financial impact assessment. Analyze the following project and provide a comprehensive strategy score and breakdown.
+You are a Jaspen strategy analyst. Analyze the following initiative and return a comprehensive confidence-weighted scorecard.
 
 Project Description: {project_description}
 
-Strategy Objective: {_normalize_strategy_objective(strategy_objective)}
+Strategy Objective: {obj_key}
 Objective Guidance: {_scorecard_objective_guidance(strategy_objective)}
+Dimension Weights for this objective: {weights_note}
 
-Return a single valid JSON object only. Do not include markdown fences, commentary, or explanatory text outside the JSON.
+Return a single valid JSON object only. No markdown fences, no commentary outside the JSON.
 
-Use null for any field that cannot be supported from the provided information. Do not invent benchmarks or placeholder prose.
+Rules:
+- Use null only when information is genuinely absent — never invent data.
+- Every numeric field must be an actual number, not prose ("18" not "significant").
+- For each dimension, assign a confidence level: "high" (evidence from conversation), "medium" (reasonable inference), "low" (limited signal), or "assumed" (no direct evidence — extrapolated from patterns).
+- For each dimension, identify the source: "conversation" (explicitly stated), "connector" (from connected data source), "inferred" (logical derivation), or "assumed" (industry/pattern-based).
+- For any dimension with confidence "low" or "assumed", populate what_would_improve with a specific, actionable suggestion.
+- The jaspen_score is the weighted average of the 6 dimension scores using the weights above.
+- score_category: "Excellent" (80-100), "Good" (60-79), "Fair" (40-59), "At Risk" (0-39).
 
-Every numeric, currency, percentage, or time-based field must contain an actual numeric value when present. Do not use words like "significant", "varies", "material", or "TBD". Examples of acceptable values:
-- "$250000"
-- "18%"
-- "6 months"
-- 14
-- 7.5
-
-If a field is null because information is missing, add a short explanation to the assumptions array describing what data would be needed.
-
-Please provide your analysis in the following JSON format:
+JSON format:
 
 {{
-    "jaspen_score": <number between 0-100>,
-    "score_category": "<Excellent/Good/Needs Improvement>",
+    "jaspen_score": <weighted average of 6 dimension scores, 0-100>,
+    "score_category": "<Excellent|Good|Fair|At Risk>",
+    "dimensions": {{
+        "market_opportunity": {{
+            "score": <0-100>,
+            "confidence": "<high|medium|low|assumed>",
+            "source": "<conversation|connector|inferred|assumed>",
+            "rationale": "<1-2 sentences>",
+            "what_would_improve": "<specific action or null if confidence is high>"
+        }},
+        "financial_viability": {{
+            "score": <0-100>,
+            "confidence": "<high|medium|low|assumed>",
+            "source": "<conversation|connector|inferred|assumed>",
+            "rationale": "<1-2 sentences>",
+            "what_would_improve": "<specific action or null if confidence is high>"
+        }},
+        "execution_readiness": {{
+            "score": <0-100>,
+            "confidence": "<high|medium|low|assumed>",
+            "source": "<conversation|connector|inferred|assumed>",
+            "rationale": "<1-2 sentences>",
+            "what_would_improve": "<specific action or null if confidence is high>"
+        }},
+        "strategic_alignment": {{
+            "score": <0-100>,
+            "confidence": "<high|medium|low|assumed>",
+            "source": "<conversation|connector|inferred|assumed>",
+            "rationale": "<1-2 sentences>",
+            "what_would_improve": "<specific action or null if confidence is high>"
+        }},
+        "risk_profile": {{
+            "score": <0-100, where higher = lower risk>,
+            "confidence": "<high|medium|low|assumed>",
+            "source": "<conversation|connector|inferred|assumed>",
+            "rationale": "<1-2 sentences>",
+            "what_would_improve": "<specific action or null if confidence is high>"
+        }},
+        "evidence_quality": {{
+            "score": <0-100>,
+            "confidence": "<high|medium|low|assumed>",
+            "source": "<conversation|connector|inferred|assumed>",
+            "rationale": "<1-2 sentences>",
+            "what_would_improve": "<specific action or null if confidence is high>"
+        }}
+    }},
     "component_scores": {{
-        "financial_health": <0-100>,
-        "operational_efficiency": <0-100>,
-        "market_position": <0-100>,
-        "execution_readiness": <0-100>
+        "financial_health": <same as financial_viability score>,
+        "operational_efficiency": <same as execution_readiness score>,
+        "market_position": <same as market_opportunity score>,
+        "execution_readiness": <same as execution_readiness score>
     }},
     "component_rationale": {{
-        "financial_health": "<2-3 sentence explanation or null>",
-        "operational_efficiency": "<2-3 sentence explanation or null>",
-        "market_position": "<2-3 sentence explanation or null>",
-        "execution_readiness": "<2-3 sentence explanation or null>"
+        "financial_health": "<same as financial_viability rationale or null>",
+        "operational_efficiency": "<same as execution_readiness rationale or null>",
+        "market_position": "<same as market_opportunity rationale or null>",
+        "execution_readiness": "<same as execution_readiness rationale or null>"
     }},
     "executive_summary": "<2-4 sentence board-ready summary of the score, current opportunity, and biggest constraint or null>",
     "financial_impact": {{
@@ -2094,7 +2149,7 @@ The executive_summary must read like a concise leadership briefing. It should ne
             llm_model=llm_model,
             strategy_objective=strategy_objective,
             max_tokens=4000,
-            temperature=0.1,
+            temperature=0,
         )
     except Exception as routed_exc:
         if isinstance(model_selection, dict):
