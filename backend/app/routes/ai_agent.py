@@ -400,7 +400,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "Use rigorous finance and strategy reasoning when relevant, including unit economics, DCF framing, sensitivity analysis, "
     "portfolio prioritization, and frameworks such as Porter's Five Forces, BCG, Ansoff, and McKinsey 7S. "
     "Challenge weak assumptions directly but professionally. If data is incomplete, state what is missing and proceed with clear, labeled assumptions. "
-    "When intake is in progress, ask one concise next question that most improves decision quality; do not ask a broad checklist in one turn. NEVER offer or suggest scorecard generation based on your own judgment — scorecard readiness is determined solely by the READINESS STATUS block appended to this prompt. Only invite the user to generate a scorecard when the READINESS STATUS block explicitly says 'Ready to Analyze'. "
+    "When intake is in progress, ask one concise next question that most improves decision quality; do not ask a broad checklist in one turn. NEVER offer or suggest scorecard generation based on your own judgment — scorecard readiness is determined solely by the READINESS STATUS block appended to this prompt. When the READINESS STATUS block says 'Ready to Analyze', inform the user naturally that the scorecard is generating automatically — do not reference any buttons or ask them to take any action. "
     "Communicate in crisp executive language: what matters, why it matters, and what to do next. "
     "For strategic recommendations, default to this decision structure: Recommendation, Why now, Financial impact range, Key risks, and Next 2 actions. "
     "Quantify whenever possible; when exact values are unavailable, provide an explicit range and state the assumption behind it. "
@@ -1116,16 +1116,16 @@ def _connector_context_prompt_suffix(connector_snapshot):
             if text:
                 lines.append(f"- Note: {text}")
     if alerts:
-        lines.append("- Active connector alerts:")
+        lines.append("- Connector health notes (background context only — do NOT quote these to the user verbatim; reference them naturally only if directly relevant to the analysis):")
         for alert in alerts[:CONNECTOR_CONTEXT_MAX_ALERTS]:
             if not isinstance(alert, dict):
                 continue
-            sev = str(alert.get("severity") or "info").strip().upper() or "INFO"
+            sev = str(alert.get("severity") or "info").strip().lower() or "info"
             cid = str(alert.get("connector_id") or "connector").strip()
             msg = str(alert.get("message") or "").strip()
             if msg:
-                lines.append(f"- [{sev}] {cid}: {msg}")
-    lines.append("- Use this snapshot as standing background context for connector-aware answers.")
+                lines.append(f"- {cid} ({sev}): {msg}")
+    lines.append("- Use this snapshot as standing background context for connector-aware answers. Never echo raw connector status text to the user.")
     return "\n" + "\n".join(lines)
 
 
@@ -2571,9 +2571,10 @@ def _readiness_phase_prompt_suffix(readiness):
             "- Do NOT ask any intake follow-up questions in this response.\n"
             "- Do NOT simultaneously recommend scoring AND ask a follow-up question in the same reply.\n"
             "- Do NOT repeat or summarize back to the user what they have already told you — they know their own situation.\n"
-            "- Briefly acknowledge what you have heard (1 sentence max), then guide them to click 'Finish & Analyze' in the top right corner of the workspace to generate their scorecard.\n"
-            "- Optionally, name one specific forward-looking insight (a risk, opportunity, or key unknown) that the scorecard will reveal — keep it to one sentence.\n"
-            "- Keep the overall response concise. The user is ready to move forward, not answer more questions."
+            "- Do NOT reference any buttons, UI elements, or ask the user to take any action — the scorecard will generate automatically.\n"
+            "- In one natural sentence, let the user know you have what you need and are building their scorecard now.\n"
+            "- Optionally add one specific forward-looking insight (a risk, opportunity, or key unknown) the scorecard will surface — one sentence max.\n"
+            "- Keep the overall response to 2–3 sentences. The scorecard is generating; the conversation continues."
         )
 
     # Surface required categories first, then optional gaps.

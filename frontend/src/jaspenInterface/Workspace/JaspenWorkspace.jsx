@@ -1761,6 +1761,8 @@ const chatViewContext = useMemo(() => {
 const baselineRef = useRef(null);
   // GOAL B: Track which sessionIds have had their scorecard hydrated
   const hydratedScorecardRef = useRef(new Set());
+  // Prevent duplicate auto-scoring triggers per session
+  const autoScoringTriggeredRef = useRef(false);
 
   // Pull messages, latest analysis id, and saved scenarios from backend
 const refreshBundle = async (tid, { fallbackTid } = {}) => {
@@ -4653,6 +4655,7 @@ useEffect(() => {
         setActiveTab('summary');
         dispatchSidebar({ type: 'CLOSE_ALL' });
         setInitialRestorePending(false);
+        autoScoringTriggeredRef.current = false;
         return;
       }
       const sid = resolvedUrlSessionId;
@@ -5692,6 +5695,17 @@ async function continueConversation(userText, options = {}) {
     }
 
     await fetchSessions();
+
+    // Agentic scoring: auto-trigger scorecard generation when backend says ready,
+    // no user button click required. Guard with ref to prevent duplicate triggers.
+    if (
+      data?.status === 'ready_to_analyze' &&
+      !analysisResult &&
+      !autoScoringTriggeredRef.current
+    ) {
+      autoScoringTriggeredRef.current = true;
+      setTimeout(() => { void onFinishAnalyze(); }, 1200);
+    }
 
     // Note: AI Agent backend handles persistence automatically
     // No need to call saveSessionToBackend - readiness is already saved by backend
@@ -10801,17 +10815,15 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
             <div className="jas-insights-body">
               {canAnalyze ? (
                 <div className="jas-insights-card jas-insights-card--action">
-                  <p className="jas-insights-eyebrow">Ready to score</p>
-                  <p className="jas-insights-headline">Jaspen has enough to work with.</p>
-                  <p className="jas-insights-sub">Generate your scorecard and unlock scenario modeling.</p>
-                  <button
-                    className="jas-insights-cta"
-                    onClick={onFinishAnalyze}
-                    disabled={busy || effectiveIsViewer}
-                    aria-disabled={busy || effectiveIsViewer}
-                  >
-                    Generate scorecard →
-                  </button>
+                  <p className="jas-insights-eyebrow">Building scorecard</p>
+                  <p className="jas-insights-headline">Jaspen is scoring your initiative.</p>
+                  <p className="jas-insights-sub">Your scorecard will appear inline when ready.</p>
+                  <div className="jas-insights-readiness">
+                    <div className="jas-insights-readiness-bar">
+                      <div className="jas-insights-readiness-fill" style={{ width: '100%' }} />
+                    </div>
+                    <span className="jas-insights-readiness-label">Ready</span>
+                  </div>
                 </div>
               ) : sessionId ? (
                 <div className="jas-insights-card">
