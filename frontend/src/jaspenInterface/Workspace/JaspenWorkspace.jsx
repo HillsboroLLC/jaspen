@@ -10823,7 +10823,21 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               <span className="jas-insights-title">Jaspen Insights</span>
             </div>
             <div className="jas-insights-body">
-              {canAnalyze ? (
+              {analysisResult ? (
+                <div className="jas-insights-card jas-insights-card--action">
+                  <p className="jas-insights-eyebrow">Scorecard ready</p>
+                  <p className="jas-insights-headline">{analysisResult.project_name || 'Your initiative'}</p>
+                  <p className="jas-insights-sub">Ask Jaspen about any dimension to dig deeper.</p>
+                  <div className="jas-insights-readiness">
+                    <div className="jas-insights-readiness-bar">
+                      <div className="jas-insights-readiness-fill" style={{ width: '100%', background: analysisResult.jaspen_score >= 80 ? '#16a34a' : analysisResult.jaspen_score >= 60 ? '#2563eb' : analysisResult.jaspen_score >= 40 ? '#d97706' : '#dc2626' }} />
+                    </div>
+                    <span className="jas-insights-readiness-label" style={{ color: analysisResult.jaspen_score >= 80 ? '#16a34a' : analysisResult.jaspen_score >= 60 ? '#2563eb' : analysisResult.jaspen_score >= 40 ? '#d97706' : '#dc2626' }}>
+                      {analysisResult.jaspen_score} / 100
+                    </span>
+                  </div>
+                </div>
+              ) : canAnalyze ? (
                 <div className="jas-insights-card jas-insights-card--action">
                   <p className="jas-insights-eyebrow">Generating scorecard</p>
                   <p className="jas-insights-headline">Jaspen is scoring your initiative.</p>
@@ -10832,6 +10846,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                     <div className="jas-insights-readiness-bar">
                       <div className="jas-insights-readiness-fill jas-readiness-fill--pulse" style={{ width: '100%' }} />
                     </div>
+                    <span className="jas-insights-readiness-label">{Math.round(uiReadiness)}% confident</span>
                   </div>
                 </div>
               ) : sessionId ? (
