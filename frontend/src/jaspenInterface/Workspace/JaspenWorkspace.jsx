@@ -2014,6 +2014,117 @@ const normalizeMutationResults = (payload) => {
   return out;
 };
 
+// ── Inline Scenarios View ─────────────────────────────────────────────────────
+const renderInlineScenariosView = () => {
+  const snaps = Array.isArray(scorecardSnapshots) ? scorecardSnapshots : [];
+  const dimKeys = [
+    { key: 'strategic_alignment', label: 'Strategic Fit' },
+    { key: 'financial_viability',  label: 'Cost Efficiency' },
+    { key: 'execution_readiness',  label: 'Time-to-Value' },
+    { key: 'risk_profile',         label: 'Execution Risk' },
+  ];
+  const renderSnapCard = (snap, i) => {
+    const score = snap.jaspen_score ?? snap.score ?? 0;
+    const dims = snap.dimensions || {};
+    const circumference = 2 * Math.PI * 28;
+    const offset = circumference - (score / 100) * circumference;
+    return (
+      <div key={snap.id || i} className={`jas-snap-card${snap.isBaseline ? ' baseline' : ''}`}>
+        <div className="jas-snap-card-header">
+          <span className="jas-snap-card-label">{snap.label || `Version ${i + 1}`}</span>
+          {snap.isBaseline && <span className="jas-snap-card-badge">Current</span>}
+        </div>
+        <div className="jas-snap-card-score-row">
+          <svg viewBox="0 0 64 64" width="52" height="52" className="jas-snap-ring">
+            <circle cx="32" cy="32" r="28" fill="none" stroke="#e5e7eb" strokeWidth="5"/>
+            <circle cx="32" cy="32" r="28" fill="none" stroke="#a0036c" strokeWidth="5"
+              strokeDasharray={circumference} strokeDashoffset={offset}
+              strokeLinecap="round" transform="rotate(-90 32 32)"/>
+            <text x="32" y="37" textAnchor="middle" fontSize="14" fontWeight="700" fill="#161f3b">{score}</text>
+          </svg>
+          <div className="jas-snap-card-dims">
+            {dimKeys.map(({ key, label }) => {
+              const dim = dims[key] || {};
+              const s = Number(dim.score || snap.component_scores?.[key] || 0);
+              const pct = Math.min(s, 100);
+              const isRisk = key === 'risk_profile';
+              const barColor = (isRisk && pct < 65) || pct < 55 ? '#f59e0b' : '#161f3b';
+              return (
+                <div key={key} className="jas-snap-dim">
+                  <span className="jas-snap-dim-label">{label}</span>
+                  <div className="jas-snap-dim-bar-track">
+                    <div className="jas-snap-dim-bar-fill" style={{ width: `${pct}%`, background: barColor }}/>
+                  </div>
+                  <span className="jas-snap-dim-val">{(pct / 10).toFixed(1)}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        {snap.top_risks?.length > 0 && (
+          <div className="jas-snap-card-risks">
+            <p className="jas-snap-card-section-label">Top Risks</p>
+            {snap.top_risks.slice(0, 2).map((r, ri) => (
+              <p key={ri} className="jas-snap-card-risk">· {typeof r === 'string' ? r : r.risk || r.text || String(r)}</p>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="jas-scenarios-inline">
+      <div className="jas-scenarios-inline-header">
+        <span className="jas-scenarios-inline-title">Scenario Comparison</span>
+        <span className="jas-scenarios-inline-sub">Ask Jaspen to model a scenario — "What if we cut scope by 30%?" or "Model faster market entry."</span>
+      </div>
+      <div className="jas-scenarios-grid">
+        {snaps.length > 0
+          ? snaps.map((snap, i) => renderSnapCard(snap, i))
+          : <p className="jas-scenarios-empty">Score your first idea to see it here, then ask Jaspen to model variations.</p>
+        }
+      </div>
+    </div>
+  );
+};
+
+// ── Inline Execution View ─────────────────────────────────────────────────────
+const renderInlineExecutionView = () => {
+  const tasks = Array.isArray(threadWbs?.tasks) ? threadWbs.tasks : [];
+  if (tasks.length === 0) {
+    return (
+      <div className="jas-execution-inline-empty">
+        <p className="jas-execution-inline-empty-title">No execution plan yet</p>
+        <p className="jas-execution-inline-empty-sub">Ask Jaspen: "Build me an execution plan" and it will appear here.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="jas-execution-inline">
+      <div className="jas-execution-inline-header">
+        <span className="jas-execution-inline-title">Execution Plan</span>
+        <span className="jas-execution-inline-count">{tasks.length} tasks</span>
+      </div>
+      <div className="jas-execution-task-list">
+        {tasks.map((task, i) => (
+          <div key={task.id || i} className="jas-execution-task-row">
+            <span className="jas-execution-task-num">{i + 1}</span>
+            <div className="jas-execution-task-body">
+              <p className="jas-execution-task-title">{task.title || task.name || task.task || `Task ${i + 1}`}</p>
+              {task.owner && <span className="jas-execution-task-meta">{task.owner}</span>}
+              {task.due_date && <span className="jas-execution-task-meta">{task.due_date}</span>}
+            </div>
+            <span className={`jas-execution-task-status ${String(task.status || 'pending').toLowerCase()}`}>
+              {task.status || 'Pending'}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 const renderScorecardCard = (result) => {
   const score = Number(result?.jaspen_score || 0);
   const category = score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : score >= 40 ? 'Fair' : 'At Risk';
@@ -10404,13 +10515,13 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                     </button>
                   )}
                   {Array.isArray(savedScenarios) && savedScenarios.length > 0 && (
-                    <button className="jas-artifact-item" onClick={() => { setActivePill('scenarios'); setActiveTab('scenario'); setArtifactsOpen(false); }}>
+                    <button className="jas-artifact-item" onClick={() => { setActivePill('scenarios'); setArtifactsOpen(false); }}>
                       <FontAwesomeIcon icon={faArrowRightArrowLeft} />
                       <span>Scenarios · {savedScenarios.length}</span>
                     </button>
                   )}
                   {Array.isArray(threadWbs?.tasks) && threadWbs.tasks.length > 0 && (
-                    <button className="jas-artifact-item" onClick={() => { setActivePill('execution'); setActiveTab('wbs'); setArtifactsOpen(false); }}>
+                    <button className="jas-artifact-item" onClick={() => { setActivePill('execution'); setArtifactsOpen(false); }}>
                       <FontAwesomeIcon icon={faListCheck} />
                       <span>Execution Plan · {threadWbs.tasks.length} tasks</span>
                     </button>
@@ -10424,28 +10535,21 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
           <div className="jas-context-stages">
             {(() => {
               // Only the CURRENT stage is highlighted
-              const currentStage = !analysisResult ? 'discovery'
-                : activeTab === 'wbs' ? 'execution'
-                : activeTab === 'scenario' ? 'scenarios'
-                : activePill === 'scenarios' ? 'scenarios'
-                : 'scoring';
-              const canScenarios = Boolean(analysisResult);
-              const canTradeoff = Boolean(analysisResult && scorecardSnapshots?.length > 1);
+              const currentStage = activePill || (!analysisResult ? 'discovery' : 'scoring');
+              const canScenarios = Boolean(analysisResult && scorecardSnapshots?.length > 1);
+              const canExecution = Array.isArray(threadWbs?.tasks) && threadWbs.tasks.length > 0;
               const stages = [
                 { key: 'discovery',  label: 'Discovery',  disabled: false },
                 { key: 'scoring',    label: 'Scoring',    disabled: !analysisResult },
-                { key: 'scenarios',  label: 'Scenarios',  disabled: !canScenarios },
-                { key: 'tradeoff',   label: 'Trade-off',  disabled: !canTradeoff },
-                { key: 'execution',  label: 'Execution',  disabled: !(Array.isArray(threadWbs?.tasks) && threadWbs.tasks.length > 0) },
+                { key: 'scenarios',  label: 'Scenarios',  disabled: !canScenarios,
+                  title: !canScenarios ? 'Score at least 2 versions of your idea to compare' : undefined },
+                { key: 'execution',  label: 'Execution',  disabled: !canExecution,
+                  title: !canExecution ? 'Ask Jaspen to build an execution plan first' : undefined },
               ];
+              // Everything stays inline — no setActiveTab navigation
               const handlePillClick = (key, disabled) => {
                 if (disabled) return;
                 setActivePill(key);
-                if (key === 'discovery') { setActiveTab('summary'); }
-                else if (key === 'scoring') { setActiveTab('summary'); }
-                else if (key === 'scenarios') { setActiveTab('scenario'); }
-                else if (key === 'tradeoff') { setActiveTab('scenario'); }
-                else if (key === 'execution') { setActiveTab('wbs'); }
               };
               return stages.map((stage, i, arr) => (
                 <React.Fragment key={stage.key}>
@@ -10453,7 +10557,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                     className={`jas-stage-pill${currentStage === stage.key ? ' active' : ''}${stage.disabled ? ' disabled' : ''}`}
                     onClick={() => handlePillClick(stage.key, stage.disabled)}
                     disabled={stage.disabled}
-                    title={stage.disabled ? (stage.key === 'tradeoff' ? 'Available after scoring 2+ scenarios' : 'Score an initiative first') : undefined}
+                    title={stage.disabled ? (stage.title || 'Not available yet') : undefined}
                   >
                     {stage.label}
                   </button>
@@ -10746,6 +10850,16 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
             ) : null}
             <p>Describe your project or goal, and I&apos;ll help you build a complete strategy scorecard with clear priorities and execution steps.</p>
           </div>
+        ) : activePill === 'scenarios' ? (
+          /* ── Inline Scenarios panel ── */
+          <div className="jas-inline-panel-wrap">
+            {renderInlineScenariosView()}
+          </div>
+        ) : activePill === 'execution' ? (
+          /* ── Inline Execution panel ── */
+          <div className="jas-inline-panel-wrap">
+            {renderInlineExecutionView()}
+          </div>
         ) : (
           <>
             <div className="jas-messages">
@@ -11035,19 +11149,24 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               )}
 
               {/* Trade-off: scenario list */}
-              {(activePill === 'scenarios' || activePill === 'tradeoff') && analysisResult && (
+              {activePill === 'scenarios' && analysisResult && (
                 <div>
-                  <p className="jas-insights-tips-label" style={{ marginBottom: 8 }}>Scenarios</p>
+                  <p className="jas-insights-tips-label" style={{ marginBottom: 8 }}>Versions</p>
                   {scorecardSnapshots?.length > 0 ? scorecardSnapshots.map((snap, i) => (
                     <div key={snap.id || i} className="jas-insights-scenario-row">
-                      <span className="jas-insights-scenario-label">{snap.label || `Scenario ${i+1}`}</span>
+                      <span className="jas-insights-scenario-label">{snap.label || `Version ${i+1}`}</span>
                       <span className="jas-insights-scenario-score">{snap.jaspen_score ?? snap.score ?? '—'}<span style={{ fontWeight: 400, color: 'var(--gray-400)' }}>/100</span></span>
                     </div>
-                  )) : (
-                    <p style={{ fontSize: '0.75rem', color: 'var(--gray-500)', fontStyle: 'italic' }}>
-                      Ask Jaspen to model a scenario to compare options.
+                  )) : null}
+                  <div style={{ marginTop: 12, padding: '10px 0', borderTop: '1px solid var(--border)' }}>
+                    <p className="jas-insights-tips-label" style={{ marginBottom: 6 }}>Model a scenario</p>
+                    <p style={{ fontSize: '0.74rem', color: 'var(--gray-600)', lineHeight: 1.5 }}>
+                      Try asking:<br/>
+                      <em>"What if we cut scope by 30%?"</em><br/>
+                      <em>"Model faster market entry."</em><br/>
+                      <em>"Reduce implementation risk."</em>
                     </p>
-                  )}
+                  </div>
                 </div>
               )}
 
