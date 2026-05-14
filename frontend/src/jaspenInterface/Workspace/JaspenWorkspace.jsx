@@ -1896,7 +1896,7 @@ const refreshBundle = async (tid, { fallbackTid } = {}) => {
         };
       });
       if (view === 'intake') {
-        setView('summary');
+        setView('intake');
         setActiveTab('summary');
       }
     }
@@ -2072,13 +2072,7 @@ const renderScorecardCard = (result) => {
       )}
 
       <div className="jas-scorecard-footer">
-        <button
-          className="jas-scorecard-view-btn"
-          onClick={() => { setActiveTab('summary'); }}
-          type="button"
-        >
-          View full scorecard →
-        </button>
+        <span className="jas-scorecard-view-hint">Ask Jaspen about any dimension to dig deeper</span>
       </div>
     </div>
   );
@@ -2400,7 +2394,7 @@ useEffect(() => {
     }
     if (requestedTab === 'summary') {
       setActiveTab('summary');
-      setView('summary');
+      setView('intake');
       return;
     }
     if (requestedTab === 'scenario') {
@@ -3211,7 +3205,7 @@ useEffect(() => {
   useEffect(() => {
     if (!canUseScenarios && activeTab === 'scenario') {
       setActiveTab('summary');
-      setView('summary');
+      setView('intake');
     }
   }, [canUseScenarios, activeTab]);
 
@@ -4945,7 +4939,7 @@ if (rawHistory.length > 0) {
         });
         baselineRef.current = rootedScoreResult._baseline_scorecard;
         setAnalysisResult(rootedScoreResult);
-        setView('summary');
+        setView('intake');
         setActiveTab('summary');
       } else {
         setView('intake');
@@ -6798,7 +6792,7 @@ const handleSaveStarter = async () => {
       // select: true forces the Score tab to switch to the adopted variant
       applySnapshotMeta(response, { refresh: true, select: true });
       setActiveTab('summary');
-      setView('summary');
+      setView('intake');
       openPlanningReadyAssistant(label || 'Scenario');
       const confirmPrompt = `${label || 'Scenario'} is active. Do you want me to generate a project WBS now?`;
       setMessages((prev) => [...prev, { role: 'ai', text: confirmPrompt }]);
@@ -6828,7 +6822,7 @@ const handleSaveStarter = async () => {
       'Scoring strategic dimensions…',
       'Building financial and risk analysis…',
       'Drafting executive score narrative…',
-      'Preparing scorecard dashboard…',
+      'Preparing scorecard…',
     ], 2100);
 
     const normalize = (r = {}) => {
@@ -6952,9 +6946,9 @@ const handleSaveStarter = async () => {
         },
       ]);
 
-      // Make Summary tab available but don't force navigate — user stays in conversation
+      // Stay in conversation — scorecard lives inline in the chat thread.
+      // analysisResult being set activates the Scoring pill visually; no tab navigation.
       setAnalysisResult(result);
-      setView('summary'); // enables Summary tab
       setStreamToolStatus('');
 
       const suggestedFollowUps = buildScorecardFollowUpPrompts(
@@ -8379,7 +8373,7 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
     if (!analysisResult) return;
     if (activeTab !== 'chat') return;
     setActiveTab('summary');
-    setView('summary');
+    setView('intake');
   }, [analysisResult, activeTab]);
 
 useEffect(() => {
@@ -8747,7 +8741,7 @@ if (missingSections) {
   dispatchSidebar({ type: 'CLOSE_HISTORY' });
   // Readiness sidebar only applies to in-progress (incomplete) sessions
   // Completed sessions go directly to summary view
-  setView('summary');
+  setView('intake');
   setActiveTab('summary');
 
   } catch (e) {
@@ -8955,7 +8949,7 @@ const handleSnapshotSelect = useCallback(async (snapshotId) => {
   if (!nextId) return;
   setSelectedScorecardId(nextId);
   setActiveTab('summary');
-  setView('summary');
+  setView('intake');
 }, []);
 
 const handleSnapshotSetActive = useCallback(async (snapshotId, snapshotLabel) => {
@@ -8968,7 +8962,7 @@ const handleSnapshotSetActive = useCallback(async (snapshotId, snapshotLabel) =>
     const response = await Jaspen.setActiveSnapshot(tid, nextId, concurrencyGuard);
     applySnapshotMeta(response, { refresh: true, select: true });
     setActiveTab('summary');
-    setView('summary');
+    setView('intake');
     openPlanningReadyAssistant(snapshotLabel || 'Active scorecard');
     showToast('Active scorecard updated.', 'success');
   } catch (err) {
@@ -9825,11 +9819,10 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
             </div>
 
             <nav className="jas-top-tabs" role="tablist" aria-label="Jaspen views">
-              <TabButton id="summary"  label="Score" />
               <TabButton id="scenario" label="Scenarios" />
 
-              {/* Only show dropdowns and Begin Project on Score tab */}
-              {activeTab === 'summary' && (
+              {/* Scorecard dropdown rail — shown only on Scenarios tab for project actions */}
+              {activeTab === 'scenario' && (
                 <div className="jas-right-rail" ref={scoreShellMenuRef}>
                   <div className={`jas-select-menu ${scoreShellMenu === 'scorecard' ? 'open' : ''}`}>
                     <button
@@ -10072,72 +10065,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
           </div>
 
           <div className="jas-workspace-body">
-{activeTab === 'summary' && (
-  <div className={!sidebarState.settings || !aiDrawerOpen ? 'score-with-rail' : ''}>
-    {!hasProjectPlan && canUseScenarios && !effectiveIsViewer && (
-      <aside className="jas-summary-guidance-callout" aria-live="polite">
-        <div className="jas-summary-guidance-copy">
-          <strong>Before creating your plan:</strong>
-          <span>Model scenarios to optimize your approach, then set one active for project generation.</span>
-        </div>
-        <button
-          type="button"
-          className="save-starter-btn"
-          onClick={() => {
-            setActiveTab('scenario');
-            setView('scenario');
-            if (sessionId || analysisResult?.analysis_id) {
-              const tid = sessionId || analysisResult?.analysis_id;
-              void refreshBundle(tid);
-            }
-          }}
-        >
-          Open Scenarios
-        </button>
-      </aside>
-    )}
-    <ErrorBoundary title="Scorecard unavailable" onRetry={() => sessionId && refreshBundle(sessionId)}>
-      <ScoreDashboard
-        analysisResult={activeScorecard}
-        loading={bundleLoading && !activeScorecard}
-        drawerOpen={aiDrawerOpen}
-        onEditField={handleScoreCardFieldEdit}
-        editEnabled
-
-        scoreVariants={scoreVariants}
-        selectedVariantId={selectedVariantId}
-        onSelectVariant={setSelectedVariantId}
-
-        scorecardSnapshots={scorecardSnapshots}
-        selectedScorecardId={effectiveSelectedScorecardId}
-        onSelectScorecard={handleSnapshotSelect}
-        baselineScorecardId={baselineScorecardId}
-        threadBundleId={sessionId}
-        scoreCommentary={scoreCommentary}
-        onOpenThreadEdit={() => setThreadEditOpen(true)}
-        canExportScorecardPdf={canExportScorecardPdf}
-        canExportScorecardPptx={canExportScorecardPptx}
-        canExportWbsCsv={canExportWbsCsv}
-        canExportConversationPdf={canExportConversationPdf}
-        canExportConversationMarkdown={canExportConversationMarkdown}
-        exportBusyType={exportBusyType}
-        onExportScorecardPdf={handleExportScorecardPdf}
-        onExportScorecardPptx={handleExportScorecardPptx}
-        onExportWbsCsv={handleExportWbsCsv}
-        onExportConversationPdf={handleExportConversationPdf}
-        onExportConversationMarkdown={handleExportConversationMarkdown}
-        canUndoManualEdits={canUndoScorecardManualEdit}
-        canRedoManualEdits={canRedoScorecardManualEdit}
-        onUndoManualEdit={undoScorecardManualEdit}
-        onRedoManualEdit={redoScorecardManualEdit}
-        manualEditHistoryBusy={scorecardEditHistoryBusy}
-
-        onBackToMain={handleNewAnalysis}
-        onOpenScenario={() => { setActiveTab('scenario'); setView('scenario'); }}
-      />
-    </ErrorBoundary>
-  </div>
-)}
+{/* Score dashboard removed — scorecard renders inline in the conversation thread */}
 
             {activeTab === 'scenario' && (
               <>
@@ -10146,7 +10074,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
 	                    baseAnalysis={analysisResult}
 	                    scenarios={savedScenarios}
 	                    onBackToScenario={() => { setView('scenario'); }}
-	                    onBackToSummary={() => { setActiveTab('summary'); setView('summary'); }}
+	                    onBackToSummary={() => { setActiveTab('summary'); setView('intake'); }}
 	                    onAdopt={handleScenarioAdopt}
 	                  />
 	                ) : (
@@ -10168,7 +10096,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                       }}
                       onScenarioSaved={handleScenarioSaved}
                       onAdoptScenario={handleScenarioAdopt}
-                      onBackToSummary={() => { setActiveTab('summary'); setView('summary'); }}
+                      onBackToSummary={() => { setActiveTab('summary'); setView('intake'); }}
                       onCompare={handleCompareScenarios}
                       onResultA={(res) => { setResultA(res); }}
                       onResultB={(res) => { setResultB(res); }}
@@ -10206,8 +10134,9 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
   // ======== RENDERS ========
   // =========================
 
-  // If we have an analysis, render the workspace with tabs (post-Analyze)
-  if (analysisResult && view !== 'intake') {
+  // Score dashboard removed — scorecard lives inline in the conversation thread.
+  // Scenarios shell still available when explicitly on scenario tab.
+  if (analysisResult && activeTab === 'scenario') {
     return renderWorkspaceShell();
   }
 
