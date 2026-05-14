@@ -593,13 +593,18 @@
   font-weight: 600;
   color: var(--navy);
 }
+/* Always-visible confidence card — never stretches */
+.jas-insights-confidence {
+  flex-shrink: 0;
+  padding: 14px 14px 0;
+}
 .jas-insights-body {
   flex: 1;
   overflow-y: auto;
-  padding: 16px 20px;
+  padding: 12px 14px 16px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 .jas-insights-card {
   background: var(--white);

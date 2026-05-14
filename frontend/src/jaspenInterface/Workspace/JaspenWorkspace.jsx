@@ -10297,33 +10297,14 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
         </div>
       </aside>
 
-      {/* Row 1: Title bar — logo · project title · notifications · credits */}
+      {/* Row 1: Title bar — session title · notifications · credits */}
       <div className="jas-titlebar">
-        <div className="jas-titlebar-left">
-          <button
-            type="button"
-            className="jas-topbar-title jas-topbar-link"
-            onClick={() => window.location.reload()}
-            title="Refresh"
-          >
-            Jaspen
-          </button>
-          {canStartOrgProjects && (
-            <button
-              className="jas-topbar-new"
-              onClick={() => handleNewAnalysis(true)}
-              title="New Session"
-              aria-label="New Session"
-            >
-              <FontAwesomeIcon icon={faPlus} />
-            </button>
-          )}
-        </div>
+        <div className="jas-titlebar-left" />
 
         {sessionId && (
           <div className="jas-titlebar-center">
             <span className="jas-project-title">
-              {analysisResult?.project_name || deriveIdeaTitle({ messages, fallback: '' }) || 'New Session'}
+              {deriveIdeaTitle({ messages, fallback: '' })}
             </span>
           </div>
         )}
@@ -10361,6 +10342,25 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       {/* Row 2: Stage pills + objective */}
       <div className="jas-context-bar">
         <div className="jas-context-left">
+          <button
+            type="button"
+            className="jas-topbar-title jas-topbar-link"
+            onClick={() => window.location.reload()}
+            title="Refresh"
+          >
+            Jaspen
+          </button>
+          {canStartOrgProjects && (
+            <button
+              className="jas-topbar-new"
+              onClick={() => handleNewAnalysis(true)}
+              title="New Session"
+              aria-label="New Session"
+            >
+              <FontAwesomeIcon icon={faPlus} />
+            </button>
+          )}
+          <div className="jas-context-divider" aria-hidden="true" />
           <div className="jas-context-stages">
             {(() => {
               // Only the CURRENT stage is highlighted
@@ -10891,12 +10891,37 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               <span className="jas-insights-title">Jaspen Insights</span>
             </div>
 
-            {/* ── Confidence bar — always visible ── */}
-            <div className="jas-insights-body" style={{ paddingBottom: 0 }}>
-              {analysisResult ? (
+            {/* ── Top card — pill-aware: Discovery shows confidence %, others show score ── */}
+            <div className="jas-insights-confidence">
+              {activePill === 'discovery' || !analysisResult ? (
+                /* Discovery (or pre-score): always show confidence % */
+                canAnalyze ? (
+                  <div className="jas-insights-card jas-insights-card--action">
+                    <p className="jas-insights-eyebrow">Generating scorecard</p>
+                    <p className="jas-insights-headline">Jaspen is scoring your initiative.</p>
+                    <div className="jas-insights-readiness">
+                      <div className="jas-insights-readiness-bar">
+                        <div className="jas-insights-readiness-fill jas-readiness-fill--pulse" style={{ width: '100%' }} />
+                      </div>
+                      <span className="jas-insights-readiness-label">{Math.round(uiReadiness)}% confident</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="jas-insights-card">
+                    <p className="jas-insights-eyebrow">{sessionId ? 'Building confidence' : 'Getting started'}</p>
+                    <p className="jas-insights-headline">{sessionId ? 'Keep the conversation going.' : 'Describe your idea or initiative.'}</p>
+                    <div className="jas-insights-readiness">
+                      <div className="jas-insights-readiness-bar">
+                        <div className="jas-insights-readiness-fill" style={{ width: `${uiReadiness}%` }} />
+                      </div>
+                      <span className="jas-insights-readiness-label">{Math.round(uiReadiness)}% confident</span>
+                    </div>
+                  </div>
+                )
+              ) : (
+                /* Scoring / Trade-off / Execution: show the score */
                 <div className="jas-insights-card jas-insights-card--action">
                   <p className="jas-insights-eyebrow">Score</p>
-                  <p className="jas-insights-headline">{analysisResult.project_name || 'Your initiative'}</p>
                   <div className="jas-insights-readiness">
                     <div className="jas-insights-readiness-bar">
                       <div className="jas-insights-readiness-fill" style={{ width: '100%', background: analysisResult.jaspen_score >= 80 ? '#16a34a' : analysisResult.jaspen_score >= 60 ? '#2563eb' : analysisResult.jaspen_score >= 40 ? '#d97706' : '#dc2626' }} />
@@ -10904,28 +10929,6 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                     <span className="jas-insights-readiness-label" style={{ color: analysisResult.jaspen_score >= 80 ? '#16a34a' : analysisResult.jaspen_score >= 60 ? '#2563eb' : analysisResult.jaspen_score >= 40 ? '#d97706' : '#dc2626' }}>
                       {analysisResult.jaspen_score} / 100
                     </span>
-                  </div>
-                </div>
-              ) : canAnalyze ? (
-                <div className="jas-insights-card jas-insights-card--action">
-                  <p className="jas-insights-eyebrow">Generating scorecard</p>
-                  <p className="jas-insights-headline">Jaspen is scoring your initiative.</p>
-                  <div className="jas-insights-readiness">
-                    <div className="jas-insights-readiness-bar">
-                      <div className="jas-insights-readiness-fill jas-readiness-fill--pulse" style={{ width: '100%' }} />
-                    </div>
-                    <span className="jas-insights-readiness-label">{Math.round(uiReadiness)}% confident</span>
-                  </div>
-                </div>
-              ) : (
-                <div className="jas-insights-card">
-                  <p className="jas-insights-eyebrow">{sessionId ? 'Building confidence' : 'Getting started'}</p>
-                  <p className="jas-insights-headline">{sessionId ? 'Keep the conversation going.' : 'Describe your idea or initiative.'}</p>
-                  <div className="jas-insights-readiness">
-                    <div className="jas-insights-readiness-bar">
-                      <div className="jas-insights-readiness-fill" style={{ width: `${uiReadiness}%` }} />
-                    </div>
-                    <span className="jas-insights-readiness-label">{Math.round(uiReadiness)}% confident</span>
                   </div>
                 </div>
               )}
