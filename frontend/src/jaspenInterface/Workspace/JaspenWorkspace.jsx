@@ -10405,6 +10405,29 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
         </div>
       </div>
 
+      {/* Context sub-bar: stage progress + intent pill */}
+      <div className="jas-context-bar">
+        <div className="jas-context-stages">
+          {[
+            { label: 'Discovery', active: !sessionId || messages.length === 0 },
+            { label: 'Scoring',   active: Boolean(sessionId) && messages.length > 0 },
+            { label: 'Scenarios', active: false },
+            { label: 'Execution', active: false },
+          ].map((stage, i, arr) => (
+            <React.Fragment key={stage.label}>
+              <span className={`jas-stage-pill${stage.active ? ' active' : ''}`}>{stage.label}</span>
+              {i < arr.length - 1 && <span className="jas-stage-sep" aria-hidden="true">›</span>}
+            </React.Fragment>
+          ))}
+        </div>
+        {(objectiveExplicitlySet || sessionId) && (
+          <div className="jas-context-pills">
+            <span className="jas-context-label">Intent</span>
+            <span className="jas-context-pill">{OBJECTIVE_LABEL_BY_KEY[strategyObjective] || 'Balanced'}</span>
+          </div>
+        )}
+      </div>
+
       {renderNotificationsModal()}
       {renderNameModal()}
       {renderBillingModal()}
@@ -10563,7 +10586,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       )}
 
       {/* Content */}
-      <div id="jas-main-content" className="jas-chat-content">
+      <div id="jas-main-content" className={`jas-chat-content${messages.length > 0 ? ' has-insights-panel' : ''}`}>
         {showSharedProjectsLanding ? (
           <div className="jas-shared-projects-landing">
             <h2>Shared Projects</h2>
@@ -10885,6 +10908,61 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
         </div>
       )}
         </div>
+
+        {/* Jaspen Insights Panel */}
+        {messages.length > 0 && (
+          <aside className="jas-insights-panel" aria-label="Jaspen Insights">
+            <div className="jas-insights-header">
+              <span className="jas-insights-dot" aria-hidden="true" />
+              <span className="jas-insights-title">Jaspen Insights</span>
+            </div>
+            <div className="jas-insights-body">
+              {canAnalyze ? (
+                <div className="jas-insights-card jas-insights-card--action">
+                  <p className="jas-insights-eyebrow">Now might be a good time</p>
+                  <p className="jas-insights-headline">You&apos;re ready to score this idea.</p>
+                  <p className="jas-insights-sub">Hit &ldquo;Finish &amp; Analyze&rdquo; to generate your scorecard and unlock scenario modeling.</p>
+                  <button
+                    className="jas-insights-cta"
+                    onClick={onFinishAnalyze}
+                    disabled={busy || effectiveIsViewer}
+                    aria-disabled={busy || effectiveIsViewer}
+                  >
+                    Generate scorecard →
+                  </button>
+                </div>
+              ) : sessionId ? (
+                <div className="jas-insights-card">
+                  <p className="jas-insights-eyebrow">In progress</p>
+                  <p className="jas-insights-headline">Keep the conversation going.</p>
+                  <p className="jas-insights-sub">Answer Jaspen&apos;s questions to build a richer picture before scoring.</p>
+                  <div className="jas-insights-readiness">
+                    <div className="jas-insights-readiness-bar">
+                      <div className="jas-insights-readiness-fill" style={{ width: `${uiReadiness}%` }} />
+                    </div>
+                    <span className="jas-insights-readiness-label">{Math.round(uiReadiness)}% ready</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="jas-insights-card">
+                  <p className="jas-insights-eyebrow">Getting started</p>
+                  <p className="jas-insights-headline">Describe your idea clearly.</p>
+                  <p className="jas-insights-sub">Be specific — &ldquo;Launch B2B SaaS for logistics&rdquo; gives Jaspen more to work with than &ldquo;build a startup&rdquo;.</p>
+                </div>
+              )}
+
+              <div className="jas-insights-tips">
+                <p className="jas-insights-tips-label">Tips</p>
+                {WORKSPACE_TIPS.slice(1, 4).map((tip) => (
+                  <div key={tip.id} className="jas-insights-tip">
+                    <p className="jas-insights-tip-title">{tip.title}</p>
+                    <p className="jas-insights-tip-body">{tip.body}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </aside>
+        )}
       </main>
 
       {/* Fixed bottom-right tips carousel */}
