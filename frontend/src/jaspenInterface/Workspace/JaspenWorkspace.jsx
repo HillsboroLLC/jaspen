@@ -955,7 +955,13 @@ function deriveIdeaTitle({ result = null, messages = [], fallback = 'Untitled Id
     .find((m) => m?.role === 'user' && String(m?.text || '').trim().length > 0);
 
   if (firstUserIdea?.text) {
-    return String(firstUserIdea.text).trim().slice(0, 72);
+    let raw = String(firstUserIdea.text).trim();
+    // Strip common goal/intent prefixes so the title is the idea itself
+    raw = raw.replace(/^(goal\s*[:–-]\s*|my goal\s+(is\s+)?[:–-]?\s*|i want to\s+|we want to\s+|we('re| are) (building|launching|creating)\s+|idea\s*[:–-]\s*)/i, '');
+    // Use first sentence or first 48 chars, whichever is shorter
+    const firstSentence = raw.split(/[.!?\n]/)[0].trim();
+    const truncated = firstSentence.length > 0 ? firstSentence : raw;
+    return truncated.length > 48 ? truncated.slice(0, 46).trimEnd() + '…' : truncated;
   }
 
   return fallback;
@@ -1417,6 +1423,7 @@ export default function JaspenWorkspace() {
   const [scorecardGenerating, setScorecardGenerating] = useState(false);
   // Tracks which stage pill's content the sidebar is showing
   const [activePill, setActivePill] = useState('discovery');
+  const [artifactsOpen, setArtifactsOpen] = useState(false);
   // Scenario results kept at the Workspace level (so Score tab can switch)
 const [resultA, setResultA] = useState(null);
 const [resultB, setResultB] = useState(null);
@@ -1910,8 +1917,15 @@ const refreshBundle = async (tid, { fallbackTid } = {}) => {
         content: m?.content || m?.text || m?.message || '',
       }))
     );
-    if ((messages?.length || 0) === 0 && bundleMessages.length > 0) {
-      setMessages(bundleMessages);
+    // Use functional form so we read actual current state, not stale closure value.
+    // Never overwrite if messages already has content (e.g. scorecard card was injected).
+    if (bundleMessages.length > 0) {
+      setMessages(prev => {
+        const hasCard = prev.some(m => m?.artifact?.type === 'scorecard');
+        if (prev.length > 0 && !hasCard) return prev; // already populated, keep it
+        if (hasCard) return prev;                       // card is there, don't clobber
+        return bundleMessages;
+      });
     }
   } catch (e) {
     showToast(e?.message || 'We could not refresh this thread right now.', 'error', {
@@ -2003,7 +2017,7 @@ const normalizeMutationResults = (payload) => {
 const renderScorecardCard = (result) => {
   const score = Number(result?.jaspen_score || 0);
   const category = score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : score >= 40 ? 'Fair' : 'At Risk';
-  const ringColor = score >= 80 ? '#16a34a' : score >= 60 ? '#2563eb' : score >= 40 ? '#d97706' : '#dc2626';
+  const ringColor = '#a0036c';
   const circumference = 2 * Math.PI * 36;
   const offset = circumference - (score / 100) * circumference;
   const dims = result?.dimensions || {};
@@ -5209,6 +5223,18 @@ useEffect(() => {
   if (analysisResult) setActivePill('scoring');
 }, [analysisResult]); // eslint-disable-line react-hooks/exhaustive-deps
 
+// Derive display messages: always append the scorecard card when analysisResult is set
+// and not already in the thread. This avoids timing/closure bugs with useEffect.
+const displayMessages = useMemo(() => {
+  if (!analysisResult || messages.length === 0) return messages;
+  const hasCard = messages.some((m) => m?.artifact?.type === 'scorecard');
+  if (hasCard) return messages;
+  return [
+    ...messages,
+    { id: 'scorecard-card', role: 'ai', text: '', artifact: { type: 'scorecard', data: analysisResult } },
+  ];
+}, [analysisResult, messages]); // eslint-disable-line react-hooks/exhaustive-deps
+
 const readinessChecklistItems = useMemo(() => {
   const items = Array.isArray(readinessAudit?.items) ? readinessAudit.items : [];
   if (items.length > 0) {
@@ -6928,11 +6954,7 @@ const handleSaveStarter = async () => {
       setBaselineScorecardId(sid);
       baselineRef.current = result._baseline_scorecard;
 
-      // Inject scorecard card inline in the conversation thread
-      setMessages(prev => [
-        ...prev,
-        { id: `scorecard-${Date.now()}`, role: 'ai', text: '', artifact: { type: 'scorecard', data: result } },
-      ]);
+      // displayMessages memo will render the card automatically once analysisResult is set
 
       // Background refresh — don't block the UI
       setTimeout(() => { void refreshBundle(sid); void fetchSessions(); }, 0);
@@ -10146,7 +10168,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
   if (hasHistory && !sidebarState.history) intakeTabs.push('history');
   // readiness tab removed — info lives in Jaspen Insights panel
   const intakeSideTabBase = 128;
-  const intakeSideTabGap = 100;
+  const intakeSideTabGap = 46;
   const intakeTabTop = (key) => {
     const idx = intakeTabs.indexOf(key);
     return `${intakeSideTabBase + idx * intakeSideTabGap}px`;
@@ -10360,25 +10382,68 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
             </button>
           )}
           <div className="jas-context-divider" aria-hidden="true" />
+
+          {/* Artifacts button — left of Discovery */}
+          {sessionId && (
+            <div className="jas-artifacts-wrap">
+              <button
+                className={`jas-artifacts-btn${artifactsOpen ? ' open' : ''}`}
+                onClick={() => setArtifactsOpen(o => !o)}
+                title="Session artifacts"
+                aria-label="Toggle session artifacts"
+              >
+                <FontAwesomeIcon icon={faLayerGroup} />
+              </button>
+              {artifactsOpen && (
+                <div className="jas-artifacts-dropdown" role="menu">
+                  <p className="jas-artifacts-label">Session Artifacts</p>
+                  {analysisResult && (
+                    <button className="jas-artifact-item" onClick={() => { setActivePill('scoring'); setArtifactsOpen(false); }}>
+                      <FontAwesomeIcon icon={faGaugeHigh} />
+                      <span>Scorecard · {analysisResult.jaspen_score}/100</span>
+                    </button>
+                  )}
+                  {Array.isArray(savedScenarios) && savedScenarios.length > 0 && (
+                    <button className="jas-artifact-item" onClick={() => { setActivePill('scenarios'); setActiveTab('scenario'); setArtifactsOpen(false); }}>
+                      <FontAwesomeIcon icon={faArrowRightArrowLeft} />
+                      <span>Scenarios · {savedScenarios.length}</span>
+                    </button>
+                  )}
+                  {Array.isArray(threadWbs?.tasks) && threadWbs.tasks.length > 0 && (
+                    <button className="jas-artifact-item" onClick={() => { setActivePill('execution'); setActiveTab('wbs'); setArtifactsOpen(false); }}>
+                      <FontAwesomeIcon icon={faListCheck} />
+                      <span>Execution Plan · {threadWbs.tasks.length} tasks</span>
+                    </button>
+                  )}
+                  {!analysisResult && <p className="jas-artifacts-empty">No artifacts yet</p>}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="jas-context-stages">
             {(() => {
               // Only the CURRENT stage is highlighted
               const currentStage = !analysisResult ? 'discovery'
                 : activeTab === 'wbs' ? 'execution'
-                : activeTab === 'scenario' ? 'tradeoff'
+                : activeTab === 'scenario' ? 'scenarios'
+                : activePill === 'scenarios' ? 'scenarios'
                 : 'scoring';
+              const canScenarios = Boolean(analysisResult);
               const canTradeoff = Boolean(analysisResult && scorecardSnapshots?.length > 1);
               const stages = [
-                { key: 'discovery', label: 'Discovery',  disabled: false },
-                { key: 'scoring',   label: 'Scoring',    disabled: !analysisResult },
-                { key: 'tradeoff',  label: 'Trade-off',  disabled: !canTradeoff },
-                { key: 'execution', label: 'Execution',  disabled: !(Array.isArray(threadWbs?.tasks) && threadWbs.tasks.length > 0) },
+                { key: 'discovery',  label: 'Discovery',  disabled: false },
+                { key: 'scoring',    label: 'Scoring',    disabled: !analysisResult },
+                { key: 'scenarios',  label: 'Scenarios',  disabled: !canScenarios },
+                { key: 'tradeoff',   label: 'Trade-off',  disabled: !canTradeoff },
+                { key: 'execution',  label: 'Execution',  disabled: !(Array.isArray(threadWbs?.tasks) && threadWbs.tasks.length > 0) },
               ];
               const handlePillClick = (key, disabled) => {
                 if (disabled) return;
                 setActivePill(key);
                 if (key === 'discovery') { setActiveTab('summary'); }
                 else if (key === 'scoring') { setActiveTab('summary'); }
+                else if (key === 'scenarios') { setActiveTab('scenario'); }
                 else if (key === 'tradeoff') { setActiveTab('scenario'); }
                 else if (key === 'execution') { setActiveTab('wbs'); }
               };
@@ -10691,11 +10756,11 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                 </div>
               )}
 
-	              {messages.map((m, idx) => (
-	                <div key={idx} className={`jas-message ${m.role === 'ai' ? 'ai' : 'user'}`}>
+	              {displayMessages.map((m, idx) => (
+	                <div key={m.id || idx} className={`jas-message ${m.role === 'ai' ? 'ai' : 'user'}`}>
 	                  <div className="jas-message-bubble">{renderConversationMessage(m)}</div>
 	                  {renderMessageAttachments(m)}
-	                  {renderMessageActions(m, `main:${idx}`, idx, messages.length)}
+	                  {renderMessageActions(m, `main:${idx}`, idx, displayMessages.length)}
 	                </div>
 	              ))}
 
@@ -10895,39 +10960,35 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               {activePill === 'discovery' || !analysisResult ? (
                 /* Discovery (or pre-score): always show confidence % */
                 canAnalyze ? (
-                  <div className="jas-insights-card jas-insights-card--action">
-                    <p className="jas-insights-eyebrow">Generating scorecard</p>
-                    <p className="jas-insights-headline">Jaspen is scoring your initiative.</p>
+                  <div className="jas-insights-score-flat">
+                    <span className="jas-insights-score-flat-label">Generating…</span>
                     <div className="jas-insights-readiness">
                       <div className="jas-insights-readiness-bar">
-                        <div className="jas-insights-readiness-fill jas-readiness-fill--pulse" style={{ width: '100%' }} />
+                        <div className="jas-insights-readiness-fill jas-readiness-fill--pulse" style={{ width: '100%', background: '#161f3b' }} />
                       </div>
-                      <span className="jas-insights-readiness-label">{Math.round(uiReadiness)}% confident</span>
+                      <span className="jas-insights-score-flat-val">{Math.round(uiReadiness)}% confident</span>
                     </div>
                   </div>
                 ) : (
-                  <div className="jas-insights-card">
-                    <p className="jas-insights-eyebrow">{sessionId ? 'Building confidence' : 'Getting started'}</p>
-                    <p className="jas-insights-headline">{sessionId ? 'Keep the conversation going.' : 'Describe your idea or initiative.'}</p>
+                  <div className="jas-insights-score-flat">
+                    <span className="jas-insights-score-flat-label">{sessionId ? 'Confidence' : 'Getting started'}</span>
                     <div className="jas-insights-readiness">
                       <div className="jas-insights-readiness-bar">
-                        <div className="jas-insights-readiness-fill" style={{ width: `${uiReadiness}%` }} />
+                        <div className="jas-insights-readiness-fill" style={{ width: `${uiReadiness}%`, background: '#161f3b' }} />
                       </div>
-                      <span className="jas-insights-readiness-label">{Math.round(uiReadiness)}% confident</span>
+                      <span className="jas-insights-score-flat-val">{Math.round(uiReadiness)}%</span>
                     </div>
                   </div>
                 )
               ) : (
                 /* Scoring / Trade-off / Execution: show the score */
-                <div className="jas-insights-card jas-insights-card--action">
-                  <p className="jas-insights-eyebrow">Score</p>
+                <div className="jas-insights-score-flat">
+                  <span className="jas-insights-score-flat-label">Score</span>
                   <div className="jas-insights-readiness">
                     <div className="jas-insights-readiness-bar">
-                      <div className="jas-insights-readiness-fill" style={{ width: '100%', background: analysisResult.jaspen_score >= 80 ? '#16a34a' : analysisResult.jaspen_score >= 60 ? '#2563eb' : analysisResult.jaspen_score >= 40 ? '#d97706' : '#dc2626' }} />
+                      <div className="jas-insights-readiness-fill" style={{ width: `${analysisResult.jaspen_score}%`, background: '#161f3b' }} />
                     </div>
-                    <span className="jas-insights-readiness-label" style={{ color: analysisResult.jaspen_score >= 80 ? '#16a34a' : analysisResult.jaspen_score >= 60 ? '#2563eb' : analysisResult.jaspen_score >= 40 ? '#d97706' : '#dc2626' }}>
-                      {analysisResult.jaspen_score} / 100
-                    </span>
+                    <span className="jas-insights-score-flat-val">{analysisResult.jaspen_score} / 100</span>
                   </div>
                 </div>
               )}
@@ -10974,17 +11035,19 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               )}
 
               {/* Trade-off: scenario list */}
-              {activePill === 'tradeoff' && analysisResult && scorecardSnapshots?.length > 1 && (
+              {(activePill === 'scenarios' || activePill === 'tradeoff') && analysisResult && (
                 <div>
                   <p className="jas-insights-tips-label" style={{ marginBottom: 8 }}>Scenarios</p>
-                  {scorecardSnapshots.map((snap, i) => (
-                    <div key={snap.id || i} style={{ padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                        <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--navy)' }}>{snap.label || `Scenario ${i+1}`}</span>
-                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--gray-600)' }}>{snap.jaspen_score ?? snap.score ?? '—'}/100</span>
-                      </div>
+                  {scorecardSnapshots?.length > 0 ? scorecardSnapshots.map((snap, i) => (
+                    <div key={snap.id || i} className="jas-insights-scenario-row">
+                      <span className="jas-insights-scenario-label">{snap.label || `Scenario ${i+1}`}</span>
+                      <span className="jas-insights-scenario-score">{snap.jaspen_score ?? snap.score ?? '—'}<span style={{ fontWeight: 400, color: 'var(--gray-400)' }}>/100</span></span>
                     </div>
-                  ))}
+                  )) : (
+                    <p style={{ fontSize: '0.75rem', color: 'var(--gray-500)', fontStyle: 'italic' }}>
+                      Ask Jaspen to model a scenario to compare options.
+                    </p>
+                  )}
                 </div>
               )}
 

@@ -598,6 +598,108 @@
   flex-shrink: 0;
   padding: 14px 14px 0;
 }
+
+/* ── Flat score / confidence block (replaces beveled card) ── */
+.jas-insights-score-flat {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.jas-insights-score-flat-label {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: #161f3b;
+}
+.jas-insights-score-flat-val {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #161f3b;
+  white-space: nowrap;
+}
+/* Override readiness bar fill to navy inside score-flat */
+.jas-insights-score-flat .jas-insights-readiness-bar {
+  background: rgba(22,31,59,0.12);
+}
+
+/* ── Artifacts button + dropdown ── */
+.jas-artifacts-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.jas-artifacts-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--gray-500);
+  cursor: pointer;
+  font-size: 0.72rem;
+  transition: background var(--transition), color var(--transition), border-color var(--transition);
+  margin-right: 6px;
+}
+.jas-artifacts-btn:hover,
+.jas-artifacts-btn.open {
+  background: var(--gray-100);
+  color: var(--navy);
+  border-color: var(--gray-400);
+}
+.jas-artifacts-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 200px;
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.10);
+  padding: 8px 6px;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.jas-artifacts-label {
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--gray-400);
+  padding: 2px 8px 6px;
+}
+.jas-artifact-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--navy);
+  transition: background var(--transition);
+  width: 100%;
+}
+.jas-artifact-item:hover { background: var(--gray-50); }
+.jas-artifact-item svg { color: var(--gray-500); font-size: 0.72rem; flex-shrink: 0; }
+.jas-artifacts-empty {
+  font-size: 0.75rem;
+  color: var(--gray-400);
+  padding: 4px 10px;
+  font-style: italic;
+}
 .jas-insights-body {
   flex: 1;
   overflow-y: auto;
@@ -1017,6 +1119,25 @@
 
 /* ── Sidebar scoring insights ──────────────────────────────── */
 .jas-insights-dim-insights { display: flex; flex-direction: column; gap: 12px; }
+.jas-insights-scenario-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+}
+.jas-insights-scenario-row:last-child { border-bottom: none; }
+.jas-insights-scenario-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--navy);
+}
+.jas-insights-scenario-score {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--navy);
+}
 .jas-insights-dim-row {
   padding-bottom: 10px;
   border-bottom: 1px solid var(--border);
