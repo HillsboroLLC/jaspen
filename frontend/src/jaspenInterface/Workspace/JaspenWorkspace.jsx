@@ -5132,6 +5132,19 @@ const canAnalyze = React.useMemo(() => {
 return uiReadiness >= 85 && hasUserTurns;
 }, [uiReadiness, messages]);
 
+// Auto-trigger: fire triggerInlineScore the moment canAnalyze first becomes true.
+// This is the primary trigger — independent of SSE status flags.
+useEffect(() => {
+  if (canAnalyze && !analysisResult && !autoScoringTriggeredRef.current) {
+    autoScoringTriggeredRef.current = true;
+    const sid = currentSessionId || sessionId;
+    if (sid) {
+      console.log('[autoScore] canAnalyze → true, triggering inline score for', sid);
+      setTimeout(() => { void triggerInlineScore(sid); }, 800);
+    }
+  }
+}, [canAnalyze]); // eslint-disable-line react-hooks/exhaustive-deps
+
 const readinessChecklistItems = useMemo(() => {
   const items = Array.isArray(readinessAudit?.items) ? readinessAudit.items : [];
   if (items.length > 0) {
