@@ -2598,23 +2598,55 @@ useEffect(() => {
     if (Number.isFinite(monthly)) return Math.max(0, Math.round(monthly));
     return null;
   }, [creditsRemaining, monthlyCreditLimit]);
-  const intakeCreditsCompactLabel = useMemo(() => {
-    if (billingLoading) return '...';
+  // Percentage of thinking power REMAINING (0–100)
+  const creditsPctRemaining = useMemo(() => {
     const remainingNum = Number(creditsRemaining);
     const limitNum = Number(monthlyCreditLimit);
+    if (!Number.isFinite(remainingNum) || !Number.isFinite(limitNum) || limitNum <= 0) return null;
+    return Math.max(0, Math.min(100, (Math.max(0, remainingNum) / limitNum) * 100));
+  }, [creditsRemaining, monthlyCreditLimit]);
+
+  // Level drives color + visibility — based on % remaining
+  const creditsLevel = useMemo(() => {
+    if (creditsPctRemaining === null) return 'full';
+    if (creditsPctRemaining <= 0)  return 'empty';
+    if (creditsPctRemaining <= 10) return 'critical';
+    if (creditsPctRemaining <= 20) return 'warning';
+    if (creditsPctRemaining <= 50) return 'moderate';
+    return 'full';
+  }, [creditsPctRemaining]);
+
+  // Only show a text label when the user should start paying attention
+  const intakeCreditsCompactLabel = useMemo(() => {
+    if (billingLoading || creditsPctRemaining === null) return null;
+    if (creditsLevel === 'full') return null; // quiet when plenty remains
+    return `${Math.round(creditsPctRemaining)}%`;
+  }, [billingLoading, creditsPctRemaining, creditsLevel]);
+
+  // Tooltip: actual numbers + reset date
+  const creditsTitle = useMemo(() => {
+    const remainingNum = Number(creditsRemaining);
+    const limitNum = Number(monthlyCreditLimit);
+    const resetRaw = billingStatus?.cycle_reset_at;
+    const resetStr = resetRaw
+      ? new Date(resetRaw).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+      : null;
     if (!Number.isFinite(remainingNum) || !Number.isFinite(limitNum) || limitNum <= 0) {
-      return 'Usage';
+      return 'Thinking power is your monthly usage capacity.';
     }
-    const pct = Math.max(0, Math.round((Math.max(0, remainingNum) / limitNum) * 100));
-    return `${pct}%`;
-  }, [billingLoading, creditsRemaining, monthlyCreditLimit, intakeCreditsValue]);
+    const rem = Math.max(0, Math.round(remainingNum)).toLocaleString();
+    const lim = Math.round(limitNum).toLocaleString();
+    return resetStr
+      ? `${rem} of ${lim} thinking power remaining · Resets ${resetStr}`
+      : `${rem} of ${lim} thinking power remaining`;
+  }, [creditsRemaining, monthlyCreditLimit, billingStatus?.cycle_reset_at]);
+
+  // Keep creditsTone for legacy banner logic
   const creditsTone = useMemo(() => {
-    if (usageWarningLevel === 'blocked' || usageWarningLevel === 'exhausted') return 'critical';
-    if (usageWarningLevel === 'urgent' || usageWarningLevel === 'critical') return 'critical';
-    if (usageWarningLevel === 'warning') return 'warning';
+    if (creditsLevel === 'empty' || creditsLevel === 'critical') return 'critical';
+    if (creditsLevel === 'warning') return 'warning';
     return 'normal';
-  }, [usageWarningLevel]);
-  const creditsTitle = 'Thinking power is your monthly usage capacity. It resets each billing cycle.';
+  }, [creditsLevel]);
   const creditsBadge = creditsRemaining == null
     ? 'Contracted'
     : monthlyCreditLimit > 0
@@ -10330,13 +10362,13 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
           {showTopbarCredits && (
             <button
               type="button"
-              className={`jas-topbar-credits ${creditsTone === 'warning' ? 'is-warning' : ''} ${creditsTone === 'critical' ? 'is-critical' : ''}`.trim()}
+              className={`jas-topbar-credits jas-credits-${creditsLevel}${creditsLevel === 'critical' ? ' jas-credits-pulse' : ''}`}
               onClick={() => setBillingModalOpen(true)}
               title={creditsTitle}
               aria-label="View thinking power usage"
             >
               <FontAwesomeIcon icon={faBolt} />
-              <span>{intakeCreditsCompactLabel}</span>
+              {intakeCreditsCompactLabel && <span>{intakeCreditsCompactLabel}</span>}
             </button>
           )}
         </div>

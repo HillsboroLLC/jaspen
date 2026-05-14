@@ -122,6 +122,8 @@ def _usage_warning_fields(cycle_limit, tokens_used):
         level = "urgent"
     elif usage_percent >= 80.0:
         level = "warning"
+    elif usage_percent >= 50.0:
+        level = "moderate"
     else:
         level = "normal"
     return {"usage_percent": round(usage_percent, 2), "usage_warning_level": level}

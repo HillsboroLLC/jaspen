@@ -743,19 +743,79 @@
 
 .jas-topbar-bell,
 .jas-topbar-credits {
-  border: 1px solid var(--border);
-  background: var(--white);
-  color: var(--navy);
+  border: 1px solid transparent;
+  background: transparent;
   border-radius: 999px;
   height: 32px;
-  padding: 0 12px;
+  padding: 0 8px;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  font-size: 0.75rem;
+  gap: 6px;
+  font-size: 0.72rem;
   font-weight: 600;
   cursor: pointer;
   transition: all var(--transition);
+}
+
+/* Full (>50% remaining) — just a quiet bolt icon, no border or label */
+.jas-topbar-credits.jas-credits-full {
+  color: var(--gray-400);
+}
+.jas-topbar-credits.jas-credits-full:hover {
+  color: var(--gray-600);
+  background: var(--gray-100);
+}
+
+/* Moderate (20–50% remaining) — visible but calm */
+.jas-topbar-credits.jas-credits-moderate {
+  border-color: var(--border);
+  background: var(--white);
+  color: var(--gray-600);
+  padding: 0 12px;
+}
+.jas-topbar-credits.jas-credits-moderate:hover {
+  border-color: var(--gray-500);
+  background: var(--gray-50);
+}
+
+/* Warning (10–20% remaining) — amber */
+.jas-topbar-credits.jas-credits-warning {
+  border-color: #f59e0b;
+  background: #fff7e6;
+  color: #8a4b00;
+  padding: 0 12px;
+}
+.jas-topbar-credits.jas-credits-warning:hover {
+  border-color: #d97706;
+  background: #fef3c7;
+}
+
+/* Critical (<10% remaining) — orange with pulse */
+.jas-topbar-credits.jas-credits-critical {
+  border-color: #fd6b02;
+  background: #fff4ee;
+  color: #7c2d12;
+  padding: 0 12px;
+}
+.jas-topbar-credits.jas-credits-critical:hover {
+  border-color: #ea580c;
+  background: #ffedd5;
+}
+
+/* Empty — red, replace with upgrade nudge feel */
+.jas-topbar-credits.jas-credits-empty {
+  border-color: #dc2626;
+  background: #fef2f2;
+  color: #991b1b;
+  padding: 0 12px;
+}
+
+@keyframes jas-pulse-credits {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+.jas-credits-pulse {
+  animation: jas-pulse-credits 1.8s ease-in-out infinite;
 }
 
 .jas-topbar-bell {
@@ -765,22 +825,9 @@
   justify-content: center;
 }
 
-.jas-topbar-bell:hover,
-.jas-topbar-credits:hover {
+.jas-topbar-bell:hover {
   border-color: var(--gray-500);
   background: var(--gray-50);
-}
-
-.jas-topbar-credits.is-warning {
-  border-color: #f59e0b;
-  color: #8a4b00;
-  background: #fff7e6;
-}
-
-.jas-topbar-credits.is-critical {
-  border-color: #dc2626;
-  color: #991b1b;
-  background: #fef2f2;
 }
 
 .jas-topbar-bell-count {
