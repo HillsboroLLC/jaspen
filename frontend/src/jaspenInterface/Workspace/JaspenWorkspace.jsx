@@ -1415,6 +1415,8 @@ export default function JaspenWorkspace() {
 
   const [analysisResult, setAnalysisResult] = useState(null);
   const [scorecardGenerating, setScorecardGenerating] = useState(false);
+  // Tracks which stage pill's content the sidebar is showing
+  const [activePill, setActivePill] = useState('discovery');
   // Scenario results kept at the Workspace level (so Score tab can switch)
 const [resultA, setResultA] = useState(null);
 const [resultB, setResultB] = useState(null);
@@ -2006,7 +2008,6 @@ const renderScorecardCard = (result) => {
   const offset = circumference - (score / 100) * circumference;
   const dims = result?.dimensions || {};
 
-  // Primary 4 metrics shown in 2-col grid
   const primaryDims = [
     { key: 'strategic_alignment', label: 'Strategic fit',   isRisk: false },
     { key: 'financial_viability', label: 'Cost efficiency', isRisk: false },
@@ -2025,6 +2026,12 @@ const renderScorecardCard = (result) => {
     : (recs[0]?.text || recs[0]?.action || null)
     || (nextSteps[0] && typeof nextSteps[0] === 'string' ? nextSteps[0] : null);
   const title = result?.project_name || deriveIdeaTitle({ result, messages, fallback: 'Initiative' });
+
+  // Relative timestamp
+  const createdAt = result?._createdAt;
+  const timeAgo = createdAt
+    ? (() => { const m = Math.round((Date.now() - createdAt) / 60000); return m < 2 ? 'just now' : `${m} min ago`; })()
+    : null;
 
   const renderDimBar = ({ key, label, isRisk }) => {
     const dim = dims[key] || {};
@@ -2051,6 +2058,12 @@ const renderScorecardCard = (result) => {
 
   return (
     <div className="jas-scorecard-card">
+      {/* Eyebrow + timestamp */}
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14 }}>
+        <span className="jas-scorecard-eyebrow">Scorecard · Baseline</span>
+        {timeAgo && <span className="jas-scorecard-timestamp">v1 · {timeAgo}</span>}
+      </div>
+
       {/* Header: ring + title */}
       <div className="jas-scorecard-header">
         <svg className="jas-score-ring" viewBox="0 0 88 88" width="80" height="80">
@@ -2065,7 +2078,6 @@ const renderScorecardCard = (result) => {
         <div className="jas-scorecard-meta">
           <span className="jas-scorecard-category" style={{ color: ringColor }}>{category}</span>
           <span className="jas-scorecard-title">{title}</span>
-          <span className="jas-scorecard-subtitle">Jaspen Scorecard · Baseline</span>
         </div>
       </div>
 
@@ -2081,34 +2093,44 @@ const renderScorecardCard = (result) => {
         </div>
       )}
 
-      {/* Top Risks */}
-      {risks.length > 0 && (
-        <div className="jas-scorecard-risks">
-          <p className="jas-scorecard-risks-label">Top Risks</p>
-          {risks.slice(0, 3).map((r, i) => (
-            <p key={i} className="jas-scorecard-risk-item">
-              · {typeof r === 'string' ? r : (r.risk || r.text || String(r))}
-            </p>
-          ))}
+      {/* Two-col bottom: Top Risks | Recommended */}
+      {(risks.length > 0 || recommendedScenario) && (
+        <div className="jas-scorecard-bottom-cols">
+          {risks.length > 0 && (
+            <div>
+              <p className="jas-scorecard-bottom-col-label">Top Risks</p>
+              {risks.slice(0, 3).map((r, i) => (
+                <p key={i} className="jas-scorecard-risk-item">
+                  · {typeof r === 'string' ? r : (r.risk || r.text || String(r))}
+                </p>
+              ))}
+            </div>
+          )}
+          {recommendedScenario && (
+            <div>
+              <p className="jas-scorecard-bottom-col-label">Recommended Scenario</p>
+              <p className="jas-scorecard-rec-text">+ {recommendedScenario}</p>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Recommended next step */}
-      {recommendedScenario && (
-        <div className="jas-scorecard-rec">
-          <p className="jas-scorecard-risks-label">Recommended Next Step</p>
-          <p className="jas-scorecard-rec-text">+ {recommendedScenario}</p>
-        </div>
-      )}
-
-      {/* Footer */}
+      {/* Footer: action buttons */}
       <div className="jas-scorecard-footer">
-        <button
-          className="jas-scorecard-action-btn"
-          onClick={() => setActiveTab('scenario')}
-        >
-          Open Scenarios
-        </button>
+        <div className="jas-scorecard-footer-actions">
+          <button className="jas-scorecard-action-ghost" title="Download scorecard">
+            ↓ Download
+          </button>
+          <button
+            className="jas-scorecard-action-btn"
+            onClick={() => setActiveTab('scenario')}
+          >
+            Open Scenarios
+          </button>
+          <button className="jas-scorecard-action-ghost" title="Share scorecard">
+            Share
+          </button>
+        </div>
         <span className="jas-scorecard-view-hint">Ask Jaspen about any dimension →</span>
       </div>
     </div>
@@ -5182,6 +5204,11 @@ useEffect(() => {
   }
 }, [canAnalyze]); // eslint-disable-line react-hooks/exhaustive-deps
 
+// Advance sidebar pill to 'scoring' the moment a scorecard lands
+useEffect(() => {
+  if (analysisResult) setActivePill('scoring');
+}, [analysisResult]); // eslint-disable-line react-hooks/exhaustive-deps
+
 const readinessChecklistItems = useMemo(() => {
   const items = Array.isArray(readinessAudit?.items) ? readinessAudit.items : [];
   if (items.length > 0) {
@@ -6885,6 +6912,7 @@ const handleSaveStarter = async () => {
         component_scores: raw.scores || raw.component_scores || {},
         project_name: raw.name || raw.project_name || deriveIdeaTitle({ messages, fallback: 'Untitled Idea' }),
         analysis_id: sid,
+        _createdAt: Date.now(),
       };
 
       if (!result._baseline_scorecard || typeof result._baseline_scorecard !== 'object') {
@@ -10269,9 +10297,9 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
         </div>
       </aside>
 
-      {/* Unified single-row top bar */}
-      <div className="jas-context-bar">
-        <div className="jas-context-left">
+      {/* Row 1: Title bar — logo · project title · notifications · credits */}
+      <div className="jas-titlebar">
+        <div className="jas-titlebar-left">
           <button
             type="button"
             className="jas-topbar-title jas-topbar-link"
@@ -10290,26 +10318,17 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               <FontAwesomeIcon icon={faPlus} />
             </button>
           )}
-          <div className="jas-context-divider" aria-hidden="true" />
-          <div className="jas-context-stages">
-            {[
-              { label: 'Discovery', active: Boolean(sessionId || messages.length > 0) },
-              { label: 'Scoring',   active: Boolean(analysisResult) },
-              { label: 'Scenarios', active: Boolean(analysisResult && scorecardSnapshots?.length > 1) },
-              { label: 'Execution', active: Boolean(analysisResult && activeTab === 'wbs') },
-            ].map((stage, i, arr) => (
-              <React.Fragment key={stage.label}>
-                <span className={`jas-stage-pill${stage.active ? ' active' : ''}`}>{stage.label}</span>
-                {i < arr.length - 1 && <span className="jas-stage-sep" aria-hidden="true">›</span>}
-              </React.Fragment>
-            ))}
-          </div>
         </div>
 
-        <div className="jas-context-right">
-          {(objectiveExplicitlySet || sessionId) && (
-            <span className="jas-context-pill">{OBJECTIVE_LABEL_BY_KEY[strategyObjective] || 'Balanced'}</span>
-          )}
+        {sessionId && (
+          <div className="jas-titlebar-center">
+            <span className="jas-project-title">
+              {analysisResult?.project_name || deriveIdeaTitle({ messages, fallback: '' }) || 'New Session'}
+            </span>
+          </div>
+        )}
+
+        <div className="jas-titlebar-right">
           {showIntakeTopbarUtilities && (
             <button
               type="button"
@@ -10335,6 +10354,55 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               <FontAwesomeIcon icon={faBolt} />
               {intakeCreditsCompactLabel && <span>{intakeCreditsCompactLabel}</span>}
             </button>
+          )}
+        </div>
+      </div>
+
+      {/* Row 2: Stage pills + objective */}
+      <div className="jas-context-bar">
+        <div className="jas-context-left">
+          <div className="jas-context-stages">
+            {(() => {
+              // Only the CURRENT stage is highlighted
+              const currentStage = !analysisResult ? 'discovery'
+                : activeTab === 'wbs' ? 'execution'
+                : activeTab === 'scenario' ? 'tradeoff'
+                : 'scoring';
+              const canTradeoff = Boolean(analysisResult && scorecardSnapshots?.length > 1);
+              const stages = [
+                { key: 'discovery', label: 'Discovery',  disabled: false },
+                { key: 'scoring',   label: 'Scoring',    disabled: !analysisResult },
+                { key: 'tradeoff',  label: 'Trade-off',  disabled: !canTradeoff },
+                { key: 'execution', label: 'Execution',  disabled: !analysisResult },
+              ];
+              const handlePillClick = (key, disabled) => {
+                if (disabled) return;
+                setActivePill(key);
+                if (key === 'discovery') { setActiveTab('summary'); }
+                else if (key === 'scoring') { setActiveTab('summary'); }
+                else if (key === 'tradeoff') { setActiveTab('scenario'); }
+                else if (key === 'execution') { setActiveTab('wbs'); }
+              };
+              return stages.map((stage, i, arr) => (
+                <React.Fragment key={stage.key}>
+                  <button
+                    className={`jas-stage-pill${currentStage === stage.key ? ' active' : ''}${stage.disabled ? ' disabled' : ''}`}
+                    onClick={() => handlePillClick(stage.key, stage.disabled)}
+                    disabled={stage.disabled}
+                    title={stage.disabled ? (stage.key === 'tradeoff' ? 'Available after scoring 2+ scenarios' : 'Score an initiative first') : undefined}
+                  >
+                    {stage.label}
+                  </button>
+                  {i < arr.length - 1 && <span className="jas-stage-sep" aria-hidden="true">›</span>}
+                </React.Fragment>
+              ));
+            })()}
+          </div>
+        </div>
+
+        <div className="jas-context-right">
+          {(objectiveExplicitlySet || sessionId) && (
+            <span className="jas-context-pill">{OBJECTIVE_LABEL_BY_KEY[strategyObjective] || 'Balanced'}</span>
           )}
         </div>
       </div>
@@ -10822,12 +10890,13 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               <span className="jas-insights-dot" aria-hidden="true" />
               <span className="jas-insights-title">Jaspen Insights</span>
             </div>
-            <div className="jas-insights-body">
+
+            {/* ── Confidence bar — always visible ── */}
+            <div className="jas-insights-body" style={{ paddingBottom: 0 }}>
               {analysisResult ? (
                 <div className="jas-insights-card jas-insights-card--action">
-                  <p className="jas-insights-eyebrow">Scorecard ready</p>
+                  <p className="jas-insights-eyebrow">Score</p>
                   <p className="jas-insights-headline">{analysisResult.project_name || 'Your initiative'}</p>
-                  <p className="jas-insights-sub">Ask Jaspen about any dimension to dig deeper.</p>
                   <div className="jas-insights-readiness">
                     <div className="jas-insights-readiness-bar">
                       <div className="jas-insights-readiness-fill" style={{ width: '100%', background: analysisResult.jaspen_score >= 80 ? '#16a34a' : analysisResult.jaspen_score >= 60 ? '#2563eb' : analysisResult.jaspen_score >= 40 ? '#d97706' : '#dc2626' }} />
@@ -10841,7 +10910,6 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                 <div className="jas-insights-card jas-insights-card--action">
                   <p className="jas-insights-eyebrow">Generating scorecard</p>
                   <p className="jas-insights-headline">Jaspen is scoring your initiative.</p>
-                  <p className="jas-insights-sub">Your scorecard will appear in the conversation shortly.</p>
                   <div className="jas-insights-readiness">
                     <div className="jas-insights-readiness-bar">
                       <div className="jas-insights-readiness-fill jas-readiness-fill--pulse" style={{ width: '100%' }} />
@@ -10849,11 +10917,10 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                     <span className="jas-insights-readiness-label">{Math.round(uiReadiness)}% confident</span>
                   </div>
                 </div>
-              ) : sessionId ? (
+              ) : (
                 <div className="jas-insights-card">
-                  <p className="jas-insights-eyebrow">Building confidence</p>
-                  <p className="jas-insights-headline">Keep the conversation going.</p>
-                  <p className="jas-insights-sub">Ask Jaspen &ldquo;what would make you more confident&rdquo; for specific suggestions.</p>
+                  <p className="jas-insights-eyebrow">{sessionId ? 'Building confidence' : 'Getting started'}</p>
+                  <p className="jas-insights-headline">{sessionId ? 'Keep the conversation going.' : 'Describe your idea or initiative.'}</p>
                   <div className="jas-insights-readiness">
                     <div className="jas-insights-readiness-bar">
                       <div className="jas-insights-readiness-fill" style={{ width: `${uiReadiness}%` }} />
@@ -10861,21 +10928,106 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                     <span className="jas-insights-readiness-label">{Math.round(uiReadiness)}% confident</span>
                   </div>
                 </div>
-              ) : (
-                <div className="jas-insights-card">
-                  <p className="jas-insights-eyebrow">Getting started</p>
-                  <p className="jas-insights-headline">Describe your idea or initiative.</p>
-                  <p className="jas-insights-sub">Be specific — Jaspen builds scoring confidence from every detail you share.</p>
-                </div>
               )}
+            </div>
 
-              {sessionId && (
+            {/* ── Pill tabs — switch sidebar context ── */}
+            {sessionId && (
+              <div className="jas-insights-pill-tabs">
+                {[
+                  { key: 'discovery', label: 'Discovery', disabled: false },
+                  { key: 'scoring',   label: 'Scoring',   disabled: !analysisResult },
+                  { key: 'tradeoff',  label: 'Trade-off', disabled: !(analysisResult && scorecardSnapshots?.length > 1) },
+                  { key: 'execution', label: 'Execution', disabled: !analysisResult },
+                ].map(t => (
+                  <button
+                    key={t.key}
+                    className={`jas-insights-pill-tab${activePill === t.key ? ' active' : ''}${t.disabled ? ' disabled' : ''}`}
+                    onClick={() => !t.disabled && setActivePill(t.key)}
+                    disabled={t.disabled}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* ── Dynamic content per pill ── */}
+            <div className="jas-insights-body">
+
+              {/* Discovery: What Jaspen knows checklist */}
+              {activePill === 'discovery' && sessionId && (
                 <div className="jas-insights-checklist">
                   <p className="jas-insights-tips-label">What Jaspen knows</p>
                   {renderReadinessChecklist()}
                 </div>
               )}
 
+              {/* Scoring: dimension rationales */}
+              {activePill === 'scoring' && analysisResult && (
+                <div className="jas-insights-dim-insights">
+                  <p className="jas-insights-tips-label" style={{ marginBottom: 8 }}>Dimension Insights</p>
+                  {[
+                    { key: 'strategic_alignment', label: 'Strategic Fit' },
+                    { key: 'financial_viability',  label: 'Cost Efficiency' },
+                    { key: 'execution_readiness',  label: 'Time-to-Value' },
+                    { key: 'risk_profile',          label: 'Execution Risk' },
+                    { key: 'market_opportunity',   label: 'Market Opportunity' },
+                    { key: 'evidence_quality',     label: 'Evidence Quality' },
+                  ].map(({ key, label }) => {
+                    const dim = (analysisResult.dimensions || {})[key];
+                    if (!dim?.rationale) return null;
+                    const s = Number(dim.score || 0);
+                    const color = s >= 80 ? '#16a34a' : s >= 60 ? '#2563eb' : s >= 40 ? '#d97706' : '#dc2626';
+                    return (
+                      <div key={key} className="jas-insights-dim-row">
+                        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                          <span className="jas-insights-dim-name">{label}</span>
+                          <span className="jas-insights-dim-score-badge" style={{ color }}>{(s/10).toFixed(1)}/10</span>
+                        </div>
+                        <p className="jas-insights-dim-rationale">{dim.rationale}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Trade-off: scenario list */}
+              {activePill === 'tradeoff' && analysisResult && scorecardSnapshots?.length > 1 && (
+                <div>
+                  <p className="jas-insights-tips-label" style={{ marginBottom: 8 }}>Scenarios</p>
+                  {scorecardSnapshots.map((snap, i) => (
+                    <div key={snap.id || i} style={{ padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                        <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--navy)' }}>{snap.label || `Scenario ${i+1}`}</span>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--gray-600)' }}>{snap.jaspen_score ?? snap.score ?? '—'}/100</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Execution: recommendations */}
+              {activePill === 'execution' && analysisResult && (
+                <div>
+                  <p className="jas-insights-tips-label" style={{ marginBottom: 8 }}>Recommendations</p>
+                  {(analysisResult.recommendations || analysisResult.next_steps || []).length > 0 ? (
+                    <div className="jas-insights-exec-recs">
+                      {(analysisResult.recommendations || analysisResult.next_steps || []).slice(0, 5).map((r, i) => (
+                        <p key={i} className="jas-insights-exec-rec">
+                          {typeof r === 'string' ? r : (r.text || r.action || String(r))}
+                        </p>
+                      ))}
+                    </div>
+                  ) : (
+                    <p style={{ fontSize: '0.75rem', color: 'var(--gray-500)', fontStyle: 'italic' }}>
+                      Score an initiative first, then ask Jaspen to build an execution plan.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* No session yet */}
               {!sessionId && (
                 <div className="jas-insights-tips">
                   <p className="jas-insights-tips-label">Tips</p>
