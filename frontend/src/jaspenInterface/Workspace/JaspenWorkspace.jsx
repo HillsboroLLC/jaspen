@@ -1409,10 +1409,7 @@ export default function JaspenWorkspace() {
   const [sessionsLoading, setSessionsLoading] = useState(true);
   const [messages, setMessages] = useState([]);
 
-  // Readiness core state - SINGLE SOURCE OF TRUTH
-  const [readinessAudit, setReadinessAudit] = useState(null); // ONLY source: GET /api/v1/readiness/audit (authoritative)
   const [collectedData, setCollectedData] = useState({});
-  const READINESS_CIRC = 2 * Math.PI * 52; // r=52 -> circumference ~326.7
 
   const [input, setInput] = useState('');
   const [pendingFiles, setPendingFiles] = useState([]);
@@ -1444,12 +1441,6 @@ export default function JaspenWorkspace() {
 const [resultA, setResultA] = useState(null);
 const [resultB, setResultB] = useState(null);
 const [resultC, setResultC] = useState(null);
-// Backend truth for macro categories + weights + version
-const [readinessSpec, setReadinessSpec] = useState(null);   // full spec payload
-const [specMap, setSpecMap] = useState({});                 // key -> {label, weight}
-const [readinessSource, setReadinessSource] = useState(null); // "ml" or "heuristic"
-const [readinessVersion, setReadinessVersion] = useState(null);
-
 const clearManualProgressStatus = useCallback(() => {
   if (manualProgressTimerRef.current) {
     window.clearInterval(manualProgressTimerRef.current);
@@ -1476,33 +1467,6 @@ const startManualProgressStatus = useCallback((steps = [], intervalMs = 2200) =>
   }
   return clearManualProgressStatus;
 }, [clearManualProgressStatus]);
-
-const applyPersistedReadinessSnapshot = useCallback((snapshot) => {
-  const normalized = normalizeReadiness(snapshot);
-  const hasMeaningfulReadiness = Boolean(
-    normalized.percent > 0 ||
-    normalized.categories.length > 0 ||
-    normalized.items.length > 0 ||
-    normalized.checklist_summary
-  );
-  if (!hasMeaningfulReadiness) return false;
-
-  setReadinessAudit({
-    overall: {
-      percent: normalized.percent,
-      source: 'persisted',
-      heur_overall: normalized.percent,
-    },
-    categories: normalized.categories,
-    items: normalized.items,
-    checklist_summary: normalized.checklist_summary,
-    version: normalized.version,
-    objective_profile: normalized.objective_profile,
-  });
-  setReadinessSource('persisted');
-  setReadinessVersion(normalized.version || readinessVersion || null);
-  return true;
-}, [readinessVersion]);
 
 // Variant selector (Baseline, Scenario A/B/C)
 const [scoreVariants, setScoreVariants] = useState([]);
@@ -4467,32 +4431,6 @@ const [initialRestorePending, setInitialRestorePending] = useState(() => Boolean
 // Sidebar Assistant uses the main `messages` thread as the single source of truth.
 // (No separate aiMessages state.)
 
-  // Fetch readiness spec on mount (ONCE) - single source, no duplicates
-  useEffect(() => {
-    const apiBase = API_BASE;
-    let abort = false;
-    (async () => {
-      try {
-        const res = await fetch(`${apiBase}/api/v1/ai-agent/readiness/spec`, { credentials: 'include' });
-        if (!res.ok) return;
-        const json = await res.json();
-        if (abort) return;
-
-        setReadinessSpec(json || null);
-        setReadinessVersion(json?.version || null);
-
-        const map = {};
-        for (const c of (json?.categories || [])) {
-          map[c.key] = { label: c.label || c.key, weight: c.weight ?? null };
-        }
-        setSpecMap(map);
-      } catch (e) {
-        console.error('[fetchReadinessSpec] failed', e);
-      }
-    })();
-    return () => { abort = true; };
-  }, []);
-  
   useEffect(() => {
     fetchSessions();
   }, []);
@@ -4928,8 +4866,6 @@ useEffect(() => {
 
   // Autoscroll
   const endRef = useRef(null);
-  // Skip exactly one server readiness ping (used right after restoring a session)
-  const skipPingRef = useRef(false);
   // Auto-restore previous session on refresh (URL sid > localStorage sid)
   const didAutoRestoreRef = useRef(false);
   // (moved above to avoid TDZ / ReferenceError)
@@ -4961,7 +4897,6 @@ useEffect(() => {
         setObjectiveExplicitlySet(false);
 // (removed) sidebar uses main `messages` as the thread source of truth
         setCollectedData({});
-        setReadinessAudit(null);
         setView('intake');
         setActiveTab('summary');
         dispatchSidebar({ type: 'CLOSE_ALL' });
@@ -4970,9 +4905,6 @@ useEffect(() => {
         return;
       }
       const sid = resolvedUrlSessionId;
-
-      // prevent readiness “snap” edge cases during restore
-      skipPingRef.current = true;
 
       let session = await loadSessionById(sid);
       let restoreBundle = null;
@@ -5043,7 +4975,6 @@ const rawHistory =
 if (rawHistory.length > 0) {
   setMessages(toUiMessages(rawHistory));
 }
-      applyPersistedReadinessSnapshot(session?.readiness || null);
       // Restore collected_data
       if (session.collected_data && typeof session.collected_data === 'object') {
         setCollectedData(session.collected_data);
@@ -5145,16 +5076,15 @@ if (rawHistory.length > 0) {
         setView('intake');
       }
 
-      // Always refresh readiness + scenarios from backend truth.
+      // Always refresh scenarios from backend truth.
       // Pass the analysis result's thread_id as a fallback in case restoredOwnerThreadId
       // is an orphan session (e.g. created by a hard-reload) that has no baseline stored.
-      fetchReadinessFor(restoredOwnerThreadId);
       refreshBundle(restoredOwnerThreadId, { fallbackTid: restoreBaseResult?.thread_id });
       setInitialRestorePending(false);
     })();
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allowedModelTypes, applyPersistedReadinessSnapshot]);
+  }, [allowedModelTypes]);
 
   const scrollToEnd = () => endRef.current?.scrollIntoView({ behavior: 'smooth' });
   useEffect(scrollToEnd, [messages, busy]);
@@ -5216,75 +5146,6 @@ if (rawHistory.length > 0) {
     return msgs.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.text }));
   }
 
-  // Fetch readiness snapshot (percent + categories) for a given session id
-  // RETURNS the audit payload for immediate use in persistence
-async function fetchReadinessFor(sid) {
-  if (!sid) {
-    devWarn('[fetchReadinessFor] ABORT - no sid provided');
-    return null;
-  }
-
-  try {
-    const apiBase = API_BASE;
-    const url = `${apiBase}/api/v1/ai-agent/readiness/audit?thread_id=${encodeURIComponent(sid)}`;
-
-    const res = await fetch(url, {
-      method: 'GET',
-      credentials: 'include',
-      headers: {
-        ...buildAuthHeaders({ 'Content-Type': 'application/json' }, 'GET'),
-        'X-Session-ID': sid,
-      },
-    });
-
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-    const auditPayload = await res.json();
-
-    const overall = {
-      percent: Number(auditPayload?.overall?.percent ?? auditPayload?.percent ?? 0),
-      source: auditPayload?.overall?.source ?? auditPayload?.source ?? null,
-      heur_overall: Number(auditPayload?.overall?.heur_overall ?? auditPayload?.heur_overall ?? 0),
-    };
-    const pct = Math.max(0, Math.min(100, Math.round(overall.percent || 0)));
-
-    const categories = Array.isArray(auditPayload?.categories) ? auditPayload.categories : [];
-    const items = Array.isArray(auditPayload?.items) ? auditPayload.items : [];
-    const checklist_summary = auditPayload?.checklist_summary && typeof auditPayload.checklist_summary === 'object'
-      ? auditPayload.checklist_summary
-      : null;
-    const version = auditPayload?.version || null;
-
-    const newAudit = { overall: { ...overall, percent: pct }, categories, items, checklist_summary, version };
-    setReadinessAudit(newAudit);
-    setReadinessSource(overall.source);
-    setReadinessVersion(version);
-    // NOTE: Do NOT map readiness categories into collectedData here. Only render from readinessAudit.categories.
-
-    return auditPayload; // Return for immediate use in persistence
-  } catch (e) {
-    console.error('[fetchReadinessFor] failed', e);
-    return null;
-  }
-}
-
-  // =================== READINESS FETCH ===================
-  // Always fetch readiness from backend when sessionId changes
-  useEffect(() => {
-    if (!sessionId) return;
-
-    // Skip exactly one readiness ping (used for brand-new sessions or restores)
-    if (skipPingRef.current) {
-      skipPingRef.current = false;
-      return;
-    }
-
-    // Always fetch from backend - no caching, no fallbacks
-    fetchReadinessFor(sessionId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId]);
-
-
   // Restore original chat + show score summary when returning to Discuss (intake)
   useEffect(() => {
     if (view !== 'intake') return;
@@ -5300,26 +5161,7 @@ async function fetchReadinessFor(sid) {
       setMessages(toUiMessages(hist));
     }
 
-    // Readiness is ONLY fetched from backend via fetchReadinessFor - no sync from saved data
   }, [view, sessionId, analysisHistory, messages?.length]);
-
-  useEffect(() => {
-    if (view !== 'intake') return;
-    const tid = sessionId || currentSessionId;
-    if (!tid) return;
-    if (readinessAudit?.overall?.percent != null) return;
-    void fetchReadinessFor(tid);
-  }, [view, sessionId, currentSessionId, readinessAudit]);
-
-  // Fetch readiness whenever the user opens the Discovery pill and it hasn't loaded yet
-  useEffect(() => {
-    if (activePill !== 'discovery') return;
-    const tid = sessionId || currentSessionId;
-    if (!tid) return;
-    if (readinessAudit?.overall?.percent != null) return;
-    void fetchReadinessFor(tid);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePill, sessionId, currentSessionId]);
 
   // --- Upload (UI only) ---
   const fileInputRef = useRef(null);
@@ -5327,20 +5169,14 @@ async function fetchReadinessFor(sid) {
   const intakeInputRef = useRef(null);
   const modelMenuRef = useRef(null);
 
-// ======= UI Readiness - SINGLE SOURCE FROM BACKEND ====================
-// ONLY source: readinessAudit.overall.percent from GET /api/v1/readiness/audit
-// NO fallbacks, NO cached values, NO guessing
 const hasConversationMessages = Array.isArray(messages)
   && messages.some((m) => String(m?.text || '').trim().length > 0);
-const uiReadiness = hasConversationMessages && readinessAudit?.overall?.percent != null
-  ? clampPercent(readinessAudit.overall.percent)
-  : 0;
 
-// Readiness gate (use backend overall.percent via uiReadiness)
-const canAnalyze = React.useMemo(() => {
-  const hasUserTurns = messages?.some(m => m.role === 'user' && (m.text || '').trim());
-return uiReadiness >= 85 && hasUserTurns;
-}, [uiReadiness, messages]);
+// canAnalyze: true once the user has provided at least 3 substantive messages
+const canAnalyze = useMemo(() => {
+  const userTurns = messages?.filter(m => m.role === 'user' && (m.text || '').trim().length > 0) || [];
+  return userTurns.length >= 3;
+}, [messages]);
 
 // Auto-trigger: fire triggerInlineScore the moment canAnalyze first becomes true.
 // This is the primary trigger — independent of SSE status flags.
@@ -5371,123 +5207,6 @@ const displayMessages = useMemo(() => {
     { id: 'scorecard-card', role: 'ai', text: '', artifact: { type: 'scorecard', data: analysisResult } },
   ];
 }, [analysisResult, messages]); // eslint-disable-line react-hooks/exhaustive-deps
-
-const readinessChecklistItems = useMemo(() => {
-  const items = Array.isArray(readinessAudit?.items) ? readinessAudit.items : [];
-  if (items.length > 0) {
-    return items.map((item, index) => {
-      const percent = clampPercent(item?.percent ?? 0);
-      const status = String(item?.status || '').toLowerCase();
-      const complete = status === 'complete' || item?.completed === true || percent >= 85;
-      const inProgress = !complete && (status === 'in_progress' || status === 'partial' || percent >= 45);
-      return {
-        id: item?.id || item?.key || `item_${index}`,
-        label: item?.label || item?.key || `Checklist item ${index + 1}`,
-        percent,
-        complete,
-        inProgress,
-        contextModule: item?.context_module || null,
-        itemType: item?.type || 'core',
-      };
-    });
-  }
-
-  const categories = Array.isArray(readinessAudit?.categories) ? readinessAudit.categories : [];
-  return categories.map((category, index) => {
-    const percent = clampPercent(category?.percent ?? 0);
-    const complete = category?.completed === true || percent >= 85;
-    const inProgress = !complete && percent >= 45;
-    return {
-      id: category?.key || `cat_${index}`,
-      label: category?.label || category?.key || `Checklist item ${index + 1}`,
-      percent,
-      complete,
-      inProgress,
-      contextModule: null,
-      itemType: 'core',
-    };
-  });
-}, [readinessAudit]);
-
-const readinessChecklistSummary = useMemo(() => {
-  const summary = readinessAudit?.checklist_summary;
-  if (summary && typeof summary === 'object') {
-    const done = Number(summary.complete || 0);
-    const inProgress = Number(summary.in_progress || 0);
-    const missing = Number(summary.missing || 0);
-    const total = Number(summary.total || (done + inProgress + missing));
-    return { done, inProgress, missing, total };
-  }
-
-  const done = readinessChecklistItems.filter((item) => item.complete).length;
-  const inProgress = readinessChecklistItems.filter((item) => !item.complete && item.inProgress).length;
-  const missing = readinessChecklistItems.filter((item) => !item.complete && !item.inProgress).length;
-  return { done, inProgress, missing, total: readinessChecklistItems.length };
-}, [readinessAudit, readinessChecklistItems]);
-
-const renderReadinessChecklistGroup = (title, items, helper = '') => {
-  if (!Array.isArray(items) || items.length === 0) return null;
-  return (
-    <div className="jas-collected-section">
-      <h4>{title}</h4>
-      {helper ? (
-        <p style={{ color: 'var(--color-text-muted)', fontSize: '12px', margin: '0 0 10px' }}>{helper}</p>
-      ) : null}
-      <div className="jas-checklist">
-        {items.map((item) => (
-          <label className="jas-check-item" key={item.id}>
-            <input type="checkbox" className="jas-check" checked={item.complete} readOnly />
-            <div className="jas-check-main">
-              <div className="jas-check-label">{item.label}</div>
-              <div className="jas-check-meta">
-                {item.complete ? 'Captured' : item.inProgress ? `In progress (${item.percent}%)` : 'Missing'}
-                {item.contextModule ? ` • ${String(item.contextModule).replace(/_/g, ' ')}` : ''}
-              </div>
-            </div>
-          </label>
-        ))}
-      </div>
-    </div>
-  );
-};
-
-const renderReadinessChecklist = () => {
-  const coreItems = readinessChecklistItems.filter((item) => item.itemType === 'core');
-  const objectiveItems = readinessChecklistItems.filter((item) => item.itemType === 'objective');
-  const contextItems = readinessChecklistItems.filter((item) => item.itemType === 'context');
-  const objectiveLabel = OBJECTIVE_LABEL_BY_KEY[
-    readinessAudit?.objective_profile || strategyObjective || 'balanced'
-  ] || 'Balanced';
-
-  return (
-    <>
-      <div className="jas-collected-section">
-        <h4>Progress Checklist</h4>
-        <p style={{ color: 'var(--color-text-muted)', fontSize: '12px', margin: '0 0 10px' }}>
-          {readinessChecklistSummary.done}/{readinessChecklistSummary.total} captured
-          {readinessChecklistSummary.inProgress > 0 ? ` • ${readinessChecklistSummary.inProgress} in progress` : ''}
-        </p>
-      </div>
-      {readinessChecklistItems.length > 0 ? (
-        <>
-          {renderReadinessChecklistGroup('Core Framework', coreItems)}
-          {renderReadinessChecklistGroup(
-            `${objectiveLabel} Focus Areas`,
-            objectiveItems,
-            `These buckets adapt to your selected objective so the conversation fills the right gaps first.`
-          )}
-          {renderReadinessChecklistGroup('Context Signals', contextItems)}
-        </>
-      ) : (
-        <div className="jas-collected-section">
-          <p style={{ color: 'var(--color-text-muted)', fontSize: '13px', lineHeight: 1.5, margin: '6px 0 0' }}>
-            Ask one more question to start checklist tracking.
-          </p>
-        </div>
-      )}
-    </>
-  );
-};
 
 const renderModelTypeInlinePicker = (className = '') => (
   <div className={`jas-model-picker-inline ${className}`.trim()} ref={modelMenuRef}>
@@ -5910,12 +5629,9 @@ useEffect(() => {
   };
 
   // === Conversation Start ===
-  // Flow: Call Jaspen.convoStart → set session → await audit → append message → save
+  // Flow: Call Jaspen.convoStart → set session → append message → save
   async function startConversation(description, options = {}) {
     setBusy(true); setError(null);
-
-    // Clear old readiness immediately to show 0% for new conversation
-    setReadinessAudit(null);
 
     try {
       const starterIntakeContext = (selectedStarter && typeof selectedStarter.intake_context === 'object')
@@ -5960,9 +5676,6 @@ useEffect(() => {
       setCurrentSessionId(sid);
       dispatchSidebar({ type: "OPEN_READINESS" });
 
-      // Step 3: await GET /api/v1/readiness/audit (authoritative)
-      await fetchReadinessFor(sid);
-      
       if (data?.model_type) {
         setSelectedModelType(String(data.model_type).toLowerCase());
       }
@@ -6024,32 +5737,8 @@ async function continueConversation(userText, options = {}) {
     setObjectiveExplicitlySet(Boolean(data?.objective_explicitly_set) || objectiveExplicitlySet);
     await applyMutationRefreshes(data, sessionId);
 
-    // Step 3: await GET /api/v1/readiness/audit
-    const auditPayload = await fetchReadinessFor(sessionId);
-
     const updatedCollected = data?.collected_data || collectedData;
     setCollectedData(updatedCollected);
-
-    // Step 4: Update UI state with new readiness
-    if (auditPayload) {
-      const pct = clampPercent(auditPayload.overall?.percent ?? 0);
-      const categories = Array.isArray(auditPayload?.categories) ? auditPayload.categories : [];
-      const items = Array.isArray(auditPayload?.items) ? auditPayload.items : [];
-      const checklist_summary = auditPayload?.checklist_summary && typeof auditPayload.checklist_summary === 'object'
-        ? auditPayload.checklist_summary
-        : null;
-      const version = auditPayload?.version || null;
-
-      setReadinessAudit({
-        overall: { ...auditPayload.overall, percent: pct },
-        categories,
-        items,
-        checklist_summary,
-        version
-      });
-    } else {
-      devWarn('[continueConversation] auditPayload is null/undefined - readiness NOT updated');
-    }
 
     await fetchSessions();
 
@@ -6138,17 +5827,6 @@ async function regenerateLastResponse() {
     }
     await applyMutationRefreshes(data, activeThreadId);
 
-    const auditPayload = await fetchReadinessFor(activeThreadId);
-    if (auditPayload) {
-      const pct = clampPercent(auditPayload.overall?.percent ?? 0);
-      setReadinessAudit({
-        overall: { ...auditPayload.overall, percent: pct },
-        categories: Array.isArray(auditPayload?.categories) ? auditPayload.categories : [],
-        items: Array.isArray(auditPayload?.items) ? auditPayload.items : [],
-        checklist_summary: auditPayload?.checklist_summary || null,
-        version: auditPayload?.version || null,
-      });
-    }
   } catch (e) {
     setMessages((prev) => {
       const updated = [...prev];
@@ -6196,18 +5874,6 @@ async function undoLastMutationTurn() {
     await refreshThreadWbs(activeThreadId);
     await fetchSessions();
 
-    const auditPayload = await fetchReadinessFor(activeThreadId);
-    if (auditPayload) {
-      const pct = clampPercent(auditPayload.overall?.percent ?? 0);
-      setReadinessAudit({
-        overall: { ...auditPayload.overall, percent: pct },
-        categories: Array.isArray(auditPayload?.categories) ? auditPayload.categories : [],
-        items: Array.isArray(auditPayload?.items) ? auditPayload.items : [],
-        checklist_summary: auditPayload?.checklist_summary || null,
-        version: auditPayload?.version || null,
-      });
-    }
-
     showToast(data?.message || 'Reverted the latest AI-applied changes.', 'success');
   } catch (undoError) {
     showToast(undoError?.message || 'We could not undo those changes right now.', 'error', {
@@ -6230,6 +5896,96 @@ const [connectedDataSources, setConnectedDataSources] = useState([]);
 const [activeContextSourceIds, setActiveContextSourceIds] = useState(new Set());
 const [contextSourceData, setContextSourceData] = useState({});
 const [contextSourceLoading, setContextSourceLoading] = useState(false);
+
+// Confidence: derived from conversation depth, text richness, and active data sources.
+// No backend call needed — computes entirely from restored/live state.
+const confidence = useMemo(() => {
+  if (!sessionId) return 0;
+  const userMsgs = messages.filter(m => m.role === 'user' && (m.text || '').trim().length > 0);
+  if (userMsgs.length === 0) return 0;
+  // Message depth: up to 60pts (15 per message, capped at 4 messages)
+  const msgScore = Math.min(60, userMsgs.length * 15);
+  // Text richness: up to 20pts
+  const totalChars = userMsgs.reduce((sum, m) => sum + (m.text || '').length, 0);
+  const richScore = Math.min(20, Math.round(totalChars / 150));
+  // Active data connectors: up to 15pts
+  const connectorScore = Math.min(15, (activeContextSourceIds?.size || 0) * 5);
+  // Collected data fields: up to 5pts
+  const dataScore = Math.min(5, Object.values(collectedData || {}).filter(v => v && String(v).trim()).length);
+  return Math.min(100, msgScore + richScore + connectorScore + dataScore);
+}, [sessionId, messages, activeContextSourceIds, collectedData]);
+
+// Keep uiReadiness as an alias so existing render references don't need mass-updating
+const uiReadiness = confidence;
+
+// Collected signals: what Jaspen has captured — derived from messages + connectors + files
+const collectedSignals = useMemo(() => {
+  const userMsgs = (messages || []).filter(m => m.role === 'user' && (m.text || '').trim().length > 0);
+  const signals = [];
+
+  if (userMsgs.length >= 1) signals.push({ id: 'idea', label: 'Initial idea captured', complete: true });
+  if (userMsgs.length >= 2) signals.push({ id: 'context', label: 'Context provided', complete: true });
+  if (userMsgs.length >= 3) signals.push({ id: 'detail', label: 'Detailed requirements shared', complete: true });
+  if (userMsgs.length >= 5) signals.push({ id: 'followup', label: 'Follow-up context captured', complete: true });
+
+  // Collected data fields (when backend populates them)
+  for (const [key, val] of Object.entries(collectedData || {})) {
+    if (!val || !String(val).trim()) continue;
+    const label = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    signals.push({ id: `cd_${key}`, label, complete: true });
+  }
+
+  // Connected data sources
+  for (const source of (connectedDataSources || [])) {
+    const isActive = activeContextSourceIds?.has(source.id);
+    signals.push({ id: `src_${source.id}`, label: `${source.label || source.id} data`, complete: Boolean(isActive) });
+  }
+
+  return signals;
+}, [messages, collectedData, connectedDataSources, activeContextSourceIds]);
+
+const renderCollectedSignals = () => {
+  if (!sessionId) return null;
+  const complete = collectedSignals.filter(s => s.complete);
+  const pending = collectedSignals.filter(s => !s.complete);
+  return (
+    <>
+      <div className="jas-collected-section">
+        <h4>What Jaspen knows</h4>
+        {complete.length === 0 && (
+          <p style={{ color: 'var(--color-text-muted)', fontSize: '13px', lineHeight: 1.5, margin: '6px 0 0' }}>
+            Start the conversation to build context.
+          </p>
+        )}
+      </div>
+      {complete.length > 0 && (
+        <div className="jas-checklist">
+          {complete.map(s => (
+            <label className="jas-check-item" key={s.id}>
+              <input type="checkbox" className="jas-check" checked readOnly />
+              <div className="jas-check-main">
+                <div className="jas-check-label">{s.label}</div>
+              </div>
+            </label>
+          ))}
+        </div>
+      )}
+      {pending.length > 0 && (
+        <div className="jas-checklist" style={{ marginTop: 8 }}>
+          {pending.map(s => (
+            <label className="jas-check-item" key={s.id}>
+              <input type="checkbox" className="jas-check" checked={false} readOnly />
+              <div className="jas-check-main">
+                <div className="jas-check-label" style={{ color: 'var(--color-text-muted)' }}>{s.label}</div>
+              </div>
+            </label>
+          ))}
+        </div>
+      )}
+    </>
+  );
+};
+
 const sfConnected = connectedDataSources.some((item) => item.id === 'salesforce_insights');
 const sfPipelineLoading = contextSourceLoading && activeContextSourceIds.has('salesforce_insights');
 const hasProjectPlan = useMemo(
@@ -8195,20 +7951,6 @@ const sendAIMessage = async () => {
       }
     }
 
-    // 4) Refresh readiness (authoritative) and persist the full updated thread
-    const sidForAudit = resp?.sessionId || currentSessionId || sessionId;
-    const auditPayload = await fetchReadinessFor(sidForAudit);
-
-    const readinessObj = auditPayload ? {
-      percent: clampPercent(auditPayload.overall?.percent ?? 0),
-      categories: auditPayload.categories || [],
-      updated_at: new Date().toISOString()
-    } : {
-      percent: 0,
-      categories: [],
-      updated_at: new Date().toISOString()
-    };
-
     await fetchSessions();
 
     // Build the chat_history from the latest visible thread
@@ -8552,7 +8294,6 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
     setMessages([]);
     setInput('');
     setBusy(false);
-    setReadinessAudit(null);
     setAnalysisResult(null);
     setError(null);
     setSavedScenarios([]);
@@ -8677,9 +8418,6 @@ useEffect(() => {
 
   // ======== FIXED: Select analysis (history restore) ========================
   const handleSelectAnalysis = async (selection) => {
-  // Block the very first readiness ping after selecting history
-  skipPingRef.current = true;
-
   const result =
     selection && typeof selection === 'object' && selection.result && typeof selection.result === 'object'
       ? selection.result
@@ -8837,9 +8575,6 @@ useEffect(() => {
   const resolvedScorecard = selectionContext.scorecard || mergedScorecard || merged || {};
   const resolvedActiveThreadId = selectionContext.ownerThreadId || resolvedOwnerThreadId;
 
-  // Readiness normalization handled by normalizeReadiness() helper
-  // Readiness is ONLY fetched from backend via fetchReadinessFor - no session cache
-
   // Branch: in-progress sessions return to intake with chat restored only when
   // they do not already carry a meaningful saved scorecard.
   if (!selectionContext.hasScorecard && merged?.status === 'in_progress' && Array.isArray(merged.chat_history)) {
@@ -8855,7 +8590,6 @@ useEffect(() => {
     setView('intake');
     dispatchSidebar({ type: 'CLOSE_HISTORY' });
     dispatchSidebar({ type: 'OPEN_READINESS' });
-    fetchReadinessFor(sid);
 
     return;
   }
@@ -11232,8 +10966,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               {/* Discovery: What Jaspen knows checklist */}
               {activePill === 'discovery' && sessionId && (
                 <div className="jas-insights-checklist">
-                  <p className="jas-insights-tips-label">What Jaspen knows</p>
-                  {renderReadinessChecklist()}
+                  {renderCollectedSignals()}
                 </div>
               )}
 
