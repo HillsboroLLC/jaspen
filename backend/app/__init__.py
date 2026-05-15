@@ -248,7 +248,7 @@ def create_app():
             os.getenv('MODEL_CLAUDE_HAIKU')
             or os.getenv('ANTHROPIC_MODEL_PLUTO')
             or os.getenv('MODEL_PLUTO_ID')
-            or 'claude-3-5-haiku-latest'
+            or 'claude-haiku-4-5'
         ),
         'claude_sonnet': (
             os.getenv('MODEL_CLAUDE_SONNET')
