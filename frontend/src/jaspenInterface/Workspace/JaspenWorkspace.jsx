@@ -5699,12 +5699,16 @@ useEffect(() => {
       void refreshKnowledgeSignals(sid);
 
       // Agentic scoring on start path — same logic as the continue path.
-      // canAnalyze requires 3 turns so won't fire here; catch it via status/text signal.
       const _startAiText = String(data?.reply || data?.message || data?.text || '').toLowerCase();
       const _startTextSignals = /building your scorecard|scorecard now|generating your scorecard|scoring your idea/.test(_startAiText);
-      if ((data?.status === 'ready_to_analyze' || _startTextSignals) && !analysisResult && !autoScoringTriggeredRef.current) {
-        autoScoringTriggeredRef.current = true;
-        setTimeout(() => { void triggerInlineScore(sid); }, 800);
+      const _startHasRescore = Array.isArray(data?.actions) && data.actions.some(a => a?.type === 'suggest_rescore');
+      if ((data?.status === 'ready_to_analyze' || _startTextSignals || _startHasRescore) && !autoScoringTriggeredRef.current) {
+        if (!analysisResult) {
+          autoScoringTriggeredRef.current = true;
+          setTimeout(() => { void triggerInlineScore(sid); }, 800);
+        } else {
+          setTimeout(() => { void triggerAutoVersion(sid); }, 800);
+        }
       }
 
       return sid;
@@ -5790,17 +5794,19 @@ async function continueConversation(userText, options = {}) {
 
     // Agentic scoring: backend signals ready_to_analyze → inject scorecard inline.
     // Also detect text fallback in case status field is missing.
-    // Pass sid directly to avoid stale closure; ref guards against duplicate triggers.
     const _aiText = String(data?.text || data?.reply || data?.message || '').toLowerCase();
     const _textSignalsScore = /building your scorecard|scorecard now|generating your scorecard|scoring your idea/.test(_aiText);
-    if (
-      (data?.status === 'ready_to_analyze' || _textSignalsScore) &&
-      !analysisResult &&
-      !autoScoringTriggeredRef.current
-    ) {
-      autoScoringTriggeredRef.current = true;
+    const _hasRescoreAction = Array.isArray(data?.actions) && data.actions.some(a => a?.type === 'suggest_rescore');
+    if ((data?.status === 'ready_to_analyze' || _textSignalsScore || _hasRescoreAction) && !autoScoringTriggeredRef.current) {
       const sid = currentSessionId || sessionId;
-      setTimeout(() => { void triggerInlineScore(sid); }, 800);
+      if (!analysisResult) {
+        // First scorecard — baseline
+        autoScoringTriggeredRef.current = true;
+        setTimeout(() => { void triggerInlineScore(sid); }, 800);
+      } else {
+        // Already have a scorecard — create a new version (variation or pivot)
+        setTimeout(() => { void triggerAutoVersion(sid); }, 800);
+      }
     }
 
     // Note: AI Agent backend handles persistence automatically
@@ -6940,7 +6946,7 @@ const handleSaveStarter = async () => {
   // Uses create_as_version=true so the backend saves it as a scenario — baseline session
   // result is NOT overwritten, so restoring from bundle always shows both baseline + versions.
   async function triggerAutoVersion(sid) {
-    if (!sid || !analysisResult) return; // need an existing scorecard to version from
+    if (!sid || !analysisResult || autoVersionGenerating) return; // need an existing scorecard; guard re-entry
 
     // Inject a loading placeholder immediately so it holds position in the thread
     const loadingId = `scorecard-v-loading-${Date.now()}`;
@@ -8023,11 +8029,13 @@ const sendAIMessage = async () => {
 
     await applyMutationRefreshes(resp, resp?.sessionId || currentSessionId || sessionId);
 
-    // 3) Auto-version: if user signalled a significant pivot AND a baseline scorecard exists, snapshot a new version
-    if (analysisResult && detectsPivot(text)) {
+    // 3) Auto-version: pivot signals OR backend suggest_rescore action triggers a new scored version.
+    // chatWithReadiness already handles text/status signals inline; this catches the suggest_rescore
+    // action from the done payload as a secondary guarantee.
+    const _respRescoreAction = Array.isArray(resp?.actions) && resp.actions.some(a => a?.type === 'suggest_rescore');
+    if (analysisResult && (detectsPivot(text) || _respRescoreAction) && !autoVersionGenerating) {
       const autoSid = resp?.sessionId || currentSessionId || sessionId;
       if (autoSid) {
-        // Small delay so the AI reply renders first, then the new version appears
         setTimeout(() => { void triggerAutoVersion(autoSid); }, 1200);
       }
     }
