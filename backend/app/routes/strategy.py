@@ -1954,7 +1954,23 @@ def _generate_jaspen_scorecard(
     model_selection=None,
     strategy_objective='balanced',
 ):
-    """Run the existing LLM scoring flow and return parsed scorecard JSON."""
+    """Run the existing LLM scoring flow and return parsed scorecard JSON.
+
+    Scorecards are large structured JSON; always force a Sonnet-class model
+    regardless of the user's chat tier. Haiku models (including 4.5) produce
+    unreliable JSON at this output size.
+    """
+    # Force a high-reliability model for structured scoring output, ignoring
+    # whatever Pluto/chat tier the user has selected.
+    _scoring_model = (
+        current_app.config.get('AI_AGENT_ANTHROPIC_MODEL')
+        or os.getenv('AI_AGENT_ANTHROPIC_MODEL')
+        or 'claude-sonnet-4-5-20250929'
+    )
+    llm_model = _scoring_model
+    if isinstance(model_selection, dict):
+        model_selection = {**model_selection, 'llm_model': _scoring_model}
+
     # Objective-based dimension weights
     _DIM_WEIGHTS = {
         "cost_optimization":  {"market_opportunity": 0.12, "financial_viability": 0.25, "execution_readiness": 0.20, "strategic_alignment": 0.15, "risk_profile": 0.20, "evidence_quality": 0.08},
