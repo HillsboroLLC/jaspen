@@ -1410,6 +1410,8 @@ export default function JaspenWorkspace() {
   const [messages, setMessages] = useState([]);
 
   const [collectedData, setCollectedData] = useState({});
+  // AI-driven knowledge signals: { signals: [...], confidence: 0-100 }
+  const [knowledgeSignals, setKnowledgeSignals] = useState(null);
 
   const [input, setInput] = useState('');
   const [pendingFiles, setPendingFiles] = useState([]);
@@ -4897,6 +4899,7 @@ useEffect(() => {
         setObjectiveExplicitlySet(false);
 // (removed) sidebar uses main `messages` as the thread source of truth
         setCollectedData({});
+        setKnowledgeSignals(null);
         setView('intake');
         setActiveTab('summary');
         dispatchSidebar({ type: 'CLOSE_ALL' });
@@ -4978,6 +4981,12 @@ if (rawHistory.length > 0) {
       // Restore collected_data
       if (session.collected_data && typeof session.collected_data === 'object') {
         setCollectedData(session.collected_data);
+      }
+
+      // Restore knowledge signals (if previously saved)
+      const savedSignals = session.knowledge_signals || null;
+      if (savedSignals && Array.isArray(savedSignals.signals)) {
+        setKnowledgeSignals({ signals: savedSignals.signals, confidence: Number(savedSignals.confidence ?? 0) });
       }
 
       // Restore scorecard (completed sessions)
@@ -5080,6 +5089,10 @@ if (rawHistory.length > 0) {
       // Pass the analysis result's thread_id as a fallback in case restoredOwnerThreadId
       // is an orphan session (e.g. created by a hard-reload) that has no baseline stored.
       refreshBundle(restoredOwnerThreadId, { fallbackTid: restoreBaseResult?.thread_id });
+
+      // Refresh knowledge signals in background (get fresh signals on restore)
+      void refreshKnowledgeSignals(restoredOwnerThreadId);
+
       setInitialRestorePending(false);
     })();
 
@@ -5688,6 +5701,10 @@ useEffect(() => {
       // REMOVED - AI Agent backend handles persistence automatically
       // await saveSessionToBackend({...});
       await fetchSessions();
+
+      // Kick off knowledge signal extraction in background
+      void refreshKnowledgeSignals(sid);
+
       return sid;
     } catch (e) {
       if (e?.status === 403 && e?.data?.code === 'model_type_not_allowed') {
@@ -5702,6 +5719,30 @@ useEffect(() => {
       setBusy(false);
     }
   }
+
+  // === Knowledge signals refresh (background, non-blocking) ===
+  // Calls the AI-powered knowledge extraction endpoint after each chat turn.
+  // Updates knowledgeSignals state with captured items + gaps + confidence.
+  const refreshKnowledgeSignals = useCallback(async (sid) => {
+    if (!sid) return;
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(sid)}/knowledge/refresh`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
+        }
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      if (Array.isArray(data?.signals)) {
+        setKnowledgeSignals({ signals: data.signals, confidence: Number(data.confidence ?? 0) });
+      }
+    } catch (e) {
+      devWarn('[refreshKnowledgeSignals] failed', e);
+    }
+  }, []);
 
   // === Conversation Continue ===
   // Flow: Call Jaspen.convoContinue → append message → await audit → persist using returned payload
@@ -5741,6 +5782,9 @@ async function continueConversation(userText, options = {}) {
     setCollectedData(updatedCollected);
 
     await fetchSessions();
+
+    // Refresh knowledge signals in background after each turn
+    void refreshKnowledgeSignals(sessionId);
 
     // Agentic scoring: backend signals ready_to_analyze → inject scorecard inline.
     // Pass sid directly to avoid stale closure; ref guards against duplicate triggers.
@@ -5897,52 +5941,50 @@ const [activeContextSourceIds, setActiveContextSourceIds] = useState(new Set());
 const [contextSourceData, setContextSourceData] = useState({});
 const [contextSourceLoading, setContextSourceLoading] = useState(false);
 
-// Confidence: derived from conversation depth, text richness, and active data sources.
-// No backend call needed — computes entirely from restored/live state.
+// Confidence: AI-driven when available (from knowledgeSignals), falls back to local formula.
 const confidence = useMemo(() => {
   if (!sessionId) return 0;
+  // Prefer AI-computed confidence from background refresh
+  if (knowledgeSignals && typeof knowledgeSignals.confidence === 'number') {
+    return Math.min(100, Math.max(0, Math.round(knowledgeSignals.confidence)));
+  }
+  // Fallback: local formula from message depth + richness + connectors
   const userMsgs = messages.filter(m => m.role === 'user' && (m.text || '').trim().length > 0);
   if (userMsgs.length === 0) return 0;
-  // Message depth: up to 60pts (15 per message, capped at 4 messages)
   const msgScore = Math.min(60, userMsgs.length * 15);
-  // Text richness: up to 20pts
   const totalChars = userMsgs.reduce((sum, m) => sum + (m.text || '').length, 0);
   const richScore = Math.min(20, Math.round(totalChars / 150));
-  // Active data connectors: up to 15pts
   const connectorScore = Math.min(15, (activeContextSourceIds?.size || 0) * 5);
-  // Collected data fields: up to 5pts
   const dataScore = Math.min(5, Object.values(collectedData || {}).filter(v => v && String(v).trim()).length);
   return Math.min(100, msgScore + richScore + connectorScore + dataScore);
-}, [sessionId, messages, activeContextSourceIds, collectedData]);
+}, [sessionId, knowledgeSignals, messages, activeContextSourceIds, collectedData]);
 
 // Keep uiReadiness as an alias so existing render references don't need mass-updating
 const uiReadiness = confidence;
 
-// Collected signals: what Jaspen has captured — derived from messages + connectors + files
+// Signals for Discovery checklist: AI-driven when available, local fallback otherwise
 const collectedSignals = useMemo(() => {
+  // If AI-driven signals exist, use them (may include unchecked gaps with hints)
+  if (knowledgeSignals && Array.isArray(knowledgeSignals.signals) && knowledgeSignals.signals.length > 0) {
+    return knowledgeSignals.signals.map(s => ({
+      id: s.id,
+      label: s.label,
+      complete: Boolean(s.captured),
+      hint: s.hint || null,
+    }));
+  }
+  // Fallback: milestone-based from message count + connectors
   const userMsgs = (messages || []).filter(m => m.role === 'user' && (m.text || '').trim().length > 0);
   const signals = [];
-
-  if (userMsgs.length >= 1) signals.push({ id: 'idea', label: 'Initial idea captured', complete: true });
-  if (userMsgs.length >= 2) signals.push({ id: 'context', label: 'Context provided', complete: true });
-  if (userMsgs.length >= 3) signals.push({ id: 'detail', label: 'Detailed requirements shared', complete: true });
-  if (userMsgs.length >= 5) signals.push({ id: 'followup', label: 'Follow-up context captured', complete: true });
-
-  // Collected data fields (when backend populates them)
-  for (const [key, val] of Object.entries(collectedData || {})) {
-    if (!val || !String(val).trim()) continue;
-    const label = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-    signals.push({ id: `cd_${key}`, label, complete: true });
-  }
-
-  // Connected data sources
+  if (userMsgs.length >= 1) signals.push({ id: 'idea', label: 'Initial idea captured', complete: true, hint: null });
+  if (userMsgs.length >= 2) signals.push({ id: 'context', label: 'Context provided', complete: true, hint: null });
+  if (userMsgs.length >= 3) signals.push({ id: 'detail', label: 'Detailed requirements shared', complete: true, hint: null });
+  if (userMsgs.length >= 5) signals.push({ id: 'followup', label: 'Follow-up context captured', complete: true, hint: null });
   for (const source of (connectedDataSources || [])) {
-    const isActive = activeContextSourceIds?.has(source.id);
-    signals.push({ id: `src_${source.id}`, label: `${source.label || source.id} data`, complete: Boolean(isActive) });
+    signals.push({ id: `src_${source.id}`, label: `${source.label || source.id} data`, complete: Boolean(activeContextSourceIds?.has(source.id)), hint: null });
   }
-
   return signals;
-}, [messages, collectedData, connectedDataSources, activeContextSourceIds]);
+}, [knowledgeSignals, messages, connectedDataSources, activeContextSourceIds]);
 
 const renderCollectedSignals = () => {
   if (!sessionId) return null;
@@ -5952,7 +5994,7 @@ const renderCollectedSignals = () => {
     <>
       <div className="jas-collected-section">
         <h4>What Jaspen knows</h4>
-        {complete.length === 0 && (
+        {complete.length === 0 && !knowledgeSignals && (
           <p style={{ color: 'var(--color-text-muted)', fontSize: '13px', lineHeight: 1.5, margin: '6px 0 0' }}>
             Start the conversation to build context.
           </p>
@@ -5971,15 +6013,23 @@ const renderCollectedSignals = () => {
         </div>
       )}
       {pending.length > 0 && (
-        <div className="jas-checklist" style={{ marginTop: 8 }}>
-          {pending.map(s => (
-            <label className="jas-check-item" key={s.id}>
-              <input type="checkbox" className="jas-check" checked={false} readOnly />
-              <div className="jas-check-main">
-                <div className="jas-check-label" style={{ color: 'var(--color-text-muted)' }}>{s.label}</div>
-              </div>
-            </label>
-          ))}
+        <div style={{ marginTop: pending.length > 0 && complete.length > 0 ? 12 : 0 }}>
+          <p style={{ color: 'var(--color-text-muted)', fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 8px' }}>
+            Would help Jaspen know
+          </p>
+          <div className="jas-checklist">
+            {pending.map(s => (
+              <label className="jas-check-item" key={s.id}>
+                <input type="checkbox" className="jas-check" checked={false} readOnly />
+                <div className="jas-check-main">
+                  <div className="jas-check-label" style={{ color: 'var(--color-text-muted)' }}>{s.label}</div>
+                  {s.hint && (
+                    <div className="jas-check-meta" style={{ marginTop: 2, fontSize: '12px', lineHeight: 1.4 }}>{s.hint}</div>
+                  )}
+                </div>
+              </label>
+            ))}
+          </div>
         </div>
       )}
     </>
@@ -8298,6 +8348,7 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
     setError(null);
     setSavedScenarios([]);
     setCollectedData({});
+    setKnowledgeSignals(null);
     setStrategyObjective('balanced');
     setObjectiveExplicitlySet(false);
     setOnboardingMode('entry');

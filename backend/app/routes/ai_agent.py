@@ -8668,6 +8668,120 @@ def readiness_audit():
     return jsonify(readiness), 200
 
 
+@ai_agent_bp.route("/threads/<thread_id>/knowledge/refresh", methods=["POST"])
+@jwt_required()
+def refresh_knowledge_signals(thread_id):
+    """
+    Use AI to extract what Jaspen has captured from this conversation and what
+    gaps remain. Returns dynamic knowledge signals for the Discovery checklist.
+    Runs after each chat turn (called in background from frontend).
+    """
+    user_id = get_jwt_identity()
+    sessions = load_user_sessions(user_id) or {}
+    session_key, session = _resolve_user_session(sessions, thread_id)
+    if not isinstance(session, dict):
+        return jsonify({"error": "Thread not found"}), 404
+
+    chat_history = _session_chat_history(session)
+    if not chat_history:
+        return jsonify({"signals": [], "confidence": 0}), 200
+
+    # Build a compact conversation summary for the AI
+    user_msgs = [
+        str(m.get("content") or m.get("text") or "").strip()
+        for m in chat_history
+        if isinstance(m, dict) and str(m.get("role", "")).lower() == "user"
+    ]
+    assistant_msgs = [
+        str(m.get("content") or m.get("text") or "").strip()[:400]
+        for m in chat_history
+        if isinstance(m, dict) and str(m.get("role", "")).lower() == "assistant"
+    ]
+    convo_text = ""
+    for i, u in enumerate(user_msgs):
+        convo_text += f"User: {u}\n"
+        if i < len(assistant_msgs):
+            convo_text += f"Jaspen: {assistant_msgs[i]}\n"
+    convo_text = convo_text[:4000]  # keep prompt compact
+
+    # Active connectors (if any stored)
+    connector_snapshot = session.get("connector_context_snapshot") or {}
+    connected_sources = list(connector_snapshot.keys()) if isinstance(connector_snapshot, dict) else []
+
+    extraction_prompt = f"""You are analyzing a conversation between a user and an AI advisor named Jaspen.
+Extract what has been captured and what is still missing.
+
+CONVERSATION:
+{convo_text}
+
+CONNECTED DATA SOURCES: {', '.join(connected_sources) if connected_sources else 'none'}
+
+Return a JSON object with this exact structure:
+{{
+  "signals": [
+    {{
+      "id": "unique_snake_case_id",
+      "label": "Short human-readable label (3-6 words)",
+      "captured": true,
+      "value_summary": "brief what was shared"
+    }},
+    {{
+      "id": "unique_snake_case_id",
+      "label": "Short human-readable label",
+      "captured": false,
+      "hint": "Specific actionable nudge — what sharing this would unlock (1 sentence)"
+    }}
+  ],
+  "confidence": <integer 0-100>
+}}
+
+Rules:
+- 4 to 8 signals total, specific to THIS idea (not generic)
+- captured=true: AI has clear enough info to use it
+- captured=false: AI knows this matters but lacks sufficient data
+- hints must be specific and valuable ("Share your monthly churn rate so I can model retention scenarios" not "Add more info")
+- confidence = realistic percentage based on how much useful context exists
+- Return ONLY the JSON object, no markdown, no explanation"""
+
+    try:
+        api_key = _anthropic_api_key()
+        if not api_key:
+            raise ValueError("No API key")
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key, timeout=15.0)
+        resp = client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=800,
+            temperature=0.1,
+            messages=[{"role": "user", "content": extraction_prompt}],
+        )
+        raw = str(resp.content[0].text).strip()
+        # Strip markdown code fences if present
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        result = json.loads(raw)
+        signals = result.get("signals", [])
+        conf = int(result.get("confidence", 0))
+    except Exception as e:
+        current_app.logger.warning("knowledge/refresh extraction failed: %s", e)
+        # Fallback: derive from message count
+        n = len(user_msgs)
+        conf = min(100, n * 15)
+        signals = []
+
+    # Persist in session
+    try:
+        session["knowledge_signals"] = {"signals": signals, "confidence": conf, "updated_at": _iso_now()}
+        sessions[session_key] = session
+        save_user_sessions(user_id, sessions)
+    except Exception:
+        pass
+
+    return jsonify({"signals": signals, "confidence": conf}), 200
+
+
 @ai_agent_bp.route("/threads", methods=["GET"])
 @jwt_required()
 def list_threads():
