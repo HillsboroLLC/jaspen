@@ -930,6 +930,7 @@ function toUiMessages(history = []) {
       role: msg?.role === 'user' ? 'user' : 'ai',
       text: (msg?.content || msg?.text || '').trim(),
       historyIndex,
+      timestamp: msg?.timestamp || msg?.created_at || null,
       feedbackValue: String(msg?.feedback?.value || '').trim().toLowerCase() || null,
       hasMutations: Array.isArray(msg?.mutations) && msg.mutations.length > 0,
       canUndo: Boolean(msg?.undo?.available),
@@ -5193,16 +5194,86 @@ useEffect(() => {
 // and not already in the thread. This avoids timing/closure bugs with useEffect.
 const displayMessages = useMemo(() => {
   if (messages.length === 0) return messages;
-  // Check if a scorecard (or its loading placeholder) is already in the thread
-  const hasCard = messages.some((m) => m?.artifact?.type === 'scorecard' || m?.artifact?.type === 'scorecard-loading');
-  if (hasCard) return messages;
-  // Fallback: if analysisResult exists but no card was injected yet, append it
-  if (!analysisResult) return messages;
-  return [
-    ...messages,
-    { id: 'scorecard-card', role: 'ai', text: '', artifact: { type: 'scorecard', data: analysisResult } },
-  ];
-}, [analysisResult, messages]); // eslint-disable-line react-hooks/exhaustive-deps
+  // If the message stream already contains injected scorecard or loading artifacts
+  // (live session), use them as-is — placeholders preserve correct in-thread position.
+  const hasInlineCard = messages.some(
+    (m) => m?.artifact?.type === 'scorecard' || m?.artifact?.type === 'scorecard-loading'
+  );
+  if (hasInlineCard) return messages;
+
+  // Reload path: messages came from bundle without scorecard artifacts.
+  // Weave scorecardSnapshots into the thread by timestamp so each card lands
+  // immediately after the last message that preceded it chronologically.
+  const snapshots = Array.isArray(scorecardSnapshots) ? scorecardSnapshots : [];
+  if (snapshots.length === 0) {
+    // No snapshots — fallback to single-result append for legacy sessions.
+    if (!analysisResult) return messages;
+    return [
+      ...messages,
+      { id: 'scorecard-card', role: 'ai', text: '', artifact: { type: 'scorecard', data: analysisResult } },
+    ];
+  }
+
+  const tsOf = (val) => {
+    const t = Date.parse(String(val || ''));
+    return Number.isFinite(t) ? t : 0;
+  };
+
+  // Sort snapshots oldest → newest by createdAt.
+  const orderedSnaps = [...snapshots].sort(
+    (a, b) => tsOf(a?.createdAt || a?._createdAt || a?.created_at) - tsOf(b?.createdAt || b?._createdAt || b?.created_at)
+  );
+
+  // Find each message's timestamp; if any message lacks one, fall back to its
+  // position-based "rank" so ordering still works.
+  const msgTimes = messages.map((m, idx) => {
+    const t = tsOf(m?.timestamp);
+    return t > 0 ? t : idx; // mixed scale ok — we only compare within consistent regime
+  });
+  const haveRealTimestamps = messages.every((m) => tsOf(m?.timestamp) > 0);
+
+  // For each snapshot, find the index of the last message whose time <= snapshot time.
+  // If no timestamps, all snapshots go after the last message.
+  const insertions = orderedSnaps.map((snap, snapIdx) => {
+    const snapTs = tsOf(snap?.createdAt || snap?._createdAt || snap?.created_at);
+    if (!haveRealTimestamps || snapTs === 0) {
+      return { snap, afterIdx: messages.length - 1, snapIdx };
+    }
+    let afterIdx = -1;
+    for (let i = 0; i < msgTimes.length; i++) {
+      if (msgTimes[i] <= snapTs) afterIdx = i;
+    }
+    return { snap, afterIdx, snapIdx };
+  });
+
+  // Build the final stream: walk messages, after each index append any snapshot whose
+  // afterIdx == i (in snapshot order).
+  const out = [];
+  messages.forEach((msg, i) => {
+    out.push(msg);
+    insertions
+      .filter((ins) => ins.afterIdx === i)
+      .forEach((ins) => {
+        const snap = ins.snap;
+        out.push({
+          id: snap?.id ? `scorecard-${snap.id}` : `scorecard-snap-${ins.snapIdx}`,
+          role: 'ai',
+          text: '',
+          artifact: { type: 'scorecard', data: snap },
+        });
+      });
+  });
+  // Any snapshots with afterIdx < 0 (predating all messages) go to the front.
+  const leading = insertions
+    .filter((ins) => ins.afterIdx < 0)
+    .map((ins) => ({
+      id: ins.snap?.id ? `scorecard-${ins.snap.id}` : `scorecard-snap-${ins.snapIdx}-pre`,
+      role: 'ai',
+      text: '',
+      artifact: { type: 'scorecard', data: ins.snap },
+    }));
+  return [...leading, ...out];
+}, [analysisResult, messages, scorecardSnapshots]); // eslint-disable-line react-hooks/exhaustive-deps
 
 const renderModelTypeInlinePicker = (className = '') => (
   <div className={`jas-model-picker-inline ${className}`.trim()} ref={modelMenuRef}>
@@ -6930,8 +7001,17 @@ const handleSaveStarter = async () => {
       setTimeout(() => { void refreshBundle(sid); void fetchSessions(); }, 0);
     } catch (e) {
       console.error('[triggerInlineScore]', e);
-      // Remove placeholder on failure so it doesn't get stuck
-      setMessages((prev) => prev.filter((m) => m.id !== loadingId));
+      // Replace placeholder with an inline error message so the user can see what failed.
+      setMessages((prev) => prev.map((m) =>
+        m.id === loadingId
+          ? {
+              id: `${loadingId}-err`,
+              role: 'ai',
+              text: 'I had enough context to score this, but the analysis call failed. Tap regenerate to retry.',
+            }
+          : m
+      ));
+      showToast('Scoring failed. Try again or rephrase the idea.', 'error');
     } finally {
       setScorecardGenerating(false);
     }
@@ -7009,9 +7089,18 @@ const handleSaveStarter = async () => {
       setTimeout(() => { void refreshBundle(sid); void fetchSessions(); }, 0);
     } catch (e) {
       console.error('[triggerAutoVersion]', e);
-      // Remove placeholder on failure
-      setMessages((prev) => prev.filter((m) => m.id !== loadingId));
-      showToast('Could not create a new scorecard version right now.', 'error');
+      // Replace placeholder with an inline error message so the user can see what failed
+      // and the conversation flow stays coherent.
+      setMessages((prev) => prev.map((m) =>
+        m.id === loadingId
+          ? {
+              id: `${loadingId}-err`,
+              role: 'ai',
+              text: 'I tried to score that variation but ran into an error. Tap the regenerate button or rephrase the change to try again.',
+            }
+          : m
+      ));
+      showToast('Could not score that variation. Try again.', 'error');
     } finally {
       setAutoVersionGenerating(false);
     }
