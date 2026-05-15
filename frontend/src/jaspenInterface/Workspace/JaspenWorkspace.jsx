@@ -5702,11 +5702,11 @@ useEffect(() => {
       const _startAiText = String(data?.reply || data?.message || data?.text || '').toLowerCase();
       const _startTextSignals = /building your scorecard|scorecard now|generating your scorecard|scoring your idea/.test(_startAiText);
       const _startHasRescore = Array.isArray(data?.actions) && data.actions.some(a => a?.type === 'suggest_rescore');
-      if ((data?.status === 'ready_to_analyze' || _startTextSignals || _startHasRescore) && !autoScoringTriggeredRef.current) {
-        if (!analysisResult) {
+      if (data?.status === 'ready_to_analyze' || _startTextSignals || _startHasRescore) {
+        if (!analysisResult && !autoScoringTriggeredRef.current) {
           autoScoringTriggeredRef.current = true;
           setTimeout(() => { void triggerInlineScore(sid); }, 800);
-        } else {
+        } else if (analysisResult) {
           setTimeout(() => { void triggerAutoVersion(sid); }, 800);
         }
       }
@@ -5794,17 +5794,19 @@ async function continueConversation(userText, options = {}) {
 
     // Agentic scoring: backend signals ready_to_analyze → inject scorecard inline.
     // Also detect text fallback in case status field is missing.
+    // The autoScoringTriggeredRef guard ONLY applies to the baseline (first) scorecard.
+    // Auto-versions are guarded separately by autoVersionGenerating inside triggerAutoVersion.
     const _aiText = String(data?.text || data?.reply || data?.message || '').toLowerCase();
     const _textSignalsScore = /building your scorecard|scorecard now|generating your scorecard|scoring your idea/.test(_aiText);
     const _hasRescoreAction = Array.isArray(data?.actions) && data.actions.some(a => a?.type === 'suggest_rescore');
-    if ((data?.status === 'ready_to_analyze' || _textSignalsScore || _hasRescoreAction) && !autoScoringTriggeredRef.current) {
+    if (data?.status === 'ready_to_analyze' || _textSignalsScore || _hasRescoreAction) {
       const sid = currentSessionId || sessionId;
-      if (!analysisResult) {
+      if (!analysisResult && !autoScoringTriggeredRef.current) {
         // First scorecard — baseline
         autoScoringTriggeredRef.current = true;
         setTimeout(() => { void triggerInlineScore(sid); }, 800);
-      } else {
-        // Already have a scorecard — create a new version (variation or pivot)
+      } else if (analysisResult) {
+        // Variation / new version — guard inside triggerAutoVersion prevents re-entry
         setTimeout(() => { void triggerAutoVersion(sid); }, 800);
       }
     }
