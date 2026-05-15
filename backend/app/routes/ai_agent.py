@@ -7913,6 +7913,11 @@ def conversation_start():
                         },
                     )
 
+                _stream_start_actions = actions if isinstance(actions, list) else []
+                _stream_start_rescore = _detect_rescore_action(assistant_reply, has_existing_scorecard=bool(session.get('result')))
+                if _stream_start_rescore:
+                    _stream_start_actions = [a for a in _stream_start_actions if a.get('type') != 'suggest_rescore'] + [_stream_start_rescore]
+
                 done_payload = {
                     "type": "done",
                     "thread_id": thread_id,
@@ -7922,7 +7927,7 @@ def conversation_start():
                     "assistant_message_index": assistant_message_index,
                     "model_type": model_selection["model_type"],
                     "allowed_model_types": model_selection["allowed_model_types"],
-                    "actions": actions,
+                    "actions": _stream_start_actions,
                     "mutations": mutations,
                     "tool_results": mutations,
                     "undo_available": undo_available,
@@ -7942,7 +7947,7 @@ def conversation_start():
                         "version": final_readiness.get("version"),
                         "updated_at": _iso_now(),
                     },
-                    "status": "gathering_info",
+                    "status": "ready_to_analyze" if _is_ready_to_analyze(final_readiness) else "gathering_info",
                     "strategy_objective": session.get("strategy_objective") or "balanced",
                     "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
                     "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
@@ -8491,6 +8496,11 @@ def conversation_continue():
                         },
                     )
 
+                _stream_cont_actions = actions if isinstance(actions, list) else []
+                _stream_cont_rescore = _detect_rescore_action(assistant_reply, has_existing_scorecard=bool(session.get('result')))
+                if _stream_cont_rescore:
+                    _stream_cont_actions = [a for a in _stream_cont_actions if a.get('type') != 'suggest_rescore'] + [_stream_cont_rescore]
+
                 done_payload = {
                     "type": "done",
                     "thread_id": thread_id,
@@ -8500,7 +8510,7 @@ def conversation_continue():
                     "assistant_message_index": assistant_message_index,
                     "model_type": model_selection["model_type"],
                     "allowed_model_types": model_selection["allowed_model_types"],
-                    "actions": actions,
+                    "actions": _stream_cont_actions,
                     "mutations": mutations,
                     "tool_results": mutations,
                     "undo_available": undo_available,
