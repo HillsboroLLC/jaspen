@@ -8075,7 +8075,7 @@ def conversation_start():
             "version": final_readiness_non_stream.get("version"),
             "updated_at": _iso_now(),
         },
-        "status": "gathering_info",
+        "status": "ready_to_analyze" if _is_ready_to_analyze(final_readiness_non_stream) else "gathering_info",
         "strategy_objective": session.get("strategy_objective") or "balanced",
         "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
         "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},

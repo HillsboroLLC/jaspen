@@ -5829,9 +5829,12 @@ async function continueConversation(userText, options = {}) {
     void refreshKnowledgeSignals(sessionId);
 
     // Agentic scoring: backend signals ready_to_analyze → inject scorecard inline.
+    // Also detect text fallback in case status field is missing.
     // Pass sid directly to avoid stale closure; ref guards against duplicate triggers.
+    const _aiText = String(data?.text || data?.reply || data?.message || '').toLowerCase();
+    const _textSignalsScore = /building your scorecard|scorecard now|generating your scorecard|scoring your idea/.test(_aiText);
     if (
-      data?.status === 'ready_to_analyze' &&
+      (data?.status === 'ready_to_analyze' || _textSignalsScore) &&
       !analysisResult &&
       !autoScoringTriggeredRef.current
     ) {
