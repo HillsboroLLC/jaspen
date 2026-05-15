@@ -1378,10 +1378,12 @@ export default function JaspenWorkspace() {
   // Imperative control for scenario modeling (used by interactive chat actions)
   const scenarioModelerRef = useRef(null);
 
+  // Don't auto-open settings when restoring a session (URL has ?sid=)
+  const _isRestoringSession = Boolean(getRestorableSessionIdFromLocation());
   const [sidebarState, dispatchSidebar] = useReducer(sidebarReducer, {
     history: false,
     readiness: false,
-    settings: true,
+    settings: !_isRestoringSession,
     userDismissedReadiness: false
   });
   const didAutoOpenSettingsRef = useRef(false);
@@ -1390,7 +1392,10 @@ export default function JaspenWorkspace() {
   useEffect(() => {
     if (didAutoOpenSettingsRef.current) return;
     didAutoOpenSettingsRef.current = true;
-    dispatchSidebar({ type: 'OPEN_SETTINGS' });
+    // Only auto-open settings on fresh workspace (no session being restored)
+    if (!getRestorableSessionIdFromLocation()) {
+      dispatchSidebar({ type: 'OPEN_SETTINGS' });
+    }
   }, []);
 
   useEffect(() => () => {
@@ -4985,7 +4990,8 @@ useEffect(() => {
           })).filter(x => (x.content || '').trim().length > 0);
 
           session = {
-            session_id: sid,
+            // Prefer bundle's resolved thread ID so canonicalSid resolves correctly below
+            session_id: String(restoreBundle?.thread?.id || restoreBundle?.thread_id || sid).trim() || sid,
             chat_history,
             collected_data: restoreBundle?.collected_data || {},
             status: restoreBundle?.status || 'in_progress',
@@ -5012,9 +5018,13 @@ useEffect(() => {
         return;
       }
 
-      setSessionId(sid);
-      setCurrentSessionId(sid);
-      setLastSessionId(sid);
+      // Prefer the backend-resolved session_id (e.g. "thread_XXX") over the raw URL sid
+      // (which may be a UUID if the URL was written before the canonical ID was known).
+      const canonicalSid = String(session.session_id || sid).trim() || sid;
+
+      setSessionId(canonicalSid);
+      setCurrentSessionId(canonicalSid);
+      setLastSessionId(canonicalSid);
       const restoredModelType = String(session?.model_type || '').toLowerCase();
       if (restoredModelType && allowedModelTypes.includes(restoredModelType)) {
         setSelectedModelType(restoredModelType);
@@ -5058,12 +5068,12 @@ if (rawHistory.length > 0) {
               baselineScorecard?.analysis_id ||
               baselineScorecard?.id ||
               baselineScorecard?.analysisId ||
-              sid,
+              canonicalSid,
             scorecardSnapshots: persistedRestoreSnapshots,
-            sessionId: sid,
+            sessionId: canonicalSid,
           })
         : buildScorecardSnapshots({
-            threadId: sid,
+            threadId: canonicalSid,
             baselineScorecard,
             currentScorecard,
             scenarioScorecards,
@@ -5094,8 +5104,8 @@ if (rawHistory.length > 0) {
           : 'intake';
       const restoreContext = resolveScoreWorkspaceContext({
         analysisHistory: restoreHistory,
-        sessionId: sid,
-        currentSessionId: sid,
+        sessionId: canonicalSid,
+        currentSessionId: canonicalSid,
         selectedScorecardId: restoreSelectedId,
         scorecardSnapshots: restoreSnapshots,
         selectedVariant: null,
@@ -5105,7 +5115,8 @@ if (rawHistory.length > 0) {
         view: restoreInitialView,
         activeTab: 'summary',
       });
-      const restoredOwnerThreadId = restoreContext.ownerThreadId || sid;
+      // canonicalSid is already the backend-resolved thread_XXX ID; use it as the final authority.
+      const restoredOwnerThreadId = restoreContext.ownerThreadId || canonicalSid;
 
       setSessionId(restoredOwnerThreadId);
       setCurrentSessionId(restoredOwnerThreadId);
