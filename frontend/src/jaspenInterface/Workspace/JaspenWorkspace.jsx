@@ -2257,12 +2257,6 @@ const renderScorecardCard = (result) => {
           <button className="jas-scorecard-action-ghost" title="Download scorecard">
             ↓ Download
           </button>
-          <button
-            className="jas-scorecard-action-btn"
-            onClick={() => setActiveTab('scenario')}
-          >
-            Open Scenarios
-          </button>
           <button className="jas-scorecard-action-ghost" title="Share scorecard">
             Share
           </button>
@@ -11182,10 +11176,10 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               <span className="jas-insights-title">Jaspen Insights</span>
             </div>
 
-            {/* ── Top card — pill-aware: Discovery shows confidence %, others show score ── */}
+            {/* ── Top card — pre-score shows confidence %, post-score always shows score ── */}
             <div className="jas-insights-confidence">
-              {activePill === 'discovery' || !analysisResult ? (
-                /* Discovery (or pre-score): always show confidence % */
+              {!analysisResult ? (
+                /* Pre-score only: show confidence % */
                 canAnalyze ? (
                   <div className="jas-insights-score-flat">
                     <span className="jas-insights-score-flat-label">Generating…</span>
