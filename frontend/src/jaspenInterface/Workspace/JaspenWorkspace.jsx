@@ -2194,6 +2194,17 @@ const renderConversationMessage = (message, opts = {}) => {
   if (message?.artifact?.type === 'scorecard') {
     return renderScorecardCard(message.artifact.data, opts);
   }
+  // Render scorecard loading placeholder inline (holds position in thread)
+  if (message?.artifact?.type === 'scorecard-loading') {
+    return (
+      <div className="jas-message-bubble">
+        <div className="jas-scorecard-generating-bubble">
+          <span className="jas-scorecard-generating-dots"><span/><span/><span/></span>
+          <span className="jas-scorecard-generating-text">{message?.artifact?.label || 'Building your scorecard…'}</span>
+        </div>
+      </div>
+    );
+  }
   const text = String(message?.text || '');
   if (message?.role === 'user') return text;
 
@@ -5181,9 +5192,12 @@ useEffect(() => {
 // Derive display messages: always append the scorecard card when analysisResult is set
 // and not already in the thread. This avoids timing/closure bugs with useEffect.
 const displayMessages = useMemo(() => {
-  if (!analysisResult || messages.length === 0) return messages;
-  const hasCard = messages.some((m) => m?.artifact?.type === 'scorecard');
+  if (messages.length === 0) return messages;
+  // Check if a scorecard (or its loading placeholder) is already in the thread
+  const hasCard = messages.some((m) => m?.artifact?.type === 'scorecard' || m?.artifact?.type === 'scorecard-loading');
   if (hasCard) return messages;
+  // Fallback: if analysisResult exists but no card was injected yet, append it
+  if (!analysisResult) return messages;
   return [
     ...messages,
     { id: 'scorecard-card', role: 'ai', text: '', artifact: { type: 'scorecard', data: analysisResult } },
@@ -6853,6 +6867,15 @@ const handleSaveStarter = async () => {
   async function triggerInlineScore(sid) {
     if (!sid) return;
     console.log('[triggerInlineScore] calling analyzeFromConversation for', sid);
+
+    // Inject a loading placeholder at the CURRENT end of the thread so the card
+    // holds its position even if the user sends more messages while scoring runs.
+    const loadingId = 'scorecard-loading';
+    setMessages((prev) => {
+      if (prev.some((m) => m.id === loadingId || m?.artifact?.type === 'scorecard' || m?.artifact?.type === 'scorecard-loading')) return prev;
+      return [...prev, { id: loadingId, role: 'ai', text: '', artifact: { type: 'scorecard-loading' } }];
+    });
+
     setScorecardGenerating(true);
     try {
       const data = await Jaspen.analyzeFromConversation({
@@ -6880,6 +6903,13 @@ const handleSaveStarter = async () => {
       }
       result.selected_scorecard_id = sid;
 
+      // Replace the placeholder with the real scorecard card, in-place
+      setMessages((prev) => prev.map((m) =>
+        m.id === loadingId
+          ? { id: 'scorecard-card', role: 'ai', text: '', artifact: { type: 'scorecard', data: result } }
+          : m
+      ));
+
       // Wire up scorecard state
       setAnalysisResult(result);
       const baselineSnapshot = { ...result._baseline_scorecard, id: sid, label: 'Baseline', isBaseline: true, createdAt: Date.now() };
@@ -6888,12 +6918,12 @@ const handleSaveStarter = async () => {
       setBaselineScorecardId(sid);
       baselineRef.current = result._baseline_scorecard;
 
-      // displayMessages memo will render the card automatically once analysisResult is set
-
       // Background refresh — don't block the UI
       setTimeout(() => { void refreshBundle(sid); void fetchSessions(); }, 0);
     } catch (e) {
       console.error('[triggerInlineScore]', e);
+      // Remove placeholder on failure so it doesn't get stuck
+      setMessages((prev) => prev.filter((m) => m.id !== loadingId));
     } finally {
       setScorecardGenerating(false);
     }
@@ -6911,6 +6941,14 @@ const handleSaveStarter = async () => {
   // result is NOT overwritten, so restoring from bundle always shows both baseline + versions.
   async function triggerAutoVersion(sid) {
     if (!sid || !analysisResult) return; // need an existing scorecard to version from
+
+    // Inject a loading placeholder immediately so it holds position in the thread
+    const loadingId = `scorecard-v-loading-${Date.now()}`;
+    setMessages((prev) => [
+      ...prev,
+      { id: loadingId, role: 'ai', text: '', artifact: { type: 'scorecard-loading', label: 'Scoring your updated idea…' } },
+    ]);
+
     setAutoVersionGenerating(true);
     try {
       // Score the current conversation state, saving as a scenario (not replacing the first)
@@ -6924,8 +6962,7 @@ const handleSaveStarter = async () => {
       const scoreNum = Number.parseInt(Number(raw.overall_score || raw.jaspen_score || 0), 10);
       const score = Number.isFinite(scoreNum) ? scoreNum : 0;
 
-      // Use the AI-generated project name as the label — if this is a genuinely different idea
-      // the name will reflect that naturally; if it's a variation the name will be similar.
+      // Use the AI-generated project name as the label
       const ideaName = raw.name || raw.project_name || deriveIdeaTitle({ messages, fallback: 'Untitled Idea' });
       const currentSnaps = Array.isArray(scorecardSnapshots) ? scorecardSnapshots : [];
       const snapNum = currentSnaps.length + 1;
@@ -6945,19 +6982,18 @@ const handleSaveStarter = async () => {
       };
 
       // Append new snapshot — baseline stays, new one added after.
-      // analysisResult is NOT updated so the original scorecard card in chat stays intact.
       setScorecardSnapshots((prev) => {
         const arr = Array.isArray(prev) ? prev : [];
-        // Avoid duplicates
         if (arr.some((s) => String(s?.id || '') === String(versionId))) return arr;
         return [...arr, newSnapshot];
       });
 
-      // Inject a new scorecard card into the conversation thread so both are visible inline
-      setMessages((prev) => [
-        ...prev,
-        { id: `scorecard-v${snapNum}`, role: 'ai', text: '', artifact: { type: 'scorecard', data: newSnapshot } },
-      ]);
+      // Replace placeholder with real scorecard card, in-place
+      setMessages((prev) => prev.map((m) =>
+        m.id === loadingId
+          ? { id: `scorecard-v${snapNum}`, role: 'ai', text: '', artifact: { type: 'scorecard', data: newSnapshot } }
+          : m
+      ));
 
       showToast(`Scored ✓`, 'success');
 
@@ -6965,6 +7001,8 @@ const handleSaveStarter = async () => {
       setTimeout(() => { void refreshBundle(sid); void fetchSessions(); }, 0);
     } catch (e) {
       console.error('[triggerAutoVersion]', e);
+      // Remove placeholder on failure
+      setMessages((prev) => prev.filter((m) => m.id !== loadingId));
       showToast('Could not create a new scorecard version right now.', 'error');
     } finally {
       setAutoVersionGenerating(false);
@@ -10726,31 +10764,10 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
 	                </div>
 	              ))}
 
-              {scorecardGenerating && !analysisResult && (
-                <div className="jas-message ai">
-                  <div className="jas-message-bubble">
-                    <div className="jas-scorecard-generating-bubble">
-                      <span className="jas-scorecard-generating-dots">
-                        <span/><span/><span/>
-                      </span>
-                      <span className="jas-scorecard-generating-text">Building your scorecard…</span>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {autoVersionGenerating && (
-                <div className="jas-message ai">
-                  <div className="jas-message-bubble">
-                    <div className="jas-scorecard-generating-bubble">
-                      <span className="jas-scorecard-generating-dots">
-                        <span/><span/><span/>
-                      </span>
-                      <span className="jas-scorecard-generating-text">Scoring your updated idea…</span>
-                    </div>
-                  </div>
-                </div>
-              )}
+              {/* Scorecard loading states are now rendered inline as placeholder messages
+                  in the messages array (scorecard-loading artifact type), so the card
+                  always holds its correct position in the thread even if the user
+                  sends follow-up messages while scoring is in progress. */}
 
               <div ref={endRef} />
             </div>
