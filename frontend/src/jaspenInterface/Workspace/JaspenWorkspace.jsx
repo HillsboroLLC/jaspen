@@ -164,6 +164,11 @@ const resolveHistoryOwnerId = (analysisHistory = [], ...candidateIds) => {
 
   if (candidates.length === 0) return '';
 
+  // thread_ prefixed IDs are session storage keys — always prefer them directly
+  // over analysis UUIDs which analysisHistory matching may otherwise surface first.
+  const threadKey = candidates.find((id) => id.startsWith('thread_'));
+  if (threadKey) return threadKey;
+
   for (const tid of candidates) {
     const exactEntry = analysisHistory.find((entry) => String(entry?.id || '').trim() === tid);
     if (exactEntry?.id) return String(exactEntry.id).trim();
