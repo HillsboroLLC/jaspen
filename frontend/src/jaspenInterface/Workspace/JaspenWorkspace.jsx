@@ -2107,7 +2107,7 @@ const renderInlineExecutionView = () => {
   );
 };
 
-const renderScorecardCard = (result) => {
+const renderScorecardCard = (result, opts = {}) => {
   const score = Number(result?.jaspen_score || 0);
   const category = score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : score >= 40 ? 'Fair' : 'At Risk';
   const ringColor = '#a0036c';
@@ -2231,6 +2231,17 @@ const renderScorecardCard = (result) => {
           <button className="jas-scorecard-action-ghost" title="Share scorecard">
             Share
           </button>
+          {opts.onNewVersion && (
+            <button
+              className="jas-scorecard-action-ghost jas-scorecard-action-new-version"
+              title="Create a new scorecard version"
+              onClick={opts.onNewVersion}
+              disabled={opts.autoVersionGenerating}
+              style={{ marginLeft: 'auto', opacity: opts.autoVersionGenerating ? 0.6 : 1 }}
+            >
+              {opts.autoVersionGenerating ? '⏳ Creating…' : '+ New Version'}
+            </button>
+          )}
         </div>
         <span className="jas-scorecard-view-hint">Ask Jaspen about any dimension →</span>
       </div>
@@ -2238,10 +2249,10 @@ const renderScorecardCard = (result) => {
   );
 };
 
-const renderConversationMessage = (message) => {
+const renderConversationMessage = (message, opts = {}) => {
   // Render scorecard artifact inline
   if (message?.artifact?.type === 'scorecard') {
-    return renderScorecardCard(message.artifact.data);
+    return renderScorecardCard(message.artifact.data, opts);
   }
   const text = String(message?.text || '');
   if (message?.role === 'user') return text;
@@ -9479,7 +9490,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
     activeDrawerTab={scenarioDrawerView}
     onDrawerTabChange={setScenarioDrawerView}
     messages={messages}
-    renderMessage={(m) => renderConversationMessage(m)}
+    renderMessage={(m) => renderConversationMessage(m, { onNewVersion: m.artifact?.type === 'scorecard' ? () => void triggerAutoVersion(sessionId || currentSessionId) : undefined, autoVersionGenerating })}
     renderAttachments={(m) => renderMessageAttachments(m)}
     renderActions={(m, key, idx, total) => renderMessageActions(m, key, idx, total)}
     streamStatus={renderStreamToolStatus()}
@@ -10762,7 +10773,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
 
 	              {displayMessages.map((m, idx) => (
 	                <div key={m.id || idx} className={`jas-message ${m.role === 'ai' ? 'ai' : 'user'}`}>
-	                  <div className="jas-message-bubble">{renderConversationMessage(m)}</div>
+	                  <div className="jas-message-bubble">{renderConversationMessage(m, { onNewVersion: m.artifact?.type === 'scorecard' ? () => void triggerAutoVersion(sessionId || currentSessionId) : undefined, autoVersionGenerating })}</div>
 	                  {renderMessageAttachments(m)}
 	                  {renderMessageActions(m, `main:${idx}`, idx, displayMessages.length)}
 	                </div>
@@ -11014,29 +11025,46 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
             {/* ── Dynamic content per pill (driven by header stage pills) ── */}
             <div className="jas-insights-body">
 
-              {/* Discovery: What Jaspen knows checklist */}
+              {/* Discovery: What Jaspen knows checklist + improvement coaching */}
               {activePill === 'discovery' && sessionId && (
                 <div className="jas-insights-checklist">
                   {renderCollectedSignals()}
+                  {/* Dynamic coaching: surface actionable gap hints */}
+                  {(() => {
+                    const gaps = (collectedSignals || []).filter(s => !s.complete && s.hint);
+                    if (gaps.length === 0) return null;
+                    return (
+                      <div className="jas-insights-coaching" style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+                        <p className="jas-insights-tips-label" style={{ marginBottom: 8 }}>How to improve confidence</p>
+                        {gaps.slice(0, 3).map(g => (
+                          <div key={g.id} className="jas-insights-coaching-item" style={{ marginBottom: 10 }}>
+                            <p style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--gray-700)', marginBottom: 2 }}>{g.label}</p>
+                            <p style={{ fontSize: '0.71rem', color: 'var(--gray-500)', lineHeight: 1.45 }}>{g.hint}</p>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
 
-              {/* Scoring: dimension rationales */}
+              {/* Scoring: dimension rationales + improvement coaching */}
               {activePill === 'scoring' && analysisResult && (
                 <div className="jas-insights-dim-insights">
                   <p className="jas-insights-tips-label" style={{ marginBottom: 8 }}>Dimension Insights</p>
                   {[
-                    { key: 'strategic_alignment', label: 'Strategic Fit' },
-                    { key: 'financial_viability',  label: 'Cost Efficiency' },
-                    { key: 'execution_readiness',  label: 'Time-to-Value' },
-                    { key: 'risk_profile',          label: 'Execution Risk' },
-                    { key: 'market_opportunity',   label: 'Market Opportunity' },
-                    { key: 'evidence_quality',     label: 'Evidence Quality' },
-                  ].map(({ key, label }) => {
+                    { key: 'strategic_alignment', label: 'Strategic Fit',       tip: 'Clarify how this aligns with your org\'s top priorities.' },
+                    { key: 'financial_viability',  label: 'Cost Efficiency',    tip: 'Share budget constraints or ROI targets to sharpen this.' },
+                    { key: 'execution_readiness',  label: 'Time-to-Value',      tip: 'Add team capacity details or a rough timeline to improve this.' },
+                    { key: 'risk_profile',          label: 'Execution Risk',     tip: 'Describe known blockers or dependencies to lower your risk score.' },
+                    { key: 'market_opportunity',   label: 'Market Opportunity',  tip: 'Include market size estimates or competitive context.' },
+                    { key: 'evidence_quality',     label: 'Evidence Quality',    tip: 'Attach data, research, or financial history to strengthen this.' },
+                  ].map(({ key, label, tip }) => {
                     const dim = (analysisResult.dimensions || {})[key];
                     if (!dim?.rationale) return null;
                     const s = Number(dim.score || 0);
                     const color = s >= 80 ? '#16a34a' : s >= 60 ? '#2563eb' : s >= 40 ? '#d97706' : '#dc2626';
+                    const isWeak = s < 60;
                     return (
                       <div key={key} className="jas-insights-dim-row">
                         <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
@@ -11044,22 +11072,57 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                           <span className="jas-insights-dim-score-badge" style={{ color }}>{(s/10).toFixed(1)}/10</span>
                         </div>
                         <p className="jas-insights-dim-rationale">{dim.rationale}</p>
+                        {isWeak && (
+                          <p style={{ fontSize: '0.7rem', color: '#d97706', marginTop: 4, lineHeight: 1.4, fontStyle: 'italic' }}>
+                            💡 {tip}
+                          </p>
+                        )}
                       </div>
                     );
                   })}
+                  {/* New Version CTA when a scorecard exists */}
+                  {analysisResult && (
+                    <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+                      <p style={{ fontSize: '0.72rem', color: 'var(--gray-600)', lineHeight: 1.45, marginBottom: 8 }}>
+                        Made changes? Create a new version to compare scores over time.
+                      </p>
+                      <button
+                        className="jas-scorecard-action-ghost jas-scorecard-action-new-version"
+                        disabled={autoVersionGenerating}
+                        onClick={() => void triggerAutoVersion(sessionId || currentSessionId)}
+                        style={{ fontSize: '0.72rem', padding: '4px 10px', opacity: autoVersionGenerating ? 0.6 : 1 }}
+                      >
+                        {autoVersionGenerating ? '⏳ Creating…' : '+ New Version'}
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
 
-              {/* Trade-off: scenario list */}
+              {/* Trade-off: scenario list + new version button */}
               {activePill === 'scenarios' && analysisResult && (
                 <div>
-                  <p className="jas-insights-tips-label" style={{ marginBottom: 8 }}>Versions</p>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <p className="jas-insights-tips-label">Versions</p>
+                    <button
+                      className="jas-scorecard-action-ghost jas-scorecard-action-new-version"
+                      disabled={autoVersionGenerating}
+                      onClick={() => void triggerAutoVersion(sessionId || currentSessionId)}
+                      style={{ fontSize: '0.7rem', padding: '3px 8px', opacity: autoVersionGenerating ? 0.6 : 1 }}
+                    >
+                      {autoVersionGenerating ? '⏳ …' : '+ New Version'}
+                    </button>
+                  </div>
                   {scorecardSnapshots?.length > 0 ? scorecardSnapshots.map((snap, i) => (
                     <div key={snap.id || i} className="jas-insights-scenario-row">
                       <span className="jas-insights-scenario-label">{snap.label || `Version ${i+1}`}</span>
                       <span className="jas-insights-scenario-score">{snap.jaspen_score ?? snap.score ?? '—'}<span style={{ fontWeight: 400, color: 'var(--gray-400)' }}>/100</span></span>
                     </div>
-                  )) : null}
+                  )) : (
+                    <p style={{ fontSize: '0.73rem', color: 'var(--gray-500)', fontStyle: 'italic', marginBottom: 8 }}>
+                      No versions yet. Hit "+ New Version" after changes to compare.
+                    </p>
+                  )}
                   <div style={{ marginTop: 12, padding: '10px 0', borderTop: '1px solid var(--border)' }}>
                     <p className="jas-insights-tips-label" style={{ marginBottom: 6 }}>Model a scenario</p>
                     <p style={{ fontSize: '0.74rem', color: 'var(--gray-600)', lineHeight: 1.5 }}>
