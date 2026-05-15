@@ -648,15 +648,65 @@ def _strategy_generate_reply(
     return response.choices[0].message.content, usage
 
 
+def _repair_json_text(text):
+    """Apply common repairs to LLM-generated JSON before parsing."""
+    if not isinstance(text, str):
+        return text
+    cleaned = text.strip()
+    # Strip markdown fences if present
+    if cleaned.startswith('```'):
+        cleaned = re.sub(r'^```(?:json)?\s*', '', cleaned)
+        cleaned = re.sub(r'\s*```\s*$', '', cleaned)
+    # Remove trailing commas before closing brackets/braces
+    cleaned = re.sub(r',\s*([}\]])', r'\1', cleaned)
+    # Insert missing comma between `}` or `]` or `"` and the next quoted key on a new line
+    # e.g.  "...},\n    "key":  → unchanged
+    #       "...}\n    "key":  → "...},\n    "key":
+    cleaned = re.sub(r'([}\]"\d])\s*\n(\s*)(")', r'\1,\n\2\3', cleaned)
+    return cleaned
+
+
 def _extract_json_object(text):
-    """Parse JSON object from model output (raw JSON or fenced/embedded JSON)."""
+    """Parse JSON object from model output (raw JSON or fenced/embedded JSON).
+
+    Resilient to: trailing commas, missing commas between fields, markdown
+    fences, and trailing prose after the JSON object. If the body still won't
+    parse, raise ValueError with the original snippet for logging.
+    """
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("Empty LLM response")
+
+    # Pass 1: try as-is
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        json_match = re.search(r'\{.*\}', text, re.DOTALL)
-        if not json_match:
-            raise ValueError("Could not parse JSON from LLM response")
-        return json.loads(json_match.group())
+        pass
+
+    # Pass 2: locate the outermost JSON object
+    json_match = re.search(r'\{.*\}', text, re.DOTALL)
+    candidate = json_match.group() if json_match else text
+
+    # Pass 3: try parsing the candidate directly
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError:
+        pass
+
+    # Pass 4: apply common repairs
+    repaired = _repair_json_text(candidate)
+    try:
+        return json.loads(repaired)
+    except json.JSONDecodeError as exc:
+        # Final fallback: truncate to last valid `}` and try again
+        last_brace = repaired.rfind('}')
+        if last_brace > 0:
+            try:
+                return json.loads(repaired[: last_brace + 1])
+            except json.JSONDecodeError:
+                pass
+        raise ValueError(
+            f"Could not parse JSON from LLM response: {exc}; first 200 chars: {candidate[:200]!r}"
+        )
 
 
 def _clean_scorecard_text(value):
@@ -2167,7 +2217,7 @@ The executive_summary must read like a concise leadership briefing. It should ne
             model_selection=model_selection,
             llm_model=llm_model,
             strategy_objective=strategy_objective,
-            max_tokens=4000,
+            max_tokens=8000,
             temperature=0,
         )
     except Exception as routed_exc:
