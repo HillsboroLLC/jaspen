@@ -6964,40 +6964,39 @@ const handleSaveStarter = async () => {
     if (!sid || !analysisResult) return; // need an existing scorecard to version from
     setAutoVersionGenerating(true);
     try {
-      // Determine version label before scoring
-      const currentSnaps = Array.isArray(scorecardSnapshots) ? scorecardSnapshots : [];
-      const nonBaselineCount = currentSnaps.filter(s => !s.isBaseline).length;
-      const versionNum = nonBaselineCount + 2; // e.g. 0 non-baseline → "Version 2"
-      const versionLabel = `Version ${versionNum}`;
-
-      // Score the current conversation state, saving as a scenario (not replacing baseline)
+      // Score the current conversation state, saving as a scenario (not replacing the first)
       const data = await Jaspen.analyzeFromConversation({
         session_id: sid,
         model_type: selectedModelType,
         create_as_version: true,
-        version_label: versionLabel,
       });
 
       const raw = data?.analysis || data?.analysis_result || data || {};
       const scoreNum = Number.parseInt(Number(raw.overall_score || raw.jaspen_score || 0), 10);
       const score = Number.isFinite(scoreNum) ? scoreNum : 0;
-      const versionId = raw.id || raw.analysis_id || `${sid}-v${versionNum}-${Date.now()}`;
+
+      // Use the AI-generated project name as the label — if this is a genuinely different idea
+      // the name will reflect that naturally; if it's a variation the name will be similar.
+      const ideaName = raw.name || raw.project_name || deriveIdeaTitle({ messages, fallback: 'Untitled Idea' });
+      const currentSnaps = Array.isArray(scorecardSnapshots) ? scorecardSnapshots : [];
+      const snapNum = currentSnaps.length + 1;
+      const versionId = raw.id || raw.analysis_id || `${sid}-s${snapNum}-${Date.now()}`;
 
       const newSnapshot = {
         ...raw,
         jaspen_score: score,
         score_category: raw.score_category || (score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : score >= 40 ? 'Fair' : 'At Risk'),
         component_scores: raw.scores || raw.component_scores || {},
-        project_name: raw.name || raw.project_name || deriveIdeaTitle({ messages, fallback: 'Untitled Idea' }),
+        project_name: ideaName,
         id: versionId,
         analysis_id: versionId,
-        label: versionLabel,
+        label: ideaName,
         isBaseline: false,
         createdAt: Date.now(),
       };
 
-      // Append new snapshot — baseline stays first, new version added after.
-      // analysisResult is NOT updated so the baseline scorecard card in chat stays intact.
+      // Append new snapshot — first scorecard stays, new one added after.
+      // analysisResult is NOT updated so the original scorecard card in chat stays intact.
       setScorecardSnapshots((prev) => {
         const arr = Array.isArray(prev) ? prev : [];
         return [...arr, newSnapshot];
@@ -7005,7 +7004,7 @@ const handleSaveStarter = async () => {
 
       // Switch to Scenarios pill so the user sees the comparison immediately
       setActivePill('scenarios');
-      showToast(`${versionLabel} created — compare it in Scenarios ↗`, 'success');
+      showToast(`Scored — see comparison in Scenarios ↗`, 'success');
 
       // Refresh bundle so the scenario persists and survives a hard reload
       setTimeout(() => { void refreshBundle(sid); void fetchSessions(); }, 0);
@@ -11131,7 +11130,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               {activePill === 'scenarios' && analysisResult && (
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                    <p className="jas-insights-tips-label">Versions</p>
+                    <p className="jas-insights-tips-label">Scored ideas</p>
                     <button
                       className="jas-scorecard-action-ghost jas-scorecard-action-new-version"
                       disabled={autoVersionGenerating}
