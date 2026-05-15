@@ -5684,6 +5684,15 @@ useEffect(() => {
       // Kick off knowledge signal extraction in background
       void refreshKnowledgeSignals(sid);
 
+      // Agentic scoring on start path — same logic as the continue path.
+      // canAnalyze requires 3 turns so won't fire here; catch it via status/text signal.
+      const _startAiText = String(data?.reply || data?.message || data?.text || '').toLowerCase();
+      const _startTextSignals = /building your scorecard|scorecard now|generating your scorecard|scoring your idea/.test(_startAiText);
+      if ((data?.status === 'ready_to_analyze' || _startTextSignals) && !analysisResult && !autoScoringTriggeredRef.current) {
+        autoScoringTriggeredRef.current = true;
+        setTimeout(() => { void triggerInlineScore(sid); }, 800);
+      }
+
       return sid;
     } catch (e) {
       if (e?.status === 403 && e?.data?.code === 'model_type_not_allowed') {
