@@ -802,7 +802,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
       { withSid: true }
     );
   },
-async analyzeFromConversation({ session_id, transcript, deterministic = true, seed, project_name, assumptions, model_type }) {
+async analyzeFromConversation({ session_id, transcript, deterministic = true, seed, project_name, assumptions, model_type, create_as_version = false, version_label }) {
     const data = await postJSON(
       endpoints.analyze,
       {
@@ -810,6 +810,7 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
         name: project_name || 'Baseline Analysis',
         framework_id: null, // Uses default "Jaspen Assessment"
         model_type: model_type || undefined,
+        ...(create_as_version ? { create_as_version: true, version_label: version_label || undefined } : {}),
       },
       { withSid: true, sidOverride: session_id }
     );

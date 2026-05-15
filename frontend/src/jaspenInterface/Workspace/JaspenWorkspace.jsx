@@ -6932,27 +6932,30 @@ const handleSaveStarter = async () => {
   }
 
   // Creates a new scored version from the current conversation and appends it to snapshots.
-  // Does NOT replace the baseline — the baseline stays as the first point of comparison.
+  // Uses create_as_version=true so the backend saves it as a scenario — baseline session
+  // result is NOT overwritten, so restoring from bundle always shows both baseline + versions.
   async function triggerAutoVersion(sid) {
     if (!sid || !analysisResult) return; // need an existing scorecard to version from
     setAutoVersionGenerating(true);
     try {
+      // Determine version label before scoring
+      const currentSnaps = Array.isArray(scorecardSnapshots) ? scorecardSnapshots : [];
+      const nonBaselineCount = currentSnaps.filter(s => !s.isBaseline).length;
+      const versionNum = nonBaselineCount + 2; // e.g. 0 non-baseline → "Version 2"
+      const versionLabel = `Version ${versionNum}`;
+
+      // Score the current conversation state, saving as a scenario (not replacing baseline)
       const data = await Jaspen.analyzeFromConversation({
         session_id: sid,
         model_type: selectedModelType,
+        create_as_version: true,
+        version_label: versionLabel,
       });
 
       const raw = data?.analysis || data?.analysis_result || data || {};
       const scoreNum = Number.parseInt(Number(raw.overall_score || raw.jaspen_score || 0), 10);
       const score = Number.isFinite(scoreNum) ? scoreNum : 0;
-
-      // Determine version label (e.g. "Version 2", "Version 3", …)
-      // Count only non-baseline snapshots to name the new version correctly
-      const currentSnaps = Array.isArray(scorecardSnapshots) ? scorecardSnapshots : [];
-      const nonBaselineCount = currentSnaps.filter(s => !s.isBaseline).length;
-      const versionNum = nonBaselineCount + 2; // e.g. 0 non-baseline → "Version 2"
-      const versionLabel = `Version ${versionNum}`;
-      const versionId = `${sid}-v${versionNum}-${Date.now()}`;
+      const versionId = raw.id || raw.analysis_id || `${sid}-v${versionNum}-${Date.now()}`;
 
       const newSnapshot = {
         ...raw,
@@ -6968,17 +6971,17 @@ const handleSaveStarter = async () => {
       };
 
       // Append new snapshot — baseline stays first, new version added after.
-      // Do NOT update analysisResult: the baseline scorecard card in chat must remain unchanged.
+      // analysisResult is NOT updated so the baseline scorecard card in chat stays intact.
       setScorecardSnapshots((prev) => {
         const arr = Array.isArray(prev) ? prev : [];
         return [...arr, newSnapshot];
       });
 
-      // Switch to Scenarios pill so the user can see the comparison side by side
+      // Switch to Scenarios pill so the user sees the comparison immediately
       setActivePill('scenarios');
       showToast(`${versionLabel} created — compare it in Scenarios ↗`, 'success');
 
-      // Background refresh
+      // Refresh bundle so the scenario persists and survives a hard reload
       setTimeout(() => { void refreshBundle(sid); void fetchSessions(); }, 0);
     } catch (e) {
       console.error('[triggerAutoVersion]', e);

@@ -2190,6 +2190,9 @@ def analyze_project():
         project_name = data.get('name') or data.get('project_name') or 'Jaspen Project'
         framework_id = data.get('framework_id')
         project_description = (data.get('description') or '').strip()
+        # When true: save result as a scenario/version rather than overwriting the baseline session result
+        create_as_version = bool(data.get('create_as_version', False))
+        version_label = str(data.get('version_label') or '').strip() or None
 
         # Build analysis input from thread conversation when thread_id is provided.
         conversation_history = []
@@ -2363,26 +2366,51 @@ def analyze_project():
         analysis['_baseline_scorecard'] = normalized_baseline
         analysis['scorecard_snapshots'] = []
         analysis['selected_scorecard_id'] = analysis_id
-        session['result'] = analysis
-        session['analysis_history'] = history
-        session['analyses'] = history
-        session['adopted_analysis_id'] = analysis_id
-        session_baseline_inputs = _extract_baseline_inputs(analysis)
-        session_baseline_inputs, session_lever_catalog = _build_scenario_lever_catalog(analysis, session_baseline_inputs)
-        session['baseline_inputs'] = session_baseline_inputs
-        session['lever_catalog'] = session_lever_catalog
-        session['timestamp'] = generated_at
-        session['completed_at'] = generated_at
-        session['status'] = 'completed'
-        if not session.get('created'):
-            session['created'] = generated_at
-        if not isinstance(session.get('chat_history'), list):
-            session['chat_history'] = conversation_history if isinstance(conversation_history, list) else []
-        if not isinstance(session.get('notes'), dict):
-            session['notes'] = {}
 
-        sessions[session_key or resolved_thread_id] = session
-        persisted_session = save_user_sessions(current_user_id, sessions)
+        if create_as_version:
+            # Version mode: preserve the baseline — only add to analysis history and
+            # save as a named scenario so it appears in bundle.scenarios on restore.
+            session['analysis_history'] = history
+            session['analyses'] = history
+            session['timestamp'] = generated_at
+            sessions[session_key or resolved_thread_id] = session
+            persisted_session = save_user_sessions(current_user_id, sessions)
+
+            # Store as a named scenario so the bundle surfaces it in scorecardSnapshots
+            _snap_label = version_label or f'Version {len(history)}'
+            try:
+                _create_scenario_record(
+                    current_user_id,
+                    resolved_thread_id,
+                    deltas={},
+                    label=_snap_label,
+                    baseline=session.get('result') or None,
+                    result=analysis,
+                    plan_key=None,
+                )
+            except Exception as _e:
+                current_app.logger.warning('create_as_version scenario save failed: %s', _e)
+        else:
+            session['result'] = analysis
+            session['analysis_history'] = history
+            session['analyses'] = history
+            session['adopted_analysis_id'] = analysis_id
+            session_baseline_inputs = _extract_baseline_inputs(analysis)
+            session_baseline_inputs, session_lever_catalog = _build_scenario_lever_catalog(analysis, session_baseline_inputs)
+            session['baseline_inputs'] = session_baseline_inputs
+            session['lever_catalog'] = session_lever_catalog
+            session['timestamp'] = generated_at
+            session['completed_at'] = generated_at
+            session['status'] = 'completed'
+            if not session.get('created'):
+                session['created'] = generated_at
+            if not isinstance(session.get('chat_history'), list):
+                session['chat_history'] = conversation_history if isinstance(conversation_history, list) else []
+            if not isinstance(session.get('notes'), dict):
+                session['notes'] = {}
+
+            sessions[session_key or resolved_thread_id] = session
+            persisted_session = save_user_sessions(current_user_id, sessions)
 
         # Fire-and-forget: extract business facts from this score into persistent user memory.
         try:
