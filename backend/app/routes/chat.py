@@ -55,10 +55,11 @@ def _anthropic_model_candidates(preferred=None):
         current_app.config.get('MODEL_TYPE_BACKING_IDS', {}).get('pluto') if isinstance(current_app.config.get('MODEL_TYPE_BACKING_IDS'), dict) else None,
     )
     fallbacks = (
+        'claude-sonnet-4-5-20250929',
         'claude-3-7-sonnet-latest',
         'claude-3-7-sonnet-20250219',
         'claude-3-5-sonnet-20241022',
-        'claude-3-5-haiku-latest',
+        'claude-haiku-4-5',
     )
     out = []
     seen = set()

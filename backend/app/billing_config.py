@@ -124,7 +124,7 @@ DEFAULT_MODEL_CATALOG = {
         'version': '1.0',
         'description': 'Fastest model for core intake and scorecard workflows.',
         'min_plan': 'free',
-        'default_llm_model': 'claude-3-5-haiku-latest',
+        'default_llm_model': 'claude-haiku-4-5',
     },
     'orbit': {
         'label': 'Orbit',
