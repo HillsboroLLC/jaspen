@@ -1441,9 +1441,6 @@ export default function JaspenWorkspace() {
   const [analysisResult, setAnalysisResult] = useState(null);
   const [scorecardGenerating, setScorecardGenerating] = useState(false);
   const [autoVersionGenerating, setAutoVersionGenerating] = useState(false);
-  // Index into messages[] at the point the last version was scored.
-  // "+ New Version" stays disabled until a substantive user message arrives after this point.
-  const [lastScoredMessageIdx, setLastScoredMessageIdx] = useState(0);
   // Tracks which stage pill's content the sidebar is showing
   const [activePill, setActivePill] = useState('discovery');
   const [artifactsOpen, setArtifactsOpen] = useState(false);
@@ -2242,10 +2239,10 @@ const renderScorecardCard = (result, opts = {}) => {
           {opts.onNewVersion && (
             <button
               className="jas-scorecard-action-ghost jas-scorecard-action-new-version"
-              title={opts.canNewVersion ? 'Score a new version based on your latest context' : 'Add more context in the chat to enable a new version'}
+              title="Score a new version based on your updated context"
               onClick={opts.onNewVersion}
-              disabled={opts.autoVersionGenerating || !opts.canNewVersion}
-              style={{ marginLeft: 'auto', opacity: (opts.autoVersionGenerating || !opts.canNewVersion) ? 0.4 : 1, cursor: (!opts.canNewVersion && !opts.autoVersionGenerating) ? 'not-allowed' : undefined }}
+              disabled={opts.autoVersionGenerating}
+              style={{ marginLeft: 'auto', opacity: opts.autoVersionGenerating ? 0.6 : 1 }}
             >
               {opts.autoVersionGenerating ? '⏳ Creating…' : '+ New Version'}
             </button>
@@ -2265,27 +2262,42 @@ const renderConversationMessage = (message, opts = {}) => {
   const text = String(message?.text || '');
   if (message?.role === 'user') return text;
 
+  const rescoreCta = message?.suggestedRescore && opts.onRescoreAction && analysisResult ? (
+    <div className="jas-rescore-cta">
+      <button
+        className="jas-rescore-cta-btn"
+        disabled={opts.autoVersionGenerating}
+        onClick={opts.onRescoreAction}
+      >
+        {opts.autoVersionGenerating ? '⏳ Scoring…' : '↗ Score this'}
+      </button>
+    </div>
+  ) : null;
+
   return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        p: ({ children }) => <p className="jas-md-paragraph">{children}</p>,
-        pre: ({ children }) => <pre className="jas-md-pre">{children}</pre>,
-        code: ({ inline, className, children, ...props }) => (
-          inline ? (
-            <code className={`jas-md-inline-code ${className || ''}`.trim()} {...props}>{children}</code>
-          ) : (
-            <code className={`jas-md-code ${className || ''}`.trim()} {...props}>{children}</code>
-          )
-        ),
-        ul: ({ children }) => <ul className="jas-md-list">{children}</ul>,
-        ol: ({ children }) => <ol className="jas-md-list jas-md-list-ordered">{children}</ol>,
-        table: ({ children }) => <div className="jas-md-table-wrap"><table className="jas-md-table">{children}</table></div>,
-        a: ({ children, ...props }) => <a {...props} target="_blank" rel="noreferrer">{children}</a>,
-      }}
-    >
-      {text}
-    </ReactMarkdown>
+    <>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          p: ({ children }) => <p className="jas-md-paragraph">{children}</p>,
+          pre: ({ children }) => <pre className="jas-md-pre">{children}</pre>,
+          code: ({ inline, className, children, ...props }) => (
+            inline ? (
+              <code className={`jas-md-inline-code ${className || ''}`.trim()} {...props}>{children}</code>
+            ) : (
+              <code className={`jas-md-code ${className || ''}`.trim()} {...props}>{children}</code>
+            )
+          ),
+          ul: ({ children }) => <ul className="jas-md-list">{children}</ul>,
+          ol: ({ children }) => <ol className="jas-md-list jas-md-list-ordered">{children}</ol>,
+          table: ({ children }) => <div className="jas-md-table-wrap"><table className="jas-md-table">{children}</table></div>,
+          a: ({ children, ...props }) => <a {...props} target="_blank" rel="noreferrer">{children}</a>,
+        }}
+      >
+        {text}
+      </ReactMarkdown>
+      {rescoreCta}
+    </>
   );
 };
 
@@ -2780,16 +2792,6 @@ useEffect(() => {
   const canUseScenarios = canUseTool('scenario_create', 'write');
   const canUseWbsWrite = canUseTool('wbs_write', 'write');
 
-  // "+ New Version" is only actionable when a substantive user message (>40 chars) has been
-  // sent since the last time a version was scored. Short acks ("ok", "yes", "thanks") don't count.
-  const hasActionableContentForNewVersion = useMemo(() => {
-    if (!analysisResult) return false;
-    const msgs = Array.isArray(messages) ? messages : [];
-    const newMsgs = msgs.slice(lastScoredMessageIdx);
-    return newMsgs.some(
-      (m) => m?.role === 'user' && typeof m?.text === 'string' && m.text.trim().length > 40
-    );
-  }, [analysisResult, messages, lastScoredMessageIdx]);
   const effectiveCanManageOrg = adminPreviewRole ? adminPreviewRole === 'admin' : canManageOrg;
   const effectiveIsViewer = adminPreviewRole ? adminPreviewRole === 'viewer' : isOrgViewer;
   const effectiveIsCollaborator = adminPreviewRole ? adminPreviewRole === 'collaborator' : isOrgCollaborator;
@@ -5505,6 +5507,8 @@ useEffect(() => {
         undoApplied: typeof metadata?.undoApplied === 'boolean' ? metadata.undoApplied : Boolean(message.undoApplied),
         regenerated: Boolean(metadata?.regenerated) || Boolean(message.regenerated),
         alternativesCount: Number.isInteger(metadata?.alternativesCount) ? metadata.alternativesCount : (message.alternativesCount || 0),
+        // Rescore CTA — set when backend signals AI suggested scoring a new version
+        suggestedRescore: metadata?.suggestedRescore || message.suggestedRescore || null,
       };
     }));
   }, []);
@@ -5566,17 +5570,21 @@ useEffect(() => {
         onDone: (payload) => {
           finalPayload = payload;
           setStreamToolStatus('');
+          const _rescoreA = Array.isArray(payload?.actions) ? payload.actions.find(a => a?.type === 'suggest_rescore') : null;
           finalizeStreamingAssistant(placeholderId, payload?.reply || payload?.message || '', {
             historyIndex: Number.isInteger(payload?.assistant_message_index) ? payload.assistant_message_index : null,
             hasMutations: Array.isArray(payload?.mutations) && payload.mutations.length > 0,
             canUndo: Boolean(payload?.undo_available),
+            suggestedRescore: _rescoreA ? { label: _rescoreA.label || 'Score this' } : null,
           });
         },
       });
+      const _finalRescoreA = Array.isArray(finalPayload?.actions) ? finalPayload.actions.find(a => a?.type === 'suggest_rescore') : null;
       finalizeStreamingAssistant(placeholderId, finalPayload?.reply || finalPayload?.message || '', {
         historyIndex: Number.isInteger(finalPayload?.assistant_message_index) ? finalPayload.assistant_message_index : null,
         hasMutations: Array.isArray(finalPayload?.mutations) && finalPayload.mutations.length > 0,
         canUndo: Boolean(finalPayload?.undo_available),
+        suggestedRescore: _finalRescoreA ? { label: _finalRescoreA.label || 'Score this' } : null,
       });
       setStreamToolStatus('');
       return finalPayload;
@@ -5625,17 +5633,21 @@ useEffect(() => {
         onDone: (payload) => {
           finalPayload = payload;
           setStreamToolStatus('');
+          const _rescoreB = Array.isArray(payload?.actions) ? payload.actions.find(a => a?.type === 'suggest_rescore') : null;
           finalizeStreamingAssistant(placeholderId, payload?.reply || payload?.message || '', {
             historyIndex: Number.isInteger(payload?.assistant_message_index) ? payload.assistant_message_index : null,
             hasMutations: Array.isArray(payload?.mutations) && payload.mutations.length > 0,
             canUndo: Boolean(payload?.undo_available),
+            suggestedRescore: _rescoreB ? { label: _rescoreB.label || 'Score this' } : null,
           });
         },
       });
+      const _finalRescoreB = Array.isArray(finalPayload?.actions) ? finalPayload.actions.find(a => a?.type === 'suggest_rescore') : null;
       finalizeStreamingAssistant(placeholderId, finalPayload?.reply || finalPayload?.message || '', {
         historyIndex: Number.isInteger(finalPayload?.assistant_message_index) ? finalPayload.assistant_message_index : null,
         hasMutations: Array.isArray(finalPayload?.mutations) && finalPayload.mutations.length > 0,
         canUndo: Boolean(finalPayload?.undo_available),
+        suggestedRescore: _finalRescoreB ? { label: _finalRescoreB.label || 'Score this' } : null,
       });
       setStreamToolStatus('');
       return finalPayload;
@@ -6926,9 +6938,6 @@ const handleSaveStarter = async () => {
       setSelectedScorecardId(sid);
       setBaselineScorecardId(sid);
       baselineRef.current = result._baseline_scorecard;
-      // Baseline just scored — reset the watermark so "+ New Version" is disabled
-      // until the user adds substantive new content in chat
-      setLastScoredMessageIdx(Array.isArray(messages) ? messages.length : 0);
 
       // displayMessages memo will render the card automatically once analysisResult is set
 
@@ -6997,9 +7006,6 @@ const handleSaveStarter = async () => {
       // Switch to Scenarios pill so the user sees the comparison immediately
       setActivePill('scenarios');
       showToast(`${versionLabel} created — compare it in Scenarios ↗`, 'success');
-
-      // Advance the watermark — button stays disabled until new substantive content arrives
-      setLastScoredMessageIdx(Array.isArray(messages) ? messages.length : 0);
 
       // Refresh bundle so the scenario persists and survives a hard reload
       setTimeout(() => { void refreshBundle(sid); void fetchSessions(); }, 0);
@@ -9512,7 +9518,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
     activeDrawerTab={scenarioDrawerView}
     onDrawerTabChange={setScenarioDrawerView}
     messages={messages}
-    renderMessage={(m) => renderConversationMessage(m, { onNewVersion: m.artifact?.type === 'scorecard' ? () => void triggerAutoVersion(sessionId || currentSessionId) : undefined, autoVersionGenerating, canNewVersion: hasActionableContentForNewVersion })}
+    renderMessage={(m) => renderConversationMessage(m, { onNewVersion: m.artifact?.type === 'scorecard' ? () => void triggerAutoVersion(sessionId || currentSessionId) : undefined, autoVersionGenerating, onRescoreAction: () => void triggerAutoVersion(sessionId || currentSessionId) })}
     renderAttachments={(m) => renderMessageAttachments(m)}
     renderActions={(m, key, idx, total) => renderMessageActions(m, key, idx, total)}
     streamStatus={renderStreamToolStatus()}
@@ -10795,7 +10801,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
 
 	              {displayMessages.map((m, idx) => (
 	                <div key={m.id || idx} className={`jas-message ${m.role === 'ai' ? 'ai' : 'user'}`}>
-	                  <div className="jas-message-bubble">{renderConversationMessage(m, { onNewVersion: m.artifact?.type === 'scorecard' ? () => void triggerAutoVersion(sessionId || currentSessionId) : undefined, autoVersionGenerating, canNewVersion: hasActionableContentForNewVersion })}</div>
+	                  <div className="jas-message-bubble">{renderConversationMessage(m, { onNewVersion: m.artifact?.type === 'scorecard' ? () => void triggerAutoVersion(sessionId || currentSessionId) : undefined, autoVersionGenerating, onRescoreAction: () => void triggerAutoVersion(sessionId || currentSessionId) })}</div>
 	                  {renderMessageAttachments(m)}
 	                  {renderMessageActions(m, `main:${idx}`, idx, displayMessages.length)}
 	                </div>
@@ -11102,20 +11108,17 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                       </div>
                     );
                   })}
-                  {/* New Version CTA when a scorecard exists */}
+                  {/* New Version CTA — manual override in sidebar */}
                   {analysisResult && (
                     <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
                       <p style={{ fontSize: '0.72rem', color: 'var(--gray-600)', lineHeight: 1.45, marginBottom: 8 }}>
-                        {hasActionableContentForNewVersion
-                          ? 'You\'ve added new context — create a version to compare scores.'
-                          : 'Share more context in chat to enable a new version.'}
+                        Ask Jaspen to model a change and it will suggest scoring a new version.
                       </p>
                       <button
                         className="jas-scorecard-action-ghost jas-scorecard-action-new-version"
-                        disabled={autoVersionGenerating || !hasActionableContentForNewVersion}
+                        disabled={autoVersionGenerating}
                         onClick={() => void triggerAutoVersion(sessionId || currentSessionId)}
-                        title={hasActionableContentForNewVersion ? 'Score a new version based on your latest context' : 'Add more context in the chat first'}
-                        style={{ fontSize: '0.72rem', padding: '4px 10px', opacity: (autoVersionGenerating || !hasActionableContentForNewVersion) ? 0.4 : 1, cursor: !hasActionableContentForNewVersion && !autoVersionGenerating ? 'not-allowed' : undefined }}
+                        style={{ fontSize: '0.72rem', padding: '4px 10px', opacity: autoVersionGenerating ? 0.6 : 1 }}
                       >
                         {autoVersionGenerating ? '⏳ Creating…' : '+ New Version'}
                       </button>
@@ -11131,24 +11134,27 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                     <p className="jas-insights-tips-label">Versions</p>
                     <button
                       className="jas-scorecard-action-ghost jas-scorecard-action-new-version"
-                      disabled={autoVersionGenerating || !hasActionableContentForNewVersion}
+                      disabled={autoVersionGenerating}
                       onClick={() => void triggerAutoVersion(sessionId || currentSessionId)}
-                      title={hasActionableContentForNewVersion ? 'Score a new version based on your latest context' : 'Add more context in the chat first'}
-                      style={{ fontSize: '0.7rem', padding: '3px 8px', opacity: (autoVersionGenerating || !hasActionableContentForNewVersion) ? 0.4 : 1, cursor: !hasActionableContentForNewVersion && !autoVersionGenerating ? 'not-allowed' : undefined }}
+                      style={{ fontSize: '0.7rem', padding: '3px 8px', opacity: autoVersionGenerating ? 0.6 : 1 }}
                     >
                       {autoVersionGenerating ? '⏳ …' : '+ New Version'}
                     </button>
                   </div>
                   {scorecardSnapshots?.length > 0 ? (() => {
-                    const baselineScore = scorecardSnapshots.find(s => s.isBaseline)?.jaspen_score ?? null;
+                    const firstScore = scorecardSnapshots[0]?.jaspen_score ?? null;
                     return scorecardSnapshots.map((snap, i) => {
                       const s = snap.jaspen_score ?? snap.score ?? null;
-                      const delta = (!snap.isBaseline && baselineScore !== null && s !== null) ? s - baselineScore : null;
+                      const delta = (i > 0 && firstScore !== null && s !== null) ? s - firstScore : null;
                       const deltaColor = delta > 0 ? '#16a34a' : delta < 0 ? '#dc2626' : '#6b7280';
+                      // Use label from snap if it describes what changed, otherwise number them
+                      const displayLabel = snap.label && snap.label !== 'Baseline' && !snap.isBaseline
+                        ? snap.label
+                        : `Scorecard ${i + 1}`;
                       return (
                         <div key={snap.id || i} className="jas-insights-scenario-row">
                           <span className="jas-insights-scenario-label">
-                            {snap.isBaseline ? '📊 Baseline' : snap.label || `Version ${i+1}`}
+                            {displayLabel}
                           </span>
                           <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                             <span className="jas-insights-scenario-score">{s ?? '—'}<span style={{ fontWeight: 400, color: 'var(--gray-400)' }}>/100</span></span>
@@ -11163,7 +11169,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                     });
                   })() : (
                     <p style={{ fontSize: '0.73rem', color: 'var(--gray-500)', fontStyle: 'italic', marginBottom: 8 }}>
-                      No versions yet. Hit "+ New Version" after changes to compare.
+                      Just the first scorecard so far. Ask Jaspen to model a change and it will suggest scoring a new one.
                     </p>
                   )}
                   <div style={{ marginTop: 12, padding: '10px 0', borderTop: '1px solid var(--border)' }}>

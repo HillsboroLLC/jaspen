@@ -1083,6 +1083,30 @@
   border-color: var(--gray-400);
 }
 
+/* ── AI-suggested rescore CTA ─────────────────────────────── */
+.jas-rescore-cta {
+  margin-top: 10px;
+}
+.jas-rescore-cta-btn {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #fff;
+  background: var(--navy, #1a2b4a);
+  border: none;
+  border-radius: 7px;
+  padding: 6px 14px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  white-space: nowrap;
+}
+.jas-rescore-cta-btn:hover:not(:disabled) {
+  opacity: 0.85;
+}
+.jas-rescore-cta-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* ── Sidebar pill tabs ─────────────────────────────────────── */
 .jas-insights-pill-tabs {
   display: flex;
