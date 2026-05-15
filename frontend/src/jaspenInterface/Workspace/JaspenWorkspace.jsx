@@ -6942,8 +6942,10 @@ const handleSaveStarter = async () => {
       const score = Number.isFinite(scoreNum) ? scoreNum : 0;
 
       // Determine version label (e.g. "Version 2", "Version 3", …)
-      const existingCount = Array.isArray(scorecardSnapshots) ? scorecardSnapshots.length : 0;
-      const versionNum = existingCount + 1;
+      // Count only non-baseline snapshots to name the new version correctly
+      const currentSnaps = Array.isArray(scorecardSnapshots) ? scorecardSnapshots : [];
+      const nonBaselineCount = currentSnaps.filter(s => !s.isBaseline).length;
+      const versionNum = nonBaselineCount + 2; // e.g. 0 non-baseline → "Version 2"
       const versionLabel = `Version ${versionNum}`;
       const versionId = `${sid}-v${versionNum}-${Date.now()}`;
 
@@ -6960,24 +6962,16 @@ const handleSaveStarter = async () => {
         createdAt: Date.now(),
       };
 
-      // Append new snapshot, preserving all existing ones (including baseline)
+      // Append new snapshot — baseline stays first, new version added after.
+      // Do NOT update analysisResult: the baseline scorecard card in chat must remain unchanged.
       setScorecardSnapshots((prev) => {
         const arr = Array.isArray(prev) ? prev : [];
         return [...arr, newSnapshot];
       });
 
-      // Also update analysisResult so the scorecard card shows the latest score
-      setAnalysisResult((prev) => ({
-        ...(prev || {}),
-        ...raw,
-        jaspen_score: score,
-        score_category: newSnapshot.score_category,
-        component_scores: newSnapshot.component_scores,
-      }));
-
-      setSelectedScorecardId(versionId);
-      setActivePill('scoring');
-      showToast(`New scorecard version created: ${versionLabel}`, 'success');
+      // Switch to Scenarios pill so the user can see the comparison side by side
+      setActivePill('scenarios');
+      showToast(`${versionLabel} created — compare it in Scenarios ↗`, 'success');
 
       // Background refresh
       setTimeout(() => { void refreshBundle(sid); void fetchSessions(); }, 0);
@@ -11113,12 +11107,29 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                       {autoVersionGenerating ? '⏳ …' : '+ New Version'}
                     </button>
                   </div>
-                  {scorecardSnapshots?.length > 0 ? scorecardSnapshots.map((snap, i) => (
-                    <div key={snap.id || i} className="jas-insights-scenario-row">
-                      <span className="jas-insights-scenario-label">{snap.label || `Version ${i+1}`}</span>
-                      <span className="jas-insights-scenario-score">{snap.jaspen_score ?? snap.score ?? '—'}<span style={{ fontWeight: 400, color: 'var(--gray-400)' }}>/100</span></span>
-                    </div>
-                  )) : (
+                  {scorecardSnapshots?.length > 0 ? (() => {
+                    const baselineScore = scorecardSnapshots.find(s => s.isBaseline)?.jaspen_score ?? null;
+                    return scorecardSnapshots.map((snap, i) => {
+                      const s = snap.jaspen_score ?? snap.score ?? null;
+                      const delta = (!snap.isBaseline && baselineScore !== null && s !== null) ? s - baselineScore : null;
+                      const deltaColor = delta > 0 ? '#16a34a' : delta < 0 ? '#dc2626' : '#6b7280';
+                      return (
+                        <div key={snap.id || i} className="jas-insights-scenario-row">
+                          <span className="jas-insights-scenario-label">
+                            {snap.isBaseline ? '📊 Baseline' : snap.label || `Version ${i+1}`}
+                          </span>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span className="jas-insights-scenario-score">{s ?? '—'}<span style={{ fontWeight: 400, color: 'var(--gray-400)' }}>/100</span></span>
+                            {delta !== null && (
+                              <span style={{ fontSize: '0.68rem', fontWeight: 600, color: deltaColor }}>
+                                {delta > 0 ? `+${delta}` : delta}
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                      );
+                    });
+                  })() : (
                     <p style={{ fontSize: '0.73rem', color: 'var(--gray-500)', fontStyle: 'italic', marginBottom: 8 }}>
                       No versions yet. Hit "+ New Version" after changes to compare.
                     </p>
