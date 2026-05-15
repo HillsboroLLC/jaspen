@@ -425,9 +425,9 @@ _SYSTEM_PROMPT_PREFIX = (
     "rank the rows by L_EXTENDEDPRICE, state the top 3 values explicitly, and explain what they mean strategically. "
     "If query_connector_data tool is available and the user asks to query or analyze connector data without "
     "a pre-attached context block, call the tool immediately — do not ask for the data first. "
-    "When the user asks to modify scenarios or WBS tasks, call the relevant tools instead of only describing steps. "
-    "When the user asks to edit, rewrite, update, or add to any part of the scorecard (executive summary, risks, recommendations, key insights, assumptions, rationale), call patch_scorecard immediately with the new content — do not just describe the change or ask a clarifying question first. "
+    "When the user asks to modify WBS tasks, call the relevant tools instead of only describing steps. "
     "When the user asks to rename the initiative, project, or title, call rename_thread with the requested new name. "
+    "NEVER call patch_scorecard. Scorecards are immutable snapshots. If the user wants any change reflected in a scorecard — even a tiny wording tweak — generate a new scorecard instead (see SCORECARDS rules below). "
     "The workspace includes an Execution tab with three views: a List view grouped by phase, "
     "a Board view showing a Kanban grouped by status (To Do / In Progress / Blocked / Done), "
     "and a Timeline view displaying a Gantt-style bar chart. The user can see and interact with all three. "
@@ -439,15 +439,17 @@ _SYSTEM_PROMPT_PREFIX = (
     "Valid priority values are: critical, high, medium, low. "
     "due_date must be an ISO date string (YYYY-MM-DD) or null. "
     "After any mutation tool succeeds, confirm exactly what changed so the user knows what to look for in the Execution tab. "
-    "RESCORING AND VARIATIONS: Once a scorecard exists, the conversation continues naturally. "
-    "When the user asks how to improve their score, or when you identify a specific lever that would materially change the outcome, "
-    "explain the change in concrete terms (e.g. 'If you cut CAC from $800 to $500 and extend runway by 6 months, "
-    "your Financial Viability would likely move from 52 to 68+'), then ask conversationally: 'Want me to score that?' "
-    "Do NOT use labels like 'Scenario A', 'Scenario B', or 'baseline' — just refer to ideas by their actual name or describe what changed. "
-    "If the user says yes, confirms, or asks you to go ahead, the system will generate a new scorecard automatically. "
-    "If the user shares a significantly different concept (new market, different model, major pivot), treat it as a new idea — "
-    "score it under its own name without forcing it to be a 'version' of the previous one. "
-    "Keep it conversational throughout — one exchange at a time, never a checklist of options. "
+    "SCORECARDS — CRITICAL RULES (read carefully): "
+    "Scorecards are immutable snapshots that accumulate inline in the conversation. The expected pattern is: "
+    "chat → chat → scorecard → chat → chat → scorecard → chat → scorecard. "
+    "Each time the user introduces ANY change — a new market, a pricing tweak, a different team size, a small scope adjustment, a pivot, a variation, an alternative to consider — your response MUST end with the literal phrase "
+    "'Building your scorecard now.' on its own line. That phrase triggers the system to generate a new scorecard inline. "
+    "Do not ask 'Want me to score that?' or wait for confirmation. Do not call patch_scorecard. Do not attempt to mutate or edit the previous scorecard. "
+    "Just acknowledge the change in one or two sentences, then end with 'Building your scorecard now.' "
+    "If the user asks a pure clarifying question about an existing scorecard (e.g. 'why is execution risk 6.5?', 'what does strategic fit mean?'), answer conversationally — do NOT generate a new scorecard. "
+    "Only generate a new scorecard when the user introduces or modifies an idea/parameter, not when they ask questions about an existing one. "
+    "Do NOT use labels like 'Scenario A', 'Scenario B', or 'baseline'. Refer to ideas by their actual name or describe what changed. "
+    "Keep it conversational throughout — one exchange at a time. "
     "RANKING: If the user asks to rank, compare, or summarize all the ideas modeled in this conversation, "
     "do so directly using the scorecard data available. Present a clear ranked list with the idea name, score, "
     "and one-line rationale for each. This also applies when the user uploads a file containing multiple ideas "
@@ -972,11 +974,12 @@ def _view_context_prompt_suffix(view_context):
     # View-specific behavioral overrides
     if current_view == "summary":
         lines.append(
-            "- IMPORTANT: The user is on the Score/Scorecard tab viewing a completed scorecard. "
+            "- IMPORTANT: The user is viewing a completed scorecard. "
             "Do NOT ask intake questions. Do NOT ask for baseline data. "
-            "If the user asks to edit, update, rewrite, or add to any part of the scorecard, "
-            "call patch_scorecard immediately with the new content — never describe the change instead of making it. "
-            "If the user asks a question about the scorecard, answer it directly."
+            "If the user describes ANY change to the idea (new market, different pricing, scope tweak, team change, even a small one), "
+            "acknowledge briefly and end your reply with 'Building your scorecard now.' — the system will generate a new scorecard inline. "
+            "Do NOT call patch_scorecard. Do NOT mutate the existing scorecard. Scorecards accumulate; they are never edited in place. "
+            "If the user asks a clarifying question about the scorecard, answer it directly without generating a new one."
         )
     elif current_view == "scenario":
         lines.append(
@@ -2676,8 +2679,9 @@ def _scorecard_content_prompt_suffix(session, view_context):
     if not sc_fields:
         return ""
     return (
-        "\n\n[CURRENT SCORECARD CONTENT — reference these exact values when the user asks to edit, "
-        "quote, or query any part of the scorecard; call patch_scorecard with updated content when asked to make changes]\n"
+        "\n\n[CURRENT SCORECARD CONTENT — reference these values to answer clarifying questions about the existing scorecard. "
+        "Never edit or patch this scorecard. If the user describes any change to the idea, end your reply with "
+        "'Building your scorecard now.' to generate a new scorecard alongside this one.]\n"
         + json.dumps(sc_fields, indent=2)
     )
 
@@ -4365,53 +4369,8 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                     "additionalProperties": False,
                 },
             },
-            {
-                "name": "patch_scorecard",
-                "description": (
-                    "Update one or more text fields on the active scorecard. "
-                    "Use this when the user asks to edit, rewrite, update, or add content to the scorecard — "
-                    "such as the executive summary, recommendations, risks, key insights, or assumptions. "
-                    "Always call this tool instead of just describing what the change would be."
-                ),
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "executive_summary": {
-                            "type": "string",
-                            "description": "Full replacement text for the executive summary.",
-                        },
-                        "key_insights": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "Full replacement list of key insights.",
-                        },
-                        "assumptions": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "Full replacement list of assumptions.",
-                        },
-                        "top_risks": {
-                            "type": "array",
-                            "items": {"type": "object"},
-                            "description": "Full replacement list of risk objects.",
-                        },
-                        "recommendations": {
-                            "type": "array",
-                            "items": {"type": "object"},
-                            "description": "Full replacement list of recommendation objects.",
-                        },
-                        "component_rationale": {
-                            "type": "object",
-                            "description": "Map of component key to rationale text.",
-                        },
-                        "decision_framework": {
-                            "type": "object",
-                            "description": "Updated decision framework fields.",
-                        },
-                    },
-                    "additionalProperties": False,
-                },
-            },
+            # patch_scorecard was removed: scorecards are immutable snapshots.
+            # Any change request generates a new scorecard via the "Building your scorecard now." trigger.
         ])
     return tools
 
