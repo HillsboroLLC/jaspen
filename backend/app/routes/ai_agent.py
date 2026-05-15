@@ -8658,8 +8658,9 @@ def readiness_audit():
         return jsonify({"error": "thread_id query param required"}), 400
 
     user_id = get_jwt_identity()
-    session = _find_session_by_thread(thread_id, user_id=user_id)
-    chat_history = session.get("chat_history", []) if isinstance(session, dict) else []
+    sessions = load_user_sessions(user_id) or {}
+    _session_key, session = _resolve_user_session(sessions, thread_id)
+    chat_history = _session_chat_history(session) if isinstance(session, dict) else []
     readiness = _clamp_readiness_with_delta(
         (session or {}).get("readiness") if isinstance((session or {}).get("readiness"), dict) else None,
         _compute_readiness(chat_history, (session or {}).get("strategy_objective")),

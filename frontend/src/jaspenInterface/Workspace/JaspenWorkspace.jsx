@@ -11176,34 +11176,34 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               <span className="jas-insights-title">Jaspen Insights</span>
             </div>
 
-            {/* ── Top card — pre-score shows confidence %, post-score always shows score ── */}
+            {/* ── Top cards: Confidence always shown; Score stacks below once scorecard exists ── */}
             <div className="jas-insights-confidence">
-              {!analysisResult ? (
-                /* Pre-score only: show confidence % */
-                canAnalyze ? (
-                  <div className="jas-insights-score-flat">
-                    <span className="jas-insights-score-flat-label">Generating…</span>
-                    <div className="jas-insights-readiness">
-                      <div className="jas-insights-readiness-bar">
-                        <div className="jas-insights-readiness-fill jas-readiness-fill--pulse" style={{ width: '100%', background: '#161f3b' }} />
-                      </div>
-                      <span className="jas-insights-score-flat-val">{Math.round(uiReadiness)}% confident</span>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="jas-insights-score-flat">
-                    <span className="jas-insights-score-flat-label">{sessionId ? 'Confidence' : 'Getting started'}</span>
-                    <div className="jas-insights-readiness">
-                      <div className="jas-insights-readiness-bar">
-                        <div className="jas-insights-readiness-fill" style={{ width: `${uiReadiness}%`, background: '#161f3b' }} />
-                      </div>
-                      <span className="jas-insights-score-flat-val">{Math.round(uiReadiness)}%</span>
-                    </div>
-                  </div>
-                )
-              ) : (
-                /* Scoring / Trade-off / Execution: show the score */
+              {/* Confidence row — always visible */}
+              {canAnalyze ? (
                 <div className="jas-insights-score-flat">
+                  <span className="jas-insights-score-flat-label">Generating…</span>
+                  <div className="jas-insights-readiness">
+                    <div className="jas-insights-readiness-bar">
+                      <div className="jas-insights-readiness-fill jas-readiness-fill--pulse" style={{ width: '100%', background: '#161f3b' }} />
+                    </div>
+                    <span className="jas-insights-score-flat-val">{Math.round(uiReadiness)}% confident</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="jas-insights-score-flat">
+                  <span className="jas-insights-score-flat-label">{sessionId ? 'Confidence' : 'Getting started'}</span>
+                  <div className="jas-insights-readiness">
+                    <div className="jas-insights-readiness-bar">
+                      <div className="jas-insights-readiness-fill" style={{ width: `${uiReadiness}%`, background: '#161f3b' }} />
+                    </div>
+                    <span className="jas-insights-score-flat-val">{Math.round(uiReadiness)}%</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Score row — stacks below confidence once scorecard exists */}
+              {analysisResult && (
+                <div className="jas-insights-score-flat" style={{ marginTop: 10 }}>
                   <span className="jas-insights-score-flat-label">Score</span>
                   <div className="jas-insights-readiness">
                     <div className="jas-insights-readiness-bar">
