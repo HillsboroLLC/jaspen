@@ -9445,7 +9445,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
     activeDrawerTab={scenarioDrawerView}
     onDrawerTabChange={setScenarioDrawerView}
     messages={messages}
-    renderMessage={(m) => renderConversationMessage(m, { onNewVersion: m.artifact?.type === 'scorecard' ? () => void triggerAutoVersion(sessionId || currentSessionId) : undefined, autoVersionGenerating, onRescoreAction: () => void triggerAutoVersion(sessionId || currentSessionId) })}
+    renderMessage={(m) => renderConversationMessage(m, { autoVersionGenerating, onRescoreAction: () => void triggerAutoVersion(sessionId || currentSessionId) })}
     renderAttachments={(m) => renderMessageAttachments(m)}
     renderActions={(m, key, idx, total) => renderMessageActions(m, key, idx, total)}
     streamStatus={renderStreamToolStatus()}
@@ -10693,7 +10693,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
 
 	              {displayMessages.map((m, idx) => (
 	                <div key={m.id || idx} className={`jas-message ${m.role === 'ai' ? 'ai' : 'user'}`}>
-	                  <div className="jas-message-bubble">{renderConversationMessage(m, { onNewVersion: m.artifact?.type === 'scorecard' ? () => void triggerAutoVersion(sessionId || currentSessionId) : undefined, autoVersionGenerating, onRescoreAction: () => void triggerAutoVersion(sessionId || currentSessionId) })}</div>
+	                  <div className="jas-message-bubble">{renderConversationMessage(m, { autoVersionGenerating, onRescoreAction: () => void triggerAutoVersion(sessionId || currentSessionId) })}</div>
 	                  {renderMessageAttachments(m)}
 	                  {renderMessageActions(m, `main:${idx}`, idx, displayMessages.length)}
 	                </div>
@@ -11000,20 +11000,12 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                       </div>
                     );
                   })}
-                  {/* New Version CTA — manual override in sidebar */}
+                  {/* Hint: AI drives rescoring conversationally via inline CTA */}
                   {analysisResult && (
                     <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-                      <p style={{ fontSize: '0.72rem', color: 'var(--gray-600)', lineHeight: 1.45, marginBottom: 8 }}>
-                        Ask Jaspen to model a change and it will suggest scoring a new version.
+                      <p style={{ fontSize: '0.72rem', color: 'var(--gray-500)', lineHeight: 1.45, fontStyle: 'italic' }}>
+                        Ask Jaspen to model a change — it will suggest scoring when ready.
                       </p>
-                      <button
-                        className="jas-scorecard-action-ghost jas-scorecard-action-new-version"
-                        disabled={autoVersionGenerating}
-                        onClick={() => void triggerAutoVersion(sessionId || currentSessionId)}
-                        style={{ fontSize: '0.72rem', padding: '4px 10px', opacity: autoVersionGenerating ? 0.6 : 1 }}
-                      >
-                        {autoVersionGenerating ? '⏳ Creating…' : '+ New Version'}
-                      </button>
                     </div>
                   )}
                 </div>
