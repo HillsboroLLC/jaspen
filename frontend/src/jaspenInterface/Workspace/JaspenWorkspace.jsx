@@ -11179,7 +11179,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
             {/* ── Top cards: Confidence always shown; Score stacks below once scorecard exists ── */}
             <div className="jas-insights-confidence">
               {/* Confidence row — always visible */}
-              {canAnalyze ? (
+              {(canAnalyze && !analysisResult) || scorecardGenerating ? (
                 <div className="jas-insights-score-flat">
                   <span className="jas-insights-score-flat-label">Generating…</span>
                   <div className="jas-insights-readiness">
