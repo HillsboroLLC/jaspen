@@ -1441,6 +1441,9 @@ export default function JaspenWorkspace() {
   const [analysisResult, setAnalysisResult] = useState(null);
   const [scorecardGenerating, setScorecardGenerating] = useState(false);
   const [autoVersionGenerating, setAutoVersionGenerating] = useState(false);
+  // Index into messages[] at the point the last version was scored.
+  // "+ New Version" stays disabled until a substantive user message arrives after this point.
+  const [lastScoredMessageIdx, setLastScoredMessageIdx] = useState(0);
   // Tracks which stage pill's content the sidebar is showing
   const [activePill, setActivePill] = useState('discovery');
   const [artifactsOpen, setArtifactsOpen] = useState(false);
@@ -2239,10 +2242,10 @@ const renderScorecardCard = (result, opts = {}) => {
           {opts.onNewVersion && (
             <button
               className="jas-scorecard-action-ghost jas-scorecard-action-new-version"
-              title="Create a new scorecard version"
+              title={opts.canNewVersion ? 'Score a new version based on your latest context' : 'Add more context in the chat to enable a new version'}
               onClick={opts.onNewVersion}
-              disabled={opts.autoVersionGenerating}
-              style={{ marginLeft: 'auto', opacity: opts.autoVersionGenerating ? 0.6 : 1 }}
+              disabled={opts.autoVersionGenerating || !opts.canNewVersion}
+              style={{ marginLeft: 'auto', opacity: (opts.autoVersionGenerating || !opts.canNewVersion) ? 0.4 : 1, cursor: (!opts.canNewVersion && !opts.autoVersionGenerating) ? 'not-allowed' : undefined }}
             >
               {opts.autoVersionGenerating ? '⏳ Creating…' : '+ New Version'}
             </button>
@@ -2776,6 +2779,17 @@ useEffect(() => {
   }, [toolEntitlementById, fallbackMinPlanByTool, currentPlanKey]);
   const canUseScenarios = canUseTool('scenario_create', 'write');
   const canUseWbsWrite = canUseTool('wbs_write', 'write');
+
+  // "+ New Version" is only actionable when a substantive user message (>40 chars) has been
+  // sent since the last time a version was scored. Short acks ("ok", "yes", "thanks") don't count.
+  const hasActionableContentForNewVersion = useMemo(() => {
+    if (!analysisResult) return false;
+    const msgs = Array.isArray(messages) ? messages : [];
+    const newMsgs = msgs.slice(lastScoredMessageIdx);
+    return newMsgs.some(
+      (m) => m?.role === 'user' && typeof m?.text === 'string' && m.text.trim().length > 40
+    );
+  }, [analysisResult, messages, lastScoredMessageIdx]);
   const effectiveCanManageOrg = adminPreviewRole ? adminPreviewRole === 'admin' : canManageOrg;
   const effectiveIsViewer = adminPreviewRole ? adminPreviewRole === 'viewer' : isOrgViewer;
   const effectiveIsCollaborator = adminPreviewRole ? adminPreviewRole === 'collaborator' : isOrgCollaborator;
@@ -6912,6 +6926,9 @@ const handleSaveStarter = async () => {
       setSelectedScorecardId(sid);
       setBaselineScorecardId(sid);
       baselineRef.current = result._baseline_scorecard;
+      // Baseline just scored — reset the watermark so "+ New Version" is disabled
+      // until the user adds substantive new content in chat
+      setLastScoredMessageIdx(Array.isArray(messages) ? messages.length : 0);
 
       // displayMessages memo will render the card automatically once analysisResult is set
 
@@ -6980,6 +6997,9 @@ const handleSaveStarter = async () => {
       // Switch to Scenarios pill so the user sees the comparison immediately
       setActivePill('scenarios');
       showToast(`${versionLabel} created — compare it in Scenarios ↗`, 'success');
+
+      // Advance the watermark — button stays disabled until new substantive content arrives
+      setLastScoredMessageIdx(Array.isArray(messages) ? messages.length : 0);
 
       // Refresh bundle so the scenario persists and survives a hard reload
       setTimeout(() => { void refreshBundle(sid); void fetchSessions(); }, 0);
@@ -9492,7 +9512,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
     activeDrawerTab={scenarioDrawerView}
     onDrawerTabChange={setScenarioDrawerView}
     messages={messages}
-    renderMessage={(m) => renderConversationMessage(m, { onNewVersion: m.artifact?.type === 'scorecard' ? () => void triggerAutoVersion(sessionId || currentSessionId) : undefined, autoVersionGenerating })}
+    renderMessage={(m) => renderConversationMessage(m, { onNewVersion: m.artifact?.type === 'scorecard' ? () => void triggerAutoVersion(sessionId || currentSessionId) : undefined, autoVersionGenerating, canNewVersion: hasActionableContentForNewVersion })}
     renderAttachments={(m) => renderMessageAttachments(m)}
     renderActions={(m, key, idx, total) => renderMessageActions(m, key, idx, total)}
     streamStatus={renderStreamToolStatus()}
@@ -10775,7 +10795,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
 
 	              {displayMessages.map((m, idx) => (
 	                <div key={m.id || idx} className={`jas-message ${m.role === 'ai' ? 'ai' : 'user'}`}>
-	                  <div className="jas-message-bubble">{renderConversationMessage(m, { onNewVersion: m.artifact?.type === 'scorecard' ? () => void triggerAutoVersion(sessionId || currentSessionId) : undefined, autoVersionGenerating })}</div>
+	                  <div className="jas-message-bubble">{renderConversationMessage(m, { onNewVersion: m.artifact?.type === 'scorecard' ? () => void triggerAutoVersion(sessionId || currentSessionId) : undefined, autoVersionGenerating, canNewVersion: hasActionableContentForNewVersion })}</div>
 	                  {renderMessageAttachments(m)}
 	                  {renderMessageActions(m, `main:${idx}`, idx, displayMessages.length)}
 	                </div>
@@ -11086,13 +11106,16 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                   {analysisResult && (
                     <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
                       <p style={{ fontSize: '0.72rem', color: 'var(--gray-600)', lineHeight: 1.45, marginBottom: 8 }}>
-                        Made changes? Create a new version to compare scores over time.
+                        {hasActionableContentForNewVersion
+                          ? 'You\'ve added new context — create a version to compare scores.'
+                          : 'Share more context in chat to enable a new version.'}
                       </p>
                       <button
                         className="jas-scorecard-action-ghost jas-scorecard-action-new-version"
-                        disabled={autoVersionGenerating}
+                        disabled={autoVersionGenerating || !hasActionableContentForNewVersion}
                         onClick={() => void triggerAutoVersion(sessionId || currentSessionId)}
-                        style={{ fontSize: '0.72rem', padding: '4px 10px', opacity: autoVersionGenerating ? 0.6 : 1 }}
+                        title={hasActionableContentForNewVersion ? 'Score a new version based on your latest context' : 'Add more context in the chat first'}
+                        style={{ fontSize: '0.72rem', padding: '4px 10px', opacity: (autoVersionGenerating || !hasActionableContentForNewVersion) ? 0.4 : 1, cursor: !hasActionableContentForNewVersion && !autoVersionGenerating ? 'not-allowed' : undefined }}
                       >
                         {autoVersionGenerating ? '⏳ Creating…' : '+ New Version'}
                       </button>
@@ -11108,9 +11131,10 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                     <p className="jas-insights-tips-label">Versions</p>
                     <button
                       className="jas-scorecard-action-ghost jas-scorecard-action-new-version"
-                      disabled={autoVersionGenerating}
+                      disabled={autoVersionGenerating || !hasActionableContentForNewVersion}
                       onClick={() => void triggerAutoVersion(sessionId || currentSessionId)}
-                      style={{ fontSize: '0.7rem', padding: '3px 8px', opacity: autoVersionGenerating ? 0.6 : 1 }}
+                      title={hasActionableContentForNewVersion ? 'Score a new version based on your latest context' : 'Add more context in the chat first'}
+                      style={{ fontSize: '0.7rem', padding: '3px 8px', opacity: (autoVersionGenerating || !hasActionableContentForNewVersion) ? 0.4 : 1, cursor: !hasActionableContentForNewVersion && !autoVersionGenerating ? 'not-allowed' : undefined }}
                     >
                       {autoVersionGenerating ? '⏳ …' : '+ New Version'}
                     </button>
