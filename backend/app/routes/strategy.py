@@ -1033,18 +1033,18 @@ def _normalize_scorecard_payload(payload):
 
     if score_value >= 75:
         proactive_hint = (
-            f"This scores {score_value} - strong execution candidate. "
+            f"This scores {score_value} — strong execution candidate. "
             f"Your highest-priority action: {top_rec_action}."
         )
     elif score_value >= 55:
         proactive_hint = (
-            f"This scores {score_value} - promising but worth modeling a scenario. "
-            f"The biggest lever: {top_risk_label}. Try Scenario A to model a mitigation."
+            f"This scores {score_value} — promising, but the biggest lever is {top_risk_label}. "
+            f"Want me to score a version where you address that?"
         )
     else:
         proactive_hint = (
-            f"This scores {score_value} - the gap is primarily in {weakest_component}. "
-            "I can help you address that before progressing."
+            f"This scores {score_value} — the gap is primarily in {weakest_component}. "
+            "Want me to walk through how to close that gap and re-score?"
         )
     normalized['proactive_next_step'] = proactive_hint
 
