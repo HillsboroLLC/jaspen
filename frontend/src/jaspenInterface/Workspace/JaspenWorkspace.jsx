@@ -1848,7 +1848,15 @@ const refreshBundle = async (tid, { fallbackTid } = {}) => {
     ).trim();
 
     if (bundleSnapshots.length > 0) {
-      setScorecardSnapshots(bundleSnapshots);
+      // Merge: keep any local-only snapshots the backend hasn't persisted yet
+      // (e.g. a version just scored via triggerAutoVersion before the round-trip completes)
+      setScorecardSnapshots((prev) => {
+        const bundleIds = new Set(bundleSnapshots.map((s) => String(s?.id || s?.analysis_id || '')).filter(Boolean));
+        const localOnly = (Array.isArray(prev) ? prev : []).filter(
+          (s) => s?.id && !bundleIds.has(String(s.id))
+        );
+        return localOnly.length > 0 ? [...bundleSnapshots, ...localOnly] : bundleSnapshots;
+      });
     }
     if (baselineId) setBaselineScorecardId(baselineId);
     if (bundleSelectedId) {
@@ -1891,6 +1899,8 @@ const refreshBundle = async (tid, { fallbackTid } = {}) => {
           selected_scorecard_id: rootedScoreResult.selected_scorecard_id,
         };
       });
+      // Prevent auto-score re-trigger — result exists from bundle
+      autoScoringTriggeredRef.current = true;
       if (view === 'intake') {
         setView('intake');
         setActiveTab('summary');
@@ -5036,6 +5046,8 @@ if (rawHistory.length > 0) {
         });
         baselineRef.current = rootedScoreResult._baseline_scorecard;
         setAnalysisResult(rootedScoreResult);
+        // Prevent auto-score from re-triggering on page reload — result already exists
+        autoScoringTriggeredRef.current = true;
         setView('intake');
         setActiveTab('summary');
       } else {
@@ -6923,16 +6935,22 @@ const handleSaveStarter = async () => {
         createdAt: Date.now(),
       };
 
-      // Append new snapshot — first scorecard stays, new one added after.
+      // Append new snapshot — baseline stays, new one added after.
       // analysisResult is NOT updated so the original scorecard card in chat stays intact.
       setScorecardSnapshots((prev) => {
         const arr = Array.isArray(prev) ? prev : [];
+        // Avoid duplicates
+        if (arr.some((s) => String(s?.id || '') === String(versionId))) return arr;
         return [...arr, newSnapshot];
       });
 
-      // Switch to Scenarios pill so the user sees the comparison immediately
-      setActivePill('scenarios');
-      showToast(`Scored — see comparison in Scenarios ↗`, 'success');
+      // Inject a new scorecard card into the conversation thread so both are visible inline
+      setMessages((prev) => [
+        ...prev,
+        { id: `scorecard-v${snapNum}`, role: 'ai', text: '', artifact: { type: 'scorecard', data: newSnapshot } },
+      ]);
+
+      showToast(`Scored ✓`, 'success');
 
       // Refresh bundle so the scenario persists and survives a hard reload
       setTimeout(() => { void refreshBundle(sid); void fetchSessions(); }, 0);
