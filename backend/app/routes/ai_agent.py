@@ -4950,23 +4950,42 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id):
 
 
 def _anthropic_content_to_dicts(content_blocks):
+    """Normalize SDK content blocks to dicts containing ONLY the canonical
+    fields the Anthropic API accepts on round-trip. model_dump() can include
+    extra fields (e.g. parsed_output on newer Haiku models) that the API
+    rejects with 'Extra inputs are not permitted'."""
     normalized = []
     for block in (content_blocks or []):
-        if isinstance(block, dict):
-            normalized.append(block)
-            continue
-        if hasattr(block, "model_dump"):
-            try:
-                normalized.append(block.model_dump())
-                continue
-            except Exception:
-                pass
-        payload = {"type": getattr(block, "type", "text")}
-        for field in ("id", "name", "input", "text"):
-            value = getattr(block, field, None)
-            if value is not None:
-                payload[field] = value
-        normalized.append(payload)
+        block_type = (
+            block.get("type") if isinstance(block, dict)
+            else getattr(block, "type", "text")
+        )
+        if block_type == "text":
+            text_val = (
+                block.get("text") if isinstance(block, dict)
+                else getattr(block, "text", "")
+            )
+            normalized.append({"type": "text", "text": str(text_val or "")})
+        elif block_type == "tool_use":
+            tu_id = block.get("id") if isinstance(block, dict) else getattr(block, "id", None)
+            tu_name = block.get("name") if isinstance(block, dict) else getattr(block, "name", None)
+            tu_input = block.get("input") if isinstance(block, dict) else getattr(block, "input", None)
+            normalized.append({
+                "type": "tool_use",
+                "id": tu_id,
+                "name": tu_name,
+                "input": tu_input if isinstance(tu_input, (dict, list)) else {},
+            })
+        elif block_type == "tool_result":
+            tr_id = block.get("tool_use_id") if isinstance(block, dict) else getattr(block, "tool_use_id", None)
+            tr_content = block.get("content") if isinstance(block, dict) else getattr(block, "content", "")
+            normalized.append({
+                "type": "tool_result",
+                "tool_use_id": tr_id,
+                "content": tr_content if isinstance(tr_content, str) else json.dumps(tr_content),
+            })
+        # silently drop unknown block types (thinking, etc.) — they aren't
+        # accepted as input by the API anyway
     return normalized
 
 
