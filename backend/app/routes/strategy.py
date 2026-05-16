@@ -1149,6 +1149,9 @@ def _scorecard_snapshot_state(scorecard_result, thread_id):
         normalized_baseline['isBaseline'] = True
         normalized_baseline['label'] = normalized_baseline.get('label') or 'Baseline'
         normalized_baseline['createdAt'] = normalized_baseline.get('createdAt') or normalized_baseline.get('timestamp')
+        # Workspace (Beta) cosmetic overrides — pass through to the snapshot.
+        if isinstance(baseline.get('display_overrides'), dict):
+            normalized_baseline['display_overrides'] = baseline['display_overrides']
         normalized_snapshots.append(normalized_baseline)
     else:
         normalized_baseline = None
@@ -5889,6 +5892,10 @@ def get_thread_bundle(thread_id):
             _snap['label'] = _snap.get('label') or _scn.get('label') or 'Version'
             _snap['isBaseline'] = False
             _snap['createdAt'] = _snap.get('createdAt') or _scn.get('created_at') or _scn_result.get('timestamp')
+            # Pass through any Workspace (Beta) cosmetic overrides so the canvas
+            # editor and chat-inline renderer see the same edited view.
+            if isinstance(_scn_result.get('display_overrides'), dict):
+                _snap['display_overrides'] = _scn_result['display_overrides']
             merged_snapshots.append(_snap)
             _existing_snap_ids.add(_scn_id)
 
@@ -5993,6 +6000,146 @@ def update_scorecard_snapshot(thread_id, snapshot_id):
         return jsonify(payload or {'error': str(conflict), 'code': 'scorecard_conflict'}), 409
     except Exception as e:
         current_app.logger.error("[update_scorecard_snapshot] %s", e)
+        return jsonify({'error': str(e)}), 500
+
+
+# ── Workspace (Beta) ──────────────────────────────────────────────────────────
+# Cosmetic edits applied via the new Workspace canvas editor. These overrides
+# never touch the AI's analytical fields (scores, dimensions, risks); they only
+# decorate cosmetic copy and styling on top of the stored snapshot.
+_ALLOWED_OVERRIDE_KEYS = {
+    'title',
+    'subtitle',
+    'executive_summary',
+    'accent_color',
+    'theme',
+    'narrative',
+}
+
+
+def _coerce_override_value(key, value):
+    """Best-effort sanitization. Returns the cleaned value, or None to delete."""
+    if value is None:
+        return None  # caller treats None as "remove this key"
+    if key in {'title', 'subtitle', 'executive_summary', 'narrative', 'theme'}:
+        return str(value).strip()
+    if key == 'accent_color':
+        s = str(value).strip()
+        # accept '#rrggbb', '#rgb', or named subset; reject anything else
+        if not s:
+            return None
+        if s.startswith('#') and len(s) in (4, 7):
+            return s
+        return None
+    return value
+
+
+def _find_scorecard_carrier(user_id, thread_id, scorecard_id):
+    """Return (kind, container, key) so the caller can read/write display_overrides.
+
+    kind = 'baseline' → container is session, key='result'
+    kind = 'scenario' → container is the scenarios-dict entry, key='result'
+    """
+    sessions = load_user_sessions(user_id) or {}
+    _resolved_tid, _key, session = _resolve_session_entry(sessions, thread_id)
+    sid = str(scorecard_id or '').strip()
+
+    # Baseline match: session.result has matching analysis_id OR scorecard_id == thread_id
+    if isinstance(session, dict) and isinstance(session.get('result'), dict):
+        res = session['result']
+        baseline_ids = {
+            str(res.get('analysis_id') or '').strip(),
+            str(res.get('id') or '').strip(),
+            str(thread_id or '').strip(),
+        }
+        if sid and sid in baseline_ids:
+            return ('baseline', sessions, _key or thread_id, session)
+
+    # Variation match: scenario with matching scenario_id OR result.id/analysis_id
+    all_data = _load_scenarios(user_id)
+    td = all_data.get(thread_id, {})
+    scenarios = td.get('scenarios') if isinstance(td.get('scenarios'), dict) else {}
+    for scn_id, scn in scenarios.items():
+        if not isinstance(scn, dict):
+            continue
+        result_blob = scn.get('result') if isinstance(scn.get('result'), dict) else {}
+        candidate_ids = {
+            str(scn_id),
+            str(scn.get('scenario_id') or ''),
+            str(result_blob.get('id') or ''),
+            str(result_blob.get('analysis_id') or ''),
+        }
+        if sid in candidate_ids:
+            return ('scenario', all_data, scn_id, scn)
+
+    return (None, None, None, None)
+
+
+@strategy_bp.route('/threads/<thread_id>/scorecards/<scorecard_id>/overrides', methods=['GET', 'PATCH'])
+@jwt_required()
+def scorecard_display_overrides(thread_id, scorecard_id):
+    """Read or write cosmetic display_overrides for a single scorecard.
+
+    GET    → returns the current overrides object (empty if none)
+    PATCH  → merges the supplied keys into display_overrides. Passing `null`
+             for a key removes it. The endpoint never touches analytical fields.
+    """
+    try:
+        user_id = get_jwt_identity()
+        kind, container, key, carrier = _find_scorecard_carrier(user_id, thread_id, scorecard_id)
+        if not kind or not isinstance(carrier, dict):
+            return jsonify({'error': 'Scorecard not found', 'thread_id': thread_id, 'scorecard_id': scorecard_id}), 404
+
+        result_blob = carrier.get('result') if isinstance(carrier.get('result'), dict) else None
+        if not isinstance(result_blob, dict):
+            return jsonify({'error': 'Scorecard payload missing'}), 404
+
+        current = result_blob.get('display_overrides') if isinstance(result_blob.get('display_overrides'), dict) else {}
+
+        if request.method == 'GET':
+            return jsonify({'display_overrides': current}), 200
+
+        # PATCH
+        payload = request.get_json(silent=True) or {}
+        patch = payload.get('display_overrides') if isinstance(payload.get('display_overrides'), dict) else payload
+        if not isinstance(patch, dict):
+            return jsonify({'error': 'Body must be a JSON object'}), 400
+
+        next_overrides = dict(current)
+        for raw_key, raw_value in patch.items():
+            if raw_key not in _ALLOWED_OVERRIDE_KEYS:
+                # ignore unknown keys rather than 400'ing — keeps the API forward-compatible
+                continue
+            cleaned = _coerce_override_value(raw_key, raw_value)
+            if cleaned is None or cleaned == '':
+                next_overrides.pop(raw_key, None)
+            else:
+                next_overrides[raw_key] = cleaned
+
+        result_blob['display_overrides'] = next_overrides
+        result_blob['display_overrides_updated_at'] = datetime.utcnow().isoformat()
+
+        if kind == 'baseline':
+            # container is the sessions dict, key is the session_key
+            container[key]['result'] = result_blob
+            container[key]['timestamp'] = datetime.utcnow().isoformat()
+            save_user_sessions(user_id, container)
+        else:
+            # container is the scenarios all_data dict
+            carrier['result'] = result_blob
+            carrier['updated_at'] = datetime.utcnow().isoformat()
+            _save_scenarios(user_id, container)
+
+        return jsonify({
+            'success': True,
+            'display_overrides': next_overrides,
+            'scorecard_id': scorecard_id,
+            'thread_id': thread_id,
+            'kind': kind,
+        }), 200
+
+    except Exception as e:
+        current_app.logger.error("[scorecard_display_overrides] %s", e)
         return jsonify({'error': str(e)}), 500
 
 

@@ -41,6 +41,8 @@ export const endpoints = {
   // KEEP OLD ENDPOINTS for backward compat during migration
   threadBundle:   (threadId, msg = 50, scn = 50 ) =>
     `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/bundle?msg_limit=${msg}&scn_limit=${scn}`,
+  scorecardOverrides: (threadId, scorecardId) =>
+    `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/scorecards/${encodeURIComponent(scorecardId)}/overrides`,
   scenario:   `${API_BASE}/api/v1/ai-agent/scenario`,
 
   // Scenario CRUD
@@ -843,6 +845,49 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
       throw new Error(`${url} -> ${res.status} ${txt}`);
     }
     return res.json();
+  },
+
+  // ---------- Workspace (Beta) cosmetic overrides ----------
+  async getScorecardOverrides(threadId, scorecardId) {
+    if (!threadId || !scorecardId) throw new Error('threadId and scorecardId required');
+    const url = endpoints.scorecardOverrides(threadId, scorecardId);
+    const res = await fetch(url, {
+      method: 'GET',
+      credentials: 'include',
+      headers: {
+        ...buildAuthHeaders({}, 'GET'),
+        'Content-Type': 'application/json',
+        'X-Session-ID': getSid(),
+      },
+    });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      throw new Error(`${url} -> ${res.status} ${txt}`);
+    }
+    const data = await res.json();
+    return (data && typeof data.display_overrides === 'object') ? data.display_overrides : {};
+  },
+
+  async patchScorecardOverrides(threadId, scorecardId, overrides) {
+    if (!threadId || !scorecardId) throw new Error('threadId and scorecardId required');
+    const url = endpoints.scorecardOverrides(threadId, scorecardId);
+    const body = JSON.stringify({ display_overrides: overrides || {} });
+    const res = await fetch(url, {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: {
+        ...buildAuthHeaders({}, 'PATCH'),
+        'Content-Type': 'application/json',
+        'X-Session-ID': getSid(),
+      },
+      body,
+    });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      throw new Error(`${url} -> ${res.status} ${txt}`);
+    }
+    const data = await res.json();
+    return (data && typeof data.display_overrides === 'object') ? data.display_overrides : {};
   },
 
   // ---------- Streaming ----------

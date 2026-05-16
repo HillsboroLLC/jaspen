@@ -11,7 +11,7 @@
 //          stay read-only — a rescore is a separate conversation.
 // ============================================================================
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faArrowLeft, faDownload, faShare, faRotateLeft, faPaperPlane } from '@fortawesome/free-solid-svg-icons';
@@ -40,9 +40,13 @@ export default function JaspenWorkspace() {
   const [snapshot, setSnapshot] = useState(null);
   const [overrides, setOverrides] = useState({});
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
   const [error, setError] = useState(null);
   const [chatInput, setChatInput] = useState('');
   const [chatHistory, setChatHistory] = useState([]);
+  const saveTimerRef = useRef(null);
+  const skipNextSaveRef = useRef(true); // first render = freshly loaded, don't save back
 
   // Fetch the artifact on mount
   useEffect(() => {
@@ -50,7 +54,14 @@ export default function JaspenWorkspace() {
     async function load() {
       try {
         setLoading(true);
-        const b = await Jaspen.fetchBundle(threadId);
+        setError(null);
+        // Load bundle (for the scorecard payload) + overrides (authoritative)
+        // in parallel. Overrides endpoint is the source of truth for cosmetic
+        // edits and works even if the snapshot in the bundle lags.
+        const [b, ov] = await Promise.all([
+          Jaspen.fetchBundle(threadId),
+          Jaspen.getScorecardOverrides(threadId, scorecardId).catch(() => ({})),
+        ]);
         if (cancelled) return;
         setBundle(b);
         const snapshots = Array.isArray(b?.scorecard_snapshots) ? b.scorecard_snapshots : [];
@@ -58,9 +69,12 @@ export default function JaspenWorkspace() {
           (s) => String(s?.id || s?.analysis_id || '') === String(scorecardId)
         ) || b?.current_scorecard || b?.baseline_scorecard || null;
         setSnapshot(target);
-        setOverrides(
-          (target && typeof target.display_overrides === 'object' && target.display_overrides) || {}
-        );
+        // Prefer the server's overrides; fall back to whatever was on the snapshot.
+        const initial = (ov && typeof ov === 'object' && Object.keys(ov).length)
+          ? ov
+          : (target && typeof target.display_overrides === 'object' && target.display_overrides) || {};
+        skipNextSaveRef.current = true;
+        setOverrides(initial);
       } catch (e) {
         if (!cancelled) setError(String(e?.message || e || 'Failed to load workspace'));
       } finally {
@@ -71,24 +85,63 @@ export default function JaspenWorkspace() {
     return () => { cancelled = true; };
   }, [threadId, scorecardId]);
 
+  // Debounced auto-save: any change to overrides is persisted ~500ms later.
+  useEffect(() => {
+    if (skipNextSaveRef.current) {
+      skipNextSaveRef.current = false;
+      return;
+    }
+    if (!threadId || !scorecardId) return;
+    if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = window.setTimeout(async () => {
+      try {
+        setSaving(true);
+        setSaveError(null);
+        await Jaspen.patchScorecardOverrides(threadId, scorecardId, overrides);
+      } catch (e) {
+        setSaveError(String(e?.message || e || 'Failed to save'));
+      } finally {
+        setSaving(false);
+      }
+    }, 500);
+    return () => { if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current); };
+  }, [overrides, threadId, scorecardId]);
+
   const rendered = useMemo(() => applyOverrides(snapshot, overrides), [snapshot, overrides]);
 
   const score = Number(rendered?.jaspen_score || 0);
   const ringColor = rendered?._accent_color || '#a0036c';
   const category = score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : score >= 40 ? 'Fair' : 'At Risk';
 
-  // Save an override locally + persist to backend (TODO: wire backend PATCH).
+  // Set or remove a single cosmetic override. Auto-save fires from the
+  // useEffect above on the next tick (debounced).
   function setOverride(key, value) {
     setOverrides((prev) => {
-      const next = { ...prev, [key]: value };
-      // TODO: persist to backend via PATCH /api/v1/strategy/threads/:threadId/scorecards/:scorecardId/overrides
+      const next = { ...prev };
+      if (value === null || value === undefined || value === '') {
+        delete next[key];
+      } else {
+        next[key] = value;
+      }
       return next;
     });
   }
 
-  function resetOverrides() {
+  async function resetOverrides() {
+    skipNextSaveRef.current = true; // we'll do the save ourselves to clear remote
     setOverrides({});
-    // TODO: persist empty overrides to backend
+    try {
+      setSaving(true);
+      // Pass nulls for each known key so the backend removes them.
+      await Jaspen.patchScorecardOverrides(threadId, scorecardId, {
+        title: null, subtitle: null, executive_summary: null,
+        accent_color: null, theme: null, narrative: null,
+      });
+    } catch (e) {
+      setSaveError(String(e?.message || e || 'Failed to reset'));
+    } finally {
+      setSaving(false);
+    }
   }
 
   function sendChat() {
@@ -208,6 +261,15 @@ export default function JaspenWorkspace() {
             <span style={{ padding:'2px 8px', borderRadius:10, background:'#fef3c7', color:'#92400e', fontSize:10, fontWeight:600, letterSpacing:'0.04em' }}>
               BETA
             </span>
+            {saving && (
+              <span style={{ fontSize:11, color:'#94a3b8' }}>Saving…</span>
+            )}
+            {!saving && saveError && (
+              <span style={{ fontSize:11, color:'#dc2626' }} title={saveError}>Save failed</span>
+            )}
+            {!saving && !saveError && Object.keys(overrides).length > 0 && (
+              <span style={{ fontSize:11, color:'#94a3b8' }}>Saved</span>
+            )}
           </div>
           <div style={{ display:'flex', gap:8 }}>
             <button
