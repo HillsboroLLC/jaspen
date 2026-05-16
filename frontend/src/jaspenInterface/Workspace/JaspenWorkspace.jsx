@@ -1441,6 +1441,10 @@ export default function JaspenWorkspace() {
   const [analysisResult, setAnalysisResult] = useState(null);
   const [scorecardGenerating, setScorecardGenerating] = useState(false);
   const [autoVersionGenerating, setAutoVersionGenerating] = useState(false);
+  // The Trade-off tab is gated behind explicit user intent. It unlocks only
+  // when the user asks to compare/rank ideas (or kicks off the session with a
+  // batch ranking request). Just having multiple scorecards is not enough.
+  const [tradeoffRequested, setTradeoffRequested] = useState(false);
   // Tracks which stage pill's content the sidebar is showing
   const [activePill, setActivePill] = useState('discovery');
   const [artifactsOpen, setArtifactsOpen] = useState(false);
@@ -1923,6 +1927,13 @@ const refreshBundle = async (tid, { fallbackTid } = {}) => {
         if (hasCard) return prev;                       // card is there, don't clobber
         return bundleMessages;
       });
+    }
+    // Re-derive trade-off unlock from history: if the user ever asked to
+    // compare/rank in this thread, the Trade-off tab stays unlocked on reload.
+    // Regex inlined to avoid TDZ on the hoisted helper above.
+    const _tradeoffRe = /\b(trade[-\s]?off|compare\s+(these|them|the\s+(ideas?|scorecards?|options?|scenarios?|versions?))|rank\s+(these|them|the\s+(ideas?|scorecards?|options?|scenarios?|versions?))|stack[-\s]?rank|side[-\s]?by[-\s]?side|head[-\s]?to[-\s]?head|which\s+(one\s+)?(is\s+)?(best|better|should\s+(i|we))|impact\s+(vs|versus|and)\s+effort|effort\s+(vs|versus|and)\s+impact)\b/i;
+    if (bundleMessages.some((m) => m.role === 'user' && _tradeoffRe.test(m.text || ''))) {
+      setTradeoffRequested(true);
     }
   } catch (e) {
     showToast(e?.message || 'We could not refresh this thread right now.', 'error', {
@@ -4874,6 +4885,7 @@ useEffect(() => {
         setCurrentSessionId(null);
         setAnalysisResult(null);
         setMessages([]);
+        setTradeoffRequested(false);
         setStrategyObjective('balanced');
         setObjectiveExplicitlySet(false);
 // (removed) sidebar uses main `messages` as the thread source of truth
@@ -7024,6 +7036,16 @@ const handleSaveStarter = async () => {
     return PIVOT_SIGNALS.test(String(userText));
   }
 
+  // Trade-off intent: phrases where the user is explicitly asking to compare,
+  // rank, or weigh multiple ideas against each other. The Trade-off tab only
+  // unlocks when one of these fires (or when the user kicks off the session
+  // with a batch "rank these" request).
+  const TRADEOFF_SIGNALS = /\b(trade[-\s]?off|trade\s+offs?|compare\s+(these|them|the\s+(ideas?|scorecards?|options?|scenarios?|versions?))|comparison|side[-\s]?by[-\s]?side|head[-\s]?to[-\s]?head|rank\s+(these|them|the\s+(ideas?|scorecards?|options?|scenarios?|versions?))|stack[-\s]?rank|prioriti[sz]e\s+(these|them|the\s+(ideas?|scorecards?|options?|scenarios?))|which\s+(one\s+)?(is\s+)?(best|better|should\s+(i|we)\s+(pick|choose|do|prioriti[sz]e|go\s+with))|impact\s+(vs|versus|and)\s+effort|effort\s+(vs|versus|and)\s+impact|portfolio\s+(view|analysis)|show\s+(me\s+)?(the\s+)?trade[-\s]?off)\b/i;
+
+  function detectsTradeoffIntent(userText = '') {
+    return TRADEOFF_SIGNALS.test(String(userText));
+  }
+
   // Creates a new scored version from the current conversation and appends it to snapshots.
   // Uses create_as_version=true so the backend saves it as a scenario — baseline session
   // result is NOT overwritten, so restoring from bundle always shows both baseline + versions.
@@ -7124,6 +7146,12 @@ const handleSaveStarter = async () => {
     if (!sessionId && !canStartOrgProjects) {
       showToast('This role can work inside shared projects but cannot start new ones.', 'info');
       return;
+    }
+
+    // Unlock the Trade-off tab the moment the user explicitly asks to compare
+    // or rank ideas. Latches once true; reset on new session.
+    if (!tradeoffRequested && text && detectsTradeoffIntent(text)) {
+      setTradeoffRequested(true);
     }
 
     const chatFiles = selectedFiles.filter((item) => isChatAttachmentFile(item));
@@ -8475,6 +8503,7 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
     setInput('');
     setBusy(false);
     setAnalysisResult(null);
+    setTradeoffRequested(false);
     setError(null);
     setSavedScenarios([]);
     setCollectedData({});
@@ -8942,6 +8971,7 @@ await authFetch(`${API_BASE}/api/v1/ai-agent/threads/${itemId}`, {
             setCurrentSessionId(null);
             setAnalysisResult(null);
             setMessages([]);
+            setTradeoffRequested(false);
             setView('intake');
           }
 
@@ -10512,13 +10542,19 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
             {(() => {
               // Only the CURRENT stage is highlighted
               const currentStage = activePill || (!analysisResult ? 'discovery' : 'scoring');
-              const canScenarios = Boolean(analysisResult);
+              // Trade-off only unlocks when the user explicitly asks to compare/rank.
+              // Just having multiple scorecards is NOT enough.
+              const canScenarios = Boolean(analysisResult) && tradeoffRequested;
               const canExecution = Array.isArray(threadWbs?.tasks) && threadWbs.tasks.length > 0;
               const stages = [
                 { key: 'discovery',  label: 'Discovery',  disabled: false },
                 { key: 'scoring',    label: 'Scoring',    disabled: !analysisResult },
                 { key: 'scenarios',  label: 'Trade-off',  disabled: !canScenarios,
-                  title: !canScenarios ? 'Score an idea first to access the trade-off view' : undefined },
+                  title: !canScenarios
+                    ? (analysisResult
+                        ? 'Ask Jaspen to compare or rank your scorecards to unlock the trade-off view'
+                        : 'Score an idea first to access the trade-off view')
+                    : undefined },
                 { key: 'execution',  label: 'Execution',  disabled: !canExecution,
                   title: !canExecution ? 'Ask Jaspen to build an execution plan first' : undefined },
               ];
