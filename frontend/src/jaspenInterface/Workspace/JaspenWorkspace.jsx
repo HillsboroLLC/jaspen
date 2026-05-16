@@ -17,6 +17,18 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faArrowLeft, faDownload, faShare, faRotateLeft, faPaperPlane } from '@fortawesome/free-solid-svg-icons';
 
 import { Jaspen } from './JaspenClient';
+import TradeoffView from './TradeoffView';
+
+// Sentinel scorecardId values that route the canvas to a non-scorecard
+// artifact view. Keep these in sync with the entry-point links in
+// JaspenChat's Session Artifacts dropdown.
+const SENTINEL_TRADEOFF = '__tradeoff__';
+const SENTINEL_EXECUTION = '__execution__';
+
+// Color palette matched against the chat scorecard's renderScorecardCard.
+const COLOR_NAVY = '#0f172a';
+const COLOR_ROSE = '#a0036c';
+const COLOR_RISK_ORANGE = '#f59e0b';
 
 // Generic placeholders that should never surface as an idea name.
 const _GENERIC_TITLES = new Set([
@@ -98,10 +110,14 @@ export default function JaspenWorkspace() {
   const saveTimerRef = useRef(null);
   const skipNextSaveRef = useRef(true); // first render = freshly loaded, don't save back
 
-  // Fetch the artifact on mount. We use the dedicated lightweight workspace
-  // endpoint that returns just the snapshot + overrides in one round-trip,
-  // not the full bundle. Falls back to fetchBundle if the focused endpoint
-  // fails for any reason.
+  const isTradeoff = scorecardId === SENTINEL_TRADEOFF;
+  const isExecution = scorecardId === SENTINEL_EXECUTION;
+  const isScorecard = !isTradeoff && !isExecution;
+
+  // Fetch the artifact on mount. ALWAYS pull the bundle in parallel — even
+  // when the focused endpoint succeeds — because the bundle carries the
+  // chat messages we need for sensible title fallback when the scorecard
+  // payload has a generic 'Baseline Analysis' name.
   useEffect(() => {
     let cancelled = false;
     async function load() {
@@ -111,49 +127,61 @@ export default function JaspenWorkspace() {
       let target = null;
       let ov = {};
 
-      // Path A: focused endpoint
-      try {
-        const data = await Jaspen.getScorecardForWorkspace(threadId, scorecardId);
-        target = data?.scorecard || null;
-        if (data?.display_overrides && typeof data.display_overrides === 'object') {
-          ov = data.display_overrides;
-        }
-      } catch (e) {
-        console.warn('[Workspace] focused scorecard fetch failed, will try bundle:', e);
+      // Always fetch the bundle in parallel (cheap-ish and gives us messages
+      // for title fallback + the snapshot list for the tradeoff view).
+      const bundlePromise = Jaspen.fetchBundle(threadId).catch((e) => {
+        console.warn('[Workspace] bundle fetch failed (non-fatal):', e);
+        return null;
+      });
+
+      // For scorecard artifacts, also fetch the focused endpoint for fast
+      // first paint + authoritative overrides.
+      let focusedPromise = Promise.resolve(null);
+      if (isScorecard) {
+        focusedPromise = Jaspen.getScorecardForWorkspace(threadId, scorecardId).catch((e) => {
+          console.warn('[Workspace] focused scorecard fetch failed:', e);
+          return null;
+        });
       }
+
+      const [b, focused] = await Promise.all([bundlePromise, focusedPromise]);
       if (cancelled) return;
 
-      // Path B: bundle fallback (older deploys, or if the focused endpoint 404s)
-      if (!target) {
-        try {
-          const b = await Jaspen.fetchBundle(threadId);
-          setBundle(b);
-          const snapshots = Array.isArray(b?.scorecard_snapshots) ? b.scorecard_snapshots : [];
-          target = snapshots.find(
-            (s) => String(s?.id || s?.analysis_id || '') === String(scorecardId)
-          ) || b?.current_scorecard || b?.baseline_scorecard || null;
-          if (target?.display_overrides && typeof target.display_overrides === 'object' && Object.keys(ov).length === 0) {
-            ov = target.display_overrides;
-          }
-        } catch (e) {
-          console.error('[Workspace] bundle fallback also failed:', e);
-          if (!cancelled) {
-            setError(`Couldn't load this scorecard (${e?.name || 'Error'}): ${e?.message || String(e)}`);
-          }
+      if (b) setBundle(b);
+
+      if (focused) {
+        target = focused.scorecard || null;
+        if (focused.display_overrides && typeof focused.display_overrides === 'object') {
+          ov = focused.display_overrides;
         }
-        if (cancelled) return;
+      }
+
+      // For scorecards, fall back to the bundle's snapshot list if focused
+      // endpoint didn't return a target.
+      if (isScorecard && !target && b) {
+        const snapshots = Array.isArray(b.scorecard_snapshots) ? b.scorecard_snapshots : [];
+        target = snapshots.find(
+          (s) => String(s?.id || s?.analysis_id || '') === String(scorecardId)
+        ) || b.current_scorecard || b.baseline_scorecard || null;
+        if (target?.display_overrides && typeof target.display_overrides === 'object' && Object.keys(ov).length === 0) {
+          ov = target.display_overrides;
+        }
       }
 
       setSnapshot(target);
       skipNextSaveRef.current = true;
       setOverrides(ov || {});
 
-      if (target) setError(null);
+      if (isScorecard && !target) {
+        setError(`Couldn't load this scorecard. Check that it exists in this thread.`);
+      } else {
+        setError(null);
+      }
       setLoading(false);
     }
     void load();
     return () => { cancelled = true; };
-  }, [threadId, scorecardId]);
+  }, [threadId, scorecardId, isScorecard]);
 
   // Debounced auto-save: any change to overrides is persisted ~500ms later.
   useEffect(() => {
@@ -179,11 +207,20 @@ export default function JaspenWorkspace() {
 
   const rendered = useMemo(() => applyOverrides(snapshot, overrides), [snapshot, overrides]);
 
-  // Resolve the display title for THIS specific scorecard. Priority:
+  // Resolve the display title for THIS specific artifact. Priority:
   // override → meaningful scorecard fields → first user message in the
   // thread bundle. Never falls back to "Untitled idea" when the thread
   // has any user message to draw from.
   const displayTitle = useMemo(() => {
+    // Sentinel artifact types: distinct top-bar titles
+    if (scorecardId === SENTINEL_TRADEOFF) {
+      const count = Array.isArray(bundle?.scorecard_snapshots) ? bundle.scorecard_snapshots.length : 0;
+      return count > 0 ? `Trade-off · ${count} ideas` : 'Trade-off';
+    }
+    if (scorecardId === SENTINEL_EXECUTION) {
+      return 'Execution Plan';
+    }
+
     const ov = overrides && typeof overrides === 'object' ? overrides : {};
     const fromScorecard = _pickMeaningful(
       ov.title,
@@ -203,7 +240,7 @@ export default function JaspenWorkspace() {
     if (fromMessage) return fromMessage;
 
     return 'Untitled idea';
-  }, [snapshot, overrides, bundle]);
+  }, [snapshot, overrides, bundle, scorecardId]);
 
   const score = Number(rendered?.jaspen_score || 0);
   const ringColor = rendered?._accent_color || '#a0036c';
@@ -272,7 +309,8 @@ export default function JaspenWorkspace() {
       </div>
     );
   }
-  if (error || !snapshot) {
+  // For scorecard routes we need a snapshot; tradeoff/execution don't.
+  if (error || (isScorecard && !snapshot)) {
     return (
       <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'100vh', gap:12, color:'#475569' }}>
         <div style={{ fontSize:15, fontWeight:600, color:'#0f172a' }}>Couldn't open this artifact</div>
@@ -413,11 +451,31 @@ export default function JaspenWorkspace() {
           </div>
         </div>
 
-        {/* The canvas itself — a simplified scorecard view for now.
-            We're rendering this inline (rather than pulling the chat's
-            renderScorecardCard) so we have full control over which fields
-            are inline-editable. */}
-        <div style={{ flex:1, overflow:'auto', padding:'32px 48px' }}>
+        {/* Canvas */}
+        <div style={{ flex:1, overflow:'auto', padding: isTradeoff ? 0 : '32px 48px' }}>
+          {isTradeoff ? (
+            // Trade-off canvas: full TradeoffView render. Cosmetic edits
+            // (title overrides etc.) will land in v1.1 — this v1 shows the
+            // full comparison surface inside the Workspace shell so the user
+            // can already 'view large' and download.
+            <div style={{ height:'100%', display:'flex', flexDirection:'column' }}>
+              <TradeoffView
+                scorecardSnapshots={Array.isArray(bundle?.scorecard_snapshots) ? bundle.scorecard_snapshots : []}
+                strategyObjective={bundle?.strategy_objective || 'balanced'}
+                portfolioAnalysis={null}
+                onAsk={() => { /* no-op for now */ }}
+                asking={false}
+              />
+            </div>
+          ) : isExecution ? (
+            <div style={{ maxWidth:980, margin:'0 auto', padding:'40px 32px', fontSize:14, color:'#475569', lineHeight:1.6 }}>
+              <div style={{ fontSize:18, fontWeight:600, color:'#0f172a', marginBottom:8 }}>Execution Plan Workspace</div>
+              <p>Bi-directional editing for the execution plan is coming next. For now, head back to Jaspen and use the Execution tab to view and edit tasks.</p>
+              <Link to={`/new?sid=${encodeURIComponent(threadId)}`} style={{ display:'inline-block', marginTop:12, padding:'8px 14px', borderRadius:8, background:'#0f172a', color:'#fff', textDecoration:'none', fontSize:13 }}>
+                Back to Jaspen
+              </Link>
+            </div>
+          ) : (
           <div
             style={{
               maxWidth:980, margin:'0 auto', background:'#fff', borderRadius:14,
@@ -477,7 +535,7 @@ export default function JaspenWorkspace() {
                 Dimensions
                 <span style={{ marginLeft:8, padding:'1px 6px', background:'#f1f5f9', borderRadius:6, fontSize:9, color:'#94a3b8' }}>locked</span>
               </div>
-              <DimensionBars dims={rendered?.dimensions || {}} accent={ringColor} />
+              <DimensionBars dims={rendered?.dimensions || {}} />
             </div>
 
             {/* Top risks + Recommended scenario — two columns to match the
@@ -527,6 +585,7 @@ export default function JaspenWorkspace() {
               Click any heading or summary above to edit. Scores and risks stay locked — use the chat to rescore.
             </div>
           </div>
+          )}
         </div>
       </main>
     </div>
@@ -600,8 +659,9 @@ function EditableText({ value, onCommit, multiline = false, style }) {
 }
 
 // ── DimensionBars: read-only score bars per dimension. ──────────────────────
-// Labels match the chat scorecard's renderScorecardCard so the workspace
-// canvas reads identically.
+// Labels and colors match the chat scorecard's renderScorecardCard so the
+// workspace canvas reads identically. Risk dimensions show in orange; all
+// other dimensions show in navy.
 const _DIMENSION_LABELS = {
   strategic_alignment: 'Strategic fit',
   financial_viability: 'Cost efficiency',
@@ -618,14 +678,13 @@ const _DIMENSION_ORDER = [
   'market_opportunity',
   'evidence_quality',
 ];
+const _RISK_DIMENSIONS = new Set(['risk_profile']);
 
-function DimensionBars({ dims, accent }) {
+function DimensionBars({ dims }) {
   if (!dims || typeof dims !== 'object') return null;
-  // Order to match the chat scorecard; skip dimensions without data.
   const ordered = _DIMENSION_ORDER
     .map((key) => ({ key, dim: dims[key] }))
     .filter(({ dim }) => dim && typeof dim === 'object');
-  // Catch any unexpected keys at the end
   for (const [key, dim] of Object.entries(dims)) {
     if (!_DIMENSION_LABELS[key] && dim && typeof dim === 'object') {
       ordered.push({ key, dim });
@@ -638,6 +697,7 @@ function DimensionBars({ dims, accent }) {
         const score = Number(dim?.score || 0);
         const label = _DIMENSION_LABELS[key]
           || key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+        const barColor = _RISK_DIMENSIONS.has(key) ? COLOR_RISK_ORANGE : COLOR_NAVY;
         return (
           <div key={key}>
             <div style={{ display:'flex', justifyContent:'space-between', fontSize:13, color:'#0f172a', marginBottom:6 }}>
@@ -647,7 +707,7 @@ function DimensionBars({ dims, accent }) {
               </span>
             </div>
             <div style={{ height:6, background:'#eef2f6', borderRadius:3, overflow:'hidden' }}>
-              <div style={{ height:'100%', width:`${score}%`, background:accent, borderRadius:3 }} />
+              <div style={{ height:'100%', width:`${score}%`, background:barColor, borderRadius:3 }} />
             </div>
           </div>
         );
