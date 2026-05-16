@@ -5864,6 +5864,34 @@ def get_thread_bundle(thread_id):
 
         scenario_levers = [dict(row) for row in lever_catalog]
 
+        # Merge scenarios saved via create_as_version into the snapshot list so
+        # all scorecard versions survive a hard reload. Each scenario record
+        # carries its full scored payload in `result`.
+        merged_snapshots = list(snapshot_state['snapshots']) if snapshot_state else []
+        _existing_snap_ids = {str(s.get('id') or s.get('analysis_id') or '') for s in merged_snapshots}
+        for _scn in scenarios_list:
+            if not isinstance(_scn, dict):
+                continue
+            _scn_result = _scn.get('result') if isinstance(_scn.get('result'), dict) else None
+            if not _scn_result:
+                continue
+            _scn_id = str(
+                _scn_result.get('id')
+                or _scn_result.get('analysis_id')
+                or _scn.get('scenario_id')
+                or ''
+            ).strip()
+            if not _scn_id or _scn_id in _existing_snap_ids:
+                continue
+            _snap = _normalize_scorecard_payload(_scn_result)
+            _snap['id'] = _scn_id
+            _snap['analysis_id'] = _snap.get('analysis_id') or _scn_id
+            _snap['label'] = _snap.get('label') or _scn.get('label') or 'Version'
+            _snap['isBaseline'] = False
+            _snap['createdAt'] = _snap.get('createdAt') or _scn.get('created_at') or _scn_result.get('timestamp')
+            merged_snapshots.append(_snap)
+            _existing_snap_ids.add(_scn_id)
+
         return jsonify({
             'thread': {
                 'id': thread_id,
@@ -5875,7 +5903,7 @@ def get_thread_bundle(thread_id):
             'messages': (session.get('chat_history') if isinstance(session, dict) and isinstance(session.get('chat_history'), list) else []),
             'baseline_scorecard': baseline,
             'current_scorecard': current_scorecard,
-            'scorecard_snapshots': snapshot_state['snapshots'] if snapshot_state else [],
+            'scorecard_snapshots': merged_snapshots,
             'selected_scorecard_id': snapshot_state['selected_id'] if snapshot_state else None,
             'scenarios': scenarios_list,
             'scenario_levers': scenario_levers,
