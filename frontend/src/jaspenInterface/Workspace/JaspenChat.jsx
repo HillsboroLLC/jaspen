@@ -10648,14 +10648,33 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                     });
 
                     // Group by canonical name, then assign vN within each group
-                    // (only when the group has more than one entry).
+                    // (only when the group has more than one entry). Legacy
+                    // scorecards may have generic placeholders like
+                    // "Baseline Analysis" — strip those so they fall through
+                    // to a sensible fallback derived from session/idea content.
+                    const _BANNED = new Set([
+                      'baseline analysis', 'baseline', 'jaspen project', 'jaspen analysis',
+                      'strategy analysis', 'initiative', 'untitled', 'untitled idea', 'project',
+                    ]);
+                    const _pickName = (s) => {
+                      const v = String(s || '').trim();
+                      if (!v) return null;
+                      if (_BANNED.has(v.toLowerCase())) return null;
+                      return v;
+                    };
+                    const sessionFallback = (
+                      _pickName(activeScorecard?.name)
+                        || _pickName(activeScorecard?.project_name)
+                        || _pickName(deriveIdeaTitle({ result: activeScorecard, messages, fallback: '' }))
+                        || 'Untitled idea'
+                    );
                     const nameOf = (c) =>
-                      String(
-                        c?.display_overrides?.title
-                          || c?.project_name
-                          || c?.label
-                          || 'Untitled idea'
-                      ).trim();
+                      _pickName(c?.display_overrides?.title)
+                        || _pickName(c?.name)
+                        || _pickName(c?.project_name)
+                        || _pickName(c?.label)
+                        || _pickName(c?.initiative_name)
+                        || sessionFallback;
                     const nameCounts = {};
                     ordered.forEach((c) => {
                       const n = nameOf(c);

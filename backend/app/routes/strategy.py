@@ -2065,6 +2065,7 @@ Rules:
 JSON format:
 
 {{
+    "name": "<a short, specific name for THIS idea — derived from the conversation, max 60 chars. Never use generic phrases like 'Baseline Analysis', 'Jaspen Project', 'Strategy Analysis', 'Initiative', or 'Untitled'. Use the actual product, market, or initiative the user is describing (e.g. 'AI HR analytics for mid-market', 'Usage-based AP invoice PLG', 'Restaurant inventory copilot').>",
     "jaspen_score": <weighted average of 6 dimension scores, 0-100>,
     "score_category": "<Excellent|Good|Fair|At Risk>",
     "dimensions": {{
@@ -2259,7 +2260,12 @@ def analyze_project():
         active_org_id = active_org.id if active_org else user.active_organization_id
 
         thread_id = data.get('thread_id') or request.headers.get('X-Session-ID')
-        project_name = data.get('name') or data.get('project_name') or 'Jaspen Project'
+        # Caller-provided name (request body) takes precedence; otherwise we
+        # let the LLM-derived `name` field in analysis_result win further
+        # below. `requested_name` distinguishes "user picked this" from
+        # "use whatever the AI produced".
+        requested_name = (data.get('name') or data.get('project_name') or '').strip() or None
+        project_name = requested_name  # may be None — resolved after scoring
         framework_id = data.get('framework_id')
         project_description = (data.get('description') or '').strip()
         # When true: save result as a scenario/version rather than overwriting the baseline session result
@@ -2342,6 +2348,52 @@ def analyze_project():
         analysis_id = str(uuid.uuid4())
         generated_at = datetime.utcnow().isoformat()
         resolved_thread_id = str(thread_id or f"thread_{uuid.uuid4().hex[:12]}")
+
+        # Resolve the final project_name. Priority:
+        #   1. Caller-provided name (request body)
+        #   2. AI-generated `name` in analysis_result (preferred default)
+        #   3. First user message snippet from the transcript
+        #   4. 'Untitled idea' as the absolute last resort
+        # Never default to 'Baseline Analysis' or 'Jaspen Project'.
+        _BANNED_PLACEHOLDER_NAMES = {
+            'baseline analysis', 'baseline', 'jaspen project', 'jaspen analysis',
+            'strategy analysis', 'initiative', 'untitled', 'untitled idea', 'project',
+        }
+
+        def _is_meaningful_name(candidate):
+            s = str(candidate or '').strip()
+            if not s:
+                return False
+            if s.lower() in _BANNED_PLACEHOLDER_NAMES:
+                return False
+            return True
+
+        ai_name = None
+        if isinstance(analysis_result, dict):
+            ai_name = (
+                _clean_scorecard_text(analysis_result.get('name'))
+                or _clean_scorecard_text(analysis_result.get('project_name'))
+                or _clean_scorecard_text(analysis_result.get('initiative_name'))
+            )
+
+        if _is_meaningful_name(requested_name):
+            project_name = requested_name
+        elif _is_meaningful_name(ai_name):
+            project_name = ai_name
+        else:
+            # Derive from the first non-trivial user message in the transcript.
+            derived = None
+            for line in str(transcript or '').splitlines():
+                clean = line.strip()
+                if not clean:
+                    continue
+                # Strip leading speaker labels like "User:" or "u:"
+                if ':' in clean[:8]:
+                    clean = clean.split(':', 1)[1].strip()
+                if len(clean) >= 12:
+                    derived = clean[:60].rstrip('.,;: ') + ('…' if len(clean) > 60 else '')
+                    break
+            project_name = derived or 'Untitled idea'
 
         prior_meta = analysis_result.get('meta') if isinstance(analysis_result.get('meta'), dict) else {}
         analysis = {

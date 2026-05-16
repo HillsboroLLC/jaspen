@@ -811,7 +811,10 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
       endpoints.analyze,
       {
         thread_id: session_id,
-        name: project_name || 'Baseline Analysis',
+        // Only pass an explicit name when the caller provided one. Otherwise
+        // let the backend derive a real idea name from the conversation —
+        // never use generic placeholders like 'Baseline Analysis'.
+        ...(project_name ? { name: project_name } : {}),
         framework_id: null, // Uses default "Jaspen Assessment"
         model_type: model_type || undefined,
         ...(create_as_version ? { create_as_version: true, version_label: version_label || undefined } : {}),
