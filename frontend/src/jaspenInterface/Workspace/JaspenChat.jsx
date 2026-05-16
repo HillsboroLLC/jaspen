@@ -10825,11 +10825,60 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                       );
                     });
                   })()}
+                  {/* Trade-off artifact — present once the user has explicitly
+                      asked to compare/rank ideas (matches the tab gating). */}
+                  {tradeoffRequested && Array.isArray(scorecardSnapshots) && scorecardSnapshots.length >= 2 && (
+                    <div className="jas-artifact-row" style={{ display:'flex', alignItems:'center', gap:4 }}>
+                      <button
+                        className="jas-artifact-item"
+                        onClick={() => { setActivePill('scenarios'); setArtifactsOpen(false); }}
+                        title="Open the Trade-off comparison view"
+                        style={{ flex:1 }}
+                      >
+                        <FontAwesomeIcon icon={faArrowRightArrowLeft} />
+                        <span>Trade-off · {scorecardSnapshots.length} ideas</span>
+                      </button>
+                      {sessionId && (
+                        <a
+                          className="jas-artifact-ws-link"
+                          href={`/workspace/${encodeURIComponent(sessionId)}/__tradeoff__`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={() => setArtifactsOpen(false)}
+                          title="Edit Trade-off in Workspace (opens in new tab) — coming soon in beta"
+                          style={{ fontSize:11, color:'#475569', padding:'4px 8px', borderRadius:6, textDecoration:'none', whiteSpace:'nowrap' }}
+                        >
+                          Edit ↗
+                        </a>
+                      )}
+                    </div>
+                  )}
+                  {/* Execution Plan artifact */}
                   {Array.isArray(threadWbs?.tasks) && threadWbs.tasks.length > 0 && (
-                    <button className="jas-artifact-item" onClick={() => { setActivePill('execution'); setArtifactsOpen(false); }}>
-                      <FontAwesomeIcon icon={faListCheck} />
-                      <span>Execution Plan · {threadWbs.tasks.length} tasks</span>
-                    </button>
+                    <div className="jas-artifact-row" style={{ display:'flex', alignItems:'center', gap:4 }}>
+                      <button
+                        className="jas-artifact-item"
+                        onClick={() => { setActivePill('execution'); setArtifactsOpen(false); }}
+                        title="Open the Execution Plan"
+                        style={{ flex:1 }}
+                      >
+                        <FontAwesomeIcon icon={faListCheck} />
+                        <span>Execution Plan · {threadWbs.tasks.length} tasks</span>
+                      </button>
+                      {sessionId && (
+                        <a
+                          className="jas-artifact-ws-link"
+                          href={`/workspace/${encodeURIComponent(sessionId)}/__execution__`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={() => setArtifactsOpen(false)}
+                          title="Edit Execution Plan in Workspace (opens in new tab) — coming soon in beta"
+                          style={{ fontSize:11, color:'#475569', padding:'4px 8px', borderRadius:6, textDecoration:'none', whiteSpace:'nowrap' }}
+                        >
+                          Edit ↗
+                        </a>
+                      )}
+                    </div>
                   )}
                   {!analysisResult && (!Array.isArray(scorecardSnapshots) || scorecardSnapshots.length === 0) && (
                     <p className="jas-artifacts-empty">No artifacts yet</p>
