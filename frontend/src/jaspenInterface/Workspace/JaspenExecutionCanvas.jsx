@@ -581,23 +581,31 @@ export function PhaseCard({ phase, tasks, onUpdateTask, onAddTask, onReorder }) 
 
 // ── Main canvas ────────────────────────────────────────────────────────────
 
-export default function JaspenExecutionCanvas({ threadId, bundle, displayTitle, score, onAskJaspen }) {
-  // Local working copy of the WBS. Initial value derives from bundle on mount;
-  // edits are local + debounced PATCH to /threads/:tid/wbs.
-  const [wbs, setWbs] = useState(() => bundle?.project_wbs || { name: 'Execution WBS', tasks: [] });
+export default function JaspenExecutionCanvas({ threadId, bundle, wbs: wbsProp, displayTitle, score, onAskJaspen }) {
+  // Local working copy of the WBS. Prefer the explicit wbs prop (fetched
+  // from /threads/:tid/wbs which is the authoritative source) over the
+  // bundle's project_wbs (which can lag for older threads).
+  const initialWbs = wbsProp && Array.isArray(wbsProp.tasks)
+    ? wbsProp
+    : (bundle?.project_wbs || { name: 'Execution WBS', tasks: [] });
+  const [wbs, setWbs] = useState(initialWbs);
   const [view, setView] = useState('list');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
   const saveTimer = useRef(null);
   const skipNextSave = useRef(true);
 
-  // Sync if the bundle prop changes (e.g. fresh load)
+  // Sync if the wbs prop or bundle changes (e.g. fresh load).
+  // wbsProp wins because /threads/:tid/wbs is the authoritative source.
   useEffect(() => {
-    if (bundle?.project_wbs) {
+    if (wbsProp && Array.isArray(wbsProp.tasks)) {
+      skipNextSave.current = true;
+      setWbs(wbsProp);
+    } else if (bundle?.project_wbs) {
       skipNextSave.current = true;
       setWbs(bundle.project_wbs);
     }
-  }, [bundle]);
+  }, [wbsProp, bundle]);
 
   // Debounced save on any WBS mutation.
   useEffect(() => {

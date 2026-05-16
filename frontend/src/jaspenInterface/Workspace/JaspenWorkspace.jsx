@@ -114,6 +114,7 @@ export default function JaspenWorkspace() {
   const isTradeoff = scorecardId === SENTINEL_TRADEOFF;
   const isExecution = scorecardId === SENTINEL_EXECUTION;
   const isScorecard = !isTradeoff && !isExecution;
+  const [wbs, setWbs] = useState(null);
 
   // Fetch the artifact on mount. ALWAYS pull the bundle in parallel — even
   // when the focused endpoint succeeds — because the bundle carries the
@@ -145,10 +146,31 @@ export default function JaspenWorkspace() {
         });
       }
 
-      const [b, focused] = await Promise.all([bundlePromise, focusedPromise]);
+      // For execution artifacts, the WBS lives on a separate endpoint
+      // (the bundle's project_wbs can lag for legacy threads). Hit
+      // /threads/:tid/wbs directly so the canvas always sees the latest.
+      let wbsPromise = Promise.resolve(null);
+      if (isExecution) {
+        wbsPromise = Jaspen.getThreadWbs(threadId).catch((e) => {
+          console.warn('[Workspace] WBS fetch failed (non-fatal):', e);
+          return null;
+        });
+      }
+
+      const [b, focused, wbsResp] = await Promise.all([bundlePromise, focusedPromise, wbsPromise]);
       if (cancelled) return;
 
       if (b) setBundle(b);
+      // Pick whichever source actually has tasks. Server-side getThreadWbs
+      // wins because that's the same source the chat tab reads from.
+      if (wbsResp && wbsResp?.project_wbs && Array.isArray(wbsResp.project_wbs.tasks) && wbsResp.project_wbs.tasks.length > 0) {
+        setWbs(wbsResp.project_wbs);
+      } else if (b?.project_wbs && Array.isArray(b.project_wbs.tasks) && b.project_wbs.tasks.length > 0) {
+        setWbs(b.project_wbs);
+      } else if (wbsResp?.project_wbs) {
+        // Empty plan — still set so canvas knows we tried
+        setWbs(wbsResp.project_wbs);
+      }
 
       if (focused) {
         target = focused.scorecard || null;
@@ -478,6 +500,7 @@ export default function JaspenWorkspace() {
             <JaspenExecutionCanvas
               threadId={threadId}
               bundle={bundle}
+              wbs={wbs}
               displayTitle={(() => {
                 // Derive the canvas title: prefer the adopted scorecard's
                 // name, fall back to the first user message.
