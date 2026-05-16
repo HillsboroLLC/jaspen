@@ -406,13 +406,8 @@ const TradeoffView = ({
         </div>
       </div>
 
-      {/* Recommendation sidebar */}
-      <TradeoffSidebar
-        ideas={ideas}
-        portfolioAnalysis={portfolioAnalysis}
-        onAsk={onAsk}
-        asking={asking}
-      />
+      {/* TradeoffSidebar removed: comparison view now uses full width.
+          Recommendations and questions go through the main chat input below. */}
     </div>
   );
 };

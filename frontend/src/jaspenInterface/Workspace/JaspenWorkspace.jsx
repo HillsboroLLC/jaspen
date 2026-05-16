@@ -5202,20 +5202,19 @@ useEffect(() => {
   if (analysisResult) setActivePill('scoring');
 }, [analysisResult]); // eslint-disable-line react-hooks/exhaustive-deps
 
-// Derive display messages: always append the scorecard card when analysisResult is set
-// and not already in the thread. This avoids timing/closure bugs with useEffect.
+// Derive display messages: weave scorecardSnapshots into the conversation in
+// chronological order. The AI emits "Building your scorecard now." right before
+// each scoring event, so that phrase is our most reliable anchor — every
+// occurrence in the chat history corresponds to one scorecard generation.
 const displayMessages = useMemo(() => {
   if (messages.length === 0) return messages;
-  // If the message stream already contains injected scorecard or loading artifacts
-  // (live session), use them as-is — placeholders preserve correct in-thread position.
+  // Live session: a real-time placeholder or scorecard artifact already lives
+  // in messages — those preserve their own position.
   const hasInlineCard = messages.some(
     (m) => m?.artifact?.type === 'scorecard' || m?.artifact?.type === 'scorecard-loading'
   );
   if (hasInlineCard) return messages;
 
-  // Reload path: messages came from bundle without scorecard artifacts.
-  // Weave scorecardSnapshots into the thread by timestamp so each card lands
-  // immediately after the last message that preceded it chronologically.
   const snapshots = Array.isArray(scorecardSnapshots) ? scorecardSnapshots : [];
   if (snapshots.length === 0) {
     // No snapshots — fallback to single-result append for legacy sessions.
@@ -5231,40 +5230,57 @@ const displayMessages = useMemo(() => {
     return Number.isFinite(t) ? t : 0;
   };
 
-  // Sort snapshots oldest → newest by createdAt.
-  const orderedSnaps = [...snapshots].sort(
-    (a, b) => tsOf(a?.createdAt || a?._createdAt || a?.created_at) - tsOf(b?.createdAt || b?._createdAt || b?.created_at)
-  );
-
-  // Find each message's timestamp; if any message lacks one, fall back to its
-  // position-based "rank" so ordering still works.
-  const msgTimes = messages.map((m, idx) => {
-    const t = tsOf(m?.timestamp);
-    return t > 0 ? t : idx; // mixed scale ok — we only compare within consistent regime
+  // Sort snapshots oldest → newest using whatever timestamps are available.
+  // Snapshots without timestamps keep their input order via a stable sort.
+  const indexed = snapshots.map((s, i) => ({ s, i }));
+  indexed.sort((a, b) => {
+    const ta = tsOf(a.s?.createdAt || a.s?._createdAt || a.s?.created_at);
+    const tb = tsOf(b.s?.createdAt || b.s?._createdAt || b.s?.created_at);
+    if (ta && tb) return ta - tb;
+    if (ta && !tb) return -1;
+    if (!ta && tb) return 1;
+    return a.i - b.i;
   });
-  const haveRealTimestamps = messages.every((m) => tsOf(m?.timestamp) > 0);
+  const orderedSnaps = indexed.map((x) => x.s);
 
-  // For each snapshot, find the index of the last message whose time <= snapshot time.
-  // If no timestamps, all snapshots go after the last message.
+  // Primary anchor: AI messages containing the "Building your scorecard now" phrase.
+  // The Nth occurrence anchors the Nth snapshot.
+  const triggerRegex = /building your scorecard|scorecard now|generating your scorecard|scoring your idea/i;
+  const triggerIndices = [];
+  messages.forEach((m, i) => {
+    if (m?.role === 'ai' && typeof m?.text === 'string' && triggerRegex.test(m.text)) {
+      triggerIndices.push(i);
+    }
+  });
+
+  // For each snapshot decide what index to insert AFTER. Prefer the trigger
+  // anchor; fall back to timestamp comparison; final fallback: end of stream.
   const insertions = orderedSnaps.map((snap, snapIdx) => {
+    if (snapIdx < triggerIndices.length) {
+      return { snap, afterIdx: triggerIndices[snapIdx], snapIdx };
+    }
     const snapTs = tsOf(snap?.createdAt || snap?._createdAt || snap?.created_at);
-    if (!haveRealTimestamps || snapTs === 0) {
-      return { snap, afterIdx: messages.length - 1, snapIdx };
+    if (snapTs > 0) {
+      // Find the last message whose timestamp is <= snapTs.
+      let afterIdx = -1;
+      for (let i = 0; i < messages.length; i++) {
+        const mt = tsOf(messages[i]?.timestamp);
+        if (mt > 0 && mt <= snapTs) afterIdx = i;
+      }
+      if (afterIdx >= 0) return { snap, afterIdx, snapIdx };
     }
-    let afterIdx = -1;
-    for (let i = 0; i < msgTimes.length; i++) {
-      if (msgTimes[i] <= snapTs) afterIdx = i;
-    }
-    return { snap, afterIdx, snapIdx };
+    // No anchor available — append to end.
+    return { snap, afterIdx: messages.length - 1, snapIdx };
   });
 
-  // Build the final stream: walk messages, after each index append any snapshot whose
-  // afterIdx == i (in snapshot order).
+  // Build the final stream: walk messages, after each index append any snapshot
+  // whose afterIdx == i (preserving snapshot order).
   const out = [];
   messages.forEach((msg, i) => {
     out.push(msg);
     insertions
       .filter((ins) => ins.afterIdx === i)
+      .sort((a, b) => a.snapIdx - b.snapIdx)
       .forEach((ins) => {
         const snap = ins.snap;
         out.push({
@@ -5275,16 +5291,7 @@ const displayMessages = useMemo(() => {
         });
       });
   });
-  // Any snapshots with afterIdx < 0 (predating all messages) go to the front.
-  const leading = insertions
-    .filter((ins) => ins.afterIdx < 0)
-    .map((ins) => ({
-      id: ins.snap?.id ? `scorecard-${ins.snap.id}` : `scorecard-snap-${ins.snapIdx}-pre`,
-      role: 'ai',
-      text: '',
-      artifact: { type: 'scorecard', data: ins.snap },
-    }));
-  return [...leading, ...out];
+  return out;
 }, [analysisResult, messages, scorecardSnapshots]); // eslint-disable-line react-hooks/exhaustive-deps
 
 const renderModelTypeInlinePicker = (className = '') => (
