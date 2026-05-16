@@ -2191,6 +2191,36 @@ const renderInlineExecutionView = () => {
       return next;
     });
   };
+  const handleReorderTask = ({ sourceId, targetId, position, targetPhase }) => {
+    setThreadWbs((prev) => {
+      const tasks = Array.isArray(prev?.tasks) ? [...prev.tasks] : [];
+      const srcIdx = tasks.findIndex((t) => String(t?.id || '') === String(sourceId));
+      if (srcIdx < 0) return prev;
+      const [moved] = tasks.splice(srcIdx, 1);
+      const newPhase = targetPhase || moved.phase || 'Execution';
+      moved.phase = newPhase;
+
+      let insertAt = tasks.length;
+      if (targetId) {
+        const tgtIdx = tasks.findIndex((t) => String(t?.id || '') === String(targetId));
+        if (tgtIdx >= 0) insertAt = position === 'before' ? tgtIdx : tgtIdx + 1;
+      } else if (position === 'end-of-phase') {
+        let lastIdxOfPhase = -1;
+        tasks.forEach((t, i) => {
+          if (String(t?.phase || '').trim() === newPhase) lastIdxOfPhase = i;
+        });
+        insertAt = lastIdxOfPhase >= 0 ? lastIdxOfPhase + 1 : tasks.length;
+      }
+      tasks.splice(insertAt, 0, moved);
+      const next = { ...(prev || {}), tasks };
+      Jaspen.upsertThreadWbs(sessionId || currentSessionId, next).catch((e) => {
+        console.error('[exec-inline] reorder save failed:', e);
+        showToast('Couldn\'t save the new order — try again.', 'error');
+      });
+      return next;
+    });
+  };
+
   const handleAddTask = (phaseName) => {
     setThreadWbs((prev) => {
       const next = { ...(prev || {}) };
@@ -2283,6 +2313,7 @@ const renderInlineExecutionView = () => {
               tasks={p.tasks}
               onUpdateTask={handleTaskUpdate}
               onAddTask={handleAddTask}
+              onReorder={handleReorderTask}
             />
           ))}
         </div>
@@ -11853,19 +11884,44 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                 const risks = Array.isArray(analysisResult?.top_risks) ? analysisResult.top_risks : [];
                 const recommendations = Array.isArray(analysisResult?.recommendations) ? analysisResult.recommendations : [];
 
-                // Next-best questions: derive from the scorecard's
-                // dimension what_would_improve fields + a couple of plan-
-                // operational prompts that always make sense.
-                const dimQuestions = Object.entries(analysisResult?.dimensions || {})
-                  .filter(([, dim]) => dim && typeof dim === 'object' && dim?.what_would_improve)
-                  .map(([, dim]) => String(dim.what_would_improve).trim())
-                  .filter(Boolean)
-                  .slice(0, 2);
-                const operationalQuestions = [];
-                if (blocked > 0) operationalQuestions.push(`Un-block the ${blocked} stalled task${blocked === 1 ? '' : 's'}?`);
-                if (total === 0) operationalQuestions.push('Build me an execution plan for the chosen idea');
-                if (inProgress > 3) operationalQuestions.push('Push everything by 1 week — too much in flight');
-                const nextQuestions = [...dimQuestions, ...operationalQuestions].slice(0, 4);
+                // Blocked task list (full, with owner) — only when any exist.
+                const blockedTasks = planTasks
+                  .filter((t) => String(t?.status || '').toLowerCase() === 'blocked')
+                  .slice(0, 4);
+
+                // Upcoming: next 4 tasks by due date that aren't done.
+                const parseTs = (v) => {
+                  const t = Date.parse(String(v || ''));
+                  return Number.isFinite(t) ? t : Number.MAX_SAFE_INTEGER;
+                };
+                const upcoming = planTasks
+                  .filter((t) => {
+                    const s = String(t?.status || '').toLowerCase();
+                    return s !== 'done' && t?.due_date;
+                  })
+                  .sort((a, b) => parseTs(a.due_date) - parseTs(b.due_date))
+                  .slice(0, 4);
+
+                // Owner workload (for quick action suggestion)
+                const ownerCounts = new Map();
+                planTasks.forEach((t) => {
+                  const n = String(t?.owner || t?.suggested_role || '').trim();
+                  if (n) ownerCounts.set(n, (ownerCounts.get(n) || 0) + 1);
+                });
+                const railOwners = Array.from(ownerCounts.entries())
+                  .map(([name, count]) => ({ name, count }));
+
+                // Quick AI-prompt chips — operational, not philosophical
+                const quickActions = [];
+                if (blocked > 0) quickActions.push(`Un-block the ${blocked} stalled task${blocked === 1 ? '' : 's'}`);
+                if (inProgress > 3) quickActions.push('Push everything by 1 week — too much in flight');
+                if (total > 0 && railOwners.length > 0) {
+                  const heaviest = railOwners.slice().sort((a, b) => b.count - a.count)[0];
+                  if (heaviest && heaviest.count >= 4) quickActions.push(`Rebalance — ${heaviest.name.split(/\s+/)[0]} has ${heaviest.count} tasks`);
+                }
+                if (quickActions.length === 0 && total > 0) {
+                  quickActions.push('Regenerate the plan with a tighter timeline');
+                }
 
                 return (
                   <>
@@ -11889,24 +11945,89 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                       </div>
                     )}
 
-                    {/* Risks */}
+                    {/* Blocked items — the most pressing thing during execution */}
+                    {blockedTasks.length > 0 && (
+                      <div style={{ marginBottom: 18 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                          <p className="jas-insights-tips-label" style={{ margin: 0 }}>Blocked</p>
+                          <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 9.5, color: '#92590b' }}>
+                            {blockedTasks.length}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          {blockedTasks.map((t) => (
+                            <div
+                              key={t.id}
+                              style={{
+                                padding: '8px 10px', background: '#fff',
+                                border: '1px solid #fcd9b8', borderLeft: '3px solid #f59e0b',
+                                borderRadius: 6,
+                              }}
+                            >
+                              <div style={{ fontSize: 12, color: '#161f3b', fontWeight: 500, lineHeight: 1.35 }}>
+                                {t.title || 'Untitled task'}
+                              </div>
+                              {(t.owner || t.suggested_role) && (
+                                <div style={{ fontSize: 10.5, color: '#8a93ad', marginTop: 3 }}>
+                                  {t.owner || t.suggested_role}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Upcoming due dates */}
+                    {upcoming.length > 0 && (
+                      <div style={{ marginBottom: 18 }}>
+                        <p className="jas-insights-tips-label" style={{ marginBottom: 8 }}>Upcoming</p>
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          {upcoming.map((t, i) => (
+                            <div
+                              key={t.id || i}
+                              style={{
+                                display: 'grid',
+                                gridTemplateColumns: 'minmax(0, 1fr) auto',
+                                gap: 10, alignItems: 'center',
+                                padding: '8px 0',
+                                borderBottom: i < upcoming.length - 1 ? '1px solid var(--border)' : 'none',
+                              }}
+                            >
+                              <div style={{ minWidth: 0 }}>
+                                <div style={{ fontSize: 12, color: '#161f3b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {t.title || 'Untitled task'}
+                                </div>
+                                <div style={{ fontSize: 10.5, color: '#8a93ad', marginTop: 2 }}>
+                                  {t.owner || t.suggested_role || 'Unassigned'}
+                                </div>
+                              </div>
+                              <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 11, color: '#5a6585', whiteSpace: 'nowrap' }}>
+                                {t.due_date}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Risks (compact — still relevant during execution) */}
                     {risks.length > 0 && (
                       <div style={{ marginBottom: 18 }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                          <p className="jas-insights-tips-label" style={{ margin: 0 }}>Risks</p>
-                          <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 9.5, color: '#8a93ad' }}>{risks.length} OPEN</span>
+                          <p className="jas-insights-tips-label" style={{ margin: 0 }}>Risks to watch</p>
+                          <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 9.5, color: '#8a93ad' }}>{risks.length}</span>
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                           {risks.slice(0, 3).map((r, i) => {
                             const t = typeof r === 'string' ? r : (r?.risk || r?.text || String(r));
-                            const isBlocked = blocked > 0 && i === 0;
                             return (
                               <div
                                 key={i}
                                 style={{
                                   padding: '8px 10px', background: '#fff',
-                                  border: `1px solid ${isBlocked ? '#fcd9b8' : '#d6e9ef'}`,
-                                  borderLeft: `3px solid ${isBlocked ? '#f59e0b' : '#a0036c'}`,
+                                  border: '1px solid #d6e9ef',
+                                  borderLeft: '3px solid #a0036c',
                                   borderRadius: 6, fontSize: 12, color: '#161f3b', lineHeight: 1.4,
                                 }}
                               >{t}</div>
@@ -11916,26 +12037,31 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                       </div>
                     )}
 
-                    {/* Next-best questions */}
-                    {nextQuestions.length > 0 && (
+                    {/* Quick AI actions (cost credits) — operational nudges */}
+                    {quickActions.length > 0 && (
                       <div>
-                        <p className="jas-insights-tips-label" style={{ marginBottom: 6 }}>Next-best questions</p>
-                        <div style={{ display: 'flex', flexDirection: 'column' }}>
-                          {nextQuestions.map((q, i) => (
-                            <div
+                        <p className="jas-insights-tips-label" style={{ marginBottom: 6 }}>Ask Jaspen to…</p>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          {quickActions.map((q, i) => (
+                            <button
                               key={i}
+                              type="button"
                               onClick={() => { setInput(q); }}
                               style={{
+                                textAlign: 'left',
                                 display: 'flex', alignItems: 'center', gap: 8,
-                                padding: '10px 0',
-                                borderBottom: i < nextQuestions.length - 1 ? '1px solid var(--border)' : 'none',
-                                fontSize: 12.5, color: '#161f3b', cursor: 'pointer', lineHeight: 1.4,
+                                padding: '8px 10px',
+                                background: '#fff', border: '1px solid var(--border)',
+                                borderRadius: 7, cursor: 'pointer',
+                                fontSize: 12, color: '#161f3b', lineHeight: 1.4,
                               }}
+                              onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#a0036c'; }}
+                              onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; }}
                             >
                               <span style={{ color: '#a0036c', fontSize: 11 }}>✦</span>
                               <span style={{ flex: 1 }}>{q}</span>
-                              <span style={{ color: '#8a93ad', fontSize: 11 }}>→</span>
-                            </div>
+                              <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 9.5, color: '#8a93ad' }}>~credits</span>
+                            </button>
                           ))}
                         </div>
                       </div>

@@ -321,8 +321,9 @@ export const OwnerChip = ({ name, count }) => (
 
 // ── Task row (the unit of editing) ─────────────────────────────────────────
 
-export function TaskRow({ task, onUpdate, isFirst, isLast }) {
+export function TaskRow({ task, onUpdate, onReorder, isFirst, isLast, phaseName }) {
   const [showActions, setShowActions] = useState(false);
+  const [dragOverEdge, setDragOverEdge] = useState(null); // 'top' | 'bottom' | null
   const status = normalizeStatus(task.status);
   const priority = normalizePriority(task.priority);
   const dueOrWeek = task.due_date || (task.timeline_days
@@ -335,8 +336,48 @@ export function TaskRow({ task, onUpdate, isFirst, isLast }) {
     onUpdate?.({ status: next });
   };
 
+  // HTML5 drag-drop handlers — write the task id to dataTransfer so the
+  // drop target can locate the source. Same logic works across phases.
+  const onDragStart = (e) => {
+    if (!task?.id) return;
+    e.dataTransfer.setData('text/plain', String(task.id));
+    e.dataTransfer.effectAllowed = 'move';
+    // Make the cursor read as 'grabbing' during drag
+    e.currentTarget.style.opacity = '0.55';
+  };
+  const onDragEnd = (e) => {
+    e.currentTarget.style.opacity = '1';
+    setDragOverEdge(null);
+  };
+  const onDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const rect = e.currentTarget.getBoundingClientRect();
+    const halfway = rect.top + rect.height / 2;
+    setDragOverEdge(e.clientY < halfway ? 'top' : 'bottom');
+  };
+  const onDragLeave = () => setDragOverEdge(null);
+  const onDrop = (e) => {
+    e.preventDefault();
+    const sourceId = e.dataTransfer.getData('text/plain');
+    setDragOverEdge(null);
+    if (!sourceId || sourceId === String(task.id)) return;
+    onReorder?.({
+      sourceId,
+      targetId: task.id,
+      position: dragOverEdge === 'top' ? 'before' : 'after',
+      targetPhase: phaseName,
+    });
+  };
+
   return (
     <div
+      draggable={!!task?.id}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
       onMouseEnter={() => setShowActions(true)}
       onMouseLeave={() => setShowActions(false)}
       style={{
@@ -344,7 +385,10 @@ export function TaskRow({ task, onUpdate, isFirst, isLast }) {
         gridTemplateColumns: '20px minmax(0, 1fr) 110px 150px 100px 130px 28px',
         alignItems: 'center', gap: 14,
         padding: '12px 4px',
-        borderTop: isFirst ? 'none' : `1px solid ${COLOR.line2}`,
+        borderTop: isFirst
+          ? (dragOverEdge === 'top' ? `2px solid ${COLOR.rose}` : 'none')
+          : (dragOverEdge === 'top' ? `2px solid ${COLOR.rose}` : `1px solid ${COLOR.line2}`),
+        borderBottom: dragOverEdge === 'bottom' ? `2px solid ${COLOR.rose}` : 'none',
         position: 'relative',
       }}
     >
@@ -435,8 +479,31 @@ export function TaskRow({ task, onUpdate, isFirst, isLast }) {
 
 // ── Phase card (header + task rows + add row) ──────────────────────────────
 
-export function PhaseCard({ phase, tasks, onUpdateTask, onAddTask }) {
+export function PhaseCard({ phase, tasks, onUpdateTask, onAddTask, onReorder }) {
+  const [emptyDragOver, setEmptyDragOver] = useState(false);
   const doneCount = tasks.filter((t) => normalizeStatus(t.status) === 'done').length;
+
+  // Drop handlers for the empty zone at the END of the phase: lets the user
+  // drop a task from another phase into this one (becomes the last task).
+  const onEmptyDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setEmptyDragOver(true);
+  };
+  const onEmptyDragLeave = () => setEmptyDragOver(false);
+  const onEmptyDrop = (e) => {
+    e.preventDefault();
+    setEmptyDragOver(false);
+    const sourceId = e.dataTransfer.getData('text/plain');
+    if (!sourceId) return;
+    onReorder?.({
+      sourceId,
+      targetId: null,
+      position: 'end-of-phase',
+      targetPhase: phase.title,
+    });
+  };
+
   return (
     <div style={{
       background: COLOR.cardBg,
@@ -466,10 +533,15 @@ export function PhaseCard({ phase, tasks, onUpdateTask, onAddTask }) {
       </div>
 
       {/* Tasks */}
-      <div>
+      <div
+        onDragOver={tasks.length === 0 ? onEmptyDragOver : undefined}
+        onDragLeave={tasks.length === 0 ? onEmptyDragLeave : undefined}
+        onDrop={tasks.length === 0 ? onEmptyDrop : undefined}
+        style={tasks.length === 0 && emptyDragOver ? { background: COLOR.roseTint, borderRadius: 8 } : undefined}
+      >
         {tasks.length === 0 && (
           <div style={{ padding: '14px 4px', fontSize: 12, color: COLOR.mute }}>
-            No tasks in this phase yet.
+            {emptyDragOver ? 'Drop here to move into this phase' : 'No tasks in this phase yet.'}
           </div>
         )}
         {tasks.map((t, i) => (
@@ -478,23 +550,30 @@ export function PhaseCard({ phase, tasks, onUpdateTask, onAddTask }) {
             task={t}
             isFirst={i === 0}
             isLast={i === tasks.length - 1}
+            phaseName={phase.title}
             onUpdate={(patch) => onUpdateTask(t.id, patch)}
+            onReorder={onReorder}
           />
         ))}
       </div>
 
-      {/* Add task row */}
+      {/* Add task / drop-to-end-of-phase zone */}
       <div
         onClick={() => onAddTask(phase.title)}
+        onDragOver={onEmptyDragOver}
+        onDragLeave={onEmptyDragLeave}
+        onDrop={onEmptyDrop}
         style={{
           padding: '12px 4px', cursor: 'pointer',
-          fontSize: 12.5, color: COLOR.mute,
+          fontSize: 12.5, color: emptyDragOver ? COLOR.rose : COLOR.mute,
           display: 'flex', alignItems: 'center', gap: 8,
-          borderTop: `1px solid ${COLOR.line2}`,
+          borderTop: emptyDragOver ? `2px dashed ${COLOR.rose}` : `1px solid ${COLOR.line2}`,
+          background: emptyDragOver && tasks.length > 0 ? COLOR.roseTint : 'transparent',
+          borderRadius: emptyDragOver ? 6 : 0,
         }}
       >
         <FontAwesomeIcon icon={faPlus} style={{ fontSize: 10 }} />
-        Add task
+        {emptyDragOver ? 'Drop to add to end of phase' : 'Add task'}
       </div>
     </div>
   );
@@ -578,6 +657,36 @@ export default function JaspenExecutionCanvas({ threadId, bundle, displayTitle, 
       tasks[idx] = { ...tasks[idx], ...patch };
       next.tasks = tasks;
       return next;
+    });
+  }, []);
+
+  // Reorder a task within or across phases. Logic:
+  //   1. Remove the source from its current position
+  //   2. Find the target index (or end-of-phase if no targetId)
+  //   3. Insert source at that index, updating its `phase` to match the target
+  const reorderTask = useCallback(({ sourceId, targetId, position, targetPhase }) => {
+    setWbs((prev) => {
+      const tasks = Array.isArray(prev?.tasks) ? [...prev.tasks] : [];
+      const srcIdx = tasks.findIndex((t) => String(t?.id || '') === String(sourceId));
+      if (srcIdx < 0) return prev;
+      const [moved] = tasks.splice(srcIdx, 1);
+      const newPhase = targetPhase || moved.phase || 'Execution';
+      moved.phase = newPhase;
+
+      let insertAt = tasks.length;
+      if (targetId) {
+        const tgtIdx = tasks.findIndex((t) => String(t?.id || '') === String(targetId));
+        if (tgtIdx >= 0) insertAt = position === 'before' ? tgtIdx : tgtIdx + 1;
+      } else if (position === 'end-of-phase') {
+        // Insert at the position immediately after the last task in that phase
+        let lastIdxOfPhase = -1;
+        tasks.forEach((t, i) => {
+          if (String(t?.phase || '').trim() === newPhase) lastIdxOfPhase = i;
+        });
+        insertAt = lastIdxOfPhase >= 0 ? lastIdxOfPhase + 1 : tasks.length;
+      }
+      tasks.splice(insertAt, 0, moved);
+      return { ...(prev || {}), tasks };
     });
   }, []);
 
@@ -709,6 +818,7 @@ export default function JaspenExecutionCanvas({ threadId, bundle, displayTitle, 
               tasks={p.tasks}
               onUpdateTask={updateTask}
               onAddTask={addTask}
+              onReorder={reorderTask}
             />
           ))}
         </div>
