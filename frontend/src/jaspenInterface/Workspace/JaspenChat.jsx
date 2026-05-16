@@ -37,6 +37,18 @@ import { Jaspen, storage } from './JaspenClient';
 // Tab components
 import ScoreDashboard   from './ScoreDashboard';
 import TradeoffView     from './TradeoffView';
+import {
+  COLOR as EXEC_COLOR,
+  Eyebrow,
+  Pill as ExecPill,
+  Avatar as ExecAvatar,
+  StatusPill,
+  PriorityDot,
+  EditableText as ExecEditableText,
+  ViewSwitcher as ExecViewSwitcher,
+  OwnerChip,
+  PhaseCard as ExecPhaseCard,
+} from './JaspenExecutionCanvas';
 import BatchIdeaManager from './components/BatchIdeaManager';
 import Onboarding from './components/Onboarding';
 import SidebarIdentityFooter from './components/SidebarIdentityFooter';
@@ -2134,26 +2146,146 @@ const renderInlineExecutionView = () => {
       </div>
     );
   }
+  // ── Populated execution plan view ──────────────────────────────────────
+  // Group tasks by phase (preserving order of first appearance), then render
+  // PhaseCards from JaspenExecutionCanvas so the chat tab and Workspace
+  // surfaces share the same visual atoms.
+  const phaseOrder = [];
+  const tasksByPhase = new Map();
+  tasks.forEach((t) => {
+    const name = String(t?.phase || 'Execution').trim() || 'Execution';
+    if (!tasksByPhase.has(name)) { phaseOrder.push(name); tasksByPhase.set(name, []); }
+    tasksByPhase.get(name).push(t);
+  });
+  const phases = phaseOrder.map((name, idx) => ({
+    num: idx + 1,
+    title: name,
+    weeks: null,
+    tasks: tasksByPhase.get(name),
+  }));
+
+  // Owners summary
+  const ownersMap = new Map();
+  tasks.forEach((t) => {
+    const n = String(t?.owner || t?.suggested_role || '').trim();
+    if (!n) return;
+    ownersMap.set(n, (ownersMap.get(n) || 0) + 1);
+  });
+  const owners = Array.from(ownersMap.entries()).map(([name, count]) => ({ name, count }));
+
+  // Inline edit handler: write to threadWbs then PATCH the whole WBS in a
+  // background save. Mirrors the auto-save pattern in JaspenExecutionCanvas.
+  const handleTaskUpdate = (taskId, patch) => {
+    setThreadWbs((prev) => {
+      const next = { ...(prev || {}) };
+      const arr = Array.isArray(prev?.tasks) ? [...prev.tasks] : [];
+      const idx = arr.findIndex((t) => String(t?.id || '') === String(taskId));
+      if (idx < 0) return prev;
+      arr[idx] = { ...arr[idx], ...patch };
+      next.tasks = arr;
+      // Fire-and-forget save; failures show as a toast but don't block typing.
+      Jaspen.upsertThreadWbs(sessionId || currentSessionId, next).catch((e) => {
+        console.error('[exec-inline] save failed:', e);
+        showToast('Couldn\'t save that change — try again.', 'error');
+      });
+      return next;
+    });
+  };
+  const handleAddTask = (phaseName) => {
+    setThreadWbs((prev) => {
+      const next = { ...(prev || {}) };
+      const arr = Array.isArray(prev?.tasks) ? [...prev.tasks] : [];
+      arr.push({
+        id: `task_local_${Math.random().toString(36).slice(2, 12)}`,
+        title: '',
+        description: '',
+        priority: 'medium',
+        estimated_days: 3,
+        timeline_days: 3,
+        owner: '',
+        suggested_role: '',
+        phase: phaseName || 'Execution',
+        status: 'todo',
+        depends_on: [],
+      });
+      next.tasks = arr;
+      Jaspen.upsertThreadWbs(sessionId || currentSessionId, next).catch((e) => {
+        console.error('[exec-inline] add save failed:', e);
+        showToast('Couldn\'t add the task — try again.', 'error');
+      });
+      return next;
+    });
+  };
+
+  const wsHref = (sessionId || currentSessionId)
+    ? `/workspace/${encodeURIComponent(sessionId || currentSessionId)}/__execution__`
+    : null;
+
   return (
-    <div className="jas-execution-inline">
-      <div className="jas-execution-inline-header">
-        <span className="jas-execution-inline-title">Execution Plan</span>
-        <span className="jas-execution-inline-count">{tasks.length} tasks</span>
-      </div>
-      <div className="jas-execution-task-list">
-        {tasks.map((task, i) => (
-          <div key={task.id || i} className="jas-execution-task-row">
-            <span className="jas-execution-task-num">{i + 1}</span>
-            <div className="jas-execution-task-body">
-              <p className="jas-execution-task-title">{task.title || task.name || task.task || `Task ${i + 1}`}</p>
-              {task.owner && <span className="jas-execution-task-meta">{task.owner}</span>}
-              {task.due_date && <span className="jas-execution-task-meta">{task.due_date}</span>}
+    <div style={{
+      flex: 1, display: 'flex', flexDirection: 'column',
+      background: EXEC_COLOR.bg, minWidth: 0, overflow: 'hidden',
+      fontFamily: "'Inter Tight', system-ui, sans-serif",
+    }}>
+      {/* Canvas header */}
+      <div style={{ padding: '22px 28px 14px', flex: '0 0 auto' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <Eyebrow color={EXEC_COLOR.rose}>✦ &nbsp;Generated</Eyebrow>
+            <div style={{ fontSize: 22, fontWeight: 600, color: EXEC_COLOR.navy, letterSpacing: '-0.015em', marginTop: 6, lineHeight: 1.2 }}>
+              Execution plan
             </div>
-            <span className={`jas-execution-task-status ${String(task.status || 'pending').toLowerCase()}`}>
-              {task.status || 'Pending'}
-            </span>
+            <div style={{ fontSize: 13, color: EXEC_COLOR.ink, marginTop: 4 }}>
+              {phases.length} phase{phases.length === 1 ? '' : 's'} · {tasks.length} task{tasks.length === 1 ? '' : 's'}
+              {owners.length > 0 && ` · ${owners.length} owner${owners.length === 1 ? '' : 's'}`}
+            </div>
           </div>
-        ))}
+          <ExecViewSwitcher value="list" />
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            {wsHref && (
+              <a
+                href={wsHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  padding: '6px 12px', borderRadius: 8,
+                  background: EXEC_COLOR.navy, color: '#fff',
+                  textDecoration: 'none', fontSize: 12.5, fontWeight: 500,
+                  whiteSpace: 'nowrap',
+                }}
+              >Open in Workspace ↗</a>
+            )}
+          </div>
+        </div>
+
+        {/* Owners strip */}
+        {owners.length > 0 && (
+          <div style={{
+            marginTop: 14, display: 'flex', alignItems: 'center', gap: 8,
+            padding: '8px 12px', flexWrap: 'wrap',
+            background: '#fff', border: `1px solid ${EXEC_COLOR.line}`, borderRadius: 10,
+          }}>
+            <Eyebrow>Owners</Eyebrow>
+            {owners.map((o) => (
+              <OwnerChip key={o.name} name={o.name} count={o.count} />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Phase cards */}
+      <div style={{ flex: 1, overflow: 'auto', padding: '0 28px 22px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {phases.map((p) => (
+            <ExecPhaseCard
+              key={p.title}
+              phase={p}
+              tasks={p.tasks}
+              onUpdateTask={handleTaskUpdate}
+              onAddTask={handleAddTask}
+            />
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -11705,24 +11837,124 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               )}
 
               {/* Execution: recommendations */}
-              {activePill === 'execution' && analysisResult && (
-                <div>
-                  <p className="jas-insights-tips-label" style={{ marginBottom: 8 }}>Recommendations</p>
-                  {(analysisResult.recommendations || analysisResult.next_steps || []).length > 0 ? (
-                    <div className="jas-insights-exec-recs">
-                      {(analysisResult.recommendations || analysisResult.next_steps || []).slice(0, 5).map((r, i) => (
-                        <p key={i} className="jas-insights-exec-rec">
-                          {typeof r === 'string' ? r : (r.text || r.action || String(r))}
-                        </p>
-                      ))}
-                    </div>
-                  ) : (
-                    <p style={{ fontSize: '0.75rem', color: 'var(--gray-500)', fontStyle: 'italic' }}>
-                      Score an initiative first, then ask Jaspen to build an execution plan.
-                    </p>
-                  )}
-                </div>
-              )}
+              {activePill === 'execution' && analysisResult && (() => {
+                const planTasks = Array.isArray(threadWbs?.tasks) ? threadWbs.tasks : [];
+                const total = planTasks.length;
+                const done = planTasks.filter((t) => String(t?.status || '').toLowerCase() === 'done').length;
+                const blocked = planTasks.filter((t) => String(t?.status || '').toLowerCase() === 'blocked').length;
+                const inProgress = planTasks.filter((t) => {
+                  const s = String(t?.status || '').toLowerCase();
+                  return s === 'in_progress' || s === 'inprogress';
+                }).length;
+                // Plan completion as confidence proxy when no scorecard
+                // confidence exists; otherwise reuse the scorecard's score.
+                const planConfidence = total > 0 ? Math.round((done / total) * 100) : Math.round(uiReadiness);
+
+                const risks = Array.isArray(analysisResult?.top_risks) ? analysisResult.top_risks : [];
+                const recommendations = Array.isArray(analysisResult?.recommendations) ? analysisResult.recommendations : [];
+
+                // Next-best questions: derive from the scorecard's
+                // dimension what_would_improve fields + a couple of plan-
+                // operational prompts that always make sense.
+                const dimQuestions = Object.entries(analysisResult?.dimensions || {})
+                  .filter(([, dim]) => dim && typeof dim === 'object' && dim?.what_would_improve)
+                  .map(([, dim]) => String(dim.what_would_improve).trim())
+                  .filter(Boolean)
+                  .slice(0, 2);
+                const operationalQuestions = [];
+                if (blocked > 0) operationalQuestions.push(`Un-block the ${blocked} stalled task${blocked === 1 ? '' : 's'}?`);
+                if (total === 0) operationalQuestions.push('Build me an execution plan for the chosen idea');
+                if (inProgress > 3) operationalQuestions.push('Push everything by 1 week — too much in flight');
+                const nextQuestions = [...dimQuestions, ...operationalQuestions].slice(0, 4);
+
+                return (
+                  <>
+                    {/* Plan confidence */}
+                    {total > 0 && (
+                      <div style={{ marginBottom: 18 }}>
+                        <p className="jas-insights-tips-label" style={{ marginBottom: 10 }}>Plan progress</p>
+                        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12 }}>
+                          <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 32, fontWeight: 600, color: '#161f3b', lineHeight: 0.95 }}>
+                            {planConfidence}<span style={{ fontSize: 15, color: '#8a93ad', fontWeight: 500 }}>%</span>
+                          </div>
+                          <div style={{ flex: 1, paddingBottom: 3 }}>
+                            <div style={{ height: 6, background: '#dfe7f1', borderRadius: 6, overflow: 'hidden' }}>
+                              <div style={{ width: `${planConfidence}%`, height: '100%', background: '#a0036c' }} />
+                            </div>
+                            <div style={{ fontSize: 10.5, color: '#8a93ad', marginTop: 5 }}>
+                              <span style={{ fontFamily: 'JetBrains Mono, monospace', color: '#5a6585' }}>{done}</span> done · <span style={{ fontFamily: 'JetBrains Mono, monospace', color: '#5a6585' }}>{inProgress}</span> in flight{blocked > 0 ? <> · <span style={{ fontFamily: 'JetBrains Mono, monospace', color: '#92590b' }}>{blocked}</span> blocked</> : null}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Risks */}
+                    {risks.length > 0 && (
+                      <div style={{ marginBottom: 18 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                          <p className="jas-insights-tips-label" style={{ margin: 0 }}>Risks</p>
+                          <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 9.5, color: '#8a93ad' }}>{risks.length} OPEN</span>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          {risks.slice(0, 3).map((r, i) => {
+                            const t = typeof r === 'string' ? r : (r?.risk || r?.text || String(r));
+                            const isBlocked = blocked > 0 && i === 0;
+                            return (
+                              <div
+                                key={i}
+                                style={{
+                                  padding: '8px 10px', background: '#fff',
+                                  border: `1px solid ${isBlocked ? '#fcd9b8' : '#d6e9ef'}`,
+                                  borderLeft: `3px solid ${isBlocked ? '#f59e0b' : '#a0036c'}`,
+                                  borderRadius: 6, fontSize: 12, color: '#161f3b', lineHeight: 1.4,
+                                }}
+                              >{t}</div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Next-best questions */}
+                    {nextQuestions.length > 0 && (
+                      <div>
+                        <p className="jas-insights-tips-label" style={{ marginBottom: 6 }}>Next-best questions</p>
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          {nextQuestions.map((q, i) => (
+                            <div
+                              key={i}
+                              onClick={() => { setInput(q); }}
+                              style={{
+                                display: 'flex', alignItems: 'center', gap: 8,
+                                padding: '10px 0',
+                                borderBottom: i < nextQuestions.length - 1 ? '1px solid var(--border)' : 'none',
+                                fontSize: 12.5, color: '#161f3b', cursor: 'pointer', lineHeight: 1.4,
+                              }}
+                            >
+                              <span style={{ color: '#a0036c', fontSize: 11 }}>✦</span>
+                              <span style={{ flex: 1 }}>{q}</span>
+                              <span style={{ color: '#8a93ad', fontSize: 11 }}>→</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Fallback when no plan yet */}
+                    {total === 0 && recommendations.length > 0 && (
+                      <div style={{ marginTop: 6 }}>
+                        <p className="jas-insights-tips-label" style={{ marginBottom: 6 }}>From the scorecard</p>
+                        {recommendations.slice(0, 3).map((r, i) => (
+                          <p key={i} style={{ fontSize: 12, color: '#5a6585', lineHeight: 1.5, marginTop: 6, borderLeft: '2px solid #a0036c', paddingLeft: 10 }}>
+                            {typeof r === 'string' ? r : (r.text || r.action || String(r))}
+                          </p>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
 
               {/* No session yet */}
               {!sessionId && (

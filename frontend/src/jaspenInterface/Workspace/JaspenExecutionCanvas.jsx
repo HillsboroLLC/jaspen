@@ -35,7 +35,7 @@ import {
 import { Jaspen } from './JaspenClient';
 
 // ── Palette (matches Claude Design + existing Jaspen chrome) ───────────────
-const COLOR = {
+export const COLOR = {
   navy: '#161f3b',
   navy2: '#2c3656',
   ink: '#5a6585',
@@ -112,7 +112,7 @@ const tintForOwner = (name) => {
 
 // ── Small UI atoms ─────────────────────────────────────────────────────────
 
-const Eyebrow = ({ children, color = COLOR.mute, style }) => (
+export const Eyebrow = ({ children, color = COLOR.mute, style }) => (
   <span style={{
     fontFamily: 'JetBrains Mono, monospace',
     fontSize: 10.5, fontWeight: 600, color,
@@ -122,7 +122,7 @@ const Eyebrow = ({ children, color = COLOR.mute, style }) => (
   }}>{children}</span>
 );
 
-const Pill = ({ children, tone = 'default', style, ...rest }) => {
+export const Pill = ({ children, tone = 'default', style, ...rest }) => {
   const tones = {
     default: { bg: COLOR.line2,  ink: COLOR.navy,    border: COLOR.line },
     ghost:   { bg: 'transparent', ink: COLOR.ink,     border: COLOR.line },
@@ -145,7 +145,7 @@ const Pill = ({ children, tone = 'default', style, ...rest }) => {
   );
 };
 
-const Avatar = ({ name, size = 22 }) => {
+export const Avatar = ({ name, size = 22 }) => {
   const bg = tintForOwner(name);
   return (
     <span style={{
@@ -158,7 +158,7 @@ const Avatar = ({ name, size = 22 }) => {
   );
 };
 
-const StatusPill = ({ status, onClick, interactive = true }) => {
+export const StatusPill = ({ status, onClick, interactive = true }) => {
   const s = normalizeStatus(status);
   const sty = STATUS_STYLE[s];
   return (
@@ -180,7 +180,7 @@ const StatusPill = ({ status, onClick, interactive = true }) => {
   );
 };
 
-const PriorityDot = ({ priority }) => {
+export const PriorityDot = ({ priority }) => {
   const p = normalizePriority(priority);
   const sty = PRIORITY_STYLE[p];
   return (
@@ -193,7 +193,7 @@ const PriorityDot = ({ priority }) => {
 
 // ── Editable text (contenteditable + commit on blur) ───────────────────────
 
-function EditableText({ value, onCommit, multiline = false, style, placeholder = '—' }) {
+export function EditableText({ value, onCommit, multiline = false, style, placeholder = '—' }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value || '');
   useEffect(() => { setDraft(value || ''); }, [value]);
@@ -265,7 +265,7 @@ function EditableText({ value, onCommit, multiline = false, style, placeholder =
 
 // ── View switcher (List / Board / Timeline) ────────────────────────────────
 
-function ViewSwitcher({ value, onChange }) {
+export function ViewSwitcher({ value, onChange }) {
   const opts = [
     { key: 'list', label: 'List' },
     { key: 'board', label: 'Board' },
@@ -304,7 +304,7 @@ function ViewSwitcher({ value, onChange }) {
 }
 
 // ── Owner summary chip (header strip) ──────────────────────────────────────
-const OwnerChip = ({ name, count }) => (
+export const OwnerChip = ({ name, count }) => (
   <div style={{
     display: 'inline-flex', alignItems: 'center', gap: 6,
     padding: '3px 10px 3px 4px', borderRadius: 999,
@@ -321,7 +321,7 @@ const OwnerChip = ({ name, count }) => (
 
 // ── Task row (the unit of editing) ─────────────────────────────────────────
 
-function TaskRow({ task, onUpdate, isFirst, isLast }) {
+export function TaskRow({ task, onUpdate, isFirst, isLast }) {
   const [showActions, setShowActions] = useState(false);
   const status = normalizeStatus(task.status);
   const priority = normalizePriority(task.priority);
@@ -435,7 +435,7 @@ function TaskRow({ task, onUpdate, isFirst, isLast }) {
 
 // ── Phase card (header + task rows + add row) ──────────────────────────────
 
-function PhaseCard({ phase, tasks, onUpdateTask, onAddTask }) {
+export function PhaseCard({ phase, tasks, onUpdateTask, onAddTask }) {
   const doneCount = tasks.filter((t) => normalizeStatus(t.status) === 'done').length;
   return (
     <div style={{
