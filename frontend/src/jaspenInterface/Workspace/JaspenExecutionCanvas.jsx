@@ -750,6 +750,49 @@ export default function JaspenExecutionCanvas({ threadId, bundle, wbs: wbsProp, 
     );
   }
 
+  // Priority counts (replaces the owners strip per design feedback) —
+  // sums tasks by priority so the user can see the load shape at a glance.
+  const priorityCounts = useMemo(() => {
+    const all = Array.isArray(wbs?.tasks) ? wbs.tasks : [];
+    const counts = { critical: 0, high: 0, medium: 0, low: 0 };
+    all.forEach((t) => {
+      const p = normalizePriority(t?.priority);
+      if (counts[p] !== undefined) counts[p] += 1;
+    });
+    return counts;
+  }, [wbs]);
+
+  // Score category label for the badge next to SCORE.
+  const scoreCategory = typeof score === 'number' && score > 0
+    ? (score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : score >= 40 ? 'Fair' : 'At Risk')
+    : null;
+
+  // "Updated X min ago" — uses the WBS's own updated_at field if present,
+  // otherwise the most recent updated_at across tasks. Refreshes once per minute.
+  const [, setNowTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setNowTick((n) => n + 1), 60000);
+    return () => clearInterval(id);
+  }, []);
+  const lastUpdatedLabel = useMemo(() => {
+    const tasks = Array.isArray(wbs?.tasks) ? wbs.tasks : [];
+    let ts = Date.parse(String(wbs?.updated_at || ''));
+    tasks.forEach((t) => {
+      const tt = Date.parse(String(t?.updated_at || ''));
+      if (Number.isFinite(tt) && (!Number.isFinite(ts) || tt > ts)) ts = tt;
+    });
+    if (!Number.isFinite(ts)) return null;
+    const diffMin = Math.max(0, Math.round((Date.now() - ts) / 60000));
+    if (diffMin < 1) return 'Updated just now';
+    if (diffMin === 1) return 'Updated 1 min ago';
+    if (diffMin < 60) return `Updated ${diffMin} min ago`;
+    const hrs = Math.round(diffMin / 60);
+    if (hrs === 1) return 'Updated 1 hr ago';
+    if (hrs < 24) return `Updated ${hrs} hrs ago`;
+    const days = Math.round(hrs / 24);
+    return `Updated ${days} day${days === 1 ? '' : 's'} ago`;
+  }, [wbs, saving]); // recompute when save completes too
+
   return (
     <div style={{
       flex: 1, display: 'flex', flexDirection: 'column',
@@ -757,7 +800,7 @@ export default function JaspenExecutionCanvas({ threadId, bundle, wbs: wbsProp, 
       fontFamily: "'Inter Tight', system-ui, sans-serif",
     }}>
       {/* Canvas header */}
-      <div style={{ padding: '24px 40px 18px', flex: '0 0 auto' }}>
+      <div style={{ padding: '24px 32px 18px', flex: '0 0 auto' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 18 }}>
           <div style={{ minWidth: 0, flex: 1 }}>
             <Eyebrow color={COLOR.rose}>✦ &nbsp;Idea · Trade-off winner</Eyebrow>
@@ -766,15 +809,25 @@ export default function JaspenExecutionCanvas({ threadId, bundle, wbs: wbsProp, 
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
               {typeof score === 'number' && score > 0 && (
-                <span style={{
-                  fontFamily: 'JetBrains Mono, monospace',
-                  fontSize: 11.5, color: COLOR.navy, padding: '3px 9px',
-                  background: COLOR.roseTint, border: `1px solid ${COLOR.roseLine}`,
-                  borderRadius: 999, fontWeight: 600,
-                }}>SCORE {score}</span>
+                <>
+                  <span style={{
+                    fontFamily: 'JetBrains Mono, monospace',
+                    fontSize: 11.5, color: COLOR.navy, padding: '3px 9px',
+                    background: COLOR.roseTint, border: `1px solid ${COLOR.roseLine}`,
+                    borderRadius: 999, fontWeight: 600,
+                  }}>SCORE {score}</span>
+                  {scoreCategory && (
+                    <span style={{
+                      fontFamily: 'JetBrains Mono, monospace',
+                      fontSize: 10.5, color: COLOR.greenInk, padding: '3px 8px',
+                      background: COLOR.greenTint, borderRadius: 4,
+                      letterSpacing: '0.08em', fontWeight: 600, textTransform: 'uppercase',
+                    }}>{scoreCategory}</span>
+                  )}
+                </>
               )}
               <span style={{ fontSize: 13, color: COLOR.ink }}>
-                {totalPhases} phases · {totalTasks} tasks
+                {totalPhases} phase{totalPhases === 1 ? '' : 's'} · {totalTasks} task{totalTasks === 1 ? '' : 's'}
               </span>
               {saving && <span style={{ fontSize: 11.5, color: COLOR.mute }}>Saving…</span>}
               {!saving && saveError && (
@@ -790,22 +843,43 @@ export default function JaspenExecutionCanvas({ threadId, bundle, wbs: wbsProp, 
           <ViewSwitcher value={view} onChange={setView} />
         </div>
 
-        {/* Owners strip */}
-        {owners.length > 0 && (
+        {/* Priority counts strip (replaces owners — easier to read load shape) */}
+        {totalTasks > 0 && (
           <div style={{
-            marginTop: 18, display: 'flex', alignItems: 'center', gap: 8,
+            marginTop: 18, display: 'flex', alignItems: 'center', gap: 10,
             padding: '10px 14px', flexWrap: 'wrap',
             background: '#fff', border: `1px solid ${COLOR.line}`, borderRadius: 12,
           }}>
-            <Eyebrow>Owners</Eyebrow>
-            {owners.map((o) => (
-              <OwnerChip key={o.name} name={o.name} count={o.count} />
-            ))}
+            <Eyebrow>Priority</Eyebrow>
+            {['critical', 'high', 'medium', 'low'].map((p) => {
+              const count = priorityCounts[p];
+              if (count === 0) return null;
+              const sty = PRIORITY_STYLE[p];
+              return (
+                <div
+                  key={p}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 7,
+                    padding: '4px 11px', borderRadius: 999,
+                    background: COLOR.line2, border: `1px solid ${COLOR.line}`,
+                  }}
+                >
+                  <span style={{ width: 7, height: 7, borderRadius: 4, background: sty.dot }} />
+                  <span style={{ fontSize: 12, color: COLOR.navy2, fontWeight: 500 }}>{sty.label}</span>
+                  <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 10.5, color: COLOR.mute }}>· {count}</span>
+                </div>
+              );
+            })}
             <div style={{ flex: 1 }} />
+            {lastUpdatedLabel && (
+              <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 10.5, color: COLOR.mute }}>
+                {lastUpdatedLabel}
+              </span>
+            )}
             {onAskJaspen && (
               <Pill
                 tone="ghost"
-                onClick={() => onAskJaspen('How can I rebalance owner workload?')}
+                onClick={() => onAskJaspen('How can I rebalance task priorities?')}
                 style={{ cursor: 'pointer', fontSize: 11.5 }}
               >
                 <FontAwesomeIcon icon={faArrowRotateRight} style={{ fontSize: 10 }} />
@@ -816,8 +890,8 @@ export default function JaspenExecutionCanvas({ threadId, bundle, wbs: wbsProp, 
         )}
       </div>
 
-      {/* Phase cards */}
-      <div style={{ flex: 1, overflow: 'auto', padding: '4px 40px 32px' }}>
+      {/* Phase cards — reduced horizontal padding so cards read wider */}
+      <div style={{ flex: 1, overflow: 'auto', padding: '4px 32px 32px' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
           {phases.map((p) => (
             <PhaseCard

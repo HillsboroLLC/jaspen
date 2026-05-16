@@ -2251,6 +2251,73 @@ const renderInlineExecutionView = () => {
     ? `/workspace/${encodeURIComponent(sessionId || currentSessionId)}/__execution__`
     : null;
 
+  // Idea name + score from the baseline / adopted scorecard so the header
+  // reads like the design (project name + SCORE pill, not generic).
+  const _BANNED_NAMES = new Set([
+    'baseline analysis', 'baseline', 'jaspen project', 'jaspen analysis',
+    'strategy analysis', 'initiative', 'untitled', 'untitled idea', 'project',
+  ]);
+  const _pickIdeaName = (s) => {
+    const v = String(s || '').trim();
+    if (!v) return null;
+    if (_BANNED_NAMES.has(v.toLowerCase())) return null;
+    return v;
+  };
+  const _scorecardForHeader = activeScorecard || analysisResult;
+  const ideaName = (
+    _pickIdeaName(_scorecardForHeader?.display_overrides?.title)
+      || _pickIdeaName(_scorecardForHeader?.name)
+      || _pickIdeaName(_scorecardForHeader?.project_name)
+      || _pickIdeaName(_scorecardForHeader?.initiative_name)
+      || deriveIdeaTitle({ result: _scorecardForHeader, messages, fallback: '' })
+      || 'Execution plan'
+  );
+  const ideaScore = Number(_scorecardForHeader?.jaspen_score || 0) || null;
+  const scoreCategory = ideaScore
+    ? (ideaScore >= 80 ? 'Excellent' : ideaScore >= 60 ? 'Good' : ideaScore >= 40 ? 'Fair' : 'At Risk')
+    : null;
+
+  // Priority counts (replaces owners strip per design feedback)
+  const priorityCounts = { critical: 0, high: 0, medium: 0, low: 0 };
+  tasks.forEach((t) => {
+    const p = String(t?.priority || 'medium').toLowerCase();
+    if (priorityCounts[p] !== undefined) priorityCounts[p] += 1;
+  });
+  const PRIO_META = {
+    critical: { dot: '#dc2626', label: 'Critical' },
+    high:     { dot: '#f59e0b', label: 'High'     },
+    medium:   { dot: '#8a93ad', label: 'Medium'   },
+    low:      { dot: '#cbd5e1', label: 'Low'      },
+  };
+
+  // "Updated X min ago" — uses the WBS updated_at OR the most recent task
+  // updated_at. Fallback: the plan's created_at.
+  const _ts = (() => {
+    let t = Date.parse(String(threadWbs?.updated_at || ''));
+    tasks.forEach((task) => {
+      const tt = Date.parse(String(task?.updated_at || ''));
+      if (Number.isFinite(tt) && (!Number.isFinite(t) || tt > t)) t = tt;
+    });
+    if (!Number.isFinite(t)) t = Date.parse(String(threadWbs?.created_at || ''));
+    return Number.isFinite(t) ? t : null;
+  })();
+  let lastUpdatedLabel = null;
+  if (_ts) {
+    const diffMin = Math.max(0, Math.round((Date.now() - _ts) / 60000));
+    if (diffMin < 1) lastUpdatedLabel = 'Updated just now';
+    else if (diffMin === 1) lastUpdatedLabel = 'Updated 1 min ago';
+    else if (diffMin < 60) lastUpdatedLabel = `Updated ${diffMin} min ago`;
+    else {
+      const hrs = Math.round(diffMin / 60);
+      if (hrs === 1) lastUpdatedLabel = 'Updated 1 hr ago';
+      else if (hrs < 24) lastUpdatedLabel = `Updated ${hrs} hrs ago`;
+      else {
+        const days = Math.round(hrs / 24);
+        lastUpdatedLabel = `Updated ${days} day${days === 1 ? '' : 's'} ago`;
+      }
+    }
+  }
+
   return (
     <div style={{
       flex: 1, display: 'flex', flexDirection: 'column',
@@ -2258,16 +2325,35 @@ const renderInlineExecutionView = () => {
       fontFamily: "'Inter Tight', system-ui, sans-serif",
     }}>
       {/* Canvas header */}
-      <div style={{ padding: '22px 28px 14px', flex: '0 0 auto' }}>
+      <div style={{ padding: '22px 22px 14px', flex: '0 0 auto' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
           <div style={{ minWidth: 0, flex: 1 }}>
-            <Eyebrow color={EXEC_COLOR.rose}>✦ &nbsp;Generated</Eyebrow>
+            <Eyebrow color={EXEC_COLOR.rose}>✦ &nbsp;Idea · Trade-off winner</Eyebrow>
             <div style={{ fontSize: 22, fontWeight: 600, color: EXEC_COLOR.navy, letterSpacing: '-0.015em', marginTop: 6, lineHeight: 1.2 }}>
-              Execution plan
+              {ideaName}
             </div>
-            <div style={{ fontSize: 13, color: EXEC_COLOR.ink, marginTop: 4 }}>
-              {phases.length} phase{phases.length === 1 ? '' : 's'} · {tasks.length} task{tasks.length === 1 ? '' : 's'}
-              {owners.length > 0 && ` · ${owners.length} owner${owners.length === 1 ? '' : 's'}`}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8, flexWrap: 'wrap' }}>
+              {ideaScore && (
+                <>
+                  <span style={{
+                    fontFamily: 'JetBrains Mono, monospace',
+                    fontSize: 11.5, color: EXEC_COLOR.navy, padding: '3px 9px',
+                    background: EXEC_COLOR.roseTint, border: `1px solid ${EXEC_COLOR.roseLine}`,
+                    borderRadius: 999, fontWeight: 600,
+                  }}>SCORE {ideaScore}</span>
+                  {scoreCategory && (
+                    <span style={{
+                      fontFamily: 'JetBrains Mono, monospace',
+                      fontSize: 10.5, color: EXEC_COLOR.greenInk, padding: '3px 8px',
+                      background: EXEC_COLOR.greenTint, borderRadius: 4,
+                      letterSpacing: '0.08em', fontWeight: 600, textTransform: 'uppercase',
+                    }}>{scoreCategory}</span>
+                  )}
+                </>
+              )}
+              <span style={{ fontSize: 13, color: EXEC_COLOR.ink }}>
+                {phases.length} phase{phases.length === 1 ? '' : 's'} · {tasks.length} task{tasks.length === 1 ? '' : 's'}
+              </span>
             </div>
           </div>
           <ExecViewSwitcher value="list" />
@@ -2288,23 +2374,45 @@ const renderInlineExecutionView = () => {
           </div>
         </div>
 
-        {/* Owners strip */}
-        {owners.length > 0 && (
+        {/* Priority chips strip (replaces owners) */}
+        {tasks.length > 0 && (
           <div style={{
-            marginTop: 14, display: 'flex', alignItems: 'center', gap: 8,
+            marginTop: 14, display: 'flex', alignItems: 'center', gap: 10,
             padding: '8px 12px', flexWrap: 'wrap',
             background: '#fff', border: `1px solid ${EXEC_COLOR.line}`, borderRadius: 10,
           }}>
-            <Eyebrow>Owners</Eyebrow>
-            {owners.map((o) => (
-              <OwnerChip key={o.name} name={o.name} count={o.count} />
-            ))}
+            <Eyebrow>Priority</Eyebrow>
+            {['critical', 'high', 'medium', 'low'].map((p) => {
+              const c = priorityCounts[p];
+              if (c === 0) return null;
+              const meta = PRIO_META[p];
+              return (
+                <div
+                  key={p}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 7,
+                    padding: '4px 11px', borderRadius: 999,
+                    background: EXEC_COLOR.line2, border: `1px solid ${EXEC_COLOR.line}`,
+                  }}
+                >
+                  <span style={{ width: 7, height: 7, borderRadius: 4, background: meta.dot }} />
+                  <span style={{ fontSize: 12, color: EXEC_COLOR.navy2, fontWeight: 500 }}>{meta.label}</span>
+                  <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 10.5, color: EXEC_COLOR.mute }}>· {c}</span>
+                </div>
+              );
+            })}
+            <div style={{ flex: 1 }} />
+            {lastUpdatedLabel && (
+              <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 10.5, color: EXEC_COLOR.mute }}>
+                {lastUpdatedLabel}
+              </span>
+            )}
           </div>
         )}
       </div>
 
-      {/* Phase cards */}
-      <div style={{ flex: 1, overflow: 'auto', padding: '0 28px 22px' }}>
+      {/* Phase cards — wider (reduced horizontal padding) */}
+      <div style={{ flex: 1, overflow: 'auto', padding: '0 22px 22px' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           {phases.map((p) => (
             <ExecPhaseCard
