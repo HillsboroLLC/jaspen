@@ -1445,6 +1445,16 @@ export default function JaspenWorkspace() {
   // when the user asks to compare/rank ideas (or kicks off the session with a
   // batch ranking request). Just having multiple scorecards is not enough.
   const [tradeoffRequested, setTradeoffRequested] = useState(false);
+  // Artifact lightbox: when the user clicks a scorecard in the Session
+  // Artifacts dropdown, we show it in a dark-backdrop modal.
+  const [lightboxScorecard, setLightboxScorecard] = useState(null);
+  // Close lightbox on Esc
+  useEffect(() => {
+    if (!lightboxScorecard) return;
+    const onKey = (e) => { if (e.key === 'Escape') setLightboxScorecard(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [lightboxScorecard]);
   // Tracks which stage pill's content the sidebar is showing
   const [activePill, setActivePill] = useState('discovery');
   const [artifactsOpen, setArtifactsOpen] = useState(false);
@@ -9558,6 +9568,86 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       {renderNameModal()}
       {renderBillingModal()}
       {renderPostAdoptWbsPrompt()}
+
+      {/* Scorecard lightbox: dark backdrop, scorecard at larger size, with
+          per-artifact actions (Download is wired to print-to-PDF). */}
+      {lightboxScorecard && (
+        <div
+          className="jas-lightbox-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Scorecard"
+          onClick={() => setLightboxScorecard(null)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 1000,
+            background: 'rgba(8, 14, 28, 0.78)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: '40px 24px', overflow: 'auto',
+          }}
+        >
+          <div
+            className="jas-lightbox-card"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#fff', borderRadius: 14, maxWidth: 900, width: '100%',
+              maxHeight: 'calc(100vh - 80px)', overflow: 'auto',
+              boxShadow: '0 20px 60px rgba(0,0,0,0.45)', position: 'relative',
+            }}
+          >
+            <button
+              type="button"
+              aria-label="Close"
+              onClick={() => setLightboxScorecard(null)}
+              style={{
+                position: 'absolute', top: 12, right: 12, zIndex: 2,
+                width: 32, height: 32, borderRadius: 16, border: 'none',
+                background: '#f1f5f9', color: '#0f172a', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 16,
+              }}
+            >
+              <FontAwesomeIcon icon={faTimes} />
+            </button>
+            <div style={{ padding: 24 }}>
+              {renderScorecardCard(lightboxScorecard, { lightbox: true })}
+            </div>
+            <div
+              style={{
+                padding: '12px 24px', borderTop: '1px solid #e6eaf2',
+                display: 'flex', gap: 8, justifyContent: 'flex-end',
+                background: '#fafbfc',
+              }}
+            >
+              <button
+                type="button"
+                className="jas-mini-btn"
+                onClick={() => window.print()}
+                style={{
+                  padding: '8px 14px', borderRadius: 8,
+                  border: '1px solid #d6dce6', background: '#fff', cursor: 'pointer',
+                  fontSize: 13, color: '#0f172a',
+                }}
+              >
+                <FontAwesomeIcon icon={faDownload} style={{ marginRight: 6 }} />
+                Download as PDF
+              </button>
+              <button
+                type="button"
+                className="jas-mini-btn"
+                onClick={() => setLightboxScorecard(null)}
+                style={{
+                  padding: '8px 14px', borderRadius: 8, border: 'none',
+                  background: '#0f172a', color: '#fff', cursor: 'pointer',
+                  fontSize: 13,
+                }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <ConfirmDialog
         isOpen={Boolean(confirmDialog)}
         title={confirmDialog?.title || 'Confirm action'}
@@ -10521,25 +10611,49 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               {artifactsOpen && (
                 <div className="jas-artifacts-dropdown" role="menu">
                   <p className="jas-artifacts-label">Session Artifacts</p>
-                  {analysisResult && (
-                    <button className="jas-artifact-item" onClick={() => { setActivePill('scoring'); setArtifactsOpen(false); }}>
-                      <FontAwesomeIcon icon={faGaugeHigh} />
-                      <span>Scorecard · {analysisResult.jaspen_score}/100</span>
-                    </button>
-                  )}
-                  {Array.isArray(scorecardSnapshots) && scorecardSnapshots.length > 0 && (
-                    <button className="jas-artifact-item" onClick={() => { setActivePill('scenarios'); setArtifactsOpen(false); }}>
-                      <FontAwesomeIcon icon={faArrowRightArrowLeft} />
-                      <span>Trade-off · {scorecardSnapshots.length} idea{scorecardSnapshots.length !== 1 ? 's' : ''}</span>
-                    </button>
-                  )}
+                  {/* Each scorecard is its own artifact. Clicking opens the
+                      lightbox modal so the user can view it large and (later)
+                      download / share / export from there. */}
+                  {(() => {
+                    const allCards = Array.isArray(scorecardSnapshots) && scorecardSnapshots.length > 0
+                      ? scorecardSnapshots
+                      : (analysisResult ? [analysisResult] : []);
+                    // Order: baseline first, then by createdAt asc
+                    const ordered = [...allCards].sort((a, b) => {
+                      if (a?.isBaseline && !b?.isBaseline) return -1;
+                      if (!a?.isBaseline && b?.isBaseline) return 1;
+                      const ta = Date.parse(a?.createdAt || a?._createdAt || a?.created_at || '');
+                      const tb = Date.parse(b?.createdAt || b?._createdAt || b?.created_at || '');
+                      if (Number.isFinite(ta) && Number.isFinite(tb)) return ta - tb;
+                      return 0;
+                    });
+                    return ordered.map((card, idx) => {
+                      const label = card?.label
+                        || card?.project_name
+                        || (card?.isBaseline ? 'Baseline' : `Version ${idx + 1}`);
+                      const score = Number(card?.jaspen_score || 0);
+                      return (
+                        <button
+                          key={card?.id || card?.analysis_id || `art-${idx}`}
+                          className="jas-artifact-item"
+                          onClick={() => { setLightboxScorecard(card); setArtifactsOpen(false); }}
+                          title={`Open ${label} scorecard`}
+                        >
+                          <FontAwesomeIcon icon={faGaugeHigh} />
+                          <span>{label} · {score}/100</span>
+                        </button>
+                      );
+                    });
+                  })()}
                   {Array.isArray(threadWbs?.tasks) && threadWbs.tasks.length > 0 && (
                     <button className="jas-artifact-item" onClick={() => { setActivePill('execution'); setArtifactsOpen(false); }}>
                       <FontAwesomeIcon icon={faListCheck} />
                       <span>Execution Plan · {threadWbs.tasks.length} tasks</span>
                     </button>
                   )}
-                  {!analysisResult && <p className="jas-artifacts-empty">No artifacts yet</p>}
+                  {!analysisResult && (!Array.isArray(scorecardSnapshots) || scorecardSnapshots.length === 0) && (
+                    <p className="jas-artifacts-empty">No artifacts yet</p>
+                  )}
                 </div>
               )}
             </div>
