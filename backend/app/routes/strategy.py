@@ -6087,13 +6087,17 @@ def _coerce_override_value(key, value):
 
 
 def _find_scorecard_carrier(user_id, thread_id, scorecard_id):
-    """Return (kind, container, key) so the caller can read/write display_overrides.
+    """Return (kind, container, key, carrier) so the caller can read/write
+    display_overrides on the right storage cell.
 
-    kind = 'baseline' → container is session, key='result'
-    kind = 'scenario' → container is the scenarios-dict entry, key='result'
+    kind = 'baseline' → container is the full sessions dict, key=session_key,
+                        carrier = the session dict (carrier['result'] holds it)
+    kind = 'scenario' → container is the full scenarios all_data dict,
+                        key=scenario_id, carrier = the scenario dict
+                        (carrier['result'] holds the scorecard)
     """
     sessions = load_user_sessions(user_id) or {}
-    _resolved_tid, _key, session = _resolve_session_entry(sessions, thread_id)
+    _key, session = _resolve_session_entry(sessions, thread_id)
     sid = str(scorecard_id or '').strip()
 
     # Baseline match: session.result has matching analysis_id OR scorecard_id == thread_id
