@@ -45,6 +45,7 @@ export const endpoints = {
     `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/scorecards/${encodeURIComponent(scorecardId)}/overrides`,
   scorecardForWorkspace: (threadId, scorecardId) =>
     `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/scorecards/${encodeURIComponent(scorecardId)}`,
+  threadWbs: (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/wbs`,
   scenario:   `${API_BASE}/api/v1/ai-agent/scenario`,
 
   // Scenario CRUD
@@ -845,6 +846,46 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
       },
     });
 
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      throw new Error(`${url} -> ${res.status} ${txt}`);
+    }
+    return res.json();
+  },
+
+  // ---------- Workspace (Beta) WBS / Execution Plan ----------
+  async getThreadWbs(threadId) {
+    if (!threadId) throw new Error('threadId required');
+    const url = endpoints.threadWbs(threadId);
+    const res = await fetch(url, {
+      method: 'GET',
+      credentials: 'include',
+      headers: {
+        ...buildAuthHeaders({}, 'GET'),
+        'Content-Type': 'application/json',
+        'X-Session-ID': getSid(),
+      },
+    });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      throw new Error(`${url} -> ${res.status} ${txt}`);
+    }
+    return res.json();
+  },
+
+  async upsertThreadWbs(threadId, wbs) {
+    if (!threadId) throw new Error('threadId required');
+    const url = endpoints.threadWbs(threadId);
+    const res = await fetch(url, {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: {
+        ...buildAuthHeaders({}, 'PATCH'),
+        'Content-Type': 'application/json',
+        'X-Session-ID': getSid(),
+      },
+      body: JSON.stringify(wbs || {}),
+    });
     if (!res.ok) {
       const txt = await res.text().catch(() => '');
       throw new Error(`${url} -> ${res.status} ${txt}`);

@@ -18,6 +18,7 @@ import { faArrowLeft, faDownload, faShare, faRotateLeft, faPaperPlane } from '@f
 
 import { Jaspen } from './JaspenClient';
 import TradeoffView from './TradeoffView';
+import JaspenExecutionCanvas from './JaspenExecutionCanvas';
 
 // Sentinel scorecardId values that route the canvas to a non-scorecard
 // artifact view. Keep these in sync with the entry-point links in
@@ -345,7 +346,11 @@ export default function JaspenWorkspace() {
             {displayTitle}
           </div>
           <div style={{ fontSize:12, color:'#64748b', marginTop:2 }}>
-            Editing cosmetic fields. Scores stay read-only.
+            {isExecution
+              ? <>Editing execution plan. <span style={{ color:'#0f172a', fontWeight:500 }}>Manual edits are free</span>; AI edits cost credits.</>
+              : isTradeoff
+                ? 'Viewing trade-off comparison. Editing comes in v1.1.'
+                : <>Editing cosmetic fields. <span style={{ color:'#0f172a', fontWeight:500 }}>Manual edits are free</span>; AI edits cost credits.</>}
           </div>
         </div>
 
@@ -353,7 +358,9 @@ export default function JaspenWorkspace() {
         <div style={{ flex:1, overflow:'auto', padding:'12px 16px', display:'flex', flexDirection:'column', gap:10 }}>
           {chatHistory.length === 0 && (
             <div style={{ fontSize:12, color:'#94a3b8', lineHeight:1.5 }}>
-              Ask Jaspen to rewrite copy, adjust tone, or tweak styling — or click anything on the canvas to edit directly.
+              {isExecution
+                ? 'Ask Jaspen to reassign tasks, shift dates, or regenerate the plan — or click any cell on the canvas to edit directly.'
+                : 'Ask Jaspen to rewrite copy, adjust tone, or tweak styling — or click anything on the canvas to edit directly.'}
             </div>
           )}
           {chatHistory.map((m, i) => (
@@ -468,13 +475,32 @@ export default function JaspenWorkspace() {
               />
             </div>
           ) : isExecution ? (
-            <div style={{ maxWidth:980, margin:'0 auto', padding:'40px 32px', fontSize:14, color:'#475569', lineHeight:1.6 }}>
-              <div style={{ fontSize:18, fontWeight:600, color:'#0f172a', marginBottom:8 }}>Execution Plan Workspace</div>
-              <p>Bi-directional editing for the execution plan is coming next. For now, head back to Jaspen and use the Execution tab to view and edit tasks.</p>
-              <Link to={`/new?sid=${encodeURIComponent(threadId)}`} style={{ display:'inline-block', marginTop:12, padding:'8px 14px', borderRadius:8, background:'#0f172a', color:'#fff', textDecoration:'none', fontSize:13 }}>
-                Back to Jaspen
-              </Link>
-            </div>
+            <JaspenExecutionCanvas
+              threadId={threadId}
+              bundle={bundle}
+              displayTitle={(() => {
+                // Derive the canvas title: prefer the adopted scorecard's
+                // name, fall back to the first user message.
+                const baseline = bundle?.baseline_scorecard;
+                const fromCard = _pickMeaningful(
+                  baseline?.display_overrides?.title,
+                  baseline?.name,
+                  baseline?.project_name,
+                  baseline?.title,
+                );
+                if (fromCard) return fromCard;
+                const msgs = Array.isArray(bundle?.messages) ? bundle.messages : [];
+                const firstUser = msgs.find(
+                  (m) => (m?.role === 'user' || m?.sender === 'user') &&
+                    String(m?.content || m?.text || '').trim().length > 0,
+                );
+                return _deriveFromMessage(firstUser?.content || firstUser?.text) || 'Execution plan';
+              })()}
+              score={Number(bundle?.baseline_scorecard?.jaspen_score || bundle?.current_scorecard?.jaspen_score || 0) || null}
+              onAskJaspen={(text) => {
+                setChatInput(text);
+              }}
+            />
           ) : (
           <div
             style={{
