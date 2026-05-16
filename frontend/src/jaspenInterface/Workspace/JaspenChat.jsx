@@ -1568,6 +1568,9 @@ const [scenarioOptions, setScenarioOptions] = useState([]);
 const [activeScenarioId, setActiveScenarioId] = useState('baseline');
 const [scenarioDrawerView, setScenarioDrawerView] = useState('assistant');
 const [aiWbsBusy, setAiWbsBusy] = useState(false);
+// Tracks which scorecard's "Build Execution Plan" CTA is in flight (so the
+// matching button on that specific card can show "Building plan…").
+const [buildingExecutionPlanFor, setBuildingExecutionPlanFor] = useState(null);
 const [pendingWbsConfirmation, setPendingWbsConfirmation] = useState(null);
   const [scenarioLevers, setScenarioLevers] = useState([]);
   const [leverCatalog, setLeverCatalog] = useState([]);
@@ -2057,10 +2060,77 @@ const normalizeMutationResults = (payload) => {
 const renderInlineExecutionView = () => {
   const tasks = Array.isArray(threadWbs?.tasks) ? threadWbs.tasks : [];
   if (tasks.length === 0) {
+    // Empty state — surface all scored ideas with a "Build plan from this
+    // scorecard" CTA so the user has an obvious next step from this tab
+    // (rather than a dead end).
+    const ideaCards = Array.isArray(scorecardSnapshots) && scorecardSnapshots.length > 0
+      ? scorecardSnapshots
+      : (analysisResult ? [analysisResult] : []);
     return (
-      <div className="jas-execution-inline-empty">
-        <p className="jas-execution-inline-empty-title">No execution plan yet</p>
-        <p className="jas-execution-inline-empty-sub">Ask Jaspen: "Build me an execution plan" and it will appear here.</p>
+      <div className="jas-execution-inline-empty" style={{ padding: '32px 28px', maxWidth: 720 }}>
+        <p className="jas-execution-inline-empty-title">Pick an idea to turn into a project</p>
+        <p className="jas-execution-inline-empty-sub" style={{ marginBottom: 18 }}>
+          Build an AI-authored execution plan from any of your scored ideas. The plan unlocks the Execution tab and can be edited directly in Workspace.
+        </p>
+        {ideaCards.length === 0 ? (
+          <p style={{ fontSize: 13, color: '#94a3b8', fontStyle: 'italic' }}>
+            Score an idea first — then come back here.
+          </p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {ideaCards.map((card, idx) => {
+              const cid = card?.id || card?.analysis_id || `card-${idx}`;
+              const name = (
+                (card?.display_overrides?.title && _isMeaningfulTitle(card.display_overrides.title)) ? card.display_overrides.title :
+                _isMeaningfulTitle(card?.name) ? card.name :
+                _isMeaningfulTitle(card?.project_name) ? card.project_name :
+                deriveIdeaTitle({ result: card, messages, fallback: `Idea ${idx + 1}` })
+              );
+              const score = Number(card?.jaspen_score || 0);
+              const isBuilding = buildingExecutionPlanFor && String(buildingExecutionPlanFor) === String(cid);
+              return (
+                <div
+                  key={cid}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 14,
+                    padding: '12px 16px',
+                    background: '#fff',
+                    border: '1px solid #e6eaf2',
+                    borderRadius: 10,
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {name}
+                    </div>
+                    <div style={{ fontSize: 11.5, color: '#64748b', marginTop: 2, fontFamily: 'JetBrains Mono, monospace' }}>
+                      Score {score} · {score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : score >= 40 ? 'Fair' : 'At Risk'}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void handleGenerateAiWbsFromScorecard({ threadBundleId: sessionId || currentSessionId, scorecardId: cid })}
+                    disabled={Boolean(buildingExecutionPlanFor)}
+                    style={{
+                      padding: '7px 13px',
+                      background: '#a0036c',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: 7,
+                      fontSize: 12.5,
+                      fontWeight: 500,
+                      cursor: buildingExecutionPlanFor ? 'wait' : 'pointer',
+                      opacity: buildingExecutionPlanFor && !isBuilding ? 0.55 : 1,
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {isBuilding ? '⏳ Building…' : 'Build Plan →'}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     );
   }
@@ -2237,6 +2307,35 @@ const renderScorecardCard = (result, opts = {}) => {
               >
                 Edit in Workspace ↗
               </a>
+            );
+          })()}
+          {/* Build Execution Plan — primary CTA on the scorecard. Generates
+              an AI-authored WBS for this specific idea and unlocks the
+              Execution tab. */}
+          {opts.onBuildExecutionPlan && (() => {
+            const cid = result?.id || result?.analysis_id;
+            const isBuilding = opts.buildingExecutionPlanFor && String(opts.buildingExecutionPlanFor) === String(cid);
+            return (
+              <button
+                className="jas-scorecard-action-primary"
+                onClick={() => opts.onBuildExecutionPlan(cid)}
+                disabled={isBuilding || opts.buildingExecutionPlanFor}
+                title="Generate an AI-authored execution plan from this scorecard"
+                style={{
+                  padding: '6px 12px',
+                  background: '#a0036c',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: 6,
+                  fontSize: 12,
+                  fontWeight: 500,
+                  cursor: isBuilding ? 'wait' : 'pointer',
+                  opacity: opts.buildingExecutionPlanFor && !isBuilding ? 0.55 : 1,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {isBuilding ? '⏳ Building plan…' : 'Build Execution Plan →'}
+              </button>
             );
           })()}
           {opts.onNewVersion && (
@@ -8266,6 +8365,8 @@ const handleGenerateAiWbsFromScorecard = useCallback(async ({ threadBundleId, sc
     : null;
 
   setAiWbsBusy(true);
+  // Track per-card busy so the matching scorecard's button shows "Building…"
+  setBuildingExecutionPlanFor(scorecardId || tid);
   try {
     const resp = await Jaspen.generateAiWbs(tid, {
       scenario_id: scenarioId,
@@ -8274,20 +8375,30 @@ const handleGenerateAiWbsFromScorecard = useCallback(async ({ threadBundleId, sc
       model_type: selectedModelType,
     });
     const taskCount = Array.isArray(resp?.project_wbs?.tasks) ? resp.project_wbs.tasks.length : 0;
+    // Persist the new WBS to local state so the Execution tab unlocks
+    // immediately without a reload.
+    if (resp?.project_wbs && typeof resp.project_wbs === 'object') {
+      setThreadWbs(resp.project_wbs);
+    }
+    // Inject a confirmation message in the chat with a 'View Execution Plan' CTA
     setMessages((prev) => [
       ...prev,
       {
         role: 'ai',
-        text: `Generated a project WBS with ${taskCount} tasks${scenarioId ? ` using scenario ${scenarioId}` : ''}.`,
+        text: `Built an execution plan with ${taskCount} task${taskCount === 1 ? '' : 's'}. It's ready in the Execution tab — or open it directly in Workspace.`,
+        _executionPlanCta: true,
       },
     ]);
-    showToast('Generated project plan from scorecard', 'success');
+    showToast('Execution plan built · open Execution tab', 'success');
+    // Also unlock and switch to the Execution pill for immediate feedback.
+    setActivePill('execution');
   } catch (err) {
     console.error('[handleGenerateAiWbsFromScorecard] failed', err);
     if (err?.status === 403) setBillingModalOpen(true);
-    showToast(err?.message || 'Failed to generate project plan', 'error');
+    showToast(err?.message || 'Failed to build execution plan', 'error');
   } finally {
     setAiWbsBusy(false);
+    setBuildingExecutionPlanFor(null);
   }
 }, [aiWbsBusy, baselineScorecardId, currentSessionId, selectedModelType, sessionId, showToast]);
 
@@ -9655,7 +9766,16 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               <FontAwesomeIcon icon={faTimes} />
             </button>
             <div style={{ padding: 24 }}>
-              {renderScorecardCard(lightboxScorecard, { lightbox: true, threadId: sessionId || currentSessionId, messages })}
+              {renderScorecardCard(lightboxScorecard, {
+                lightbox: true,
+                threadId: sessionId || currentSessionId,
+                messages,
+                onBuildExecutionPlan: (cid) => {
+                  setLightboxScorecard(null);
+                  void handleGenerateAiWbsFromScorecard({ threadBundleId: sessionId || currentSessionId, scorecardId: cid });
+                },
+                buildingExecutionPlanFor,
+              })}
             </div>
             <div
               style={{
@@ -9782,7 +9902,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
     activeDrawerTab={scenarioDrawerView}
     onDrawerTabChange={setScenarioDrawerView}
     messages={messages}
-    renderMessage={(m) => renderConversationMessage(m, { autoVersionGenerating, threadId: sessionId || currentSessionId, messages, onRescoreAction: () => void triggerAutoVersion(sessionId || currentSessionId) })}
+    renderMessage={(m) => renderConversationMessage(m, { autoVersionGenerating, threadId: sessionId || currentSessionId, messages, onRescoreAction: () => void triggerAutoVersion(sessionId || currentSessionId), onBuildExecutionPlan: (cid) => void handleGenerateAiWbsFromScorecard({ threadBundleId: sessionId || currentSessionId, scorecardId: cid }), buildingExecutionPlanFor })}
     renderAttachments={(m) => renderMessageAttachments(m)}
     renderActions={(m, key, idx, total) => renderMessageActions(m, key, idx, total)}
     streamStatus={renderStreamToolStatus()}
@@ -10895,7 +11015,12 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               // Trade-off only unlocks when the user explicitly asks to compare/rank.
               // Just having multiple scorecards is NOT enough.
               const canScenarios = Boolean(analysisResult) && tradeoffRequested;
-              const canExecution = Array.isArray(threadWbs?.tasks) && threadWbs.tasks.length > 0;
+              const hasExecutionPlan = Array.isArray(threadWbs?.tasks) && threadWbs.tasks.length > 0;
+              // Execution tab is clickable once the user has at least one
+              // scorecard — even if no plan exists yet — so they can see the
+              // "Pick an idea to turn into a project" empty state with
+              // Build-Plan CTAs per idea.
+              const canExecution = hasExecutionPlan || Boolean(analysisResult);
               const stages = [
                 { key: 'discovery',  label: 'Discovery',  disabled: false },
                 { key: 'scoring',    label: 'Scoring',    disabled: !analysisResult },
@@ -10906,7 +11031,9 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                         : 'Score an idea first to access the trade-off view')
                     : undefined },
                 { key: 'execution',  label: 'Execution',  disabled: !canExecution,
-                  title: !canExecution ? 'Ask Jaspen to build an execution plan first' : undefined },
+                  title: !canExecution
+                    ? 'Score an idea first — then turn it into a project from this tab'
+                    : (hasExecutionPlan ? undefined : 'Pick an idea to turn into a project') },
               ];
               // Everything stays inline — no setActiveTab navigation
               const handlePillClick = (key, disabled) => {
@@ -11243,7 +11370,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
 
 	              {displayMessages.map((m, idx) => (
 	                <div key={m.id || idx} className={`jas-message ${m.role === 'ai' ? 'ai' : 'user'}`}>
-	                  <div className="jas-message-bubble">{renderConversationMessage(m, { autoVersionGenerating, threadId: sessionId || currentSessionId, messages, onRescoreAction: () => void triggerAutoVersion(sessionId || currentSessionId) })}</div>
+	                  <div className="jas-message-bubble">{renderConversationMessage(m, { autoVersionGenerating, threadId: sessionId || currentSessionId, messages, onRescoreAction: () => void triggerAutoVersion(sessionId || currentSessionId), onBuildExecutionPlan: (cid) => void handleGenerateAiWbsFromScorecard({ threadBundleId: sessionId || currentSessionId, scorecardId: cid }), buildingExecutionPlanFor })}</div>
 	                  {renderMessageAttachments(m)}
 	                  {renderMessageActions(m, `main:${idx}`, idx, displayMessages.length)}
 	                </div>
