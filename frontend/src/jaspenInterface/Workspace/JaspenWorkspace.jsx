@@ -18,16 +18,42 @@ import { faArrowLeft, faDownload, faShare, faRotateLeft, faPaperPlane } from '@f
 
 import { Jaspen } from './JaspenClient';
 
+// Generic placeholders that should never surface as an idea name.
+const _GENERIC_TITLES = new Set([
+  'baseline analysis', 'baseline', 'jaspen project', 'jaspen analysis',
+  'strategy analysis', 'initiative', 'untitled', 'untitled idea',
+  'untitled scorecard', 'project',
+]);
+
+function _pickMeaningful(...candidates) {
+  for (const c of candidates) {
+    const v = String(c || '').trim();
+    if (!v) continue;
+    if (_GENERIC_TITLES.has(v.toLowerCase())) continue;
+    return v;
+  }
+  return null;
+}
+
 /**
  * Apply display_overrides on top of a raw scorecard payload. Overrides are
  * purely cosmetic — anything missing falls through to the original value.
+ * Generic placeholder names (Baseline Analysis, etc.) are stripped so the
+ * canvas always shows a real idea name.
  */
 function applyOverrides(scorecard, overrides) {
   if (!scorecard) return null;
   const ov = overrides && typeof overrides === 'object' ? overrides : {};
+  const meaningfulName = _pickMeaningful(
+    ov.title,
+    scorecard.name,
+    scorecard.project_name,
+    scorecard.title,
+    scorecard.initiative_name,
+  ) || 'Untitled idea';
   return {
     ...scorecard,
-    project_name: ov.title ?? scorecard.project_name,
+    project_name: meaningfulName,
     executive_summary: ov.executive_summary ?? scorecard.executive_summary,
     _accent_color: ov.accent_color ?? scorecard._accent_color ?? null,
     _display_overrides: ov,

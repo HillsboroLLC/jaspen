@@ -947,15 +947,34 @@ function toUiMessages(history = []) {
     .filter((m) => m.text.length > 0 && !isContextSyncMessage(m.text));
 }
 
+// Generic placeholders that are never acceptable as an idea title. We strip
+// these so the derivation falls through to a real name from the conversation.
+const _GENERIC_TITLE_NAMES = new Set([
+  'baseline analysis', 'baseline', 'jaspen project', 'jaspen analysis',
+  'strategy analysis', 'initiative', 'untitled', 'untitled idea',
+  'untitled scorecard', 'project',
+]);
+
+function _isMeaningfulTitle(s) {
+  const v = String(s || '').trim();
+  if (!v) return false;
+  if (_GENERIC_TITLE_NAMES.has(v.toLowerCase())) return false;
+  return true;
+}
+
 function deriveIdeaTitle({ result = null, messages = [], fallback = 'Untitled Idea' } = {}) {
-  const projectName = String(
-    result?.project_name ||
-    result?.name ||
-    result?.title ||
-    result?.compat?.title ||
-    ''
-  ).trim();
-  if (projectName) return projectName;
+  // Use the FIRST meaningful candidate — skip generic placeholders like
+  // 'Baseline Analysis' that legacy scorecards still carry.
+  const candidates = [
+    result?.display_overrides?.title,
+    result?.project_name,
+    result?.name,
+    result?.title,
+    result?.compat?.title,
+  ];
+  for (const c of candidates) {
+    if (_isMeaningfulTitle(c)) return String(c).trim();
+  }
 
   const firstUserIdea = (Array.isArray(messages) ? messages : [])
     .find((m) => m?.role === 'user' && String(m?.text || '').trim().length > 0);
@@ -2095,7 +2114,16 @@ const renderScorecardCard = (result, opts = {}) => {
   const recommendedScenario = (recs[0] && typeof recs[0] === 'string') ? recs[0]
     : (recs[0]?.text || recs[0]?.action || null)
     || (nextSteps[0] && typeof nextSteps[0] === 'string' ? nextSteps[0] : null);
-  const title = result?.project_name || deriveIdeaTitle({ result, messages, fallback: 'Initiative' });
+  // Title: prefer Workspace override → meaningful scorecard fields → derived
+  // from conversation. Generic placeholders like "Baseline Analysis" are
+  // filtered out so legacy cards still get a sensible display name.
+  const title = (
+    _isMeaningfulTitle(result?.display_overrides?.title) ? result.display_overrides.title :
+    _isMeaningfulTitle(result?.name) ? result.name :
+    _isMeaningfulTitle(result?.project_name) ? result.project_name :
+    _isMeaningfulTitle(result?.title) ? result.title :
+    deriveIdeaTitle({ result, messages: opts.messages || [], fallback: 'Untitled idea' })
+  );
 
   // Relative timestamp
   const createdAt = result?._createdAt;
@@ -9627,7 +9655,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               <FontAwesomeIcon icon={faTimes} />
             </button>
             <div style={{ padding: 24 }}>
-              {renderScorecardCard(lightboxScorecard, { lightbox: true, threadId: sessionId || currentSessionId })}
+              {renderScorecardCard(lightboxScorecard, { lightbox: true, threadId: sessionId || currentSessionId, messages })}
             </div>
             <div
               style={{
@@ -9754,7 +9782,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
     activeDrawerTab={scenarioDrawerView}
     onDrawerTabChange={setScenarioDrawerView}
     messages={messages}
-    renderMessage={(m) => renderConversationMessage(m, { autoVersionGenerating, threadId: sessionId || currentSessionId, onRescoreAction: () => void triggerAutoVersion(sessionId || currentSessionId) })}
+    renderMessage={(m) => renderConversationMessage(m, { autoVersionGenerating, threadId: sessionId || currentSessionId, messages, onRescoreAction: () => void triggerAutoVersion(sessionId || currentSessionId) })}
     renderAttachments={(m) => renderMessageAttachments(m)}
     renderActions={(m, key, idx, total) => renderMessageActions(m, key, idx, total)}
     streamStatus={renderStreamToolStatus()}
@@ -10647,11 +10675,15 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                       return 0;
                     });
 
-                    // Group by canonical name, then assign vN within each group
-                    // (only when the group has more than one entry). Legacy
-                    // scorecards may have generic placeholders like
-                    // "Baseline Analysis" — strip those so they fall through
-                    // to a sensible fallback derived from session/idea content.
+                    // Each scorecard gets its OWN idea name. Resolution order:
+                    //   1. User-edited title from Workspace overrides
+                    //   2. AI-generated name field on the scorecard
+                    //   3. project_name / label / initiative_name (legit values)
+                    //   4. The user message that triggered THIS scorecard —
+                    //      every scoring round is preceded by "Building your
+                    //      scorecard now." in the AI chat, and a user message
+                    //      describing the idea just before that.
+                    //   5. The first user message of the session (oldest fallback)
                     const _BANNED = new Set([
                       'baseline analysis', 'baseline', 'jaspen project', 'jaspen analysis',
                       'strategy analysis', 'initiative', 'untitled', 'untitled idea', 'project',
@@ -10662,27 +10694,57 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                       if (_BANNED.has(v.toLowerCase())) return null;
                       return v;
                     };
-                    const sessionFallback = (
-                      _pickName(activeScorecard?.name)
-                        || _pickName(activeScorecard?.project_name)
-                        || _pickName(deriveIdeaTitle({ result: activeScorecard, messages, fallback: '' }))
-                        || 'Untitled idea'
-                    );
-                    const nameOf = (c) =>
+                    const _snippetFromMsg = (text) => {
+                      let raw = String(text || '').trim();
+                      raw = raw.replace(/^(goal\s*[:–-]\s*|my goal\s+(is\s+)?[:–-]?\s*|i want to\s+|we want to\s+|we('re| are) (building|launching|creating)\s+|idea\s*[:–-]\s*|let'?s\s+(pivot\s+to\s+|add\s+|change\s+to\s+)|what\s+if\s+we\s+)/i, '');
+                      const firstSentence = raw.split(/[.!?\n]/)[0].trim();
+                      const cleaned = firstSentence.length > 0 ? firstSentence : raw;
+                      const words = cleaned.split(/\s+/);
+                      if (words.length <= 9) return cleaned;
+                      return words.slice(0, 9).join(' ') + '…';
+                    };
+
+                    // Build chronological maps of: triggers in the AI chat,
+                    // and the user message that preceded each trigger.
+                    const triggerRegex = /building your scorecard|scorecard now|generating your scorecard|scoring your idea/i;
+                    const triggeringUserMsgByIdx = [];
+                    const msgs = Array.isArray(messages) ? messages : [];
+                    msgs.forEach((m, i) => {
+                      if (m?.role === 'ai' && typeof m?.text === 'string' && triggerRegex.test(m.text)) {
+                        let lastUser = null;
+                        for (let j = i - 1; j >= 0; j--) {
+                          if (msgs[j]?.role === 'user' && String(msgs[j]?.text || '').trim()) {
+                            lastUser = msgs[j].text;
+                            break;
+                          }
+                        }
+                        triggeringUserMsgByIdx.push(lastUser);
+                      }
+                    });
+
+                    const firstUserMsg = msgs.find(
+                      (m) => m?.role === 'user' && String(m?.text || '').trim()
+                    )?.text;
+
+                    const sessionFallback = _pickName(_snippetFromMsg(firstUserMsg))
+                      || 'Untitled idea';
+
+                    const nameOf = (c, idx) =>
                       _pickName(c?.display_overrides?.title)
                         || _pickName(c?.name)
                         || _pickName(c?.project_name)
                         || _pickName(c?.label)
                         || _pickName(c?.initiative_name)
+                        || _pickName(_snippetFromMsg(triggeringUserMsgByIdx[idx]))
                         || sessionFallback;
                     const nameCounts = {};
-                    ordered.forEach((c) => {
-                      const n = nameOf(c);
+                    ordered.forEach((c, i) => {
+                      const n = nameOf(c, i);
                       nameCounts[n] = (nameCounts[n] || 0) + 1;
                     });
                     const nameRunning = {};
-                    const enriched = ordered.map((c) => {
-                      const n = nameOf(c);
+                    const enriched = ordered.map((c, i) => {
+                      const n = nameOf(c, i);
                       nameRunning[n] = (nameRunning[n] || 0) + 1;
                       const needsSuffix = nameCounts[n] > 1;
                       return {
@@ -11097,7 +11159,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
 
 	              {displayMessages.map((m, idx) => (
 	                <div key={m.id || idx} className={`jas-message ${m.role === 'ai' ? 'ai' : 'user'}`}>
-	                  <div className="jas-message-bubble">{renderConversationMessage(m, { autoVersionGenerating, threadId: sessionId || currentSessionId, onRescoreAction: () => void triggerAutoVersion(sessionId || currentSessionId) })}</div>
+	                  <div className="jas-message-bubble">{renderConversationMessage(m, { autoVersionGenerating, threadId: sessionId || currentSessionId, messages, onRescoreAction: () => void triggerAutoVersion(sessionId || currentSessionId) })}</div>
 	                  {renderMessageAttachments(m)}
 	                  {renderMessageActions(m, `main:${idx}`, idx, displayMessages.length)}
 	                </div>
