@@ -6075,6 +6075,43 @@ def _find_scorecard_carrier(user_id, thread_id, scorecard_id):
     return (None, None, None, None)
 
 
+@strategy_bp.route('/threads/<thread_id>/scorecards/<scorecard_id>', methods=['GET'])
+@jwt_required()
+def get_scorecard_for_workspace(thread_id, scorecard_id):
+    """Lightweight single-artifact fetch used by the Workspace canvas.
+    Returns the full scorecard payload + cosmetic display_overrides in one
+    round-trip. Doesn't pull the rest of the bundle (messages, scenarios list,
+    etc.) so the workspace loads fast and can't be blocked by an unrelated
+    bundle hiccup."""
+    try:
+        user_id = get_jwt_identity()
+        kind, _container, _key, carrier = _find_scorecard_carrier(user_id, thread_id, scorecard_id)
+        if not kind or not isinstance(carrier, dict):
+            return jsonify({'error': 'Scorecard not found', 'thread_id': thread_id, 'scorecard_id': scorecard_id}), 404
+
+        result_blob = carrier.get('result') if isinstance(carrier.get('result'), dict) else None
+        if not isinstance(result_blob, dict):
+            return jsonify({'error': 'Scorecard payload missing'}), 404
+
+        normalized = _normalize_scorecard_payload(result_blob)
+        normalized['id'] = str(
+            normalized.get('id')
+            or normalized.get('analysis_id')
+            or scorecard_id
+        )
+        normalized['isBaseline'] = (kind == 'baseline')
+        overrides = result_blob.get('display_overrides') if isinstance(result_blob.get('display_overrides'), dict) else {}
+
+        return jsonify({
+            'scorecard': normalized,
+            'display_overrides': overrides,
+            'kind': kind,
+        }), 200
+    except Exception as e:
+        current_app.logger.error("[get_scorecard_for_workspace] %s", e)
+        return jsonify({'error': str(e)}), 500
+
+
 @strategy_bp.route('/threads/<thread_id>/scorecards/<scorecard_id>/overrides', methods=['GET', 'PATCH'])
 @jwt_required()
 def scorecard_display_overrides(thread_id, scorecard_id):

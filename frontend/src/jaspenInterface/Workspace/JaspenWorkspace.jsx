@@ -48,38 +48,58 @@ export default function JaspenWorkspace() {
   const saveTimerRef = useRef(null);
   const skipNextSaveRef = useRef(true); // first render = freshly loaded, don't save back
 
-  // Fetch the artifact on mount
+  // Fetch the artifact on mount. We use the dedicated lightweight workspace
+  // endpoint that returns just the snapshot + overrides in one round-trip,
+  // not the full bundle. Falls back to fetchBundle if the focused endpoint
+  // fails for any reason.
   useEffect(() => {
     let cancelled = false;
     async function load() {
+      setLoading(true);
+      setError(null);
+
+      let target = null;
+      let ov = {};
+
+      // Path A: focused endpoint
       try {
-        setLoading(true);
-        setError(null);
-        // Load bundle (for the scorecard payload) + overrides (authoritative)
-        // in parallel. Overrides endpoint is the source of truth for cosmetic
-        // edits and works even if the snapshot in the bundle lags.
-        const [b, ov] = await Promise.all([
-          Jaspen.fetchBundle(threadId),
-          Jaspen.getScorecardOverrides(threadId, scorecardId).catch(() => ({})),
-        ]);
-        if (cancelled) return;
-        setBundle(b);
-        const snapshots = Array.isArray(b?.scorecard_snapshots) ? b.scorecard_snapshots : [];
-        const target = snapshots.find(
-          (s) => String(s?.id || s?.analysis_id || '') === String(scorecardId)
-        ) || b?.current_scorecard || b?.baseline_scorecard || null;
-        setSnapshot(target);
-        // Prefer the server's overrides; fall back to whatever was on the snapshot.
-        const initial = (ov && typeof ov === 'object' && Object.keys(ov).length)
-          ? ov
-          : (target && typeof target.display_overrides === 'object' && target.display_overrides) || {};
-        skipNextSaveRef.current = true;
-        setOverrides(initial);
+        const data = await Jaspen.getScorecardForWorkspace(threadId, scorecardId);
+        target = data?.scorecard || null;
+        if (data?.display_overrides && typeof data.display_overrides === 'object') {
+          ov = data.display_overrides;
+        }
       } catch (e) {
-        if (!cancelled) setError(String(e?.message || e || 'Failed to load workspace'));
-      } finally {
-        if (!cancelled) setLoading(false);
+        console.warn('[Workspace] focused scorecard fetch failed, will try bundle:', e);
       }
+      if (cancelled) return;
+
+      // Path B: bundle fallback (older deploys, or if the focused endpoint 404s)
+      if (!target) {
+        try {
+          const b = await Jaspen.fetchBundle(threadId);
+          setBundle(b);
+          const snapshots = Array.isArray(b?.scorecard_snapshots) ? b.scorecard_snapshots : [];
+          target = snapshots.find(
+            (s) => String(s?.id || s?.analysis_id || '') === String(scorecardId)
+          ) || b?.current_scorecard || b?.baseline_scorecard || null;
+          if (target?.display_overrides && typeof target.display_overrides === 'object' && Object.keys(ov).length === 0) {
+            ov = target.display_overrides;
+          }
+        } catch (e) {
+          console.error('[Workspace] bundle fallback also failed:', e);
+          if (!cancelled) {
+            setError(`Couldn't load this scorecard (${e?.name || 'Error'}): ${e?.message || String(e)}`);
+          }
+        }
+        if (cancelled) return;
+      }
+
+      setSnapshot(target);
+      skipNextSaveRef.current = true;
+      setOverrides(ov || {});
+
+      if (target) setError(null);
+      setLoading(false);
     }
     void load();
     return () => { cancelled = true; };

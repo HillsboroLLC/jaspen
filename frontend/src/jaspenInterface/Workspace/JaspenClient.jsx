@@ -43,6 +43,8 @@ export const endpoints = {
     `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/bundle?msg_limit=${msg}&scn_limit=${scn}`,
   scorecardOverrides: (threadId, scorecardId) =>
     `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/scorecards/${encodeURIComponent(scorecardId)}/overrides`,
+  scorecardForWorkspace: (threadId, scorecardId) =>
+    `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/scorecards/${encodeURIComponent(scorecardId)}`,
   scenario:   `${API_BASE}/api/v1/ai-agent/scenario`,
 
   // Scenario CRUD
@@ -848,6 +850,25 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
   },
 
   // ---------- Workspace (Beta) cosmetic overrides ----------
+  async getScorecardForWorkspace(threadId, scorecardId) {
+    if (!threadId || !scorecardId) throw new Error('threadId and scorecardId required');
+    const url = endpoints.scorecardForWorkspace(threadId, scorecardId);
+    const res = await fetch(url, {
+      method: 'GET',
+      credentials: 'include',
+      headers: {
+        ...buildAuthHeaders({}, 'GET'),
+        'Content-Type': 'application/json',
+        'X-Session-ID': getSid(),
+      },
+    });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      throw new Error(`${url} -> ${res.status} ${txt}`);
+    }
+    return res.json();
+  },
+
   async getScorecardOverrides(threadId, scorecardId) {
     if (!threadId || !scorecardId) throw new Error('threadId and scorecardId required');
     const url = endpoints.scorecardOverrides(threadId, scorecardId);

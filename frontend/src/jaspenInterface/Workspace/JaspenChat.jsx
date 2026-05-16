@@ -10636,19 +10636,43 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                     const allCards = Array.isArray(scorecardSnapshots) && scorecardSnapshots.length > 0
                       ? scorecardSnapshots
                       : (analysisResult ? [analysisResult] : []);
-                    // Order: baseline first, then by createdAt asc
+                    // Each scorecard stands on its own. Use the AI-generated
+                    // project name. Disambiguate only when multiple cards share
+                    // the SAME name (different iterations of the same idea) →
+                    // suffix them v1, v2, v3 in chronological order.
                     const ordered = [...allCards].sort((a, b) => {
-                      if (a?.isBaseline && !b?.isBaseline) return -1;
-                      if (!a?.isBaseline && b?.isBaseline) return 1;
                       const ta = Date.parse(a?.createdAt || a?._createdAt || a?.created_at || '');
                       const tb = Date.parse(b?.createdAt || b?._createdAt || b?.created_at || '');
                       if (Number.isFinite(ta) && Number.isFinite(tb)) return ta - tb;
                       return 0;
                     });
-                    return ordered.map((card, idx) => {
-                      const label = card?.label
-                        || card?.project_name
-                        || (card?.isBaseline ? 'Baseline' : `Version ${idx + 1}`);
+
+                    // Group by canonical name, then assign vN within each group
+                    // (only when the group has more than one entry).
+                    const nameOf = (c) =>
+                      String(
+                        c?.display_overrides?.title
+                          || c?.project_name
+                          || c?.label
+                          || 'Untitled idea'
+                      ).trim();
+                    const nameCounts = {};
+                    ordered.forEach((c) => {
+                      const n = nameOf(c);
+                      nameCounts[n] = (nameCounts[n] || 0) + 1;
+                    });
+                    const nameRunning = {};
+                    const enriched = ordered.map((c) => {
+                      const n = nameOf(c);
+                      nameRunning[n] = (nameRunning[n] || 0) + 1;
+                      const needsSuffix = nameCounts[n] > 1;
+                      return {
+                        card: c,
+                        label: needsSuffix ? `${n} · v${nameRunning[n]}` : n,
+                      };
+                    });
+
+                    return enriched.map(({ card, label }, idx) => {
                       const score = Number(card?.jaspen_score || 0);
                       const cardId = card?.id || card?.analysis_id || `art-${idx}`;
                       const wsHref = sessionId
