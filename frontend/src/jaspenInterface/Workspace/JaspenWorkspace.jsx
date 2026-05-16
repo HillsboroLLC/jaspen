@@ -24,15 +24,39 @@ const _GENERIC_TITLES = new Set([
   'strategy analysis', 'initiative', 'untitled', 'untitled idea',
   'untitled scorecard', 'project',
 ]);
+const _GENERIC_TITLE_PATTERNS = [/^version\s+\d+$/i, /^v\d+$/i, /^scenario\s+[a-z]$/i];
 
 function _pickMeaningful(...candidates) {
   for (const c of candidates) {
     const v = String(c || '').trim();
     if (!v) continue;
     if (_GENERIC_TITLES.has(v.toLowerCase())) continue;
+    if (_GENERIC_TITLE_PATTERNS.some((re) => re.test(v))) continue;
     return v;
   }
   return null;
+}
+
+// Derive a short idea name (≤7 words, natural-break aware) from a chat message.
+function _deriveFromMessage(text) {
+  if (!text) return null;
+  let raw = String(text).trim();
+  if (!raw) return null;
+  raw = raw.replace(
+    /^(goal\s*[:–-]\s*|my goal\s+(is\s+)?[:–-]?\s*|i want to\s+|we want to\s+|we('re| are) (building|launching|creating)\s+|idea\s*[:–-]\s*|let'?s\s+(pivot\s+to\s+|add\s+|change\s+to\s+)|what\s+if\s+we\s+|please\s+score\s+(this|that)?\s*)/i,
+    '',
+  );
+  const firstSentence = raw.split(/[.!?\n]/)[0].trim();
+  const cleaned = firstSentence.length > 0 ? firstSentence : raw;
+  const words = cleaned.split(/\s+/);
+  if (words.length <= 7) return cleaned;
+  const BREAKS = new Set(['for', 'to', 'that', 'which', 'and', 'or', 'with', 'in', 'on', 'at', 'by', 'from', 'via', 'using', 'through', 'across', 'into', 'of', 'about', 'between']);
+  for (let i = Math.min(6, words.length - 1); i >= 3; i--) {
+    if (BREAKS.has(words[i].toLowerCase().replace(/[^a-z]/g, ''))) {
+      return words.slice(0, i).join(' ');
+    }
+  }
+  return words.slice(0, 7).join(' ');
 }
 
 /**
@@ -155,9 +179,48 @@ export default function JaspenWorkspace() {
 
   const rendered = useMemo(() => applyOverrides(snapshot, overrides), [snapshot, overrides]);
 
+  // Resolve the display title for THIS specific scorecard. Priority:
+  // override → meaningful scorecard fields → first user message in the
+  // thread bundle. Never falls back to "Untitled idea" when the thread
+  // has any user message to draw from.
+  const displayTitle = useMemo(() => {
+    const ov = overrides && typeof overrides === 'object' ? overrides : {};
+    const fromScorecard = _pickMeaningful(
+      ov.title,
+      snapshot?.name,
+      snapshot?.project_name,
+      snapshot?.title,
+      snapshot?.initiative_name,
+    );
+    if (fromScorecard) return fromScorecard;
+
+    const msgs = Array.isArray(bundle?.messages) ? bundle.messages : [];
+    const firstUser = msgs.find(
+      (m) => (m?.role === 'user' || m?.sender === 'user') &&
+        String(m?.content || m?.text || '').trim().length > 0,
+    );
+    const fromMessage = _deriveFromMessage(firstUser?.content || firstUser?.text);
+    if (fromMessage) return fromMessage;
+
+    return 'Untitled idea';
+  }, [snapshot, overrides, bundle]);
+
   const score = Number(rendered?.jaspen_score || 0);
   const ringColor = rendered?._accent_color || '#a0036c';
   const category = score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : score >= 40 ? 'Fair' : 'At Risk';
+
+  // Recommended scenario (first recommendation that has actionable text)
+  const recs = Array.isArray(rendered?.recommendations) ? rendered.recommendations : [];
+  const nextSteps = Array.isArray(rendered?.next_steps) ? rendered.next_steps : [];
+  const recommendedScenario = (() => {
+    if (recs[0]) {
+      if (typeof recs[0] === 'string') return recs[0];
+      if (recs[0]?.text) return recs[0].text;
+      if (recs[0]?.action) return recs[0].action;
+    }
+    if (nextSteps[0] && typeof nextSteps[0] === 'string') return nextSteps[0];
+    return null;
+  })();
 
   // Set or remove a single cosmetic override. Auto-save fires from the
   // useEffect above on the next tick (debounced).
@@ -241,7 +304,7 @@ export default function JaspenWorkspace() {
             Workspace · Beta
           </div>
           <div style={{ fontSize:14, color:'#0f172a', marginTop:4, fontWeight:600 }}>
-            {rendered?.project_name || 'Untitled scorecard'}
+            {displayTitle}
           </div>
           <div style={{ fontSize:12, color:'#64748b', marginTop:2 }}>
             Editing cosmetic fields. Scores stay read-only.
@@ -303,7 +366,7 @@ export default function JaspenWorkspace() {
       <main style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden' }}>
         <div style={{ padding:'18px 28px', borderBottom:'1px solid #e6eaf2', background:'#fff', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
           <div style={{ display:'flex', alignItems:'baseline', gap:10 }}>
-            <h1 style={{ margin:0, fontSize:18, fontWeight:600, color:'#0f172a' }}>{rendered?.project_name || 'Untitled scorecard'}</h1>
+            <h1 style={{ margin:0, fontSize:18, fontWeight:600, color:'#0f172a' }}>{displayTitle}</h1>
             <span style={{ padding:'2px 8px', borderRadius:10, background:'#fef3c7', color:'#92400e', fontSize:10, fontWeight:600, letterSpacing:'0.04em' }}>
               BETA
             </span>
@@ -364,7 +427,7 @@ export default function JaspenWorkspace() {
           >
             {/* Title — editable */}
             <EditableText
-              value={rendered?.project_name || 'Untitled scorecard'}
+              value={displayTitle}
               onCommit={(v) => setOverride('title', v)}
               style={{ fontSize:24, fontWeight:600, color:'#0f172a', letterSpacing:'-0.01em' }}
             />
@@ -417,20 +480,52 @@ export default function JaspenWorkspace() {
               <DimensionBars dims={rendered?.dimensions || {}} accent={ringColor} />
             </div>
 
-            {/* Top risks — read-only */}
-            {Array.isArray(rendered?.top_risks) && rendered.top_risks.length > 0 && (
-              <div style={{ marginTop:28 }}>
-                <div style={{ fontSize:11, fontWeight:600, color:'#64748b', letterSpacing:'0.06em', textTransform:'uppercase', marginBottom:8 }}>
-                  Top risks
-                  <span style={{ marginLeft:8, padding:'1px 6px', background:'#f1f5f9', borderRadius:6, fontSize:9, color:'#94a3b8' }}>locked</span>
-                </div>
-                <ul style={{ margin:0, paddingLeft:18, fontSize:13, color:'#334155', lineHeight:1.6 }}>
-                  {rendered.top_risks.slice(0, 5).map((r, i) => (
-                    <li key={i}>{typeof r === 'string' ? r : (r?.risk || r?.label || '—')}</li>
-                  ))}
-                </ul>
+            {/* Top risks + Recommended scenario — two columns to match the
+                chat scorecard layout. Both read-only. */}
+            {(Array.isArray(rendered?.top_risks) && rendered.top_risks.length > 0) || recommendedScenario ? (
+              <div style={{
+                marginTop:32, display:'grid',
+                gridTemplateColumns: recommendedScenario && Array.isArray(rendered?.top_risks) && rendered.top_risks.length > 0
+                  ? '1fr 1fr' : '1fr',
+                gap:40, paddingTop:24, borderTop:'1px solid #e6eaf2',
+              }}>
+                {Array.isArray(rendered?.top_risks) && rendered.top_risks.length > 0 && (
+                  <div>
+                    <div style={{ fontSize:11, fontWeight:600, color:'#64748b', letterSpacing:'0.06em', textTransform:'uppercase', marginBottom:10 }}>
+                      Top risks
+                      <span style={{ marginLeft:8, padding:'1px 6px', background:'#f1f5f9', borderRadius:6, fontSize:9, color:'#94a3b8' }}>locked</span>
+                    </div>
+                    <ul style={{ margin:0, paddingLeft:0, listStyle:'none', fontSize:13, color:'#334155', lineHeight:1.65 }}>
+                      {rendered.top_risks.slice(0, 5).map((r, i) => (
+                        <li key={i} style={{ marginBottom:6, paddingLeft:14, position:'relative' }}>
+                          <span style={{ position:'absolute', left:0, color:'#94a3b8' }}>·</span>
+                          {typeof r === 'string' ? r : (r?.risk || r?.label || '—')}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {recommendedScenario && (
+                  <div>
+                    <div style={{ fontSize:11, fontWeight:600, color:'#64748b', letterSpacing:'0.06em', textTransform:'uppercase', marginBottom:10 }}>
+                      Recommended scenario
+                      <span style={{ marginLeft:8, padding:'1px 6px', background:'#f1f5f9', borderRadius:6, fontSize:9, color:'#94a3b8' }}>locked</span>
+                    </div>
+                    <div style={{ fontSize:13, color:ringColor, lineHeight:1.65, fontStyle:'italic' }}>
+                      + {recommendedScenario}
+                    </div>
+                  </div>
+                )}
               </div>
-            )}
+            ) : null}
+
+            {/* Footer hint matching the chat's "Ask Jaspen about any dimension →" */}
+            <div style={{
+              marginTop:32, paddingTop:18, borderTop:'1px solid #e6eaf2',
+              fontSize:12, color:'#64748b',
+            }}>
+              Click any heading or summary above to edit. Scores and risks stay locked — use the chat to rescore.
+            </div>
           </div>
         </div>
       </main>
@@ -505,20 +600,50 @@ function EditableText({ value, onCommit, multiline = false, style }) {
 }
 
 // ── DimensionBars: read-only score bars per dimension. ──────────────────────
+// Labels match the chat scorecard's renderScorecardCard so the workspace
+// canvas reads identically.
+const _DIMENSION_LABELS = {
+  strategic_alignment: 'Strategic fit',
+  financial_viability: 'Cost efficiency',
+  execution_readiness: 'Time-to-value',
+  risk_profile: 'Execution risk',
+  market_opportunity: 'Market Opportunity',
+  evidence_quality: 'Evidence Quality',
+};
+const _DIMENSION_ORDER = [
+  'strategic_alignment',
+  'financial_viability',
+  'execution_readiness',
+  'risk_profile',
+  'market_opportunity',
+  'evidence_quality',
+];
+
 function DimensionBars({ dims, accent }) {
-  const entries = Object.entries(dims || {}).filter(([, v]) => v && typeof v === 'object');
-  if (entries.length === 0) return null;
+  if (!dims || typeof dims !== 'object') return null;
+  // Order to match the chat scorecard; skip dimensions without data.
+  const ordered = _DIMENSION_ORDER
+    .map((key) => ({ key, dim: dims[key] }))
+    .filter(({ dim }) => dim && typeof dim === 'object');
+  // Catch any unexpected keys at the end
+  for (const [key, dim] of Object.entries(dims)) {
+    if (!_DIMENSION_LABELS[key] && dim && typeof dim === 'object') {
+      ordered.push({ key, dim });
+    }
+  }
+  if (ordered.length === 0) return null;
   return (
     <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 1fr)', gap:'14px 32px' }}>
-      {entries.map(([key, dim]) => {
+      {ordered.map(({ key, dim }) => {
         const score = Number(dim?.score || 0);
-        const label = key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+        const label = _DIMENSION_LABELS[key]
+          || key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
         return (
           <div key={key}>
             <div style={{ display:'flex', justifyContent:'space-between', fontSize:13, color:'#0f172a', marginBottom:6 }}>
               <span>{label}</span>
               <span style={{ fontFamily:'JetBrains Mono, monospace', fontSize:12, color:'#475569' }}>
-                {score.toFixed(1)}<span style={{ color:'#94a3b8' }}>/100</span>
+                {(score / 10).toFixed(1)}<span style={{ color:'#94a3b8' }}>/10</span>
               </span>
             </div>
             <div style={{ height:6, background:'#eef2f6', borderRadius:3, overflow:'hidden' }}>

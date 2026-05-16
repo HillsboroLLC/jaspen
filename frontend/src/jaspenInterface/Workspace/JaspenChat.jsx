@@ -10684,24 +10684,32 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                     //      scorecard now." in the AI chat, and a user message
                     //      describing the idea just before that.
                     //   5. The first user message of the session (oldest fallback)
+                    // Generic placeholders are stripped. Also strip the
+                    // backend's auto-generated "Version N" labels for legacy
+                    // variations — we'll regenerate vN suffixes ourselves
+                    // based on grouping by parent idea.
                     const _BANNED = new Set([
                       'baseline analysis', 'baseline', 'jaspen project', 'jaspen analysis',
                       'strategy analysis', 'initiative', 'untitled', 'untitled idea', 'project',
                     ]);
+                    const _BANNED_PATTERNS = [/^version\s+\d+$/i, /^v\d+$/i, /^scenario\s+[a-z]$/i];
                     const _pickName = (s) => {
                       const v = String(s || '').trim();
                       if (!v) return null;
                       if (_BANNED.has(v.toLowerCase())) return null;
+                      if (_BANNED_PATTERNS.some((re) => re.test(v))) return null;
                       return v;
                     };
+                    // Reuse deriveIdeaTitle's logic (handles prefix stripping,
+                    // first-sentence pick, and the 7-word natural-break cap).
                     const _snippetFromMsg = (text) => {
-                      let raw = String(text || '').trim();
-                      raw = raw.replace(/^(goal\s*[:–-]\s*|my goal\s+(is\s+)?[:–-]?\s*|i want to\s+|we want to\s+|we('re| are) (building|launching|creating)\s+|idea\s*[:–-]\s*|let'?s\s+(pivot\s+to\s+|add\s+|change\s+to\s+)|what\s+if\s+we\s+)/i, '');
-                      const firstSentence = raw.split(/[.!?\n]/)[0].trim();
-                      const cleaned = firstSentence.length > 0 ? firstSentence : raw;
-                      const words = cleaned.split(/\s+/);
-                      if (words.length <= 9) return cleaned;
-                      return words.slice(0, 9).join(' ') + '…';
+                      if (!text) return null;
+                      const derived = deriveIdeaTitle({
+                        result: null,
+                        messages: [{ role: 'user', text: String(text) }],
+                        fallback: '',
+                      });
+                      return derived || null;
                     };
 
                     // Build chronological maps of: triggers in the AI chat,
@@ -10729,14 +10737,41 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                     const sessionFallback = _pickName(_snippetFromMsg(firstUserMsg))
                       || 'Untitled idea';
 
-                    const nameOf = (c, idx) =>
-                      _pickName(c?.display_overrides?.title)
+                    // The "anchor idea name" is the meaningful name on the
+                    // baseline (or the first card if no baseline marker), used
+                    // as the shared label for all variations of that idea.
+                    const anchorIdeaName = (() => {
+                      const baseline = ordered.find((c) => c?.isBaseline) || ordered[0];
+                      return (
+                        _pickName(baseline?.display_overrides?.title)
+                          || _pickName(baseline?.name)
+                          || _pickName(baseline?.project_name)
+                          || _pickName(baseline?.initiative_name)
+                          || _pickName(_snippetFromMsg(triggeringUserMsgByIdx[0]))
+                          || sessionFallback
+                      );
+                    })();
+
+                    // For each card, prefer its OWN distinct name if the AI
+                    // gave it one (a genuinely different idea). Otherwise
+                    // collapse to the shared anchor name so v1/v2/v3 grouping
+                    // works as the user expects.
+                    const nameOf = (c, idx) => {
+                      // A card has its own name only if it's NOT a baseline
+                      // and the AI generated a meaningful, different name.
+                      const ownName = _pickName(c?.display_overrides?.title)
                         || _pickName(c?.name)
                         || _pickName(c?.project_name)
-                        || _pickName(c?.label)
-                        || _pickName(c?.initiative_name)
-                        || _pickName(_snippetFromMsg(triggeringUserMsgByIdx[idx]))
-                        || sessionFallback;
+                        || _pickName(c?.initiative_name);
+                      if (ownName && ownName.toLowerCase() !== anchorIdeaName.toLowerCase()) {
+                        return ownName;
+                      }
+                      return anchorIdeaName;
+                    };
+                    // Count occurrences of each name to know whether to
+                    // attach v1/v2/v3 suffixes. When a name appears more than
+                    // once → show v1, v2, v3... on every instance (not just
+                    // the 2nd+). When unique → no suffix.
                     const nameCounts = {};
                     ordered.forEach((c, i) => {
                       const n = nameOf(c, i);
@@ -10746,10 +10781,10 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                     const enriched = ordered.map((c, i) => {
                       const n = nameOf(c, i);
                       nameRunning[n] = (nameRunning[n] || 0) + 1;
-                      const needsSuffix = nameCounts[n] > 1;
+                      const showVersion = nameCounts[n] > 1;
                       return {
                         card: c,
-                        label: needsSuffix ? `${n} · v${nameRunning[n]}` : n,
+                        label: showVersion ? `${n} · v${nameRunning[n]}` : n,
                       };
                     });
 
