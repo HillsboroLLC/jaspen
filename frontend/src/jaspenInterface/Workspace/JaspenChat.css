@@ -656,7 +656,8 @@
   position: absolute;
   top: calc(100% + 6px);
   left: 0;
-  min-width: 200px;
+  min-width: 320px;
+  max-width: 420px;
   background: var(--white);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -694,6 +695,14 @@
 }
 .jas-artifact-item:hover { background: var(--gray-50); }
 .jas-artifact-item svg { color: var(--gray-500); font-size: 0.72rem; flex-shrink: 0; }
+.jas-artifact-item > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+.jas-artifact-ws-link:hover { background: var(--gray-50); color: var(--navy) !important; }
 .jas-artifacts-empty {
   font-size: 0.75rem;
   color: var(--gray-400);
