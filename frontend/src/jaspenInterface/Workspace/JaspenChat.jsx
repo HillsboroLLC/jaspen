@@ -3397,14 +3397,21 @@ useEffect(() => {
     await updateUiPreferences({ hide_thinking_power_meter: next });
   }, [meterHiddenWS, updateUiPreferences]);
 
-  // Opt-out for the low-power warning toast (the one that fires when
-  // remaining Thinking Power drops below 10%). Persists to user.ui_preferences
-  // so the choice survives sessions.
-  const warningHidden = Boolean(user?.ui_preferences?.hide_thinking_power_warning);
+  // Opt-out for the low-power warning toast (≤10% remaining). Local state
+  // so the checkbox responds immediately to clicks; persists to
+  // user.ui_preferences via updateUiPreferences in the background.
+  const [warningHiddenWS, setWarningHiddenWS] = useState(
+    Boolean(user?.ui_preferences?.hide_thinking_power_warning)
+  );
+  useEffect(() => {
+    setWarningHiddenWS(Boolean(user?.ui_preferences?.hide_thinking_power_warning));
+  }, [user?.ui_preferences?.hide_thinking_power_warning]);
   const toggleThinkingPowerWarning = useCallback(async () => {
+    const next = !warningHiddenWS;
+    setWarningHiddenWS(next);  // Optimistic — flips the UI immediately
     if (typeof updateUiPreferences !== 'function') return;
-    await updateUiPreferences({ hide_thinking_power_warning: !warningHidden });
-  }, [warningHidden, updateUiPreferences]);
+    await updateUiPreferences({ hide_thinking_power_warning: next });
+  }, [warningHiddenWS, updateUiPreferences]);
   useEffect(() => {
     if (!lowCreditsDismissStorageKey || !lowCreditsBannerEligible) {
       setLowCreditsBannerDismissed(false);
@@ -3834,7 +3841,9 @@ useEffect(() => {
       const usagePayload = payload?.usage && typeof payload.usage === 'object' ? payload.usage : null;
       const remainingPct = Number(usagePayload?.thinking_power_remaining_pct);
       const lowWarning = Boolean(usagePayload?.thinking_power_low_warning);
-      const optOut = Boolean(user?.ui_preferences?.hide_thinking_power_warning);
+      // Source of truth: local state (warningHiddenWS). Falls back to user
+      // prefs in case syncCreditsFromPayload runs before useState initializes.
+      const optOut = Boolean(warningHiddenWS ?? user?.ui_preferences?.hide_thinking_power_warning);
       if (lowWarning && !optOut && Number.isFinite(remainingPct) && typeof showToast === 'function') {
         showToast(
           `Thinking Power is low (${remainingPct.toFixed(1)}% left). Top up or wait until reset.`,
@@ -3847,7 +3856,7 @@ useEffect(() => {
     if (refresh) {
       void loadBilling();
     }
-  }, [adminWorkspacePreviewPlan, loadBilling, showToast]);
+  }, [adminWorkspacePreviewPlan, loadBilling, showToast, warningHiddenWS, user?.ui_preferences?.hide_thinking_power_warning]);
 
   useEffect(() => {
     if (!canUseScenarios && activeTab === 'scenario') {
@@ -4583,7 +4592,7 @@ useEffect(() => {
           <label className="jas-ud-meter-toggle" style={{ cursor: 'pointer' }}>
             <input
               type="checkbox"
-              checked={!warningHidden}
+              checked={!warningHiddenWS}
               onChange={toggleThinkingPowerWarning}
               style={{ marginRight: 8 }}
             />
@@ -4605,6 +4614,9 @@ useEffect(() => {
                 <p className="jas-ud-usage-credits-line">
                   Used <strong>{Number(resolvedMonthlyCreditsUsed || 0).toLocaleString()}</strong> of <strong>{Number(monthlyCreditLimit || 0).toLocaleString()}</strong> credits
                 </p>
+                <p className="jas-ud-usage-credits-line" style={{ marginTop: 4 }}>
+                  <strong>{creditsRemaining == null ? 'Contracted' : Number(creditsRemaining || 0).toLocaleString()}</strong> credits remaining
+                </p>
                 <p className="jas-ud-usage-note">Resets: {formatNextResetDate(billingStatus?.cycle_reset_at)} · {currentPlanLabel}</p>
                 {creditsTone !== 'normal' && (
                   <div className="jas-account-actions">
@@ -4618,19 +4630,6 @@ useEffect(() => {
                 )}
               </>
             )}
-          </div>
-        )}
-
-        {/* Current Thread Usage: intentionally minimal. Just remaining
-            credits — model name, per-call list, and "thinking power used"
-            were noisy and not something other agents show. */}
-        {activeThreadId && (
-          <div className="jas-ud-section">
-            <div className="jas-ud-section-label">Current Thread</div>
-            <p className="jas-ud-usage-credits-line">
-              <strong>{creditsRemaining == null ? 'Contracted' : Number(creditsRemaining || 0).toLocaleString()}</strong>{' '}
-              credits remaining
-            </p>
           </div>
         )}
 
