@@ -1215,32 +1215,10 @@ export default function JaspenExecutionCanvas({ threadId, bundle, wbs: wbsProp, 
   const totalTasks = (wbs?.tasks || []).length;
   const totalPhases = phases.length;
 
-  // Empty state — no execution plan yet.
-  if (totalTasks === 0) {
-    return (
-      <div style={{
-        flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: COLOR.bg, padding: 48,
-      }}>
-        <div style={{
-          background: '#fff', border: `1px solid ${COLOR.line}`, borderRadius: 14,
-          padding: '36px 40px', maxWidth: 560, textAlign: 'center',
-          boxShadow: '0 1px 3px rgba(15,23,42,0.04)',
-        }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: COLOR.rose, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-            Execution Plan
-          </div>
-          <div style={{ fontSize: 18, fontWeight: 600, color: COLOR.navy, marginTop: 12 }}>
-            No execution plan yet
-          </div>
-          <div style={{ fontSize: 13, color: COLOR.ink, marginTop: 10, lineHeight: 1.55 }}>
-            Head back to Jaspen and ask: <span style={{ color: COLOR.navy, fontWeight: 500 }}>"Build me an execution plan."</span>
-            <br />Once it's generated, it shows up here ready to edit.
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // ── Hooks must run unconditionally (React rules-of-hooks) ───────────────
+  // Anything below the empty-state early return WILL be skipped on the
+  // first render when totalTasks === 0, which trips React. So all hooks
+  // live up here, ordered identically every render.
 
   // Priority counts (replaces the owners strip per design feedback) —
   // sums tasks by priority so the user can see the load shape at a glance.
@@ -1253,11 +1231,6 @@ export default function JaspenExecutionCanvas({ threadId, bundle, wbs: wbsProp, 
     });
     return counts;
   }, [wbs]);
-
-  // Score category label for the badge next to SCORE.
-  const scoreCategory = typeof score === 'number' && score > 0
-    ? (score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : score >= 40 ? 'Fair' : 'At Risk')
-    : null;
 
   // "Updated X min ago" — uses the WBS's own updated_at field if present,
   // otherwise the most recent updated_at across tasks. Refreshes once per minute.
@@ -1284,6 +1257,39 @@ export default function JaspenExecutionCanvas({ threadId, bundle, wbs: wbsProp, 
     const days = Math.round(hrs / 24);
     return `Updated ${days} day${days === 1 ? '' : 's'} ago`;
   }, [wbs, saving]); // recompute when save completes too
+
+  // Score category label for the badge next to SCORE. (Plain value — not a
+  // hook — so its position doesn't matter; kept here for locality.)
+  const scoreCategory = typeof score === 'number' && score > 0
+    ? (score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : score >= 40 ? 'Fair' : 'At Risk')
+    : null;
+
+  // Empty state — no execution plan yet. Must come AFTER all hooks.
+  if (totalTasks === 0) {
+    return (
+      <div style={{
+        flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: COLOR.bg, padding: 48,
+      }}>
+        <div style={{
+          background: '#fff', border: `1px solid ${COLOR.line}`, borderRadius: 14,
+          padding: '36px 40px', maxWidth: 560, textAlign: 'center',
+          boxShadow: '0 1px 3px rgba(15,23,42,0.04)',
+        }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: COLOR.rose, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+            Execution Plan
+          </div>
+          <div style={{ fontSize: 18, fontWeight: 600, color: COLOR.navy, marginTop: 12 }}>
+            No execution plan yet
+          </div>
+          <div style={{ fontSize: 13, color: COLOR.ink, marginTop: 10, lineHeight: 1.55 }}>
+            Head back to Jaspen and ask: <span style={{ color: COLOR.navy, fontWeight: 500 }}>"Build me an execution plan."</span>
+            <br />Once it's generated, it shows up here ready to edit.
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{
