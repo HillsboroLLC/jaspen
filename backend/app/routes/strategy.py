@@ -2236,7 +2236,7 @@ The executive_summary must read like a concise leadership briefing. It should ne
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": analysis_prompt}
             ],
-            temperature=0.1,
+            temperature=0,  # Deterministic — same input → same scores
             max_tokens=4000
         )
         analysis_text = response.choices[0].message.content

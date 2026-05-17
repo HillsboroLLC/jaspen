@@ -3310,10 +3310,11 @@ useEffect(() => {
   }, [creditsPctRemaining]);
 
   // Only show a text label when the user should start paying attention
+  // (≤50% remaining). Floor so we never show a stale 100% post-usage.
   const intakeCreditsCompactLabel = useMemo(() => {
     if (billingLoading || creditsPctRemaining === null) return null;
     if (creditsLevel === 'full') return null; // quiet when plenty remains
-    return `${Math.round(creditsPctRemaining)}%`;
+    return `${Math.floor(creditsPctRemaining)}%`;
   }, [billingLoading, creditsPctRemaining, creditsLevel]);
 
   // Tooltip: actual numbers + reset date
@@ -3340,11 +3341,20 @@ useEffect(() => {
     if (creditsLevel === 'warning') return 'warning';
     return 'normal';
   }, [creditsLevel]);
-  const creditsBadge = creditsRemaining == null
-    ? 'Contracted'
-    : monthlyCreditLimit > 0
-      ? `${Math.max(0, Math.round((Math.max(0, Number(creditsRemaining || 0)) / Number(monthlyCreditLimit || 1)) * 100))}%`
-      : 'Usage';
+  // Use floor (not round) so any consumption drops the badge below 100%.
+  // Cap at 99% any time even a token has been used — only literally zero
+  // usage shows 100%.
+  const creditsBadge = (() => {
+    if (creditsRemaining == null) return 'Contracted';
+    const remaining = Math.max(0, Number(creditsRemaining || 0));
+    const limit = Number(monthlyCreditLimit || 0);
+    if (limit <= 0) return 'Usage';
+    const rawPct = (remaining / limit) * 100;
+    if (remaining >= limit) return '100%';
+    // Anything consumed → cap at 99% so user never sees a stale 100%.
+    const pct = Math.min(99, Math.floor(rawPct));
+    return `${pct}%`;
+  })();
   const lowCreditsCycleKey = useMemo(() => {
     const now = new Date();
     const y = now.getUTCFullYear();
@@ -3386,6 +3396,15 @@ useEffect(() => {
     if (typeof updateUiPreferences !== 'function') return;
     await updateUiPreferences({ hide_thinking_power_meter: next });
   }, [meterHiddenWS, updateUiPreferences]);
+
+  // Opt-out for the low-power warning toast (the one that fires when
+  // remaining Thinking Power drops below 10%). Persists to user.ui_preferences
+  // so the choice survives sessions.
+  const warningHidden = Boolean(user?.ui_preferences?.hide_thinking_power_warning);
+  const toggleThinkingPowerWarning = useCallback(async () => {
+    if (typeof updateUiPreferences !== 'function') return;
+    await updateUiPreferences({ hide_thinking_power_warning: !warningHidden });
+  }, [warningHidden, updateUiPreferences]);
   useEffect(() => {
     if (!lowCreditsDismissStorageKey || !lowCreditsBannerEligible) {
       setLowCreditsBannerDismissed(false);
@@ -3805,22 +3824,18 @@ useEffect(() => {
       return next;
     });
 
-    // ── Thinking Power post-click toast ────────────────────────────────────
-    // Surfaces the % of monthly budget this turn consumed, plus a warning
-    // toast if remaining drops under THINKING_POWER_LOW_WARNING_PCT (10%).
-    // Per pricing policy: cost is shown after the click (the user knows it
-    // costs tokens — we don't guess in advance).
+    // ── Thinking Power low-warning toast ───────────────────────────────────
+    // The per-turn "Used X.X%" toast was removed — the sidebar gauge + topbar
+    // bolt are the source of truth and noise-free. We still fire ONE warning
+    // toast per session when remaining drops under THINKING_POWER_LOW_WARNING_PCT
+    // (10%) so the user has clear runway to top up. Suppressible per-user
+    // via the "Hide low-power warnings" preference in the User Settings drawer.
     try {
       const usagePayload = payload?.usage && typeof payload.usage === 'object' ? payload.usage : null;
-      const usedPct = Number(usagePayload?.thinking_power_used_pct);
       const remainingPct = Number(usagePayload?.thinking_power_remaining_pct);
       const lowWarning = Boolean(usagePayload?.thinking_power_low_warning);
-      if (Number.isFinite(usedPct) && usedPct > 0 && typeof showToast === 'function') {
-        // Round display: <0.1% gets ‹0.1%, otherwise one decimal.
-        const display = usedPct < 0.1 ? '<0.1' : usedPct.toFixed(1);
-        showToast(`Used ${display}% Thinking Power`, 'info', { durationMs: 2200 });
-      }
-      if (lowWarning && Number.isFinite(remainingPct) && typeof showToast === 'function') {
+      const optOut = Boolean(user?.ui_preferences?.hide_thinking_power_warning);
+      if (lowWarning && !optOut && Number.isFinite(remainingPct) && typeof showToast === 'function') {
         showToast(
           `Thinking Power is low (${remainingPct.toFixed(1)}% left). Top up or wait until reset.`,
           'warning',
@@ -4565,6 +4580,15 @@ useEffect(() => {
             <FontAwesomeIcon icon={faGaugeHigh} />
             {hideThinkingPowerMeter ? 'Show usage meter' : 'Hide usage meter'}
           </button>
+          <label className="jas-ud-meter-toggle" style={{ cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={!warningHidden}
+              onChange={toggleThinkingPowerWarning}
+              style={{ marginRight: 8 }}
+            />
+            Show low-power warnings
+          </label>
         </div>
 
         {!hideThinkingPowerMeter && (
@@ -4597,72 +4621,18 @@ useEffect(() => {
           </div>
         )}
 
-        <div className="jas-ud-section">
-          <div className="jas-ud-section-label">Current Thread Usage</div>
-          {!activeThreadId && (
-            <p className="jas-ud-usage-empty">Start or open a thread to see usage details.</p>
-          )}
-          {activeThreadId && threadUsageLoading && (
-            <p className="jas-ud-usage-empty">Loading usage...</p>
-          )}
-          {activeThreadId && !threadUsageLoading && threadUsageError && (
-            <p className="jas-ud-usage-error">{threadUsageError}</p>
-          )}
-          {activeThreadId && !threadUsageLoading && !threadUsageError && !threadUsage && (
-            <p className="jas-ud-usage-empty">Usage details are not available for this thread yet.</p>
-          )}
-          {activeThreadId && !threadUsageLoading && !threadUsageError && (
-            threadUsage ? (
-            <>
-              <div className="jas-ud-usage-top">
-                <span className="jas-ud-usage-model">
-                  Model: {String(
-                    threadUsage?.usage_summary?.model_label
-                    || selectedModelOption?.label
-                    || 'Pluto'
-                  )}
-                </span>
-                <button
-                  type="button"
-                  className="jas-ud-usage-refresh"
-                  onClick={() => loadThreadUsage(activeThreadId)}
-                >
-                  Refresh
-                </button>
-              </div>
-              <div className="jas-ud-usage-grid">
-                <div className="jas-ud-usage-stat">
-                  <span>Thinking power used</span>
-                  <strong>{Number(threadUsage?.usage_summary?.credits_charged || 0).toLocaleString()}</strong>
-                </div>
-                <div className="jas-ud-usage-stat">
-                  <span>Interactions</span>
-                  <strong>{Number(threadUsage?.usage_summary?.events || 0).toLocaleString()}</strong>
-                </div>
-                <div className="jas-ud-usage-stat">
-                  <span>Model</span>
-                  <strong>{String(threadUsage?.usage_summary?.model_label || selectedModelOption?.label || 'Pluto')}</strong>
-                </div>
-                <div className="jas-ud-usage-stat">
-                  <span>Latest remaining</span>
-                  <strong>{creditsRemaining == null ? 'Contracted' : Number(creditsRemaining || 0).toLocaleString()}</strong>
-                </div>
-              </div>
-              {Array.isArray(threadUsage?.usage_events) && threadUsage.usage_events.length > 0 && (
-                <div className="jas-ud-usage-events">
-                  {threadUsage.usage_events.slice(-4).reverse().map((event, idx) => (
-                    <div key={`${event?.timestamp || 'usage'}-${idx}`} className="jas-ud-usage-event">
-                      <span>{event?.timestamp ? fmtTime(event.timestamp) : fmtTime(new Date())}</span>
-                      <span>{String(event?.model_label || 'Model')}</span>
-                      <span>{Number(event?.credits_charged || 0).toLocaleString()} credits</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
-            ) : null
-          )}
-        </div>
+        {/* Current Thread Usage: intentionally minimal. Just remaining
+            credits — model name, per-call list, and "thinking power used"
+            were noisy and not something other agents show. */}
+        {activeThreadId && (
+          <div className="jas-ud-section">
+            <div className="jas-ud-section-label">Current Thread</div>
+            <p className="jas-ud-usage-credits-line">
+              <strong>{creditsRemaining == null ? 'Contracted' : Number(creditsRemaining || 0).toLocaleString()}</strong>{' '}
+              credits remaining
+            </p>
+          </div>
+        )}
 
         <div className="jas-ud-section">
           <button className="jas-ud-item" onClick={() => { openExternal('/pages/support'); }}>
@@ -5690,22 +5660,38 @@ useEffect(() => {
 // occurrence in the chat history corresponds to one scorecard generation.
 const displayMessages = useMemo(() => {
   if (messages.length === 0) return messages;
-  // Live session: a real-time placeholder or scorecard artifact already lives
-  // in messages — those preserve their own position.
-  const hasInlineCard = messages.some(
-    (m) => m?.artifact?.type === 'scorecard' || m?.artifact?.type === 'scorecard-loading'
-  );
-  if (hasInlineCard) return messages;
+
+  // PRIOR BUG: an early-return for "any inline card present" meant that as
+  // soon as the live placeholder showed up, every previous snapshot
+  // disappeared from the chat — the new one took over rendering and the
+  // older 4 were lost until reload. Now we collect the inline-card IDs and
+  // still weave in any snapshot that ISN'T already inline. This preserves
+  // historical scorecards while letting the live one render in place.
+  const inlineCardIds = new Set();
+  messages.forEach((m) => {
+    if (m?.artifact?.type === 'scorecard' || m?.artifact?.type === 'scorecard-loading') {
+      const id = String(m?.artifact?.data?.id || m?.artifact?.data?.analysis_id || '');
+      if (id) inlineCardIds.add(id);
+    }
+  });
 
   const snapshots = Array.isArray(scorecardSnapshots) ? scorecardSnapshots : [];
-  if (snapshots.length === 0) {
-    // No snapshots — fallback to single-result append for legacy sessions.
-    if (!analysisResult) return messages;
+  const snapshotsToWeave = snapshots.filter((s) => {
+    const id = String(s?.id || s?.analysis_id || '');
+    return id ? !inlineCardIds.has(id) : true;
+  });
+
+  if (snapshotsToWeave.length === 0) {
+    // Every snapshot is already inline (or there are none). Nothing to weave;
+    // also handle the legacy single-result append for pre-snapshot sessions.
+    if (!analysisResult || inlineCardIds.size > 0) return messages;
     return [
       ...messages,
       { id: 'scorecard-card', role: 'ai', text: '', artifact: { type: 'scorecard', data: analysisResult } },
     ];
   }
+
+  // From here down we operate on snapshotsToWeave instead of all snapshots.
 
   const tsOf = (val) => {
     const t = Date.parse(String(val || ''));
@@ -5714,7 +5700,7 @@ const displayMessages = useMemo(() => {
 
   // Sort snapshots oldest → newest using whatever timestamps are available.
   // Snapshots without timestamps keep their input order via a stable sort.
-  const indexed = snapshots.map((s, i) => ({ s, i }));
+  const indexed = snapshotsToWeave.map((s, i) => ({ s, i }));
   indexed.sort((a, b) => {
     const ta = tsOf(a.s?.createdAt || a.s?._createdAt || a.s?.created_at);
     const tb = tsOf(b.s?.createdAt || b.s?._createdAt || b.s?.created_at);

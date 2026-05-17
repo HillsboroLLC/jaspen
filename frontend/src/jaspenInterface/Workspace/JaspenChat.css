@@ -1405,16 +1405,16 @@
   background: var(--gray-100);
 }
 
-/* Moderate (20–50% remaining) — visible but calm */
+/* Moderate (20–50% remaining) — show the % and color the bolt navy so it
+   reads as "informational, time to glance" rather than a generic gray icon. */
 .jas-topbar-credits.jas-credits-moderate {
-  border-color: var(--border);
-  background: var(--white);
-  color: var(--gray-600);
-  padding: 0 12px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--navy);
+  padding: 0 10px;
 }
 .jas-topbar-credits.jas-credits-moderate:hover {
-  border-color: var(--gray-500);
-  background: var(--gray-50);
+  background: rgba(22, 31, 59, 0.06);
 }
 
 /* Warning (10–20% remaining) — amber */
