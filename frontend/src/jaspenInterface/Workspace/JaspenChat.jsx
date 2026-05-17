@@ -11051,7 +11051,10 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                   <button
                     className="hi-delete"
                     type="button"
-                    onClick={() => {
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      console.log('[history delete] clicked for', item.id);
                       handleDeleteAnalysis(item.id);
                     }}
                     title="Delete"
@@ -11333,9 +11336,12 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                       );
                     });
                   })()}
-                  {/* Trade-off artifact — present once the user has explicitly
-                      asked to compare/rank ideas (matches the tab gating). */}
-                  {tradeoffRequested && Array.isArray(scorecardSnapshots) && scorecardSnapshots.length >= 2 && (
+                  {/* Trade-off artifact — surface whenever the user has at
+                      least two scorecards to compare. The pill gating is now
+                      "always available once a scorecard exists", but for the
+                      artifact list we still want ≥2 since you can't compare
+                      a single idea against itself. */}
+                  {Array.isArray(scorecardSnapshots) && scorecardSnapshots.length >= 2 && (
                     <div className="jas-artifact-row" style={{ display:'flex', alignItems:'center', gap:4 }}>
                       <button
                         className="jas-artifact-item"
@@ -11729,7 +11735,22 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
           </div>
         ) : activePill === 'scenarios' ? (
           /* ── Trade-off portfolio view ── */
-          <div className="jas-inline-panel-wrap jas-tradeoff-panel-wrap">
+          <div className="jas-inline-panel-wrap jas-tradeoff-panel-wrap" style={{ position: 'relative' }}>
+            {sessionId && (
+              <a
+                href={`/workspace/${encodeURIComponent(sessionId)}/__tradeoff__`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  position: 'absolute', top: 14, right: 18, zIndex: 5,
+                  padding: '6px 12px', borderRadius: 8,
+                  background: '#0f172a', color: '#fff',
+                  textDecoration: 'none', fontSize: 12.5, fontWeight: 500,
+                  whiteSpace: 'nowrap',
+                  boxShadow: '0 1px 2px rgba(15,23,42,0.08)',
+                }}
+              >Open in Workspace ↗</a>
+            )}
             <TradeoffView
               scorecardSnapshots={scorecardSnapshots}
               strategyObjective={strategyObjective}
@@ -12243,17 +12264,21 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                           <p className="jas-insights-tips-label" style={{ margin: 0 }}>Risks to watch</p>
                           <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 9.5, color: '#8a93ad' }}>{risks.length}</span>
                         </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {/* Flat list — no card chrome, just a rose left accent
+                            and dividers. Matches the restraint of the
+                            Upcoming list directly above. */}
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
                           {risks.slice(0, 3).map((r, i) => {
                             const t = typeof r === 'string' ? r : (r?.risk || r?.text || String(r));
+                            const isLast = i === Math.min(risks.length, 3) - 1;
                             return (
                               <div
                                 key={i}
                                 style={{
-                                  padding: '8px 10px', background: '#fff',
-                                  border: '1px solid #d6e9ef',
-                                  borderLeft: '3px solid #a0036c',
-                                  borderRadius: 6, fontSize: 12, color: '#161f3b', lineHeight: 1.4,
+                                  padding: '8px 0 8px 10px',
+                                  borderLeft: '2px solid #a0036c',
+                                  borderBottom: isLast ? 'none' : '1px solid var(--border)',
+                                  fontSize: 12, color: '#161f3b', lineHeight: 1.4,
                                 }}
                               >{t}</div>
                             );
