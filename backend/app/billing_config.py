@@ -110,6 +110,113 @@ SHARED_POOL_PLANS = {'team', 'enterprise'}
 SOFT_STOP_GRACE_MULTIPLIER = 1.05
 TOKENS_PER_CREDIT = 1000
 
+# Threshold for the "you're almost out" warning surfaced to the frontend.
+# When a user's Thinking Power drops below this fraction of their cycle limit,
+# responses include `thinking_power_low_warning: true` and the UI nudges them
+# to top up. (Soft cap with grace at 0% lives in SOFT_STOP_GRACE_MULTIPLIER.)
+THINKING_POWER_LOW_WARNING_PCT = 10.0
+
+# ── Anthropic published prices ($ per million tokens) ──────────────────────
+# STICKY-ON-DECREASE policy (Bailey, 2026-05-17): we update these values
+# upward when Anthropic raises prices, but never downward — users don't know
+# Claude is the primary engine, and we use multiple agents (Gemini for
+# processing, Claude for judgment), so a Claude price drop shouldn't
+# automatically reduce what we charge.
+#
+# Every Claude-routed call's actual cost is computed from these numbers and
+# multiplied by MARGIN_MULTIPLIER, then debited from the user's plan budget.
+ANTHROPIC_PRICES_USD_PER_M = {
+    # Opus 4.x — premium reasoning
+    'claude-opus-4-1-20250805':    {'input': 15.00, 'output': 75.00},
+    'claude-opus-4-20250514':      {'input': 15.00, 'output': 75.00},
+    # Sonnet 4.x — workhorse
+    'claude-sonnet-4-5-20250929':  {'input': 3.00,  'output': 15.00},
+    'claude-sonnet-4-20250514':    {'input': 3.00,  'output': 15.00},
+    # Haiku 4.5 — fast/cheap
+    'claude-haiku-4-5-20251001':   {'input': 1.00,  'output': 5.00},
+    'claude-haiku-4-5':            {'input': 1.00,  'output': 5.00},
+    # Fallback when an unknown Claude model surfaces — assume Sonnet rates
+    '__default_claude__':          {'input': 3.00,  'output': 15.00},
+}
+
+# Margin multiplier on Anthropic cost. Anthropic cost × this number = what
+# we debit from the user's Thinking Power budget. Default 3.0× (≈67% margin).
+# Tunable via env so we can adjust without code changes if Anthropic raises
+# prices significantly.
+MARGIN_MULTIPLIER = float(os.getenv('JASPEN_MARGIN_MULTIPLIER', '3.0'))
+
+# Plan-level Anthropic cost ceiling (USD per month, BEFORE margin). At 3.0×
+# margin these map to comfortable margins per Stripe pricing:
+#   Free        $0  → $0.50 budget (~5–10 Sonnet turns; demo)
+#   Essential  $39  → $13 budget × 3 = $39 retail → break-even on heavy users,
+#                     comfortable margin on light users
+#   Team      $129  → $43 budget × 3 = $129
+#   Enterprise $299 → $100 budget × 3 = $300
+#
+# These are intentionally calibrated so the heaviest users hit zero margin
+# (not negative) — most users use far less. Tunable via env.
+PLAN_THINKING_BUDGET_USD = {
+    'free':       float(os.getenv('JASPEN_BUDGET_FREE',       '0.50')),
+    'essential':  float(os.getenv('JASPEN_BUDGET_ESSENTIAL', '13.00')),
+    'team':       float(os.getenv('JASPEN_BUDGET_TEAM',      '43.00')),
+    'enterprise': float(os.getenv('JASPEN_BUDGET_ENTERPRISE','100.00')),
+}
+
+
+def anthropic_cost_usd(model_name, input_tokens, output_tokens):
+    """Anthropic's $ cost for one completion. Sticky-on-decrease per the
+    ANTHROPIC_PRICES_USD_PER_M table. Unknown Claude models fall back to
+    Sonnet rates; non-Claude (e.g., Gemini) models return 0."""
+    if not model_name:
+        return 0.0
+    name = str(model_name).strip().lower()
+    if not name.startswith('claude'):
+        # Gemini / other providers don't debit Thinking Power.
+        return 0.0
+    prices = ANTHROPIC_PRICES_USD_PER_M.get(name) or ANTHROPIC_PRICES_USD_PER_M['__default_claude__']
+    in_tokens = max(0, int(input_tokens or 0))
+    out_tokens = max(0, int(output_tokens or 0))
+    return (in_tokens * prices['input'] + out_tokens * prices['output']) / 1_000_000.0
+
+
+def plan_thinking_budget_usd(plan_key):
+    """Monthly Anthropic-cost budget for a plan (USD, before margin)."""
+    canonical = normalize_plan_key(plan_key)
+    return PLAN_THINKING_BUDGET_USD.get(canonical, PLAN_THINKING_BUDGET_USD['essential'])
+
+
+def thinking_power_debit_pct(plan_key, model_name, input_tokens, output_tokens):
+    """How much of a user's monthly Thinking Power % to debit for one call.
+
+    Returns a float in 0–100. Gemini and other non-Claude models return 0.0
+    (they're free background processing per the pricing policy).
+    """
+    raw_cost = anthropic_cost_usd(model_name, input_tokens, output_tokens)
+    if raw_cost <= 0:
+        return 0.0
+    budget = plan_thinking_budget_usd(plan_key)
+    if budget <= 0:
+        # Free plan with zero budget → any Claude call is "100%" so the
+        # caller can decide what to do (typically: deny or pop the paywall).
+        return 100.0
+    return (raw_cost * MARGIN_MULTIPLIER / budget) * 100.0
+
+
+def credits_for_completion(plan_key, model_name, input_tokens, output_tokens):
+    """Credits to debit (in the legacy 1 credit = 1000 tokens unit) for one
+    completion, derived from Anthropic's $ cost × MARGIN_MULTIPLIER. This is
+    the bridge between the new $-based model and the existing credits-based
+    consume_credits() machinery — we don't have to rip out the old plumbing.
+    """
+    debit_pct = thinking_power_debit_pct(plan_key, model_name, input_tokens, output_tokens)
+    if debit_pct <= 0:
+        return 0
+    monthly_limit = get_monthly_credit_limit(plan_key, {}) or 0
+    if monthly_limit <= 0:
+        return 0
+    # Debit %  →  fraction of monthly token cap
+    return int(round(monthly_limit * (debit_pct / 100.0)))
+
 MODEL_TYPE_ALIASES = {
     'pluto-1': 'pluto',
     'orbit-1': 'orbit',

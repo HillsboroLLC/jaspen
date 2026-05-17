@@ -3805,10 +3805,34 @@ useEffect(() => {
       return next;
     });
 
+    // ── Thinking Power post-click toast ────────────────────────────────────
+    // Surfaces the % of monthly budget this turn consumed, plus a warning
+    // toast if remaining drops under THINKING_POWER_LOW_WARNING_PCT (10%).
+    // Per pricing policy: cost is shown after the click (the user knows it
+    // costs tokens — we don't guess in advance).
+    try {
+      const usagePayload = payload?.usage && typeof payload.usage === 'object' ? payload.usage : null;
+      const usedPct = Number(usagePayload?.thinking_power_used_pct);
+      const remainingPct = Number(usagePayload?.thinking_power_remaining_pct);
+      const lowWarning = Boolean(usagePayload?.thinking_power_low_warning);
+      if (Number.isFinite(usedPct) && usedPct > 0 && typeof showToast === 'function') {
+        // Round display: <0.1% gets ‹0.1%, otherwise one decimal.
+        const display = usedPct < 0.1 ? '<0.1' : usedPct.toFixed(1);
+        showToast(`Used ${display}% Thinking Power`, 'info', { durationMs: 2200 });
+      }
+      if (lowWarning && Number.isFinite(remainingPct) && typeof showToast === 'function') {
+        showToast(
+          `Thinking Power is low (${remainingPct.toFixed(1)}% left). Top up or wait until reset.`,
+          'warning',
+          { durationMs: 6000 },
+        );
+      }
+    } catch (_) { /* meter is display-only — never throw */ }
+
     if (refresh) {
       void loadBilling();
     }
-  }, [adminWorkspacePreviewPlan, loadBilling]);
+  }, [adminWorkspacePreviewPlan, loadBilling, showToast]);
 
   useEffect(() => {
     if (!canUseScenarios && activeTab === 'scenario') {

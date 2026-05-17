@@ -27,14 +27,18 @@ from app.billing_config import (
     add_credits,
     bootstrap_legacy_credits,
     consume_credits,
+    credits_for_completion,
     get_allowed_model_types,
     get_default_model_type,
     get_monthly_credit_limit,
     get_model_catalog,
     get_usage_meter_state,
     normalize_model_type,
+    plan_thinking_budget_usd,
+    thinking_power_debit_pct,
     tokens_to_credits,
     to_public_plan,
+    THINKING_POWER_LOW_WARNING_PCT,
 )
 from app.connector_monitor import check_connector_health, generate_connector_insights
 from app.tool_registry import (
@@ -3512,12 +3516,65 @@ def _execute_local_tool(tool_name, tool_input, *, readiness, user, user_id, thre
     ), next_count
 
 
-def _estimate_usage_credit_charge(total_tokens, model_type, provider=None):
-    """Token-based charge: 1 billed unit = 1 token, regardless of provider/model."""
+def _estimate_usage_credit_charge(total_tokens, model_type, provider=None, *,
+                                   input_tokens=None, output_tokens=None,
+                                   anthropic_model=None, plan_key=None):
+    """Compute credits to debit for one completion.
+
+    Preferred path (Thinking Power model): when we have input/output token
+    counts plus the Anthropic model name, we use the real $/M cost from
+    ANTHROPIC_PRICES_USD_PER_M × MARGIN_MULTIPLIER, then convert to credit
+    units against the user's plan. This is what makes Sonnet turns more
+    expensive than Haiku turns, mirroring actual Anthropic cost.
+
+    Fallback path (legacy): flat 1 credit-unit = 1 token, model-agnostic.
+    Used when the caller didn't pass enough info to do real cost math
+    (or for non-Claude providers like Gemini — which are intended to be
+    "free background processing" per Bailey's pricing policy).
+    """
+    # New path: real-cost math
+    if anthropic_model and input_tokens is not None and output_tokens is not None and plan_key:
+        try:
+            charge = credits_for_completion(
+                plan_key,
+                anthropic_model,
+                int(input_tokens or 0),
+                int(output_tokens or 0),
+            )
+            if charge > 0:
+                return int(charge)
+            # Gemini / other non-Claude → 0 (free background per pricing policy)
+            if anthropic_model and not str(anthropic_model).lower().startswith('claude'):
+                return 0
+        except Exception:
+            current_app.logger.exception("Thinking-Power debit math failed; falling back to flat token charge")
+
+    # Legacy fallback
     total_tokens = int(total_tokens or 0)
     if total_tokens <= 0:
         return 0
     return int(total_tokens)
+
+
+def _charge_for_usage(usage, model_type, user):
+    """Thinking-Power-aware wrapper around _estimate_usage_credit_charge.
+
+    Pulls input/output tokens + Anthropic model name from the usage dict
+    and the user's plan key, so we can compute the real Anthropic-cost ×
+    margin debit. Falls back to the legacy flat-token math if any of those
+    pieces are missing (or if the call wasn't Claude — Gemini debits 0).
+    """
+    if not isinstance(usage, dict):
+        return _estimate_usage_credit_charge(0, model_type, None)
+    return _estimate_usage_credit_charge(
+        usage.get("total_tokens"),
+        model_type,
+        usage.get("provider"),
+        input_tokens=usage.get("input_tokens"),
+        output_tokens=usage.get("output_tokens"),
+        anthropic_model=usage.get("model") or usage.get("anthropic_model"),
+        plan_key=getattr(user, "subscription_plan", None) if user else None,
+    )
 
 
 def _preflight_credit_estimate(model_type, token_hint=None):
@@ -6308,7 +6365,16 @@ def _model_label_for_type(model_type):
     return str((item or {}).get("label") or fallback)
 
 
-def _public_usage_payload(usage, *, model_type=None, credits_charged=None, credits_remaining=None):
+def _public_usage_payload(
+    usage,
+    *,
+    model_type=None,
+    credits_charged=None,
+    credits_remaining=None,
+    user=None,
+    plan_key=None,
+    monthly_limit_credits=None,
+):
     usage = usage if isinstance(usage, dict) else {}
     normalized_model_type = normalize_model_type(model_type or usage.get("model_type") or "pluto") or "pluto"
     payload = {
@@ -6323,6 +6389,31 @@ def _public_usage_payload(usage, *, model_type=None, credits_charged=None, credi
     if isinstance(failover, dict):
         attempted = failover.get("attempted_providers")
         payload["failover_attempted"] = bool(isinstance(attempted, list) and len(attempted) > 0)
+
+    # Thinking Power %: how much of the plan's monthly budget this turn used,
+    # and how much remains. The frontend uses these to render the
+    # "Used X.X% Thinking Power" toast and the live gauge.
+    try:
+        # Caller can pass monthly_limit_credits directly, or we derive it
+        # from the user's plan. The token-unit math matches consume_credits
+        # (1 credit-unit == 1 token internally; the UI divides by 1000).
+        if monthly_limit_credits is None:
+            effective_plan = plan_key or (getattr(user, "subscription_plan", None) if user else None)
+            if effective_plan:
+                monthly_limit_credits = get_monthly_credit_limit(effective_plan, {}) or 0
+        monthly_tokens = int(monthly_limit_credits or 0)
+        charged_tokens = int(credits_charged or 0)
+        remaining_tokens = int(credits_remaining or 0) if credits_remaining is not None else None
+        if monthly_tokens > 0 and charged_tokens > 0:
+            payload["thinking_power_used_pct"] = round((charged_tokens / monthly_tokens) * 100.0, 2)
+        if monthly_tokens > 0 and remaining_tokens is not None:
+            remaining_pct = round((remaining_tokens / monthly_tokens) * 100.0, 2)
+            payload["thinking_power_remaining_pct"] = max(0.0, remaining_pct)
+            if remaining_pct < THINKING_POWER_LOW_WARNING_PCT:
+                payload["thinking_power_low_warning"] = True
+    except Exception:
+        # Never block a response on the meter math — these are display-only.
+        pass
     return payload
 
 
@@ -6961,6 +7052,7 @@ def _visible_batch_payload(batch):
                 model_type=model_type,
                 credits_charged=((ranking_result.get("credits") or {}).get("charged") if isinstance(ranking_result.get("credits"), dict) else None),
                 credits_remaining=((ranking_result.get("credits") or {}).get("remaining") if isinstance(ranking_result.get("credits"), dict) else None),
+                user=user,
             )
             ranking_result = {
                 **ranking_result,
@@ -7679,6 +7771,7 @@ def conversation_start():
                 model_type=model_selection["model_type"],
                 credits_charged=0,
                 credits_remaining=user.credits_remaining,
+                user=user,
             ),
             "context_budget": get_context_budget(to_public_plan(user.subscription_plan)),
             "credits": _public_credits_payload(charged=0, remaining=user.credits_remaining),
@@ -7753,6 +7846,7 @@ def conversation_start():
                 model_type=model_selection["model_type"],
                 credits_charged=0,
                 credits_remaining=user.credits_remaining,
+                user=user,
             ),
             "context_budget": get_context_budget(to_public_plan(user.subscription_plan)),
             "credits": _public_credits_payload(charged=0, remaining=user.credits_remaining),
@@ -7838,7 +7932,7 @@ def conversation_start():
                 mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
                 undo_snapshot = state.get("undo_snapshot") if isinstance(state.get("undo_snapshot"), dict) else None
 
-                credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"], usage.get("provider"))
+                credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
                 credit_settlement = _settle_reserved_credits(
                     user,
                     reserved_credits=reserved_credits,
@@ -7924,6 +8018,7 @@ def conversation_start():
                         model_type=model_selection["model_type"],
                         credits_charged=credits_charged,
                         credits_remaining=remaining,
+                        user=user,
                     ),
                     "context_budget": context_budget,
                     "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
@@ -7980,7 +8075,7 @@ def conversation_start():
         _release_reserved_credits(user, reserved_credits)
         raise
 
-    credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"], usage.get("provider"))
+    credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
     credit_settlement = _settle_reserved_credits(
         user,
         reserved_credits=reserved_credits,
@@ -8057,6 +8152,7 @@ def conversation_start():
             model_type=model_selection["model_type"],
             credits_charged=credits_charged,
             credits_remaining=remaining,
+            user=user,
         ),
         "context_budget": context_budget,
         "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
@@ -8278,6 +8374,7 @@ def conversation_continue():
                 model_type=model_selection["model_type"],
                 credits_charged=0,
                 credits_remaining=user.credits_remaining,
+                user=user,
             ),
             "context_budget": get_context_budget(to_public_plan(user.subscription_plan)),
             "credits": _public_credits_payload(charged=0, remaining=user.credits_remaining),
@@ -8337,6 +8434,7 @@ def conversation_continue():
                 model_type=model_selection["model_type"],
                 credits_charged=0,
                 credits_remaining=user.credits_remaining,
+                user=user,
             ),
             "context_budget": get_context_budget(to_public_plan(user.subscription_plan)),
             "credits": _public_credits_payload(charged=0, remaining=user.credits_remaining),
@@ -8422,7 +8520,7 @@ def conversation_continue():
                 mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
                 undo_snapshot = state.get("undo_snapshot") if isinstance(state.get("undo_snapshot"), dict) else None
 
-                credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"], usage.get("provider"))
+                credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
                 credit_settlement = _settle_reserved_credits(
                     user,
                     reserved_credits=reserved_credits,
@@ -8507,6 +8605,7 @@ def conversation_continue():
                         model_type=model_selection["model_type"],
                         credits_charged=credits_charged,
                         credits_remaining=remaining,
+                        user=user,
                     ),
                     "context_budget": context_budget,
                     "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
@@ -8563,7 +8662,7 @@ def conversation_continue():
         _release_reserved_credits(user, reserved_credits)
         raise
 
-    credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"], usage.get("provider"))
+    credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
     credit_settlement = _settle_reserved_credits(
         user,
         reserved_credits=reserved_credits,
@@ -8639,6 +8738,7 @@ def conversation_continue():
             model_type=model_selection["model_type"],
             credits_charged=credits_charged,
             credits_remaining=remaining,
+            user=user,
         ),
         "context_budget": context_budget,
         "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
@@ -9888,7 +9988,7 @@ def conversation_regenerate():
                     "total_tokens": 0,
                 }
 
-                credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"], usage.get("provider"))
+                credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
                 credit_settlement = _settle_reserved_credits(
                     user,
                     reserved_credits=reserved_credits,
@@ -9955,6 +10055,7 @@ def conversation_regenerate():
                         model_type=model_selection["model_type"],
                         credits_charged=credits_charged,
                         credits_remaining=remaining,
+                        user=user,
                     ),
                     "context_budget": context_budget,
                     "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
@@ -10008,7 +10109,7 @@ def conversation_regenerate():
         _release_reserved_credits(user, reserved_credits)
         raise
 
-    credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"], usage.get("provider"))
+    credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
     credit_settlement = _settle_reserved_credits(
         user,
         reserved_credits=reserved_credits,
@@ -10068,6 +10169,7 @@ def conversation_regenerate():
             model_type=model_selection["model_type"],
             credits_charged=credits_charged,
             credits_remaining=remaining,
+            user=user,
         ),
         "context_budget": context_budget,
         "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
@@ -10331,7 +10433,7 @@ def rank_batch_ideas(batch_id):
         current_app.logger.exception("Failed ranking batch ideas")
         return jsonify({"error": f"Failed to rank ideas: {exc}"}), 500
 
-    credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"], usage.get("provider"))
+    credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
     credit_settlement = _settle_reserved_credits(
         user,
         reserved_credits=reserved_credits,
@@ -10351,6 +10453,7 @@ def rank_batch_ideas(batch_id):
             model_type=model_selection["model_type"],
             credits_charged=credits_charged,
             credits_remaining=remaining,
+            user=user,
         ),
         "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
     }
@@ -10479,7 +10582,7 @@ def clarify_batch_idea(batch_id, idea_id):
         current_app.logger.exception("Failed reevaluating clarified batch idea")
         return jsonify({"error": f"Failed to reevaluate idea: {exc}"}), 500
 
-    credits_charged = _estimate_usage_credit_charge(usage.get("total_tokens"), model_selection["model_type"], usage.get("provider"))
+    credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
     credit_settlement = _settle_reserved_credits(
         user,
         reserved_credits=reserved_credits,
@@ -10513,6 +10616,7 @@ def clarify_batch_idea(batch_id, idea_id):
             model_type=model_selection["model_type"],
             credits_charged=credits_charged,
             credits_remaining=remaining,
+            user=user,
         ),
         "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
     }
@@ -10538,6 +10642,7 @@ def clarify_batch_idea(batch_id, idea_id):
             model_type=model_selection["model_type"],
             credits_charged=credits_charged,
             credits_remaining=remaining,
+            user=user,
         ),
         "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
         "status": batch.status,
