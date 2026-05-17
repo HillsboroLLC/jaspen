@@ -342,7 +342,7 @@ function buildConversationForm(fields = {}, files = []) {
   return form;
 }
 
-async function openRetriedStream(url, { body, sid, isForm = false } = {}) {
+async function openRetriedStream(url, { body, sid, isForm = false, signal = null } = {}) {
   const baseHeaders = isForm
     ? buildAuthHeaders({ Accept: 'text/event-stream' }, 'POST')
     : buildAuthHeaders({
@@ -358,6 +358,7 @@ async function openRetriedStream(url, { body, sid, isForm = false } = {}) {
       'X-Session-ID': sid || getSid(),
     },
     body,
+    signal,
   }, { method: 'POST', retryable: true });
 }
 
@@ -667,6 +668,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
     onToolResult,
     onToolStatus,
     onDone,
+    abortSignal = null,
   }) {
     const url = `${endpoints.convoNext}?stream=true`;
     const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
@@ -691,6 +693,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
       sid: getSid(),
       body,
       isForm: hasAttachments,
+      signal: abortSignal,
     });
 
     const reader = resp.body?.getReader();

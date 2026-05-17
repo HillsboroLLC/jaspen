@@ -1465,6 +1465,17 @@ export default function JaspenChat() {
   const [undoingMutation, setUndoingMutation] = useState(false);
   const [streamToolStatus, setStreamToolStatus] = useState('');
   const manualProgressTimerRef = useRef(null);
+  // AbortController for in-flight streams — Stop button calls .abort() on this.
+  const streamAbortRef = useRef(null);
+  const stopActiveStream = useCallback(() => {
+    try {
+      streamAbortRef.current?.abort();
+    } catch (_) { /* no-op */ }
+    streamAbortRef.current = null;
+    setBusy(false);
+    setIsStreamingReply(false);
+    setStreamToolStatus('');
+  }, []);
   const [copiedMessageKey, setCopiedMessageKey] = useState(null);
   const [feedbackBusyKey, setFeedbackBusyKey] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
@@ -5583,6 +5594,14 @@ if (rawHistory.length > 0) {
 
   const scrollToEnd = () => endRef.current?.scrollIntoView({ behavior: 'smooth' });
   useEffect(scrollToEnd, [messages, busy]);
+  // When the user clicks Trade-off / Execution pill, the corresponding
+  // artifact renders at the bottom of the conversation. Auto-scroll so
+  // it's immediately visible without manually scrolling down.
+  useEffect(() => {
+    if (activePill === 'scenarios' || activePill === 'execution') {
+      endRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [activePill]);
 
   const syncAiDrawerToBottom = useCallback(() => {
     const node = aiMessagesRef.current;
@@ -6099,6 +6118,12 @@ useEffect(() => {
   }) => {
     setIsStreamingReply(true);
     const placeholderId = createStreamingAssistantPlaceholder();
+    // Wire up a fresh AbortController for this stream so the Stop button
+    // can cancel mid-flight. Any prior controller is left to be GC'd —
+    // we don't try to "stop the previous stream" since busy state prevents
+    // concurrent sends.
+    const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    streamAbortRef.current = controller;
     let finalPayload = null;
     try {
       finalPayload = await Jaspen.streamConversation({
@@ -6109,6 +6134,7 @@ useEffect(() => {
         intake_context: intakeContext && typeof intakeContext === 'object' ? intakeContext : undefined,
         view_context: viewContext && typeof viewContext === 'object' ? viewContext : undefined,
         attachments,
+        abortSignal: controller?.signal,
         onDelta: (text) => appendStreamingAssistantDelta(placeholderId, text),
         onToolUse: (event) => setStreamToolStatus(toolStatusLabel(event?.tool)),
         onToolResult: () => setStreamToolStatus(''),
@@ -6136,9 +6162,16 @@ useEffect(() => {
       return finalPayload;
     } catch (streamErr) {
       setStreamToolStatus('');
+      // Stop button → AbortError. Treat as a clean cancel, not a failure.
+      const wasAborted = streamErr?.name === 'AbortError' || controller?.signal?.aborted;
+      if (wasAborted) {
+        setStreamingAssistantError(placeholderId, 'Stopped.');
+        return finalPayload;
+      }
       setStreamingAssistantError(placeholderId, 'Sorry — I hit an error. Please try again.');
       throw streamErr;
     } finally {
+      streamAbortRef.current = null;
       setIsStreamingReply(false);
     }
   }, [
@@ -6293,11 +6326,15 @@ useEffect(() => {
       // Kick off knowledge signal extraction in background
       void refreshKnowledgeSignals(sid);
 
-      // Agentic scoring on start path — same logic as the continue path.
+      // Agentic scoring on start path — only auto-fire when the AI clearly
+      // signals "score this now" (explicit trigger phrase or backend status).
+      // We deliberately do NOT auto-fire on suggest_rescore actions — those
+      // are meant to render as a user-clickable button ("Want me to score
+      // that?"), not auto-execute. Auto-firing on them caused phantom
+      // scorecards after clarifying questions.
       const _startAiText = String(data?.reply || data?.message || data?.text || '').toLowerCase();
       const _startTextSignals = /building your scorecard|scorecard now|generating your scorecard|scoring your idea/.test(_startAiText);
-      const _startHasRescore = Array.isArray(data?.actions) && data.actions.some(a => a?.type === 'suggest_rescore');
-      if (data?.status === 'ready_to_analyze' || _startTextSignals || _startHasRescore) {
+      if (data?.status === 'ready_to_analyze' || _startTextSignals) {
         if (!analysisResult && !autoScoringTriggeredRef.current) {
           autoScoringTriggeredRef.current = true;
           setTimeout(() => { void triggerInlineScore(sid); }, 800);
@@ -6387,14 +6424,14 @@ async function continueConversation(userText, options = {}) {
     // Refresh knowledge signals in background after each turn
     void refreshKnowledgeSignals(sessionId);
 
-    // Agentic scoring: backend signals ready_to_analyze → inject scorecard inline.
-    // Also detect text fallback in case status field is missing.
-    // The autoScoringTriggeredRef guard ONLY applies to the baseline (first) scorecard.
-    // Auto-versions are guarded separately by autoVersionGenerating inside triggerAutoVersion.
+    // Agentic scoring: only auto-fire when the AI clearly signals "score now"
+    // via the trigger phrase or the backend status. suggest_rescore actions
+    // are USER-clickable button proposals — not auto-execute signals.
+    // (Auto-firing on suggest_rescore caused phantom scorecards after
+    // clarifying questions like "which two of these are duplicates?")
     const _aiText = String(data?.text || data?.reply || data?.message || '').toLowerCase();
     const _textSignalsScore = /building your scorecard|scorecard now|generating your scorecard|scoring your idea/.test(_aiText);
-    const _hasRescoreAction = Array.isArray(data?.actions) && data.actions.some(a => a?.type === 'suggest_rescore');
-    if (data?.status === 'ready_to_analyze' || _textSignalsScore || _hasRescoreAction) {
+    if (data?.status === 'ready_to_analyze' || _textSignalsScore) {
       const sid = currentSessionId || sessionId;
       if (!analysisResult && !autoScoringTriggeredRef.current) {
         // First scorecard — baseline
@@ -11786,43 +11823,15 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
             ) : null}
             <p>Describe your project or goal, and I&apos;ll help you build a complete strategy scorecard with clear priorities and execution steps.</p>
           </div>
-        ) : activePill === 'scenarios' ? (
-          /* ── Trade-off portfolio view ── */
-          <div className="jas-inline-panel-wrap jas-tradeoff-panel-wrap" style={{ position: 'relative' }}>
-            {sessionId && (
-              <a
-                href={`/workspace/${encodeURIComponent(sessionId)}/__tradeoff__`}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{
-                  position: 'absolute', top: 14, right: 18, zIndex: 5,
-                  padding: '6px 12px', borderRadius: 8,
-                  background: '#0f172a', color: '#fff',
-                  textDecoration: 'none', fontSize: 12.5, fontWeight: 500,
-                  whiteSpace: 'nowrap',
-                  boxShadow: '0 1px 2px rgba(15,23,42,0.08)',
-                }}
-              >Open in Workspace ↗</a>
-            )}
-            <TradeoffView
-              scorecardSnapshots={scorecardSnapshots}
-              strategyObjective={strategyObjective}
-              portfolioAnalysis={null}
-              onAsk={(text) => {
-                setActivePill(null); // switch back to conversation
-                void onSubmit({ text });
-              }}
-              asking={busy}
-              threadId={sessionId || currentSessionId}
-            />
-          </div>
-        ) : activePill === 'execution' ? (
-          /* ── Inline Execution panel ── */
-          <div className="jas-inline-panel-wrap">
-            {renderInlineExecutionView()}
-          </div>
         ) : (
           <>
+            {/* Single conversation surface for every stage. Trade-off and
+                Execution used to swap the whole panel out for full-page
+                views with their own chat input — that broke the mental
+                model (users had to know to navigate back to Discovery to
+                see chat replies). Now both are inline artifacts that pin
+                to the bottom of the conversation when their pill is
+                active. One chat input, always at the bottom. */}
             <div className="jas-messages">
               {error && (
                 <div className="agent-chat-error">
@@ -11838,6 +11847,51 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
 	                  {renderMessageActions(m, `main:${idx}`, idx, displayMessages.length)}
 	                </div>
 	              ))}
+
+              {/* Trade-off artifact — pinned at end of conversation when the
+                  Trade-off pill is active. "Open in Workspace" gives users
+                  the full canvas for edits. */}
+              {activePill === 'scenarios' && Array.isArray(scorecardSnapshots) && scorecardSnapshots.length > 0 && (
+                <div className="jas-message ai">
+                  <div className="jas-message-bubble" style={{ padding: 0, background: 'transparent', position: 'relative' }}>
+                    {sessionId && (
+                      <a
+                        href={`/workspace/${encodeURIComponent(sessionId)}/__tradeoff__`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{
+                          position: 'absolute', top: 14, right: 18, zIndex: 5,
+                          padding: '6px 12px', borderRadius: 8,
+                          background: '#0f172a', color: '#fff',
+                          textDecoration: 'none', fontSize: 12.5, fontWeight: 500,
+                          whiteSpace: 'nowrap',
+                          boxShadow: '0 1px 2px rgba(15,23,42,0.08)',
+                        }}
+                      >Open in Workspace ↗</a>
+                    )}
+                    <TradeoffView
+                      scorecardSnapshots={scorecardSnapshots}
+                      strategyObjective={strategyObjective}
+                      portfolioAnalysis={null}
+                      onAsk={(text) => {
+                        setActivePill(null);
+                        void onSubmit({ text });
+                      }}
+                      asking={busy}
+                      threadId={sessionId || currentSessionId}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Execution artifact — same pattern. */}
+              {activePill === 'execution' && (
+                <div className="jas-message ai">
+                  <div className="jas-message-bubble" style={{ padding: 0, background: 'transparent' }}>
+                    {renderInlineExecutionView()}
+                  </div>
+                </div>
+              )}
 
               {/* Scorecard loading states are now rendered inline as placeholder messages
                   in the messages array (scorecard-loading artifact type), so the card
@@ -11919,14 +11973,30 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                 >
                   <FontAwesomeIcon icon={faMicrophone} />
                 </button>
-                <button
-                  className="jas-ci-btn send"
-                  onClick={onSubmit}
-                  disabled={busy || effectiveIsViewer || (!input.trim() && pendingFiles.length === 0)} aria-disabled={busy || effectiveIsViewer || (!input.trim() && pendingFiles.length === 0)}
-                  title="Send"
-                >
-                  {busy ? <FontAwesomeIcon icon={faSpinner} spin /> : <FontAwesomeIcon icon={faArrowUp} />}
-                </button>
+                {/* Stop button replaces Send while a stream is in flight.
+                    Click cancels the AbortController so the user isn't stuck
+                    watching a slow / unwanted reply finish. */}
+                {(busy || isStreamingReply) ? (
+                  <button
+                    className="jas-ci-btn send"
+                    onClick={stopActiveStream}
+                    title="Stop"
+                    aria-label="Stop the in-flight reply"
+                    style={{ background: '#a0036c' }}
+                  >
+                    <span style={{ width: 12, height: 12, background: '#fff', borderRadius: 2, display: 'inline-block' }} />
+                  </button>
+                ) : (
+                  <button
+                    className="jas-ci-btn send"
+                    onClick={onSubmit}
+                    disabled={effectiveIsViewer || (!input.trim() && pendingFiles.length === 0)}
+                    aria-disabled={effectiveIsViewer || (!input.trim() && pendingFiles.length === 0)}
+                    title="Send"
+                  >
+                    <FontAwesomeIcon icon={faArrowUp} />
+                  </button>
+                )}
               </div>
             </div>
           </div>
