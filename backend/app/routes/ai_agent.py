@@ -9292,20 +9292,45 @@ def delete_thread(thread_id):
     hard_arg = (request.args.get("hard") or "").strip().lower()
     hard = hard_arg in ("1", "true", "yes", "y")
 
+    current_app.logger.info(
+        f"[delete_thread] user={user_id[:8]} thread_id={thread_id!r} hard={hard}"
+    )
+
     # Include archived rows so the user can hard-purge something they
     # previously soft-deleted.
     sessions = load_user_sessions(user_id, include_archived=True) or {}
     session_key, session = _resolve_user_session(sessions, thread_id)
     if not isinstance(session, dict):
+        current_app.logger.warning(
+            f"[delete_thread] thread {thread_id!r} not found for user {user_id[:8]} "
+            f"(candidates: {list(sessions.keys())[:6]})"
+        )
         return jsonify({"error": "Thread not found"}), 404
 
     resolved_thread_id = str(session.get("session_id") or session_key or thread_id)
+    # Try BOTH the resolved id and the dict key against the DB — legacy
+    # threads can have mismatches between payload.session_id and the row's
+    # session_id column.
+    candidate_ids = []
+    for cid in (resolved_thread_id, session_key, thread_id):
+        sid = str(cid or "").strip()
+        if sid and sid not in candidate_ids:
+            candidate_ids.append(sid)
 
     if hard:
-        # Permanent purge: drop the session row and anonymize the ledger row.
-        # (mark_ledger_purged nulls user + session links and stamps purged_at.)
-        removed = hard_delete_user_session(user_id, resolved_thread_id)
-        ledger_purged = mark_ledger_purged(resolved_thread_id)
+        removed_any = False
+        for sid in candidate_ids:
+            if hard_delete_user_session(user_id, sid):
+                removed_any = True
+                break
+        ledger_purged = False
+        for sid in candidate_ids:
+            if mark_ledger_purged(sid):
+                ledger_purged = True
+                break
+        current_app.logger.info(
+            f"[delete_thread] hard purged thread={resolved_thread_id} row_removed={removed_any}"
+        )
         if user:
             _audit_ai_agent_event(
                 "session.purged",
@@ -9314,7 +9339,7 @@ def delete_thread(thread_id):
                     "thread_id": resolved_thread_id,
                     "scope": "single",
                     "ledger_purged": bool(ledger_purged),
-                    "row_removed": bool(removed),
+                    "row_removed": bool(removed_any),
                 },
             )
         return jsonify({
@@ -9324,15 +9349,42 @@ def delete_thread(thread_id):
         }), 200
 
     # Soft delete: stamp archived_at + purge_after on the row, write ledger.
-    row = archive_user_session(user_id, resolved_thread_id, grace_days=30)
+    row = None
+    for sid in candidate_ids:
+        row = archive_user_session(user_id, sid, grace_days=30)
+        if row is not None:
+            current_app.logger.info(
+                f"[delete_thread] archived row id={row.id} session_id={row.session_id} "
+                f"(matched on candidate {sid!r})"
+            )
+            break
+
     if row is None:
-        # Row didn't exist (shouldn't happen — we just resolved it) — fall
-        # back to wiping it out of the legacy in-payload dict.
-        sessions.pop(session_key or resolved_thread_id, None)
-        save_user_sessions(user_id, sessions)
+        # Last-resort: hard-delete via direct row lookup. The legacy fallback
+        # of save_user_sessions(sessions_minus_one, []) never actually deletes
+        # rows (it only upserts everything in the dict), so we use the hard
+        # helper instead so the user's click actually has an effect.
+        deleted_any = False
+        for sid in candidate_ids:
+            if hard_delete_user_session(user_id, sid):
+                deleted_any = True
+                current_app.logger.info(
+                    f"[delete_thread] fallback hard-delete succeeded for {sid!r}"
+                )
+                break
+        if not deleted_any:
+            current_app.logger.error(
+                f"[delete_thread] BOTH archive and hard-delete failed for user={user_id[:8]} "
+                f"candidates={candidate_ids}"
+            )
+            return jsonify({
+                "error": "Failed to delete session (no matching row)",
+                "tried": candidate_ids,
+            }), 500
         return jsonify({
             "success": True,
             "deleted_thread_id": resolved_thread_id,
+            "note": "hard-deleted (no row matched soft-archive)",
         }), 200
 
     # Best-effort ledger write — distillation is silent on failure so the
