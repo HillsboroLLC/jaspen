@@ -9463,54 +9463,46 @@ if (!baselineRef.current) baselineRef.current = normalizedFallback._baseline_sco
     const entry = analysisHistory.find((item) => String(item?.id || '').trim() === String(itemId).trim());
     const label = (entry?.name || entry?.title || entry?.result?.project_name || 'this analysis').trim();
 
-    setConfirmDialog({
-      title: 'Delete analysis',
-      message: `Delete "${label}"? We'll archive it and permanently purge it after 30 days. Anonymized scoring signals (score, dimension distribution, risk tags) stay in your org's idea ledger so benchmarking still works — they never identify the original idea text.`,
-      confirmLabel: 'Delete analysis',
-      confirmVariant: 'danger',
-      onConfirm: async () => {
-        // Optimistic UI: drop from local history immediately so the row
-        // disappears even before fetchSessions() returns.
-        setAnalysisHistory((prev) => prev.filter((it) => String(it?.id || '') !== String(itemId)));
+    // Native confirm — no recovery (matches user expectation of "real apps
+    // don't let you undo delete"). Anonymized scoring signals still go to
+    // the org ledger silently for ML / benchmarking, but the session is
+    // gone from the user's perspective immediately.
+    // Using window.confirm so a misbehaving custom dialog can never block
+    // the action — if there was ever a problem before, it was here.
+    const ok = window.confirm(
+      `Delete "${label}"?\n\n` +
+      `This permanently removes the session and its chat history. ` +
+      `Anonymized scores (no idea text) stay in your org's benchmarking ledger.\n\n` +
+      `This cannot be undone.`
+    );
+    if (!ok) return;
 
-        const result = await deleteAnalysisById(itemId);
+    // Optimistic UI removal — row disappears immediately.
+    setAnalysisHistory((prev) => prev.filter((it) => String(it?.id || '') !== String(itemId)));
 
-        if (!result.ok) {
-          showToast(`Couldn't delete: ${result.body?.error || `HTTP ${result.status || '?'}`}`, 'error');
-          await fetchSessions();
-          return;
-        }
+    // Hard delete (?hard=1) — skip the grace window since the user has
+    // already confirmed they want it gone.
+    const result = await deleteAnalysisById(itemId, { hard: true });
 
-        const wasActive = String(currentSessionId || sessionId || '') === String(itemId);
-        if (wasActive) {
-          clearLastSessionId();
-          setSessionId(null);
-          setCurrentSessionId(null);
-          setAnalysisResult(null);
-          setMessages([]);
-          setTradeoffRequested(false);
-          setView('intake');
-        }
+    if (!result.ok) {
+      showToast(`Couldn't delete: ${result.body?.error || `HTTP ${result.status || '?'}`}`, 'error');
+      await fetchSessions();
+      return;
+    }
 
-        await fetchSessions();
+    const wasActive = String(currentSessionId || sessionId || '') === String(itemId);
+    if (wasActive) {
+      clearLastSessionId();
+      setSessionId(null);
+      setCurrentSessionId(null);
+      setAnalysisResult(null);
+      setMessages([]);
+      setTradeoffRequested(false);
+      setView('intake');
+    }
 
-        // Undo toast — soft-deletes have a 30-day grace window so an Undo
-        // here just clears archived_at on the row.
-        showToast('Session archived', 'success', {
-          actionLabel: 'Undo',
-          durationMs: 8000,
-          onAction: async () => {
-            const restored = await restoreAnalysisById(itemId);
-            if (restored) {
-              await fetchSessions();
-              showToast('Session restored', 'success');
-            } else {
-              showToast('Restore failed — try Settings → Archived sessions.', 'error');
-            }
-          },
-        });
-      },
-    });
+    await fetchSessions();
+    showToast('Session deleted', 'success');
   };
 
   // Permanent purge — separate from soft-delete. Skips the 30-day grace

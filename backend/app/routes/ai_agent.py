@@ -9418,18 +9418,38 @@ def delete_thread(thread_id):
             candidate_ids.append(sid)
 
     if hard:
+        # Distill the structured signal to the ledger BEFORE we drop the row.
+        # The ledger keeps de-identified score/dimensions/risk tags for org
+        # benchmarking ("ideas like this typically score X"); the user-
+        # visible content (idea text, chat) is gone. If distillation fails
+        # we still proceed with the delete — the user explicitly asked.
+        try:
+            distill_session_to_ledger_row(
+                user=user,
+                session=session,
+                outcome="active",
+            )
+        except Exception as e:
+            current_app.logger.warning(
+                f"[delete_thread] pre-purge distillation failed for {resolved_thread_id}: {e}"
+            )
+
         removed_any = False
         for sid in candidate_ids:
             if hard_delete_user_session(user_id, sid):
                 removed_any = True
                 break
+        # Anonymize the ledger row: null the user + session links, stamp
+        # purged_at. Aggregate signals stay for the org's "ideas like this"
+        # ML / benchmarking surface.
         ledger_purged = False
         for sid in candidate_ids:
             if mark_ledger_purged(sid):
                 ledger_purged = True
                 break
         current_app.logger.info(
-            f"[delete_thread] hard purged thread={resolved_thread_id} row_removed={removed_any}"
+            f"[delete_thread] hard purged thread={resolved_thread_id} "
+            f"row_removed={removed_any} ledger_purged={ledger_purged}"
         )
         if user:
             _audit_ai_agent_event(
