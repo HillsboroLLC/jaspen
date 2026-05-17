@@ -2670,28 +2670,105 @@ def _build_agent_system_prompt(*, context_summary_text, intake_context, view_con
 
 
 def _scorecard_content_prompt_suffix(session, view_context):
-    """Inject current scorecard fields when user is on the summary/score view."""
-    current_view = str((view_context or {}).get("current_view") or "").lower()
-    if current_view != "summary":
+    """Inject every scorecard the user has generated in this thread (compact
+    form) so the chat agent can answer comparison questions like 'which of
+    these are duplicates?' without needing to re-score. Scorecards are
+    included on EVERY view (not just summary) because the user can ask
+    about them from any pill.
+
+    Each scorecard contributes: id, name, score, score_category, key
+    dimension scores, top risks (text), and recommended scenario. That's
+    enough for the model to detect near-duplicates and answer ranking
+    questions, without exploding the context.
+    """
+    snapshots = _collect_session_scorecards(session)
+    if not snapshots:
         return ""
-    result_blob = (session or {}).get("result") if isinstance((session or {}).get("result"), dict) else {}
-    if not result_blob:
-        return ""
-    sc_fields = {
-        k: result_blob[k] for k in (
-            "executive_summary", "key_insights", "top_risks", "recommendations",
-            "component_rationale", "financial_impact", "jaspen_score", "score_category",
-            "project_name", "initiative_name", "industry",
-        ) if k in result_blob and result_blob[k]
-    }
-    if not sc_fields:
+
+    compact = []
+    for idx, snap in enumerate(snapshots):
+        if not isinstance(snap, dict):
+            continue
+        dims_raw = snap.get("dimensions") if isinstance(snap.get("dimensions"), dict) else {}
+        dim_summary = {}
+        for k, v in dims_raw.items():
+            if isinstance(v, dict) and "score" in v:
+                dim_summary[k] = v["score"]
+            elif isinstance(v, (int, float)):
+                dim_summary[k] = v
+        risks = snap.get("top_risks")
+        risk_texts = []
+        if isinstance(risks, list):
+            for r in risks[:3]:
+                if isinstance(r, str):
+                    risk_texts.append(r[:160])
+                elif isinstance(r, dict):
+                    t = r.get("text") or r.get("risk") or r.get("description") or ""
+                    if isinstance(t, str) and t:
+                        risk_texts.append(t[:160])
+        recs = snap.get("recommendations") or snap.get("next_steps")
+        rec_first = None
+        if isinstance(recs, list) and recs:
+            first = recs[0]
+            if isinstance(first, str):
+                rec_first = first[:200]
+            elif isinstance(first, dict):
+                rec_first = (first.get("text") or first.get("action") or "")[:200] or None
+        compact.append({
+            "id": str(snap.get("id") or snap.get("analysis_id") or f"snap_{idx}"),
+            "name": snap.get("project_name") or snap.get("name") or snap.get("label") or f"Scorecard {idx + 1}",
+            "score": snap.get("jaspen_score") or snap.get("score"),
+            "score_category": snap.get("score_category"),
+            "dimensions": dim_summary,
+            "top_risks": risk_texts,
+            "recommended": rec_first,
+        })
+    if not compact:
         return ""
     return (
-        "\n\n[CURRENT SCORECARD CONTENT — reference these values to answer clarifying questions about the existing scorecard. "
-        "Never edit or patch this scorecard. If the user describes any change to the idea, end your reply with "
-        "'Building your scorecard now.' to generate a new scorecard alongside this one.]\n"
-        + json.dumps(sc_fields, indent=2)
+        "\n\n[SCORED IDEAS IN THIS THREAD — these are the scorecards the user has generated. "
+        "Use this data to answer questions like 'which of these are duplicates / nearly identical / strongest', "
+        "to compare or rank ideas, or to reference specific scores when explaining a number. "
+        "Never edit or patch a scorecard — they're immutable snapshots. "
+        "Do NOT emit 'Building your scorecard now.' unless the user explicitly asks you to score a new variation; "
+        "the system has auto-scoring turned off and only fires when the user clicks the Generate scorecard CTA.]\n"
+        + json.dumps(compact, indent=2)
     )
+
+
+def _collect_session_scorecards(session):
+    """Return every scorecard payload in this thread: baseline + every
+    scenario-derived snapshot. Order: oldest → newest. De-duped by id."""
+    if not isinstance(session, dict):
+        return []
+    out = []
+    seen = set()
+
+    def _push(card):
+        if not isinstance(card, dict):
+            return
+        cid = str(card.get("id") or card.get("analysis_id") or "")
+        if cid and cid in seen:
+            return
+        if cid:
+            seen.add(cid)
+        out.append(card)
+
+    result_blob = session.get("result") if isinstance(session.get("result"), dict) else {}
+    # baseline
+    baseline = result_blob.get("_baseline_scorecard") if isinstance(result_blob.get("_baseline_scorecard"), dict) else result_blob
+    if baseline and baseline.get("jaspen_score") is not None:
+        _push(baseline)
+    # scorecard_snapshots list
+    for snap in (result_blob.get("scorecard_snapshots") or []):
+        _push(snap)
+    # scenarios (each carries .result with the full scorecard payload)
+    for scen in (session.get("scenarios") or []):
+        if isinstance(scen, dict):
+            inner = scen.get("result") or scen.get("scorecard") or scen.get("analysis_result")
+            if isinstance(inner, dict):
+                _push(inner)
+    return out
 
 
 def _message_has_data_context_request(user_message):

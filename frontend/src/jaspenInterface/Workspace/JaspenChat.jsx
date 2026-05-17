@@ -5594,14 +5594,6 @@ if (rawHistory.length > 0) {
 
   const scrollToEnd = () => endRef.current?.scrollIntoView({ behavior: 'smooth' });
   useEffect(scrollToEnd, [messages, busy]);
-  // When the user clicks Trade-off / Execution pill, the corresponding
-  // artifact renders at the bottom of the conversation. Auto-scroll so
-  // it's immediately visible without manually scrolling down.
-  useEffect(() => {
-    if (activePill === 'scenarios' || activePill === 'execution') {
-      endRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [activePill]);
 
   const syncAiDrawerToBottom = useCallback(() => {
     const node = aiMessagesRef.current;
@@ -6326,23 +6318,11 @@ useEffect(() => {
       // Kick off knowledge signal extraction in background
       void refreshKnowledgeSignals(sid);
 
-      // Agentic scoring on start path — only auto-fire when the AI clearly
-      // signals "score this now" (explicit trigger phrase or backend status).
-      // We deliberately do NOT auto-fire on suggest_rescore actions — those
-      // are meant to render as a user-clickable button ("Want me to score
-      // that?"), not auto-execute. Auto-firing on them caused phantom
-      // scorecards after clarifying questions.
-      const _startAiText = String(data?.reply || data?.message || data?.text || '').toLowerCase();
-      const _startTextSignals = /building your scorecard|scorecard now|generating your scorecard|scoring your idea/.test(_startAiText);
-      if (data?.status === 'ready_to_analyze' || _startTextSignals) {
-        if (!analysisResult && !autoScoringTriggeredRef.current) {
-          autoScoringTriggeredRef.current = true;
-          setTimeout(() => { void triggerInlineScore(sid); }, 800);
-        } else if (analysisResult) {
-          setTimeout(() => { void triggerAutoVersion(sid); }, 800);
-        }
-      }
-
+      // Auto-scoring is OFF. Scoring is a user-initiated action, never
+      // system-initiated. The Jaspen Insights panel surfaces a "Generate
+      // scorecard" CTA when confidence is high enough; the user clicks it
+      // when they're ready. The "+ New Version" button on existing
+      // scorecards covers re-scoring. Conversations stay conversational.
       return sid;
     } catch (e) {
       if (e?.status === 403 && e?.data?.code === 'model_type_not_allowed') {
@@ -6424,24 +6404,8 @@ async function continueConversation(userText, options = {}) {
     // Refresh knowledge signals in background after each turn
     void refreshKnowledgeSignals(sessionId);
 
-    // Agentic scoring: only auto-fire when the AI clearly signals "score now"
-    // via the trigger phrase or the backend status. suggest_rescore actions
-    // are USER-clickable button proposals — not auto-execute signals.
-    // (Auto-firing on suggest_rescore caused phantom scorecards after
-    // clarifying questions like "which two of these are duplicates?")
-    const _aiText = String(data?.text || data?.reply || data?.message || '').toLowerCase();
-    const _textSignalsScore = /building your scorecard|scorecard now|generating your scorecard|scoring your idea/.test(_aiText);
-    if (data?.status === 'ready_to_analyze' || _textSignalsScore) {
-      const sid = currentSessionId || sessionId;
-      if (!analysisResult && !autoScoringTriggeredRef.current) {
-        // First scorecard — baseline
-        autoScoringTriggeredRef.current = true;
-        setTimeout(() => { void triggerInlineScore(sid); }, 800);
-      } else if (analysisResult) {
-        // Variation / new version — guard inside triggerAutoVersion prevents re-entry
-        setTimeout(() => { void triggerAutoVersion(sid); }, 800);
-      }
-    }
+    // Auto-scoring is OFF. Scoring is a user-initiated action, never
+    // system-initiated. See the matching comment on the start path above.
 
     // Note: AI Agent backend handles persistence automatically
     // No need to call saveSessionToBackend - readiness is already saved by backend
@@ -11848,50 +11812,12 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
 	                </div>
 	              ))}
 
-              {/* Trade-off artifact — pinned at end of conversation when the
-                  Trade-off pill is active. "Open in Workspace" gives users
-                  the full canvas for edits. */}
-              {activePill === 'scenarios' && Array.isArray(scorecardSnapshots) && scorecardSnapshots.length > 0 && (
-                <div className="jas-message ai">
-                  <div className="jas-message-bubble" style={{ padding: 0, background: 'transparent', position: 'relative' }}>
-                    {sessionId && (
-                      <a
-                        href={`/workspace/${encodeURIComponent(sessionId)}/__tradeoff__`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{
-                          position: 'absolute', top: 14, right: 18, zIndex: 5,
-                          padding: '6px 12px', borderRadius: 8,
-                          background: '#0f172a', color: '#fff',
-                          textDecoration: 'none', fontSize: 12.5, fontWeight: 500,
-                          whiteSpace: 'nowrap',
-                          boxShadow: '0 1px 2px rgba(15,23,42,0.08)',
-                        }}
-                      >Open in Workspace ↗</a>
-                    )}
-                    <TradeoffView
-                      scorecardSnapshots={scorecardSnapshots}
-                      strategyObjective={strategyObjective}
-                      portfolioAnalysis={null}
-                      onAsk={(text) => {
-                        setActivePill(null);
-                        void onSubmit({ text });
-                      }}
-                      asking={busy}
-                      threadId={sessionId || currentSessionId}
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* Execution artifact — same pattern. */}
-              {activePill === 'execution' && (
-                <div className="jas-message ai">
-                  <div className="jas-message-bubble" style={{ padding: 0, background: 'transparent' }}>
-                    {renderInlineExecutionView()}
-                  </div>
-                </div>
-              )}
+              {/* The pills (Discovery / Scoring / Trade-off / Execution) no
+                  longer swap the conversation panel content. They only
+                  change which Insights the right sidebar emphasizes. The
+                  Trade-off table and Execution canvas live in Workspace
+                  (Open in Workspace from any scorecard); inline artifacts
+                  for both are TBD. The chat is the single source of truth. */}
 
               {/* Scorecard loading states are now rendered inline as placeholder messages
                   in the messages array (scorecard-loading artifact type), so the card

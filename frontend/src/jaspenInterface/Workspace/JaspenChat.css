@@ -603,23 +603,24 @@
 .jas-insights-collapse-btn {
   appearance: none;
   -webkit-appearance: none;
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--gray-600, #5a6585);
-  width: 26px;
-  height: 26px;
-  border-radius: 6px;
+  background: #fff;
+  border: 1px solid var(--border, #d0e8ef);
+  color: var(--navy, #161f3b);
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
   flex-shrink: 0;
+  font-size: 13px;
 }
 .jas-insights-collapse-btn:hover {
-  background: rgba(160, 3, 108, 0.06);
+  background: rgba(160, 3, 108, 0.08);
   color: var(--magenta, #a0036c);
-  border-color: rgba(160, 3, 108, 0.18);
+  border-color: rgba(160, 3, 108, 0.24);
 }
 .jas-insights-collapse-btn--inline {
   margin-left: auto;
