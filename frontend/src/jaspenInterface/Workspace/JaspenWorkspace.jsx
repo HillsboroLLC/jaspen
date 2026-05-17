@@ -544,17 +544,48 @@ export default function JaspenWorkspace() {
             // hide a comparison that actually has data to show.
             <div style={{ height:'100%', display:'flex', flexDirection:'column' }}>
               {(() => {
-                const list = Array.isArray(bundle?.scorecard_snapshots) ? [...bundle.scorecard_snapshots] : [];
-                const known = new Set(list.map((s) => String(s?.id || s?.analysis_id || '')));
+                // Mirror what the chat-tab Trade-off view sees. Sources, in
+                // order of preference: bundle.scorecard_snapshots (the
+                // canonical merged list), then baseline_scorecard, then
+                // current_scorecard, then every scenario in bundle.scenarios.
+                // We de-dupe by id so the same scorecard doesn't appear twice.
+                const list = [];
+                const known = new Set();
                 const seed = (s, label, isBaseline) => {
                   if (!s || typeof s !== 'object') return;
-                  const id = String(s.id || s.analysis_id || (isBaseline ? 'baseline' : 'current'));
+                  const id = String(
+                    s.id || s.analysis_id || s.analysisId ||
+                    (isBaseline ? 'baseline' : `card_${list.length}`)
+                  );
                   if (known.has(id)) return;
                   known.add(id);
-                  list.unshift({ ...s, id, analysis_id: id, label: s.label || label, isBaseline: Boolean(isBaseline) });
+                  list.push({
+                    ...s,
+                    id,
+                    analysis_id: s.analysis_id || id,
+                    label: s.label || label,
+                    isBaseline: Boolean(isBaseline || s.isBaseline),
+                  });
                 };
+                // 1. The canonical merged list (covers historical snapshots).
+                (Array.isArray(bundle?.scorecard_snapshots) ? bundle.scorecard_snapshots : [])
+                  .forEach((s, i) => seed(s, s?.label || `Version ${i + 1}`, s?.isBaseline));
+                // 2. Baseline + current — usually already in (1), but seed
+                //    anyway in case the merged list is empty for legacy threads.
                 seed(bundle?.baseline_scorecard, 'Baseline', true);
                 seed(bundle?.current_scorecard, 'Current', false);
+                // 3. Scenario-derived scorecards — `result` is the standard
+                //    payload key, but we accept the alternates the chat tab
+                //    accepts too.
+                (Array.isArray(bundle?.scenarios) ? bundle.scenarios : []).forEach((entry, i) => {
+                  const inner = entry?.result || entry?.scorecard || entry?.analysis_result;
+                  if (!inner || typeof inner !== 'object') return;
+                  seed(
+                    { ...inner, label: inner.label || entry?.label || `Scenario ${i + 1}` },
+                    entry?.label || `Scenario ${i + 1}`,
+                    false,
+                  );
+                });
                 return (
                   <TradeoffView
                     scorecardSnapshots={list}

@@ -24,7 +24,7 @@ import {
   faPaperPlane, faSpinner, faTimes, faBars, faCheck, faExclamationTriangle,
   faChartLine, faTrash, faPlus, faMinus, faMicrophone,
   faBolt, faLayerGroup, faPlay, faListCheck, faArrowUpRightFromSquare, faGaugeHigh, faClockRotateLeft, faPaperclip, faArrowUp,
-  faDownload, faChevronDown, faUser, faBell, faLock, faCopy, faThumbsUp, faThumbsDown, faRotate, faPen, faArrowRightArrowLeft
+  faDownload, faChevronDown, faChevronLeft, faChevronRight, faUser, faBell, faLock, faCopy, faThumbsUp, faThumbsDown, faRotate, faPen, faArrowRightArrowLeft
 } from '@fortawesome/free-solid-svg-icons';
 import {
   MonitorCheck, MessageCircleQuestion,
@@ -1484,6 +1484,19 @@ export default function JaspenChat() {
   const [lightboxScorecard, setLightboxScorecard] = useState(null);
   // View mode for the inline Execution view in the chat tab (list/board/timeline)
   const [inlineExecView, setInlineExecView] = useState('list');
+  // Jaspen Insights panel collapsed state — persists to localStorage so the
+  // user's preference survives reloads. Auto-suggested-but-not-forced collapse
+  // when the user opens execution / trade-off (those views need width).
+  const [insightsCollapsed, setInsightsCollapsed] = useState(() => {
+    try { return localStorage.getItem('jaspen.insightsCollapsed') === '1'; } catch (_) { return false; }
+  });
+  const toggleInsightsCollapsed = () => {
+    setInsightsCollapsed((v) => {
+      const next = !v;
+      try { localStorage.setItem('jaspen.insightsCollapsed', next ? '1' : '0'); } catch (_) {}
+      return next;
+    });
+  };
   // Close lightbox on Esc
   useEffect(() => {
     if (!lightboxScorecard) return;
@@ -11960,12 +11973,48 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       )}
         </div>
 
-        {/* Jaspen Insights Panel */}
-        {messages.length > 0 && (
+        {/* Jaspen Insights Panel — collapses to a thin rail to free up
+            real estate for the main canvas. State persists in localStorage. */}
+        {messages.length > 0 && insightsCollapsed && (
+          <aside
+            className="jas-insights-panel jas-insights-panel--collapsed"
+            aria-label="Jaspen Insights (collapsed)"
+          >
+            <button
+              type="button"
+              className="jas-insights-collapse-btn"
+              onClick={toggleInsightsCollapsed}
+              title="Expand Jaspen Insights"
+              aria-label="Expand Jaspen Insights"
+              aria-expanded="false"
+            >
+              <FontAwesomeIcon icon={faChevronLeft} />
+            </button>
+            <div className="jas-insights-rail-dot" aria-hidden="true" />
+            <div
+              className="jas-insights-rail-label"
+              aria-hidden="true"
+              title="Click to expand"
+            >
+              JASPEN INSIGHTS
+            </div>
+          </aside>
+        )}
+        {messages.length > 0 && !insightsCollapsed && (
           <aside className="jas-insights-panel" aria-label="Jaspen Insights">
             <div className="jas-insights-header">
               <span className="jas-insights-dot" aria-hidden="true" />
               <span className="jas-insights-title">Jaspen Insights</span>
+              <button
+                type="button"
+                className="jas-insights-collapse-btn jas-insights-collapse-btn--inline"
+                onClick={toggleInsightsCollapsed}
+                title="Collapse panel"
+                aria-label="Collapse Jaspen Insights"
+                aria-expanded="true"
+              >
+                <FontAwesomeIcon icon={faChevronRight} />
+              </button>
             </div>
 
             {/* ── Top cards: Confidence always shown; Score stacks below once scorecard exists ── */}
