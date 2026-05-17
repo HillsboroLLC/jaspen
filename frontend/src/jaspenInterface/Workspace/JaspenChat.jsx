@@ -9385,16 +9385,22 @@ if (!baselineRef.current) baselineRef.current = normalizedFallback._baseline_sco
     void handleSelectAnalysis(entry);
   }, [sessionId, currentSessionId, view, analysisResult, analysisHistory]);
 
-  // Delete a session
+  // Delete a session — returns { ok, status, body } so callers can react to
+  // failures instead of swallowing the error silently.
   const deleteAnalysisById = async (itemId) => {
     try {
-await authFetch(`${API_BASE}/api/v1/ai-agent/threads/${itemId}`, {
-  method: 'DELETE',
-  headers: buildAuthHeaders({}, 'DELETE'),
-  credentials: 'include'
-} );
+      const resp = await authFetch(`${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(itemId)}`, {
+        method: 'DELETE',
+        headers: buildAuthHeaders({}, 'DELETE'),
+        credentials: 'include',
+      });
+      const status = resp?.status;
+      let body = null;
+      try { body = await resp.json(); } catch (_) { /* may be empty */ }
+      return { ok: resp?.ok === true, status, body };
     } catch (error) {
       console.error('Error deleting session from backend:', error);
+      return { ok: false, status: 0, body: { error: String(error?.message || error) } };
     }
   };
 
@@ -9405,12 +9411,38 @@ await authFetch(`${API_BASE}/api/v1/ai-agent/threads/${itemId}`, {
 
     setConfirmDialog({
       title: 'Delete analysis',
-      message: `Delete "${label}"? This cannot be undone.`,
+      message: `Delete "${label}"? This will remove it from your history. (Anonymized scoring signals stay in your org's idea ledger for benchmarking — they never identify the original idea text.)`,
       confirmLabel: 'Delete analysis',
       confirmVariant: 'danger',
       onConfirm: async () => {
-        await deleteAnalysisById(itemId);
+        // Optimistic UI: drop from local history immediately so the row
+        // disappears even before fetchSessions() returns.
+        setAnalysisHistory((prev) => prev.filter((it) => String(it?.id || '') !== String(itemId)));
+
+        const result = await deleteAnalysisById(itemId);
+
+        if (!result.ok) {
+          showToast(`Couldn't delete: ${result.body?.error || `HTTP ${result.status || '?'}`}`, 'error');
+          // Restore the list — the row didn't actually go away on the server.
+          await fetchSessions();
+          return;
+        }
+
+        // If we deleted the session the user is currently viewing, send them
+        // back to the intake screen so we don't end up rendering a ghost.
+        const wasActive = String(currentSessionId || sessionId || '') === String(itemId);
+        if (wasActive) {
+          clearLastSessionId();
+          setSessionId(null);
+          setCurrentSessionId(null);
+          setAnalysisResult(null);
+          setMessages([]);
+          setTradeoffRequested(false);
+          setView('intake');
+        }
+
         await fetchSessions();
+        showToast('Session deleted', 'success');
       },
     });
   };
@@ -11302,9 +11334,11 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
             {(() => {
               // Only the CURRENT stage is highlighted
               const currentStage = activePill || (!analysisResult ? 'discovery' : 'scoring');
-              // Trade-off only unlocks when the user explicitly asks to compare/rank.
-              // Just having multiple scorecards is NOT enough.
-              const canScenarios = Boolean(analysisResult) && tradeoffRequested;
+              // Trade-off is available for the whole session once the user has
+              // any scorecard — they shouldn't lose access after building an
+              // execution plan or refreshing. `tradeoffRequested` still gates
+              // whether the inline comparison auto-renders in the chat thread.
+              const canScenarios = Boolean(analysisResult);
               const hasExecutionPlan = Array.isArray(threadWbs?.tasks) && threadWbs.tasks.length > 0;
               // Execution tab is clickable once the user has at least one
               // scorecard — even if no plan exists yet — so they can see the
@@ -11316,9 +11350,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                 { key: 'scoring',    label: 'Scoring',    disabled: !analysisResult },
                 { key: 'scenarios',  label: 'Trade-off',  disabled: !canScenarios,
                   title: !canScenarios
-                    ? (analysisResult
-                        ? 'Ask Jaspen to compare or rank your scorecards to unlock the trade-off view'
-                        : 'Score an idea first to access the trade-off view')
+                    ? 'Score an idea first to access the trade-off view'
                     : undefined },
                 { key: 'execution',  label: 'Execution',  disabled: !canExecution,
                   title: !canExecution

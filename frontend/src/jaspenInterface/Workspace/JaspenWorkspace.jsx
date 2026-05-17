@@ -108,6 +108,7 @@ export default function JaspenWorkspace() {
   const [error, setError] = useState(null);
   const [chatInput, setChatInput] = useState('');
   const [chatHistory, setChatHistory] = useState([]);
+  const [chatBusy, setChatBusy] = useState(false);
   const saveTimerRef = useRef(null);
   const skipNextSaveRef = useRef(true); // first render = freshly loaded, don't save back
 
@@ -313,15 +314,63 @@ export default function JaspenWorkspace() {
     }
   }
 
-  function sendChat() {
+  async function sendChat() {
     const text = chatInput.trim();
-    if (!text) return;
-    setChatHistory((prev) => [
-      ...prev,
-      { role: 'user', text },
-      { role: 'ai', text: 'Workspace chat is in beta. Edits via chat will land in v1.1 — for now, click any heading on the canvas to edit it directly.' },
-    ]);
+    if (!text || chatBusy) return;
+    // Optimistic user message
+    const userTurn = { role: 'user', text };
+    const nextHistory = [...chatHistory, userTurn];
+    setChatHistory([...nextHistory, { role: 'ai', text: '…', pending: true }]);
     setChatInput('');
+    setChatBusy(true);
+
+    try {
+      // Build a thin analysis_context so the agent grounds replies in this
+      // artifact. We keep it compact — only the fields the agent needs to
+      // reason about this canvas. Manual edits still flow through their own
+      // patch endpoints; this chat is for Q&A + AI-assisted edits.
+      const ctx = {
+        thread_id: threadId,
+        artifact_kind: isExecution ? 'execution_plan' : isTradeoff ? 'tradeoff' : 'scorecard',
+        scorecard_id: isScorecard ? scorecardId : null,
+        scorecard_name: isScorecard ? (snapshot?.name || displayTitle) : displayTitle,
+        snapshot: isScorecard ? snapshot : null,
+        wbs_summary: isExecution && Array.isArray(wbs?.tasks)
+          ? { tasks: wbs.tasks.length }
+          : null,
+      };
+
+      // Conversation history (Anthropic-friendly role+content shape).
+      const history = nextHistory.map((m) => ({
+        role: m.role === 'user' ? 'user' : 'assistant',
+        content: String(m.text || ''),
+      }));
+
+      const resp = await Jaspen.chat({
+        message: text,
+        conversation_history: history,
+        analysis_context: ctx,
+        analysis_id: threadId,
+      });
+      const replyText = String(resp?.text || resp?.response || resp?.reply || '').trim()
+        || 'Got it — I noted that. (No reply payload was returned.)';
+      setChatHistory((prev) => {
+        // Replace the trailing pending placeholder
+        const arr = prev.slice(0, -1);
+        return [...arr, { role: 'ai', text: replyText }];
+      });
+    } catch (e) {
+      console.error('[workspace chat] failed:', e);
+      setChatHistory((prev) => {
+        const arr = prev.slice(0, -1);
+        return [
+          ...arr,
+          { role: 'ai', text: `Jaspen couldn't reply: ${String(e?.message || e || 'unknown error')}. Try again in a moment.` },
+        ];
+      });
+    } finally {
+      setChatBusy(false);
+    }
   }
 
   // --- Loading / error states ---
@@ -371,7 +420,7 @@ export default function JaspenWorkspace() {
             {isExecution
               ? <>Editing execution plan. <span style={{ color:'#0f172a', fontWeight:500 }}>Manual edits are free</span>; AI edits cost credits.</>
               : isTradeoff
-                ? 'Viewing trade-off comparison. Editing comes in v1.1.'
+                ? <>Viewing trade-off comparison. <span style={{ color:'#0f172a', fontWeight:500 }}>Ask Jaspen anything</span> about the comparison.</>
                 : <>Editing cosmetic fields. <span style={{ color:'#0f172a', fontWeight:500 }}>Manual edits are free</span>; AI edits cost credits.</>}
           </div>
         </div>
@@ -409,16 +458,17 @@ export default function JaspenWorkspace() {
               value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); } }}
-              placeholder="Describe a change…"
+              placeholder={chatBusy ? 'Jaspen is replying…' : 'Describe a change…'}
+              disabled={chatBusy}
               style={{ flex:1, border:'none', outline:'none', background:'transparent', fontSize:13, color:'#0f172a' }}
             />
             <button
               onClick={sendChat}
-              disabled={!chatInput.trim()}
+              disabled={!chatInput.trim() || chatBusy}
               style={{
                 width:30, height:30, borderRadius:8, border:'none',
-                background: chatInput.trim() ? '#0f172a' : '#cbd5e1',
-                color:'#fff', cursor: chatInput.trim() ? 'pointer' : 'not-allowed',
+                background: (chatInput.trim() && !chatBusy) ? '#0f172a' : '#cbd5e1',
+                color:'#fff', cursor: (chatInput.trim() && !chatBusy) ? 'pointer' : 'not-allowed',
                 display:'flex', alignItems:'center', justifyContent:'center',
               }}
               aria-label="Send"
