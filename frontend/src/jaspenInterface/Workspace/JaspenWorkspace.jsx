@@ -537,14 +537,34 @@ export default function JaspenWorkspace() {
             // (title overrides etc.) will land in v1.1 — this v1 shows the
             // full comparison surface inside the Workspace shell so the user
             // can already 'view large' and download.
+            //
+            // We merge baseline + current into the snapshots list because for
+            // older threads `bundle.scorecard_snapshots` may be empty even
+            // when a baseline exists — TradeoffView's empty state would then
+            // hide a comparison that actually has data to show.
             <div style={{ height:'100%', display:'flex', flexDirection:'column' }}>
-              <TradeoffView
-                scorecardSnapshots={Array.isArray(bundle?.scorecard_snapshots) ? bundle.scorecard_snapshots : []}
-                strategyObjective={bundle?.strategy_objective || 'balanced'}
-                portfolioAnalysis={null}
-                onAsk={() => { /* no-op for now */ }}
-                asking={false}
-              />
+              {(() => {
+                const list = Array.isArray(bundle?.scorecard_snapshots) ? [...bundle.scorecard_snapshots] : [];
+                const known = new Set(list.map((s) => String(s?.id || s?.analysis_id || '')));
+                const seed = (s, label, isBaseline) => {
+                  if (!s || typeof s !== 'object') return;
+                  const id = String(s.id || s.analysis_id || (isBaseline ? 'baseline' : 'current'));
+                  if (known.has(id)) return;
+                  known.add(id);
+                  list.unshift({ ...s, id, analysis_id: id, label: s.label || label, isBaseline: Boolean(isBaseline) });
+                };
+                seed(bundle?.baseline_scorecard, 'Baseline', true);
+                seed(bundle?.current_scorecard, 'Current', false);
+                return (
+                  <TradeoffView
+                    scorecardSnapshots={list}
+                    strategyObjective={bundle?.strategy_objective || 'balanced'}
+                    portfolioAnalysis={null}
+                    onAsk={() => { /* no-op for now */ }}
+                    asking={false}
+                  />
+                );
+              })()}
             </div>
           ) : isExecution ? (
             <JaspenExecutionCanvas
