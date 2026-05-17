@@ -186,9 +186,12 @@ const HeroStrip = ({ ideas, objective }) => {
   const maxPossible = total * 100;
   const capture     = maxPossible ? Math.round((top3Scores / maxPossible) * 100) : 0;
 
+  // "Combined score" was confusing (sum of scores is meaningless to read at a
+  // glance). Replaced with the session average — matches the existing
+  // "Ideas scored" / "Top-3 capture" sibling stats in shape and tone.
   const stats = [
     { k: 'Ideas scored',   v: `${total}`, sub: `of ${total} in session` },
-    { k: 'Combined score', v: `${combined}`, sub: `avg ${avg}` },
+    { k: 'Session avg',    v: `${avg}`,   sub: 'across scored ideas' },
     { k: 'Top-3 capture',  v: `${capture}%`, sub: 'of projected impact' },
   ];
 
