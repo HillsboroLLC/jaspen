@@ -48,6 +48,8 @@ import {
   ViewSwitcher as ExecViewSwitcher,
   OwnerChip,
   PhaseCard as ExecPhaseCard,
+  BoardView as ExecBoardView,
+  TimelineView as ExecTimelineView,
 } from './JaspenExecutionCanvas';
 import BatchIdeaManager from './components/BatchIdeaManager';
 import Onboarding from './components/Onboarding';
@@ -1480,6 +1482,8 @@ export default function JaspenChat() {
   // Artifact lightbox: when the user clicks a scorecard in the Session
   // Artifacts dropdown, we show it in a dark-backdrop modal.
   const [lightboxScorecard, setLightboxScorecard] = useState(null);
+  // View mode for the inline Execution view in the chat tab (list/board/timeline)
+  const [inlineExecView, setInlineExecView] = useState('list');
   // Close lightbox on Esc
   useEffect(() => {
     if (!lightboxScorecard) return;
@@ -2356,7 +2360,7 @@ const renderInlineExecutionView = () => {
               </span>
             </div>
           </div>
-          <ExecViewSwitcher value="list" />
+          <ExecViewSwitcher value={inlineExecView} onChange={setInlineExecView} />
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             {wsHref && (
               <a
@@ -2411,21 +2415,36 @@ const renderInlineExecutionView = () => {
         )}
       </div>
 
-      {/* Phase cards — wider (reduced horizontal padding) */}
-      <div style={{ flex: 1, overflow: 'auto', padding: '0 22px 22px' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {phases.map((p) => (
-            <ExecPhaseCard
-              key={p.title}
-              phase={p}
-              tasks={p.tasks}
-              onUpdateTask={handleTaskUpdate}
-              onAddTask={handleAddTask}
-              onReorder={handleReorderTask}
-            />
-          ))}
+      {/* View body — list / board / timeline */}
+      {inlineExecView === 'list' && (
+        <div style={{ flex: 1, overflow: 'auto', padding: '0 22px 22px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {phases.map((p) => (
+              <ExecPhaseCard
+                key={p.title}
+                phase={p}
+                tasks={p.tasks}
+                onUpdateTask={handleTaskUpdate}
+                onAddTask={handleAddTask}
+                onReorder={handleReorderTask}
+              />
+            ))}
+          </div>
         </div>
-      </div>
+      )}
+      {inlineExecView === 'board' && (
+        <div style={{ flex: 1, overflow: 'auto' }}>
+          <ExecBoardView
+            wbs={threadWbs}
+            onColumnDrop={(sourceId, newStatus) => handleTaskUpdate(sourceId, { status: newStatus })}
+          />
+        </div>
+      )}
+      {inlineExecView === 'timeline' && (
+        <div style={{ flex: 1, overflow: 'auto' }}>
+          <ExecTimelineView wbs={threadWbs} phases={phases} />
+        </div>
+      )}
     </div>
   );
 };

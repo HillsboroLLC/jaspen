@@ -283,16 +283,13 @@ export function ViewSwitcher({ value, onChange }) {
             key={o.key}
             type="button"
             onClick={() => onChange?.(o.key)}
-            disabled={o.key !== 'list'}
-            title={o.key !== 'list' ? `${o.label} view — coming in v1.1` : undefined}
             style={{
               padding: '5px 12px', borderRadius: 6, border: 'none',
               background: active ? '#fff' : 'transparent',
-              color: o.key !== 'list' ? COLOR.mute : (active ? COLOR.navy : COLOR.ink),
+              color: active ? COLOR.navy : COLOR.ink,
               fontSize: 12.5, fontWeight: active ? 600 : 500,
-              cursor: o.key !== 'list' ? 'not-allowed' : 'pointer',
+              cursor: 'pointer',
               boxShadow: active ? '0 1px 3px rgba(15,23,42,0.08)' : 'none',
-              opacity: o.key !== 'list' ? 0.55 : 1,
             }}
           >
             {o.label}
@@ -579,6 +576,489 @@ export function PhaseCard({ phase, tasks, onUpdateTask, onAddTask, onReorder }) 
   );
 }
 
+// ── Board view (Kanban by status) ──────────────────────────────────────────
+
+const BOARD_COLUMNS = [
+  { id: 'todo',        label: 'To Do',       dot: COLOR.mute   },
+  { id: 'in_progress', label: 'In Progress', dot: COLOR.blue   },
+  { id: 'blocked',     label: 'Blocked',     dot: COLOR.orange },
+  { id: 'done',        label: 'Done',        dot: COLOR.green  },
+];
+
+// Card rendered inside a Kanban column.
+function BoardCard({ task, onUpdate, onColumnDrop }) {
+  const [hover, setHover] = useState(false);
+  const priority = normalizePriority(task?.priority);
+  const dot = PRIORITY_STYLE[priority].dot;
+
+  const onDragStart = (e) => {
+    if (!task?.id) return;
+    e.dataTransfer.setData('text/plain', String(task.id));
+    e.dataTransfer.effectAllowed = 'move';
+    e.currentTarget.style.opacity = '0.55';
+  };
+  const onDragEnd = (e) => { e.currentTarget.style.opacity = '1'; };
+
+  return (
+    <div
+      draggable={!!task?.id}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        position: 'relative',
+        background: '#fff',
+        border: `1px solid ${COLOR.line}`,
+        borderRadius: 10,
+        padding: '11px 12px 10px',
+        boxShadow: hover ? '0 6px 18px rgba(22,31,59,0.10), 0 0 0 1px rgba(22,31,59,0.04)' : '0 1px 2px rgba(22,31,59,0.04)',
+        cursor: 'grab',
+      }}
+    >
+      {/* priority dot + title */}
+      <div style={{ display: 'flex', gap: 9, alignItems: 'flex-start', marginBottom: 9 }}>
+        <span style={{ width: 7, height: 7, borderRadius: 4, background: dot, marginTop: 6, flex: '0 0 auto' }} />
+        <div style={{
+          fontSize: 13, fontWeight: 500, color: COLOR.navy, lineHeight: 1.35,
+          display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+        }}>{task?.title || 'Untitled task'}</div>
+      </div>
+
+      {/* phase pill */}
+      {task?.phase && (
+        <div style={{ marginBottom: 10 }}>
+          <span style={{
+            display: 'inline-block', padding: '2px 7px', borderRadius: 4,
+            background: COLOR.line2,
+            fontFamily: 'JetBrains Mono, monospace',
+            fontSize: 10, fontWeight: 600, color: COLOR.ink,
+            letterSpacing: '0.06em', textTransform: 'uppercase',
+          }}>{task.phase}</span>
+        </div>
+      )}
+
+      {/* owner + due */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Avatar name={task?.owner || task?.suggested_role || ''} size={20} />
+        <span style={{ fontSize: 12, color: COLOR.navy2, fontWeight: 500 }}>
+          {String(task?.owner || task?.suggested_role || 'Unassigned').split(/\s+/)[0]}
+        </span>
+        <span style={{ flex: 1 }} />
+        {task?.due_date && (
+          <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 10.5, color: COLOR.ink }}>
+            {task.due_date}
+          </span>
+        )}
+      </div>
+
+      {/* hover ⋯ */}
+      {hover && (
+        <span style={{ position: 'absolute', top: 8, right: 8, color: COLOR.mute }}>
+          <FontAwesomeIcon icon={faEllipsis} style={{ fontSize: 11 }} />
+        </span>
+      )}
+    </div>
+  );
+}
+
+function BoardColumn({ col, tasks, onColumnDrop }) {
+  const [hover, setHover] = useState(false);
+  const onDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setHover(true);
+  };
+  const onDragLeave = () => setHover(false);
+  const onDrop = (e) => {
+    e.preventDefault();
+    setHover(false);
+    const sourceId = e.dataTransfer.getData('text/plain');
+    if (!sourceId) return;
+    onColumnDrop?.(sourceId, col.id);
+  };
+
+  return (
+    <div
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      style={{
+        flex: 1, minWidth: 0,
+        display: 'flex', flexDirection: 'column',
+        background: hover ? COLOR.roseTint : COLOR.line2,
+        border: `1px solid ${hover ? COLOR.rose : COLOR.line}`,
+        borderRadius: 14,
+        padding: '14px 12px',
+        minHeight: 0, transition: 'background 120ms, border-color 120ms',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, padding: '0 4px' }}>
+        <span style={{ width: 8, height: 8, borderRadius: 4, background: col.dot }} />
+        <span style={{ fontSize: 12.5, fontWeight: 600, color: COLOR.navy, letterSpacing: '-0.005em', textTransform: 'uppercase' }}>
+          {col.label}
+        </span>
+        <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 11, color: COLOR.mute, fontWeight: 500 }}>
+          {tasks.length}
+        </span>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto', minHeight: 0 }}>
+        {tasks.length === 0 && col.id === 'done' && (
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: '40px 12px',
+            border: `1.5px dashed ${COLOR.line}`, borderRadius: 10,
+            fontSize: 12, color: COLOR.mute, textAlign: 'center',
+          }}>Drop here when complete</div>
+        )}
+        {tasks.length === 0 && col.id !== 'done' && (
+          <div style={{ padding: '14px 4px', fontSize: 11, color: COLOR.mute, fontStyle: 'italic' }}>
+            No tasks
+          </div>
+        )}
+        {tasks.map((t) => (
+          <BoardCard key={t.id} task={t} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function BoardView({ wbs, onColumnDrop }) {
+  const buckets = useMemo(() => {
+    const b = { todo: [], in_progress: [], blocked: [], done: [] };
+    (wbs?.tasks || []).forEach((t) => {
+      const s = normalizeStatus(t?.status);
+      if (b[s]) b[s].push(t);
+    });
+    return b;
+  }, [wbs]);
+
+  return (
+    <div style={{
+      flex: 1, minHeight: 0, overflow: 'hidden',
+      padding: '4px 32px 32px',
+      display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14,
+    }}>
+      {BOARD_COLUMNS.map((col) => (
+        <BoardColumn
+          key={col.id}
+          col={col}
+          tasks={buckets[col.id]}
+          onColumnDrop={onColumnDrop}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ── Timeline view (Gantt-style, 12 weekly columns) ─────────────────────────
+
+const TIMELINE_WEEKS = 12;
+// Phase tints — rotate through 4 themes
+const PHASE_TINTS = [
+  { tint: '#fbeaf3', stripe: COLOR.rose },
+  { tint: '#e9f0fe', stripe: COLOR.blue },
+  { tint: '#fff5e6', stripe: COLOR.orange },
+  { tint: '#dff4e8', stripe: COLOR.green },
+];
+
+// Format a date as "May 21" for week headers.
+const _formatShortDate = (d) => {
+  if (!d) return '';
+  const m = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()];
+  return `${m} ${d.getDate()}`;
+};
+
+// Build the 12 weekly columns starting from the earliest task due_date,
+// or today if none have due dates.
+function buildTimelineGrid(wbs) {
+  const tasks = Array.isArray(wbs?.tasks) ? wbs.tasks : [];
+  // Anchor: first due_date in the plan, else today.
+  let anchor = null;
+  tasks.forEach((t) => {
+    const d = Date.parse(String(t?.due_date || ''));
+    if (Number.isFinite(d) && (!anchor || d < anchor)) anchor = d;
+  });
+  if (!anchor) anchor = Date.now();
+  // Walk backward to the Monday of the anchor's week.
+  const start = new Date(anchor);
+  start.setHours(0, 0, 0, 0);
+  const dayIdx = (start.getDay() + 6) % 7; // 0 = Mon
+  start.setDate(start.getDate() - dayIdx);
+
+  const weeks = [];
+  for (let i = 0; i < TIMELINE_WEEKS; i++) {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i * 7);
+    weeks.push({ n: i + 1, date: d });
+  }
+  return { weeks, gridStart: weeks[0].date };
+}
+
+// Map a task to its (startWeek, endWeek) integer indices [1..12]. Uses
+// estimated_days/timeline_days to length the bar; uses due_date as the
+// END of the bar when available.
+function taskToWeekRange(task, weeks, gridStart) {
+  const dueTs = Date.parse(String(task?.due_date || ''));
+  const days = Math.max(1, Number(task?.estimated_days || task?.timeline_days || 5));
+  if (Number.isFinite(dueTs)) {
+    const endIdx = Math.floor((dueTs - gridStart.getTime()) / (7 * 86400 * 1000));
+    const endWeek = Math.max(1, Math.min(TIMELINE_WEEKS, endIdx + 1));
+    const span = Math.max(1, Math.ceil(days / 7));
+    const startWeek = Math.max(1, endWeek - span + 1);
+    return { startWeek, endWeek };
+  }
+  // No due date — fall back to "1 week starting at week 1" (Phase 1, etc.)
+  // Caller composes per-phase fallback below.
+  return null;
+}
+
+function GanttBar({ task, startWeek, endWeek, onUpdate }) {
+  const priority = normalizePriority(task?.priority);
+  const muted = priority === 'low';
+  const color = muted ? COLOR.line2 : PRIORITY_STYLE[priority].dot;
+  const inkColor = muted ? COLOR.navy : '#fff';
+  const span = endWeek - startWeek + 1;
+  const leftPct = ((startWeek - 1) / TIMELINE_WEEKS) * 100;
+  const widthPct = (span / TIMELINE_WEEKS) * 100;
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        left: `calc(${leftPct}% + 6px)`,
+        width: `calc(${widthPct}% - 12px)`,
+        top: 7, bottom: 7,
+        borderRadius: 7,
+        background: color,
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '0 9px',
+        color: inkColor,
+        boxShadow: muted ? 'none' : '0 1px 2px rgba(22,31,59,0.10)',
+        cursor: 'grab', overflow: 'hidden',
+      }}
+      title={task?.title}
+    >
+      <Avatar name={task?.owner || task?.suggested_role || ''} size={18} />
+      <span style={{
+        fontSize: 11.5, fontWeight: 600, flex: 1,
+        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        color: inkColor, letterSpacing: '-0.005em',
+      }}>{task?.title || 'Untitled task'}</span>
+      {span >= 2 && task?.due_date && (
+        <span style={{
+          fontFamily: 'JetBrains Mono, monospace', fontSize: 10, fontWeight: 600,
+          color: muted ? COLOR.ink : 'rgba(255,255,255,0.85)', flex: '0 0 auto',
+        }}>{task.due_date}</span>
+      )}
+    </div>
+  );
+}
+
+export function TimelineView({ wbs, phases }) {
+  const { weeks, gridStart } = useMemo(() => buildTimelineGrid(wbs), [wbs]);
+  const LEFT_W = 308;
+  const ROW_H = 46;
+  const HEADER_H = 56;
+
+  // Today line position (% across the 12-week range)
+  const todayFrac = (() => {
+    const t = (Date.now() - gridStart.getTime()) / (TIMELINE_WEEKS * 7 * 86400 * 1000);
+    return Math.max(0, Math.min(1, t));
+  })();
+
+  return (
+    <div style={{ padding: '4px 32px 22px', flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex' }}>
+      <div style={{
+        flex: 1, minWidth: 0,
+        background: '#fff', border: `1px solid ${COLOR.line}`, borderRadius: 14,
+        display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        position: 'relative',
+      }}>
+        {/* Week header */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: `${LEFT_W}px 1fr`,
+          height: HEADER_H, flex: '0 0 auto',
+          borderBottom: `1px solid ${COLOR.line}`,
+          background: '#fff', zIndex: 2,
+        }}>
+          <div style={{ padding: '0 22px', display: 'flex', alignItems: 'center' }}>
+            <Eyebrow>Phase &nbsp;·&nbsp; Task</Eyebrow>
+          </div>
+          <div style={{ position: 'relative', display: 'grid', gridTemplateColumns: `repeat(${TIMELINE_WEEKS}, 1fr)` }}>
+            {weeks.map((w, i) => (
+              <div key={w.n} style={{
+                borderLeft: i === 0 ? 'none' : `1px solid ${COLOR.line2}`,
+                padding: '8px 10px 0',
+                display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 3,
+              }}>
+                <div style={{
+                  fontFamily: 'JetBrains Mono, monospace',
+                  fontSize: 10, color: COLOR.mute, letterSpacing: '0.06em', fontWeight: 600,
+                }}>WK {w.n}</div>
+                <div style={{
+                  fontFamily: 'JetBrains Mono, monospace',
+                  fontSize: 11, color: COLOR.navy, fontWeight: 600, letterSpacing: '0.02em',
+                }}>{_formatShortDate(w.date)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Body */}
+        <div style={{ flex: 1, overflow: 'auto', position: 'relative' }}>
+          {phases.map((phase, pIdx) => {
+            const tint = PHASE_TINTS[pIdx % PHASE_TINTS.length];
+            const doneCount = phase.tasks.filter((t) => normalizeStatus(t.status) === 'done').length;
+            return (
+              <div key={phase.title} style={{
+                position: 'relative',
+                background: tint.tint,
+                borderLeft: `3px solid ${tint.stripe}`,
+              }}>
+                {/* Phase header strip */}
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: `${LEFT_W - 3}px 1fr`,
+                  height: 38,
+                  borderBottom: `1px solid ${COLOR.line}`,
+                  alignItems: 'center',
+                }}>
+                  <div style={{ padding: '0 14px 0 19px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{
+                      fontFamily: 'JetBrains Mono, monospace',
+                      fontSize: 10, fontWeight: 700,
+                      color: tint.stripe, letterSpacing: '0.14em',
+                    }}>PHASE {phase.num}</span>
+                    <span style={{ fontSize: 12.5, fontWeight: 600, color: COLOR.navy }}>{phase.title}</span>
+                  </div>
+                  <div style={{ padding: '0 14px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 11, color: COLOR.ink }}>
+                      <span style={{ fontFamily: 'JetBrains Mono, monospace', color: COLOR.navy, fontWeight: 600 }}>{doneCount}</span>
+                      {' / '}{phase.tasks.length} complete
+                    </span>
+                  </div>
+                </div>
+
+                {/* Tasks */}
+                {phase.tasks.map((t, tIdx) => {
+                  // Try to derive week range from due_date; else fall back to a
+                  // best-guess 2-week bar staggered by index inside the phase.
+                  let range = taskToWeekRange(t, weeks, gridStart);
+                  if (!range) {
+                    const fallbackStart = Math.min(TIMELINE_WEEKS, 1 + tIdx);
+                    const fallbackEnd = Math.min(TIMELINE_WEEKS, fallbackStart + 1);
+                    range = { startWeek: fallbackStart, endWeek: fallbackEnd };
+                  }
+                  return (
+                    <div key={t.id || tIdx} style={{
+                      position: 'relative',
+                      display: 'grid',
+                      gridTemplateColumns: `${LEFT_W}px 1fr`,
+                      height: ROW_H,
+                      borderBottom: `1px solid ${COLOR.line2}`,
+                    }}>
+                      <div style={{
+                        padding: '0 14px 0 22px',
+                        display: 'flex', alignItems: 'center', gap: 10,
+                        borderRight: `1px solid ${COLOR.line}`,
+                        background: '#fff',
+                      }}>
+                        <span style={{
+                          width: 6, height: 6, borderRadius: 4,
+                          background: PRIORITY_STYLE[normalizePriority(t.priority)].dot,
+                          opacity: normalizePriority(t.priority) === 'low' ? 0.6 : 1,
+                          flex: '0 0 auto',
+                        }} />
+                        <span style={{
+                          fontSize: 12.5, color: COLOR.navy, fontWeight: 500,
+                          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                          flex: 1, minWidth: 0,
+                        }}>{t.title || 'Untitled task'}</span>
+                        <Avatar name={t.owner || t.suggested_role || ''} size={20} />
+                      </div>
+                      <div style={{ position: 'relative' }}>
+                        {/* Faint week gridlines */}
+                        {weeks.map((w, i) => (
+                          <div key={w.n} style={{
+                            position: 'absolute',
+                            left: `${(i / TIMELINE_WEEKS) * 100}%`,
+                            top: 0, bottom: 0, width: 1,
+                            background: i === 0 ? 'transparent' : COLOR.line2,
+                          }} />
+                        ))}
+                        <GanttBar
+                          task={t}
+                          startWeek={range.startWeek}
+                          endWeek={range.endWeek}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+
+          {/* Today vertical line */}
+          {todayFrac > 0 && todayFrac < 1 && (
+            <div style={{
+              position: 'absolute',
+              left: `calc(${LEFT_W}px + ${todayFrac} * (100% - ${LEFT_W}px))`,
+              top: 0, bottom: 0,
+              width: 0,
+              borderLeft: `1.5px dashed ${COLOR.rose}`,
+              pointerEvents: 'none', zIndex: 3,
+            }}>
+              <span style={{
+                position: 'absolute', top: 6, left: -22,
+                padding: '2px 7px', borderRadius: 4,
+                background: COLOR.rose, color: '#fff',
+                fontSize: 9.5, fontWeight: 700, letterSpacing: '0.12em',
+                fontFamily: 'JetBrains Mono, monospace',
+              }}>TODAY</span>
+            </div>
+          )}
+        </div>
+
+        {/* Legend */}
+        <div style={{
+          flex: '0 0 auto',
+          padding: '10px 22px',
+          borderTop: `1px solid ${COLOR.line}`,
+          display: 'flex', alignItems: 'center', gap: 18,
+          background: '#fff',
+        }}>
+          <Eyebrow>Priority</Eyebrow>
+          {[
+            { k: 'Critical', c: PRIORITY_STYLE.critical.dot },
+            { k: 'High',     c: PRIORITY_STYLE.high.dot     },
+            { k: 'Medium',   c: PRIORITY_STYLE.medium.dot   },
+            { k: 'Low',      c: PRIORITY_STYLE.low.dot, muted: true },
+          ].map((p) => (
+            <span key={p.k} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 11.5, color: COLOR.ink }}>
+              <span style={{ width: 14, height: 8, borderRadius: 3, background: p.c, opacity: p.muted ? 0.8 : 1 }} />
+              {p.k}
+            </span>
+          ))}
+          <div style={{ width: 1, height: 14, background: COLOR.line, margin: '0 4px' }} />
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 11.5, color: COLOR.ink }}>
+            <span style={{ display: 'inline-block', width: 18, height: 0, borderTop: `1.5px dashed ${COLOR.rose}` }} />
+            Today
+          </span>
+          <div style={{ flex: 1 }} />
+          <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 10.5, color: COLOR.mute }}>
+            WK 1 · {_formatShortDate(weeks[0].date).toUpperCase()} → WK {TIMELINE_WEEKS} · {_formatShortDate(weeks[weeks.length - 1].date).toUpperCase()}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main canvas ────────────────────────────────────────────────────────────
 
 export default function JaspenExecutionCanvas({ threadId, bundle, wbs: wbsProp, displayTitle, score, onAskJaspen }) {
@@ -694,6 +1174,18 @@ export default function JaspenExecutionCanvas({ threadId, bundle, wbs: wbsProp, 
         insertAt = lastIdxOfPhase >= 0 ? lastIdxOfPhase + 1 : tasks.length;
       }
       tasks.splice(insertAt, 0, moved);
+      return { ...(prev || {}), tasks };
+    });
+  }, []);
+
+  // Board column drop — moves a task into a new status bucket.
+  const onColumnDrop = useCallback((sourceId, newStatus) => {
+    setWbs((prev) => {
+      const tasks = Array.isArray(prev?.tasks) ? [...prev.tasks] : [];
+      const idx = tasks.findIndex((t) => String(t?.id || '') === String(sourceId));
+      if (idx < 0) return prev;
+      if (normalizeStatus(tasks[idx]?.status) === newStatus) return prev;
+      tasks[idx] = { ...tasks[idx], status: newStatus };
       return { ...(prev || {}), tasks };
     });
   }, []);
@@ -890,21 +1382,33 @@ export default function JaspenExecutionCanvas({ threadId, bundle, wbs: wbsProp, 
         )}
       </div>
 
-      {/* Phase cards — reduced horizontal padding so cards read wider */}
-      <div style={{ flex: 1, overflow: 'auto', padding: '4px 32px 32px' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-          {phases.map((p) => (
-            <PhaseCard
-              key={p.title}
-              phase={p}
-              tasks={p.tasks}
-              onUpdateTask={updateTask}
-              onAddTask={addTask}
-              onReorder={reorderTask}
-            />
-          ))}
+      {/* View body — list / board / timeline */}
+      {view === 'list' && (
+        <div style={{ flex: 1, overflow: 'auto', padding: '4px 32px 32px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+            {phases.map((p) => (
+              <PhaseCard
+                key={p.title}
+                phase={p}
+                tasks={p.tasks}
+                onUpdateTask={updateTask}
+                onAddTask={addTask}
+                onReorder={reorderTask}
+              />
+            ))}
+          </div>
         </div>
-      </div>
+      )}
+      {view === 'board' && (
+        <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+          <BoardView wbs={wbs} onColumnDrop={onColumnDrop} />
+        </div>
+      )}
+      {view === 'timeline' && (
+        <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+          <TimelineView wbs={wbs} phases={phases} />
+        </div>
+      )}
     </div>
   );
 }
