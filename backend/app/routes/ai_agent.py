@@ -453,27 +453,12 @@ _SYSTEM_PROMPT_PREFIX = (
     "Valid priority values are: critical, high, medium, low. "
     "due_date must be an ISO date string (YYYY-MM-DD) or null. "
     "After any mutation tool succeeds, confirm exactly what changed so the user knows what to look for in the Execution tab. "
-    "SCORECARDS — CRITICAL RULES (read carefully): "
-    "Scorecards are immutable snapshots that accumulate inline in the conversation. The expected pattern is: "
-    "chat → chat → scorecard → chat → chat → scorecard → chat → scorecard. "
-    "Each time the user introduces a NEW idea variation — a new market, a pricing tweak, a different team size, a scope adjustment, a pivot, an alternative to consider — your response MUST end with the literal phrase "
-    "'Building your scorecard now.' on its own line. That phrase triggers the system to generate a new scorecard inline. "
-    "Do not ask 'Want me to score that?' or wait for confirmation. Do not call patch_scorecard. Do not attempt to mutate or edit the previous scorecard. "
-    "Just acknowledge the change in one or two sentences, then end with 'Building your scorecard now.' "
-    "\n"
-    "DO NOT generate a new scorecard for confirmations, acknowledgments, or decisions about EXISTING scorecards. Examples that must be answered conversationally with NO new scorecard:\n"
-    "  - 'I'll go with these 4 for now' (selection of existing ideas)\n"
-    "  - 'Yes, let's move forward' / 'Looks good' / 'Go with that' / 'Sounds great'\n"
-    "  - 'Thanks' / 'Got it' / 'OK' / 'Cool'\n"
-    "  - 'Let's keep all three' / 'Park these for now' / 'I want to revisit later'\n"
-    "  - 'Why is execution risk 6.5?' / 'What does strategic fit mean?' (clarifying questions)\n"
-    "  - 'Can you summarize the top risks?' / 'Walk me through dimension X' (read-only requests)\n"
-    "  - 'Which idea would you pick?' / 'How do these compare?' (analysis of existing scorecards)\n"
-    "Only generate a new scorecard when the user introduces or modifies an idea/parameter, not when they confirm, decide, or ask questions about existing ones. "
-    "If you have ANY doubt about whether a new scorecard is warranted, do NOT emit the trigger phrase. Instead, ask the user explicitly: e.g. 'Want me to score this as a new variation, or are we keeping the existing scorecards?' Wait for a clear yes before scoring. "
-    "It is far worse to score unnecessarily (creating duplicate scorecards) than to under-score. The system will refuse to score on a confirmation message anyway, so the trigger phrase is wasted there. "
-    "Do NOT use labels like 'Scenario A', 'Scenario B', or 'baseline'. Refer to ideas by their actual name or describe what changed. "
-    "Keep it conversational throughout — one exchange at a time. "
+    "SCORECARDS: "
+    "Scorecards are immutable snapshots that accumulate inline in the conversation — chat, chat, scorecard, chat, scorecard, etc. "
+    "When the user proposes a new idea, variation, or parameter change that warrants a fresh score, end your reply with 'Building your scorecard now.' on its own line — that phrase triggers the system to generate the scorecard inline. "
+    "Use your judgment about when to score. A confirmation, a correction, an acknowledgment, or a question about an existing scorecard never warrants a new one. A genuinely new idea, a pivoted market, a meaningfully different team or pricing model does. If you're unsure, just ask the user before scoring. "
+    "Do not call patch_scorecard or attempt to edit a previous scorecard — they're immutable. "
+    "Refer to ideas by their actual name (not 'Scenario A' / 'baseline'). Keep the conversation natural — one exchange at a time. "
     "RANKING: If the user asks to rank, compare, or summarize all the ideas modeled in this conversation, "
     "do so directly using the scorecard data available. Present a clear ranked list with the idea name, score, "
     "and one-line rationale for each. This also applies when the user uploads a file containing multiple ideas "
@@ -998,12 +983,11 @@ def _view_context_prompt_suffix(view_context):
     # View-specific behavioral overrides
     if current_view == "summary":
         lines.append(
-            "- IMPORTANT: The user is viewing a completed scorecard. "
-            "Do NOT ask intake questions. Do NOT ask for baseline data. "
-            "If the user describes ANY change to the idea (new market, different pricing, scope tweak, team change, even a small one), "
-            "acknowledge briefly and end your reply with 'Building your scorecard now.' — the system will generate a new scorecard inline. "
-            "Do NOT call patch_scorecard. Do NOT mutate the existing scorecard. Scorecards accumulate; they are never edited in place. "
-            "If the user asks a clarifying question about the scorecard, answer it directly without generating a new one."
+            "- The user is viewing a completed scorecard. "
+            "Do NOT ask intake questions or ask for baseline data again. "
+            "If the user proposes a new variation worth scoring, end your reply with 'Building your scorecard now.' to trigger a fresh scorecard inline. "
+            "Do NOT call patch_scorecard — scorecards are immutable. "
+            "Use your judgment: confirmations, corrections, and clarifying questions don't need a new scorecard."
         )
     elif current_view == "scenario":
         lines.append(
@@ -7942,13 +7926,6 @@ def conversation_start():
                 mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
                 undo_snapshot = state.get("undo_snapshot") if isinstance(state.get("undo_snapshot"), dict) else None
 
-                # Hard safeguard against scoring on a confirmation/correction.
-                # Strips "Building your scorecard now." from the assembled reply
-                # before we persist or surface it in any subsequent payload.
-                # The streamed chunks may already contain the phrase, but the
-                # frontend uses the final assembled text for trigger detection.
-                assistant_reply = _strip_trigger_if_confirmation(assistant_reply, user_message)
-
                 credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
                 credit_settlement = _settle_reserved_credits(
                     user,
@@ -8092,12 +8069,6 @@ def conversation_start():
         _release_reserved_credits(user, reserved_credits)
         raise
 
-    # Hard safeguard: if the user's message was a confirmation / correction /
-    # read-only question, strip the "Building your scorecard now." trigger
-    # so we don't auto-spawn a redundant scorecard. The prompt also forbids
-    # this, but a deterministic backend check makes it impossible to slip.
-    assistant_reply = _strip_trigger_if_confirmation(assistant_reply, user_message)
-
     credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
     credit_settlement = _settle_reserved_credits(
         user,
@@ -8198,98 +8169,6 @@ def conversation_start():
 
 
 import re as _re
-
-# ── Confirmation / correction patterns ─────────────────────────────────────
-# If the user's most recent message matches this regex AND nothing in it
-# proposes a new variation, we strip the "Building your scorecard now."
-# trigger from the assistant's reply. This is a hard safeguard against the
-# agent over-scoring on acknowledgments / corrections.
-_USER_CONFIRMATION_RE = _re.compile(
-    r"^\s*(?:"
-    r"yes(?:\b|,|\s)|yeah\b|yep\b|yup\b|ok(?:ay)?\b|sure\b|sounds?\s+good|looks?\s+good|"
-    r"thanks?\b|thank\s+you\b|got\s+it\b|cool\b|great\b|perfect\b|alright\b|got\s+ya\b|"
-    r"go\s+with\s+(?:that|these|those|it)|"
-    r"i'?ll\s+go\s+with|i\s+will\s+go\s+with|"
-    r"i'?m\s+going\s+to\s+(?:move\s+forward|stick|keep|park|use|go)|"
-    r"let'?s\s+(?:keep|park|move\s+forward|go|stick|use)|"
-    r"keep\s+(?:these|those|all)|park\s+(?:these|those|it)|"
-    r"no\s+(?:that\s+was|need|thanks|new)\b|"
-    r"that\s+was\s+(?:a\s+repeat|just|wrong|fine|good)|"
-    r"you\s+didn'?t\s+need\s+to|you\s+don'?t\s+need\s+to|"
-    r"i\s+was\s+just\s+(?:letting\s+you\s+know|saying|asking|checking)|"
-    r"just\s+(?:letting\s+you\s+know|wanted\s+to|asking|checking)|"
-    r"stop\s+(?:scoring|making|creating)|don'?t\s+score|no\s+more\s+score|"
-    r"why\s+(?:did|do|is|are)|what\s+(?:does|do|is|are)|how\s+(?:does|do|is|are)|"
-    r"can\s+you\s+(?:explain|summarize|tell\s+me|walk\s+me|clarify|expand|elaborate)|"
-    r"which\s+(?:one|idea|of)|"
-    r"summari[sz]e|"
-    r"got\s+it\b|noted\b"
-    r")",
-    _re.IGNORECASE,
-)
-
-# Patterns that indicate the user IS proposing a new variation — these
-# override the confirmation regex when both match. Examples: "let's try X
-# instead", "what if we pivot to Y", "score this updated version".
-_USER_NEW_VARIATION_RE = _re.compile(
-    r"\b(?:"
-    r"score\s+(?:this|that|it|a|the\s+new)|re[-\s]?score|"
-    r"what\s+if\s+(?:we|i)|let'?s\s+try\b|"
-    r"pivot\s+to|switch\s+to|change\s+to|"
-    r"new\s+(?:idea|variation|scenario|version|approach|market)|"
-    r"different\s+(?:market|team|pricing|approach|model|target)|"
-    r"add\s+(?:a\s+)?(?:new|another)|"
-    r"tweak\s+(?:the\s+)?(?:pricing|team|scope|timeline)|"
-    r"adjust\s+(?:the\s+)?(?:pricing|team|scope|timeline)|"
-    r"increase\s+(?:the\s+)?(?:price|budget|team|headcount)|"
-    r"decrease\s+(?:the\s+)?(?:price|budget|team|headcount)|"
-    r"what\s+about\s+(?:adding|trying|targeting|pivoting)"
-    r")\b",
-    _re.IGNORECASE,
-)
-
-# Phrases the AI uses to trigger scoring. We strip these from the reply
-# when the user's input was clearly confirmatory.
-_BUILD_SCORECARD_TRIGGER_RE = _re.compile(
-    r"(?:^|\n)\s*(?:building\s+your\s+scorecard\s+now\.?|generating\s+your\s+scorecard\.?|scoring\s+your\s+idea\.?|scorecard\s+now\.?)\s*$",
-    _re.IGNORECASE | _re.MULTILINE,
-)
-
-
-def _user_message_looks_confirmatory(user_message: str) -> bool:
-    """Return True if the user's message is purely an acknowledgment,
-    correction, or read-only question (no new idea proposed)."""
-    text = (user_message or "").strip()
-    if not text:
-        return False
-    # If the user explicitly proposes a new variation, it's NOT a confirmation.
-    if _USER_NEW_VARIATION_RE.search(text):
-        return False
-    # Multi-sentence messages — check the FIRST and LAST short fragments.
-    # Long detailed messages (>200 chars) generally aren't pure confirmations.
-    if len(text) > 220:
-        return False
-    return bool(_USER_CONFIRMATION_RE.search(text))
-
-
-def _strip_trigger_if_confirmation(assistant_reply: str, user_message: str) -> str:
-    """If the user's message was a confirmation/correction, strip any
-    'Building your scorecard now.' trigger from the assistant's reply so
-    the frontend doesn't auto-spawn a new scorecard. The agent's
-    conversational text stays; only the trigger phrase at the end gets cut.
-    """
-    if not assistant_reply:
-        return assistant_reply
-    if not _user_message_looks_confirmatory(user_message):
-        return assistant_reply
-    cleaned = _BUILD_SCORECARD_TRIGGER_RE.sub("", assistant_reply).rstrip()
-    if cleaned != (assistant_reply or "").rstrip():
-        current_app.logger.info(
-            "[trigger-strip] suppressed scorecard trigger (user msg looks confirmatory): %r",
-            (user_message or "")[:80],
-        )
-    return cleaned
-
 
 # Patterns that indicate the AI is suggesting a rescore
 _RESCORE_SUGGESTION_RE = _re.compile(
@@ -8635,13 +8514,6 @@ def conversation_continue():
                 mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
                 undo_snapshot = state.get("undo_snapshot") if isinstance(state.get("undo_snapshot"), dict) else None
 
-                # Hard safeguard against scoring on a confirmation/correction.
-                # Strips "Building your scorecard now." from the assembled reply
-                # before we persist or surface it in any subsequent payload.
-                # The streamed chunks may already contain the phrase, but the
-                # frontend uses the final assembled text for trigger detection.
-                assistant_reply = _strip_trigger_if_confirmation(assistant_reply, user_message)
-
                 credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
                 credit_settlement = _settle_reserved_credits(
                     user,
@@ -8783,12 +8655,6 @@ def conversation_continue():
     except Exception:
         _release_reserved_credits(user, reserved_credits)
         raise
-
-    # Hard safeguard: if the user's message was a confirmation / correction /
-    # read-only question, strip the "Building your scorecard now." trigger
-    # so we don't auto-spawn a redundant scorecard. The prompt also forbids
-    # this, but a deterministic backend check makes it impossible to slip.
-    assistant_reply = _strip_trigger_if_confirmation(assistant_reply, user_message)
 
     credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
     credit_settlement = _settle_reserved_credits(
