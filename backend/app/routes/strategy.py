@@ -6066,6 +6066,10 @@ _ALLOWED_OVERRIDE_KEYS = {
     'accent_color',
     'theme',
     'narrative',
+    # Trade-off "park / un-park": when False, this scorecard is excluded from
+    # hero-strip math, the quadrant, and the ranking pills in the Trade-off
+    # view. It still renders in the chat — purely a presentation flag.
+    'tradeoff_included',
 }
 
 
@@ -6083,6 +6087,19 @@ def _coerce_override_value(key, value):
         if s.startswith('#') and len(s) in (4, 7):
             return s
         return None
+    if key == 'tradeoff_included':
+        # Coerce truthy/falsy strings and numbers. Default to True if ambiguous.
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        if isinstance(value, str):
+            v = value.strip().lower()
+            if v in ('false', '0', 'no', 'off', 'excluded', 'parked'):
+                return False
+            if v in ('true', '1', 'yes', 'on', 'included'):
+                return True
+        return True
     return value
 
 

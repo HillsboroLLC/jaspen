@@ -2654,6 +2654,44 @@ const renderScorecardCard = (result, opts = {}) => {
           )}
         </div>
         <span className="jas-scorecard-view-hint">Ask Jaspen about any dimension →</span>
+
+        {/* Parked-from-trade-off pill. Visible only when the user has
+            explicitly excluded this scorecard from the Trade-off view
+            (tradeoff_included = false). Clicking it re-includes via the
+            same /overrides PATCH endpoint the Trade-off row toggle uses. */}
+        {result?.display_overrides?.tradeoff_included === false && opts.threadId && (
+          <div style={{
+            marginTop: 10,
+            display: 'inline-flex', alignItems: 'center', gap: 8,
+            padding: '6px 10px',
+            background: 'rgba(160,3,108,0.06)',
+            border: '1px solid rgba(160,3,108,0.18)',
+            borderRadius: 999,
+            fontSize: 11.5, color: '#a0036c', fontWeight: 500,
+          }}>
+            <span>Parked from trade-off</span>
+            <button
+              type="button"
+              onClick={async () => {
+                const cid = String(result?.id || result?.analysis_id || '');
+                if (!cid) return;
+                try {
+                  await Jaspen.patchScorecardOverrides(opts.threadId, cid, { tradeoff_included: true });
+                  if (typeof opts.onTradeoffIncludeChanged === 'function') {
+                    opts.onTradeoffIncludeChanged(cid, true);
+                  }
+                } catch (e) {
+                  console.error('[scorecard] re-include failed', e);
+                }
+              }}
+              style={{
+                appearance: 'none', border: 'none', background: 'transparent',
+                color: '#a0036c', fontWeight: 600, cursor: 'pointer',
+                padding: 0, textDecoration: 'underline', fontSize: 11.5,
+              }}
+            >Include</button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -10884,6 +10922,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                   void onSubmit({ text });
                 }}
                 asking={busy}
+                threadId={sessionId || currentSessionId}
               />
             )}
           </div>
@@ -11774,6 +11813,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                 void onSubmit({ text });
               }}
               asking={busy}
+              threadId={sessionId || currentSessionId}
             />
           </div>
         ) : activePill === 'execution' ? (

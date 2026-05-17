@@ -593,6 +593,7 @@ export default function JaspenWorkspace() {
                     portfolioAnalysis={null}
                     onAsk={() => { /* no-op for now */ }}
                     asking={false}
+                    threadId={threadId}
                   />
                 );
               })()}
