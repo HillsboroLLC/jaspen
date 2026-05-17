@@ -50,7 +50,17 @@ from app.connector_store import get_connector_settings, get_thread_sync_profile,
 from app.jira_sync import sync_wbs_to_jira
 from app.smartsheet_sync import sync_wbs_to_smartsheet
 
-from .sessions import load_user_sessions, save_user_sessions
+from .sessions import (
+    load_user_sessions,
+    save_user_sessions,
+    archive_user_session,
+    hard_delete_user_session,
+)
+from app.idea_ledger import (
+    distill_session_to_ledger_row,
+    mark_ledger_archived,
+    mark_ledger_purged,
+)
 
 ai_agent_bp = Blueprint('ai_agent', __name__)
 PENDING_MUTATION_UNDO_KEY = "pending_mutation_undo"
@@ -8877,27 +8887,56 @@ def list_threads():
 @ai_agent_bp.route("/threads", methods=["DELETE"])
 @jwt_required()
 def reset_threads():
+    """Bulk soft-delete: archive every non-archived session for the user.
+
+    Distills each session to the ledger before archiving so the org-level
+    learning signal is preserved. Hard purge of the actual rows happens
+    when the per-row purge_after window elapses (via sweep_purge).
+
+    Pass ?hard=1 to bypass the grace window and purge everything now
+    (also anonymizes ledger rows). Use with care.
+    """
     user_id = str(get_jwt_identity())
     user = User.query.get(user_id)
-    sessions = load_user_sessions(user_id) or {}
+
+    hard_arg = (request.args.get("hard") or "").strip().lower()
+    hard = hard_arg in ("1", "true", "yes", "y")
+
+    sessions = load_user_sessions(user_id, include_archived=hard) or {}
     cleared_threads = len(sessions) if isinstance(sessions, dict) else 0
 
-    # Reset per-user AI Agent sessions.
-    existing_ids = list(sessions.keys()) if isinstance(sessions, dict) else []
-    save_user_sessions(user_id, {}, session_ids_to_delete=existing_ids)
+    if hard:
+        # Hard wipe: drop the rows and anonymize all ledger entries.
+        existing_ids = list(sessions.keys()) if isinstance(sessions, dict) else []
+        save_user_sessions(user_id, {}, session_ids_to_delete=existing_ids)
+        for sid in existing_ids:
+            try:
+                mark_ledger_purged(sid)
+            except Exception:
+                pass
+    else:
+        # Soft path: distill → archive each session.
+        for sid, session in (sessions.items() if isinstance(sessions, dict) else []):
+            try:
+                distill_session_to_ledger_row(user=user, session=session, outcome="active")
+                archive_user_session(user_id, sid, grace_days=30)
+                mark_ledger_archived(sid)
+            except Exception as e:
+                current_app.logger.warning(f"[reset_threads] failed for {sid}: {e}")
 
     # Reset per-user scenario storage used by ScenarioModeler.
     scenarios_cleared = save_scenarios_data(user_id, {})
 
     if user:
         _audit_ai_agent_event(
-            "session.archived",
+            "session.purged" if hard else "session.archived",
             user=user,
             details={
                 "thread_id": "*",
                 "scope": "all",
                 "cleared_threads": cleared_threads,
                 "cleared_scenarios": bool(scenarios_cleared),
+                "hard": hard,
             },
         )
 
@@ -9242,17 +9281,71 @@ def touch_thread(thread_id):
 @ai_agent_bp.route("/threads/<thread_id>", methods=["DELETE"])
 @jwt_required()
 def delete_thread(thread_id):
+    """Soft-delete a session: archive it, schedule a hard-purge in 30 days,
+    and write a de-identified row to org_idea_ledger so the org-level
+    learning signal survives. Pass ?hard=1 to skip the grace window and
+    purge immediately (also strips the user from the ledger row).
+    """
     user_id = str(get_jwt_identity())
     user = User.query.get(user_id)
-    sessions = load_user_sessions(user_id) or {}
+
+    hard_arg = (request.args.get("hard") or "").strip().lower()
+    hard = hard_arg in ("1", "true", "yes", "y")
+
+    # Include archived rows so the user can hard-purge something they
+    # previously soft-deleted.
+    sessions = load_user_sessions(user_id, include_archived=True) or {}
     session_key, session = _resolve_user_session(sessions, thread_id)
     if not isinstance(session, dict):
         return jsonify({"error": "Thread not found"}), 404
 
     resolved_thread_id = str(session.get("session_id") or session_key or thread_id)
-    target_key = session_key or resolved_thread_id
-    sessions.pop(target_key, None)
-    save_user_sessions(user_id, sessions)
+
+    if hard:
+        # Permanent purge: drop the session row and anonymize the ledger row.
+        # (mark_ledger_purged nulls user + session links and stamps purged_at.)
+        removed = hard_delete_user_session(user_id, resolved_thread_id)
+        ledger_purged = mark_ledger_purged(resolved_thread_id)
+        if user:
+            _audit_ai_agent_event(
+                "session.purged",
+                user=user,
+                details={
+                    "thread_id": resolved_thread_id,
+                    "scope": "single",
+                    "ledger_purged": bool(ledger_purged),
+                    "row_removed": bool(removed),
+                },
+            )
+        return jsonify({
+            "success": True,
+            "purged": True,
+            "deleted_thread_id": resolved_thread_id,
+        }), 200
+
+    # Soft delete: stamp archived_at + purge_after on the row, write ledger.
+    row = archive_user_session(user_id, resolved_thread_id, grace_days=30)
+    if row is None:
+        # Row didn't exist (shouldn't happen — we just resolved it) — fall
+        # back to wiping it out of the legacy in-payload dict.
+        sessions.pop(session_key or resolved_thread_id, None)
+        save_user_sessions(user_id, sessions)
+        return jsonify({
+            "success": True,
+            "deleted_thread_id": resolved_thread_id,
+        }), 200
+
+    # Best-effort ledger write — distillation is silent on failure so the
+    # user's delete action still succeeds end-to-end.
+    try:
+        distill_session_to_ledger_row(
+            user=user,
+            session=session,
+            outcome="active",
+        )
+        mark_ledger_archived(resolved_thread_id)
+    except Exception as e:
+        current_app.logger.warning(f"[delete_thread] ledger write failed for {resolved_thread_id}: {e}")
 
     if user:
         _audit_ai_agent_event(
@@ -9261,13 +9354,139 @@ def delete_thread(thread_id):
             details={
                 "thread_id": resolved_thread_id,
                 "scope": "single",
+                "purge_after": row.purge_after.isoformat() if row and row.purge_after else None,
             },
         )
 
     return jsonify({
         "success": True,
+        "archived": True,
+        "purge_after": row.purge_after.isoformat() if row and row.purge_after else None,
         "deleted_thread_id": resolved_thread_id,
     }), 200
+
+
+@ai_agent_bp.route("/threads/<thread_id>/purge", methods=["POST"])
+@jwt_required()
+def purge_thread(thread_id):
+    """Permanent purge — convenience POST endpoint that delegates to
+    delete_thread with hard=1. Lets the frontend issue a deliberate
+    second-confirm action without juggling query strings.
+    """
+    user_id = str(get_jwt_identity())
+    user = User.query.get(user_id)
+
+    sessions = load_user_sessions(user_id, include_archived=True) or {}
+    session_key, session = _resolve_user_session(sessions, thread_id)
+    if not isinstance(session, dict):
+        return jsonify({"error": "Thread not found"}), 404
+
+    resolved_thread_id = str(session.get("session_id") or session_key or thread_id)
+    removed = hard_delete_user_session(user_id, resolved_thread_id)
+    ledger_purged = mark_ledger_purged(resolved_thread_id)
+
+    if user:
+        _audit_ai_agent_event(
+            "session.purged",
+            user=user,
+            details={
+                "thread_id": resolved_thread_id,
+                "scope": "single",
+                "ledger_purged": bool(ledger_purged),
+                "row_removed": bool(removed),
+            },
+        )
+
+    return jsonify({
+        "success": True,
+        "purged": True,
+        "deleted_thread_id": resolved_thread_id,
+    }), 200
+
+
+@ai_agent_bp.route("/threads/<thread_id>/restore", methods=["POST"])
+@jwt_required()
+def restore_thread(thread_id):
+    """Undo a soft-delete within the 30-day grace window. Clears
+    archived_at + purge_after on the UserSession row and resets the
+    ledger row's outcome.
+    """
+    user_id = str(get_jwt_identity())
+    user = User.query.get(user_id)
+
+    sessions = load_user_sessions(user_id, include_archived=True) or {}
+    session_key, session = _resolve_user_session(sessions, thread_id)
+    if not isinstance(session, dict):
+        return jsonify({"error": "Thread not found"}), 404
+
+    resolved_thread_id = str(session.get("session_id") or session_key or thread_id)
+
+    # Direct row update — sessions.py helpers don't currently surface restore.
+    from app.models import UserSession, OrgIdeaLedger
+    row = UserSession.query.filter_by(user_id=user_id, session_id=resolved_thread_id).first()
+    if row is None or row.archived_at is None:
+        return jsonify({"error": "Thread is not archived"}), 400
+
+    row.archived_at = None
+    row.purge_after = None
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": f"Failed to restore: {e}"}), 500
+
+    ledger = OrgIdeaLedger.query.filter_by(source_session_id=resolved_thread_id).first()
+    if ledger is not None:
+        ledger.outcome = "active"
+        ledger.archived_at = None
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+
+    if user:
+        _audit_ai_agent_event(
+            "session.restored",
+            user=user,
+            details={"thread_id": resolved_thread_id},
+        )
+
+    return jsonify({"success": True, "restored_thread_id": resolved_thread_id}), 200
+
+
+@ai_agent_bp.route("/threads/sweep-purge", methods=["POST"])
+@jwt_required()
+def sweep_purge_expired_threads():
+    """Sweep archived sessions whose purge_after has elapsed and hard-delete
+    them. Returns the count. Intended to be called by a scheduled task,
+    but is jwt_required so admins/dev can trigger it manually. Only
+    operates on the calling user's own rows for now (we'll add an admin
+    cross-user variant when we wire a real scheduler).
+    """
+    user_id = str(get_jwt_identity())
+    from app.models import UserSession
+    now = datetime.utcnow()
+    rows = (
+        UserSession.query
+        .filter(UserSession.user_id == user_id)
+        .filter(UserSession.archived_at.isnot(None))
+        .filter(UserSession.purge_after.isnot(None))
+        .filter(UserSession.purge_after <= now)
+        .all()
+    )
+    purged_ids = []
+    for row in rows:
+        sid = row.session_id
+        try:
+            db.session.delete(row)
+            db.session.commit()
+            mark_ledger_purged(sid)
+            purged_ids.append(sid)
+        except Exception as e:
+            db.session.rollback()
+            current_app.logger.warning(f"[sweep_purge] failed to purge {sid}: {e}")
+
+    return jsonify({"success": True, "purged_count": len(purged_ids), "purged_ids": purged_ids}), 200
 
 
 @ai_agent_bp.route("/threads/<thread_id>/messages", methods=["POST"])

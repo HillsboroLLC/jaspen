@@ -514,10 +514,16 @@ class UserSession(db.Model):
     scenarios_json = db.Column(db.JSON, nullable=True, default=dict)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    # Soft delete: when the user clicks "Delete from my history" we set
+    # archived_at + purge_after. The row stays in the table (so we can undo
+    # within the grace window) but is hidden from history queries.
+    archived_at = db.Column(db.DateTime, nullable=True, index=True)
+    purge_after = db.Column(db.DateTime, nullable=True, index=True)
 
     __table_args__ = (
         db.UniqueConstraint('user_id', 'session_id', name='uq_user_sessions_user_id_session_id'),
         db.Index('ix_user_sessions_user_id_updated_at', 'user_id', 'updated_at'),
+        db.Index('ix_user_sessions_user_archived', 'user_id', 'archived_at'),
     )
 
 
@@ -834,3 +840,69 @@ class StripeWebhookEvent(db.Model):
         index=True,
     )
     processed_at = db.Column(db.DateTime, nullable=True, index=True)
+
+
+class OrgIdeaLedger(db.Model):
+    """De-identified scoring signals retained per session for org-level
+    benchmarking and pattern detection.
+
+    The ledger is what survives a "Delete from my history" action: the
+    original UserSession (with the idea text, chat, attachments) gets
+    archived and eventually purged, but the structured signals here power
+    the "ideas like this typically score X" experience for teams /
+    enterprises. A "Purge permanently" action sets purged_at and nulls the
+    user_id to fully anonymize the row.
+    """
+    __tablename__ = 'org_idea_ledger'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    ledger_id = db.Column(db.String(36), nullable=False, unique=True, default=lambda: str(uuid.uuid4()))
+    organization_id = db.Column(
+        db.String(36),
+        db.ForeignKey('organizations.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    originating_user_id = db.Column(
+        db.String(36),
+        db.ForeignKey('users.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    # While the UserSession still exists this links back to it; nulled when
+    # the session is fully purged.
+    source_session_id = db.Column(db.String(255), nullable=True, index=True)
+
+    # High-level categorical tags — these stay even after purge.
+    idea_category = db.Column(db.String(100), nullable=True, index=True)
+    industry = db.Column(db.String(100), nullable=True, index=True)
+    company_size = db.Column(db.String(50), nullable=True)
+
+    # Scoring snapshot (structured numbers only — no free-text rationale).
+    jaspen_score = db.Column(db.Integer, nullable=True, index=True)
+    score_category = db.Column(db.String(20), nullable=True, index=True)
+    dimensions = db.Column(db.JSON, nullable=True)       # {<dim>: {score, confidence, source}}
+    risk_tags = db.Column(db.JSON, nullable=True)        # ["market_risk", "execution_risk", ...]
+    recommendation_tags = db.Column(db.JSON, nullable=True)
+
+    # Engagement signals — did the user actually use the workflow.
+    had_tradeoff = db.Column(db.Boolean, nullable=False, default=False)
+    had_execution_plan = db.Column(db.Boolean, nullable=False, default=False)
+    phase_count = db.Column(db.Integer, nullable=True)
+    task_count = db.Column(db.Integer, nullable=True)
+    objective = db.Column(db.String(50), nullable=True)
+    model_tier_used = db.Column(db.String(32), nullable=True)
+
+    # Lifecycle: "active" | "archived" | "purged"
+    outcome = db.Column(db.String(32), nullable=False, default='active', index=True)
+
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    archived_at = db.Column(db.DateTime, nullable=True, index=True)
+    purged_at = db.Column(db.DateTime, nullable=True, index=True)
+
+    __table_args__ = (
+        db.Index('ix_org_idea_ledger_org_score', 'organization_id', 'jaspen_score'),
+        db.Index('ix_org_idea_ledger_industry_score', 'industry', 'jaspen_score'),
+        db.Index('ix_org_idea_ledger_org_created', 'organization_id', 'created_at'),
+    )

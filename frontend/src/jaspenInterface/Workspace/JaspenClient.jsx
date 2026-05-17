@@ -23,6 +23,10 @@ export const endpoints = {
   // Threads
   getThread:      (threadId) => `${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(threadId)}`,
   updateThread:   (threadId) => `${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(threadId)}`,
+  deleteThread:   (threadId, { hard = false } = {}) => `${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(threadId)}${hard ? '?hard=1' : ''}`,
+  purgeThread:    (threadId) => `${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(threadId)}/purge`,
+  restoreThread:  (threadId) => `${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(threadId)}/restore`,
+  sweepPurge:     `${API_BASE}/api/v1/ai-agent/threads/sweep-purge`,
   appendMessages: (threadId) => `${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(threadId)}/messages`,
   messageFeedback: (threadId, messageIndex) => `${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(threadId)}/messages/${encodeURIComponent(messageIndex)}/feedback`,
   regenerate: `${API_BASE}/api/v1/ai-agent/conversation/regenerate`,
@@ -1018,6 +1022,21 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
 
   deleteAnalysis: async (analysis_id) =>
     del(endpoints.deleteAnalysis(analysis_id), { withSid: true }),
+
+  // ---------- Sessions / threads lifecycle ----------
+  // Soft-delete (default) or hard-purge (`hard: true`). Soft-delete sets
+  // archived_at + a 30-day purge_after window, and writes a de-identified
+  // ledger row that survives the eventual hard purge.
+  deleteThread: async (threadId, { hard = false } = {}) =>
+    del(endpoints.deleteThread(threadId, { hard }), { withSid: true }),
+
+  // Convenience POST that always hard-purges (no query string juggling).
+  purgeThread: async (threadId) =>
+    postJSON(endpoints.purgeThread(threadId), {}, { withSid: true }),
+
+  // Undo a soft-delete within the grace window.
+  restoreThread: async (threadId) =>
+    postJSON(endpoints.restoreThread(threadId), {}, { withSid: true }),
 
   // Scenarios
   createScenario: async (threadId, { deltas = {}, label, session_id, baseline } = {}) =>

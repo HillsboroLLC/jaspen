@@ -9386,10 +9386,12 @@ if (!baselineRef.current) baselineRef.current = normalizedFallback._baseline_sco
   }, [sessionId, currentSessionId, view, analysisResult, analysisHistory]);
 
   // Delete a session — returns { ok, status, body } so callers can react to
-  // failures instead of swallowing the error silently.
-  const deleteAnalysisById = async (itemId) => {
+  // failures instead of swallowing the error silently. Pass { hard: true }
+  // to permanently purge (skips the 30-day grace window).
+  const deleteAnalysisById = async (itemId, { hard = false } = {}) => {
     try {
-      const resp = await authFetch(`${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(itemId)}`, {
+      const url = `${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(itemId)}${hard ? '?hard=1' : ''}`;
+      const resp = await authFetch(url, {
         method: 'DELETE',
         headers: buildAuthHeaders({}, 'DELETE'),
         credentials: 'include',
@@ -9404,6 +9406,21 @@ if (!baselineRef.current) baselineRef.current = normalizedFallback._baseline_sco
     }
   };
 
+  // Restore a soft-deleted session (used by the Undo toast action).
+  const restoreAnalysisById = async (itemId) => {
+    try {
+      const resp = await authFetch(`${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(itemId)}/restore`, {
+        method: 'POST',
+        headers: buildAuthHeaders({}, 'POST'),
+        credentials: 'include',
+      });
+      return resp?.ok === true;
+    } catch (error) {
+      console.error('Error restoring session:', error);
+      return false;
+    }
+  };
+
   const handleDeleteAnalysis = async (itemId) => {
     if (!itemId) return;
     const entry = analysisHistory.find((item) => String(item?.id || '').trim() === String(itemId).trim());
@@ -9411,7 +9428,7 @@ if (!baselineRef.current) baselineRef.current = normalizedFallback._baseline_sco
 
     setConfirmDialog({
       title: 'Delete analysis',
-      message: `Delete "${label}"? This will remove it from your history. (Anonymized scoring signals stay in your org's idea ledger for benchmarking — they never identify the original idea text.)`,
+      message: `Delete "${label}"? We'll archive it and permanently purge it after 30 days. Anonymized scoring signals (score, dimension distribution, risk tags) stay in your org's idea ledger so benchmarking still works — they never identify the original idea text.`,
       confirmLabel: 'Delete analysis',
       confirmVariant: 'danger',
       onConfirm: async () => {
@@ -9423,13 +9440,10 @@ if (!baselineRef.current) baselineRef.current = normalizedFallback._baseline_sco
 
         if (!result.ok) {
           showToast(`Couldn't delete: ${result.body?.error || `HTTP ${result.status || '?'}`}`, 'error');
-          // Restore the list — the row didn't actually go away on the server.
           await fetchSessions();
           return;
         }
 
-        // If we deleted the session the user is currently viewing, send them
-        // back to the intake screen so we don't end up rendering a ghost.
         const wasActive = String(currentSessionId || sessionId || '') === String(itemId);
         if (wasActive) {
           clearLastSessionId();
@@ -9442,7 +9456,59 @@ if (!baselineRef.current) baselineRef.current = normalizedFallback._baseline_sco
         }
 
         await fetchSessions();
-        showToast('Session deleted', 'success');
+
+        // Undo toast — soft-deletes have a 30-day grace window so an Undo
+        // here just clears archived_at on the row.
+        showToast('Session archived', 'success', {
+          actionLabel: 'Undo',
+          durationMs: 8000,
+          onAction: async () => {
+            const restored = await restoreAnalysisById(itemId);
+            if (restored) {
+              await fetchSessions();
+              showToast('Session restored', 'success');
+            } else {
+              showToast('Restore failed — try Settings → Archived sessions.', 'error');
+            }
+          },
+        });
+      },
+    });
+  };
+
+  // Permanent purge — separate from soft-delete. Skips the 30-day grace
+  // window and anonymizes the org ledger row. Exposed via the Settings →
+  // Archived sessions drawer (TBD) for now.
+  const handlePurgeAnalysis = async (itemId) => {
+    if (!itemId) return;
+    const entry = analysisHistory.find((item) => String(item?.id || '').trim() === String(itemId).trim());
+    const label = (entry?.name || entry?.title || entry?.result?.project_name || 'this analysis').trim();
+
+    setConfirmDialog({
+      title: 'Purge permanently',
+      message: `Permanently purge "${label}"? This removes the session AND anonymizes its ledger row — your org will no longer benchmark against this idea. Cannot be undone.`,
+      confirmLabel: 'Purge permanently',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        setAnalysisHistory((prev) => prev.filter((it) => String(it?.id || '') !== String(itemId)));
+        const result = await deleteAnalysisById(itemId, { hard: true });
+        if (!result.ok) {
+          showToast(`Couldn't purge: ${result.body?.error || `HTTP ${result.status || '?'}`}`, 'error');
+          await fetchSessions();
+          return;
+        }
+        const wasActive = String(currentSessionId || sessionId || '') === String(itemId);
+        if (wasActive) {
+          clearLastSessionId();
+          setSessionId(null);
+          setCurrentSessionId(null);
+          setAnalysisResult(null);
+          setMessages([]);
+          setTradeoffRequested(false);
+          setView('intake');
+        }
+        await fetchSessions();
+        showToast('Session purged', 'success');
       },
     });
   };

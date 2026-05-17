@@ -148,22 +148,75 @@ def _upsert_session_row(user_id, session_id, payload, existing=None):
     return row
 
 
-def load_user_sessions(user_id):
-    """Load sessions for a user from the database."""
+def load_user_sessions(user_id, include_archived=False):
+    """Load sessions for a user from the database.
+
+    By default archived sessions (soft-deleted via "Delete from my history")
+    are filtered out. Set ``include_archived=True`` for admin / restore /
+    purge-sweep flows that need to see them.
+    """
     user_id = str(user_id)
 
-    rows = (
+    query = (
         UserSession.query
         .filter_by(user_id=user_id)
-        .order_by(UserSession.updated_at.desc(), UserSession.id.desc())
-        .all()
     )
+    if not include_archived:
+        query = query.filter(UserSession.archived_at.is_(None))
+    rows = query.order_by(UserSession.updated_at.desc(), UserSession.id.desc()).all()
 
     sessions = {}
     for row in rows:
         payload = _session_row_to_payload(row)
         sessions[str(payload.get('session_id') or row.session_id)] = payload
     return sessions
+
+
+def archive_user_session(user_id, session_id, grace_days=30):
+    """Soft-delete a session: mark archived_at + schedule purge_after.
+
+    Returns the SQLAlchemy row (or None if not found) so callers can read
+    payload fields for ledger distillation in the same transaction.
+    """
+    from datetime import timedelta
+    user_id = str(user_id)
+    sid = str(session_id)
+    row = (
+        UserSession.query
+        .filter_by(user_id=user_id, session_id=sid)
+        .first()
+    )
+    if row is None:
+        return None
+    now = datetime.utcnow()
+    row.archived_at = now
+    row.purge_after = now + timedelta(days=max(1, int(grace_days)))
+    db.session.commit()
+    return row
+
+
+def hard_delete_user_session(user_id, session_id):
+    """Hard-delete a single user session row (no soft-delete intermediate).
+    Use for "Purge permanently" and for the purge sweep past the grace
+    window. Returns True if a row was removed.
+    """
+    user_id = str(user_id)
+    sid = str(session_id)
+    row = (
+        UserSession.query
+        .filter_by(user_id=user_id, session_id=sid)
+        .first()
+    )
+    if row is None:
+        return False
+    try:
+        db.session.delete(row)
+        db.session.commit()
+        return True
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error hard-deleting session {sid} for user {user_id}: {e}")
+        return False
 
 
 def _session_query_for_user(user_id):
