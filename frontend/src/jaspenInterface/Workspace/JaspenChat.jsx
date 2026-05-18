@@ -5892,11 +5892,51 @@ useEffect(() => {
   if (analysisResult) setActivePill('scoring');
 }, [analysisResult]); // eslint-disable-line react-hooks/exhaustive-deps
 
-// Artifacts now arrive as explicit assistant messages from the backend and are
-// already in thread order. Render message list directly.
+// Primary path: artifacts arrive as explicit assistant messages from backend
+// and are rendered directly in thread order. Backward-compat fallback: older
+// threads may still persist scorecards only in snapshot state; surface those
+// as inline artifact cards when no scorecard artifact message is present.
 const displayMessages = useMemo(() => {
-  return Array.isArray(messages) ? messages : [];
-}, [messages]);
+  const baseMessages = Array.isArray(messages) ? [...messages] : [];
+  const hasScorecardArtifact = baseMessages.some(
+    (entry) => String(entry?.artifact?.type || '').trim() === 'scorecard'
+  );
+  if (hasScorecardArtifact) return baseMessages;
+
+  const snapshotPool = Array.isArray(scorecardSnapshots) && scorecardSnapshots.length > 0
+    ? scorecardSnapshots
+    : (analysisResult && typeof analysisResult === 'object' ? [analysisResult] : []);
+  if (!snapshotPool.length) return baseMessages;
+
+  const existingIds = new Set(
+    baseMessages.map((entry) => String(entry?.id || '').trim()).filter(Boolean)
+  );
+  const fallbackArtifacts = [];
+  snapshotPool.forEach((snapshot, idx) => {
+    if (!hasMeaningfulScorecardData(snapshot)) return;
+    const snapshotId = String(
+      snapshot?.id || snapshot?.analysis_id || snapshot?.analysisId || `legacy-${idx + 1}`
+    ).trim();
+    let messageId = `legacy-scorecard-${snapshotId}`;
+    if (existingIds.has(messageId)) {
+      messageId = `${messageId}-${idx + 1}`;
+    }
+    existingIds.add(messageId);
+    fallbackArtifacts.push({
+      id: messageId,
+      role: 'ai',
+      text: '',
+      artifact: {
+        type: 'scorecard',
+        data: snapshot,
+      },
+      timestamp: snapshot?.created_at || snapshot?.createdAt || null,
+    });
+  });
+
+  if (!fallbackArtifacts.length) return baseMessages;
+  return [...baseMessages, ...fallbackArtifacts];
+}, [analysisResult, messages, scorecardSnapshots]);
 
 const renderModelTypeInlinePicker = (className = '') => (
   <div className={`jas-model-picker-inline ${className}`.trim()} ref={modelMenuRef}>
