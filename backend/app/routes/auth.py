@@ -5,6 +5,7 @@ import io
 import os
 import re
 import secrets
+import time
 
 import pyotp
 import qrcode
@@ -1631,20 +1632,49 @@ def logout_all_sessions():
 
 
 @auth_bp.route('/refresh', methods=['POST'])
-@jwt_required()
 def refresh_access_token():
     """
-    Silently renew the access token cookie while the current token is still valid.
-    Called proactively by the frontend before the token expires to prevent mid-session
-    logouts. Issues a fresh access token with the same identity and token_version.
+    Silently renew the access token cookie for recently expired sessions.
+    Supports a short grace window so active users do not get forced to sign in
+    immediately after access-token expiry.
     """
     try:
-        user_id = get_jwt_identity()
+        encoded = request.cookies.get('jaspen_access')
+        if not encoded:
+            return jsonify(error='Missing auth cookie'), 401
+
+        claims = decode_token(encoded, allow_expired=True)
+        exp = int(claims.get('exp') or 0)
+        now_epoch = int(time.time())
+        refresh_grace_seconds = 7 * 24 * 60 * 60
+        if exp <= 0 or (exp + refresh_grace_seconds) < now_epoch:
+            return jsonify(error='Refresh window expired'), 401
+
+        user_id = str(claims.get('sub') or '').strip()
+        if not user_id:
+            return jsonify(error='Invalid token'), 401
         user = User.query.get(user_id)
         if not user:
             return jsonify(error='User not found'), 404
         if user.deactivated_at is not None:
             return jsonify(_deactivated_account_payload()), 403
+
+        token_version = int(claims.get('token_version') or 0)
+        current_token_version = int(getattr(user, 'auth_token_version', 0) or 0)
+        if token_version != current_token_version:
+            return jsonify(error='Session no longer valid'), 401
+
+        if not bool(claims.get('mfa_pending')):
+            jti = str(claims.get('jti') or '').strip()
+            if jti:
+                auth_session = (
+                    UserAuthSession.query
+                    .filter(UserAuthSession.user_id == user.id, UserAuthSession.token_jti == jti)
+                    .first()
+                )
+                if auth_session and auth_session.revoked_at is not None:
+                    return jsonify(error='Session no longer valid'), 401
+
         # Issue a fresh token with the same version — no session re-registration needed
         # since we're extending an already-authenticated session.
         new_token = _create_user_access_token(user)

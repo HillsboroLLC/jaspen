@@ -12687,8 +12687,28 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               )}
             </div>
           </aside>
-        )}
-      </main>
+      )}
+    </main>
+
+      <ConfirmDialog
+        isOpen={Boolean(confirmDialog)}
+        title={confirmDialog?.title || 'Confirm action'}
+        message={confirmDialog?.message || 'Are you sure you want to continue?'}
+        confirmLabel={confirmDialog?.confirmLabel || 'Confirm'}
+        confirmVariant={confirmDialog?.confirmVariant || 'danger'}
+        checkboxLabel={confirmDialog?.checkboxLabel || null}
+        checkboxChecked={deleteCheckboxOpen}
+        onCheckboxChange={(next) => {
+          deleteCheckboxRef.current = Boolean(next);
+          setDeleteCheckboxOpen(Boolean(next));
+        }}
+        onConfirm={async () => {
+          const action = confirmDialog?.onConfirm;
+          setConfirmDialog(null);
+          if (typeof action === 'function') await action();
+        }}
+        onCancel={() => setConfirmDialog(null)}
+      />
 
       {/* Fixed bottom-right tips carousel */}
       {tipIndex < WORKSPACE_TIPS.length && (
