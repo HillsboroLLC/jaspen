@@ -15,11 +15,13 @@
   border: 1px solid var(--color-border-default, #dbe3ee);
   border-radius: 14px;
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.18);
-  padding: 34px 38px 30px;
+  box-sizing: border-box;
+  padding: 40px 44px 34px !important;
 }
 
 .jas-confirm-title {
   margin: 0;
+  padding: 0 2px;
   color: var(--color-text-primary, #161f3b);
   font-size: 1.2rem;
   line-height: 1.25;
@@ -28,6 +30,7 @@
 
 .jas-confirm-message {
   margin: 14px 0 0;
+  padding: 0 2px;
   color: var(--color-text-secondary, #4b5563);
   line-height: 1.45;
   font-size: 1.05rem;
@@ -35,6 +38,7 @@
 
 .jas-confirm-actions {
   margin-top: 22px;
+  padding: 0 2px;
   display: flex;
   justify-content: flex-end;
   gap: 16px;
@@ -47,6 +51,7 @@
   gap: 10px;
   margin-top: 24px;
   padding-top: 10px;
+  padding-left: 2px;
   font-size: 1rem;
   line-height: 1.3;
   color: #475569;
