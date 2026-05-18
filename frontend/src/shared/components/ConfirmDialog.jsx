@@ -11,6 +11,11 @@ export default function ConfirmDialog({
   pending = false,
   onConfirm,
   onCancel,
+  // Optional "don't ask me again" inline checkbox. When provided, renders a
+  // checkbox below the message; callers control checked state + handler.
+  checkboxLabel = null,
+  checkboxChecked = false,
+  onCheckboxChange = null,
 }) {
   const titleId = useId();
   const descriptionId = useId();
@@ -51,6 +56,23 @@ export default function ConfirmDialog({
       >
         <h3 id={titleId} className="jas-confirm-title">{title}</h3>
         <p id={descriptionId} className="jas-confirm-message">{message}</p>
+        {checkboxLabel && (
+          <label
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              marginTop: 12, fontSize: 13, color: '#475569',
+              cursor: 'pointer', userSelect: 'none',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={Boolean(checkboxChecked)}
+              onChange={(e) => onCheckboxChange?.(e.target.checked)}
+              style={{ cursor: 'pointer' }}
+            />
+            {checkboxLabel}
+          </label>
+        )}
         <div className="jas-confirm-actions">
           <button
             type="button"

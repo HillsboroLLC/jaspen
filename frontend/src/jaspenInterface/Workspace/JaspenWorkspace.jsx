@@ -100,6 +100,7 @@ function applyOverrides(scorecard, overrides) {
 export default function JaspenWorkspace() {
   const { threadId, scorecardId } = useParams();
   const [bundle, setBundle] = useState(null);
+  const [bundleError, setBundleError] = useState(null);
   const [snapshot, setSnapshot] = useState(null);
   const [overrides, setOverrides] = useState({});
   const [loading, setLoading] = useState(true);
@@ -132,8 +133,12 @@ export default function JaspenWorkspace() {
 
       // Always fetch the bundle in parallel (cheap-ish and gives us messages
       // for title fallback + the snapshot list for the tradeoff view).
+      // Track bundle errors so the Trade-off view can surface them instead
+      // of showing the misleading "Score an idea" empty state when the
+      // real issue was a failed fetch.
       const bundlePromise = Jaspen.fetchBundle(threadId).catch((e) => {
-        console.warn('[Workspace] bundle fetch failed (non-fatal):', e);
+        console.warn('[Workspace] bundle fetch failed:', e);
+        setBundleError(String(e?.message || e || 'fetch failed'));
         return null;
       });
 
@@ -586,6 +591,43 @@ export default function JaspenWorkspace() {
                     false,
                   );
                 });
+
+                // Diagnostic visibility — log every source the Trade-off view
+                // pulled from so the user (and we) can see exactly where the
+                // data came from / why it might be empty.
+                if (typeof console !== 'undefined' && console.log) {
+                  console.log('[Trade-off Workspace]', {
+                    threadId,
+                    bundleLoaded: Boolean(bundle),
+                    bundleError,
+                    snapshotsFromBundle: (bundle?.scorecard_snapshots || []).length,
+                    hasBaseline: Boolean(bundle?.baseline_scorecard),
+                    hasCurrent: Boolean(bundle?.current_scorecard),
+                    scenariosFromBundle: (bundle?.scenarios || []).length,
+                    listLength: list.length,
+                  });
+                }
+
+                // Honest error path: when bundle didn't load at all, say so
+                // instead of falling through to "Score an idea" — that
+                // empty-state was misleading users into thinking they had
+                // no scorecards when the real cause was a fetch failure.
+                if (!bundle && bundleError) {
+                  return (
+                    <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center', padding:40, flexDirection:'column', gap:10 }}>
+                      <div style={{ fontSize:14, fontWeight:600, color:'#0f172a' }}>Couldn't load trade-off data</div>
+                      <div style={{ fontSize:12.5, color:'#5a6585', maxWidth:480, textAlign:'center' }}>
+                        {bundleError}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => window.location.reload()}
+                        style={{ marginTop:8, padding:'8px 14px', borderRadius:8, background:'#0f172a', color:'#fff', border:'none', fontSize:13, cursor:'pointer' }}
+                      >Refresh</button>
+                    </div>
+                  );
+                }
+
                 return (
                   <TradeoffView
                     scorecardSnapshots={list}

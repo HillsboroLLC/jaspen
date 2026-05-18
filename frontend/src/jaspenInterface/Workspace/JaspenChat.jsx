@@ -9705,43 +9705,16 @@ if (!baselineRef.current) baselineRef.current = normalizedFallback._baseline_sco
     }
   };
 
-  const handleDeleteAnalysis = async (itemId) => {
-    if (!itemId) return;
-    const entry = analysisHistory.find((item) => String(item?.id || '').trim() === String(itemId).trim());
-    const label = (entry?.name || entry?.title || entry?.result?.project_name || 'this analysis').trim();
-
-    // Honor the "don't ask me again" preference — skip the confirm if set.
-    const skipConfirm = Boolean(skipDeleteConfirmWS)
-      || Boolean(user?.ui_preferences?.skip_delete_confirm)
-      || (typeof localStorage !== 'undefined' && localStorage.getItem('jaspen.skipDeleteConfirm') === '1');
-
-    if (!skipConfirm) {
-      // Native confirm — fine for now; restyling matches what the user said
-      // ("OK if it stays browser-native"). To opt out: check the box below
-      // after confirming; the next click goes straight through.
-      const ok = window.confirm(
-        `Delete "${label}"?\n\n` +
-        `This permanently removes the session and its chat history. ` +
-        `Anonymized scores (no idea text) stay in your org's benchmarking ledger.\n\n` +
-        `This cannot be undone.\n\n` +
-        `Tip: toggle "Skip delete confirm" in User Settings to bypass this prompt next time.`
-      );
-      if (!ok) return;
-    }
-
-    // Optimistic UI removal — row disappears immediately.
+  // Performs the actual delete after the user confirms (or after the opt-out
+  // path skips the dialog). Pulled out so both flows hit the same code.
+  const performDeleteAnalysis = useCallback(async (itemId) => {
     setAnalysisHistory((prev) => prev.filter((it) => String(it?.id || '') !== String(itemId)));
-
-    // Hard delete (?hard=1) — skip the grace window since the user has
-    // already confirmed they want it gone.
     const result = await deleteAnalysisById(itemId, { hard: true });
-
     if (!result.ok) {
       showToast(`Couldn't delete: ${result.body?.error || `HTTP ${result.status || '?'}`}`, 'error');
       await fetchSessions();
       return;
     }
-
     const wasActive = String(currentSessionId || sessionId || '') === String(itemId);
     if (wasActive) {
       clearLastSessionId();
@@ -9752,9 +9725,41 @@ if (!baselineRef.current) baselineRef.current = normalizedFallback._baseline_sco
       setTradeoffRequested(false);
       setView('intake');
     }
-
     await fetchSessions();
     showToast('Session deleted', 'success');
+  }, [currentSessionId, sessionId, showToast]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleDeleteAnalysis = (itemId) => {
+    if (!itemId) return;
+    const entry = analysisHistory.find((item) => String(item?.id || '').trim() === String(itemId).trim());
+    const label = (entry?.name || entry?.title || entry?.result?.project_name || 'this analysis').trim();
+
+    const skipConfirm = Boolean(skipDeleteConfirmWS)
+      || Boolean(user?.ui_preferences?.skip_delete_confirm)
+      || (typeof localStorage !== 'undefined' && localStorage.getItem('jaspen.skipDeleteConfirm') === '1');
+
+    if (skipConfirm) {
+      void performDeleteAnalysis(itemId);
+      return;
+    }
+
+    // Custom confirm dialog with an inline "Don't ask me again" checkbox.
+    // Frictionless: opt-out lives right here, no digging into Settings.
+    setConfirmDialog({
+      title: `Delete "${label}"?`,
+      message: 'This permanently removes the session and its chat history. Anonymized scores (no idea text) stay in your org\'s benchmarking ledger. This cannot be undone.',
+      confirmLabel: 'Delete',
+      confirmVariant: 'danger',
+      checkboxLabel: "Don't ask me again",
+      onConfirm: async ({ checkboxChecked } = {}) => {
+        // If the user ticked the checkbox, persist the opt-out BEFORE the
+        // delete so the next click goes straight through.
+        if (checkboxChecked && !skipDeleteConfirmWS) {
+          await toggleSkipDeleteConfirm();
+        }
+        await performDeleteAnalysis(itemId);
+      },
+    });
   };
 
   // Permanent purge — separate from soft-delete. Skips the 30-day grace
@@ -10489,10 +10494,19 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
         message={confirmDialog?.message || 'Are you sure you want to continue?'}
         confirmLabel={confirmDialog?.confirmLabel || 'Confirm'}
         confirmVariant={confirmDialog?.confirmVariant || 'danger'}
+        checkboxLabel={confirmDialog?.checkboxLabel || null}
+        checkboxChecked={Boolean(confirmDialog?.checkboxChecked)}
+        onCheckboxChange={(next) => {
+          setConfirmDialog((prev) => prev ? { ...prev, checkboxChecked: Boolean(next) } : prev);
+        }}
         onConfirm={async () => {
-          const action = confirmDialog?.onConfirm;
+          // Capture the dialog's state before clearing it so the onConfirm
+          // handler can read the checkbox value.
+          const snapshot = confirmDialog;
           setConfirmDialog(null);
-          if (typeof action === 'function') await action();
+          if (typeof snapshot?.onConfirm === 'function') {
+            await snapshot.onConfirm({ checkboxChecked: Boolean(snapshot?.checkboxChecked) });
+          }
         }}
         onCancel={() => setConfirmDialog(null)}
       />
