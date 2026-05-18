@@ -5948,13 +5948,17 @@ const displayMessages = useMemo(() => {
     });
   }
 
-  if (!existingArtifactTypes.has('tradeoff') && tradeoffRequested && snapshotPool.length >= 2) {
+  if (!existingArtifactTypes.has('tradeoff') && snapshotPool.length >= 2) {
     const included = snapshotPool.filter((snapshot) => snapshot?.display_overrides?.tradeoff_included !== false);
     if (included.length >= 2) {
       let messageId = 'legacy-tradeoff-artifact';
       if (existingIds.has(messageId)) {
         messageId = `${messageId}-${Date.now()}`;
       }
+      const latestSnapshotTs = included
+        .map((snapshot) => Date.parse(String(snapshot?.created_at || snapshot?.createdAt || '')))
+        .filter((value) => Number.isFinite(value))
+        .sort((a, b) => b - a)[0];
       existingIds.add(messageId);
       fallbackArtifacts.push({
         id: messageId,
@@ -5963,10 +5967,11 @@ const displayMessages = useMemo(() => {
         artifact: {
           type: 'tradeoff',
           data: {
-            scorecards: included,
+            snapshots: included,
             generated_at: new Date().toISOString(),
           },
         },
+        timestamp: Number.isFinite(latestSnapshotTs) ? new Date(latestSnapshotTs).toISOString() : null,
       });
     }
   }
@@ -6002,15 +6007,48 @@ const displayMessages = useMemo(() => {
     return -1;
   };
 
-  fallbackArtifacts.forEach((artifactEntry) => {
+  const toMs = (value) => {
+    const parsed = Date.parse(String(value || ''));
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  const orderedFallback = [...fallbackArtifacts].sort((a, b) => {
+    const aTs = toMs(a?.timestamp);
+    const bTs = toMs(b?.timestamp);
+    if (aTs === null && bTs === null) return 0;
+    if (aTs === null) return 1;
+    if (bTs === null) return -1;
+    return aTs - bTs;
+  });
+
+  orderedFallback.forEach((artifactEntry) => {
     const artifactType = String(artifactEntry?.artifact?.type || '').trim();
     let anchor = -1;
-    if (artifactType === 'scorecard') {
-      anchor = findAnchorIndex(/\b(scorecard|score this|scored|building your scorecard|readiness)\b/i);
-    } else if (artifactType === 'tradeoff') {
-      anchor = findAnchorIndex(/\b(trade[-\s]?off|compare|rank|side[-\s]?by[-\s]?side)\b/i);
-    } else if (artifactType === 'execution_plan') {
-      anchor = findAnchorIndex(/\b(execution plan|wbs|work breakdown|build execution)\b/i);
+
+    // Prefer chronological placement when timestamps exist.
+    const artifactTs = toMs(artifactEntry?.timestamp);
+    if (artifactTs !== null) {
+      let lastBeforeIdx = -1;
+      for (let i = 0; i < composed.length; i += 1) {
+        const entryTs = toMs(composed[i]?.timestamp);
+        if (entryTs !== null && entryTs <= artifactTs) {
+          lastBeforeIdx = i;
+        }
+      }
+      if (lastBeforeIdx >= 0) {
+        anchor = lastBeforeIdx;
+      }
+    }
+
+    // Fall back to semantic anchoring when timestamp positioning is unavailable.
+    if (anchor < 0) {
+      if (artifactType === 'scorecard') {
+        anchor = findAnchorIndex(/\b(scorecard|score this|scored|building your scorecard|readiness)\b/i);
+      } else if (artifactType === 'tradeoff') {
+        anchor = findAnchorIndex(/\b(trade[-\s]?off|compare|rank|side[-\s]?by[-\s]?side)\b/i);
+      } else if (artifactType === 'execution_plan') {
+        anchor = findAnchorIndex(/\b(execution plan|wbs|work breakdown|build execution)\b/i);
+      }
     }
     if (anchor >= 0) {
       composed.splice(anchor + 1, 0, artifactEntry);
