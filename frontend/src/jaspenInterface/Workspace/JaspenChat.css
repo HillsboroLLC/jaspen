@@ -30,6 +30,37 @@
   --transition: 0.2s ease;
 }
 
+/* === Confirm dialog spacing overrides inside workspace ===
+   The workspace reset zeroes margin/padding for all descendants, so the
+   shared ConfirmDialog needs explicit scoped spacing here. */
+.jas-shell .jas-confirm-dialog {
+  box-sizing: border-box;
+  padding: 40px 44px 34px !important;
+}
+
+.jas-shell .jas-confirm-title {
+  font-size: 1.2rem;
+  line-height: 1.25;
+}
+
+.jas-shell .jas-confirm-message {
+  margin-top: 14px !important;
+}
+
+.jas-shell .jas-confirm-checkbox {
+  margin-top: 34px !important;
+  padding-top: 14px !important;
+}
+
+.jas-shell .jas-confirm-actions {
+  margin-top: 30px !important;
+}
+
+.jas-shell .jas-confirm-btn-danger {
+  min-height: 44px;
+  padding: 0 22px;
+}
+
 /* === Base Layout === */
 .jas-workspace-shell,
 .jas-shell {
