@@ -2013,12 +2013,20 @@ const refreshBundle = async (tid, { fallbackTid } = {}) => {
       (Array.isArray(bundle?.messages) ? bundle.messages : []).map((m) => toHistoryMessageShape(m))
     );
     // Use functional form so we read actual current state, not stale closure value.
-    // Never overwrite if messages already has content (e.g. scorecard card was injected).
+    // Prefer bundle when it carries explicit artifacts and current state does not.
     if (bundleMessages.length > 0) {
       setMessages(prev => {
-        const hasCard = prev.some(m => m?.artifact?.type === 'scorecard');
-        if (prev.length > 0 && !hasCard) return prev; // already populated, keep it
-        if (hasCard) return prev;                       // card is there, don't clobber
+        const prevHasArtifacts = prev.some((entry) => Boolean(entry?.artifact));
+        const bundleHasArtifacts = bundleMessages.some((entry) => Boolean(entry?.artifact));
+        if (prev.length === 0) return bundleMessages;
+        if (!prevHasArtifacts && bundleHasArtifacts) return bundleMessages;
+        if (prevHasArtifacts && bundleHasArtifacts) {
+          const prevArtifactCount = prev.filter((entry) => Boolean(entry?.artifact)).length;
+          const bundleArtifactCount = bundleMessages.filter((entry) => Boolean(entry?.artifact)).length;
+          if (bundleArtifactCount > prevArtifactCount) return bundleMessages;
+        }
+        // Keep existing state otherwise (for in-flight local optimistic cards).
+        if (prev.length > 0) return prev;
         return bundleMessages;
       });
     }
@@ -5894,32 +5902,79 @@ useEffect(() => {
 
 // Primary path: artifacts arrive as explicit assistant messages from backend
 // and are rendered directly in thread order. Backward-compat fallback: older
-// threads may still persist scorecards only in snapshot state; surface those
-// as inline artifact cards when no scorecard artifact message is present.
+// threads may still persist artifacts only in snapshot/WBS state; surface them
+// inline when message artifacts are missing.
 const displayMessages = useMemo(() => {
   const baseMessages = Array.isArray(messages) ? [...messages] : [];
-  const hasScorecardArtifact = baseMessages.some(
-    (entry) => String(entry?.artifact?.type || '').trim() === 'scorecard'
+  const existingArtifactTypes = new Set(
+    baseMessages
+      .map((entry) => String(entry?.artifact?.type || '').trim())
+      .filter(Boolean)
   );
-  if (hasScorecardArtifact) return baseMessages;
 
   const snapshotPool = Array.isArray(scorecardSnapshots) && scorecardSnapshots.length > 0
     ? scorecardSnapshots
     : (analysisResult && typeof analysisResult === 'object' ? [analysisResult] : []);
-  if (!snapshotPool.length) return baseMessages;
+  const hasProjectPlan = Array.isArray(threadWbs?.tasks) && threadWbs.tasks.length > 0;
+  const hasLegacyInputs = snapshotPool.length > 0 || hasProjectPlan;
+  if (!hasLegacyInputs) return baseMessages;
 
   const existingIds = new Set(
     baseMessages.map((entry) => String(entry?.id || '').trim()).filter(Boolean)
   );
   const fallbackArtifacts = [];
-  snapshotPool.forEach((snapshot, idx) => {
-    if (!hasMeaningfulScorecardData(snapshot)) return;
-    const snapshotId = String(
-      snapshot?.id || snapshot?.analysis_id || snapshot?.analysisId || `legacy-${idx + 1}`
-    ).trim();
-    let messageId = `legacy-scorecard-${snapshotId}`;
+
+  if (!existingArtifactTypes.has('scorecard')) {
+    snapshotPool.forEach((snapshot, idx) => {
+      if (!hasMeaningfulScorecardData(snapshot)) return;
+      const snapshotId = String(
+        snapshot?.id || snapshot?.analysis_id || snapshot?.analysisId || `legacy-${idx + 1}`
+      ).trim();
+      let messageId = `legacy-scorecard-${snapshotId}`;
+      if (existingIds.has(messageId)) {
+        messageId = `${messageId}-${idx + 1}`;
+      }
+      existingIds.add(messageId);
+      fallbackArtifacts.push({
+        id: messageId,
+        role: 'ai',
+        text: '',
+        artifact: {
+          type: 'scorecard',
+          data: snapshot,
+        },
+        timestamp: snapshot?.created_at || snapshot?.createdAt || null,
+      });
+    });
+  }
+
+  if (!existingArtifactTypes.has('tradeoff') && tradeoffRequested && snapshotPool.length >= 2) {
+    const included = snapshotPool.filter((snapshot) => snapshot?.display_overrides?.tradeoff_included !== false);
+    if (included.length >= 2) {
+      let messageId = 'legacy-tradeoff-artifact';
+      if (existingIds.has(messageId)) {
+        messageId = `${messageId}-${Date.now()}`;
+      }
+      existingIds.add(messageId);
+      fallbackArtifacts.push({
+        id: messageId,
+        role: 'ai',
+        text: '',
+        artifact: {
+          type: 'tradeoff',
+          data: {
+            scorecards: included,
+            generated_at: new Date().toISOString(),
+          },
+        },
+      });
+    }
+  }
+
+  if (!existingArtifactTypes.has('execution_plan') && hasProjectPlan) {
+    let messageId = 'legacy-execution-plan-artifact';
     if (existingIds.has(messageId)) {
-      messageId = `${messageId}-${idx + 1}`;
+      messageId = `${messageId}-${Date.now()}`;
     }
     existingIds.add(messageId);
     fallbackArtifacts.push({
@@ -5927,16 +5982,45 @@ const displayMessages = useMemo(() => {
       role: 'ai',
       text: '',
       artifact: {
-        type: 'scorecard',
-        data: snapshot,
+        type: 'execution_plan',
+        data: threadWbs,
       },
-      timestamp: snapshot?.created_at || snapshot?.createdAt || null,
+      timestamp: threadWbs?.updated_at || threadWbs?.created_at || null,
     });
-  });
+  }
 
   if (!fallbackArtifacts.length) return baseMessages;
-  return [...baseMessages, ...fallbackArtifacts];
-}, [analysisResult, messages, scorecardSnapshots]);
+
+  const composed = [...baseMessages];
+  const findAnchorIndex = (regex) => {
+    for (let i = composed.length - 1; i >= 0; i -= 1) {
+      const entry = composed[i];
+      const text = String(entry?.text || '').trim();
+      if (!text) continue;
+      if (regex.test(text)) return i;
+    }
+    return -1;
+  };
+
+  fallbackArtifacts.forEach((artifactEntry) => {
+    const artifactType = String(artifactEntry?.artifact?.type || '').trim();
+    let anchor = -1;
+    if (artifactType === 'scorecard') {
+      anchor = findAnchorIndex(/\b(scorecard|score this|scored|building your scorecard|readiness)\b/i);
+    } else if (artifactType === 'tradeoff') {
+      anchor = findAnchorIndex(/\b(trade[-\s]?off|compare|rank|side[-\s]?by[-\s]?side)\b/i);
+    } else if (artifactType === 'execution_plan') {
+      anchor = findAnchorIndex(/\b(execution plan|wbs|work breakdown|build execution)\b/i);
+    }
+    if (anchor >= 0) {
+      composed.splice(anchor + 1, 0, artifactEntry);
+    } else {
+      composed.push(artifactEntry);
+    }
+  });
+
+  return composed;
+}, [analysisResult, messages, scorecardSnapshots, threadWbs, tradeoffRequested]);
 
 const renderModelTypeInlinePicker = (className = '') => (
   <div className={`jas-model-picker-inline ${className}`.trim()} ref={modelMenuRef}>
