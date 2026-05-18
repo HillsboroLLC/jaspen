@@ -9729,6 +9729,14 @@ if (!baselineRef.current) baselineRef.current = normalizedFallback._baseline_sco
     showToast('Session deleted', 'success');
   }, [currentSessionId, sessionId, showToast]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Checkbox state for the delete-confirm dialog. Pulled out of the
+  // confirmDialog state object so the onConfirm closure can read the latest
+  // value directly from the ref — no stale-closure bugs under React
+  // batching. The useState mirror is just so the checkbox visually flips
+  // when the user clicks it.
+  const deleteCheckboxRef = useRef(false);
+  const [deleteCheckboxOpen, setDeleteCheckboxOpen] = useState(false);
+
   const handleDeleteAnalysis = (itemId) => {
     if (!itemId) return;
     const entry = analysisHistory.find((item) => String(item?.id || '').trim() === String(itemId).trim());
@@ -9743,18 +9751,21 @@ if (!baselineRef.current) baselineRef.current = normalizedFallback._baseline_sco
       return;
     }
 
-    // Custom confirm dialog with an inline "Don't ask me again" checkbox.
-    // Frictionless: opt-out lives right here, no digging into Settings.
+    // Reset checkbox state before opening the dialog.
+    deleteCheckboxRef.current = false;
+    setDeleteCheckboxOpen(false);
+
+    // Same setConfirmDialog pattern handleClearHistory uses (which works).
+    // Onconfirm reads the checkbox from a ref so there's no closure issue.
     setConfirmDialog({
       title: `Delete "${label}"?`,
-      message: 'This permanently removes the session and its chat history. Anonymized scores (no idea text) stay in your org\'s benchmarking ledger. This cannot be undone.',
+      message: "This permanently removes the session and its chat history. Anonymized scores (no idea text) stay in your org's benchmarking ledger. This cannot be undone.",
       confirmLabel: 'Delete',
       confirmVariant: 'danger',
       checkboxLabel: "Don't ask me again",
-      onConfirm: async ({ checkboxChecked } = {}) => {
-        // If the user ticked the checkbox, persist the opt-out BEFORE the
-        // delete so the next click goes straight through.
-        if (checkboxChecked && !skipDeleteConfirmWS) {
+      onConfirm: async () => {
+        // Persist the opt-out BEFORE delete so the next click goes through.
+        if (deleteCheckboxRef.current && !skipDeleteConfirmWS) {
           await toggleSkipDeleteConfirm();
         }
         await performDeleteAnalysis(itemId);
@@ -10495,18 +10506,20 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
         confirmLabel={confirmDialog?.confirmLabel || 'Confirm'}
         confirmVariant={confirmDialog?.confirmVariant || 'danger'}
         checkboxLabel={confirmDialog?.checkboxLabel || null}
-        checkboxChecked={Boolean(confirmDialog?.checkboxChecked)}
+        checkboxChecked={deleteCheckboxOpen}
         onCheckboxChange={(next) => {
-          setConfirmDialog((prev) => prev ? { ...prev, checkboxChecked: Boolean(next) } : prev);
+          // Mirror to both ref (read by onConfirm) and state (drives UI).
+          deleteCheckboxRef.current = Boolean(next);
+          setDeleteCheckboxOpen(Boolean(next));
         }}
         onConfirm={async () => {
-          // Capture the dialog's state before clearing it so the onConfirm
-          // handler can read the checkbox value.
-          const snapshot = confirmDialog;
+          // Same shape as handleClearHistory's working flow — capture the
+          // handler reference, clear the dialog, then run the handler. The
+          // handler reads the checkbox from deleteCheckboxRef so there's no
+          // stale-closure concern.
+          const action = confirmDialog?.onConfirm;
           setConfirmDialog(null);
-          if (typeof snapshot?.onConfirm === 'function') {
-            await snapshot.onConfirm({ checkboxChecked: Boolean(snapshot?.checkboxChecked) });
-          }
+          if (typeof action === 'function') await action();
         }}
         onCancel={() => setConfirmDialog(null)}
       />
