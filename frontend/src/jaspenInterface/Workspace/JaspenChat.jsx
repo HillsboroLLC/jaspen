@@ -2708,6 +2708,159 @@ const renderScorecardCard = (result, opts = {}) => {
   );
 };
 
+// ── Inline Trade-off artifact ─────────────────────────────────────────────────
+// Compact summary card for the chat thread. Shows top 3 ranked ideas + a
+// session-avg figure. Full table + quadrant lives in Workspace.
+const renderInlineTradeoffArtifact = (data, opts = {}) => {
+  const snaps = Array.isArray(data?.snapshots) ? data.snapshots : [];
+  if (snaps.length === 0) return null;
+  // Only count snapshots where tradeoff_included !== false
+  const included = snaps.filter((s) => s?.display_overrides?.tradeoff_included !== false);
+  const ranked = [...included].sort(
+    (a, b) => Number(b?.jaspen_score ?? b?.score ?? 0) - Number(a?.jaspen_score ?? a?.score ?? 0)
+  );
+  const top3 = ranked.slice(0, 3);
+  const total = included.length;
+  const avg = total ? (ranked.reduce((s, x) => s + Number(x?.jaspen_score ?? x?.score ?? 0), 0) / total).toFixed(1) : '0';
+  const wsHref = opts.threadId ? `/workspace/${encodeURIComponent(opts.threadId)}/__tradeoff__` : null;
+  return (
+    <div style={{
+      background: '#fff', border: '1px solid #e9ecef', borderRadius: 14,
+      padding: '18px 20px 16px', maxWidth: 720,
+      fontFamily: "'Inter Tight', system-ui, sans-serif",
+    }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 12 }}>
+        <div>
+          <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 10.5, color: '#a0036c', letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 600 }}>
+            Trade-off · {total} idea{total === 1 ? '' : 's'} compared
+          </div>
+          <div style={{ fontSize: 13, color: '#5a6585', marginTop: 4 }}>
+            Session avg: <strong style={{ color: '#161f3b' }}>{avg}</strong>
+          </div>
+        </div>
+        {wsHref && (
+          <a
+            href={wsHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              padding: '6px 12px', borderRadius: 8,
+              background: '#0f172a', color: '#fff',
+              textDecoration: 'none', fontSize: 12.5, fontWeight: 500, whiteSpace: 'nowrap',
+            }}
+          >Open in Workspace ↗</a>
+        )}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column' }}>
+        {top3.map((s, i) => {
+          const score = Math.round(Number(s?.jaspen_score ?? s?.score ?? 0));
+          const name = s?.project_name || s?.name || s?.label || `Idea ${i + 1}`;
+          const isLast = i === top3.length - 1;
+          return (
+            <div key={s?.id || i} style={{
+              display: 'grid', gridTemplateColumns: '24px 1fr 48px',
+              alignItems: 'center', gap: 12,
+              padding: '10px 0',
+              borderBottom: isLast ? 'none' : '1px solid #f1f3f5',
+            }}>
+              <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 12, fontWeight: 600, color: i === 0 ? '#a0036c' : '#5a6585' }}>{i + 1}</span>
+              <span style={{ fontSize: 13, fontWeight: i === 0 ? 600 : 500, color: '#161f3b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+              <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 14, fontWeight: 600, color: '#161f3b', textAlign: 'right' }}>{score}</span>
+            </div>
+          );
+        })}
+      </div>
+      {total > 3 && (
+        <div style={{ fontSize: 11.5, color: '#8a93ad', marginTop: 8, fontFamily: 'JetBrains Mono, monospace' }}>
+          + {total - 3} more in Workspace
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ── Inline Execution plan artifact ────────────────────────────────────────────
+// Compact summary: phase / task counts + progress bar + first 3 task names.
+// Full canvas (List / Board / Timeline) lives in Workspace.
+const renderInlineExecutionArtifact = (wbs, opts = {}) => {
+  const tasks = Array.isArray(wbs?.tasks) ? wbs.tasks : [];
+  if (tasks.length === 0) return null;
+  const phases = new Set(tasks.map((t) => String(t?.phase || 'Execution').trim() || 'Execution'));
+  const statusCount = { todo: 0, in_progress: 0, blocked: 0, done: 0 };
+  tasks.forEach((t) => {
+    const s = String(t?.status || 'todo').toLowerCase();
+    if (s.includes('done') || s.includes('complete')) statusCount.done += 1;
+    else if (s.includes('progress') || s.includes('doing')) statusCount.in_progress += 1;
+    else if (s.includes('block')) statusCount.blocked += 1;
+    else statusCount.todo += 1;
+  });
+  const donePct = tasks.length ? Math.round((statusCount.done / tasks.length) * 100) : 0;
+  const inProgressPct = tasks.length ? Math.round((statusCount.in_progress / tasks.length) * 100) : 0;
+  const wsHref = opts.threadId ? `/workspace/${encodeURIComponent(opts.threadId)}/__execution__` : null;
+  return (
+    <div style={{
+      background: '#fff', border: '1px solid #e9ecef', borderRadius: 14,
+      padding: '18px 20px 16px', maxWidth: 720,
+      fontFamily: "'Inter Tight', system-ui, sans-serif",
+    }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 12 }}>
+        <div>
+          <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 10.5, color: '#a0036c', letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 600 }}>
+            Execution plan
+          </div>
+          <div style={{ fontSize: 13, color: '#5a6585', marginTop: 4 }}>
+            {phases.size} phase{phases.size === 1 ? '' : 's'} · {tasks.length} task{tasks.length === 1 ? '' : 's'} · <strong style={{ color: '#161f3b' }}>{donePct}% done</strong>
+          </div>
+        </div>
+        {wsHref && (
+          <a
+            href={wsHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              padding: '6px 12px', borderRadius: 8,
+              background: '#0f172a', color: '#fff',
+              textDecoration: 'none', fontSize: 12.5, fontWeight: 500, whiteSpace: 'nowrap',
+            }}
+          >Open in Workspace ↗</a>
+        )}
+      </div>
+      {/* Progress bar: green=done, navy=in-progress, light gray=todo */}
+      <div style={{ display: 'flex', height: 6, borderRadius: 3, overflow: 'hidden', background: '#f1f3f5', marginBottom: 12 }}>
+        <div style={{ width: `${donePct}%`, background: '#16a34a' }} />
+        <div style={{ width: `${inProgressPct}%`, background: '#161f3b' }} />
+      </div>
+      <div style={{ display: 'flex', gap: 14, fontFamily: 'JetBrains Mono, monospace', fontSize: 10.5, color: '#5a6585', marginBottom: 10 }}>
+        <span><strong style={{ color: '#16a34a' }}>{statusCount.done}</strong> done</span>
+        <span><strong style={{ color: '#161f3b' }}>{statusCount.in_progress}</strong> in progress</span>
+        {statusCount.blocked > 0 && <span><strong style={{ color: '#dc2626' }}>{statusCount.blocked}</strong> blocked</span>}
+        <span><strong style={{ color: '#8a93ad' }}>{statusCount.todo}</strong> to-do</span>
+      </div>
+      {/* First 3 task names so the user sees what's in the plan at a glance */}
+      <div style={{ display: 'flex', flexDirection: 'column' }}>
+        {tasks.slice(0, 3).map((t, i) => {
+          const isLast = i === Math.min(3, tasks.length) - 1;
+          return (
+            <div key={t?.id || i} style={{
+              display: 'grid', gridTemplateColumns: '1fr auto',
+              gap: 12, padding: '7px 0',
+              borderBottom: isLast ? 'none' : '1px solid #f1f3f5',
+            }}>
+              <span style={{ fontSize: 12.5, color: '#161f3b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t?.title || 'Untitled task'}</span>
+              <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 10.5, color: '#8a93ad' }}>{String(t?.phase || '').slice(0, 24)}</span>
+            </div>
+          );
+        })}
+      </div>
+      {tasks.length > 3 && (
+        <div style={{ fontSize: 11.5, color: '#8a93ad', marginTop: 8, fontFamily: 'JetBrains Mono, monospace' }}>
+          + {tasks.length - 3} more in Workspace
+        </div>
+      )}
+    </div>
+  );
+};
+
 const renderConversationMessage = (message, opts = {}) => {
   // Render scorecard artifact inline
   if (message?.artifact?.type === 'scorecard') {
@@ -2723,6 +2876,18 @@ const renderConversationMessage = (message, opts = {}) => {
         </div>
       </div>
     );
+  }
+  // Trade-off comparison artifact — compact inline summary of the top
+  // ranked ideas across the user's scorecards. Open in Workspace for the
+  // full canvas (table, quadrant, all ideas).
+  if (message?.artifact?.type === 'tradeoff') {
+    return renderInlineTradeoffArtifact(message.artifact.data, opts);
+  }
+  // Execution plan artifact — compact inline summary of phases / task
+  // counts / progress, with Open in Workspace for the full Kanban / List /
+  // Timeline canvas.
+  if (message?.artifact?.type === 'execution_plan') {
+    return renderInlineExecutionArtifact(message.artifact.data, opts);
   }
   const text = String(message?.text || '');
   if (message?.role === 'user') return text;
@@ -3461,6 +3626,25 @@ useEffect(() => {
     if (typeof updateUiPreferences !== 'function') return;
     await updateUiPreferences({ hide_thinking_power_warning: next });
   }, [warningHiddenWS, updateUiPreferences]);
+
+  // Opt-out for the delete-session confirm dialog. Same local-state +
+  // optimistic-flip pattern as above. Persists to ui_preferences AND
+  // localStorage so it sticks even before billing/user refresh.
+  const [skipDeleteConfirmWS, setSkipDeleteConfirmWS] = useState(() => {
+    if (Boolean(user?.ui_preferences?.skip_delete_confirm)) return true;
+    try { return localStorage.getItem('jaspen.skipDeleteConfirm') === '1'; } catch (_) { return false; }
+  });
+  useEffect(() => {
+    setSkipDeleteConfirmWS(Boolean(user?.ui_preferences?.skip_delete_confirm)
+      || (typeof localStorage !== 'undefined' && localStorage.getItem('jaspen.skipDeleteConfirm') === '1'));
+  }, [user?.ui_preferences?.skip_delete_confirm]);
+  const toggleSkipDeleteConfirm = useCallback(async () => {
+    const next = !skipDeleteConfirmWS;
+    setSkipDeleteConfirmWS(next);
+    try { localStorage.setItem('jaspen.skipDeleteConfirm', next ? '1' : '0'); } catch (_) {}
+    if (typeof updateUiPreferences !== 'function') return;
+    await updateUiPreferences({ skip_delete_confirm: next });
+  }, [skipDeleteConfirmWS, updateUiPreferences]);
   useEffect(() => {
     if (!lowCreditsDismissStorageKey || !lowCreditsBannerEligible) {
       setLowCreditsBannerDismissed(false);
@@ -4647,6 +4831,15 @@ useEffect(() => {
             />
             Show low-power warnings
           </label>
+          <label className="jas-ud-meter-toggle" style={{ cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={skipDeleteConfirmWS}
+              onChange={toggleSkipDeleteConfirm}
+              style={{ marginRight: 8 }}
+            />
+            Skip delete confirm
+          </label>
         </div>
 
         {!hideThinkingPowerMeter && (
@@ -5729,14 +5922,41 @@ const displayMessages = useMemo(() => {
     return id ? !inlineCardIds.has(id) : true;
   });
 
+  // Helper: append the derived artifacts (trade-off, execution plan) at the
+  // tail of any output. Trade-off shows when there are ≥2 scorecards;
+  // execution plan shows when the WBS has tasks. Both render regardless of
+  // which pill is active — pills only change the right sidebar.
+  const _withDerivedArtifacts = (base) => {
+    const next = Array.isArray(base) ? [...base] : [];
+    if (Array.isArray(scorecardSnapshots) && scorecardSnapshots.length >= 2) {
+      next.push({
+        id: 'tradeoff-artifact',
+        role: 'ai',
+        text: '',
+        artifact: { type: 'tradeoff', data: { snapshots: scorecardSnapshots } },
+      });
+    }
+    if (threadWbs && Array.isArray(threadWbs.tasks) && threadWbs.tasks.length > 0) {
+      next.push({
+        id: 'execution-artifact',
+        role: 'ai',
+        text: '',
+        artifact: { type: 'execution_plan', data: threadWbs },
+      });
+    }
+    return next;
+  };
+
   if (snapshotsToWeave.length === 0) {
     // Every snapshot is already inline (or there are none). Nothing to weave;
     // also handle the legacy single-result append for pre-snapshot sessions.
-    if (!analysisResult || inlineCardIds.size > 0) return messages;
-    return [
+    if (!analysisResult || inlineCardIds.size > 0) {
+      return _withDerivedArtifacts(messages);
+    }
+    return _withDerivedArtifacts([
       ...messages,
       { id: 'scorecard-card', role: 'ai', text: '', artifact: { type: 'scorecard', data: analysisResult } },
-    ];
+    ]);
   }
 
   // From here down we operate on snapshotsToWeave instead of all snapshots.
@@ -5807,8 +6027,11 @@ const displayMessages = useMemo(() => {
         });
       });
   });
-  return out;
-}, [analysisResult, messages, scorecardSnapshots]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Append derived artifacts (trade-off + execution) at the end of the
+  // conversation. Always visible regardless of pill — see helper above.
+  return _withDerivedArtifacts(out);
+}, [analysisResult, messages, scorecardSnapshots, threadWbs]); // eslint-disable-line react-hooks/exhaustive-deps
 
 const renderModelTypeInlinePicker = (className = '') => (
   <div className={`jas-model-picker-inline ${className}`.trim()} ref={modelMenuRef}>
@@ -9487,19 +9710,24 @@ if (!baselineRef.current) baselineRef.current = normalizedFallback._baseline_sco
     const entry = analysisHistory.find((item) => String(item?.id || '').trim() === String(itemId).trim());
     const label = (entry?.name || entry?.title || entry?.result?.project_name || 'this analysis').trim();
 
-    // Native confirm — no recovery (matches user expectation of "real apps
-    // don't let you undo delete"). Anonymized scoring signals still go to
-    // the org ledger silently for ML / benchmarking, but the session is
-    // gone from the user's perspective immediately.
-    // Using window.confirm so a misbehaving custom dialog can never block
-    // the action — if there was ever a problem before, it was here.
-    const ok = window.confirm(
-      `Delete "${label}"?\n\n` +
-      `This permanently removes the session and its chat history. ` +
-      `Anonymized scores (no idea text) stay in your org's benchmarking ledger.\n\n` +
-      `This cannot be undone.`
-    );
-    if (!ok) return;
+    // Honor the "don't ask me again" preference — skip the confirm if set.
+    const skipConfirm = Boolean(skipDeleteConfirmWS)
+      || Boolean(user?.ui_preferences?.skip_delete_confirm)
+      || (typeof localStorage !== 'undefined' && localStorage.getItem('jaspen.skipDeleteConfirm') === '1');
+
+    if (!skipConfirm) {
+      // Native confirm — fine for now; restyling matches what the user said
+      // ("OK if it stays browser-native"). To opt out: check the box below
+      // after confirming; the next click goes straight through.
+      const ok = window.confirm(
+        `Delete "${label}"?\n\n` +
+        `This permanently removes the session and its chat history. ` +
+        `Anonymized scores (no idea text) stay in your org's benchmarking ledger.\n\n` +
+        `This cannot be undone.\n\n` +
+        `Tip: toggle "Skip delete confirm" in User Settings to bypass this prompt next time.`
+      );
+      if (!ok) return;
+    }
 
     // Optimistic UI removal — row disappears immediately.
     setAnalysisHistory((prev) => prev.filter((it) => String(it?.id || '') !== String(itemId)));
