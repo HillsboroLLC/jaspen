@@ -57,18 +57,12 @@ export default function ConfirmDialog({
         <h3 id={titleId} className="jas-confirm-title">{title}</h3>
         <p id={descriptionId} className="jas-confirm-message">{message}</p>
         {checkboxLabel && (
-          <label
-            style={{
-              display: 'flex', alignItems: 'center', gap: 8,
-              marginTop: 12, fontSize: 13, color: '#475569',
-              cursor: 'pointer', userSelect: 'none',
-            }}
-          >
+          <label className="jas-confirm-checkbox">
             <input
               type="checkbox"
               checked={Boolean(checkboxChecked)}
               onChange={(e) => onCheckboxChange?.(e.target.checked)}
-              style={{ cursor: 'pointer' }}
+              className="jas-confirm-checkbox-input"
             />
             {checkboxLabel}
           </label>

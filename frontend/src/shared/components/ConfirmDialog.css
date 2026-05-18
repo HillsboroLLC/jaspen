@@ -10,31 +10,54 @@
 }
 
 .jas-confirm-dialog {
-  width: min(460px, 100%);
+  width: min(620px, 100%);
   background: var(--color-surface-default, #ffffff);
   border: 1px solid var(--color-border-default, #dbe3ee);
   border-radius: 14px;
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.18);
-  padding: 20px;
+  padding: 28px 30px 24px;
 }
 
 .jas-confirm-title {
   margin: 0;
   color: var(--color-text-primary, #161f3b);
-  font-size: 1.05rem;
+  font-size: 2rem;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
 }
 
 .jas-confirm-message {
-  margin: 10px 0 0;
+  margin: 14px 0 0;
   color: var(--color-text-secondary, #4b5563);
-  line-height: 1.5;
+  line-height: 1.45;
+  font-size: 1.05rem;
 }
 
 .jas-confirm-actions {
-  margin-top: 18px;
+  margin-top: 22px;
   display: flex;
   justify-content: flex-end;
+  gap: 16px;
+  align-items: center;
+}
+
+.jas-confirm-checkbox {
+  display: flex;
+  align-items: center;
   gap: 10px;
+  margin-top: 18px;
+  font-size: 1rem;
+  line-height: 1.3;
+  color: #475569;
+  cursor: pointer;
+  user-select: none;
+}
+
+.jas-confirm-checkbox-input {
+  cursor: pointer;
+  inline-size: 18px;
+  block-size: 18px;
+  margin: 0;
 }
 
 .jas-confirm-btn {
@@ -52,9 +75,19 @@
 }
 
 .jas-confirm-btn-cancel {
-  background: var(--color-surface-subtle, #f8fafc);
-  border-color: var(--color-border-default, #dbe3ee);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  min-height: auto;
+  padding: 0;
   color: var(--color-text-primary, #161f3b);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.jas-confirm-btn-cancel:hover,
+.jas-confirm-btn-cancel:focus-visible {
+  text-decoration: underline;
 }
 
 .jas-confirm-btn-primary {
