@@ -849,7 +849,6 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
         ...buildAuthHeaders({}, 'GET'),
         'Content-Type': 'application/json',
         'X-Session-ID': getSid(),
-        'Cache-Control': 'no-store',
       },
     });
 

@@ -939,26 +939,50 @@ function cloneScorecardSnapshot(snapshot) {
   }
 }
 
+function toHistoryMessageShape(message = {}) {
+  if (!message || typeof message !== 'object') return { role: 'assistant', content: '' };
+  return {
+    ...message,
+    role: message?.role || (message?.sender === 'user' ? 'user' : 'assistant'),
+    content: message?.content ?? message?.text ?? message?.message ?? '',
+    artifact: message?.artifact && typeof message.artifact === 'object' ? message.artifact : undefined,
+    timestamp: message?.timestamp || message?.created_at || undefined,
+    mutations: Array.isArray(message?.mutations) ? message.mutations : undefined,
+    undo: message?.undo && typeof message.undo === 'object' ? message.undo : undefined,
+    feedback: message?.feedback && typeof message.feedback === 'object' ? message.feedback : undefined,
+    regenerated: Boolean(message?.regenerated),
+    alternatives: Array.isArray(message?.alternatives) ? message.alternatives : undefined,
+    attachments: Array.isArray(message?.attachments) ? message.attachments : undefined,
+  };
+}
+
 function toUiMessages(history = []) {
   return (Array.isArray(history) ? history : [])
-    .map((msg, historyIndex) => ({
-      role: msg?.role === 'user' ? 'user' : 'ai',
-      text: (msg?.content || msg?.text || '').trim(),
-      historyIndex,
-      timestamp: msg?.timestamp || msg?.created_at || null,
-      feedbackValue: String(msg?.feedback?.value || '').trim().toLowerCase() || null,
-      hasMutations: Array.isArray(msg?.mutations) && msg.mutations.length > 0,
-      canUndo: Boolean(msg?.undo?.available),
-      undoApplied: Boolean(msg?.undo?.applied),
-      regenerated: Boolean(msg?.regenerated),
-      alternativesCount: Array.isArray(msg?.alternatives) ? msg.alternatives.length : 0,
-      attachments: Array.isArray(msg?.attachments)
-        ? msg.attachments
-          .map((attachment) => buildMessageAttachmentMeta(attachment))
-          .filter((attachment) => attachment.name)
-        : [],
-    }))
-    .filter((m) => m.text.length > 0 && !isContextSyncMessage(m.text));
+    .map((rawMsg, historyIndex) => {
+      const msg = toHistoryMessageShape(rawMsg);
+      const artifact = msg?.artifact && typeof msg.artifact === 'object' ? msg.artifact : null;
+      const text = String(msg?.content || msg?.text || '').trim();
+      return {
+        id: msg?.id || null,
+        role: msg?.role === 'user' ? 'user' : 'ai',
+        text,
+        artifact: artifact && typeof artifact.type === 'string' ? artifact : null,
+        historyIndex,
+        timestamp: msg?.timestamp || msg?.created_at || null,
+        feedbackValue: String(msg?.feedback?.value || '').trim().toLowerCase() || null,
+        hasMutations: Array.isArray(msg?.mutations) && msg.mutations.length > 0,
+        canUndo: Boolean(msg?.undo?.available),
+        undoApplied: Boolean(msg?.undo?.applied),
+        regenerated: Boolean(msg?.regenerated),
+        alternativesCount: Array.isArray(msg?.alternatives) ? msg.alternatives.length : 0,
+        attachments: Array.isArray(msg?.attachments)
+          ? msg.attachments
+            .map((attachment) => buildMessageAttachmentMeta(attachment))
+            .filter((attachment) => attachment.name)
+          : [],
+      };
+    })
+    .filter((m) => (m.artifact || m.text.length > 0) && !isContextSyncMessage(m.text));
 }
 
 // Generic placeholders that are never acceptable as an idea title. We strip
@@ -1986,10 +2010,7 @@ const refreshBundle = async (tid, { fallbackTid } = {}) => {
     }
 
     const bundleMessages = toUiMessages(
-      (Array.isArray(bundle?.messages) ? bundle.messages : []).map((m) => ({
-        role: m?.role || (m?.sender === 'user' ? 'user' : 'assistant'),
-        content: m?.content || m?.text || m?.message || '',
-      }))
+      (Array.isArray(bundle?.messages) ? bundle.messages : []).map((m) => toHistoryMessageShape(m))
     );
     // Use functional form so we read actual current state, not stale closure value.
     // Never overwrite if messages already has content (e.g. scorecard card was injected).
@@ -2892,18 +2913,6 @@ const renderConversationMessage = (message, opts = {}) => {
   const text = String(message?.text || '');
   if (message?.role === 'user') return text;
 
-  const rescoreCta = message?.suggestedRescore && opts.onRescoreAction && analysisResult ? (
-    <div className="jas-rescore-cta">
-      <button
-        className="jas-rescore-cta-btn"
-        disabled={opts.autoVersionGenerating}
-        onClick={opts.onRescoreAction}
-      >
-        {opts.autoVersionGenerating ? '⏳ Scoring…' : '↗ Score this'}
-      </button>
-    </div>
-  ) : null;
-
   return (
     <>
       <ReactMarkdown
@@ -2926,7 +2935,6 @@ const renderConversationMessage = (message, opts = {}) => {
       >
         {text}
       </ReactMarkdown>
-      {rescoreCta}
     </>
   );
 };
@@ -3133,7 +3141,7 @@ const applyMutationRefreshes = async (payload, fallbackThreadId = null) => {
     const tool = String(mutation?.tool || '').trim();
     const success = mutation?.success !== false;
     if (!success) return;
-    if (tool === 'create_scenario') {
+    if (tool === 'generate_scorecard' || tool === 'generate_tradeoff_comparison') {
       scenarioChanged = true;
     }
     if (['update_wbs_task', 'add_wbs_task', 'add_wbs_dependency', 'remove_wbs_task', 'generate_execution_plan'].includes(tool)) {
@@ -5603,10 +5611,12 @@ useEffect(() => {
 
           // Normalize bundle messages into the same chat_history shape your UI expects
           const bundleMsgs = Array.isArray(restoreBundle?.messages) ? restoreBundle.messages : [];
-          const chat_history = bundleMsgs.map((m) => ({
-            role: m.role || (m.sender === 'user' ? 'user' : 'assistant'),
-            content: m.content || m.text || m.message || '',
-          })).filter(x => (x.content || '').trim().length > 0);
+          const chat_history = bundleMsgs
+            .map((m) => toHistoryMessageShape(m))
+            .filter((x) => {
+              const text = String(x?.content || '').trim();
+              return text.length > 0 || Boolean(x?.artifact);
+            });
 
           session = {
             // Prefer bundle's resolved thread ID so canonicalSid resolves correctly below
@@ -5877,161 +5887,16 @@ const canAnalyze = useMemo(() => {
   return userTurns.length >= 3;
 }, [messages]);
 
-// Auto-trigger: fire triggerInlineScore the moment canAnalyze first becomes true.
-// This is the primary trigger — independent of SSE status flags.
-useEffect(() => {
-  if (canAnalyze && !analysisResult && !autoScoringTriggeredRef.current) {
-    autoScoringTriggeredRef.current = true;
-    const sid = currentSessionId || sessionId;
-    if (sid) {
-      console.log('[autoScore] canAnalyze → true, triggering inline score for', sid);
-      setTimeout(() => { void triggerInlineScore(sid); }, 800);
-    }
-  }
-}, [canAnalyze]); // eslint-disable-line react-hooks/exhaustive-deps
-
 // Advance sidebar pill to 'scoring' the moment a scorecard lands
 useEffect(() => {
   if (analysisResult) setActivePill('scoring');
 }, [analysisResult]); // eslint-disable-line react-hooks/exhaustive-deps
 
-// Derive display messages: weave scorecardSnapshots into the conversation in
-// chronological order. The AI emits "Building your scorecard now." right before
-// each scoring event, so that phrase is our most reliable anchor — every
-// occurrence in the chat history corresponds to one scorecard generation.
+// Artifacts now arrive as explicit assistant messages from the backend and are
+// already in thread order. Render message list directly.
 const displayMessages = useMemo(() => {
-  if (messages.length === 0) return messages;
-
-  // PRIOR BUG: an early-return for "any inline card present" meant that as
-  // soon as the live placeholder showed up, every previous snapshot
-  // disappeared from the chat — the new one took over rendering and the
-  // older 4 were lost until reload. Now we collect the inline-card IDs and
-  // still weave in any snapshot that ISN'T already inline. This preserves
-  // historical scorecards while letting the live one render in place.
-  const inlineCardIds = new Set();
-  messages.forEach((m) => {
-    if (m?.artifact?.type === 'scorecard' || m?.artifact?.type === 'scorecard-loading') {
-      const id = String(m?.artifact?.data?.id || m?.artifact?.data?.analysis_id || '');
-      if (id) inlineCardIds.add(id);
-    }
-  });
-
-  const snapshots = Array.isArray(scorecardSnapshots) ? scorecardSnapshots : [];
-  const snapshotsToWeave = snapshots.filter((s) => {
-    const id = String(s?.id || s?.analysis_id || '');
-    return id ? !inlineCardIds.has(id) : true;
-  });
-
-  // Helper: append the derived artifacts (trade-off, execution plan) at the
-  // tail of any output. Trade-off shows when there are ≥2 scorecards;
-  // execution plan shows when the WBS has tasks. Both render regardless of
-  // which pill is active — pills only change the right sidebar.
-  const _withDerivedArtifacts = (base) => {
-    const next = Array.isArray(base) ? [...base] : [];
-    if (Array.isArray(scorecardSnapshots) && scorecardSnapshots.length >= 2) {
-      next.push({
-        id: 'tradeoff-artifact',
-        role: 'ai',
-        text: '',
-        artifact: { type: 'tradeoff', data: { snapshots: scorecardSnapshots } },
-      });
-    }
-    if (threadWbs && Array.isArray(threadWbs.tasks) && threadWbs.tasks.length > 0) {
-      next.push({
-        id: 'execution-artifact',
-        role: 'ai',
-        text: '',
-        artifact: { type: 'execution_plan', data: threadWbs },
-      });
-    }
-    return next;
-  };
-
-  if (snapshotsToWeave.length === 0) {
-    // Every snapshot is already inline (or there are none). Nothing to weave;
-    // also handle the legacy single-result append for pre-snapshot sessions.
-    if (!analysisResult || inlineCardIds.size > 0) {
-      return _withDerivedArtifacts(messages);
-    }
-    return _withDerivedArtifacts([
-      ...messages,
-      { id: 'scorecard-card', role: 'ai', text: '', artifact: { type: 'scorecard', data: analysisResult } },
-    ]);
-  }
-
-  // From here down we operate on snapshotsToWeave instead of all snapshots.
-
-  const tsOf = (val) => {
-    const t = Date.parse(String(val || ''));
-    return Number.isFinite(t) ? t : 0;
-  };
-
-  // Sort snapshots oldest → newest using whatever timestamps are available.
-  // Snapshots without timestamps keep their input order via a stable sort.
-  const indexed = snapshotsToWeave.map((s, i) => ({ s, i }));
-  indexed.sort((a, b) => {
-    const ta = tsOf(a.s?.createdAt || a.s?._createdAt || a.s?.created_at);
-    const tb = tsOf(b.s?.createdAt || b.s?._createdAt || b.s?.created_at);
-    if (ta && tb) return ta - tb;
-    if (ta && !tb) return -1;
-    if (!ta && tb) return 1;
-    return a.i - b.i;
-  });
-  const orderedSnaps = indexed.map((x) => x.s);
-
-  // Primary anchor: AI messages containing the "Building your scorecard now" phrase.
-  // The Nth occurrence anchors the Nth snapshot.
-  const triggerRegex = /building your scorecard|scorecard now|generating your scorecard|scoring your idea/i;
-  const triggerIndices = [];
-  messages.forEach((m, i) => {
-    if (m?.role === 'ai' && typeof m?.text === 'string' && triggerRegex.test(m.text)) {
-      triggerIndices.push(i);
-    }
-  });
-
-  // For each snapshot decide what index to insert AFTER. Prefer the trigger
-  // anchor; fall back to timestamp comparison; final fallback: end of stream.
-  const insertions = orderedSnaps.map((snap, snapIdx) => {
-    if (snapIdx < triggerIndices.length) {
-      return { snap, afterIdx: triggerIndices[snapIdx], snapIdx };
-    }
-    const snapTs = tsOf(snap?.createdAt || snap?._createdAt || snap?.created_at);
-    if (snapTs > 0) {
-      // Find the last message whose timestamp is <= snapTs.
-      let afterIdx = -1;
-      for (let i = 0; i < messages.length; i++) {
-        const mt = tsOf(messages[i]?.timestamp);
-        if (mt > 0 && mt <= snapTs) afterIdx = i;
-      }
-      if (afterIdx >= 0) return { snap, afterIdx, snapIdx };
-    }
-    // No anchor available — append to end.
-    return { snap, afterIdx: messages.length - 1, snapIdx };
-  });
-
-  // Build the final stream: walk messages, after each index append any snapshot
-  // whose afterIdx == i (preserving snapshot order).
-  const out = [];
-  messages.forEach((msg, i) => {
-    out.push(msg);
-    insertions
-      .filter((ins) => ins.afterIdx === i)
-      .sort((a, b) => a.snapIdx - b.snapIdx)
-      .forEach((ins) => {
-        const snap = ins.snap;
-        out.push({
-          id: snap?.id ? `scorecard-${snap.id}` : `scorecard-snap-${ins.snapIdx}`,
-          role: 'ai',
-          text: '',
-          artifact: { type: 'scorecard', data: snap },
-        });
-      });
-  });
-
-  // Append derived artifacts (trade-off + execution) at the end of the
-  // conversation. Always visible regardless of pill — see helper above.
-  return _withDerivedArtifacts(out);
-}, [analysisResult, messages, scorecardSnapshots, threadWbs]); // eslint-disable-line react-hooks/exhaustive-deps
+  return Array.isArray(messages) ? messages : [];
+}, [messages]);
 
 const renderModelTypeInlinePicker = (className = '') => (
   <div className={`jas-model-picker-inline ${className}`.trim()} ref={modelMenuRef}>
@@ -6287,10 +6152,31 @@ useEffect(() => {
         undoApplied: typeof metadata?.undoApplied === 'boolean' ? metadata.undoApplied : Boolean(message.undoApplied),
         regenerated: Boolean(metadata?.regenerated) || Boolean(message.regenerated),
         alternativesCount: Number.isInteger(metadata?.alternativesCount) ? metadata.alternativesCount : (message.alternativesCount || 0),
-        // Rescore CTA — set when backend signals AI suggested scoring a new version
-        suggestedRescore: metadata?.suggestedRescore || message.suggestedRescore || null,
       };
     }));
+  }, []);
+
+  const appendArtifactMessagesFromPayload = useCallback((payload) => {
+    const artifactMessages = Array.isArray(payload?.artifact_messages) ? payload.artifact_messages : [];
+    if (!artifactMessages.length) return;
+    const incoming = toUiMessages(artifactMessages);
+    if (!incoming.length) return;
+    setMessages((prev) => {
+      const next = Array.isArray(prev) ? [...prev] : [];
+      incoming.forEach((entry) => {
+        const artifactType = String(entry?.artifact?.type || '').trim();
+        const artifactId = String(entry?.artifact?.data?.id || entry?.artifact?.data?.analysis_id || '').trim();
+        const duplicate = next.some((existing) => {
+          const existingType = String(existing?.artifact?.type || '').trim();
+          const existingId = String(existing?.artifact?.data?.id || existing?.artifact?.data?.analysis_id || '').trim();
+          if (!artifactType || artifactType !== existingType) return false;
+          if (artifactId && existingId) return artifactId === existingId;
+          return false;
+        });
+        if (!duplicate) next.push(entry);
+      });
+      return next;
+    });
   }, []);
 
   const setStreamingAssistantError = useCallback((messageId, fallbackText) => {
@@ -6309,8 +6195,10 @@ useEffect(() => {
       case 'remove_wbs_task':
       case 'generate_execution_plan':
         return 'Updating execution plan…';
-      case 'create_scenario':
-        return 'Modeling scenario…';
+      case 'generate_scorecard':
+        return 'Building scorecard…';
+      case 'generate_tradeoff_comparison':
+        return 'Comparing scorecards…';
       case 'rename_thread':
         return 'Renaming initiative…';
       case 'get_readiness_snapshot':
@@ -6357,22 +6245,20 @@ useEffect(() => {
         onDone: (payload) => {
           finalPayload = payload;
           setStreamToolStatus('');
-          const _rescoreA = Array.isArray(payload?.actions) ? payload.actions.find(a => a?.type === 'suggest_rescore') : null;
           finalizeStreamingAssistant(placeholderId, payload?.reply || payload?.message || '', {
             historyIndex: Number.isInteger(payload?.assistant_message_index) ? payload.assistant_message_index : null,
             hasMutations: Array.isArray(payload?.mutations) && payload.mutations.length > 0,
             canUndo: Boolean(payload?.undo_available),
-            suggestedRescore: _rescoreA ? { label: _rescoreA.label || 'Score this' } : null,
           });
+          appendArtifactMessagesFromPayload(payload);
         },
       });
-      const _finalRescoreA = Array.isArray(finalPayload?.actions) ? finalPayload.actions.find(a => a?.type === 'suggest_rescore') : null;
       finalizeStreamingAssistant(placeholderId, finalPayload?.reply || finalPayload?.message || '', {
         historyIndex: Number.isInteger(finalPayload?.assistant_message_index) ? finalPayload.assistant_message_index : null,
         hasMutations: Array.isArray(finalPayload?.mutations) && finalPayload.mutations.length > 0,
         canUndo: Boolean(finalPayload?.undo_available),
-        suggestedRescore: _finalRescoreA ? { label: _finalRescoreA.label || 'Score this' } : null,
       });
+      appendArtifactMessagesFromPayload(finalPayload);
       setStreamToolStatus('');
       return finalPayload;
     } catch (streamErr) {
@@ -6393,6 +6279,7 @@ useEffect(() => {
     appendStreamingAssistantDelta,
     createStreamingAssistantPlaceholder,
     finalizeStreamingAssistant,
+    appendArtifactMessagesFromPayload,
     setStreamingAssistantError,
     toolStatusLabel,
   ]);
@@ -6427,22 +6314,20 @@ useEffect(() => {
         onDone: (payload) => {
           finalPayload = payload;
           setStreamToolStatus('');
-          const _rescoreB = Array.isArray(payload?.actions) ? payload.actions.find(a => a?.type === 'suggest_rescore') : null;
           finalizeStreamingAssistant(placeholderId, payload?.reply || payload?.message || '', {
             historyIndex: Number.isInteger(payload?.assistant_message_index) ? payload.assistant_message_index : null,
             hasMutations: Array.isArray(payload?.mutations) && payload.mutations.length > 0,
             canUndo: Boolean(payload?.undo_available),
-            suggestedRescore: _rescoreB ? { label: _rescoreB.label || 'Score this' } : null,
           });
+          appendArtifactMessagesFromPayload(payload);
         },
       });
-      const _finalRescoreB = Array.isArray(finalPayload?.actions) ? finalPayload.actions.find(a => a?.type === 'suggest_rescore') : null;
       finalizeStreamingAssistant(placeholderId, finalPayload?.reply || finalPayload?.message || '', {
         historyIndex: Number.isInteger(finalPayload?.assistant_message_index) ? finalPayload.assistant_message_index : null,
         hasMutations: Array.isArray(finalPayload?.mutations) && finalPayload.mutations.length > 0,
         canUndo: Boolean(finalPayload?.undo_available),
-        suggestedRescore: _finalRescoreB ? { label: _finalRescoreB.label || 'Score this' } : null,
       });
+      appendArtifactMessagesFromPayload(finalPayload);
       setStreamToolStatus('');
       return finalPayload;
     } catch (streamErr) {
@@ -6456,6 +6341,7 @@ useEffect(() => {
     appendStreamingAssistantDelta,
     createStreamingAssistantPlaceholder,
     finalizeStreamingAssistant,
+    appendArtifactMessagesFromPayload,
     setStreamingAssistantError,
     toolStatusLabel,
   ]);
@@ -7765,13 +7651,6 @@ const handleSaveStarter = async () => {
     }
   }
 
-  // Auto-version: detects pivot/significant-change signals in a user message
-  const PIVOT_SIGNALS = /\b(pivot|pivoting|completely\s+change|change\s+the\s+model|change\s+the\s+market|change\s+the\s+target|change\s+the\s+concept|change\s+the\s+approach|change\s+the\s+strategy|new\s+direction|different\s+approach|different\s+market|different\s+model|different\s+revenue\s+model|different\s+target|scrap\s+(that|this|the\s+idea|the\s+plan)|start\s+over|throw\s+out|rethink|reimagine|overhaul|fundamentally\s+different|instead\s+of\s+(that|this)|forget\s+(that|this)|actually[\s,]+let'?s|actually[\s,]+I\s+want\s+to|change\s+the\s+business\s+model|change\s+our\s+strategy|change\s+our\s+approach|new\s+business\s+model|new\s+strategy|total\s+rework|completely\s+different|shift\s+to|shift\s+our|let'?s\s+go\s+with\s+(a\s+)?different|what\s+if\s+we\s+(changed|switched|went|moved)|reconsider|restructure\s+the)\b/i;
-
-  function detectsPivot(userText = '') {
-    return PIVOT_SIGNALS.test(String(userText));
-  }
-
   // Trade-off intent: phrases where the user is explicitly asking to compare,
   // rank, or weigh multiple ideas against each other. The Trade-off tab only
   // unlocks when one of these fires (or when the user kicks off the session
@@ -8884,17 +8763,6 @@ const sendAIMessage = async () => {
 
     await applyMutationRefreshes(resp, resp?.sessionId || currentSessionId || sessionId);
 
-    // 3) Auto-version: pivot signals OR backend suggest_rescore action triggers a new scored version.
-    // chatWithReadiness already handles text/status signals inline; this catches the suggest_rescore
-    // action from the done payload as a secondary guarantee.
-    const _respRescoreAction = Array.isArray(resp?.actions) && resp.actions.some(a => a?.type === 'suggest_rescore');
-    if (analysisResult && (detectsPivot(text) || _respRescoreAction) && !autoVersionGenerating) {
-      const autoSid = resp?.sessionId || currentSessionId || sessionId;
-      if (autoSid) {
-        setTimeout(() => { void triggerAutoVersion(autoSid); }, 1200);
-      }
-    }
-
     await fetchSessions();
 
     // Build the chat_history from the latest visible thread
@@ -9559,10 +9427,7 @@ try {
   setSessionId(id);
   setLastSessionId(id);
   const bundleHistory = Array.isArray(bundle?.messages)
-    ? bundle.messages.map((m) => ({
-        role: m?.role || (m?.sender === 'user' ? 'user' : 'assistant'),
-        content: m?.content || m?.text || m?.message || '',
-      }))
+    ? bundle.messages.map((m) => toHistoryMessageShape(m))
     : [];
   const restoredMessages = toUiMessages(
     bundleHistory.length > 0
@@ -10598,7 +10463,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
     activeDrawerTab={scenarioDrawerView}
     onDrawerTabChange={setScenarioDrawerView}
     messages={messages}
-    renderMessage={(m) => renderConversationMessage(m, { autoVersionGenerating, threadId: sessionId || currentSessionId, messages, onRescoreAction: () => void triggerAutoVersion(sessionId || currentSessionId), onBuildExecutionPlan: (cid) => void handleGenerateAiWbsFromScorecard({ threadBundleId: sessionId || currentSessionId, scorecardId: cid }), buildingExecutionPlanFor })}
+    renderMessage={(m) => renderConversationMessage(m, { autoVersionGenerating, threadId: sessionId || currentSessionId, messages, onBuildExecutionPlan: (cid) => void handleGenerateAiWbsFromScorecard({ threadBundleId: sessionId || currentSessionId, scorecardId: cid }), buildingExecutionPlanFor })}
     renderAttachments={(m) => renderMessageAttachments(m)}
     renderActions={(m, key, idx, total) => renderMessageActions(m, key, idx, total)}
     streamStatus={renderStreamToolStatus()}
@@ -12061,7 +11926,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
 
 	              {displayMessages.map((m, idx) => (
 	                <div key={m.id || idx} className={`jas-message ${m.role === 'ai' ? 'ai' : 'user'}`}>
-	                  <div className="jas-message-bubble">{renderConversationMessage(m, { autoVersionGenerating, threadId: sessionId || currentSessionId, messages, onRescoreAction: () => void triggerAutoVersion(sessionId || currentSessionId), onBuildExecutionPlan: (cid) => void handleGenerateAiWbsFromScorecard({ threadBundleId: sessionId || currentSessionId, scorecardId: cid }), buildingExecutionPlanFor })}</div>
+	                  <div className="jas-message-bubble">{renderConversationMessage(m, { autoVersionGenerating, threadId: sessionId || currentSessionId, messages, onBuildExecutionPlan: (cid) => void handleGenerateAiWbsFromScorecard({ threadBundleId: sessionId || currentSessionId, scorecardId: cid }), buildingExecutionPlanFor })}</div>
 	                  {renderMessageAttachments(m)}
 	                  {renderMessageActions(m, `main:${idx}`, idx, displayMessages.length)}
 	                </div>
