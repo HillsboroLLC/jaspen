@@ -11768,7 +11768,11 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
           <div className="jas-context-stages">
             {(() => {
               // Only the CURRENT stage is highlighted
-              const currentStage = activePill || (!analysisResult ? 'discovery' : 'scoring');
+              const currentStage = activePill || (
+                (Array.isArray(scorecardSnapshots) && scorecardSnapshots.length > 0) || analysisResult
+                  ? 'scoring'
+                  : 'discovery'
+              );
               // Trade-off is available for the whole session once the user has
               // any scorecard — they shouldn't lose access after building an
               // execution plan or refreshing. `tradeoffRequested` still gates
@@ -11776,12 +11780,13 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               const scoredIdeasCount = Array.isArray(scorecardSnapshots) && scorecardSnapshots.length > 0
                 ? scorecardSnapshots.length
                 : (analysisResult ? 1 : 0);
+              const canScoring = scoredIdeasCount >= 1;
               const canScenarios = scoredIdeasCount >= 2;
               const hasExecutionPlan = Array.isArray(threadWbs?.tasks) && threadWbs.tasks.length > 0;
               const canExecution = hasExecutionPlan;
               const stages = [
                 { key: 'discovery',  label: 'Discovery',  disabled: false },
-                { key: 'scoring',    label: 'Scoring',    disabled: !analysisResult },
+                { key: 'scoring',    label: 'Scoring',    disabled: !canScoring },
                 { key: 'scenarios',  label: 'Trade-off',  disabled: !canScenarios,
                   title: !canScenarios
                     ? 'Create at least two scorecards to compare in Trade-off'
