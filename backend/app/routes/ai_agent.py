@@ -9972,14 +9972,24 @@ def append_thread_messages(thread_id):
         if role not in ("user", "assistant"):
             continue
         content = str(msg.get("content") or msg.get("text") or "").strip()
-        if not content:
+        artifact = msg.get("artifact") if isinstance(msg.get("artifact"), dict) else None
+        artifact_type = str((artifact or {}).get("type") or "").strip()
+        artifact_data = (artifact or {}).get("data")
+        has_valid_artifact = bool(artifact_type and isinstance(artifact_data, dict))
+        if not content and not has_valid_artifact:
             continue
-        chat_history.append({
+        entry = {
             "role": role,
             "content": content,
             "text": content,
             "timestamp": now_iso,
-        })
+        }
+        if has_valid_artifact:
+            entry["artifact"] = {
+                "type": artifact_type,
+                "data": artifact_data,
+            }
+        chat_history.append(entry)
 
     session["chat_history"] = chat_history
     result_blob = session.get("result")

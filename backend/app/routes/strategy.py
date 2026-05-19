@@ -5951,6 +5951,39 @@ def get_thread_bundle(thread_id):
             merged_snapshots.append(_snap)
             _existing_snap_ids.add(_scn_id)
 
+        # Also merge scorecard artifacts saved in chat_history (assistant
+        # artifact entries). This rescues legacy/new threads where a scorecard
+        # exists inline but has not been mirrored into scenarios yet.
+        chat_history = session.get('chat_history') if isinstance(session, dict) and isinstance(session.get('chat_history'), list) else []
+        for _msg in chat_history:
+            if not isinstance(_msg, dict):
+                continue
+            _artifact = _msg.get('artifact') if isinstance(_msg.get('artifact'), dict) else None
+            if not isinstance(_artifact, dict):
+                continue
+            if str(_artifact.get('type') or '').strip() != 'scorecard':
+                continue
+            _data = _artifact.get('data') if isinstance(_artifact.get('data'), dict) else None
+            if not _data:
+                continue
+            _aid = str(
+                _data.get('id')
+                or _data.get('analysis_id')
+                or _data.get('analysisId')
+                or ''
+            ).strip()
+            if not _aid or _aid in _existing_snap_ids:
+                continue
+            _snap = _normalize_scorecard_payload(_data)
+            _snap['id'] = _aid
+            _snap['analysis_id'] = _snap.get('analysis_id') or _aid
+            _snap['isBaseline'] = bool(_snap.get('isBaseline'))
+            _snap['createdAt'] = _snap.get('createdAt') or _msg.get('timestamp') or _data.get('timestamp')
+            if isinstance(_data.get('display_overrides'), dict):
+                _snap['display_overrides'] = _data['display_overrides']
+            merged_snapshots.append(_snap)
+            _existing_snap_ids.add(_aid)
+
         return jsonify({
             'thread': {
                 'id': thread_id,
@@ -6145,6 +6178,28 @@ def _find_scorecard_carrier(user_id, thread_id, scorecard_id):
         if sid in candidate_ids:
             return ('scenario', all_data, scn_id, scn)
 
+    # Fallback: chat_history assistant artifact entries can hold scorecards
+    # that were rendered inline before scenario persistence.
+    if isinstance(session, dict):
+        chat_history = session.get('chat_history')
+        if isinstance(chat_history, list):
+            for msg in reversed(chat_history):
+                if not isinstance(msg, dict):
+                    continue
+                artifact = msg.get('artifact') if isinstance(msg.get('artifact'), dict) else None
+                if not isinstance(artifact, dict) or str(artifact.get('type') or '').strip() != 'scorecard':
+                    continue
+                data = artifact.get('data') if isinstance(artifact.get('data'), dict) else None
+                if not isinstance(data, dict):
+                    continue
+                candidate_ids = {
+                    str(data.get('id') or '').strip(),
+                    str(data.get('analysis_id') or '').strip(),
+                    str(data.get('analysisId') or '').strip(),
+                }
+                if sid and sid in candidate_ids:
+                    return ('chat_artifact', sessions, _key or thread_id, {'result': data})
+
     return (None, None, None, None)
 
 
@@ -6234,6 +6289,42 @@ def scorecard_display_overrides(thread_id, scorecard_id):
             container[key]['result'] = result_blob
             container[key]['timestamp'] = datetime.utcnow().isoformat()
             save_user_sessions(user_id, container)
+        elif kind == 'chat_artifact':
+            # Persist overrides back into the matching assistant artifact entry
+            # in chat_history so workspace edits survive refresh even when this
+            # scorecard has not been promoted to scenario storage yet.
+            session_entry = container.get(key) if isinstance(container, dict) else None
+            if isinstance(session_entry, dict):
+                chat_history = session_entry.get('chat_history')
+                if isinstance(chat_history, list):
+                    target_id = str(scorecard_id or '').strip()
+                    for msg in chat_history:
+                        if not isinstance(msg, dict):
+                            continue
+                        artifact = msg.get('artifact') if isinstance(msg.get('artifact'), dict) else None
+                        if not isinstance(artifact, dict) or str(artifact.get('type') or '').strip() != 'scorecard':
+                            continue
+                        data = artifact.get('data') if isinstance(artifact.get('data'), dict) else None
+                        if not isinstance(data, dict):
+                            continue
+                        ids = {
+                            str(data.get('id') or '').strip(),
+                            str(data.get('analysis_id') or '').strip(),
+                            str(data.get('analysisId') or '').strip(),
+                        }
+                        if target_id and target_id in ids:
+                            data['display_overrides'] = next_overrides
+                            data['display_overrides_updated_at'] = result_blob['display_overrides_updated_at']
+                            artifact['data'] = data
+                            msg['artifact'] = artifact
+                            break
+                    session_entry['chat_history'] = chat_history
+                    result_blob_session = session_entry.get('result')
+                    if isinstance(result_blob_session, dict):
+                        result_blob_session['chat_history'] = chat_history
+                    session_entry['timestamp'] = datetime.utcnow().isoformat()
+                    container[key] = session_entry
+                    save_user_sessions(user_id, container)
         else:
             # container is the scenarios all_data dict
             carrier['result'] = result_blob

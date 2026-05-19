@@ -7270,11 +7270,7 @@ const openWorkspaceRoute = useCallback((threadIdValue, artifactIdValue) => {
   if (!tid || !aid) return false;
   const href = `/workspace/${encodeURIComponent(tid)}/${encodeURIComponent(aid)}`;
   const opened = window.open(href, '_blank', 'noopener,noreferrer');
-  if (!opened) {
-    // Popup blockers can reject programmatic new tabs. Fall back to same-tab
-    // navigation so the CTA still works deterministically.
-    window.location.assign(href);
-  }
+  if (!opened) window.location.assign(href);
   return true;
 }, []);
 
@@ -7336,6 +7332,15 @@ const resolveWorkspaceScorecardId = useCallback(async (rawCard) => {
     return String(byNameAndScore.analysis_id || byNameAndScore.id).trim();
   }
 
+  // If the exact card isn't persisted yet, fall back to a persisted card id
+  // so workspace opens to a real artifact instead of a 404 shell.
+  const persistedFallback = pool.find((entry) => (
+    String(entry?.analysis_id || entry?.id || '').trim().length > 0
+  ));
+  if (persistedFallback?.analysis_id || persistedFallback?.id) {
+    return String(persistedFallback.analysis_id || persistedFallback.id).trim();
+  }
+
   return directCandidates[0] || null;
 }, [currentSessionId, sessionId]);
 
@@ -7343,26 +7348,15 @@ const openWorkspaceScorecard = useCallback(async (rawCard, { closeArtifacts = fa
   const tid = String(sessionId || currentSessionId || '').trim();
   if (!tid || !rawCard || typeof rawCard !== 'object') return;
   if (closeArtifacts) setArtifactsOpen(false);
-
-  // Open a placeholder tab synchronously in the click gesture so browsers
-  // don't block the later navigation while we resolve the persisted id.
-  const pendingTab = window.open('about:blank', '_blank', 'noopener,noreferrer');
-
   const resolvedId = await resolveWorkspaceScorecardId(rawCard);
   if (!resolvedId) {
-    if (pendingTab && !pendingTab.closed) pendingTab.close();
     showToast('Could not resolve this scorecard in workspace yet. Please retry in a moment.', 'error');
     return;
   }
-
-  const href = `/workspace/${encodeURIComponent(tid)}/${encodeURIComponent(resolvedId)}`;
-  if (pendingTab && !pendingTab.closed) {
-    pendingTab.location.assign(href);
-    return;
+  const opened = openWorkspaceRoute(tid, resolvedId);
+  if (!opened) {
+    showToast('Could not open this scorecard in workspace.', 'error');
   }
-
-  const opened = window.open(href, '_blank', 'noopener,noreferrer');
-  if (!opened) window.location.assign(href);
 }, [currentSessionId, openWorkspaceRoute, resolveWorkspaceScorecardId, sessionId, showToast]);
 
 const liveStatusMessage = useMemo(() => {
@@ -8437,38 +8431,7 @@ const handleSaveStarter = async () => {
       : `Generate a trade-off comparison using all currently scored ideas in this conversation.\n\nUse generate_tradeoff_comparison with the listed ideas. Do not generate or regenerate any scorecards.\n${scopedIdeas}`;
     setActivePill('scenarios');
     setTradeoffRequested(true);
-    const now = Date.now();
-    setMessages((prev) => {
-      const next = (Array.isArray(prev) ? prev : []).filter(
-        (entry) => String(entry?.artifact?.type || '').trim() !== 'tradeoff'
-      );
-      return [
-        ...next,
-        { id: `tradeoff-user-${now}`, role: 'user', text: prompt },
-        {
-          id: `tradeoff-artifact-${now}`,
-          role: 'ai',
-          text: '',
-          artifact: {
-            type: 'tradeoff',
-            data: {
-              snapshots: scoredSnapshots,
-              generated_at: new Date().toISOString(),
-              source: 'insights_cta',
-            },
-          },
-        },
-      ];
-    });
-    try {
-      await Jaspen.appendMessages(sid, [
-        { role: 'user', content: prompt },
-        { role: 'assistant', content: refresh ? 'Updated trade-off comparison from current scored ideas.' : 'Generated trade-off comparison from current scored ideas.' },
-      ]);
-    } catch (persistErr) {
-      devWarn('[requestTradeoffFromInsights] persist failed', persistErr);
-    }
-    showToast(refresh ? 'Trade-off updated' : 'Trade-off built', 'success');
+    await onSubmit({ text: prompt });
   }
 
   function onKey(e) {
@@ -9438,7 +9401,11 @@ const uiActions = parseUIActions(actionEnvelope);
 
 const handleGenerateAiWbsFromScorecard = useCallback(async ({ threadBundleId, scorecardId } = {}) => {
   const tid = threadBundleId || currentSessionId || sessionId;
-  if (!tid || aiWbsBusy) return;
+  if (!tid) {
+    showToast('No active session. Please refresh this thread and try again.', 'error');
+    return;
+  }
+  if (aiWbsBusy) return;
 
   const scenarioId = (scorecardId && baselineScorecardId && scorecardId !== baselineScorecardId)
     ? scorecardId
