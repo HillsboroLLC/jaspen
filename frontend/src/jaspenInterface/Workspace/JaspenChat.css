@@ -760,6 +760,12 @@
   color: var(--gray-400);
   padding: 2px 8px 6px;
 }
+.jas-artifact-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px;
+  align-items: center;
+}
 .jas-artifact-item {
   display: flex;
   align-items: center;
@@ -784,6 +790,15 @@
   white-space: nowrap;
   min-width: 0;
   flex: 1;
+}
+.jas-artifact-ws-link {
+  font-size: 11px;
+  color: #475569;
+  padding: 4px 8px;
+  border-radius: 6px;
+  text-decoration: none;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .jas-artifact-ws-link:hover { background: var(--gray-50); color: var(--navy) !important; }
 .jas-artifacts-empty {

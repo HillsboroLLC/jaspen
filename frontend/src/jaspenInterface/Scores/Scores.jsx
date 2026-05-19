@@ -731,7 +731,7 @@ export default function Scores() {
             <div className="scores-agent-empty">
               <p>
                 Ask Jaspen to look across your scored portfolio and recommend what to do next.
-                It will weigh score alongside readiness, execution path, and upside instead of blindly picking the top score.
+                It will weigh score alongside confidence, execution path, and upside instead of blindly picking the top score.
               </p>
               <div className="scores-agent-starters">
                 {PORTFOLIO_STARTER_PROMPTS.map((prompt) => (

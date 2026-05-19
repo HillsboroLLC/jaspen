@@ -864,7 +864,7 @@ const SCORE_COMPONENT_PROMPT_ROWS = [
   { key: 'financial_health', label: 'Financial Health', aliases: ['financial_health', 'financialHealth', 'financial', 'economics'] },
   { key: 'operational_efficiency', label: 'Operational Efficiency', aliases: ['operational_efficiency', 'operationalEfficiency', 'operations', 'execution'] },
   { key: 'market_position', label: 'Market Position', aliases: ['market_position', 'marketPosition', 'market', 'strategy'] },
-  { key: 'execution_readiness', label: 'Execution Readiness', aliases: ['execution_readiness', 'executionReadiness', 'readiness', 'team'] },
+  { key: 'execution_readiness', label: 'Execution Confidence', aliases: ['execution_readiness', 'executionReadiness', 'readiness', 'team'] },
 ];
 
 function extractScoreComponentRows(scorecard) {
@@ -1013,6 +1013,20 @@ function _isMeaningfulTitle(s) {
   return true;
 }
 
+function _capTitleSmart(value = '') {
+  let cleaned = String(value || '').trim().replace(/\s+/g, ' ');
+  cleaned = cleaned.replace(/^(we('re| are| run)\s+(an?\s+)?)|^(i('?m| am)\s+(building|launching|creating)\s+(an?\s+)?)|^(launch\s+(an?\s+)?)/i, '');
+  if (!cleaned) return '';
+  const words = cleaned.split(' ');
+  if (words.length <= 7) return cleaned;
+  const BREAK_WORDS = new Set(['for','to','that','which','and','or','with','in','on','at','by','from','via','using','through','across','into','of','about','between']);
+  for (let i = Math.min(6, words.length - 1); i >= 3; i--) {
+    const token = words[i].toLowerCase().replace(/[^a-z]/g, '');
+    if (BREAK_WORDS.has(token)) return words.slice(0, i).join(' ');
+  }
+  return words.slice(0, 7).join(' ');
+}
+
 function deriveIdeaTitle({ result = null, messages = [], fallback = 'Untitled Idea' } = {}) {
   // Use the FIRST meaningful candidate — skip generic placeholders like
   // 'Baseline Analysis' that legacy scorecards still carry.
@@ -1024,7 +1038,7 @@ function deriveIdeaTitle({ result = null, messages = [], fallback = 'Untitled Id
     result?.compat?.title,
   ];
   for (const c of candidates) {
-    if (_isMeaningfulTitle(c)) return String(c).trim();
+    if (_isMeaningfulTitle(c)) return _capTitleSmart(String(c).trim());
   }
 
   const firstUserIdea = (Array.isArray(messages) ? messages : [])
@@ -1033,24 +1047,15 @@ function deriveIdeaTitle({ result = null, messages = [], fallback = 'Untitled Id
   if (firstUserIdea?.text) {
     let raw = String(firstUserIdea.text).trim();
     // Strip common goal/intent prefixes so the title is the idea itself
-    raw = raw.replace(/^(goal\s*[:–-]\s*|my goal\s+(is\s+)?[:–-]?\s*|i want to\s+|we want to\s+|we('re| are) (building|launching|creating)\s+|idea\s*[:–-]\s*)/i, '');
+    raw = raw.replace(/^(goal\s*[:–-]\s*|my goal\s+(is\s+)?[:–-]?\s*|i want to\s+|we want to\s+|we('re| are) (building|launching|creating)\s+|we('re| are| run)\s+(an?\s+)?|idea\s*[:–-]\s*)/i, '');
     // Take first sentence only
     const firstSentence = raw.split(/[.!?\n]/)[0].trim();
     const cleaned = firstSentence.length > 0 ? firstSentence : raw;
     // Cap at 7 words — find a natural break (before prepositions/conjunctions) rather than hard-cutting
-    const words = cleaned.split(/\s+/);
-    if (words.length <= 7) return cleaned;
-    // Look backward from word 7 for a natural stopping point (preposition/conjunction)
-    const BREAK_WORDS = new Set(['for','to','that','which','and','or','with','in','on','at','by','from','via','using','through','across','into','of','about','between']);
-    for (let i = Math.min(6, words.length - 1); i >= 3; i--) {
-      if (BREAK_WORDS.has(words[i].toLowerCase().replace(/[^a-z]/g, ''))) {
-        return words.slice(0, i).join(' ');
-      }
-    }
-    return words.slice(0, 7).join(' ');
+    return _capTitleSmart(cleaned);
   }
 
-  return fallback;
+  return _capTitleSmart(fallback);
 }
 
 function normalizeSearchableText(value) {
@@ -1121,7 +1126,7 @@ function metricLabelForHistory(metricKey = '') {
   if (key === 'financial_health') return 'Financial Health';
   if (key === 'operational_efficiency') return 'Operational Efficiency';
   if (key === 'market_position') return 'Market Position';
-  if (key === 'execution_readiness') return 'Execution Readiness';
+  if (key === 'execution_readiness') return 'Execution Confidence';
   return 'Score';
 }
 
@@ -1411,7 +1416,7 @@ const WORKSPACE_TIPS = [
   {
     id: 'tip2',
     title: 'Score before you plan',
-    body: 'Run the Jaspen Score to validate viability across financial health, market position, and execution readiness.',
+    body: 'Run the Jaspen Score to validate viability across financial health, market position, and execution confidence.',
   },
   {
     id: 'tip3',
@@ -6377,7 +6382,7 @@ useEffect(() => {
       case 'rename_thread':
         return 'Renaming initiative…';
       case 'get_readiness_snapshot':
-        return 'Checking readiness…';
+        return 'Checking confidence signals…';
       case 'get_data_contract':
         return 'Reviewing required inputs…';
       default:
@@ -8114,7 +8119,7 @@ const handleSaveStarter = async () => {
       { key: 'financial_health',       label: 'Financial Health',       val: comps.financial_health ?? comps.financialHealth ?? comps.financial ?? comps.economics ?? 0 },
       { key: 'operational_efficiency', label: 'Operational Efficiency', val: comps.operational_efficiency ?? comps.operationalEfficiency ?? comps.operations ?? comps.execution ?? 0 },
       { key: 'market_position',        label: 'Market Position',        val: comps.market_position ?? comps.marketPosition ?? comps.market ?? comps.strategy ?? 0 },
-      { key: 'execution_readiness',    label: 'Execution Readiness',    val: comps.execution_readiness ?? comps.executionReadiness ?? comps.readiness ?? comps.team ?? 0 },
+      { key: 'execution_readiness',    label: 'Execution Confidence',    val: comps.execution_readiness ?? comps.executionReadiness ?? comps.readiness ?? comps.team ?? 0 },
     ];
     const clamp = (n) => Math.max(0, Math.min(100, Math.round(Number(n) || 0)));
     const risks = Array.isArray(result.risks) ? result.risks : [];
@@ -11636,9 +11641,9 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                         || _pickName(c?.project_name)
                         || _pickName(c?.initiative_name);
                       if (ownName && ownName.toLowerCase() !== anchorIdeaName.toLowerCase()) {
-                        return ownName;
+                        return _capTitleSmart(ownName);
                       }
-                      return anchorIdeaName;
+                      return _capTitleSmart(anchorIdeaName);
                     };
                     // Count occurrences of each name to know whether to
                     // attach v1/v2/v3 suffixes. When a name appears more than
@@ -11656,7 +11661,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                       const showVersion = nameCounts[n] > 1;
                       return {
                         card: c,
-                        label: showVersion ? `${n} · v${nameRunning[n]}` : n,
+                        label: showVersion ? `${_capTitleSmart(n)} · v${nameRunning[n]}` : _capTitleSmart(n),
                       };
                     });
 
@@ -11667,12 +11672,11 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                         ? `/workspace/${encodeURIComponent(sessionId)}/${encodeURIComponent(cardId)}`
                         : null;
                       return (
-                        <div key={cardId} className="jas-artifact-row" style={{ display:'flex', alignItems:'center', gap:4 }}>
+                        <div key={cardId} className="jas-artifact-row">
                           <button
                             className="jas-artifact-item"
                             onClick={() => { setLightboxScorecard(card); setArtifactsOpen(false); }}
                             title={`Preview ${label}`}
-                            style={{ flex:1 }}
                           >
                             <FontAwesomeIcon icon={faGaugeHigh} />
                             <span>{label} · {score}/100</span>
@@ -11703,12 +11707,11 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                       artifact list we still want ≥2 since you can't compare
                       a single idea against itself. */}
                   {Array.isArray(scorecardSnapshots) && scorecardSnapshots.length >= 2 && (
-                    <div className="jas-artifact-row" style={{ display:'flex', alignItems:'center', gap:4 }}>
+                    <div className="jas-artifact-row">
                       <button
                         className="jas-artifact-item"
                         onClick={() => { setActivePill('scenarios'); setArtifactsOpen(false); }}
                         title="Open the Trade-off comparison view"
-                        style={{ flex:1 }}
                       >
                         <FontAwesomeIcon icon={faArrowRightArrowLeft} />
                         <span>Trade-off · {scorecardSnapshots.length} ideas</span>
@@ -11730,12 +11733,11 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                   )}
                   {/* Execution Plan artifact */}
                   {Array.isArray(threadWbs?.tasks) && threadWbs.tasks.length > 0 && (
-                    <div className="jas-artifact-row" style={{ display:'flex', alignItems:'center', gap:4 }}>
+                    <div className="jas-artifact-row">
                       <button
                         className="jas-artifact-item"
                         onClick={() => { setActivePill('execution'); setArtifactsOpen(false); }}
                         title="Open the Execution Plan"
-                        style={{ flex:1 }}
                       >
                         <FontAwesomeIcon icon={faListCheck} />
                         <span>Execution Plan · {threadWbs.tasks.length} tasks</span>
@@ -11771,24 +11773,23 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               // any scorecard — they shouldn't lose access after building an
               // execution plan or refreshing. `tradeoffRequested` still gates
               // whether the inline comparison auto-renders in the chat thread.
-              const canScenarios = Boolean(analysisResult);
+              const scoredIdeasCount = Array.isArray(scorecardSnapshots) && scorecardSnapshots.length > 0
+                ? scorecardSnapshots.length
+                : (analysisResult ? 1 : 0);
+              const canScenarios = scoredIdeasCount >= 2;
               const hasExecutionPlan = Array.isArray(threadWbs?.tasks) && threadWbs.tasks.length > 0;
-              // Execution tab is clickable once the user has at least one
-              // scorecard — even if no plan exists yet — so they can see the
-              // "Pick an idea to turn into a project" empty state with
-              // Build-Plan CTAs per idea.
-              const canExecution = hasExecutionPlan || Boolean(analysisResult);
+              const canExecution = hasExecutionPlan;
               const stages = [
                 { key: 'discovery',  label: 'Discovery',  disabled: false },
                 { key: 'scoring',    label: 'Scoring',    disabled: !analysisResult },
                 { key: 'scenarios',  label: 'Trade-off',  disabled: !canScenarios,
                   title: !canScenarios
-                    ? 'Score an idea first to access the trade-off view'
+                    ? 'Create at least two scorecards to compare in Trade-off'
                     : undefined },
                 { key: 'execution',  label: 'Execution',  disabled: !canExecution,
                   title: !canExecution
-                    ? 'Score an idea first — then turn it into a project from this tab'
-                    : (hasExecutionPlan ? undefined : 'Pick an idea to turn into a project') },
+                    ? 'Build an execution plan from a scorecard first'
+                    : undefined },
               ];
               // Everything stays inline — no setActiveTab navigation
               const handlePillClick = (key, disabled) => {
@@ -12363,6 +12364,21 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
 
             {/* ── Top cards: Confidence always shown; Score stacks below once scorecard exists ── */}
             <div className="jas-insights-confidence">
+              {(() => {
+                if (activePill !== 'scoring' || Math.round(uiReadiness) >= 80) return null;
+                const topGaps = (collectedSignals || []).filter((signal) => !signal.complete).slice(0, 3);
+                if (topGaps.length === 0) return null;
+                return (
+                  <div className="jas-insights-score-flat" style={{ marginBottom: 10 }}>
+                    <span className="jas-insights-score-flat-label">To reach 80% confidence</span>
+                    <div style={{ fontSize: '0.72rem', color: 'var(--gray-700)', lineHeight: 1.45 }}>
+                      Ask for:
+                      {' '}
+                      {topGaps.map((signal) => signal.label).join(', ')}
+                    </div>
+                  </div>
+                );
+              })()}
               {/* Confidence row — always visible */}
               {(canAnalyze && !analysisResult) || scorecardGenerating ? (
                 <div className="jas-insights-score-flat">
@@ -12387,17 +12403,20 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               )}
 
               {/* Score row — stacks below confidence once scorecard exists */}
-              {analysisResult && (
+              {(activeScorecard || analysisResult) && (() => {
+                const scoreValue = Number(activeScorecard?.jaspen_score ?? activeScorecard?.score ?? analysisResult?.jaspen_score ?? analysisResult?.score ?? 0);
+                return (
                 <div className="jas-insights-score-flat" style={{ marginTop: 10 }}>
                   <span className="jas-insights-score-flat-label">Score</span>
                   <div className="jas-insights-readiness">
                     <div className="jas-insights-readiness-bar">
-                      <div className="jas-insights-readiness-fill" style={{ width: `${analysisResult.jaspen_score}%`, background: '#161f3b' }} />
+                      <div className="jas-insights-readiness-fill" style={{ width: `${Math.max(0, Math.min(100, scoreValue))}%`, background: '#161f3b' }} />
                     </div>
-                    <span className="jas-insights-score-flat-val">{analysisResult.jaspen_score} / 100</span>
+                    <span className="jas-insights-score-flat-val">{Math.round(scoreValue)} / 100</span>
                   </div>
                 </div>
-              )}
+                );
+              })()}
             </div>
 
             {/* ── Dynamic content per pill (driven by header stage pills) ── */}
@@ -12462,7 +12481,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                   {analysisResult && (
                     <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
                       <p style={{ fontSize: '0.72rem', color: 'var(--gray-500)', lineHeight: 1.45, fontStyle: 'italic' }}>
-                        Ask Jaspen to model a change — it will suggest scoring when ready.
+                        Ask Jaspen to model a change — it will recommend what evidence improves confidence next.
                       </p>
                     </div>
                   )}

@@ -2663,10 +2663,10 @@ def _readiness_phase_prompt_suffix(readiness):
         )
 
     return (
-        f"\n\nREADINESS STATUS ({pct}% — Early Stage):\n"
-        "Intake is in early stages — DO NOT offer, suggest, or ask about scorecard generation. "
+        f"\n\nCONFIDENCE STATUS ({pct}% — Early Context):\n"
+        "Context is still early — DO NOT offer, suggest, or ask about scorecard generation. "
         "DO NOT ask 'Would you like me to generate a scorecard?' or any similar prompt. "
-        "The two most critical things to establish first are: "
+        "The two most critical signals to establish first are: "
         "(1) a specific, measurable goal with a time horizon, and "
         "(2) a measurable current-vs-target metric. "
         "Ask exactly one focused question to gather whichever of these is still missing."
@@ -4366,7 +4366,7 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
     tools = [
         {
             "name": "get_readiness_snapshot",
-            "description": "Return the latest readiness percent, missing checklist items, and top follow-up question.",
+            "description": "Return the latest confidence percent, missing checklist items, and top follow-up question.",
             "input_schema": {
                 "type": "object",
                 "properties": {},
@@ -4375,7 +4375,7 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
         },
         {
             "name": "get_data_contract",
-            "description": "Return required fields for current evidence collection when readiness v2 is active.",
+            "description": "Return required fields for current evidence collection when confidence-spec v2 is active.",
             "input_schema": {
                 "type": "object",
                 "properties": {},
@@ -4559,7 +4559,7 @@ def _anthropic_tool_output(tool_name, readiness):
             }
         return {
             "available": False,
-            "reason": "Data contract is only used for readiness-v2.",
+            "reason": "Data contract is only used for confidence-spec v2.",
         }
 
     missing_items = [

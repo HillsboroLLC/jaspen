@@ -68,7 +68,7 @@ const TOPICS = {
       {
         heading: 'Core Layers',
         body: [
-          'Intake captures context, scoring quantifies readiness, scenarios model tradeoffs, WBS planning operationalizes execution, and connectors sync external systems.',
+          'Intake captures context, scoring quantifies confidence, scenarios model tradeoffs, WBS planning operationalizes execution, and connectors sync external systems.',
         ],
       },
       {
@@ -89,7 +89,7 @@ const TOPICS = {
       {
         heading: 'Score Meaning',
         body: [
-          'Jaspen Score is a 0-100 summary of readiness and execution quality. It is supported by component-level scores so teams can see which capability areas are helping or hurting outcomes.',
+          'Jaspen Score is a 0-100 summary of confidence and execution quality. It is supported by component-level scores so teams can see which capability areas are helping or hurting outcomes.',
         ],
       },
       {

@@ -39,7 +39,7 @@ export default function ComparisonView({
       { key: 'financial_health', label: 'Financial Health' },
       { key: 'operational_efficiency', label: 'Operational Efficiency' },
       { key: 'market_position', label: 'Market Position' },
-      { key: 'execution_readiness', label: 'Execution Readiness' },
+      { key: 'execution_readiness', label: 'Execution Confidence' },
     ];
     const rows = entries.map((entry) => ({
       name: entry.label,
