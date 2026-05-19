@@ -67,6 +67,19 @@ const IS_DEV = process.env.NODE_ENV !== 'production';
 const devWarn = (...args) => {
   if (IS_DEV) console.warn(...args);
 };
+const BASELINE_INTERNAL_LABEL = 'Baseline';
+const BASELINE_DISPLAY_LABEL = 'Original';
+
+const isBaselineLikeLabel = (value) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === 'baseline' || normalized === 'original';
+};
+
+const formatScorecardLabel = (label, { isBaseline = false, fallback = 'Scorecard' } = {}) => {
+  if (isBaseline || isBaselineLikeLabel(label)) return BASELINE_DISPLAY_LABEL;
+  const cleaned = String(label || '').trim();
+  return cleaned || fallback;
+};
 
 const getRestorableSessionIdFromLocation = () => {
   try {
@@ -236,7 +249,7 @@ const buildMergedScorecardSnapshots = ({
           ...baselineSource,
           id: baselineId,
           analysis_id: baselineSource.analysis_id || baselineId,
-          label: 'Baseline',
+          label: BASELINE_INTERNAL_LABEL,
           isBaseline: true,
         }
       : null;
@@ -267,7 +280,7 @@ const buildMergedScorecardSnapshots = ({
         ...snapshot,
         ...baselineSnapshot,
         isBaseline: true,
-        label: 'Baseline',
+        label: BASELINE_INTERNAL_LABEL,
       });
       return;
     }
@@ -381,7 +394,7 @@ const buildScorecardSnapshots = ({
         baselineScorecard.id ||
         baselineScorecard.analysisId ||
         `baseline_${normalizedThreadId || Date.now()}`,
-      label: baselineScorecard.label || 'Baseline',
+      label: baselineScorecard.label || BASELINE_INTERNAL_LABEL,
       isBaseline: true,
     });
   }
@@ -1579,7 +1592,7 @@ const [selectedVariantId, setSelectedVariantId] = useState('baseline');
 // Keep the list of selectable score variants in sync
 useEffect(() => {
   const opts = [
-    analysisResult ? { id: 'baseline',  label: 'Baseline',   result: analysisResult } : null,
+    analysisResult ? { id: 'baseline',  label: BASELINE_INTERNAL_LABEL,   result: analysisResult } : null,
     resultA        ? { id: 'scenarioA', label: 'Scenario A', result: resultA }        : null,
     resultB        ? { id: 'scenarioB', label: 'Scenario B', result: resultB }        : null,
     resultC        ? { id: 'scenarioC', label: 'Scenario C', result: resultC }        : null,
@@ -1710,7 +1723,7 @@ const [pendingWbsConfirmation, setPendingWbsConfirmation] = useState(null);
         {
           ...baselineSource,
           id: baseId,
-          label: 'Baseline',
+          label: BASELINE_INTERNAL_LABEL,
           isBaseline: true,
           createdAt: Date.now(),
         },
@@ -2571,7 +2584,7 @@ const renderScorecardCard = (result, opts = {}) => {
     <div className="jas-scorecard-card">
       {/* Eyebrow + timestamp */}
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14 }}>
-        <span className="jas-scorecard-eyebrow">Scorecard · Baseline</span>
+        <span className="jas-scorecard-eyebrow">Scorecard</span>
         {timeAgo && <span className="jas-scorecard-timestamp">v1 · {timeAgo}</span>}
       </div>
 
@@ -7419,7 +7432,7 @@ async function onBeginProject(extraAnswers = null) {
   const activeScenarioName = activeScenarioProjectLabel;
   const sourceLabel = activeScenarioName
     ? `${activeScenarioName} (Active)`
-    : 'Baseline';
+    : 'Current scorecard';
   const ok = window.confirm(
     `Build an execution plan based on: ${sourceLabel}?\n\n` +
     `Jaspen will generate a full project WBS from this scorecard context and open it on the Execution page.`
@@ -7787,7 +7800,7 @@ const handleSaveStarter = async () => {
 
       // Wire up scorecard state
       setAnalysisResult(result);
-      const baselineSnapshot = { ...result._baseline_scorecard, id: sid, label: 'Baseline', isBaseline: true, createdAt: Date.now() };
+      const baselineSnapshot = { ...result._baseline_scorecard, id: sid, label: BASELINE_INTERNAL_LABEL, isBaseline: true, createdAt: Date.now() };
       setScorecardSnapshots([baselineSnapshot]);
       setSelectedScorecardId(sid);
       setBaselineScorecardId(sid);
@@ -8254,7 +8267,7 @@ const handleSaveStarter = async () => {
     // Determine baseline snapshot to preserve (if not already preserved)
     const baselineSnap =
       (Array.isArray(scorecardSnapshots) ? scorecardSnapshots.find(s => s.id === baselineId) : null) ||
-      (analysisResult ? { ...analysisResult, id: baselineId, label: 'Baseline', isBaseline: true } : null);
+      (analysisResult ? { ...analysisResult, id: baselineId, label: BASELINE_INTERNAL_LABEL, isBaseline: true } : null);
 
     const safeBaseline = baselineSnap ? { ...baselineSnap } : null;
     if (safeBaseline) {
@@ -8276,7 +8289,7 @@ const handleSaveStarter = async () => {
     // Also ensure baseline has isBaseline true
     const persistedSnaps = withEdited.map(s => {
       if (!s) return s;
-      if (s.id === baselineId) return { ...s, isBaseline: true, label: s.label || 'Baseline' };
+      if (s.id === baselineId) return { ...s, isBaseline: true, label: s.label || BASELINE_INTERNAL_LABEL };
       return s;
     });
 
@@ -10187,7 +10200,10 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
           })
           .map((snap, idx) => ({
             id: snap.id,
-            label: snap.isBaseline ? 'Baseline' : (snap.label || `Scenario ${idx}`),
+            label: formatScorecardLabel(
+              snap.label,
+              { isBaseline: Boolean(snap?.isBaseline), fallback: `Scorecard ${idx + 1}` }
+            ),
             isBaseline: Boolean(snap?.isBaseline),
             isSelected: String(snap?.id || '') === String(effectiveSelectedScorecardId || ''),
             isActive: String(snap?.id || '') === String(activeSnapshotId || ''),
@@ -10205,8 +10221,15 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       ? resolvedScoreSelectValue
       : selectedVariantId;
     const selectedScoreLabel = useSnapshotSelect
-      ? (snapshotOptions.find((option) => option.id === resolvedScoreSelectValue)?.label || snapshotOptions[0]?.label || 'Baseline')
-      : (scoreVariants.find((variant) => variant.id === scoreSelectValue)?.label || 'Baseline');
+      ? (
+        snapshotOptions.find((option) => option.id === resolvedScoreSelectValue)?.label ||
+        snapshotOptions[0]?.label ||
+        BASELINE_DISPLAY_LABEL
+      )
+      : formatScorecardLabel(
+        scoreVariants.find((variant) => variant.id === scoreSelectValue)?.label,
+        { fallback: BASELINE_DISPLAY_LABEL }
+      );
     const completedScoreOptions = analysisHistory
       .filter((item) => (item.result?.status || 'completed') === 'completed')
       .map((item) => ({
@@ -10986,8 +11009,10 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                             >
                               {scoreSelectValue === option.id && <FontAwesomeIcon icon={faCheck} />}
                               <span>
-                                {option.label}
-                                {option.isBaseline ? ' (Baseline)' : option.isActive ? ' (Active)' : ''}
+                                {formatScorecardLabel(option.label, { isBaseline: Boolean(option.isBaseline) || option.id === 'baseline' })}
+                                {option.isBaseline
+                                  ? (isBaselineLikeLabel(option.label) ? '' : ` (${BASELINE_DISPLAY_LABEL})`)
+                                  : option.isActive ? ' (Active)' : ''}
                               </span>
                             </button>
                             {useSnapshotSelect && (
@@ -12456,7 +12481,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                       const s = snap.jaspen_score ?? snap.score ?? null;
                       const delta = (i > 0 && s !== null) ? Number(s) - firstScore : null;
                       const deltaColor = delta > 0 ? '#16a34a' : delta < 0 ? '#dc2626' : '#6b7280';
-                      const displayLabel = snap.label && snap.label !== 'Baseline' && !snap.isBaseline
+                      const displayLabel = snap.label && !isBaselineLikeLabel(snap.label) && !snap.isBaseline
                         ? snap.label
                         : `Scorecard ${i + 1}`;
                       return (

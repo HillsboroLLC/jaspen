@@ -469,7 +469,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "When the user asks to build an execution plan, call generate_execution_plan. "
     "Use your judgment about when to score. A confirmation, a correction, an acknowledgment, or a question about an existing scorecard never warrants a new one. A genuinely new idea, a pivoted market, a meaningfully different team or pricing model does. If you're unsure, ask the user before scoring. "
     "Do not call patch_scorecard or attempt to edit a previous scorecard — they're immutable. "
-    "Refer to ideas by their actual name (not 'Scenario A' / 'baseline'). Keep the conversation natural — one exchange at a time. "
+    "Refer to ideas by their actual name (not placeholders like 'Scenario A' or 'Original'). Keep the conversation natural — one exchange at a time. "
     "RANKING: If the user asks to rank, compare, or summarize all the ideas modeled in this conversation, "
     "do so directly using the scorecard data available. Present a clear ranked list with the idea name, score, "
     "and one-line rationale for each. This also applies when the user uploads a file containing multiple ideas "
@@ -995,7 +995,7 @@ def _view_context_prompt_suffix(view_context):
     if current_view == "summary":
         lines.append(
             "- The user is viewing a completed scorecard. "
-            "Do NOT ask intake questions or ask for baseline data again. "
+            "Do NOT ask intake questions or ask for previously provided intake data again. "
             "If the user proposes a new variation worth scoring, call generate_scorecard to create a fresh scorecard inline. "
             "Do NOT call patch_scorecard — scorecards are immutable. "
             "Use your judgment: confirmations, corrections, and clarifying questions don't need a new scorecard."
@@ -1581,7 +1581,7 @@ READINESS_SPEC_V1 = {
 READINESS_SPEC_V2 = {
     "version": "readiness-v2",
     # required_keys: these categories MUST be complete for ready_to_analyze to trigger,
-    # regardless of overall percent.  Goal + measurable baseline are non-negotiable gates.
+    # regardless of overall percent. Goal + measurable evidence are non-negotiable gates.
     "required_keys": ["goal_definition", "evidence_baseline"],
     # min_keywords: how many keyword matches a category needs before it counts as complete.
     # 1 is intentional — each keyword in the v2 lists is already specific enough that a
@@ -1593,7 +1593,7 @@ READINESS_SPEC_V2 = {
         {"key": "goal_definition",    "label": "Goal Definition",               "weight": 0.20, "step": 1, "required": True},
         # Required gate: must have at least one number or financial/KPI metric.
         # evidence_baseline uses its own quality-score path inside _compute_readiness.
-        {"key": "evidence_baseline",  "label": "Data Baseline (Financial/KPI)", "weight": 0.20, "step": 2, "required": True},
+        {"key": "evidence_baseline",  "label": "Current Evidence (Financial/KPI)", "weight": 0.20, "step": 2, "required": True},
         # Core operational categories — each carries equal weight of the remaining 60%.
         {"key": "sme_drivers",        "label": "SME Drivers (Why)",             "weight": 0.15, "step": 3},
         {"key": "system_mapping",     "label": "System Mapping",                "weight": 0.15, "step": 4},
@@ -1695,7 +1695,7 @@ FOLLOW_UP_QUESTIONS_BY_VERSION = {
     },
     "readiness-v2": {
         "goal_definition": "What is the specific initiative goal, target outcome, and time horizon?",
-        "evidence_baseline": "Share baseline data: current vs target metrics, timeframe, and source (financial or KPI).",
+        "evidence_baseline": "Share current evidence: current vs target metrics, timeframe, and source (financial or KPI).",
         "sme_drivers": "Which SMEs can explain why this is happening, and what patterns are they seeing?",
         "system_mapping": "Map the system: what teams, steps, and handoffs shape this initiative end-to-end?",
         "constraint_unlock": "What is the primary constraint today, and what unlock would remove it?",
@@ -1791,9 +1791,9 @@ OBJECTIVE_FOCUS_PROFILES = {
     "cost": [
         {
             "id": "cost_baseline",
-            "label": "Cost baseline and target savings are defined",
+            "label": "Current cost level and target savings are defined",
             "keywords": ["cost", "expense", "budget", "savings", "baseline", "target"],
-            "question": "What is the current cost baseline, and what savings target are you trying to achieve?",
+            "question": "What are your current costs, and what savings target are you trying to achieve?",
         },
         {
             "id": "cost_efficiency_levers",
@@ -1839,7 +1839,7 @@ OBJECTIVE_FOCUS_PROFILES = {
             "id": "growth_funnel",
             "label": "Acquisition or conversion funnel is defined",
             "keywords": ["acquisition", "conversion", "pipeline", "funnel", "lead", "activation"],
-            "question": "What funnel stage do you expect to improve, and what current conversion baseline are you working from?",
+            "question": "What funnel stage do you expect to improve, and what is your current conversion rate?",
         },
         {
             "id": "growth_retention",
@@ -2412,7 +2412,7 @@ def _looks_like_connector_deferral(reply):
         "i could not retrieve connector rows",
         "please confirm the connected source/table",
         "what is the specific initiative goal",
-        "share baseline data:",
+        "share current evidence:",
         "i will prioritize numeric evidence",
         "i can now compute focused cost-driver summaries",
     )
@@ -2617,7 +2617,7 @@ def _readiness_phase_prompt_suffix(readiness):
 
     The ready-to-analyze gate requires both:
       • Overall >= 85%
-      • All required categories complete (goal_definition + evidence_baseline)
+      • All required categories complete (goal_definition + quantitative evidence)
     Below that threshold we surface the highest-priority missing REQUIRED
     category first, then the next incomplete non-required one.
     """
@@ -2668,7 +2668,7 @@ def _readiness_phase_prompt_suffix(readiness):
         "DO NOT ask 'Would you like me to generate a scorecard?' or any similar prompt. "
         "The two most critical things to establish first are: "
         "(1) a specific, measurable goal with a time horizon, and "
-        "(2) a baseline metric showing current vs target state. "
+        "(2) a measurable current-vs-target metric. "
         "Ask exactly one focused question to gather whichever of these is still missing."
     )
 
@@ -2956,7 +2956,7 @@ def _direct_connector_fallback_reply(user_id, user_message, readiness):
             lines.append("**Recommended Actions (30/60/90)**")
             lines.append(f"- 30 days: Validate top `{cost_col}` contributors by supplier/part and flag outliers > sampled average.")
             lines.append(f"- 60 days: Design cost-control levers for high-value lines (discount policy, quantity thresholds, sourcing shifts).")
-            lines.append(f"- 90 days: Track weekly `{cost_col}` trend and target a measurable reduction against current sampled baseline.")
+            lines.append(f"- 90 days: Track weekly `{cost_col}` trend and target a measurable reduction against current sampled levels.")
         else:
             lines.append("I could not compute numeric cost drivers from the returned rows. Try specifying cost columns.")
     else:
@@ -4375,7 +4375,7 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
         },
         {
             "name": "get_data_contract",
-            "description": "Return required fields for baseline evidence collection when readiness v2 is active.",
+            "description": "Return required fields for current evidence collection when readiness v2 is active.",
             "input_schema": {
                 "type": "object",
                 "properties": {},
@@ -4880,7 +4880,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id):
         raw_deltas = tool_input.get("deltas") if isinstance(tool_input.get("deltas"), dict) else {}
         _, _, baseline, baseline_inputs, _session, objective = _resolve_thread_baseline(user_id, thread_id)
         if not isinstance(baseline, dict):
-            return _tool_error("No baseline scorecard is available yet for this thread.", code="missing_baseline")
+            return _tool_error("No scorecard is available yet for this thread.", code="missing_baseline")
 
         deltas = _sanitize_deltas(baseline_inputs or {}, raw_deltas)
         if not deltas:
@@ -7587,7 +7587,7 @@ def _batch_promotion_prompt_suffix(user_id, thread_id):
         "This project was promoted from a batch idea upload.\n"
         f'Original idea: "{title}"\n'
         f"Provided metadata: {metadata_pairs or 'none'}\n"
-        "The user has already provided baseline information. Focus on deepening the analysis rather than re-asking for information already provided."
+        "The user has already provided foundational context. Focus on deepening the analysis rather than re-asking for information already provided."
     )
 
 
@@ -7653,7 +7653,7 @@ def _promote_batch_idea_to_thread(user, batch, idea, model_selection):
         },
         {
             "role": "assistant",
-            "content": "Imported this batch idea and generated an initial Jaspen scorecard. Open the Score and Execution tabs to review the baseline plan.",
+            "content": "Imported this batch idea and generated an initial Jaspen scorecard. Open the Score and Execution tabs to review the initial plan.",
             "timestamp": generated_at,
         },
     ]
@@ -7838,7 +7838,7 @@ def _heuristic_insight_text(summary):
     risks = summary.get("risk_indicators") or []
     opps = summary.get("opportunities") or []
     risk_sentence = f"Risks: {risks[0]}" if risks else "Risks: None flagged from basic statistical checks."
-    opp_sentence = f"Opportunity: {opps[0]}" if opps else "Opportunity: Establish a baseline dashboard and monitor trend inflections weekly."
+    opp_sentence = f"Opportunity: {opps[0]}" if opps else "Opportunity: Establish a weekly dashboard and monitor trend inflections."
     return " ".join([lead, trend_sentence, anomaly_sentence, risk_sentence, opp_sentence]).strip()
 
 
