@@ -12372,7 +12372,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                   <div className="jas-insights-score-flat" style={{ marginBottom: 10 }}>
                     <span className="jas-insights-score-flat-label">To reach 80% confidence</span>
                     <div style={{ fontSize: '0.72rem', color: 'var(--gray-700)', lineHeight: 1.45 }}>
-                      Ask for:
+                      Provide:
                       {' '}
                       {topGaps.map((signal) => signal.label).join(', ')}
                     </div>
@@ -12404,7 +12404,19 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
 
               {/* Score row — stacks below confidence once scorecard exists */}
               {(activeScorecard || analysisResult) && (() => {
-                const scoreValue = Number(activeScorecard?.jaspen_score ?? activeScorecard?.score ?? analysisResult?.jaspen_score ?? analysisResult?.score ?? 0);
+                const rawScoreCandidates = [
+                  activeScorecard?.jaspen_score,
+                  activeScorecard?.score,
+                  analysisResult?.jaspen_score,
+                  analysisResult?.score,
+                ];
+                const resolvedRawScore = rawScoreCandidates.find((candidate) => (
+                  candidate !== undefined
+                  && candidate !== null
+                  && String(candidate).trim() !== ''
+                  && !Number.isNaN(Number(candidate))
+                ));
+                const scoreValue = resolvedRawScore === undefined ? 0 : Number(resolvedRawScore);
                 return (
                 <div className="jas-insights-score-flat" style={{ marginTop: 10 }}>
                   <span className="jas-insights-score-flat-label">Score</span>
