@@ -11777,9 +11777,17 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               // any scorecard — they shouldn't lose access after building an
               // execution plan or refreshing. `tradeoffRequested` still gates
               // whether the inline comparison auto-renders in the chat thread.
-              const scoredIdeasCount = Array.isArray(scorecardSnapshots) && scorecardSnapshots.length > 0
-                ? scorecardSnapshots.length
-                : (analysisResult ? 1 : 0);
+              const artifactScorecardsCount = (Array.isArray(displayMessages) ? displayMessages : []).filter((entry) => (
+                String(entry?.artifact?.type || '').trim() === 'scorecard'
+                && hasMeaningfulScorecardData(entry?.artifact?.data)
+              )).length;
+              const scoredIdeasCount = Math.max(
+                Array.isArray(scorecardSnapshots) && scorecardSnapshots.length > 0
+                  ? scorecardSnapshots.length
+                  : 0,
+                analysisResult ? 1 : 0,
+                artifactScorecardsCount
+              );
               const canScoring = scoredIdeasCount >= 1;
               const canScenarios = scoredIdeasCount >= 2;
               const hasExecutionPlan = Array.isArray(threadWbs?.tasks) && threadWbs.tasks.length > 0;
