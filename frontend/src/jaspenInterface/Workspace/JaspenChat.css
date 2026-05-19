@@ -1379,6 +1379,10 @@
   padding-right: 316px;
 }
 
+.jas-chat-content.has-insights-panel-collapsed {
+  padding-right: 52px;
+}
+
 .jas-topbar-left {
   display: flex;
   align-items: center;

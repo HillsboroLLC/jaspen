@@ -6078,6 +6078,75 @@ const displayMessages = useMemo(() => {
   return composed;
 }, [analysisResult, messages, scorecardSnapshots, threadWbs, tradeoffRequested]);
 
+const insightsScoreSource = useMemo(() => {
+  const SCORE_KEYS = [
+    'strategic_alignment',
+    'financial_viability',
+    'execution_readiness',
+    'risk_profile',
+    'market_opportunity',
+    'evidence_quality',
+  ];
+
+  const scoreSignal = (candidate) => {
+    if (!candidate || typeof candidate !== 'object') return -1;
+    const components = candidate?.component_scores || candidate?.scores || candidate?.compat?.components || {};
+    const dimensions = candidate?.dimensions || {};
+    let signal = 0;
+
+    const overall = Number(candidate?.jaspen_score ?? candidate?.score ?? 0);
+    if (Number.isFinite(overall) && overall > 0) signal += 2;
+
+    SCORE_KEYS.forEach((key) => {
+      const dimScore = Number(dimensions?.[key]?.score ?? components?.[key] ?? 0);
+      if (Number.isFinite(dimScore) && dimScore > 0) signal += 1;
+      const rationale = dimensions?.[key]?.rationale || dimensions?.[key]?.summary || dimensions?.[key]?.insight || dimensions?.[key]?.explanation;
+      if (rationale && String(rationale).trim()) signal += 1;
+    });
+    return signal;
+  };
+
+  const selectedSnapshot = (() => {
+    const selectedId = String(effectiveSelectedScorecardId || '').trim();
+    if (!selectedId) return null;
+    return (Array.isArray(scorecardSnapshots) ? scorecardSnapshots : []).find((snapshot) => {
+      const snapshotId = String(snapshot?.id || snapshot?.analysis_id || snapshot?.analysisId || '').trim();
+      return snapshotId && snapshotId === selectedId;
+    }) || null;
+  })();
+
+  const artifactScorecards = (Array.isArray(displayMessages) ? displayMessages : [])
+    .map((entry) => (String(entry?.artifact?.type || '').trim() === 'scorecard' ? entry?.artifact?.data : null))
+    .filter((entry) => entry && typeof entry === 'object');
+
+  const candidates = [
+    activeScorecard,
+    selectedSnapshot,
+    ...(Array.isArray(scorecardSnapshots) ? scorecardSnapshots : []),
+    analysisResult,
+    bundleCurrentScorecard,
+    bundleBaselineScorecard,
+    ...artifactScorecards,
+  ].filter((entry) => entry && typeof entry === 'object' && hasMeaningfulScorecardData(entry));
+
+  if (!candidates.length) return null;
+
+  const best = candidates.reduce((winner, candidate) => {
+    if (!winner) return candidate;
+    return scoreSignal(candidate) > scoreSignal(winner) ? candidate : winner;
+  }, null);
+
+  return best || candidates[0] || null;
+}, [
+  activeScorecard,
+  analysisResult,
+  bundleBaselineScorecard,
+  bundleCurrentScorecard,
+  displayMessages,
+  effectiveSelectedScorecardId,
+  scorecardSnapshots,
+]);
+
 const renderModelTypeInlinePicker = (className = '') => (
   <div className={`jas-model-picker-inline ${className}`.trim()} ref={modelMenuRef}>
     <button
@@ -11991,7 +12060,10 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       )}
 
       {/* Content */}
-      <div id="jas-main-content" className={`jas-chat-content${messages.length > 0 ? ' has-insights-panel' : ''}`}>
+      <div
+        id="jas-main-content"
+        className={`jas-chat-content${messages.length > 0 && !insightsCollapsed ? ' has-insights-panel' : ''}${messages.length > 0 && insightsCollapsed ? ' has-insights-panel-collapsed' : ''}`}
+      >
         {showSharedProjectsLanding ? (
           <div className="jas-shared-projects-landing">
             <h2>Shared Projects</h2>
@@ -12416,12 +12488,10 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               )}
 
               {/* Score row — stacks below confidence once scorecard exists */}
-              {(activeScorecard || analysisResult) && (() => {
+              {insightsScoreSource && (() => {
                 const rawScoreCandidates = [
-                  activeScorecard?.jaspen_score,
-                  activeScorecard?.score,
-                  analysisResult?.jaspen_score,
-                  analysisResult?.score,
+                  insightsScoreSource?.jaspen_score,
+                  insightsScoreSource?.score,
                 ];
                 const resolvedRawScore = rawScoreCandidates.find((candidate) => (
                   candidate !== undefined
@@ -12471,8 +12541,8 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               )}
 
               {/* Scoring: dimension rationales + improvement coaching */}
-              {activePill === 'scoring' && (activeScorecard || analysisResult) && (() => {
-                const scoreSource = activeScorecard || analysisResult || {};
+              {activePill === 'scoring' && insightsScoreSource && (() => {
+                const scoreSource = insightsScoreSource || {};
                 const dimensions = scoreSource?.dimensions || {};
                 const componentScores = scoreSource?.component_scores || scoreSource?.scores || {};
                 const firstRisk = Array.isArray(scoreSource?.top_risks) && scoreSource.top_risks.length > 0
