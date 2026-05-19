@@ -8334,12 +8334,9 @@ const handleSaveStarter = async () => {
       showToast('Score at least two ideas before building a trade-off.', 'info');
       return;
     }
-    const scopedIdeas = scored
-      .map((item, idx) => `${idx + 1}. ${item.label} (id: ${item.id}, score: ${Math.round(item.score)}/100)`)
-      .join('\n');
     const prompt = refresh
-      ? `Update the existing trade-off comparison now using these exact scored ideas from this thread:\n${scopedIdeas}\n\nUse generate_tradeoff_comparison and include all listed IDs.`
-      : `Generate a trade-off comparison now using these exact scored ideas from this thread:\n${scopedIdeas}\n\nUse generate_tradeoff_comparison and include all listed IDs.`;
+      ? 'Update the trade-off comparison using all currently scored ideas in this conversation.'
+      : 'Generate a trade-off comparison using all currently scored ideas in this conversation.';
     setActivePill('scenarios');
     setTradeoffRequested(true);
     await onSubmit({ text: prompt });
@@ -12997,13 +12994,16 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                     </div>
                   ) : (
                     <div className="jas-insights-tradeoff-cta">
+                      <p style={{ fontSize: '0.71rem', color: 'var(--gray-500)', lineHeight: 1.45, marginTop: 10, fontStyle: 'italic' }}>
+                        New scored ideas can shift the result. Refresh when you are ready.
+                      </p>
                       <button
                         type="button"
                         className="jas-insights-action-btn jas-insights-action-btn--ghost"
                         onClick={() => { void requestTradeoffFromInsights({ refresh: true }); }}
                         disabled={busy || scorecardGenerating || autoVersionGenerating}
                       >
-                        {busy || scorecardGenerating || autoVersionGenerating ? 'Working…' : 'Update trade-off with latest scores'}
+                        {busy || scorecardGenerating || autoVersionGenerating ? 'Working…' : 'Update trade-off'}
                       </button>
                     </div>
                   )}
