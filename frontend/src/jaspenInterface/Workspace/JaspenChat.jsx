@@ -7269,7 +7269,12 @@ const openWorkspaceRoute = useCallback((threadIdValue, artifactIdValue) => {
   const aid = String(artifactIdValue || '').trim();
   if (!tid || !aid) return false;
   const href = `/workspace/${encodeURIComponent(tid)}/${encodeURIComponent(aid)}`;
-  window.open(href, '_blank', 'noopener,noreferrer');
+  const opened = window.open(href, '_blank', 'noopener,noreferrer');
+  if (!opened) {
+    // Popup blockers can reject programmatic new tabs. Fall back to same-tab
+    // navigation so the CTA still works deterministically.
+    window.location.assign(href);
+  }
   return true;
 }, []);
 
@@ -7338,15 +7343,26 @@ const openWorkspaceScorecard = useCallback(async (rawCard, { closeArtifacts = fa
   const tid = String(sessionId || currentSessionId || '').trim();
   if (!tid || !rawCard || typeof rawCard !== 'object') return;
   if (closeArtifacts) setArtifactsOpen(false);
+
+  // Open a placeholder tab synchronously in the click gesture so browsers
+  // don't block the later navigation while we resolve the persisted id.
+  const pendingTab = window.open('about:blank', '_blank', 'noopener,noreferrer');
+
   const resolvedId = await resolveWorkspaceScorecardId(rawCard);
   if (!resolvedId) {
+    if (pendingTab && !pendingTab.closed) pendingTab.close();
     showToast('Could not resolve this scorecard in workspace yet. Please retry in a moment.', 'error');
     return;
   }
-  const opened = openWorkspaceRoute(tid, resolvedId);
-  if (!opened) {
-    showToast('Could not open this scorecard in workspace.', 'error');
+
+  const href = `/workspace/${encodeURIComponent(tid)}/${encodeURIComponent(resolvedId)}`;
+  if (pendingTab && !pendingTab.closed) {
+    pendingTab.location.assign(href);
+    return;
   }
+
+  const opened = window.open(href, '_blank', 'noopener,noreferrer');
+  if (!opened) window.location.assign(href);
 }, [currentSessionId, openWorkspaceRoute, resolveWorkspaceScorecardId, sessionId, showToast]);
 
 const liveStatusMessage = useMemo(() => {
