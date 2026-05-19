@@ -2944,6 +2944,10 @@ const renderConversationMessage = (message, opts = {}) => {
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
+          h1: ({ children }) => <h1 className="jas-md-h1">{children}</h1>,
+          h2: ({ children }) => <h2 className="jas-md-h2">{children}</h2>,
+          h3: ({ children }) => <h3 className="jas-md-h3">{children}</h3>,
+          h4: ({ children }) => <h4 className="jas-md-h4">{children}</h4>,
           p: ({ children }) => <p className="jas-md-paragraph">{children}</p>,
           pre: ({ children }) => <pre className="jas-md-pre">{children}</pre>,
           code: ({ inline, className, children, ...props }) => (
@@ -6061,7 +6065,7 @@ const displayMessages = useMemo(() => {
     // Fall back to semantic anchoring when timestamp positioning is unavailable.
     if (anchor < 0) {
       if (artifactType === 'scorecard') {
-        anchor = findAnchorIndex(/\b(scorecard|score this|scored|building your scorecard|readiness)\b/i);
+        anchor = findAnchorIndex(/\b(scorecard|score this|scored|building your scorecard)\b/i);
       } else if (artifactType === 'tradeoff') {
         anchor = findAnchorIndex(/\b(trade[-\s]?off|compare|rank|side[-\s]?by[-\s]?side)\b/i);
       } else if (artifactType === 'execution_plan') {
@@ -6078,73 +6082,194 @@ const displayMessages = useMemo(() => {
   return composed;
 }, [analysisResult, messages, scorecardSnapshots, threadWbs, tradeoffRequested]);
 
-const insightsScoreSource = useMemo(() => {
-  const SCORE_KEYS = [
-    'strategic_alignment',
-    'financial_viability',
-    'execution_readiness',
-    'risk_profile',
-    'market_opportunity',
-    'evidence_quality',
-  ];
-
-  const scoreSignal = (candidate) => {
-    if (!candidate || typeof candidate !== 'object') return -1;
-    const components = candidate?.component_scores || candidate?.scores || candidate?.compat?.components || {};
-    const dimensions = candidate?.dimensions || {};
-    let signal = 0;
-
-    const overall = Number(candidate?.jaspen_score ?? candidate?.score ?? 0);
-    if (Number.isFinite(overall) && overall > 0) signal += 2;
-
-    SCORE_KEYS.forEach((key) => {
-      const dimScore = Number(dimensions?.[key]?.score ?? components?.[key] ?? 0);
-      if (Number.isFinite(dimScore) && dimScore > 0) signal += 1;
-      const rationale = dimensions?.[key]?.rationale || dimensions?.[key]?.summary || dimensions?.[key]?.insight || dimensions?.[key]?.explanation;
-      if (rationale && String(rationale).trim()) signal += 1;
-    });
-    return signal;
+const scoredIdeaInsights = useMemo(() => {
+  const parseScore = (value) => {
+    const raw = Number(value?.jaspen_score ?? value?.score ?? NaN);
+    return Number.isFinite(raw) ? Math.max(0, Math.min(100, raw)) : null;
   };
 
-  const selectedSnapshot = (() => {
-    const selectedId = String(effectiveSelectedScorecardId || '').trim();
-    if (!selectedId) return null;
-    return (Array.isArray(scorecardSnapshots) ? scorecardSnapshots : []).find((snapshot) => {
-      const snapshotId = String(snapshot?.id || snapshot?.analysis_id || snapshot?.analysisId || '').trim();
-      return snapshotId && snapshotId === selectedId;
-    }) || null;
-  })();
+  const parseConfidence = (value) => {
+    if (value == null) return null;
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return Math.max(0, Math.min(100, Math.round(value)));
+    }
+    const text = String(value || '').trim();
+    if (!text) return null;
+    const numeric = Number(text.replace('%', ''));
+    return Number.isFinite(numeric) ? Math.max(0, Math.min(100, Math.round(numeric))) : null;
+  };
 
-  const artifactScorecards = (Array.isArray(displayMessages) ? displayMessages : [])
-    .map((entry) => (String(entry?.artifact?.type || '').trim() === 'scorecard' ? entry?.artifact?.data : null))
-    .filter((entry) => entry && typeof entry === 'object');
+  const inferConfidenceFromDimensions = (value) => {
+    const dims = value?.dimensions && typeof value.dimensions === 'object' ? value.dimensions : {};
+    const confidenceMap = { high: 85, medium: 70, low: 50, assumed: 35 };
+    const values = Object.values(dims)
+      .map((dim) => String(dim?.confidence || '').toLowerCase().trim())
+      .map((conf) => confidenceMap[conf])
+      .filter((conf) => Number.isFinite(conf));
+    if (!values.length) return null;
+    const avg = values.reduce((sum, item) => sum + item, 0) / values.length;
+    return Math.max(0, Math.min(100, Math.round(avg)));
+  };
 
-  const candidates = [
-    activeScorecard,
-    selectedSnapshot,
-    ...(Array.isArray(scorecardSnapshots) ? scorecardSnapshots : []),
-    analysisResult,
-    bundleCurrentScorecard,
-    bundleBaselineScorecard,
-    ...artifactScorecards,
-  ].filter((entry) => entry && typeof entry === 'object' && hasMeaningfulScorecardData(entry));
+  const deriveLabel = (value, fallbackLabel) => {
+    const candidate = String(
+      value?.display_overrides?.title
+      || value?.label
+      || value?.name
+      || value?.project_name
+      || value?.initiative_name
+      || fallbackLabel
+      || ''
+    ).trim();
+    if (!candidate) return null;
+    return isBaselineLikeLabel(candidate) ? 'Scorecard' : _capTitleSmart(candidate);
+  };
 
-  if (!candidates.length) return null;
+  const entries = [];
+  const seen = new Set();
 
-  const best = candidates.reduce((winner, candidate) => {
-    if (!winner) return candidate;
-    return scoreSignal(candidate) > scoreSignal(winner) ? candidate : winner;
-  }, null);
+  const pushEntry = (rawValue, meta = {}) => {
+    if (!rawValue || typeof rawValue !== 'object' || !hasMeaningfulScorecardData(rawValue)) return;
+    const score = parseScore(rawValue);
+    if (!Number.isFinite(score)) return;
+    const entryId = String(
+      rawValue?.id
+      || rawValue?.analysis_id
+      || rawValue?.analysisId
+      || meta?.id
+      || ''
+    ).trim();
+    const key = entryId || `${meta?.source || 'scorecard'}:${entries.length}`;
+    if (seen.has(key)) return;
+    seen.add(key);
 
-  return best || candidates[0] || null;
+    const explicitConfidence = parseConfidence(
+      rawValue?.data_confidence
+      ?? rawValue?.confidence_level
+      ?? rawValue?.confidence
+      ?? rawValue?.meta?.confidence
+    );
+    const inferredConfidence = inferConfidenceFromDimensions(rawValue);
+    const confidence = Number.isFinite(explicitConfidence) ? explicitConfidence : inferredConfidence;
+
+    entries.push({
+      id: entryId || key,
+      label: deriveLabel(rawValue, meta?.fallbackLabel || null) || `Scorecard ${entries.length + 1}`,
+      score,
+      confidence: Number.isFinite(confidence) ? confidence : null,
+      timestamp: String(meta?.timestamp || rawValue?.created_at || rawValue?.updated_at || '').trim() || null,
+      data: rawValue,
+      source: meta?.source || 'unknown',
+      index: Number.isFinite(meta?.index) ? meta.index : entries.length,
+    });
+  };
+
+  (Array.isArray(scorecardSnapshots) ? scorecardSnapshots : []).forEach((snapshot, idx) => {
+    pushEntry(snapshot, { source: 'snapshot', index: idx });
+  });
+
+  (Array.isArray(displayMessages) ? displayMessages : []).forEach((entry, idx) => {
+    if (String(entry?.artifact?.type || '').trim() !== 'scorecard') return;
+    const artifactData = entry?.artifact?.data;
+    pushEntry(artifactData, {
+      source: 'artifact',
+      index: idx,
+      timestamp: entry?.timestamp || artifactData?.created_at || artifactData?.updated_at || null,
+      fallbackLabel: entry?.artifact?.label || null,
+    });
+  });
+
+  pushEntry(activeScorecard, { source: 'active' });
+  pushEntry(analysisResult, { source: 'analysisResult' });
+  pushEntry(bundleCurrentScorecard, { source: 'bundleCurrent' });
+  pushEntry(bundleBaselineScorecard, { source: 'bundleBaseline' });
+
+  const orderedEntries = [...entries].sort((a, b) => {
+    const aTs = Date.parse(String(a?.timestamp || ''));
+    const bTs = Date.parse(String(b?.timestamp || ''));
+    const aHasTs = Number.isFinite(aTs);
+    const bHasTs = Number.isFinite(bTs);
+    if (aHasTs && bHasTs && aTs !== bTs) return aTs - bTs;
+    const aIndex = Number.isFinite(a?.index) ? a.index : 0;
+    const bIndex = Number.isFinite(b?.index) ? b.index : 0;
+    return aIndex - bIndex;
+  });
+
+  const ranked = orderedEntries.filter((entry) => Number.isFinite(entry.score));
+  const confidenceSamples = orderedEntries
+    .map((entry) => entry?.confidence)
+    .filter((confidence) => Number.isFinite(confidence));
+  const highest = ranked.length > 0
+    ? ranked.reduce((winner, entry) => (winner == null || entry.score > winner.score ? entry : winner), null)
+    : null;
+  const averageScore = ranked.length > 0
+    ? Math.round((ranked.reduce((sum, entry) => sum + entry.score, 0) / ranked.length) * 10) / 10
+    : null;
+  const averageConfidence = confidenceSamples.length > 0
+    ? Math.round(confidenceSamples.reduce((sum, entry) => sum + entry, 0) / confidenceSamples.length)
+    : null;
+
+  return {
+    items: orderedEntries,
+    count: orderedEntries.length,
+    highest,
+    averageScore,
+    averageConfidence,
+  };
 }, [
   activeScorecard,
   analysisResult,
   bundleBaselineScorecard,
   bundleCurrentScorecard,
   displayMessages,
+  scorecardSnapshots,
+]);
+
+const insightsScoreSource = useMemo(() => {
+  const selectedId = String(effectiveSelectedScorecardId || '').trim();
+
+  const selectedSnapshot = selectedId
+    ? (Array.isArray(scorecardSnapshots) ? scorecardSnapshots : []).find((snapshot) => {
+      const snapshotId = String(snapshot?.id || snapshot?.analysis_id || snapshot?.analysisId || '').trim();
+      return snapshotId && snapshotId === selectedId;
+    }) || null
+    : null;
+
+  const selectedInsightScorecard = selectedId
+    ? (scoredIdeaInsights?.items || []).find((entry) => String(entry?.id || '') === selectedId)?.data || null
+    : null;
+
+  const latestScoredIdea = (() => {
+    const items = Array.isArray(scoredIdeaInsights?.items) ? scoredIdeaInsights.items : [];
+    if (!items.length) return null;
+    return items[items.length - 1]?.data || null;
+  })();
+
+  const activeId = String(
+    activeScorecard?.id || activeScorecard?.analysis_id || activeScorecard?.analysisId || ''
+  ).trim();
+  const activeMatchesSelected = Boolean(selectedId && activeId && activeId === selectedId);
+
+  const candidates = [
+    selectedSnapshot,
+    selectedInsightScorecard,
+    activeMatchesSelected ? activeScorecard : null,
+    latestScoredIdea,
+    activeScorecard,
+    analysisResult,
+    bundleCurrentScorecard,
+    bundleBaselineScorecard,
+  ].filter((entry) => entry && typeof entry === 'object' && hasMeaningfulScorecardData(entry));
+
+  return candidates[0] || null;
+}, [
+  activeScorecard,
+  analysisResult,
+  bundleBaselineScorecard,
+  bundleCurrentScorecard,
   effectiveSelectedScorecardId,
   scorecardSnapshots,
+  scoredIdeaInsights,
 ]);
 
 const renderModelTypeInlinePicker = (className = '') => (
@@ -12543,6 +12668,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               {/* Scoring: dimension rationales + improvement coaching */}
               {activePill === 'scoring' && insightsScoreSource && (() => {
                 const scoreSource = insightsScoreSource || {};
+                const scoredItems = Array.isArray(scoredIdeaInsights?.items) ? scoredIdeaInsights.items : [];
                 const dimensions = scoreSource?.dimensions || {};
                 const componentScores = scoreSource?.component_scores || scoreSource?.scores || {};
                 const firstRisk = Array.isArray(scoreSource?.top_risks) && scoreSource.top_risks.length > 0
@@ -12584,6 +12710,38 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
 
                 return (
                   <div className="jas-insights-dim-insights">
+                    {scoredItems.length > 0 && (
+                      <div className="jas-insights-score-summary">
+                        <p className="jas-insights-tips-label" style={{ marginBottom: 8 }}>
+                          Scored ideas · {scoredItems.length}
+                        </p>
+                        <div className="jas-insights-score-summary-list">
+                          {scoredItems.map((item, idx) => (
+                            <div key={item?.id || `score-item-${idx}`} className="jas-insights-score-summary-row">
+                              <span className="jas-insights-score-summary-name">{item?.label || `Scorecard ${idx + 1}`}</span>
+                              <span className="jas-insights-score-summary-val">
+                                {Number.isFinite(item?.score) ? `${Math.round(item.score)}/100` : '—'}
+                                {' · '}
+                                {Number.isFinite(item?.confidence) ? `${Math.round(item.confidence)}% conf` : 'conf —'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                        {scoredItems.length > 1 && (
+                          <div className="jas-insights-score-summary-meta">
+                            {Number.isFinite(scoredIdeaInsights?.averageScore) && (
+                              <span>Avg score {scoredIdeaInsights.averageScore}/100</span>
+                            )}
+                            {scoredIdeaInsights?.highest?.label && Number.isFinite(scoredIdeaInsights?.highest?.score) && (
+                              <span>Top idea: {scoredIdeaInsights.highest.label} ({Math.round(scoredIdeaInsights.highest.score)}/100)</span>
+                            )}
+                            {Number.isFinite(scoredIdeaInsights?.averageConfidence) && (
+                              <span>Avg confidence {Math.round(scoredIdeaInsights.averageConfidence)}%</span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
                     <p className="jas-insights-tips-label" style={{ marginBottom: 8 }}>Dimension Insights</p>
                     {rows.map(({ key, label, score, rationale, improve }) => {
                       const color = score >= 80 ? '#16a34a' : score >= 60 ? '#2563eb' : score >= 40 ? '#d97706' : '#dc2626';
@@ -12620,22 +12778,23 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               })()}
 
               {/* Trade-off: scored ideas summary list */}
-              {activePill === 'scenarios' && analysisResult && (
+              {activePill === 'scenarios' && scoredIdeaInsights.count >= 2 && (
                 <div>
                   <p className="jas-insights-tips-label" style={{ marginBottom: 8 }}>
-                    Scored ideas · {scorecardSnapshots?.length ?? 0}
+                    Scored ideas · {scoredIdeaInsights.count}
                   </p>
-                  {scorecardSnapshots?.length > 0 ? (() => {
-                    const firstScore = Number(scorecardSnapshots[0]?.jaspen_score ?? scorecardSnapshots[0]?.score ?? 0);
-                    return scorecardSnapshots.map((snap, i) => {
-                      const s = snap.jaspen_score ?? snap.score ?? null;
+                  {scoredIdeaInsights.count > 0 ? (() => {
+                    const scoredItems = Array.isArray(scoredIdeaInsights?.items) ? scoredIdeaInsights.items : [];
+                    const firstScore = Number(scoredItems[0]?.score ?? 0);
+                    return scoredItems.map((snap, i) => {
+                      const s = snap?.score ?? null;
                       const delta = (i > 0 && s !== null) ? Number(s) - firstScore : null;
                       const deltaColor = delta > 0 ? '#16a34a' : delta < 0 ? '#dc2626' : '#6b7280';
-                      const displayLabel = snap.label && !isBaselineLikeLabel(snap.label) && !snap.isBaseline
+                      const displayLabel = snap?.label && !isBaselineLikeLabel(snap.label)
                         ? snap.label
                         : `Scorecard ${i + 1}`;
                       return (
-                        <div key={snap.id || i} className="jas-insights-scenario-row">
+                        <div key={snap?.id || i} className="jas-insights-scenario-row">
                           <span className="jas-insights-scenario-label">{displayLabel}</span>
                           <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                             <span className="jas-insights-scenario-score">{s ?? '—'}<span style={{ fontWeight: 400, color: 'var(--gray-400)' }}>/100</span></span>
@@ -12653,6 +12812,11 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                       Score an idea to start comparing. Ask Jaspen to model a change and it will suggest scoring a new one.
                     </p>
                   )}
+                  {!Array.isArray(displayMessages) || !displayMessages.some((entry) => String(entry?.artifact?.type || '').trim() === 'tradeoff') ? (
+                    <p style={{ fontSize: '0.71rem', color: 'var(--gray-500)', lineHeight: 1.45, marginTop: 10, fontStyle: 'italic' }}>
+                      You have enough scored ideas for a trade-off. Ask Jaspen to generate a side-by-side comparison when you are ready.
+                    </p>
+                  ) : null}
                 </div>
               )}
 
