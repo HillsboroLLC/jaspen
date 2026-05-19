@@ -12471,47 +12471,83 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               )}
 
               {/* Scoring: dimension rationales + improvement coaching */}
-              {activePill === 'scoring' && analysisResult && (
-                <div className="jas-insights-dim-insights">
-                  <p className="jas-insights-tips-label" style={{ marginBottom: 8 }}>Dimension Insights</p>
-                  {[
-                    { key: 'strategic_alignment', label: 'Strategic Fit',       tip: 'Clarify how this aligns with your org\'s top priorities.' },
-                    { key: 'financial_viability',  label: 'Cost Efficiency',    tip: 'Share budget constraints or ROI targets to sharpen this.' },
-                    { key: 'execution_readiness',  label: 'Time-to-Value',      tip: 'Add team capacity details or a rough timeline to improve this.' },
-                    { key: 'risk_profile',          label: 'Execution Risk',     tip: 'Describe known blockers or dependencies to lower your risk score.' },
-                    { key: 'market_opportunity',   label: 'Market Opportunity',  tip: 'Include market size estimates or competitive context.' },
-                    { key: 'evidence_quality',     label: 'Evidence Quality',    tip: 'Attach data, research, or financial history to strengthen this.' },
-                  ].map(({ key, label, tip }) => {
-                    const dim = (analysisResult.dimensions || {})[key];
-                    if (!dim?.rationale) return null;
-                    const s = Number(dim.score || 0);
-                    const color = s >= 80 ? '#16a34a' : s >= 60 ? '#2563eb' : s >= 40 ? '#d97706' : '#dc2626';
-                    const isWeak = s < 60;
-                    return (
-                      <div key={key} className="jas-insights-dim-row">
-                        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-                          <span className="jas-insights-dim-name">{label}</span>
-                          <span className="jas-insights-dim-score-badge" style={{ color }}>{(s/10).toFixed(1)}/10</span>
+              {activePill === 'scoring' && (activeScorecard || analysisResult) && (() => {
+                const scoreSource = activeScorecard || analysisResult || {};
+                const dimensions = scoreSource?.dimensions || {};
+                const componentScores = scoreSource?.component_scores || scoreSource?.scores || {};
+                const firstRisk = Array.isArray(scoreSource?.top_risks) && scoreSource.top_risks.length > 0
+                  ? (typeof scoreSource.top_risks[0] === 'string'
+                    ? scoreSource.top_risks[0]
+                    : (scoreSource.top_risks[0]?.risk || scoreSource.top_risks[0]?.text || ''))
+                  : '';
+                const dimensionDefs = [
+                  { key: 'strategic_alignment', label: 'Strategic Fit', tip: 'Clarify how this aligns with your top strategic priorities.' },
+                  { key: 'financial_viability', label: 'Cost Efficiency', tip: 'Provide budget guardrails, ROI targets, and payback thresholds.' },
+                  { key: 'execution_readiness', label: 'Time-to-Value', tip: 'Provide team capacity, timeline constraints, and owner bandwidth.' },
+                  { key: 'risk_profile', label: 'Execution Risk', tip: 'Provide dependency risks, failure modes, and mitigation options.' },
+                  { key: 'market_opportunity', label: 'Market Opportunity', tip: 'Provide TAM/SAM assumptions, win-rate data, and competitor context.' },
+                  { key: 'evidence_quality', label: 'Evidence Quality', tip: 'Provide supporting data, benchmarks, and historical performance evidence.' },
+                ];
+
+                const toInsightSummary = (label, score, rationale, tip) => {
+                  if (rationale && String(rationale).trim()) return String(rationale).trim();
+                  const normalized = Number.isFinite(score) ? score : 0;
+                  const tenth = (normalized / 10).toFixed(1);
+                  let band = 'is uncertain';
+                  if (normalized >= 80) band = 'is strong';
+                  else if (normalized >= 65) band = 'is solid with room to tighten';
+                  else if (normalized >= 50) band = 'is moderate and needs more evidence';
+                  else band = 'is weak and needs better grounding';
+                  return `${label} is ${tenth}/10 and ${band}. ${tip}`;
+                };
+
+                const rows = dimensionDefs
+                  .map(({ key, label, tip }) => {
+                    const dim = dimensions[key] || {};
+                    const score = Number(dim?.score ?? componentScores?.[key] ?? 0);
+                    const rationale = dim?.rationale || dim?.summary || dim?.insight || dim?.explanation || '';
+                    const improve = dim?.what_would_improve || tip;
+                    if (!Number.isFinite(score) || score <= 0) return null;
+                    return { key, label, score, rationale, improve };
+                  })
+                  .filter(Boolean);
+
+                return (
+                  <div className="jas-insights-dim-insights">
+                    <p className="jas-insights-tips-label" style={{ marginBottom: 8 }}>Dimension Insights</p>
+                    {rows.map(({ key, label, score, rationale, improve }) => {
+                      const color = score >= 80 ? '#16a34a' : score >= 60 ? '#2563eb' : score >= 40 ? '#d97706' : '#dc2626';
+                      const isWeak = score < 60;
+                      const summary = toInsightSummary(label, score, rationale, improve);
+                      return (
+                        <div key={key} className="jas-insights-dim-row">
+                          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                            <span className="jas-insights-dim-name">{label}</span>
+                            <span className="jas-insights-dim-score-badge" style={{ color }}>{(score / 10).toFixed(1)}/10</span>
+                          </div>
+                          <p className="jas-insights-dim-rationale">{summary}</p>
+                          {isWeak && (
+                            <p style={{ fontSize: '0.7rem', color: '#d97706', marginTop: 4, lineHeight: 1.4, fontStyle: 'italic' }}>
+                              Improve next: {improve}
+                            </p>
+                          )}
                         </div>
-                        <p className="jas-insights-dim-rationale">{dim.rationale}</p>
-                        {isWeak && (
-                          <p style={{ fontSize: '0.7rem', color: '#d97706', marginTop: 4, lineHeight: 1.4, fontStyle: 'italic' }}>
-                            💡 {tip}
-                          </p>
-                        )}
-                      </div>
-                    );
-                  })}
-                  {/* Hint: AI drives rescoring conversationally via inline CTA */}
-                  {analysisResult && (
+                      );
+                    })}
                     <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-                      <p style={{ fontSize: '0.72rem', color: 'var(--gray-500)', lineHeight: 1.45, fontStyle: 'italic' }}>
-                        Ask Jaspen to model a change — it will recommend what evidence improves confidence next.
-                      </p>
+                      {firstRisk ? (
+                        <p style={{ fontSize: '0.72rem', color: 'var(--gray-600)', lineHeight: 1.45 }}>
+                          Biggest current risk driver: {firstRisk}
+                        </p>
+                      ) : (
+                        <p style={{ fontSize: '0.72rem', color: 'var(--gray-500)', lineHeight: 1.45, fontStyle: 'italic' }}>
+                          Ask Jaspen to model a change and it will recommend what evidence to provide next.
+                        </p>
+                      )}
                     </div>
-                  )}
-                </div>
-              )}
+                  </div>
+                );
+              })()}
 
               {/* Trade-off: scored ideas summary list */}
               {activePill === 'scenarios' && analysisResult && (
