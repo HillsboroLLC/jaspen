@@ -6338,8 +6338,8 @@ const selectedScoredIdeaEntry = useMemo(() => {
 const insightsConfidenceValue = useMemo(() => {
   const selectedConf = Number(selectedScoredIdeaEntry?.confidence ?? NaN);
   if (Number.isFinite(selectedConf)) return Math.max(0, Math.min(100, selectedConf));
-  return Math.max(0, Math.min(100, Number(uiReadiness || 0)));
-}, [selectedScoredIdeaEntry, uiReadiness]);
+  return Math.max(0, Math.min(100, Number(confidence || 0)));
+}, [selectedScoredIdeaEntry, confidence]);
 
 const renderModelTypeInlinePicker = (className = '') => (
   <div className={`jas-model-picker-inline ${className}`.trim()} ref={modelMenuRef}>
