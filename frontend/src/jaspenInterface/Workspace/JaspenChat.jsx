@@ -6092,7 +6092,8 @@ const hasTradeoffArtifact = useMemo(
   const scoredIdeaInsights = useMemo(() => {
   const parseScore = (value) => {
     const raw = Number(value?.jaspen_score ?? value?.score ?? NaN);
-    return Number.isFinite(raw) ? Math.max(0, Math.min(100, raw)) : null;
+    if (!Number.isFinite(raw) || raw <= 0) return null;
+    return Math.max(0, Math.min(100, raw));
   };
 
   const parseConfidence = (value) => {
@@ -8315,9 +8316,12 @@ const handleSaveStarter = async () => {
       showToast('Score at least two ideas before building a trade-off.', 'info');
       return;
     }
+    const scopedIdeas = scored
+      .map((item, idx) => `${idx + 1}. ${item.label} (id: ${item.id}, score: ${Math.round(item.score)}/100)`)
+      .join('\n');
     const prompt = refresh
-      ? 'Update the trade-off comparison using all currently scored ideas in this conversation.'
-      : 'Generate a trade-off comparison using all currently scored ideas in this conversation.';
+      ? `Update the trade-off comparison using all currently scored ideas in this conversation.\n\nUse generate_tradeoff_comparison with the listed ideas. Do not generate or regenerate any scorecards.\n${scopedIdeas}`
+      : `Generate a trade-off comparison using all currently scored ideas in this conversation.\n\nUse generate_tradeoff_comparison with the listed ideas. Do not generate or regenerate any scorecards.\n${scopedIdeas}`;
     setActivePill('scenarios');
     setTradeoffRequested(true);
     await onSubmit({ text: prompt });
@@ -11848,9 +11852,15 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                       lightbox modal so the user can view it large and (later)
                       download / share / export from there. */}
                   {(() => {
-                    const allCards = Array.isArray(scorecardSnapshots) && scorecardSnapshots.length > 0
-                      ? scorecardSnapshots
-                      : (analysisResult ? [analysisResult] : []);
+                    const messageScorecards = (Array.isArray(displayMessages) ? displayMessages : [])
+                      .filter((entry) => String(entry?.artifact?.type || '').trim() === 'scorecard')
+                      .map((entry) => entry?.artifact?.data)
+                      .filter((entry) => hasMeaningfulScorecardData(entry));
+                    const allCards = messageScorecards.length > 0
+                      ? messageScorecards
+                      : (Array.isArray(scorecardSnapshots) && scorecardSnapshots.length > 0
+                        ? scorecardSnapshots
+                        : (analysisResult ? [analysisResult] : []));
                     // Each scorecard stands on its own. Use the AI-generated
                     // project name. Disambiguate only when multiple cards share
                     // the SAME name (different iterations of the same idea) →
@@ -12016,7 +12026,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                       "always available once a scorecard exists", but for the
                       artifact list we still want ≥2 since you can't compare
                       a single idea against itself. */}
-                  {Array.isArray(scorecardSnapshots) && scorecardSnapshots.length >= 2 && (
+                  {(hasTradeoffArtifact || (Array.isArray(scorecardSnapshots) && scorecardSnapshots.length >= 2)) && (
                     <div className="jas-artifact-row">
                       <button
                         className="jas-artifact-item"
@@ -12024,7 +12034,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                         title="Open the Trade-off comparison view"
                       >
                         <FontAwesomeIcon icon={faArrowRightArrowLeft} />
-                        <span>Trade-off · {scorecardSnapshots.length} ideas</span>
+                        <span>Trade-off · {tradeoffEligibleScoredItems.length} ideas</span>
                       </button>
                       {sessionId && (
                         <a
@@ -12067,7 +12077,11 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                       )}
                     </div>
                   )}
-                  {!analysisResult && (!Array.isArray(scorecardSnapshots) || scorecardSnapshots.length === 0) && (
+                  {!analysisResult
+                    && (!Array.isArray(scorecardSnapshots) || scorecardSnapshots.length === 0)
+                    && !(Array.isArray(displayMessages) && displayMessages.some((entry) => entry?.artifact))
+                    && !hasTradeoffArtifact
+                    && !(Array.isArray(threadWbs?.tasks) && threadWbs.tasks.length > 0) && (
                     <p className="jas-artifacts-empty">No artifacts yet</p>
                   )}
                 </div>
