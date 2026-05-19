@@ -6366,6 +6366,8 @@ const tradeoffEligibleScoredItems = useMemo(() => {
       id: String(entry?.id || '').trim() || `scorecard-${idx + 1}`,
       label: String(entry?.label || '').trim() || `Scorecard ${idx + 1}`,
       score: Math.max(0, Math.min(100, Number(entry.score))),
+      confidence: Number.isFinite(entry?.confidence) ? Number(entry.confidence) : null,
+      data: entry?.data && typeof entry.data === 'object' ? entry.data : null,
     }));
 }, [scoredIdeaInsights]);
 
@@ -8316,6 +8318,13 @@ const handleSaveStarter = async () => {
       showToast('Score at least two ideas before building a trade-off.', 'info');
       return;
     }
+    const scoredSnapshots = scored
+      .map((item) => (item?.data && typeof item.data === 'object' ? item.data : null))
+      .filter((entry) => entry && hasMeaningfulScorecardData(entry) && entry?.display_overrides?.tradeoff_included !== false);
+    if (scoredSnapshots.length < 2) {
+      showToast('Need at least two included scored ideas to build a trade-off.', 'info');
+      return;
+    }
     const scopedIdeas = scored
       .map((item, idx) => `${idx + 1}. ${item.label} (id: ${item.id}, score: ${Math.round(item.score)}/100)`)
       .join('\n');
@@ -8324,7 +8333,38 @@ const handleSaveStarter = async () => {
       : `Generate a trade-off comparison using all currently scored ideas in this conversation.\n\nUse generate_tradeoff_comparison with the listed ideas. Do not generate or regenerate any scorecards.\n${scopedIdeas}`;
     setActivePill('scenarios');
     setTradeoffRequested(true);
-    await onSubmit({ text: prompt });
+    const now = Date.now();
+    setMessages((prev) => {
+      const next = (Array.isArray(prev) ? prev : []).filter(
+        (entry) => String(entry?.artifact?.type || '').trim() !== 'tradeoff'
+      );
+      return [
+        ...next,
+        { id: `tradeoff-user-${now}`, role: 'user', text: prompt },
+        {
+          id: `tradeoff-artifact-${now}`,
+          role: 'ai',
+          text: '',
+          artifact: {
+            type: 'tradeoff',
+            data: {
+              snapshots: scoredSnapshots,
+              generated_at: new Date().toISOString(),
+              source: 'insights_cta',
+            },
+          },
+        },
+      ];
+    });
+    try {
+      await Jaspen.appendMessages(sid, [
+        { role: 'user', content: prompt },
+        { role: 'assistant', content: refresh ? 'Updated trade-off comparison from current scored ideas.' : 'Generated trade-off comparison from current scored ideas.' },
+      ]);
+    } catch (persistErr) {
+      devWarn('[requestTradeoffFromInsights] persist failed', persistErr);
+    }
+    showToast(refresh ? 'Trade-off updated' : 'Trade-off built', 'success');
   }
 
   function onKey(e) {
