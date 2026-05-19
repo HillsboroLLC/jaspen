@@ -6358,34 +6358,15 @@ const insightsConfidenceSource = useMemo(() => {
 ]);
 
 const tradeoffEligibleScoredItems = useMemo(() => {
-  const snapshots = Array.isArray(scorecardSnapshots) ? scorecardSnapshots : [];
-  const seen = new Set();
-  const items = [];
-
-  snapshots.forEach((snapshot, idx) => {
-    if (!snapshot || typeof snapshot !== 'object') return;
-    const rawScore = Number(snapshot?.jaspen_score ?? snapshot?.score ?? NaN);
-    if (!Number.isFinite(rawScore)) return;
-    const id = String(snapshot?.id || snapshot?.analysis_id || snapshot?.analysisId || '').trim();
-    if (!id || seen.has(id)) return;
-    seen.add(id);
-    const label = String(
-      snapshot?.display_overrides?.title
-      || snapshot?.label
-      || snapshot?.name
-      || snapshot?.project_name
-      || snapshot?.initiative_name
-      || `Scorecard ${idx + 1}`
-    ).trim();
-    items.push({
-      id,
-      label: label || `Scorecard ${idx + 1}`,
-      score: Math.max(0, Math.min(100, rawScore)),
-    });
-  });
-
-  return items;
-}, [scorecardSnapshots]);
+  const items = Array.isArray(scoredIdeaInsights?.items) ? scoredIdeaInsights.items : [];
+  return items
+    .filter((entry) => Number.isFinite(entry?.score))
+    .map((entry, idx) => ({
+      id: String(entry?.id || '').trim() || `scorecard-${idx + 1}`,
+      label: String(entry?.label || '').trim() || `Scorecard ${idx + 1}`,
+      score: Math.max(0, Math.min(100, Number(entry.score))),
+    }));
+}, [scoredIdeaInsights]);
 
 const renderModelTypeInlinePicker = (className = '') => (
   <div className={`jas-model-picker-inline ${className}`.trim()} ref={modelMenuRef}>
