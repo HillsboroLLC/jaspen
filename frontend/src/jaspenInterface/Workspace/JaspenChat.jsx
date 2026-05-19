@@ -6234,16 +6234,28 @@ const hasTradeoffArtifact = useMemo(
 
 const insightsScoreSource = useMemo(() => {
   const selectedId = String(effectiveSelectedScorecardId || '').trim();
+  const matchesSelectedId = (value) => {
+    if (!selectedId || !value || typeof value !== 'object') return false;
+    const candidateIds = [
+      value?.id,
+      value?.analysis_id,
+      value?.analysisId,
+      value?.scorecard_id,
+      value?.snapshot_id,
+    ]
+      .map((entry) => String(entry || '').trim())
+      .filter(Boolean);
+    return candidateIds.includes(selectedId);
+  };
 
   const selectedSnapshot = selectedId
     ? (Array.isArray(scorecardSnapshots) ? scorecardSnapshots : []).find((snapshot) => {
-      const snapshotId = String(snapshot?.id || snapshot?.analysis_id || snapshot?.analysisId || '').trim();
-      return snapshotId && snapshotId === selectedId;
+      return matchesSelectedId(snapshot);
     }) || null
     : null;
 
   const selectedInsightScorecard = selectedId
-    ? (scoredIdeaInsights?.items || []).find((entry) => String(entry?.id || '') === selectedId)?.data || null
+    ? (scoredIdeaInsights?.items || []).find((entry) => matchesSelectedId(entry) || matchesSelectedId(entry?.data))?.data || null
     : null;
 
   const latestScoredIdea = (() => {
@@ -6252,10 +6264,7 @@ const insightsScoreSource = useMemo(() => {
     return items[items.length - 1]?.data || null;
   })();
 
-  const activeId = String(
-    activeScorecard?.id || activeScorecard?.analysis_id || activeScorecard?.analysisId || ''
-  ).trim();
-  const activeMatchesSelected = Boolean(selectedId && activeId && activeId === selectedId);
+  const activeMatchesSelected = matchesSelectedId(activeScorecard);
 
   const candidates = [
     selectedSnapshot,
@@ -6275,6 +6284,75 @@ const insightsScoreSource = useMemo(() => {
   bundleBaselineScorecard,
   bundleCurrentScorecard,
   effectiveSelectedScorecardId,
+  scorecardSnapshots,
+  scoredIdeaInsights,
+]);
+
+const insightsConfidenceSource = useMemo(() => {
+  const selectedId = String(effectiveSelectedScorecardId || '').trim();
+  const matchesSelectedId = (value) => {
+    if (!selectedId || !value || typeof value !== 'object') return false;
+    const candidateIds = [
+      value?.id,
+      value?.analysis_id,
+      value?.analysisId,
+      value?.scorecard_id,
+      value?.snapshot_id,
+      value?.data?.id,
+      value?.data?.analysis_id,
+      value?.data?.analysisId,
+    ]
+      .map((entry) => String(entry || '').trim())
+      .filter(Boolean);
+    return candidateIds.includes(selectedId);
+  };
+
+  const selectedSnapshot = selectedId
+    ? (Array.isArray(scorecardSnapshots) ? scorecardSnapshots : []).find((snapshot) => {
+      return matchesSelectedId(snapshot);
+    }) || null
+    : null;
+
+  const selectedInsightEntry = selectedId
+    ? (scoredIdeaInsights?.items || []).find((entry) => matchesSelectedId(entry) || matchesSelectedId(entry?.data)) || null
+    : null;
+  const selectedInsightScorecard = selectedInsightEntry?.data || null;
+
+  const latestInsightEntry = (() => {
+    const items = Array.isArray(scoredIdeaInsights?.items) ? scoredIdeaInsights.items : [];
+    if (!items.length) return null;
+    return items[items.length - 1] || null;
+  })();
+  const latestScoredIdea = latestInsightEntry?.data || null;
+
+  const candidates = [
+    selectedInsightEntry,
+    selectedInsightScorecard,
+    selectedSnapshot,
+    insightsScoreSource,
+    latestInsightEntry,
+    latestScoredIdea,
+    activeScorecard,
+    analysisResult,
+    bundleCurrentScorecard,
+    bundleBaselineScorecard,
+  ].filter((entry) => entry && typeof entry === 'object');
+
+  for (const candidate of candidates) {
+    const rawConfidence = Number(candidate?.confidence ?? candidate?.confidence_pct ?? candidate?.confidence_percent ?? NaN);
+    if (Number.isFinite(rawConfidence)) {
+      return Math.max(0, Math.min(100, rawConfidence));
+    }
+  }
+
+  return null;
+}, [
+  activeScorecard,
+  analysisResult,
+  bundleBaselineScorecard,
+  bundleCurrentScorecard,
+  effectiveSelectedScorecardId,
+  insightsScoreSource,
   scorecardSnapshots,
   scoredIdeaInsights,
 ]);
@@ -12635,52 +12713,54 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
             {/* ── Top cards: Confidence always shown; Score stacks below once scorecard exists ── */}
             <div className="jas-insights-confidence">
               {(() => {
-                if (activePill !== 'scoring' || Math.round(uiReadiness) >= 80) return null;
+                const displayConfidence = Number.isFinite(insightsConfidenceSource) ? insightsConfidenceSource : uiReadiness;
                 const topGaps = (collectedSignals || []).filter((signal) => !signal.complete).slice(0, 3);
-                if (topGaps.length === 0) return null;
                 return (
-                  <div className="jas-insights-score-flat" style={{ marginBottom: 10 }}>
-                    <span className="jas-insights-score-flat-label">To reach 80% confidence</span>
-                    <div style={{ fontSize: '0.72rem', color: 'var(--gray-700)', lineHeight: 1.45 }}>
-                      Provide:
-                      {' '}
-                      {topGaps.map((signal) => signal.label).join(', ')}
-                    </div>
-                  </div>
+                  <>
+                    {activePill === 'scoring' && Math.round(displayConfidence) < 80 && topGaps.length > 0 && (
+                      <div className="jas-insights-score-flat" style={{ marginBottom: 10 }}>
+                        <span className="jas-insights-score-flat-label">To reach 80% confidence</span>
+                        <div style={{ fontSize: '0.72rem', color: 'var(--gray-700)', lineHeight: 1.45 }}>
+                          Provide:
+                          {' '}
+                          {topGaps.map((signal) => signal.label).join(', ')}
+                        </div>
+                      </div>
+                    )}
+                    {scorecardGenerating ? (
+                      <div className="jas-insights-score-flat">
+                        <span className="jas-insights-score-flat-label">Building scorecard…</span>
+                        <div className="jas-insights-readiness">
+                          <div className="jas-insights-readiness-bar">
+                            <div className="jas-insights-readiness-fill jas-readiness-fill--pulse" style={{ width: '100%', background: '#161f3b' }} />
+                          </div>
+                          <span className="jas-insights-score-flat-val">{Math.round(displayConfidence)}% confident</span>
+                        </div>
+                      </div>
+                    ) : (canAnalyze && !analysisResult) ? (
+                      <div className="jas-insights-score-flat">
+                        <span className="jas-insights-score-flat-label">Ready for more context</span>
+                        <div className="jas-insights-readiness">
+                          <div className="jas-insights-readiness-bar">
+                            <div className="jas-insights-readiness-fill" style={{ width: `${displayConfidence}%`, background: '#161f3b' }} />
+                          </div>
+                          <span className="jas-insights-score-flat-val">{Math.round(displayConfidence)}% confident</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="jas-insights-score-flat">
+                        <span className="jas-insights-score-flat-label">{sessionId ? 'Confidence' : 'Getting started'}</span>
+                        <div className="jas-insights-readiness">
+                          <div className="jas-insights-readiness-bar">
+                            <div className="jas-insights-readiness-fill" style={{ width: `${displayConfidence}%`, background: '#161f3b' }} />
+                          </div>
+                          <span className="jas-insights-score-flat-val">{Math.round(displayConfidence)}%</span>
+                        </div>
+                      </div>
+                    )}
+                  </>
                 );
               })()}
-              {/* Confidence row — always visible */}
-              {scorecardGenerating ? (
-                <div className="jas-insights-score-flat">
-                  <span className="jas-insights-score-flat-label">Building scorecard…</span>
-                  <div className="jas-insights-readiness">
-                    <div className="jas-insights-readiness-bar">
-                      <div className="jas-insights-readiness-fill jas-readiness-fill--pulse" style={{ width: '100%', background: '#161f3b' }} />
-                    </div>
-                    <span className="jas-insights-score-flat-val">{Math.round(uiReadiness)}% confident</span>
-                  </div>
-                </div>
-              ) : (canAnalyze && !analysisResult) ? (
-                <div className="jas-insights-score-flat">
-                  <span className="jas-insights-score-flat-label">Ready for more context</span>
-                  <div className="jas-insights-readiness">
-                    <div className="jas-insights-readiness-bar">
-                      <div className="jas-insights-readiness-fill" style={{ width: `${uiReadiness}%`, background: '#161f3b' }} />
-                    </div>
-                    <span className="jas-insights-score-flat-val">{Math.round(uiReadiness)}% confident</span>
-                  </div>
-                </div>
-              ) : (
-                <div className="jas-insights-score-flat">
-                  <span className="jas-insights-score-flat-label">{sessionId ? 'Confidence' : 'Getting started'}</span>
-                  <div className="jas-insights-readiness">
-                    <div className="jas-insights-readiness-bar">
-                      <div className="jas-insights-readiness-fill" style={{ width: `${uiReadiness}%`, background: '#161f3b' }} />
-                    </div>
-                    <span className="jas-insights-score-flat-val">{Math.round(uiReadiness)}%</span>
-                  </div>
-                </div>
-              )}
 
               {/* Score row — stacks below confidence once scorecard exists */}
               {insightsScoreSource && (() => {
@@ -12788,7 +12868,15 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                         <div className="jas-insights-score-summary-list">
                           {scoredItems.map((item, idx) => {
                             const rowId = String(item?.id || '').trim();
-                            const isSelected = Boolean(rowId && rowId === effectiveSelectedScorecardId);
+                            const selectedId = String(effectiveSelectedScorecardId || '').trim();
+                            const rowData = item?.data || {};
+                            const rowIds = [
+                              rowId,
+                              rowData?.id,
+                              rowData?.analysis_id,
+                              rowData?.analysisId,
+                            ].map((value) => String(value || '').trim()).filter(Boolean);
+                            const isSelected = Boolean(selectedId && rowIds.includes(selectedId));
                             return (
                             <button
                               key={item?.id || `score-item-${idx}`}
