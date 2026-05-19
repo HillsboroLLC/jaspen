@@ -2653,23 +2653,16 @@ const renderScorecardCard = (result, opts = {}) => {
           <button className="jas-scorecard-action-ghost" title="Share scorecard">
             Share
           </button>
-          {(() => {
-            const tid = opts.threadId;
-            const cid = result?.id || result?.analysis_id;
-            if (!tid || !cid) return null;
-            return (
-              <a
-                className="jas-scorecard-action-ghost"
-                href={`/workspace/${encodeURIComponent(tid)}/${encodeURIComponent(cid)}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                title="Edit in Workspace (opens in new tab) — Beta"
-                style={{ textDecoration:'none' }}
-              >
-                Edit in Workspace ↗
-              </a>
-            );
-          })()}
+          {opts.onOpenWorkspaceScorecard && (
+            <button
+              className="jas-scorecard-action-ghost"
+              type="button"
+              onClick={() => { void opts.onOpenWorkspaceScorecard(result); }}
+              title="Edit in Workspace (opens in new tab) — Beta"
+            >
+              Edit in Workspace ↗
+            </button>
+          )}
           {/* Build Execution Plan — primary CTA on the scorecard. Generates
               an AI-authored WBS for this specific idea and unlocks the
               Execution tab. */}
@@ -2786,16 +2779,21 @@ const renderInlineTradeoffArtifact = (data, opts = {}) => {
           </div>
         </div>
         {wsHref && (
-          <a
-            href={wsHref}
-            target="_blank"
-            rel="noopener noreferrer"
+          <button
+            type="button"
+            onClick={() => {
+              if (opts.onOpenWorkspaceRoute) {
+                void opts.onOpenWorkspaceRoute(opts.threadId, '__tradeoff__');
+              } else {
+                window.open(wsHref, '_blank', 'noopener,noreferrer');
+              }
+            }}
             style={{
               padding: '6px 12px', borderRadius: 8,
               background: '#0f172a', color: '#fff',
-              textDecoration: 'none', fontSize: 12.5, fontWeight: 500, whiteSpace: 'nowrap',
+              border: 'none', fontSize: 12.5, fontWeight: 500, whiteSpace: 'nowrap', cursor: 'pointer',
             }}
-          >Open in Workspace ↗</a>
+          >Open in Workspace ↗</button>
         )}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column' }}>
@@ -2860,16 +2858,21 @@ const renderInlineExecutionArtifact = (wbs, opts = {}) => {
           </div>
         </div>
         {wsHref && (
-          <a
-            href={wsHref}
-            target="_blank"
-            rel="noopener noreferrer"
+          <button
+            type="button"
+            onClick={() => {
+              if (opts.onOpenWorkspaceRoute) {
+                void opts.onOpenWorkspaceRoute(opts.threadId, '__execution__');
+              } else {
+                window.open(wsHref, '_blank', 'noopener,noreferrer');
+              }
+            }}
             style={{
               padding: '6px 12px', borderRadius: 8,
               background: '#0f172a', color: '#fff',
-              textDecoration: 'none', fontSize: 12.5, fontWeight: 500, whiteSpace: 'nowrap',
+              border: 'none', fontSize: 12.5, fontWeight: 500, whiteSpace: 'nowrap', cursor: 'pointer',
             }}
-          >Open in Workspace ↗</a>
+          >Open in Workspace ↗</button>
         )}
       </div>
       {/* Progress bar: green=done, navy=in-progress, light gray=todo */}
@@ -7261,6 +7264,91 @@ const openExecutionPage = useCallback((threadIdValue) => {
   navigate(`/execution-plan?${nextParams.toString()}`);
 }, [location.search, navigate]);
 
+const openWorkspaceRoute = useCallback((threadIdValue, artifactIdValue) => {
+  const tid = String(threadIdValue || '').trim();
+  const aid = String(artifactIdValue || '').trim();
+  if (!tid || !aid) return false;
+  const href = `/workspace/${encodeURIComponent(tid)}/${encodeURIComponent(aid)}`;
+  window.open(href, '_blank', 'noopener,noreferrer');
+  return true;
+}, []);
+
+const resolveWorkspaceScorecardId = useCallback(async (rawCard) => {
+  const tid = String(sessionId || currentSessionId || '').trim();
+  if (!tid || !rawCard || typeof rawCard !== 'object') return null;
+  const directCandidates = [
+    rawCard?.analysis_id,
+    rawCard?.analysisId,
+    rawCard?.id,
+  ].map((value) => String(value || '').trim()).filter(Boolean);
+  const title = String(
+    rawCard?.display_overrides?.title
+    || rawCard?.project_name
+    || rawCard?.name
+    || rawCard?.label
+    || ''
+  ).trim().toLowerCase();
+  const score = Number(rawCard?.jaspen_score ?? rawCard?.score ?? NaN);
+
+  const bundle = await Jaspen.fetchBundle(tid).catch(() => null);
+  const snapshots = Array.isArray(bundle?.scorecard_snapshots) ? bundle.scorecard_snapshots : [];
+  const pool = [
+    ...snapshots,
+    bundle?.current_scorecard,
+    bundle?.baseline_scorecard,
+  ].filter((entry) => entry && typeof entry === 'object');
+
+  const byId = (value) => {
+    const needle = String(value || '').trim();
+    if (!needle) return null;
+    return pool.find((entry) => (
+      String(entry?.analysis_id || '').trim() === needle
+      || String(entry?.id || '').trim() === needle
+    )) || null;
+  };
+  for (const candidateId of directCandidates) {
+    const match = byId(candidateId);
+    if (match?.analysis_id || match?.id) {
+      return String(match.analysis_id || match.id).trim();
+    }
+  }
+
+  const byNameAndScore = pool.find((entry) => {
+    const entryTitle = String(
+      entry?.display_overrides?.title
+      || entry?.project_name
+      || entry?.name
+      || entry?.label
+      || ''
+    ).trim().toLowerCase();
+    const entryScore = Number(entry?.jaspen_score ?? entry?.score ?? NaN);
+    if (!entryTitle || !title) return false;
+    if (entryTitle !== title) return false;
+    if (Number.isFinite(score) && Number.isFinite(entryScore)) return Math.abs(entryScore - score) <= 0.5;
+    return true;
+  });
+  if (byNameAndScore?.analysis_id || byNameAndScore?.id) {
+    return String(byNameAndScore.analysis_id || byNameAndScore.id).trim();
+  }
+
+  return directCandidates[0] || null;
+}, [currentSessionId, sessionId]);
+
+const openWorkspaceScorecard = useCallback(async (rawCard, { closeArtifacts = false } = {}) => {
+  const tid = String(sessionId || currentSessionId || '').trim();
+  if (!tid || !rawCard || typeof rawCard !== 'object') return;
+  if (closeArtifacts) setArtifactsOpen(false);
+  const resolvedId = await resolveWorkspaceScorecardId(rawCard);
+  if (!resolvedId) {
+    showToast('Could not resolve this scorecard in workspace yet. Please retry in a moment.', 'error');
+    return;
+  }
+  const opened = openWorkspaceRoute(tid, resolvedId);
+  if (!opened) {
+    showToast('Could not open this scorecard in workspace.', 'error');
+  }
+}, [currentSessionId, openWorkspaceRoute, resolveWorkspaceScorecardId, sessionId, showToast]);
+
 const liveStatusMessage = useMemo(() => {
   if (beginBusy) return 'Project setup is in progress.';
   if (!busy) return '';
@@ -11007,7 +11095,15 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
     activeDrawerTab={scenarioDrawerView}
     onDrawerTabChange={setScenarioDrawerView}
     messages={messages}
-    renderMessage={(m) => renderConversationMessage(m, { autoVersionGenerating, threadId: sessionId || currentSessionId, messages, onBuildExecutionPlan: (cid) => void handleGenerateAiWbsFromScorecard({ threadBundleId: sessionId || currentSessionId, scorecardId: cid }), buildingExecutionPlanFor })}
+    renderMessage={(m) => renderConversationMessage(m, {
+      autoVersionGenerating,
+      threadId: sessionId || currentSessionId,
+      messages,
+      onBuildExecutionPlan: (cid) => void handleGenerateAiWbsFromScorecard({ threadBundleId: sessionId || currentSessionId, scorecardId: cid }),
+      buildingExecutionPlanFor,
+      onOpenWorkspaceScorecard: (scorecard) => openWorkspaceScorecard(scorecard),
+      onOpenWorkspaceRoute: (threadIdValue, artifactIdValue) => openWorkspaceRoute(threadIdValue, artifactIdValue),
+    })}
     renderAttachments={(m) => renderMessageAttachments(m)}
     renderActions={(m, key, idx, total) => renderMessageActions(m, key, idx, total)}
     streamStatus={renderStreamToolStatus()}
@@ -12027,10 +12123,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
 
                     return enriched.map(({ card, label }, idx) => {
                       const score = Number(card?.jaspen_score || 0);
-                      const cardId = card?.id || card?.analysis_id || `art-${idx}`;
-                      const wsHref = sessionId
-                        ? `/workspace/${encodeURIComponent(sessionId)}/${encodeURIComponent(cardId)}`
-                        : null;
+                      const cardId = card?.analysis_id || card?.id || `art-${idx}`;
                       return (
                         <div key={cardId} className="jas-artifact-row">
                           <button
@@ -12041,21 +12134,19 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                             <FontAwesomeIcon icon={faGaugeHigh} />
                             <span>{label} · {score}/100</span>
                           </button>
-                          {wsHref && (
-                            <a
+                          {sessionId && (
+                            <button
                               className="jas-artifact-ws-link"
-                              href={wsHref}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              onClick={() => setArtifactsOpen(false)}
+                              type="button"
+                              onClick={() => { void openWorkspaceScorecard(card, { closeArtifacts: true }); }}
                               title="Edit in Workspace (opens in new tab)"
                               style={{
                                 fontSize:11, color:'#475569', padding:'4px 8px', borderRadius:6,
-                                textDecoration:'none', whiteSpace:'nowrap',
+                                textDecoration:'none', whiteSpace:'nowrap', border:'none', background:'transparent', cursor:'pointer',
                               }}
                             >
                               Edit ↗
-                            </a>
+                            </button>
                           )}
                         </div>
                       );
@@ -12077,17 +12168,15 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                         <span>Trade-off · {tradeoffEligibleScoredItems.length} ideas</span>
                       </button>
                       {sessionId && (
-                        <a
+                        <button
                           className="jas-artifact-ws-link"
-                          href={`/workspace/${encodeURIComponent(sessionId)}/__tradeoff__`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={() => setArtifactsOpen(false)}
+                          type="button"
+                          onClick={() => { setArtifactsOpen(false); openWorkspaceRoute(sessionId, '__tradeoff__'); }}
                           title="Edit Trade-off in Workspace (opens in new tab) — coming soon in beta"
-                          style={{ fontSize:11, color:'#475569', padding:'4px 8px', borderRadius:6, textDecoration:'none', whiteSpace:'nowrap' }}
+                          style={{ fontSize:11, color:'#475569', padding:'4px 8px', borderRadius:6, textDecoration:'none', whiteSpace:'nowrap', border:'none', background:'transparent', cursor:'pointer' }}
                         >
                           Edit ↗
-                        </a>
+                        </button>
                       )}
                     </div>
                   )}
@@ -12103,17 +12192,15 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                         <span>Execution Plan · {threadWbs.tasks.length} tasks</span>
                       </button>
                       {sessionId && (
-                        <a
+                        <button
                           className="jas-artifact-ws-link"
-                          href={`/workspace/${encodeURIComponent(sessionId)}/__execution__`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={() => setArtifactsOpen(false)}
+                          type="button"
+                          onClick={() => { setArtifactsOpen(false); openWorkspaceRoute(sessionId, '__execution__'); }}
                           title="Edit Execution Plan in Workspace (opens in new tab) — coming soon in beta"
-                          style={{ fontSize:11, color:'#475569', padding:'4px 8px', borderRadius:6, textDecoration:'none', whiteSpace:'nowrap' }}
+                          style={{ fontSize:11, color:'#475569', padding:'4px 8px', borderRadius:6, textDecoration:'none', whiteSpace:'nowrap', border:'none', background:'transparent', cursor:'pointer' }}
                         >
                           Edit ↗
-                        </a>
+                        </button>
                       )}
                     </div>
                   )}
@@ -12494,7 +12581,15 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
 
 	              {displayMessages.map((m, idx) => (
 	                <div key={m.id || idx} className={`jas-message ${m.role === 'ai' ? 'ai' : 'user'}`}>
-	                  <div className="jas-message-bubble">{renderConversationMessage(m, { autoVersionGenerating, threadId: sessionId || currentSessionId, messages, onBuildExecutionPlan: (cid) => void handleGenerateAiWbsFromScorecard({ threadBundleId: sessionId || currentSessionId, scorecardId: cid }), buildingExecutionPlanFor })}</div>
+	                  <div className="jas-message-bubble">{renderConversationMessage(m, {
+                    autoVersionGenerating,
+                    threadId: sessionId || currentSessionId,
+                    messages,
+                    onBuildExecutionPlan: (cid) => void handleGenerateAiWbsFromScorecard({ threadBundleId: sessionId || currentSessionId, scorecardId: cid }),
+                    buildingExecutionPlanFor,
+                    onOpenWorkspaceScorecard: (scorecard) => openWorkspaceScorecard(scorecard),
+                    onOpenWorkspaceRoute: (threadIdValue, artifactIdValue) => openWorkspaceRoute(threadIdValue, artifactIdValue),
+                  })}</div>
 	                  {renderMessageAttachments(m)}
 	                  {renderMessageActions(m, `main:${idx}`, idx, displayMessages.length)}
 	                </div>
