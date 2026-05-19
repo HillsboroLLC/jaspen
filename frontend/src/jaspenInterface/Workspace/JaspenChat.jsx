@@ -6332,8 +6332,19 @@ const selectedScoredIdeaEntry = useMemo(() => {
   const selectedId = String(effectiveSelectedScorecardId || '').trim();
   if (!selectedId) return null;
   const items = Array.isArray(scoredIdeaInsights?.items) ? scoredIdeaInsights.items : [];
-  return items.find((entry) => String(entry?.id || '').trim() === selectedId) || null;
-}, [effectiveSelectedScorecardId, scoredIdeaInsights]);
+  const direct = items.find((entry) => String(entry?.id || '').trim() === selectedId) || null;
+  if (direct) return direct;
+  const fallback = (Array.isArray(tradeoffEligibleScoredItems) ? tradeoffEligibleScoredItems : [])
+    .find((entry) => String(entry?.id || '').trim() === selectedId);
+  if (!fallback) return null;
+  return {
+    id: fallback.id,
+    label: fallback.label,
+    score: fallback.score,
+    confidence: fallback.confidence,
+    data: null,
+  };
+}, [effectiveSelectedScorecardId, scoredIdeaInsights, tradeoffEligibleScoredItems]);
 
 const insightsConfidenceValue = useMemo(() => {
   const selectedConf = Number(selectedScoredIdeaEntry?.confidence ?? NaN);
@@ -12891,7 +12902,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               })()}
 
               {/* Trade-off: scored ideas summary list */}
-              {(activePill === 'scenarios' || activePill === 'scoring') && tradeoffEligibleScoredItems.length >= 2 && (
+              {(activePill === 'scenarios' || activePill === 'scoring' || activePill === 'tradeoff') && tradeoffEligibleScoredItems.length >= 2 && (
                 <div>
                   <p className="jas-insights-tips-label" style={{ marginBottom: 8 }}>
                     Scored ideas · {tradeoffEligibleScoredItems.length}
