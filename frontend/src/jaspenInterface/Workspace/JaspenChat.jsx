@@ -6089,7 +6089,7 @@ const hasTradeoffArtifact = useMemo(
   [displayMessages]
 );
 
-const scoredIdeaInsights = useMemo(() => {
+  const scoredIdeaInsights = useMemo(() => {
   const parseScore = (value) => {
     const raw = Number(value?.jaspen_score ?? value?.score ?? NaN);
     return Number.isFinite(raw) ? Math.max(0, Math.min(100, raw)) : null;
@@ -6278,6 +6278,36 @@ const insightsScoreSource = useMemo(() => {
   scorecardSnapshots,
   scoredIdeaInsights,
 ]);
+
+const tradeoffEligibleScoredItems = useMemo(() => {
+  const snapshots = Array.isArray(scorecardSnapshots) ? scorecardSnapshots : [];
+  const seen = new Set();
+  const items = [];
+
+  snapshots.forEach((snapshot, idx) => {
+    if (!snapshot || typeof snapshot !== 'object') return;
+    const rawScore = Number(snapshot?.jaspen_score ?? snapshot?.score ?? NaN);
+    if (!Number.isFinite(rawScore)) return;
+    const id = String(snapshot?.id || snapshot?.analysis_id || snapshot?.analysisId || '').trim();
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    const label = String(
+      snapshot?.display_overrides?.title
+      || snapshot?.label
+      || snapshot?.name
+      || snapshot?.project_name
+      || snapshot?.initiative_name
+      || `Scorecard ${idx + 1}`
+    ).trim();
+    items.push({
+      id,
+      label: label || `Scorecard ${idx + 1}`,
+      score: Math.max(0, Math.min(100, rawScore)),
+    });
+  });
+
+  return items;
+}, [scorecardSnapshots]);
 
 const renderModelTypeInlinePicker = (className = '') => (
   <div className={`jas-model-picker-inline ${className}`.trim()} ref={modelMenuRef}>
@@ -8221,9 +8251,17 @@ const handleSaveStarter = async () => {
       return;
     }
     if (busy || scorecardGenerating || autoVersionGenerating) return;
+    const scored = Array.isArray(tradeoffEligibleScoredItems) ? tradeoffEligibleScoredItems : [];
+    if (scored.length < 2) {
+      showToast('Score at least two ideas before building a trade-off.', 'info');
+      return;
+    }
+    const scopedIdeas = scored
+      .map((item, idx) => `${idx + 1}. ${item.label} (id: ${item.id}, score: ${Math.round(item.score)}/100)`)
+      .join('\n');
     const prompt = refresh
-      ? 'Update the trade-off comparison using the latest scored ideas in this conversation.'
-      : 'Generate a trade-off comparison using all currently scored ideas in this conversation.';
+      ? `Update the existing trade-off comparison now using these exact scored ideas from this thread:\n${scopedIdeas}\n\nUse generate_tradeoff_comparison and include all listed IDs.`
+      : `Generate a trade-off comparison now using these exact scored ideas from this thread:\n${scopedIdeas}\n\nUse generate_tradeoff_comparison and include all listed IDs.`;
     setActivePill('scenarios');
     setTradeoffRequested(true);
     await onSubmit({ text: prompt });
@@ -12748,16 +12786,27 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                           Scored ideas · {scoredItems.length}
                         </p>
                         <div className="jas-insights-score-summary-list">
-                          {scoredItems.map((item, idx) => (
-                            <div key={item?.id || `score-item-${idx}`} className="jas-insights-score-summary-row">
+                          {scoredItems.map((item, idx) => {
+                            const rowId = String(item?.id || '').trim();
+                            const isSelected = Boolean(rowId && rowId === effectiveSelectedScorecardId);
+                            return (
+                            <button
+                              key={item?.id || `score-item-${idx}`}
+                              type="button"
+                              className={`jas-insights-score-summary-row${isSelected ? ' is-selected' : ''}`}
+                              onClick={() => {
+                                if (!rowId) return;
+                                setSelectedScorecardId(rowId);
+                              }}
+                            >
                               <span className="jas-insights-score-summary-name">{item?.label || `Scorecard ${idx + 1}`}</span>
                               <span className="jas-insights-score-summary-val">
                                 {Number.isFinite(item?.score) ? `${Math.round(item.score)}/100` : '—'}
                                 {' · '}
                                 {Number.isFinite(item?.confidence) ? `${Math.round(item.confidence)}% conf` : 'conf —'}
                               </span>
-                            </div>
-                          ))}
+                            </button>
+                          );})}
                         </div>
                         {scoredItems.length > 1 && (
                           <div className="jas-insights-score-summary-meta">
@@ -12810,13 +12859,13 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               })()}
 
               {/* Trade-off: scored ideas summary list */}
-              {activePill === 'scenarios' && scoredIdeaInsights.count >= 2 && (
+              {activePill === 'scenarios' && tradeoffEligibleScoredItems.length >= 2 && (
                 <div>
                   <p className="jas-insights-tips-label" style={{ marginBottom: 8 }}>
-                    Scored ideas · {scoredIdeaInsights.count}
+                    Scored ideas · {tradeoffEligibleScoredItems.length}
                   </p>
-                  {scoredIdeaInsights.count > 0 ? (() => {
-                    const scoredItems = Array.isArray(scoredIdeaInsights?.items) ? scoredIdeaInsights.items : [];
+                  {tradeoffEligibleScoredItems.length > 0 ? (() => {
+                    const scoredItems = tradeoffEligibleScoredItems;
                     const firstScore = Number(scoredItems[0]?.score ?? 0);
                     return scoredItems.map((snap, i) => {
                       const s = snap?.score ?? null;

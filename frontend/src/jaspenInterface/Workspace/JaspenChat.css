@@ -1260,10 +1260,24 @@
   gap: 6px;
 }
 .jas-insights-score-summary-row {
+  width: 100%;
   display: flex;
   justify-content: space-between;
   align-items: baseline;
   gap: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 8px;
+  padding: 6px 7px;
+  text-align: left;
+  cursor: pointer;
+}
+.jas-insights-score-summary-row:hover {
+  background: #f8fbff;
+}
+.jas-insights-score-summary-row.is-selected {
+  border-color: #d6e4ff;
+  background: #f6f9ff;
 }
 .jas-insights-score-summary-name {
   font-size: 0.75rem;
