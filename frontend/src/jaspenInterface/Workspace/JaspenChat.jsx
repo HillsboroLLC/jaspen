@@ -1778,9 +1778,7 @@ const [pendingWbsConfirmation, setPendingWbsConfirmation] = useState(null);
     const activeId = String(activeSnapshotId || '').trim();
     const baselineId = String(baselineScorecardId || '').trim();
 
-    // Always prefer explicit user selection from the insights list.
-    // Some scored rows can exist before their snapshot hydration catches up.
-    if (selectedId) {
+    if (selectedId && (snapshotIds.size === 0 || snapshotIds.has(selectedId))) {
       return selectedId;
     }
     if (activeId && (snapshotIds.size === 0 || snapshotIds.has(activeId))) {
@@ -6282,25 +6280,9 @@ const insightsScoreSource = useMemo(() => {
 ]);
 
 const tradeoffEligibleScoredItems = useMemo(() => {
+  const snapshots = Array.isArray(scorecardSnapshots) ? scorecardSnapshots : [];
   const seen = new Set();
   const items = [];
-  const scoredItems = Array.isArray(scoredIdeaInsights?.items) ? scoredIdeaInsights.items : [];
-  const snapshots = Array.isArray(scorecardSnapshots) ? scorecardSnapshots : [];
-
-  scoredItems.forEach((entry, idx) => {
-    if (!entry || typeof entry !== 'object') return;
-    const id = String(entry?.id || '').trim();
-    const score = Number(entry?.score ?? NaN);
-    if (!id || seen.has(id) || !Number.isFinite(score)) return;
-    seen.add(id);
-    const label = String(entry?.label || `Scorecard ${idx + 1}`).trim();
-    items.push({
-      id,
-      label: label || `Scorecard ${idx + 1}`,
-      score: Math.max(0, Math.min(100, score)),
-      confidence: Number.isFinite(entry?.confidence) ? Math.max(0, Math.min(100, Number(entry.confidence))) : null,
-    });
-  });
 
   snapshots.forEach((snapshot, idx) => {
     if (!snapshot || typeof snapshot !== 'object') return;
@@ -6321,36 +6303,11 @@ const tradeoffEligibleScoredItems = useMemo(() => {
       id,
       label: label || `Scorecard ${idx + 1}`,
       score: Math.max(0, Math.min(100, rawScore)),
-      confidence: null,
     });
   });
 
   return items;
-}, [scorecardSnapshots, scoredIdeaInsights]);
-
-const selectedScoredIdeaEntry = useMemo(() => {
-  const selectedId = String(effectiveSelectedScorecardId || '').trim();
-  if (!selectedId) return null;
-  const items = Array.isArray(scoredIdeaInsights?.items) ? scoredIdeaInsights.items : [];
-  const direct = items.find((entry) => String(entry?.id || '').trim() === selectedId) || null;
-  if (direct) return direct;
-  const fallback = (Array.isArray(tradeoffEligibleScoredItems) ? tradeoffEligibleScoredItems : [])
-    .find((entry) => String(entry?.id || '').trim() === selectedId);
-  if (!fallback) return null;
-  return {
-    id: fallback.id,
-    label: fallback.label,
-    score: fallback.score,
-    confidence: fallback.confidence,
-    data: null,
-  };
-}, [effectiveSelectedScorecardId, scoredIdeaInsights, tradeoffEligibleScoredItems]);
-
-const insightsConfidenceValue = useMemo(() => {
-  const selectedConf = Number(selectedScoredIdeaEntry?.confidence ?? NaN);
-  if (Number.isFinite(selectedConf)) return Math.max(0, Math.min(100, selectedConf));
-  return Math.max(0, Math.min(100, Number(confidence || 0)));
-}, [selectedScoredIdeaEntry, confidence]);
+}, [scorecardSnapshots]);
 
 const renderModelTypeInlinePicker = (className = '') => (
   <div className={`jas-model-picker-inline ${className}`.trim()} ref={modelMenuRef}>
@@ -12678,7 +12635,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
             {/* ── Top cards: Confidence always shown; Score stacks below once scorecard exists ── */}
             <div className="jas-insights-confidence">
               {(() => {
-                if (activePill !== 'scoring' || Math.round(insightsConfidenceValue) >= 80) return null;
+                if (activePill !== 'scoring' || Math.round(uiReadiness) >= 80) return null;
                 const topGaps = (collectedSignals || []).filter((signal) => !signal.complete).slice(0, 3);
                 if (topGaps.length === 0) return null;
                 return (
@@ -12700,7 +12657,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                     <div className="jas-insights-readiness-bar">
                       <div className="jas-insights-readiness-fill jas-readiness-fill--pulse" style={{ width: '100%', background: '#161f3b' }} />
                     </div>
-                    <span className="jas-insights-score-flat-val">{Math.round(insightsConfidenceValue)}% confident</span>
+                    <span className="jas-insights-score-flat-val">{Math.round(uiReadiness)}% confident</span>
                   </div>
                 </div>
               ) : (canAnalyze && !analysisResult) ? (
@@ -12708,9 +12665,9 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                   <span className="jas-insights-score-flat-label">Ready for more context</span>
                   <div className="jas-insights-readiness">
                     <div className="jas-insights-readiness-bar">
-                      <div className="jas-insights-readiness-fill" style={{ width: `${insightsConfidenceValue}%`, background: '#161f3b' }} />
+                      <div className="jas-insights-readiness-fill" style={{ width: `${uiReadiness}%`, background: '#161f3b' }} />
                     </div>
-                    <span className="jas-insights-score-flat-val">{Math.round(insightsConfidenceValue)}% confident</span>
+                    <span className="jas-insights-score-flat-val">{Math.round(uiReadiness)}% confident</span>
                   </div>
                 </div>
               ) : (
@@ -12718,9 +12675,9 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                   <span className="jas-insights-score-flat-label">{sessionId ? 'Confidence' : 'Getting started'}</span>
                   <div className="jas-insights-readiness">
                     <div className="jas-insights-readiness-bar">
-                      <div className="jas-insights-readiness-fill" style={{ width: `${insightsConfidenceValue}%`, background: '#161f3b' }} />
+                      <div className="jas-insights-readiness-fill" style={{ width: `${uiReadiness}%`, background: '#161f3b' }} />
                     </div>
-                    <span className="jas-insights-score-flat-val">{Math.round(insightsConfidenceValue)}%</span>
+                    <span className="jas-insights-score-flat-val">{Math.round(uiReadiness)}%</span>
                   </div>
                 </div>
               )}
@@ -12902,7 +12859,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               })()}
 
               {/* Trade-off: scored ideas summary list */}
-              {(activePill === 'scenarios' || activePill === 'scoring' || activePill === 'tradeoff') && tradeoffEligibleScoredItems.length >= 2 && (
+              {activePill === 'scenarios' && tradeoffEligibleScoredItems.length >= 2 && (
                 <div>
                   <p className="jas-insights-tips-label" style={{ marginBottom: 8 }}>
                     Scored ideas · {tradeoffEligibleScoredItems.length}
