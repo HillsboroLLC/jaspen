@@ -1426,7 +1426,7 @@
 .jas-chat-content.has-insights-panel-collapsed > .jas-chat-welcome,
 .jas-chat-content.has-insights-panel-collapsed > .jas-messages,
 .jas-chat-content.has-insights-panel-collapsed > .jas-chat-input-area {
-  max-width: min(1320px, calc(100vw - 118px));
+  max-width: none;
 }
 
 .jas-chat-content.has-insights-panel-collapsed .jas-chat-input-box,
@@ -1434,7 +1434,42 @@
 .jas-chat-content.has-insights-panel-collapsed .agent-chat-objective-tags,
 .jas-chat-content.has-insights-panel-collapsed .jas-connector-context-tags,
 .jas-chat-content.has-insights-panel-collapsed .jas-starter-selector {
-  max-width: min(1320px, calc(100vw - 118px));
+  max-width: none;
+}
+
+.jas-insights-tradeoff-cta {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.jas-insights-action-btn {
+  appearance: none;
+  border: 1px solid #d7deea;
+  background: #161f3b;
+  color: #fff;
+  border-radius: 999px;
+  padding: 7px 12px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.jas-insights-action-btn:hover:not(:disabled) {
+  background: #1f2a4d;
+}
+
+.jas-insights-action-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.jas-insights-action-btn--ghost {
+  background: #fff;
+  color: #161f3b;
 }
 
 .jas-topbar-left {

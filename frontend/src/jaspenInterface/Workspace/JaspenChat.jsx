@@ -5970,7 +5970,7 @@ const displayMessages = useMemo(() => {
     });
   }
 
-  if (!existingArtifactTypes.has('tradeoff') && snapshotPool.length >= 2) {
+  if (!existingArtifactTypes.has('tradeoff') && snapshotPool.length >= 2 && tradeoffRequested) {
     const included = snapshotPool.filter((snapshot) => snapshot?.display_overrides?.tradeoff_included !== false);
     if (included.length >= 2) {
       let messageId = 'legacy-tradeoff-artifact';
@@ -6081,6 +6081,13 @@ const displayMessages = useMemo(() => {
 
   return composed;
 }, [analysisResult, messages, scorecardSnapshots, threadWbs, tradeoffRequested]);
+
+const hasTradeoffArtifact = useMemo(
+  () => (Array.isArray(displayMessages) ? displayMessages : []).some(
+    (entry) => String(entry?.artifact?.type || '').trim() === 'tradeoff'
+  ),
+  [displayMessages]
+);
 
 const scoredIdeaInsights = useMemo(() => {
   const parseScore = (value) => {
@@ -8205,6 +8212,21 @@ const handleSaveStarter = async () => {
     if (analysisFiles.length > 0) {
       await analyzeUploadedFiles(analysisFiles, resolvedThreadId, text);
     }
+  }
+
+  async function requestTradeoffFromInsights({ refresh = false } = {}) {
+    const sid = sessionId || currentSessionId;
+    if (!sid) {
+      showToast('Start or continue a conversation first.', 'info');
+      return;
+    }
+    if (busy || scorecardGenerating || autoVersionGenerating) return;
+    const prompt = refresh
+      ? 'Update the trade-off comparison using the latest scored ideas in this conversation.'
+      : 'Generate a trade-off comparison using all currently scored ideas in this conversation.';
+    setActivePill('scenarios');
+    setTradeoffRequested(true);
+    await onSubmit({ text: prompt });
   }
 
   function onKey(e) {
@@ -12590,12 +12612,22 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                 );
               })()}
               {/* Confidence row — always visible */}
-              {(canAnalyze && !analysisResult) || scorecardGenerating ? (
+              {scorecardGenerating ? (
                 <div className="jas-insights-score-flat">
-                  <span className="jas-insights-score-flat-label">Generating…</span>
+                  <span className="jas-insights-score-flat-label">Building scorecard…</span>
                   <div className="jas-insights-readiness">
                     <div className="jas-insights-readiness-bar">
                       <div className="jas-insights-readiness-fill jas-readiness-fill--pulse" style={{ width: '100%', background: '#161f3b' }} />
+                    </div>
+                    <span className="jas-insights-score-flat-val">{Math.round(uiReadiness)}% confident</span>
+                  </div>
+                </div>
+              ) : (canAnalyze && !analysisResult) ? (
+                <div className="jas-insights-score-flat">
+                  <span className="jas-insights-score-flat-label">Ready for more context</span>
+                  <div className="jas-insights-readiness">
+                    <div className="jas-insights-readiness-bar">
+                      <div className="jas-insights-readiness-fill" style={{ width: `${uiReadiness}%`, background: '#161f3b' }} />
                     </div>
                     <span className="jas-insights-score-flat-val">{Math.round(uiReadiness)}% confident</span>
                   </div>
@@ -12812,11 +12844,32 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                       Score an idea to start comparing. Ask Jaspen to model a change and it will suggest scoring a new one.
                     </p>
                   )}
-                  {!Array.isArray(displayMessages) || !displayMessages.some((entry) => String(entry?.artifact?.type || '').trim() === 'tradeoff') ? (
-                    <p style={{ fontSize: '0.71rem', color: 'var(--gray-500)', lineHeight: 1.45, marginTop: 10, fontStyle: 'italic' }}>
-                      You have enough scored ideas for a trade-off. Ask Jaspen to generate a side-by-side comparison when you are ready.
-                    </p>
-                  ) : null}
+                  {!hasTradeoffArtifact ? (
+                    <div className="jas-insights-tradeoff-cta">
+                      <p style={{ fontSize: '0.71rem', color: 'var(--gray-500)', lineHeight: 1.45, marginTop: 10, fontStyle: 'italic' }}>
+                        You have enough scored ideas for a trade-off. Generate it when you are ready.
+                      </p>
+                      <button
+                        type="button"
+                        className="jas-insights-action-btn"
+                        onClick={() => { void requestTradeoffFromInsights({ refresh: false }); }}
+                        disabled={busy || scorecardGenerating || autoVersionGenerating}
+                      >
+                        {busy || scorecardGenerating || autoVersionGenerating ? 'Working…' : 'Build trade-off now'}
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="jas-insights-tradeoff-cta">
+                      <button
+                        type="button"
+                        className="jas-insights-action-btn jas-insights-action-btn--ghost"
+                        onClick={() => { void requestTradeoffFromInsights({ refresh: true }); }}
+                        disabled={busy || scorecardGenerating || autoVersionGenerating}
+                      >
+                        {busy || scorecardGenerating || autoVersionGenerating ? 'Working…' : 'Update trade-off with latest scores'}
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
 
