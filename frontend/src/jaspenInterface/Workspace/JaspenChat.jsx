@@ -7269,8 +7269,7 @@ const openWorkspaceRoute = useCallback((threadIdValue, artifactIdValue) => {
   const aid = String(artifactIdValue || '').trim();
   if (!tid || !aid) return false;
   const href = `/workspace/${encodeURIComponent(tid)}/${encodeURIComponent(aid)}`;
-  const opened = window.open(href, '_blank', 'noopener,noreferrer');
-  if (!opened) window.location.assign(href);
+  window.open(href, '_blank', 'noopener,noreferrer');
   return true;
 }, []);
 
@@ -8317,7 +8316,7 @@ const handleSaveStarter = async () => {
   // === Input handling ===
   async function onSubmit(options = {}) {
     const now = Date.now();
-    if (now - (lastSendAtRef.current || 0) < 500) return;
+    if (!options?.force && now - (lastSendAtRef.current || 0) < 500) return;
     lastSendAtRef.current = now;
 
     const text = (options.text ?? input ?? '').trim();
@@ -8431,7 +8430,7 @@ const handleSaveStarter = async () => {
       : `Generate a trade-off comparison using all currently scored ideas in this conversation.\n\nUse generate_tradeoff_comparison with the listed ideas. Do not generate or regenerate any scorecards.\n${scopedIdeas}`;
     setActivePill('scenarios');
     setTradeoffRequested(true);
-    await onSubmit({ text: prompt });
+    await onSubmit({ text: prompt, force: true });
   }
 
   function onKey(e) {
@@ -9421,19 +9420,26 @@ const handleGenerateAiWbsFromScorecard = useCallback(async ({ threadBundleId, sc
       prompt: 'Generate a recommended project WBS from this scorecard.',
       model_type: selectedModelType,
     });
-    const taskCount = Array.isArray(resp?.project_wbs?.tasks) ? resp.project_wbs.tasks.length : 0;
+    const wbsPayload = (
+      (resp?.project_wbs && typeof resp.project_wbs === 'object') ? resp.project_wbs
+      : ((resp?.wbs && typeof resp.wbs === 'object') ? resp.wbs : null)
+    );
+    const taskCount = Array.isArray(wbsPayload?.tasks) ? wbsPayload.tasks.length : 0;
     // Persist the new WBS to local state so the Execution tab unlocks
     // immediately without a reload.
-    if (resp?.project_wbs && typeof resp.project_wbs === 'object') {
-      setThreadWbs(resp.project_wbs);
+    if (wbsPayload && typeof wbsPayload === 'object') {
+      setThreadWbs(wbsPayload);
     }
-    // Inject a confirmation message in the chat with a 'View Execution Plan' CTA
+    // Inject an inline execution artifact anchored at this exact generation point.
     setMessages((prev) => [
       ...prev,
       {
         role: 'ai',
         text: `Built an execution plan with ${taskCount} task${taskCount === 1 ? '' : 's'}. It's ready in the Execution tab — or open it directly in Workspace.`,
-        _executionPlanCta: true,
+        artifact: {
+          type: 'execution_plan',
+          data: wbsPayload || { tasks: [] },
+        },
       },
     ]);
     showToast('Execution plan built · open Execution tab', 'success');
