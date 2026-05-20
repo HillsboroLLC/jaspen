@@ -9414,12 +9414,32 @@ const handleGenerateAiWbsFromScorecard = useCallback(async ({ threadBundleId, sc
   // Track per-card busy so the matching scorecard's button shows "Building…"
   setBuildingExecutionPlanFor(scorecardId || tid);
   try {
-    const resp = await Jaspen.generateAiWbs(tid, {
-      scenario_id: scenarioId,
-      commit: true,
-      prompt: 'Generate a recommended project WBS from this scorecard.',
-      model_type: selectedModelType,
-    });
+    let resp = null;
+    try {
+      resp = await Jaspen.generateAiWbs(tid, {
+        scenario_id: scenarioId,
+        commit: true,
+        prompt: 'Generate a recommended project WBS from this scorecard.',
+        model_type: selectedModelType,
+      });
+    } catch (firstErr) {
+      const msg = String(firstErr?.message || '').toLowerCase();
+      const code = Number(firstErr?.status || 0);
+      const shouldRetryUnscoped = (
+        code === 404
+        || msg.includes('no scorecard context')
+        || msg.includes('not found')
+      );
+      if (!shouldRetryUnscoped) throw firstErr;
+      // Some scorecard ids shown in chat are not persisted scenario ids.
+      // Retry against thread-level baseline context so the CTA still works.
+      resp = await Jaspen.generateAiWbs(tid, {
+        scenario_id: null,
+        commit: true,
+        prompt: 'Generate a recommended project WBS from this thread baseline scorecard context.',
+        model_type: selectedModelType,
+      });
+    }
     const wbsPayload = (
       (resp?.project_wbs && typeof resp.project_wbs === 'object') ? resp.project_wbs
       : ((resp?.wbs && typeof resp.wbs === 'object') ? resp.wbs : null)
