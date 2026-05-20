@@ -5170,17 +5170,41 @@ def generate_ai_wbs(thread_id):
         ).strip()
         preflight_answers = payload.get('preflight_answers') if isinstance(payload.get('preflight_answers'), dict) else {}
         scenario_id = str(payload.get('scenario_id') or '').strip() or None
+        scorecard_id = str(payload.get('scorecard_id') or '').strip() or None
 
         all_data, thread_data, baseline, _baseline_inputs, session, _strategy_objective = _resolve_thread_baseline(user_id, thread_id)
         scenarios = thread_data.get('scenarios') if isinstance(thread_data.get('scenarios'), dict) else {}
         adopted_id = thread_data.get('adopted_scenario_id')
         adopted_scenario = None
 
-        current_scorecard = baseline if isinstance(baseline, dict) else None
-        if scenario_id and scenario_id in scenarios and isinstance((scenarios.get(scenario_id) or {}).get('result'), dict):
+        current_scorecard = None
+
+        # First-class resolution: explicit scorecard_id from CTA click.
+        if scorecard_id:
+            kind, _container, _key, carrier = _find_scorecard_carrier(user_id, thread_id, scorecard_id)
+            if kind and isinstance(carrier, dict):
+                result_blob = carrier.get('result') if isinstance(carrier.get('result'), dict) else None
+                if isinstance(result_blob, dict):
+                    current_scorecard = result_blob
+
+        # Fallbacks: baseline / scenario / adopted scenario / session result.
+        if not isinstance(current_scorecard, dict):
+            current_scorecard = baseline if isinstance(baseline, dict) else None
+
+        if (
+            not isinstance(current_scorecard, dict)
+            and scenario_id
+            and scenario_id in scenarios
+            and isinstance((scenarios.get(scenario_id) or {}).get('result'), dict)
+        ):
             adopted_scenario = scenarios.get(scenario_id)
             current_scorecard = adopted_scenario.get('result')
-        elif adopted_id and adopted_id in scenarios and isinstance((scenarios.get(adopted_id) or {}).get('result'), dict):
+        elif (
+            not isinstance(current_scorecard, dict)
+            and adopted_id
+            and adopted_id in scenarios
+            and isinstance((scenarios.get(adopted_id) or {}).get('result'), dict)
+        ):
             adopted_scenario = scenarios.get(adopted_id)
             current_scorecard = adopted_scenario.get('result')
         if current_scorecard is None and isinstance(session, dict) and isinstance(session.get('result'), dict):
