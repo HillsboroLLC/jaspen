@@ -571,6 +571,35 @@
   gap: 16px;
 }
 
+.strategy-auth-tabs {
+  display: flex;
+  border: 1px solid var(--gray-200);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.strategy-auth-tab {
+  flex: 1;
+  padding: 8px 12px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--gray-500);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.strategy-auth-tab.is-active {
+  background: var(--navy);
+  color: #fff;
+}
+
+.strategy-auth-tab:not(.is-active):hover {
+  background: var(--gray-50);
+  color: var(--navy);
+}
+
 .strategy-google-btn {
   width: 100%;
 }

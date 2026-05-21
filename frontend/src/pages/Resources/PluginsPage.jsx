@@ -26,6 +26,11 @@ const PLUGINS = [
 export default function PluginsPage() {
   return (
     <MarketingPageLayout pageClass="page-resources page-plugins">
+      <div className="coming-soon-banner">
+        <span className="coming-soon-badge">Coming Soon</span>
+        Plugins are in development. Join the waitlist to be notified when they launch.{' '}
+        <a href="mailto:hello@jaspen.ai">Get notified</a>
+      </div>
       <section className="page-hero page-hero-resources">
         <div className="hero-copy">
           <p className="hero-kicker">Resources</p>

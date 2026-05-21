@@ -13,8 +13,10 @@ export default function StrategyAccessCard() {
   const [status, setStatus] = useState('Pending');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
   const [authStatus, setAuthStatus] = useState('idle');
   const [authMode, setAuthMode] = useState('email');
+  const [flowMode, setFlowMode] = useState('signin');
   const [authError, setAuthError] = useState('');
   const [authErrorDetail, setAuthErrorDetail] = useState('');
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -199,13 +201,30 @@ export default function StrategyAccessCard() {
       setAuthErrorDetail('');
       return;
     }
+    if (flowMode === 'signup' && !String(name || '').trim()) {
+      setAuthError('Please enter your name.');
+      setAuthErrorDetail('');
+      return;
+    }
 
     setAuthStatus('sending');
     setAuthError('');
     try {
+      if (flowMode === 'signup') {
+        const signupAttempt = await signup(normalizedEmail, password, String(name).trim());
+        if (signupAttempt?.success) {
+          setAuthStatus('sent');
+          window.location.href = getPostAuthRedirect();
+          return;
+        }
+        setAuthError(signupAttempt?.error || 'Unable to create account right now.');
+        setAuthErrorDetail(signupAttempt?.detail || '');
+        setAuthStatus('idle');
+        return;
+      }
+
       const loginAttempt = await login(normalizedEmail, password);
 
-      // MFA required — open the AuthModal which has full MFA flow
       if (loginAttempt?.mfaRequired) {
         setAuthStatus('idle');
         setMfaData(loginAttempt);
@@ -220,23 +239,11 @@ export default function StrategyAccessCard() {
         return;
       }
 
-      const inferredName = normalizedEmail.split('@')[0] || 'Jaspen User';
-      const signupAttempt = await signup(normalizedEmail, password, inferredName);
-      if (signupAttempt?.success) {
-        setAuthStatus('sent');
-        window.location.href = getPostAuthRedirect();
-        return;
-      }
-
-      setAuthError(
-        loginAttempt?.error
-        || signupAttempt?.error
-        || 'Unable to sign in with email right now.'
-      );
-      setAuthErrorDetail(loginAttempt?.detail || signupAttempt?.detail || '');
+      setAuthError(loginAttempt?.error || 'Incorrect email or password.');
+      setAuthErrorDetail(loginAttempt?.detail || '');
       setAuthStatus('idle');
     } catch (error) {
-      setAuthError(error?.message || 'Unable to sign in with email right now.');
+      setAuthError(error?.message || 'Unable to sign in right now.');
       setAuthErrorDetail(error?.detail || '');
       setAuthStatus('idle');
     }
@@ -259,6 +266,22 @@ export default function StrategyAccessCard() {
       <div className="strategy-card-section strategy-card-auth">
         {authMode !== 'forgot' && (
           <>
+            <div className="strategy-auth-tabs">
+              <button
+                type="button"
+                className={`strategy-auth-tab ${flowMode === 'signin' ? 'is-active' : ''}`}
+                onClick={() => { setFlowMode('signin'); setAuthError(''); setAuthErrorDetail(''); setAuthStatus('idle'); }}
+              >
+                Sign in
+              </button>
+              <button
+                type="button"
+                className={`strategy-auth-tab ${flowMode === 'signup' ? 'is-active' : ''}`}
+                onClick={() => { setFlowMode('signup'); setAuthError(''); setAuthErrorDetail(''); setAuthStatus('idle'); }}
+              >
+                Create account
+              </button>
+            </div>
             <button
               type="button"
               className="jaspen-btn jaspen-btn-outline strategy-google-btn"
@@ -270,6 +293,17 @@ export default function StrategyAccessCard() {
           </>
         )}
         <form className="strategy-card-form" onSubmit={authMode === 'forgot' ? handleForgotPassword : handleEmailSubmit}>
+          {flowMode === 'signup' && authMode !== 'forgot' && (
+            <input
+              type="text"
+              className="strategy-email-input"
+              placeholder="Your name"
+              aria-label="Full name"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              disabled={authStatus === 'sending' || authStatus === 'sent'}
+            />
+          )}
           <input
             type="email"
             className="strategy-email-input"
@@ -293,11 +327,16 @@ export default function StrategyAccessCard() {
           <button
             type="submit"
             className="jaspen-btn jaspen-btn-primary strategy-email-btn"
-            disabled={authStatus === 'sending' || authStatus === 'sent'} aria-disabled={authStatus === 'sending' || authStatus === 'sent'}
+            disabled={authStatus === 'sending' || authStatus === 'sent'}
+            aria-disabled={authStatus === 'sending' || authStatus === 'sent'}
           >
             {authStatus === 'sending'
-              ? (authMode === 'forgot' ? 'Sending reset link…' : 'Sending...')
-              : (authMode === 'forgot' ? 'Send reset link' : 'Continue with email')}
+              ? (authMode === 'forgot' ? 'Sending reset link…' : 'One moment…')
+              : authMode === 'forgot'
+                ? 'Send reset link'
+                : flowMode === 'signup'
+                  ? 'Create account'
+                  : 'Sign in'}
           </button>
         </form>
         <div className="strategy-card-meta">
@@ -305,12 +344,7 @@ export default function StrategyAccessCard() {
             <button
               type="button"
               className="strategy-meta-link"
-              onClick={() => {
-                setAuthMode('email');
-                setAuthStatus('idle');
-                setAuthError('');
-                setAuthErrorDetail('');
-              }}
+              onClick={() => { setAuthMode('email'); setAuthStatus('idle'); setAuthError(''); setAuthErrorDetail(''); }}
             >
               Back to sign in
             </button>
@@ -318,12 +352,7 @@ export default function StrategyAccessCard() {
             <button
               type="button"
               className="strategy-meta-link"
-              onClick={() => {
-                setAuthMode('forgot');
-                setAuthStatus('idle');
-                setAuthError('');
-                setAuthErrorDetail('');
-              }}
+              onClick={() => { setAuthMode('forgot'); setAuthStatus('idle'); setAuthError(''); setAuthErrorDetail(''); }}
             >
               Forgot password?
             </button>

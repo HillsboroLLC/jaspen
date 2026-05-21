@@ -41,6 +41,42 @@
   padding-top: 96px;
 }
 
+.coming-soon-banner {
+  background: #fef9ec;
+  border: 1px solid #f5d97a;
+  border-radius: 10px;
+  padding: 12px 18px;
+  font-size: 0.875rem;
+  color: #7a5a00;
+  margin-bottom: 24px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.coming-soon-badge {
+  background: #f5c800;
+  color: #3d2e00;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+.coming-soon-banner a {
+  color: #a0036c;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.coming-soon-banner a:hover {
+  text-decoration: underline;
+}
+
 .marketing-content {
   padding-bottom: 72px;
 }
