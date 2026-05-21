@@ -316,7 +316,7 @@ export default function PricingPage() {
             const isFree = plan.plan_key === 'free';
             const loading = pendingKey === plan.plan_key;
             return (
-              <article key={plan.plan_key} className={`marketing-card pricing-plan-card ${isEssential ? 'is-featured' : ''}`}>
+              <article key={plan.plan_key} id={plan.plan_key} className={`marketing-card pricing-plan-card ${isEssential ? 'is-featured' : ''}`}>
                 <div className="pricing-plan-head">
                   <h3>{plan.label}</h3>
                   <span className="plan-price">{plan.price}</span>

@@ -2258,11 +2258,15 @@ const renderInlineExecutionView = () => {
       if (idx < 0) return prev;
       arr[idx] = { ...arr[idx], ...patch };
       next.tasks = arr;
-      // Fire-and-forget save; failures show as a toast but don't block typing.
-      Jaspen.upsertThreadWbs(sessionId || currentSessionId, next).catch((e) => {
+      const sid = sessionId || currentSessionId;
+      const attemptSave = () => Jaspen.upsertThreadWbs(sid, next).catch((e) => {
         console.error('[exec-inline] save failed:', e);
-        showToast('Couldn\'t save that change — try again.', 'error');
+        showToast('Couldn\'t save that change — try again.', 'error', {
+          actionLabel: 'Retry',
+          onAction: attemptSave,
+        });
       });
+      attemptSave();
       return next;
     });
   };
@@ -2288,10 +2292,15 @@ const renderInlineExecutionView = () => {
       }
       tasks.splice(insertAt, 0, moved);
       const next = { ...(prev || {}), tasks };
-      Jaspen.upsertThreadWbs(sessionId || currentSessionId, next).catch((e) => {
+      const sid = sessionId || currentSessionId;
+      const attemptReorderSave = () => Jaspen.upsertThreadWbs(sid, next).catch((e) => {
         console.error('[exec-inline] reorder save failed:', e);
-        showToast('Couldn\'t save the new order — try again.', 'error');
+        showToast('Couldn\'t save the new order — try again.', 'error', {
+          actionLabel: 'Retry',
+          onAction: attemptReorderSave,
+        });
       });
+      attemptReorderSave();
       return next;
     });
   };
@@ -2314,10 +2323,15 @@ const renderInlineExecutionView = () => {
         depends_on: [],
       });
       next.tasks = arr;
-      Jaspen.upsertThreadWbs(sessionId || currentSessionId, next).catch((e) => {
+      const sid = sessionId || currentSessionId;
+      const attemptAddSave = () => Jaspen.upsertThreadWbs(sid, next).catch((e) => {
         console.error('[exec-inline] add save failed:', e);
-        showToast('Couldn\'t add the task — try again.', 'error');
+        showToast('Couldn\'t add the task — try again.', 'error', {
+          actionLabel: 'Retry',
+          onAction: attemptAddSave,
+        });
       });
+      attemptAddSave();
       return next;
     });
   };
@@ -6655,12 +6669,17 @@ useEffect(() => {
     });
   }, []);
 
-  const setStreamingAssistantError = useCallback((messageId, fallbackText) => {
-    setMessages((prev) => prev.map((message) => (
-      message.id === messageId
-        ? { ...message, text: fallbackText || 'Sorry — I hit an error. Please try again.', streaming: false }
-        : message
-    )));
+  const setStreamingAssistantError = useCallback((messageId, fallbackText, { keepPartial = false } = {}) => {
+    setMessages((prev) => prev.map((message) => {
+      if (message.id !== messageId) return message;
+      const errorNote = fallbackText || 'Sorry — I hit an error. Please try again.';
+      const partialText = keepPartial ? String(message.text || '').trim() : '';
+      return {
+        ...message,
+        text: partialText ? `${partialText}\n\n---\n*${errorNote}*` : errorNote,
+        streaming: false,
+      };
+    }));
   }, []);
 
   const toolStatusLabel = useCallback((toolName) => {
@@ -6745,7 +6764,7 @@ useEffect(() => {
         setStreamingAssistantError(placeholderId, 'Stopped.');
         return finalPayload;
       }
-      setStreamingAssistantError(placeholderId, 'Sorry — I hit an error. Please try again.');
+      setStreamingAssistantError(placeholderId, 'Sorry — I hit an error. Please try again.', { keepPartial: true });
       throw streamErr;
     } finally {
       streamAbortRef.current = null;
@@ -6808,7 +6827,7 @@ useEffect(() => {
       return finalPayload;
     } catch (streamErr) {
       setStreamToolStatus('');
-      setStreamingAssistantError(placeholderId, 'Sorry — I hit an error. Please try again.');
+      setStreamingAssistantError(placeholderId, 'Sorry — I hit an error. Please try again.', { keepPartial: true });
       throw streamErr;
     } finally {
       setIsStreamingReply(false);

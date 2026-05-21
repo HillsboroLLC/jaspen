@@ -21,10 +21,16 @@ export default function MarketingPageLayout({ pageClass = '', children }) {
       <header className="marketing-header">
         <div className="marketing-header-inner">
           <Link to="/" className="marketing-logo">Jaspen</Link>
+          <nav className="marketing-header-nav" aria-label="Site navigation">
+            <Link to="/pages/jaspen-score">Jaspen Score</Link>
+            <Link to="/pages/solutions">Solutions</Link>
+            <Link to="/pages/pricing">Pricing</Link>
+            <Link to="/pages/resources/tutorials">Tutorials</Link>
+            <Link to="/pages/resources/connectors">Connectors</Link>
+          </nav>
           <div className="marketing-header-actions">
-            <Link to="/" className="marketing-home-link">Back to home</Link>
             <Link to="/login" className="marketing-contact-link">Get in touch</Link>
-            <a href="/#request-access" className="marketing-request-btn">Request access</a>
+            <Link to="/pages/pricing" className="marketing-request-btn">Request access</Link>
           </div>
         </div>
       </header>

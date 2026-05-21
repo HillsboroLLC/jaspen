@@ -27,6 +27,21 @@ if (sentryDsn) {
   });
 }
 
+// Catch promises that reject without a .catch() handler. Sentry captures these
+// automatically when initialized, but the handler also prevents silent failures
+// from background polling and storage operations from going completely unnoticed.
+window.addEventListener('unhandledrejection', (event) => {
+  const reason = event?.reason;
+  // Ignore expected network aborts (user navigating away, cancelled fetches).
+  if (reason?.name === 'AbortError') return;
+  if (sentryDsn) {
+    Sentry.captureException(reason instanceof Error ? reason : new Error(String(reason)));
+  } else {
+    // eslint-disable-next-line no-console
+    console.error('[unhandledrejection]', reason);
+  }
+});
+
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
   <React.StrictMode>

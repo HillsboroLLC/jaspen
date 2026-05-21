@@ -12,7 +12,7 @@ const AGENT_COMPONENTS = [
   { title: 'Intake Layer', detail: 'Captures prompt, constraints, workspace context, and selected model tier.' },
   { title: 'Reasoning Core', detail: 'Generates options, tradeoffs, and recommended next actions from available context.' },
   { title: 'Scoring & Readiness', detail: 'Tracks confidence and checklist completion against plan quality.' },
-  { title: 'Scenario Modeler', detail: 'Builds and compares paths to quantify impact, cost, and risk.' },
+  { title: 'Tradeoff Engine', detail: 'Builds and compares paths to quantify impact, cost, and risk across decision options.' },
   { title: 'Execution Translator', detail: 'Converts decisions into milestones, owners, and execution artifacts.' },
   { title: 'Connector Orchestrator', detail: 'Applies sync rules, credentials, conflict policies, and workspace mapping.' },
   { title: 'Audit & Admin Controls', detail: 'Records connector/access changes and supports managed overrides.' },

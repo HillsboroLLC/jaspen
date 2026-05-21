@@ -24,6 +24,10 @@ import AuthCallback  from './shared/components/AuthCallback';
 import ResetPasswordPage from './pages/Auth/ResetPasswordPage';
 import SalesforceOAuthBridge from './pages/Auth/SalesforceOAuthBridge';
 import JaspenScorePage from './pages/Marketing/JaspenScorePage';
+import JaspenPage from './pages/Marketing/JaspenPage';
+import ProjectManagementPage from './pages/Marketing/ProjectManagementPage';
+import JaspenInJiraPage from './pages/Marketing/JaspenInJiraPage';
+import JaspenInSmartsheetsPage from './pages/Marketing/JaspenInSmartsheetsPage';
 import SolutionsPage from './pages/Marketing/SolutionsPage';
 import PricingPage from './pages/Marketing/PricingPage';
 import ApiPage from './pages/Marketing/ApiPage';
@@ -79,6 +83,10 @@ function AnimatedAppRoutes({ withShell }) {
             <Route path="/pages/terms"    element={withShell(<Terms />, { title: 'Terms of service' })} />
             <Route path="/pages/support"  element={withShell(<Support />, { title: 'Support' })} />
             <Route path="/pages/jaspen-score" element={withShell(<JaspenScorePage />, { title: 'Jaspen Score', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/pages/jaspen" element={withShell(<JaspenPage />, { title: 'Jaspen — Execution Intelligence', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/pages/project-management" element={withShell(<ProjectManagementPage />, { title: 'Project Management | Jaspen', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/pages/jaspen-in-jira" element={withShell(<JaspenInJiraPage />, { title: 'Jaspen in Jira', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/pages/jaspen-in-smartsheets" element={withShell(<JaspenInSmartsheetsPage />, { title: 'Jaspen in Smartsheet', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/pages/solutions" element={withShell(<SolutionsPage />, { title: 'Solutions', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/pages/pricing" element={withShell(<PricingPage />, { title: 'Pricing', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/pages/api" element={withShell(<ApiPage />, { title: 'API', showHeader: false, fullBleed: true, noPadding: true })} />

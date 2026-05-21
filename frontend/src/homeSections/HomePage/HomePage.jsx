@@ -42,16 +42,16 @@ const NAV_MENUS = [
       {
         title: 'Products',
         items: [
-          { label: 'Jaspen', sectionId: 'product' },
+          { label: 'Jaspen', path: '/pages/jaspen' },
           { label: 'Jaspen Score', path: '/pages/jaspen-score' },
-          { label: 'Project Management', sectionId: 'product' },
+          { label: 'Project Management', path: '/pages/project-management' },
         ],
       },
       {
         title: 'Features',
         items: [
-          { label: 'Jaspen in Jira', sectionId: 'product' },
-          { label: 'Jaspen in Smartsheets', sectionId: 'product' },
+          { label: 'Jaspen in Jira', path: '/pages/jaspen-in-jira' },
+          { label: 'Jaspen in Smartsheets', path: '/pages/jaspen-in-smartsheets' },
         ],
       },
     ],
@@ -69,14 +69,14 @@ const NAV_MENUS = [
       {
         title: 'Industries',
         items: [
-          { label: 'Financial Services', sectionId: 'industries' },
-          { label: 'Nonprofits', sectionId: 'industries' },
-          { label: 'Quick Service Restaurants', sectionId: 'industries' },
-          { label: 'Government', sectionId: 'industries' },
-          { label: 'Healthcare', sectionId: 'industries' },
-          { label: 'Wellness', sectionId: 'industries' },
-          { label: 'Energy', sectionId: 'industries' },
-          { label: 'Aviation', sectionId: 'industries' },
+          { label: 'Financial Services', path: '/pages/solutions#financial-services' },
+          { label: 'Nonprofits', path: '/pages/solutions#nonprofits' },
+          { label: 'Quick Service Restaurants', path: '/pages/solutions#quick-service-restaurants' },
+          { label: 'Government', path: '/pages/solutions#government' },
+          { label: 'Healthcare', path: '/pages/solutions#healthcare' },
+          { label: 'Wellness', path: '/pages/solutions#wellness' },
+          { label: 'Energy', path: '/pages/solutions#energy' },
+          { label: 'Aviation', path: '/pages/solutions#aviation' },
         ],
       },
     ],
@@ -94,10 +94,10 @@ const NAV_MENUS = [
       {
         title: 'Plans',
         items: [
-          { label: 'Free', sectionId: 'pricing-plans' },
-          { label: 'Essential ($39)', sectionId: 'pricing-plans' },
-          { label: 'Team', sectionId: 'pricing-plans' },
-          { label: 'Enterprise', sectionId: 'pricing-plans' },
+          { label: 'Free', path: '/pages/pricing#free' },
+          { label: 'Essential ($39)', path: '/pages/pricing#essential' },
+          { label: 'Team', path: '/pages/pricing#team' },
+          { label: 'Enterprise', path: '/pages/pricing#enterprise' },
         ],
       },
     ],
@@ -133,13 +133,15 @@ export default function HomePage() {
   const closeMenuTimer = useRef(null);
   const [searchParams] = useSearchParams();
 
-  // Scroll to auth card when redirected with ?auth=1
+  // Scroll to auth card when redirected with ?auth=1, then clean the URL so
+  // refreshing the page doesn't re-display the session-expired error state.
   useEffect(() => {
     if (searchParams.get('auth') === '1') {
       const card = document.querySelector('.strategy-card-float');
       if (card) {
         card.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
+      window.history.replaceState({}, '', window.location.pathname);
     }
   }, [searchParams]);
 
@@ -278,7 +280,15 @@ export default function HomePage() {
                         <ul>
                           {column.items.map((item) => (
                             <li key={`${menu.label}-${column.title}-${item.label}`}>
-                              {item.path ? (
+                              {item.path && !item.path.startsWith('http') ? (
+                                <Link
+                                  to={item.path}
+                                  className="mega-menu-link"
+                                  onClick={closeNavMenus}
+                                >
+                                  {item.label}
+                                </Link>
+                              ) : item.path ? (
                                 <a
                                   href={item.path}
                                   target="_blank"
@@ -333,7 +343,9 @@ export default function HomePage() {
                         <ul>
                           {column.items.map((item) => (
                             <li key={`mobile-${menu.label}-${column.title}-${item.label}`}>
-                              {item.path ? (
+                              {item.path && !item.path.startsWith('http') ? (
+                                <Link to={item.path} onClick={closeNavMenus}>{item.label}</Link>
+                              ) : item.path ? (
                                 <a href={item.path} target="_blank" rel="noopener noreferrer" onClick={closeNavMenus} className="mobile-link-external">
                                   {item.label}
                                   <i className="fa-solid fa-arrow-up-right-from-square mega-menu-external-icon" aria-hidden="true"></i>

@@ -117,10 +117,15 @@ function handleResponseSideEffects(response, url, skipUnauthorizedNotice) {
   const now = Date.now();
 
   if (response.status === 401 && !skipUnauthorizedNotice && now - lastSessionExpiredNoticeAt > 2000) {
-    lastSessionExpiredNoticeAt = now;
-    window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT, {
-      detail: { status: 401, url },
-    }));
+    // Only fire if the browser held an active session (CSRF token cookie is set by the
+    // server alongside the access token, so its presence means the user was logged in).
+    const hadActiveSession = Boolean(getCsrfToken());
+    if (hadActiveSession) {
+      lastSessionExpiredNoticeAt = now;
+      window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT, {
+        detail: { status: 401, url },
+      }));
+    }
   }
 
   if (response.status >= 500 && response.status <= 599 && now - lastServerErrorNoticeAt > 2000) {

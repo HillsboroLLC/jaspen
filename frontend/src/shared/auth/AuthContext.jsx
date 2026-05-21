@@ -217,6 +217,10 @@ export function AuthProvider({ children }) {
   const [currentUserRole, setCurrentUserRole] = useState(null);
   const [permissions, setPermissions] = useState([]);
   const authRedirectInFlightRef = useRef(false);
+  // Tracks whether this browser session ever had an authenticated user. Used to
+  // distinguish "session expired" (was logged in, now 401) from "never logged in"
+  // (anonymous visitor whose background request returned 401).
+  const hadUserRef = useRef(false);
   const clearAuthTokens = () => {
     localStorage.removeItem('access_token');
     localStorage.removeItem('token');
@@ -283,6 +287,9 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     const handleSessionExpired = () => {
+      // If the user was never authenticated in this session, a 401 is expected
+      // (anonymous visitor) — don't redirect to the session-expired error page.
+      if (!hadUserRef.current) return;
       if (authRedirectInFlightRef.current) return;
       authRedirectInFlightRef.current = true;
 
@@ -333,6 +340,12 @@ export function AuthProvider({ children }) {
       window.removeEventListener(AUTH_EVENTS.SERVER_ERROR_EVENT, handleServerError);
     };
   }, []);
+
+  // Track that this session had a real user — prevents spurious session-expired redirects
+  // for anonymous visitors whose background requests return 401.
+  useEffect(() => {
+    if (user) hadUserRef.current = true;
+  }, [user]);
 
   // Load LSS users and set role when user changes
   useEffect(() => {

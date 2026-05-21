@@ -1,10 +1,26 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import MarketingPageLayout from '../Marketing/MarketingPageLayout';
 
 const DEMOS = [
-  { title: 'Executive Decision Flow', detail: 'See how strategic inputs become option sets, tradeoffs, and recommended actions.' },
-  { title: 'Cross-Functional Plan Build', detail: 'Watch an initiative move from framing to owner-ready milestones in one flow.' },
-  { title: 'Readiness and Risk Review', detail: 'Understand how readiness scoring and delivery risk signals stay connected.' },
+  {
+    title: 'Executive Decision Flow',
+    detail: 'See how strategic inputs become option sets, tradeoffs, and recommended actions.',
+    duration: '~12 min',
+    audience: 'Strategy leads, executives',
+  },
+  {
+    title: 'Cross-Functional Plan Build',
+    detail: 'Watch an initiative move from framing to owner-ready milestones in one flow.',
+    duration: '~18 min',
+    audience: 'Program managers, PMO teams',
+  },
+  {
+    title: 'Readiness and Risk Review',
+    detail: 'Understand how readiness scoring and delivery risk signals stay connected.',
+    duration: '~10 min',
+    audience: 'Delivery leads, operations teams',
+  },
 ];
 
 export default function DemosPage() {
@@ -46,19 +62,38 @@ export default function DemosPage() {
       <section className="marketing-section">
         <div className="resource-callout">
           <h3>Recommended order</h3>
-          <p>Start with Decision Flow, then Plan Build, then Readiness Review for a full product picture.</p>
+          <p>Start with Decision Flow, then Plan Build, then Readiness Review for a complete picture of the decision-to-execution journey.</p>
         </div>
       </section>
       <section className="marketing-section">
         <h2>Demo Library</h2>
         <div className="resource-track">
           {DEMOS.map((demo, idx) => (
-            <article key={demo.title} className="resource-card">
+            <article key={demo.title} className="resource-card demo-card">
               <span className="resource-index">0{idx + 1}</span>
               <h3>{demo.title}</h3>
               <p>{demo.detail}</p>
+              <div className="demo-card-meta">
+                <span>{demo.duration}</span>
+                <span>{demo.audience}</span>
+              </div>
             </article>
           ))}
+        </div>
+      </section>
+      <section className="marketing-section">
+        <div className="demos-cta-block">
+          <div className="demos-cta-copy">
+            <h3>See Jaspen in action with your team</h3>
+            <p>
+              Request a live walkthrough tailored to your operating context — strategy review, program execution, or
+              cross-functional coordination.
+            </p>
+          </div>
+          <div className="demos-cta-actions">
+            <Link to="/login" className="demos-cta-btn demos-cta-btn-primary">Request a walkthrough</Link>
+            <Link to="/pages/resources/tutorials" className="demos-cta-btn demos-cta-btn-secondary">Read the tutorials</Link>
+          </div>
         </div>
       </section>
     </MarketingPageLayout>
