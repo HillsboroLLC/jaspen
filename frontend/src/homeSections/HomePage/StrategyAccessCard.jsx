@@ -30,6 +30,28 @@ export default function StrategyAccessCard() {
     try { return readAuthQueryNotice(window.location.search || ''); } catch { return null; }
   });
 
+  // Clean transient auth query params from the address bar after we've captured
+  // the notice. Keep any unrelated params (plan/ref/etc.) intact.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const url = new URL(window.location.href);
+      const hadTransientAuthParams = (
+        url.searchParams.has('auth')
+        || url.searchParams.has('error')
+        || url.searchParams.has('signed_out')
+      );
+      if (!hadTransientAuthParams) return;
+      url.searchParams.delete('auth');
+      url.searchParams.delete('error');
+      url.searchParams.delete('signed_out');
+      const cleaned = `${url.pathname}${url.search}${url.hash}`;
+      window.history.replaceState({}, '', cleaned);
+    } catch (_err) {
+      // Ignore URL parsing failures and leave current URL unchanged.
+    }
+  }, []);
+
   useEffect(() => {
     const prefersReducedMotion =
       typeof window !== 'undefined' &&
