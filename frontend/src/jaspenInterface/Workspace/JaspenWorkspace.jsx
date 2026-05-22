@@ -44,7 +44,7 @@ const _GENERIC_TITLE_PATTERNS = [/^version\s+\d+$/i, /^v\d+$/i, /^scenario\s+[a-
 const DEFAULT_SCORECARD_SECTIONS = [
   { key: 'score',      label: 'Score',                cols: 2, locked: true },
   { key: 'executive',  label: 'Executive Summary',    cols: 2, locked: false },
-  { key: 'dimensions', label: 'Dimensions',           cols: 2, locked: true },
+  { key: 'dimensions', label: 'Dimensions',           cols: 2, locked: true, dimCols: 2, dimOrder: null },
   { key: 'risks',      label: 'Top Risks',            cols: 1, locked: true },
   { key: 'scenario',   label: 'Recommended Scenario', cols: 1, locked: true },
 ];
@@ -123,9 +123,19 @@ export default function JaspenWorkspace() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const saveTimerRef = useRef(null);
   const skipNextSaveRef = useRef(true); // first render = freshly loaded, don't save back
-  const [sectionLayout, setSectionLayout] = useState(() =>
-    DEFAULT_SCORECARD_SECTIONS.map((s) => ({ ...s, collapsed: false }))
-  );
+  const [sectionLayout, setSectionLayout] = useState(() => {
+    try {
+      const saved = localStorage.getItem(`jw-layout-${threadId}-${scorecardId}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return DEFAULT_SCORECARD_SECTIONS.map((d) => {
+          const found = parsed.find((p) => p.key === d.key);
+          return found ? { ...d, ...found } : { ...d, collapsed: false };
+        });
+      }
+    } catch {}
+    return DEFAULT_SCORECARD_SECTIONS.map((s) => ({ ...s, collapsed: false }));
+  });
   const dragSectionRef = useRef(null);
 
   const isTradeoff = scorecardId === SENTINEL_TRADEOFF;
@@ -248,6 +258,13 @@ export default function JaspenWorkspace() {
     }, 500);
     return () => { if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current); };
   }, [overrides, threadId, scorecardId]);
+
+  useEffect(() => {
+    if (!threadId || !scorecardId) return;
+    try {
+      localStorage.setItem(`jw-layout-${threadId}-${scorecardId}`, JSON.stringify(sectionLayout));
+    } catch {}
+  }, [sectionLayout, threadId, scorecardId]);
 
   const rendered = useMemo(() => applyOverrides(snapshot, overrides), [snapshot, overrides]);
 
@@ -859,15 +876,44 @@ export default function JaspenWorkspace() {
                           fontSize:9, color:'#94a3b8',
                         }}>LOCKED</span>
                       )}
-                      {/* Size toggle */}
-                      <button
-                        type="button"
-                        onClick={toggleSize}
-                        title={section.cols === 2 ? 'Half width' : 'Full width'}
-                        style={{ fontSize:11, color:'#94a3b8', cursor:'pointer', background:'none', border:'none', padding:'2px 4px' }}
-                      >
-                        {section.cols === 2 ? '◫' : '▬'}
-                      </button>
+                      {/* Width selector */}
+                      <div style={{ display:'flex', gap:1, background:'#f1f5f9', borderRadius:5, padding:2, flexShrink:0 }}>
+                        {[{ val:1, label:'½' }, { val:2, label:'Full' }].map(({ val, label }) => (
+                          <button
+                            key={val}
+                            type="button"
+                            onClick={() => setSectionLayout(prev => prev.map((s, i) => i === idx ? { ...s, cols: val } : s))}
+                            style={{
+                              padding:'1px 8px', fontSize:10, borderRadius:3, border:'none', cursor:'pointer',
+                              background: section.cols === val ? '#fff' : 'transparent',
+                              color: section.cols === val ? '#334155' : '#94a3b8',
+                              fontWeight: section.cols === val ? 600 : 400,
+                              boxShadow: section.cols === val ? '0 1px 2px rgba(0,0,0,0.08)' : 'none',
+                              lineHeight:'18px', transition:'all 0.1s',
+                            }}
+                          >{label}</button>
+                        ))}
+                      </div>
+                      {/* Dimensions-specific: column layout for bars */}
+                      {section.key === 'dimensions' && (
+                        <div style={{ display:'flex', gap:1, background:'#f1f5f9', borderRadius:5, padding:2, flexShrink:0 }}>
+                          {[{ val:1, label:'1 col' }, { val:2, label:'2 col' }].map(({ val, label }) => (
+                            <button
+                              key={val}
+                              type="button"
+                              onClick={() => setSectionLayout(prev => prev.map((s, i) => i === idx ? { ...s, dimCols: val } : s))}
+                              style={{
+                                padding:'1px 8px', fontSize:10, borderRadius:3, border:'none', cursor:'pointer',
+                                background: (section.dimCols ?? 2) === val ? '#fff' : 'transparent',
+                                color: (section.dimCols ?? 2) === val ? '#334155' : '#94a3b8',
+                                fontWeight: (section.dimCols ?? 2) === val ? 600 : 400,
+                                boxShadow: (section.dimCols ?? 2) === val ? '0 1px 2px rgba(0,0,0,0.08)' : 'none',
+                                lineHeight:'18px', transition:'all 0.1s',
+                              }}
+                            >{label}</button>
+                          ))}
+                        </div>
+                      )}
                       {/* Collapse toggle */}
                       <button
                         type="button"
@@ -916,7 +962,14 @@ export default function JaspenWorkspace() {
                       )}
 
                       {section.key === 'dimensions' && (
-                        <DimensionBars dims={rendered?.dimensions || {}} />
+                        <DimensionBars
+                          dims={rendered?.dimensions || {}}
+                          cols={section.dimCols ?? 2}
+                          dimOrder={section.dimOrder ?? null}
+                          onReorder={(newOrder) => setSectionLayout(prev =>
+                            prev.map((s, i) => i === idx ? { ...s, dimOrder: newOrder } : s)
+                          )}
+                        />
                       )}
 
                       {section.key === 'risks' && Array.isArray(rendered?.top_risks) && rendered.top_risks.length > 0 && (
@@ -1044,9 +1097,11 @@ const _DIMENSION_ORDER = [
 ];
 const _RISK_DIMENSIONS = new Set(['risk_profile']);
 
-function DimensionBars({ dims }) {
+function DimensionBars({ dims, cols = 2, dimOrder, onReorder }) {
+  const dragDimRef = useRef(null);
+
   if (!dims || typeof dims !== 'object') return null;
-  const ordered = _DIMENSION_ORDER
+  let ordered = _DIMENSION_ORDER
     .map((key) => ({ key, dim: dims[key] }))
     .filter(({ dim }) => dim && typeof dim === 'object');
   for (const [key, dim] of Object.entries(dims)) {
@@ -1055,15 +1110,72 @@ function DimensionBars({ dims }) {
     }
   }
   if (ordered.length === 0) return null;
+
+  if (dimOrder && dimOrder.length > 0) {
+    const map = new Map(ordered.map((d) => [d.key, d]));
+    const reordered = dimOrder.map((k) => map.get(k)).filter(Boolean);
+    for (const d of ordered) {
+      if (!dimOrder.includes(d.key)) reordered.push(d);
+    }
+    ordered = reordered;
+  }
+
   return (
-    <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 1fr)', gap:'14px 32px' }}>
-      {ordered.map(({ key, dim }) => {
+    <div style={{ display:'grid', gridTemplateColumns:`repeat(${cols}, 1fr)`, gap:'14px 32px' }}>
+      {ordered.map(({ key, dim }, dimIdx) => {
         const score = Number(dim?.score || 0);
         const label = _DIMENSION_LABELS[key]
           || key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
         const barColor = _RISK_DIMENSIONS.has(key) ? COLOR_RISK_ORANGE : COLOR_NAVY;
+
+        const handleDimDragStart = (e) => {
+          dragDimRef.current = dimIdx;
+          e.dataTransfer.effectAllowed = 'move';
+          e.stopPropagation();
+        };
+        const handleDimDragOver = (e) => {
+          if (!onReorder) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const rect = e.currentTarget.getBoundingClientRect();
+          const isAfter = e.clientX > rect.left + rect.width / 2;
+          e.currentTarget.dataset.dropAfter = isAfter ? '1' : '0';
+          e.currentTarget.style.borderRight = isAfter ? '2px solid #a0036c' : '';
+          e.currentTarget.style.borderLeft = isAfter ? '' : '2px solid #a0036c';
+        };
+        const handleDimDragLeave = (e) => {
+          e.currentTarget.style.borderLeft = '';
+          e.currentTarget.style.borderRight = '';
+          delete e.currentTarget.dataset.dropAfter;
+        };
+        const handleDimDrop = (e) => {
+          if (!onReorder) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const isAfter = e.currentTarget.dataset.dropAfter === '1';
+          e.currentTarget.style.borderLeft = '';
+          e.currentTarget.style.borderRight = '';
+          delete e.currentTarget.dataset.dropAfter;
+          const fromIdx = dragDimRef.current;
+          if (fromIdx === null || fromIdx === dimIdx) return;
+          const keys = ordered.map((d) => d.key);
+          const [moved] = keys.splice(fromIdx, 1);
+          const targetIdx = dimIdx > fromIdx ? dimIdx - 1 : dimIdx;
+          keys.splice(isAfter ? targetIdx + 1 : targetIdx, 0, moved);
+          onReorder(keys);
+          dragDimRef.current = null;
+        };
+
         return (
-          <div key={key}>
+          <div
+            key={key}
+            draggable={!!onReorder}
+            onDragStart={handleDimDragStart}
+            onDragOver={handleDimDragOver}
+            onDragLeave={handleDimDragLeave}
+            onDrop={handleDimDrop}
+            style={{ cursor: onReorder ? 'grab' : 'default', padding:'2px 0' }}
+          >
             <div style={{ display:'flex', justifyContent:'space-between', fontSize:13, color:'#0f172a', marginBottom:6 }}>
               <span>{label}</span>
               <span style={{ fontFamily:'JetBrains Mono, monospace', fontSize:12, color:'#475569' }}>
