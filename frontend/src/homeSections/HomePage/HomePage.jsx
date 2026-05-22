@@ -179,7 +179,7 @@ export default function HomePage() {
                       <i className="fa-solid fa-sliders"></i>
                     </span>
                     <div>
-                      <strong>Model Scenarios</strong>
+                      <strong>Evaluate Tradeoffs</strong>
                       <p>Adjust key assumptions — budget, timeline, team — and instantly compare projected outcomes before committing.</p>
                     </div>
                   </div>
