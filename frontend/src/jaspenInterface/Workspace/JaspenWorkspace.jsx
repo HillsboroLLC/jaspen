@@ -110,6 +110,7 @@ export default function JaspenWorkspace() {
   const [chatInput, setChatInput] = useState('');
   const [chatHistory, setChatHistory] = useState([]);
   const [chatBusy, setChatBusy] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const saveTimerRef = useRef(null);
   const skipNextSaveRef = useRef(true); // first render = freshly loaded, don't save back
 
@@ -400,12 +401,30 @@ export default function JaspenWorkspace() {
   }
 
   return (
-    <div style={{ display:'flex', height:'100vh', background:'#f7f8fa', fontFamily:'Inter Tight, system-ui, sans-serif' }}>
+    <div data-ws-root style={{ display:'flex', height:'100vh', background:'#f7f8fa', fontFamily:'Inter Tight, system-ui, sans-serif', position:'relative' }}>
+      <style>{`
+        @media print {
+          [data-ws-sidebar] { display: none !important; }
+          [data-ws-topbar] { display: none !important; }
+          [data-ws-root] { display: block !important; height: auto !important; }
+          [data-ws-main] { width: 100% !important; overflow: visible !important; }
+          [data-ws-canvas] { overflow: visible !important; padding: 0 !important; }
+        }
+      `}</style>
+
       {/* === LEFT SIDEBAR: scoped chat === */}
       <aside
+        data-ws-sidebar
         style={{
-          width:340, flexShrink:0, background:'#fff',
-          borderRight:'1px solid #e6eaf2', display:'flex', flexDirection:'column',
+          width: sidebarOpen ? 340 : 0,
+          flexShrink: 0,
+          background: '#fff',
+          borderRight: sidebarOpen ? '1px solid #e6eaf2' : 'none',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          transition: 'width 0.25s ease',
+          position: 'relative',
         }}
       >
         <div style={{ padding:'14px 16px', borderBottom:'1px solid #e6eaf2', display:'flex', alignItems:'center', gap:10 }}>
@@ -484,9 +503,40 @@ export default function JaspenWorkspace() {
         </div>
       </aside>
 
+      {/* Sidebar toggle tab */}
+      <button
+        data-ws-sidebar
+        onClick={() => setSidebarOpen((o) => !o)}
+        title={sidebarOpen ? 'Collapse chat' : 'Expand chat'}
+        style={{
+          position: 'absolute',
+          left: sidebarOpen ? 332 : 0,
+          top: '50%',
+          transform: 'translateY(-50%)',
+          zIndex: 10,
+          width: 20,
+          height: 48,
+          borderRadius: sidebarOpen ? '0 6px 6px 0' : '0 6px 6px 0',
+          border: '1px solid #e6eaf2',
+          borderLeft: sidebarOpen ? 'none' : '1px solid #e6eaf2',
+          background: '#fff',
+          color: '#64748b',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: 10,
+          transition: 'left 0.25s ease',
+          padding: 0,
+        }}
+        aria-label={sidebarOpen ? 'Collapse chat panel' : 'Expand chat panel'}
+      >
+        {sidebarOpen ? '‹' : '›'}
+      </button>
+
       {/* === CENTER: canvas === */}
-      <main style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden' }}>
-        <div style={{ padding:'18px 28px', borderBottom:'1px solid #e6eaf2', background:'#fff', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+      <main data-ws-main style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden' }}>
+        <div data-ws-topbar style={{ padding:'18px 28px', borderBottom:'1px solid #e6eaf2', background:'#fff', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
           <div style={{ display:'flex', alignItems:'baseline', gap:10 }}>
             <h1 style={{ margin:0, fontSize:18, fontWeight:600, color:'#0f172a' }}>{displayTitle}</h1>
             <span style={{ padding:'2px 8px', borderRadius:10, background:'#fef3c7', color:'#92400e', fontSize:10, fontWeight:600, letterSpacing:'0.04em' }}>
@@ -536,7 +586,7 @@ export default function JaspenWorkspace() {
         </div>
 
         {/* Canvas */}
-        <div style={{ flex:1, overflow:'auto', padding: isTradeoff ? 0 : '32px 48px' }}>
+        <div data-ws-canvas style={{ flex:1, overflow:'auto', padding: isTradeoff ? 0 : '32px 48px' }}>
           {isTradeoff ? (
             // Trade-off canvas: full TradeoffView render. Cosmetic edits
             // (title overrides etc.) will land in v1.1 — this v1 shows the
