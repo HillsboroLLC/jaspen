@@ -139,29 +139,27 @@
   left: 0;
   top: var(--side-tab-top);
   writing-mode: horizontal-tb;
-  background: var(--white);
-  border: 1px solid var(--gray-200);
+  background: var(--navy);
+  border: 1px solid var(--navy);
   border-left: none;
-  padding: 6px 8px 6px 7px;
-  color: var(--gray-500);
+  padding: 10px 9px;
+  color: var(--white);
   cursor: pointer;
   z-index: 100;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 0 999px 999px 0;
-  transition: background var(--transition), color var(--transition), border-color var(--transition);
-  box-shadow: 1px 1px 4px rgba(15,23,42,0.06);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  transition: background var(--transition), transform var(--transition);
 }
 .jas-drawer-tab:hover {
-  background: var(--gray-100);
-  color: var(--navy);
-  border-color: var(--gray-300);
+  background: #0f1629;
+  transform: translateX(1px);
 }
 .jas-drawer-tab svg {
-  font-size: 0.65rem;
-  width: 11px;
-  height: 11px;
+  font-size: 0.875rem;
+  width: 14px;
+  height: 14px;
 }
 
 .jas-drawer-tab-readiness {
@@ -543,18 +541,19 @@
   gap: 2px;
 }
 .jas-stage-pill {
+  font-family: var(--font-mono);
   font-size: 0.65rem;
+  font-weight: 500;
   color: var(--gray-500);
-  padding: 4px 9px;
+  padding: 3px 10px;
   border-radius: 999px;
   border: 1px solid transparent;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
   cursor: pointer;
   background: none;
   transition: all var(--transition);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  line-height: 1;
+  white-space: nowrap;
 }
 .jas-stage-pill:hover:not(.disabled) {
   color: var(--navy);

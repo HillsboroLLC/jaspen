@@ -25,7 +25,6 @@ import {
   faChartLine, faTrash, faPlus, faMinus, faMicrophone,
   faBolt, faLayerGroup, faPlay, faListCheck, faArrowUpRightFromSquare, faGaugeHigh, faClockRotateLeft, faPaperclip, faArrowUp,
   faDownload, faChevronDown, faChevronLeft, faChevronRight, faUser, faBell, faLock, faCopy, faThumbsUp, faThumbsDown, faRotate, faPen, faArrowRightArrowLeft,
-  faLightbulb
 } from '@fortawesome/free-solid-svg-icons';
 import {
   MonitorCheck, MessageCircleQuestion,
@@ -12253,12 +12252,6 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               const canScenarios = scoredIdeasCount >= 2;
               const hasExecutionPlan = Array.isArray(threadWbs?.tasks) && threadWbs.tasks.length > 0;
               const canExecution = hasExecutionPlan;
-              const stageIcons = {
-                discovery: faLightbulb,
-                scoring: faChartLine,
-                scenarios: faArrowRightArrowLeft,
-                execution: faListCheck,
-              };
               const stages = [
                 { key: 'discovery',  label: 'Discovery',  disabled: false },
                 { key: 'scoring',    label: 'Scoring',    disabled: !canScoring },
@@ -12282,9 +12275,9 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                     className={`jas-stage-pill${currentStage === stage.key ? ' active' : ''}${stage.disabled ? ' disabled' : ''}`}
                     onClick={() => handlePillClick(stage.key, stage.disabled)}
                     disabled={stage.disabled}
-                    title={stage.disabled ? (stage.title || 'Not available yet') : stage.label}
+                    title={stage.disabled ? (stage.title || 'Not available yet') : undefined}
                   >
-                    <FontAwesomeIcon icon={stageIcons[stage.key]} />
+                    {stage.label}
                   </button>
                   {i < arr.length - 1 && <span className="jas-stage-sep" aria-hidden="true">›</span>}
                 </React.Fragment>
