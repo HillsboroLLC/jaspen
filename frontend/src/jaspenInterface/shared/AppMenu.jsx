@@ -1052,7 +1052,6 @@ export default function AppMenu() {
           aria-controls="app-menu-panel"
         >
           <FontAwesomeIcon icon={faBars} />
-          MENU
         </button>
       )}
 
