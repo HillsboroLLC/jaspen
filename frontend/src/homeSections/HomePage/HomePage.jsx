@@ -130,7 +130,7 @@ export default function HomePage() {
                 <a href="#request-access" className="jaspen-btn jaspen-btn-primary jaspen-btn-lg">
                   Request Access
                 </a>
-                <a href="#product" onClick={(e) => scrollToSection(e, 'product')} className="jaspen-btn jaspen-btn-outline jaspen-btn-lg">
+                <a href="#intro-header" onClick={(e) => scrollToSection(e, 'intro-header')} className="jaspen-btn jaspen-btn-outline jaspen-btn-lg">
                   See How It Works
                 </a>
               </div>
