@@ -41,12 +41,14 @@ const _GENERIC_TITLE_PATTERNS = [/^version\s+\d+$/i, /^v\d+$/i, /^scenario\s+[a-
 
 // Default section config for the scorecard canvas section-grid. Defined as a
 // module-level const (not state) so it is stable across renders.
+// cols is out of 4 — the outer grid uses repeat(4, 1fr)
+// 1 = 25%  2 = 50%  3 = 75%  4 = 100%
 const DEFAULT_SCORECARD_SECTIONS = [
-  { key: 'score',      label: 'Score',                cols: 2, locked: true },
-  { key: 'executive',  label: 'Executive Summary',    cols: 2, locked: false },
-  { key: 'dimensions', label: 'Dimensions',           cols: 2, locked: true, dimCols: 2, dimOrder: null },
-  { key: 'risks',      label: 'Top Risks',            cols: 1, locked: true },
-  { key: 'scenario',   label: 'Recommended Scenario', cols: 1, locked: true },
+  { key: 'score',      label: 'Score',                cols: 4, locked: true },
+  { key: 'executive',  label: 'Executive Summary',    cols: 4, locked: false },
+  { key: 'dimensions', label: 'Dimensions',           cols: 4, locked: true, dimCols: 2, dimOrder: null },
+  { key: 'risks',      label: 'Top Risks',            cols: 2, locked: true },
+  { key: 'scenario',   label: 'Recommended Scenario', cols: 2, locked: true },
 ];
 
 function _pickMeaningful(...candidates) {
@@ -765,8 +767,8 @@ export default function JaspenWorkspace() {
               style={{ fontSize:24, fontWeight:600, color:'#0f172a', letterSpacing:'-0.01em' }}
             />
 
-            {/* Section grid */}
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:20, marginTop:28 }}>
+            {/* Section grid — 4-column so sections can snap to 25/50/75/100% */}
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(4, 1fr)', gap:20, marginTop:28 }}>
               {sectionLayout.map((section, idx) => {
                 // Skip sections with no data
                 if (section.key === 'executive' &&
@@ -876,41 +878,43 @@ export default function JaspenWorkspace() {
                           fontSize:9, color:'#94a3b8',
                         }}>LOCKED</span>
                       )}
-                      {/* Width selector */}
-                      <div style={{ display:'flex', gap:1, background:'#f1f5f9', borderRadius:5, padding:2, flexShrink:0 }}>
-                        {[{ val:1, label:'½' }, { val:2, label:'Full' }].map(({ val, label }) => (
+                      {/* Grid width picker — 4 segments = 25/50/75/100% */}
+                      <div
+                        style={{ display:'flex', gap:2, flexShrink:0, alignItems:'center' }}
+                        title={`Width: ${section.cols}/4 columns`}
+                      >
+                        {[1,2,3,4].map((n) => (
                           <button
-                            key={val}
+                            key={n}
                             type="button"
-                            onClick={() => setSectionLayout(prev => prev.map((s, i) => i === idx ? { ...s, cols: val } : s))}
+                            onClick={() => setSectionLayout(prev => prev.map((s, i) => i === idx ? { ...s, cols: n } : s))}
+                            title={n === 1 ? '¼ width' : n === 2 ? '½ width' : n === 3 ? '¾ width' : 'Full width'}
                             style={{
-                              padding:'1px 8px', fontSize:10, borderRadius:3, border:'none', cursor:'pointer',
-                              background: section.cols === val ? '#fff' : 'transparent',
-                              color: section.cols === val ? '#334155' : '#94a3b8',
-                              fontWeight: section.cols === val ? 600 : 400,
-                              boxShadow: section.cols === val ? '0 1px 2px rgba(0,0,0,0.08)' : 'none',
-                              lineHeight:'18px', transition:'all 0.1s',
+                              width:9, height:14, borderRadius:2, border:'none', cursor:'pointer', padding:0,
+                              background: n <= section.cols ? '#0f172a' : '#e2e8f0',
+                              transition:'background 0.1s',
                             }}
-                          >{label}</button>
+                          />
                         ))}
                       </div>
-                      {/* Dimensions-specific: column layout for bars */}
+                      {/* Dimensions-specific: inner bar column picker */}
                       {section.key === 'dimensions' && (
-                        <div style={{ display:'flex', gap:1, background:'#f1f5f9', borderRadius:5, padding:2, flexShrink:0 }}>
-                          {[{ val:1, label:'1 col' }, { val:2, label:'2 col' }].map(({ val, label }) => (
+                        <div
+                          style={{ display:'flex', gap:2, flexShrink:0, alignItems:'center' }}
+                          title={`Bars: ${section.dimCols ?? 2} column${(section.dimCols ?? 2) > 1 ? 's' : ''}`}
+                        >
+                          {[1,2].map((n) => (
                             <button
-                              key={val}
+                              key={n}
                               type="button"
-                              onClick={() => setSectionLayout(prev => prev.map((s, i) => i === idx ? { ...s, dimCols: val } : s))}
+                              onClick={() => setSectionLayout(prev => prev.map((s, i) => i === idx ? { ...s, dimCols: n } : s))}
+                              title={n === 1 ? '1-column bars' : '2-column bars'}
                               style={{
-                                padding:'1px 8px', fontSize:10, borderRadius:3, border:'none', cursor:'pointer',
-                                background: (section.dimCols ?? 2) === val ? '#fff' : 'transparent',
-                                color: (section.dimCols ?? 2) === val ? '#334155' : '#94a3b8',
-                                fontWeight: (section.dimCols ?? 2) === val ? 600 : 400,
-                                boxShadow: (section.dimCols ?? 2) === val ? '0 1px 2px rgba(0,0,0,0.08)' : 'none',
-                                lineHeight:'18px', transition:'all 0.1s',
+                                width:9, height:14, borderRadius:2, border:'none', cursor:'pointer', padding:0,
+                                background: n <= (section.dimCols ?? 2) ? '#0f172a' : '#e2e8f0',
+                                transition:'background 0.1s',
                               }}
-                            >{label}</button>
+                            />
                           ))}
                         </div>
                       )}
