@@ -77,6 +77,19 @@
    ============================================================================ */
 
 .jaspen-header {
+  --navy: #0f172a;
+  --navy-deep: #020617;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --white: #ffffff;
+  --gray-50: #f8fafc;
+  --gray-200: #e2e8f0;
+  --gray-400: #94a3b8;
+  --gray-500: #64748b;
+  --gray-600: #475569;
+  --gray-700: #334155;
+  --container-max: 1280px;
+
   position: fixed;
   top: 0;
   left: 0;
