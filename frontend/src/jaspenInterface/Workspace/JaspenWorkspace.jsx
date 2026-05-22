@@ -778,24 +778,43 @@ export default function JaspenWorkspace() {
                   e.dataTransfer.effectAllowed = 'move';
                 };
 
+                const clearDropIndicator = (el) => {
+                  el.style.borderTop = '';
+                  el.style.borderLeft = '';
+                  el.style.borderRight = '';
+                  delete el.dataset.dropAfter;
+                };
+
                 const handleDragOver = (e) => {
                   e.preventDefault();
-                  e.currentTarget.style.borderTop = '2px solid #a0036c';
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const isAfter = e.clientX > rect.left + rect.width / 2;
+                  e.currentTarget.dataset.dropAfter = isAfter ? '1' : '0';
+                  if (isAfter) {
+                    e.currentTarget.style.borderRight = '2px solid #a0036c';
+                    e.currentTarget.style.borderLeft = '';
+                  } else {
+                    e.currentTarget.style.borderLeft = '2px solid #a0036c';
+                    e.currentTarget.style.borderRight = '';
+                  }
+                  e.currentTarget.style.borderTop = '';
                 };
 
                 const handleDragLeave = (e) => {
-                  e.currentTarget.style.borderTop = '';
+                  clearDropIndicator(e.currentTarget);
                 };
 
                 const handleDrop = (e) => {
                   e.preventDefault();
-                  e.currentTarget.style.borderTop = '';
+                  const isAfter = e.currentTarget.dataset.dropAfter === '1';
+                  clearDropIndicator(e.currentTarget);
                   const fromIdx = dragSectionRef.current;
                   if (fromIdx === null || fromIdx === idx) return;
                   setSectionLayout((prev) => {
                     const next = [...prev];
                     const [moved] = next.splice(fromIdx, 1);
-                    next.splice(idx, 0, moved);
+                    const targetIdx = idx > fromIdx ? idx - 1 : idx;
+                    next.splice(isAfter ? targetIdx + 1 : targetIdx, 0, moved);
                     return next;
                   });
                   dragSectionRef.current = null;
