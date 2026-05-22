@@ -404,6 +404,7 @@ export default function JaspenWorkspace() {
     <div data-ws-root style={{ display:'flex', height:'100vh', background:'#f7f8fa', fontFamily:'Inter Tight, system-ui, sans-serif', position:'relative' }}>
       <style>{`
         @media print {
+          * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
           [data-ws-sidebar] { display: none !important; }
           [data-ws-topbar] { display: none !important; }
           [data-ws-root] { display: block !important; height: auto !important; }
