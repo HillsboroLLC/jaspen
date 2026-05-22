@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import StrategyAccessCard from './StrategyAccessCard';
 import JaspenDemoCycler from './JaspenDemoCycler';
 import JaspenNav from './JaspenNav';
+import ScrollGuide from './ScrollGuide';
 import './HomePage.css';
 
 const STEPS = [
@@ -113,6 +114,7 @@ export default function HomePage() {
   return (
     <div className="homepage">
       <JaspenNav />
+      <ScrollGuide />
 
       <main>
         {/* ========== HERO ========== */}
@@ -195,6 +197,90 @@ export default function HomePage() {
               <div className="intro-demo-frame">
                 <JaspenDemoCycler />
               </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ========== HOMEPAGE PRICING ========== */}
+        <section id="pricing-plans" className="jaspen-home-pricing-section">
+          <div className="jaspen-container">
+            <div className="home-pricing-header scroll-reveal">
+              <h2>Simple path from exploration to scale</h2>
+            </div>
+            <div className="home-plan-grid">
+              {[
+                {
+                  name: 'Free',
+                  headline: 'Unlock exploration',
+                  microcopy: 'Start without commitment',
+                  price: '$0',
+                  usage: '1,000 credits/month',
+                  description: 'Explore ideas, validate direction, and see how Jaspen thinks.',
+                  ctaLabel: 'Start exploring',
+                  ctaHref: '/?auth=1',
+                },
+                {
+                  name: 'Essential',
+                  headline: 'Onboard your strategy partner',
+                  microcopy: 'For individual operators and builders',
+                  price: '$39/month',
+                  usage: '7,000 credits/month',
+                  description: 'Turn ideas into clear decisions and walk away with execution plans.',
+                  ctaLabel: 'Upgrade to Essential',
+                  ctaHref: '/pages/pricing?plan=essential#plans',
+                },
+                {
+                  name: 'Team',
+                  headline: 'Move faster together',
+                  microcopy: 'For small teams and cross-functional work',
+                  price: '$129/month',
+                  usage: '29,000 shared credits/month',
+                  description: 'Align your team, pressure-test decisions, and execute with clarity.',
+                  ctaLabel: 'Start Team workspace',
+                  ctaHref: '/pages/pricing?plan=team#plans',
+                },
+                {
+                  name: 'Enterprise',
+                  headline: 'Scale decision-making across your organization',
+                  microcopy: 'For organizations and large-scale execution',
+                  price: '$299/month+',
+                  usage: '80,000 shared credits/month',
+                  description: 'Bring structure, speed, and consistency to how your business operates.',
+                  ctaLabel: 'Start Enterprise',
+                  ctaHref: '/pages/pricing?plan=enterprise#plans',
+                  subCta: 'Need more capacity or custom pricing? Contact sales.',
+                },
+              ].map((plan, idx) => (
+                <article key={plan.name} className={`home-plan-card scroll-reveal ${idx === 1 ? 'is-emphasized' : ''}`}>
+                  <div className="home-plan-intro">
+                    <p className="home-plan-name">{plan.name}</p>
+                    <h3>{plan.headline}</h3>
+                    <p className="home-plan-microcopy">{plan.microcopy}</p>
+                  </div>
+                  <p className="home-plan-price">{plan.price}</p>
+                  <div className="home-plan-usage-row">
+                    <span className="home-thinking-power">
+                      Thinking power
+                      <span
+                        className="home-thinking-power-info"
+                        role="img"
+                        aria-label="Thinking power is your monthly capacity—like horsepower for how much Jaspen can think, analyze, and plan with you."
+                        title="Thinking power is your monthly capacity—like horsepower for how much Jaspen can think, analyze, and plan with you."
+                      >
+                        i
+                      </span>
+                    </span>
+                    <span className="home-plan-usage">{plan.usage}</span>
+                  </div>
+                  <div className="home-plan-description-wrap">
+                    <p className="home-plan-description">{plan.description}</p>
+                  </div>
+                  <div className="home-plan-cta-wrap">
+                    {plan.subCta ? <p className="home-plan-subcta">{plan.subCta}</p> : <p className="home-plan-subcta home-plan-subcta-empty" aria-hidden="true">&nbsp;</p>}
+                    <a href={plan.ctaHref} className="home-plan-link">{plan.ctaLabel}</a>
+                  </div>
+                </article>
+              ))}
             </div>
           </div>
         </section>
@@ -302,92 +388,6 @@ export default function HomePage() {
                   <div key={industry} className="industry-chip">{industry}</div>
                 ))}
               </div>
-            </div>
-          </div>
-        </section>
-
-        {/* ========== HOMEPAGE PRICING ========== */}
-        <section id="pricing-plans" className="jaspen-home-pricing-section">
-          <div className="jaspen-container">
-            <div className="home-pricing-header scroll-reveal">
-              <h2>Simple path from exploration to scale</h2>
-            </div>
-            <div className="home-plan-grid">
-              {[
-                {
-                  name: 'Free',
-                  headline: 'Unlock exploration',
-                  microcopy: 'Start without commitment',
-                  price: '$0',
-                  usage: '1,000 credits/month',
-                  description: 'Explore ideas, validate direction, and see how Jaspen thinks.',
-                  ctaLabel: 'Start exploring',
-                  // Free plan → sign up / log in, land on the workspace
-                  ctaHref: '/?auth=1',
-                },
-                {
-                  name: 'Essential',
-                  headline: 'Onboard your strategy partner',
-                  microcopy: 'For individual operators and builders',
-                  price: '$39/month',
-                  usage: '7,000 credits/month',
-                  description: 'Turn ideas into clear decisions and walk away with execution plans.',
-                  ctaLabel: 'Upgrade to Essential',
-                  // Paid plan → log in then auto-start checkout on the pricing page
-                  ctaHref: '/pages/pricing?plan=essential#plans',
-                },
-                {
-                  name: 'Team',
-                  headline: 'Move faster together',
-                  microcopy: 'For small teams and cross-functional work',
-                  price: '$129/month',
-                  usage: '29,000 shared credits/month',
-                  description: 'Align your team, pressure-test decisions, and execute with clarity.',
-                  ctaLabel: 'Start Team workspace',
-                  ctaHref: '/pages/pricing?plan=team#plans',
-                },
-                {
-                  name: 'Enterprise',
-                  headline: 'Scale decision-making across your organization',
-                  microcopy: 'For organizations and large-scale execution',
-                  price: '$299/month+',
-                  usage: '80,000 shared credits/month',
-                  description: 'Bring structure, speed, and consistency to how your business operates.',
-                  ctaLabel: 'Start Enterprise',
-                  ctaHref: '/pages/pricing?plan=enterprise#plans',
-                  subCta: 'Need more capacity or custom pricing? Contact sales.',
-                },
-              ].map((plan, idx) => (
-                <article key={plan.name} className={`home-plan-card scroll-reveal ${idx === 1 ? 'is-emphasized' : ''}`}>
-                  <div className="home-plan-intro">
-                    <p className="home-plan-name">{plan.name}</p>
-                    <h3>{plan.headline}</h3>
-                    <p className="home-plan-microcopy">{plan.microcopy}</p>
-                  </div>
-                  <p className="home-plan-price">{plan.price}</p>
-                  <div className="home-plan-usage-row">
-                    <span className="home-thinking-power">
-                      Thinking power
-                      <span
-                        className="home-thinking-power-info"
-                        role="img"
-                        aria-label="Thinking power is your monthly capacity—like horsepower for how much Jaspen can think, analyze, and plan with you."
-                        title="Thinking power is your monthly capacity—like horsepower for how much Jaspen can think, analyze, and plan with you."
-                      >
-                        i
-                      </span>
-                    </span>
-                    <span className="home-plan-usage">{plan.usage}</span>
-                  </div>
-                  <div className="home-plan-description-wrap">
-                    <p className="home-plan-description">{plan.description}</p>
-                  </div>
-                  <div className="home-plan-cta-wrap">
-                    {plan.subCta ? <p className="home-plan-subcta">{plan.subCta}</p> : <p className="home-plan-subcta home-plan-subcta-empty" aria-hidden="true">&nbsp;</p>}
-                    <a href={plan.ctaHref} className="home-plan-link">{plan.ctaLabel}</a>
-                  </div>
-                </article>
-              ))}
             </div>
           </div>
         </section>

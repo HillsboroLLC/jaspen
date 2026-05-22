@@ -1,0 +1,174 @@
+/* ============================================================
+   Scroll Guide — floating right-side section navigator
+   ============================================================ */
+
+.scroll-guide {
+  position: fixed;
+  right: 28px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.scroll-guide-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.scroll-guide-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: flex-end;
+  position: relative;
+}
+
+.scroll-guide-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(15, 23, 42, 0.18);
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.2s, width 0.25s;
+  flex-shrink: 0;
+}
+
+.scroll-guide-dot.is-active {
+  background: #a0036c;
+  transform: scale(1.35);
+  width: 10px;
+  height: 10px;
+}
+
+.scroll-guide-dot:hover:not(.is-active) {
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.scroll-guide-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: rgba(15, 23, 42, 0.55);
+  white-space: nowrap;
+  opacity: 0;
+  transform: translateX(4px);
+  transition: opacity 0.15s, transform 0.15s;
+  pointer-events: none;
+  letter-spacing: 0.04em;
+}
+
+.scroll-guide-item:hover .scroll-guide-label {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.scroll-guide-item:has(.is-active) .scroll-guide-label {
+  opacity: 1;
+  transform: translateX(0);
+  color: #a0036c;
+}
+
+/* Back to top */
+.scroll-guide-top {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(15, 23, 42, 0.06);
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  color: rgba(15, 23, 42, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 0.7rem;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(6px);
+  transition: opacity 0.2s, transform 0.2s, background 0.15s;
+  margin-top: 4px;
+}
+
+.scroll-guide-top.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.scroll-guide-top:hover {
+  background: rgba(15, 23, 42, 0.1);
+  color: rgba(15, 23, 42, 0.8);
+}
+
+/* ============================================================
+   Scroll cue — animated "Scroll" hint near hero bottom
+   ============================================================ */
+
+.scroll-cue {
+  position: fixed;
+  bottom: 40px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  animation: cue-fade-in 1s ease 1.5s both;
+  pointer-events: none;
+}
+
+.scroll-cue-label {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(15, 23, 42, 0.35);
+}
+
+.scroll-cue-track {
+  width: 2px;
+  height: 36px;
+  background: rgba(15, 23, 42, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+  position: relative;
+}
+
+.scroll-cue-dot {
+  width: 2px;
+  height: 14px;
+  background: #a0036c;
+  border-radius: 2px;
+  animation: cue-bounce 1.4s ease-in-out infinite;
+}
+
+@keyframes cue-bounce {
+  0%   { transform: translateY(-14px); opacity: 0; }
+  20%  { opacity: 1; }
+  80%  { opacity: 1; }
+  100% { transform: translateY(36px); opacity: 0; }
+}
+
+@keyframes cue-fade-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* Hide on small screens */
+@media (max-width: 900px) {
+  .scroll-guide {
+    display: none;
+  }
+  .scroll-cue {
+    display: none;
+  }
+}
