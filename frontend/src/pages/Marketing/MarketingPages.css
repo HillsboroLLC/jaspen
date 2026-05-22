@@ -41,6 +41,42 @@
   padding-top: 96px;
 }
 
+.marketing-footer {
+  border-top: 1px solid var(--marketing-gray-100);
+  padding: 40px 0;
+  margin-top: 80px;
+}
+
+.marketing-footer-inner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.marketing-footer-copy {
+  font-size: 0.875rem;
+  color: var(--marketing-gray-500);
+}
+
+.marketing-footer-links {
+  display: flex;
+  gap: 32px;
+}
+
+.marketing-footer-links a {
+  text-decoration: none;
+  color: var(--marketing-gray-500);
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: color 0.15s;
+}
+
+.marketing-footer-links a:hover {
+  color: var(--marketing-navy-deep);
+}
+
 .coming-soon-banner {
   background: #fef9ec;
   border: 1px solid #f5d97a;

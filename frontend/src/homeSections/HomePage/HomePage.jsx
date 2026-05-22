@@ -422,10 +422,7 @@ export default function HomePage() {
       <footer className="jaspen-footer">
         <div className="jaspen-container">
           <div className="jaspen-footer-inner">
-            <div className="jaspen-footer-left">
-              <span className="jaspen-footer-logo">Jaspen</span>
-              <p>&copy; {new Date().getFullYear()} Jaspen. All rights reserved.</p>
-            </div>
+            <p className="jaspen-footer-copy">&copy; {new Date().getFullYear()} Jaspen. All rights reserved.</p>
             <div className="jaspen-footer-right">
               <Link to="/pages/privacy">Privacy</Link>
               <Link to="/pages/terms">Terms</Link>

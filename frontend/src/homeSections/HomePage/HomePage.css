@@ -1769,15 +1769,7 @@
   align-items: center;
 }
 
-.jaspen-footer-logo {
-  font-size: 1.5rem;
-  font-weight: 800;
-  color: var(--navy-deep);
-  margin-bottom: 12px;
-  display: block;
-}
-
-.jaspen-footer-left p {
+.jaspen-footer-copy {
   color: var(--gray-400);
   font-size: 0.875rem;
 }
