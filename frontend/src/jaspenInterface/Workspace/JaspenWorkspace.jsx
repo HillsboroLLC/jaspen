@@ -768,7 +768,6 @@ export default function JaspenWorkspace() {
                 };
 
                 const toggleSize = () => {
-                  if (section.key === 'score') return; // score is always full-width
                   setSectionLayout((prev) =>
                     prev.map((s, i) => i === idx ? { ...s, cols: s.cols === 2 ? 1 : 2 } : s)
                   );
@@ -841,17 +840,15 @@ export default function JaspenWorkspace() {
                           fontSize:9, color:'#94a3b8',
                         }}>LOCKED</span>
                       )}
-                      {/* Size toggle — hidden for 'score' section */}
-                      {section.key !== 'score' && (
-                        <button
-                          type="button"
-                          onClick={toggleSize}
-                          title={section.cols === 2 ? 'Half width' : 'Full width'}
-                          style={{ fontSize:11, color:'#94a3b8', cursor:'pointer', background:'none', border:'none', padding:'2px 4px' }}
-                        >
-                          {section.cols === 2 ? '◫' : '▬'}
-                        </button>
-                      )}
+                      {/* Size toggle */}
+                      <button
+                        type="button"
+                        onClick={toggleSize}
+                        title={section.cols === 2 ? 'Half width' : 'Full width'}
+                        style={{ fontSize:11, color:'#94a3b8', cursor:'pointer', background:'none', border:'none', padding:'2px 4px' }}
+                      >
+                        {section.cols === 2 ? '◫' : '▬'}
+                      </button>
                       {/* Collapse toggle */}
                       <button
                         type="button"
