@@ -1,17 +1,27 @@
 /* ============================================================
-   Scroll Guide — floating right-side section navigator
+   Scroll Guide — fixed right-side section navigator
+   Only visible after the hero is scrolled past
    ============================================================ */
 
 .scroll-guide {
   position: fixed;
-  right: 28px;
+  right: 20px;
   top: 50%;
   transform: translateY(-50%);
   z-index: 200;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 12px;
+  align-items: flex-end;
+  gap: 8px;
+
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.4s ease;
+}
+
+.scroll-guide.is-visible {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .scroll-guide-list {
@@ -20,50 +30,27 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .scroll-guide-item {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   justify-content: flex-end;
-  position: relative;
 }
 
-.scroll-guide-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: rgba(15, 23, 42, 0.18);
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  transition: background 0.2s, transform 0.2s, width 0.25s;
-  flex-shrink: 0;
-}
-
-.scroll-guide-dot.is-active {
-  background: #a0036c;
-  transform: scale(1.35);
-  width: 10px;
-  height: 10px;
-}
-
-.scroll-guide-dot:hover:not(.is-active) {
-  background: rgba(15, 23, 42, 0.45);
-}
-
+/* Label — hidden by default, slides in on hover or active */
 .scroll-guide-label {
-  font-size: 0.7rem;
+  font-size: 0.6875rem;
   font-weight: 600;
-  color: rgba(15, 23, 42, 0.55);
+  letter-spacing: 0.04em;
+  color: rgba(15, 23, 42, 0.45);
   white-space: nowrap;
   opacity: 0;
   transform: translateX(4px);
-  transition: opacity 0.15s, transform 0.15s;
+  transition: opacity 0.15s, transform 0.15s, color 0.15s;
   pointer-events: none;
-  letter-spacing: 0.04em;
 }
 
 .scroll-guide-item:hover .scroll-guide-label {
@@ -71,6 +58,30 @@
   transform: translateX(0);
 }
 
+/* Dot */
+.scroll-guide-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(15, 23, 42, 0.2);
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.2s, transform 0.2s;
+}
+
+.scroll-guide-dot:hover {
+  background: rgba(15, 23, 42, 0.45);
+  transform: scale(1.2);
+}
+
+.scroll-guide-dot.is-active {
+  background: #a0036c;
+  transform: scale(1.4);
+}
+
+/* Show label for active section */
 .scroll-guide-item:has(.is-active) .scroll-guide-label {
   opacity: 1;
   transform: translateX(0);
@@ -79,42 +90,33 @@
 
 /* Back to top */
 .scroll-guide-top {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   background: rgba(15, 23, 42, 0.06);
   border: 1px solid rgba(15, 23, 42, 0.1);
-  color: rgba(15, 23, 42, 0.5);
+  color: rgba(15, 23, 42, 0.45);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  font-size: 0.7rem;
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(6px);
-  transition: opacity 0.2s, transform 0.2s, background 0.15s;
+  font-size: 0.65rem;
   margin-top: 4px;
-}
-
-.scroll-guide-top.is-visible {
-  opacity: 1;
-  pointer-events: auto;
-  transform: translateY(0);
+  transition: background 0.15s, color 0.15s;
 }
 
 .scroll-guide-top:hover {
-  background: rgba(15, 23, 42, 0.1);
+  background: rgba(15, 23, 42, 0.12);
   color: rgba(15, 23, 42, 0.8);
 }
 
 /* ============================================================
-   Scroll cue — animated "Scroll" hint near hero bottom
+   Scroll cue — animated hint at bottom of hero
    ============================================================ */
 
 .scroll-cue {
   position: fixed;
-  bottom: 40px;
+  bottom: 36px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 200;
@@ -122,52 +124,49 @@
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  animation: cue-fade-in 1s ease 1.5s both;
+  animation: cue-fade-in 0.6s ease 2s both;
   pointer-events: none;
 }
 
 .scroll-cue-label {
-  font-size: 0.6875rem;
+  font-size: 0.625rem;
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: rgba(15, 23, 42, 0.35);
+  color: rgba(15, 23, 42, 0.3);
 }
 
 .scroll-cue-track {
   width: 2px;
-  height: 36px;
-  background: rgba(15, 23, 42, 0.1);
+  height: 32px;
+  background: rgba(15, 23, 42, 0.08);
   border-radius: 2px;
   overflow: hidden;
-  position: relative;
 }
 
 .scroll-cue-dot {
   width: 2px;
-  height: 14px;
+  height: 12px;
   background: #a0036c;
   border-radius: 2px;
-  animation: cue-bounce 1.4s ease-in-out infinite;
+  animation: cue-slide 1.5s ease-in-out infinite;
 }
 
-@keyframes cue-bounce {
-  0%   { transform: translateY(-14px); opacity: 0; }
+@keyframes cue-slide {
+  0%   { transform: translateY(-12px); opacity: 0; }
   20%  { opacity: 1; }
   80%  { opacity: 1; }
-  100% { transform: translateY(36px); opacity: 0; }
+  100% { transform: translateY(32px); opacity: 0; }
 }
 
 @keyframes cue-fade-in {
-  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
-  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
-/* Hide on small screens */
-@media (max-width: 900px) {
-  .scroll-guide {
-    display: none;
-  }
+/* Hide everything on small screens */
+@media (max-width: 1024px) {
+  .scroll-guide,
   .scroll-cue {
     display: none;
   }
