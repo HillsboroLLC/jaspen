@@ -1689,6 +1689,22 @@
   opacity: 1;
 }
 
+.cta-eyebrow {
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  opacity: 0.7;
+  margin-bottom: 16px !important;
+}
+
+.cta-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
 .cta-box .jaspen-btn-primary {
   background: var(--white);
   color: var(--accent);
@@ -1698,6 +1714,18 @@
 .cta-box .jaspen-btn-primary:hover {
   background: var(--navy-deep);
   color: var(--white);
+}
+
+.cta-btn-secondary {
+  background: transparent;
+  color: var(--white);
+  border: 2px solid rgba(255, 255, 255, 0.45);
+  padding: 18px 40px;
+}
+
+.cta-btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.7);
 }
 
 .cta-abstract-visual {

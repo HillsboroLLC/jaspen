@@ -397,11 +397,17 @@ export default function HomePage() {
           <div className="jaspen-container">
             <div className="cta-box scroll-reveal" id="cta-box">
               <div className="cta-content">
-                <h2>Ready to move from ideas to action?</h2>
-                <p>Request early access and see how Jaspen can accelerate your next initiative.</p>
-                <a href="mailto:hello@jaspen.ai" className="jaspen-btn jaspen-btn-primary jaspen-btn-lg">
-                  Request access
-                </a>
+                <p className="cta-eyebrow">Enterprise</p>
+                <h2>Need more than the standard plans?</h2>
+                <p>Custom data integrations, dedicated support, SSO, and volume licensing — reach out and we'll scope what you need.</p>
+                <div className="cta-actions">
+                  <a href="mailto:hello@jaspen.ai" className="jaspen-btn jaspen-btn-primary jaspen-btn-lg">
+                    Talk to us
+                  </a>
+                  <a href="#hero-content" onClick={(e) => scrollToSection(e, 'hero-content')} className="jaspen-btn cta-btn-secondary jaspen-btn-lg">
+                    Start for free
+                  </a>
+                </div>
               </div>
               <div className="cta-abstract-visual">
                 <div className="abstract-circle"></div>
