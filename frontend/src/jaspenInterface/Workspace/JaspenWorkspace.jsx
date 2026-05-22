@@ -39,6 +39,16 @@ const _GENERIC_TITLES = new Set([
 ]);
 const _GENERIC_TITLE_PATTERNS = [/^version\s+\d+$/i, /^v\d+$/i, /^scenario\s+[a-z]$/i];
 
+// Default section config for the scorecard canvas section-grid. Defined as a
+// module-level const (not state) so it is stable across renders.
+const DEFAULT_SCORECARD_SECTIONS = [
+  { key: 'score',      label: 'Score',                cols: 2, locked: true },
+  { key: 'executive',  label: 'Executive Summary',    cols: 2, locked: false },
+  { key: 'dimensions', label: 'Dimensions',           cols: 2, locked: true },
+  { key: 'risks',      label: 'Top Risks',            cols: 1, locked: true },
+  { key: 'scenario',   label: 'Recommended Scenario', cols: 1, locked: true },
+];
+
 function _pickMeaningful(...candidates) {
   for (const c of candidates) {
     const v = String(c || '').trim();
@@ -113,6 +123,10 @@ export default function JaspenWorkspace() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const saveTimerRef = useRef(null);
   const skipNextSaveRef = useRef(true); // first render = freshly loaded, don't save back
+  const [sectionLayout, setSectionLayout] = useState(() =>
+    DEFAULT_SCORECARD_SECTIONS.map((s) => ({ ...s, collapsed: false }))
+  );
+  const dragSectionRef = useRef(null);
 
   const isTradeoff = scorecardId === SENTINEL_TRADEOFF;
   const isExecution = scorecardId === SENTINEL_EXECUTION;
@@ -734,94 +748,184 @@ export default function JaspenWorkspace() {
               style={{ fontSize:24, fontWeight:600, color:'#0f172a', letterSpacing:'-0.01em' }}
             />
 
-            {/* Score ring + category */}
-            <div style={{ display:'flex', alignItems:'center', gap:24, marginTop:24 }}>
-              <div style={{ position:'relative', width:96, height:96 }}>
-                <svg width="96" height="96" viewBox="0 0 96 96">
-                  <circle cx="48" cy="48" r="36" fill="none" stroke="#e6eaf2" strokeWidth="8" />
-                  <circle
-                    cx="48" cy="48" r="36" fill="none" stroke={ringColor} strokeWidth="8"
-                    strokeDasharray={2 * Math.PI * 36}
-                    strokeDashoffset={(1 - score / 100) * 2 * Math.PI * 36}
-                    strokeLinecap="round"
-                    transform="rotate(-90 48 48)"
-                  />
-                </svg>
-                <div style={{ position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center', fontSize:26, fontWeight:600, color:'#0f172a' }}>
-                  {score}
-                </div>
-              </div>
-              <div>
-                <div style={{ fontSize:11, fontWeight:600, color:ringColor, letterSpacing:'0.06em', textTransform:'uppercase' }}>{category}</div>
-                <div style={{ fontSize:18, fontWeight:600, color:'#0f172a', marginTop:4 }}>Strategy scorecard</div>
-                <div style={{ fontSize:12, color:'#64748b', marginTop:2 }}>Locked · scores reflect Jaspen's analysis. Open chat to rescore.</div>
-              </div>
+            {/* Section grid */}
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:20, marginTop:28 }}>
+              {sectionLayout.map((section, idx) => {
+                // Skip sections with no data
+                if (section.key === 'executive' &&
+                    !rendered?.executive_summary &&
+                    rendered?._display_overrides?.executive_summary === undefined) return null;
+                if (section.key === 'risks' &&
+                    !(Array.isArray(rendered?.top_risks) && rendered.top_risks.length > 0)) return null;
+                if (section.key === 'scenario' && !recommendedScenario) return null;
+
+                const isCollapsed = section.collapsed;
+
+                const toggleCollapse = () => {
+                  setSectionLayout((prev) =>
+                    prev.map((s, i) => i === idx ? { ...s, collapsed: !s.collapsed } : s)
+                  );
+                };
+
+                const toggleSize = () => {
+                  if (section.key === 'score') return; // score is always full-width
+                  setSectionLayout((prev) =>
+                    prev.map((s, i) => i === idx ? { ...s, cols: s.cols === 2 ? 1 : 2 } : s)
+                  );
+                };
+
+                const handleDragStart = (e) => {
+                  dragSectionRef.current = idx;
+                  e.dataTransfer.effectAllowed = 'move';
+                };
+
+                const handleDragOver = (e) => {
+                  e.preventDefault();
+                  e.currentTarget.style.borderTop = '2px solid #a0036c';
+                };
+
+                const handleDragLeave = (e) => {
+                  e.currentTarget.style.borderTop = '';
+                };
+
+                const handleDrop = (e) => {
+                  e.preventDefault();
+                  e.currentTarget.style.borderTop = '';
+                  const fromIdx = dragSectionRef.current;
+                  if (fromIdx === null || fromIdx === idx) return;
+                  setSectionLayout((prev) => {
+                    const next = [...prev];
+                    const [moved] = next.splice(fromIdx, 1);
+                    next.splice(idx, 0, moved);
+                    return next;
+                  });
+                  dragSectionRef.current = null;
+                };
+
+                return (
+                  <div
+                    key={section.key}
+                    draggable
+                    onDragStart={handleDragStart}
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                    style={{
+                      gridColumn: `span ${section.cols}`,
+                      background: isCollapsed ? '#fafbfc' : '#fff',
+                      borderRadius: 8,
+                      padding: isCollapsed ? 0 : '12px',
+                      transition: 'all 0.15s',
+                      boxSizing: 'border-box',
+                    }}
+                  >
+                    {/* Section header bar */}
+                    <div style={{
+                      display:'flex', alignItems:'center', gap:8,
+                      padding:'6px 0', marginBottom: isCollapsed ? 0 : 12,
+                      cursor:'default', borderBottom:'1px solid #e6eaf2',
+                    }}>
+                      {/* Drag handle */}
+                      <span style={{ fontSize:14, color:'#cbd5e1', cursor:'grab', userSelect:'none' }}>⠿</span>
+                      {/* Label */}
+                      <span style={{
+                        fontSize:11, fontWeight:600, color:'#64748b',
+                        letterSpacing:'0.06em', textTransform:'uppercase', flex:1,
+                      }}>
+                        {section.label}
+                      </span>
+                      {/* Lock badge */}
+                      {section.locked && (
+                        <span style={{
+                          padding:'1px 6px', background:'#f1f5f9', borderRadius:6,
+                          fontSize:9, color:'#94a3b8',
+                        }}>LOCKED</span>
+                      )}
+                      {/* Size toggle — hidden for 'score' section */}
+                      {section.key !== 'score' && (
+                        <button
+                          type="button"
+                          onClick={toggleSize}
+                          title={section.cols === 2 ? 'Half width' : 'Full width'}
+                          style={{ fontSize:11, color:'#94a3b8', cursor:'pointer', background:'none', border:'none', padding:'2px 4px' }}
+                        >
+                          {section.cols === 2 ? '◫' : '▬'}
+                        </button>
+                      )}
+                      {/* Collapse toggle */}
+                      <button
+                        type="button"
+                        onClick={toggleCollapse}
+                        title={isCollapsed ? 'Expand' : 'Collapse'}
+                        style={{ fontSize:11, color:'#94a3b8', cursor:'pointer', background:'none', border:'none', padding:'2px 4px' }}
+                      >
+                        {isCollapsed ? '›' : '⌄'}
+                      </button>
+                    </div>
+
+                    {/* Section content */}
+                    <div style={{ display: isCollapsed ? 'none' : 'block' }}>
+                      {section.key === 'score' && (
+                        <div style={{ display:'flex', alignItems:'center', gap:24 }}>
+                          <div style={{ position:'relative', width:96, height:96 }}>
+                            <svg width="96" height="96" viewBox="0 0 96 96">
+                              <circle cx="48" cy="48" r="36" fill="none" stroke="#e6eaf2" strokeWidth="8" />
+                              <circle
+                                cx="48" cy="48" r="36" fill="none" stroke={ringColor} strokeWidth="8"
+                                strokeDasharray={2 * Math.PI * 36}
+                                strokeDashoffset={(1 - score / 100) * 2 * Math.PI * 36}
+                                strokeLinecap="round"
+                                transform="rotate(-90 48 48)"
+                              />
+                            </svg>
+                            <div style={{ position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center', fontSize:26, fontWeight:600, color:'#0f172a' }}>
+                              {score}
+                            </div>
+                          </div>
+                          <div>
+                            <div style={{ fontSize:11, fontWeight:600, color:ringColor, letterSpacing:'0.06em', textTransform:'uppercase' }}>{category}</div>
+                            <div style={{ fontSize:18, fontWeight:600, color:'#0f172a', marginTop:4 }}>Strategy scorecard</div>
+                            <div style={{ fontSize:12, color:'#64748b', marginTop:2 }}>Locked · scores reflect Jaspen's analysis. Open chat to rescore.</div>
+                          </div>
+                        </div>
+                      )}
+
+                      {section.key === 'executive' && (
+                        <EditableText
+                          multiline
+                          value={rendered?.executive_summary || ''}
+                          onCommit={(v) => setOverride('executive_summary', v)}
+                          style={{ fontSize:14, color:'#334155', lineHeight:1.6 }}
+                        />
+                      )}
+
+                      {section.key === 'dimensions' && (
+                        <DimensionBars dims={rendered?.dimensions || {}} />
+                      )}
+
+                      {section.key === 'risks' && Array.isArray(rendered?.top_risks) && rendered.top_risks.length > 0 && (
+                        <ul style={{ margin:0, paddingLeft:0, listStyle:'none', fontSize:13, color:'#334155', lineHeight:1.65 }}>
+                          {rendered.top_risks.slice(0, 5).map((r, i) => (
+                            <li key={i} style={{ marginBottom:6, paddingLeft:14, position:'relative' }}>
+                              <span style={{ position:'absolute', left:0, color:'#94a3b8' }}>·</span>
+                              {typeof r === 'string' ? r : (r?.risk || r?.label || '—')}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+
+                      {section.key === 'scenario' && recommendedScenario && (
+                        <div style={{ fontSize:13, color:ringColor, lineHeight:1.65, fontStyle:'italic' }}>
+                          + {recommendedScenario}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
 
-            {/* Executive summary — editable */}
-            {(rendered?.executive_summary || rendered?._display_overrides?.executive_summary !== undefined) && (
-              <div style={{ marginTop:28 }}>
-                <div style={{ fontSize:11, fontWeight:600, color:'#64748b', letterSpacing:'0.06em', textTransform:'uppercase', marginBottom:8 }}>
-                  Executive summary
-                </div>
-                <EditableText
-                  multiline
-                  value={rendered?.executive_summary || ''}
-                  onCommit={(v) => setOverride('executive_summary', v)}
-                  style={{ fontSize:14, color:'#334155', lineHeight:1.6 }}
-                />
-              </div>
-            )}
-
-            {/* Dimension scores — read-only with lock badges */}
-            <div style={{ marginTop:32 }}>
-              <div style={{ fontSize:11, fontWeight:600, color:'#64748b', letterSpacing:'0.06em', textTransform:'uppercase', marginBottom:12 }}>
-                Dimensions
-                <span style={{ marginLeft:8, padding:'1px 6px', background:'#f1f5f9', borderRadius:6, fontSize:9, color:'#94a3b8' }}>locked</span>
-              </div>
-              <DimensionBars dims={rendered?.dimensions || {}} />
-            </div>
-
-            {/* Top risks + Recommended scenario — two columns to match the
-                chat scorecard layout. Both read-only. */}
-            {(Array.isArray(rendered?.top_risks) && rendered.top_risks.length > 0) || recommendedScenario ? (
-              <div style={{
-                marginTop:32, display:'grid',
-                gridTemplateColumns: recommendedScenario && Array.isArray(rendered?.top_risks) && rendered.top_risks.length > 0
-                  ? '1fr 1fr' : '1fr',
-                gap:40, paddingTop:24, borderTop:'1px solid #e6eaf2',
-              }}>
-                {Array.isArray(rendered?.top_risks) && rendered.top_risks.length > 0 && (
-                  <div>
-                    <div style={{ fontSize:11, fontWeight:600, color:'#64748b', letterSpacing:'0.06em', textTransform:'uppercase', marginBottom:10 }}>
-                      Top risks
-                      <span style={{ marginLeft:8, padding:'1px 6px', background:'#f1f5f9', borderRadius:6, fontSize:9, color:'#94a3b8' }}>locked</span>
-                    </div>
-                    <ul style={{ margin:0, paddingLeft:0, listStyle:'none', fontSize:13, color:'#334155', lineHeight:1.65 }}>
-                      {rendered.top_risks.slice(0, 5).map((r, i) => (
-                        <li key={i} style={{ marginBottom:6, paddingLeft:14, position:'relative' }}>
-                          <span style={{ position:'absolute', left:0, color:'#94a3b8' }}>·</span>
-                          {typeof r === 'string' ? r : (r?.risk || r?.label || '—')}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {recommendedScenario && (
-                  <div>
-                    <div style={{ fontSize:11, fontWeight:600, color:'#64748b', letterSpacing:'0.06em', textTransform:'uppercase', marginBottom:10 }}>
-                      Recommended scenario
-                      <span style={{ marginLeft:8, padding:'1px 6px', background:'#f1f5f9', borderRadius:6, fontSize:9, color:'#94a3b8' }}>locked</span>
-                    </div>
-                    <div style={{ fontSize:13, color:ringColor, lineHeight:1.65, fontStyle:'italic' }}>
-                      + {recommendedScenario}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ) : null}
-
-            {/* Footer hint matching the chat's "Ask Jaspen about any dimension →" */}
+            {/* Footer hint */}
             <div style={{
               marginTop:32, paddingTop:18, borderTop:'1px solid #e6eaf2',
               fontSize:12, color:'#64748b',
