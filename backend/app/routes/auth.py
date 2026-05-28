@@ -393,9 +393,13 @@ def _build_email_verification_token(user):
     })
 
 
-def _email_verification_link(token):
+def _email_verification_link(token, url_root=None):
     query = urlencode({'token': token})
-    return f"{request.url_root.rstrip('/')}/api/v1/auth/verify-email?{query}"
+    # url_root can be pre-captured from the request context so this function
+    # works safely inside a background thread (which has no request context).
+    if url_root is None:
+        url_root = request.url_root
+    return f"{url_root.rstrip('/')}/api/v1/auth/verify-email?{query}"
 
 
 def _build_password_reset_token(user):
@@ -528,9 +532,9 @@ def _mark_user_email_verified(user):
     return changed
 
 
-def _send_email_verification_email(user):
+def _send_email_verification_email(user, url_root=None):
     token = _build_email_verification_token(user)
-    verification_link = _email_verification_link(token)
+    verification_link = _email_verification_link(token, url_root=url_root)
     msg = Message(
         subject='Verify your email for Jaspen',
         recipients=[user.email],
@@ -716,16 +720,18 @@ def signup():
     if _verification_required_enabled():
         # Send the verification email in a background thread so that SMTP
         # latency or a transient failure never blocks the signup response.
+        # Capture request-context values NOW before the thread starts.
         app = current_app._get_current_object()
         user_id = user.id
         user_email = user.email
+        captured_url_root = request.url_root  # captured while still in request context
 
         def _send_verification_bg():
             with app.app_context():
                 try:
                     target_user = User.query.get(user_id)
                     if target_user:
-                        _send_email_verification_email(target_user)
+                        _send_email_verification_email(target_user, url_root=captured_url_root)
                         db.session.commit()
                 except Exception:
                     app.logger.exception(
