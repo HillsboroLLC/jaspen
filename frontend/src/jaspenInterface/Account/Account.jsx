@@ -883,33 +883,85 @@ export default function Account() {
     }
   };
 
+  // Tier map mirrors the backend _PLAN_TIER dict — used to detect upgrade vs downgrade.
+  const PLAN_TIER_MAP = { free: 0, essential: 1, team: 2, enterprise: 3 };
+
   const startPlanChange = async (planKey) => {
     setPendingAction(planKey);
     setMessage('');
 
+    const currentPlanKey = status?.plan_key || 'free';
+    const hasSubscription = Boolean(status?.stripe_subscription_id);
+
     try {
-      const response = await authFetch(`${API_BASE}/api/v1/billing/create-checkout-session`, {
+      // ── Moving to free: cancel at period end ──────────────────────────────
+      if (planKey === 'free') {
+        const response = await authFetch(`${API_BASE}/api/v1/billing/cancel-subscription`, {
+          method: 'POST',
+          headers: authHeaders({}, 'POST'),
+          credentials: 'include',
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          if (response.status === 401) { navigate('/?auth=1', { replace: true }); return; }
+          throw new Error(data?.msg || 'Unable to cancel subscription.');
+        }
+        const endDate = data?.current_period_end_iso
+          ? new Date(data.current_period_end_iso).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+          : 'your next billing date';
+        setMessage(`Your subscription will cancel at the end of the current period. You'll keep your current access through ${endDate}.`);
+        await refreshStatus();
+        return;
+      }
+
+      // ── New subscriber (free plan or no Stripe subscription): Stripe checkout ──
+      if (!hasSubscription || currentPlanKey === 'free') {
+        const response = await authFetch(`${API_BASE}/api/v1/billing/create-checkout-session`, {
+          method: 'POST',
+          headers: authHeaders({ 'Content-Type': 'application/json' }, 'POST'),
+          credentials: 'include',
+          body: JSON.stringify({ plan_key: planKey }),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          if (response.status === 401) { navigate('/?auth=1', { replace: true }); return; }
+          throw new Error(data?.msg || 'Unable to start plan change.');
+        }
+        if (data?.url) { window.location.href = data.url; return; }
+        setMessage('Plan updated successfully.');
+        await refreshStatus();
+        return;
+      }
+
+      // ── Existing paid subscriber: upgrade or downgrade in-place ───────────
+      const currentTier = PLAN_TIER_MAP[currentPlanKey] ?? 0;
+      const newTier = PLAN_TIER_MAP[planKey] ?? 0;
+      const isUpgrade = newTier > currentTier;
+
+      const response = await authFetch(`${API_BASE}/api/v1/billing/modify-subscription`, {
         method: 'POST',
         headers: authHeaders({ 'Content-Type': 'application/json' }, 'POST'),
         credentials: 'include',
         body: JSON.stringify({ plan_key: planKey }),
       });
       const data = await response.json();
-
       if (!response.ok) {
-        if (response.status === 401) {
-          navigate('/?auth=1', { replace: true });
-          return;
-        }
-        throw new Error(data?.msg || 'Unable to start plan change.');
+        if (response.status === 401) { navigate('/?auth=1', { replace: true }); return; }
+        throw new Error(data?.msg || 'Unable to update subscription.');
       }
 
-      if (data?.url) {
-        window.location.href = data.url;
-        return;
+      if (isUpgrade) {
+        setMessage(
+          `You're now on the ${data.plan_label} plan. The prorated cost for the remainder of your billing cycle has been charged to your card on file.`
+        );
+      } else {
+        const endDate = data.current_period_end_iso
+          ? new Date(data.current_period_end_iso).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+          : 'your next billing date';
+        setMessage(
+          `You'll keep your current ${data.current_plan_label} access through ${endDate}. Starting then, your plan will switch to ${data.plan_label}.`
+        );
       }
-
-      setMessage('Plan updated successfully.');
       await refreshStatus();
     } catch (error) {
       setMessage(error.message || 'Unable to start plan change.');

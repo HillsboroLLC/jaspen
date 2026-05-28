@@ -343,10 +343,25 @@ def create_checkout_session():
     return jsonify({'sessionId': session.id, 'url': session.url}), 200
 
 
+# Plan tier used to detect upgrade vs downgrade direction.
+_PLAN_TIER = {'free': 0, 'essential': 1, 'team': 2, 'enterprise': 3}
+
+
 @billing_bp.route('/modify-subscription', methods=['POST'])
 @jwt_required()
 def modify_subscription():
-    """Modify the logged-in user's active subscription in-place (with Stripe proration)."""
+    """Modify an existing paid subscription in-place.
+
+    Upgrades (higher tier): prorate immediately — Stripe charges the
+    difference for the rest of the current cycle and the new plan is
+    active right away.
+
+    Downgrades (lower tier): no immediate charge or credit — the new
+    (lower) price is scheduled in Stripe metadata and applied the next
+    time invoice.payment_succeeded fires (i.e. at the start of the next
+    billing cycle). The user keeps their current plan and credits until
+    then.
+    """
     user = User.query.get(get_jwt_identity())
     if not user:
         return jsonify({'msg': 'User not found'}), 404
@@ -378,6 +393,11 @@ def modify_subscription():
     if not price_id:
         return jsonify({'msg': f"No Stripe price configured for '{plan_key}'"}), 400
 
+    current_plan = to_public_plan(user.subscription_plan)
+    current_tier = _PLAN_TIER.get(current_plan, 0)
+    new_tier = _PLAN_TIER.get(plan_key, 0)
+    is_upgrade = new_tier > current_tier
+
     try:
         subscription = stripe.Subscription.retrieve(user.stripe_subscription_id)
         items = (subscription.get('items') or {}).get('data') or []
@@ -387,27 +407,56 @@ def modify_subscription():
         if not item_id:
             return jsonify({'msg': 'Subscription item missing id'}), 400
 
-        updated = stripe.Subscription.modify(
-            user.stripe_subscription_id,
-            items=[{'id': item_id, 'price': price_id}],
-            proration_behavior='create_prorations',
-        )
+        if is_upgrade:
+            updated = stripe.Subscription.modify(
+                user.stripe_subscription_id,
+                items=[{'id': item_id, 'price': price_id}],
+                proration_behavior='create_prorations',
+                metadata={'scheduled_plan_change': ''},
+            )
+        else:
+            # Downgrade: schedule for next cycle, no immediate charge/credit.
+            updated = stripe.Subscription.modify(
+                user.stripe_subscription_id,
+                items=[{'id': item_id, 'price': price_id}],
+                proration_behavior='none',
+                metadata={'scheduled_plan_change': plan_key},
+            )
     except stripe.error.StripeError as exc:
         return jsonify({'msg': str(exc)}), 400
 
-    apply_plan_to_user(user, plan_key, current_app.config, reset_credits=False)
     stripe_customer = updated.get('customer')
     if stripe_customer:
         user.stripe_customer_id = stripe_customer
     user.subscription_status = str(updated.get('status') or '').strip().lower() or user.subscription_status
-    db.session.commit()
 
-    return jsonify({
-        'success': True,
-        'plan_key': plan_key,
-        'stripe_subscription_id': user.stripe_subscription_id,
-        'subscription_status': user.subscription_status,
-    }), 200
+    if is_upgrade:
+        apply_plan_to_user(user, plan_key, current_app.config, reset_credits=False)
+        db.session.commit()
+        return jsonify({
+            'success': True,
+            'effective': 'immediate',
+            'plan_key': plan_key,
+            'plan_label': plan_catalog[plan_key].get('label', plan_key),
+            'subscription_status': user.subscription_status,
+        }), 200
+    else:
+        current_period_end = updated.get('current_period_end')
+        period_end_iso = (
+            time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(current_period_end))
+            if current_period_end else None
+        )
+        db.session.commit()
+        return jsonify({
+            'success': True,
+            'effective': 'period_end',
+            'plan_key': plan_key,
+            'plan_label': plan_catalog[plan_key].get('label', plan_key),
+            'current_plan_label': plan_catalog.get(current_plan, {}).get('label', current_plan),
+            'current_period_end': current_period_end,
+            'current_period_end_iso': period_end_iso,
+            'subscription_status': user.subscription_status,
+        }), 200
 
 
 def _create_credit_pack_checkout_session():
@@ -619,12 +668,49 @@ def stripe_webhook():
                 event_id, inv.get('subscription'), inv.get('customer'),
             )
         if user:
-            reset_user_monthly_credits(user, current_app.config, force=True)
+            # Check whether a deferred downgrade was scheduled on this subscription.
+            # Downgrades store the target plan key in Stripe subscription metadata
+            # under 'scheduled_plan_change' so they take effect at the next cycle.
+            subscription_id = inv.get('subscription')
+            scheduled_plan_key = None
+            if subscription_id:
+                try:
+                    sub = stripe.Subscription.retrieve(subscription_id)
+                    metadata = (sub.get('metadata') or {})
+                    raw_scheduled = str(metadata.get('scheduled_plan_change') or '').strip()
+                    if raw_scheduled:
+                        scheduled_plan_key = normalize_plan_key(raw_scheduled)
+                except stripe.error.StripeError as exc:
+                    current_app.logger.warning(
+                        "invoice.payment_succeeded: could not retrieve subscription %s to check scheduled downgrade: %s",
+                        subscription_id, exc,
+                    )
+
+            if scheduled_plan_key:
+                # Apply the deferred downgrade — this also resets credits for the new plan.
+                apply_plan_to_user(user, scheduled_plan_key, current_app.config, reset_credits=True)
+                # Clear the scheduled flag so it doesn't fire again next cycle.
+                try:
+                    stripe.Subscription.modify(subscription_id, metadata={'scheduled_plan_change': ''})
+                except stripe.error.StripeError as exc:
+                    current_app.logger.warning(
+                        "invoice.payment_succeeded: could not clear scheduled_plan_change metadata for sub %s: %s",
+                        subscription_id, exc,
+                    )
+                current_app.logger.info(
+                    "invoice.payment_succeeded: applied deferred downgrade to plan=%s for user=%s "
+                    "(credits_remaining=%s, credits_reset_at=%s)",
+                    scheduled_plan_key, user.id, user.credits_remaining, user.credits_reset_at,
+                )
+            else:
+                # Normal monthly renewal — just reset credits for the current plan.
+                reset_user_monthly_credits(user, current_app.config, force=True)
+                current_app.logger.info(
+                    "invoice.payment_succeeded: reset credits for user=%s (credits_remaining=%s, credits_reset_at=%s)",
+                    user.id, user.credits_remaining, user.credits_reset_at,
+                )
+
             user.subscription_status = 'active'
-            current_app.logger.info(
-                "invoice.payment_succeeded: reset credits for user=%s (credits_remaining=%s, credits_reset_at=%s)",
-                user.id, user.credits_remaining, user.credits_reset_at,
-            )
 
     elif event_type == 'invoice.payment_failed':
         inv = event['data']['object']
