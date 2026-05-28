@@ -5,6 +5,7 @@ import io
 import os
 import re
 import secrets
+import threading
 import time
 
 import pyotp
@@ -713,12 +714,25 @@ def signup():
         return jsonify(_approval_pending_payload()), 202
 
     if _verification_required_enabled():
-        try:
-            _send_email_verification_email(user)
-            db.session.commit()
-        except Exception:
-            current_app.logger.exception('Failed to send signup verification email for %s', user.email)
-            return jsonify(message='We created your account but could not send the verification email yet. Please try again shortly.'), 500
+        # Send the verification email in a background thread so that SMTP
+        # latency or a transient failure never blocks the signup response.
+        app = current_app._get_current_object()
+        user_id = user.id
+        user_email = user.email
+
+        def _send_verification_bg():
+            with app.app_context():
+                try:
+                    target_user = User.query.get(user_id)
+                    if target_user:
+                        _send_email_verification_email(target_user)
+                        db.session.commit()
+                except Exception:
+                    app.logger.exception(
+                        'Background: failed to send signup verification email for %s', user_email
+                    )
+
+        threading.Thread(target=_send_verification_bg, daemon=True).start()
         return jsonify(
             message='Check your inbox to verify your email before getting started.',
             verification_required=True,
