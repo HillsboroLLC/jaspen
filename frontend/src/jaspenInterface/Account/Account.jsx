@@ -2053,13 +2053,13 @@ export default function Account() {
                     {PLAN_AUDIENCE[key]}
                   </p>
                   <p className="account-plan-meta">
-                    {key === 'team'
-                      ? '29,000 shared credits/month · 3 seats included'
-                      : key === 'enterprise'
-                      ? '80,000 shared credits/month · 5 seats included'
-                      : (plan.monthly_credits == null)
-                      ? 'Contracted pooled usage'
-                      : `${Number(plan.monthly_credits).toLocaleString()} credits/month`}
+                    {(() => {
+                      if (plan.monthly_credits == null) return 'Contracted pooled usage';
+                      const credits = Math.round(plan.monthly_credits).toLocaleString();
+                      const base = `${credits} credits/month`;
+                      const seats = plan.included_seats ? ` · ${plan.included_seats} seats included` : '';
+                      return `${base}${seats}`;
+                    })()}
                   </p>
                   {plan.description && (
                     <p className="account-plan-connectors" style={{ color: 'rgba(22,31,59,0.72)' }}>

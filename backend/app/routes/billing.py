@@ -634,6 +634,18 @@ def stripe_webhook():
         )
         if user:
             user.subscription_status = 'past_due'
+            # Cap credits to the free-plan limit so a past-due user cannot
+            # continue burning premium capacity while payment is unresolved.
+            # When payment succeeds the monthly reset restores their full
+            # plan allotment (invoice.payment_succeeded handler above).
+            free_limit = get_monthly_credit_limit('free', current_app.config)
+            if free_limit is not None and user.credits_remaining is not None:
+                if user.credits_remaining > free_limit:
+                    user.credits_remaining = free_limit
+                    current_app.logger.info(
+                        "Capped credits to free limit (%s) for past-due user=%s",
+                        free_limit, user.id,
+                    )
             current_app.logger.warning(
                 "Stripe payment failed for user=%s subscription=%s",
                 user.id,
