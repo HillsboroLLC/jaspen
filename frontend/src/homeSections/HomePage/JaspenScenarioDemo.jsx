@@ -5,9 +5,9 @@ const PROJECT = 'AI Meal Prep Platform';
 const BASELINE_SCORE = 68;
 
 const THINKING_PHRASES = [
-  'Modeling scenarios...',
+  'Scoring ideas...',
   'Projecting outcomes...',
-  'Comparing results...',
+  'Comparing tradeoffs...',
 ];
 
 const SCENARIO_A = {
@@ -176,11 +176,11 @@ export default function JaspenScenarioDemo({ onComplete }) {
   const showWinner = ['winner', 'done'].includes(phase);
 
   return (
-    <div className="jad-root" aria-label="Jaspen Scenario Modeler Demo" aria-live="polite">
+    <div className="jad-root" aria-label="Jaspen Trade-Off Engine Demo" aria-live="polite">
 
       {/* Header */}
       <div className="jad-sm-header">
-        <span className="jad-eyebrow jad-eyebrow--magenta">Scenario Modeler</span>
+        <span className="jad-eyebrow jad-eyebrow--magenta">Trade-Off Engine</span>
         {showBaseline && (
           <div className="jad-sm-project jad-anim-up">
             <span className="jad-sm-project-name">{PROJECT}</span>
@@ -205,7 +205,7 @@ export default function JaspenScenarioDemo({ onComplete }) {
       {showA && (
         <div className={`jad-card jad-card-visible jad-sm-scenario${showWinner ? ' jad-sm-winner' : ''}`}>
           <div className="jad-sm-scenario-head">
-            <span className="jad-eyebrow jad-eyebrow--orange">Scenario A</span>
+            <span className="jad-eyebrow jad-eyebrow--orange">Idea A</span>
             {scoreA > 0 && (
               <div className="jad-sm-score-row">
                 <span className="jad-sm-score-num">
@@ -250,7 +250,7 @@ export default function JaspenScenarioDemo({ onComplete }) {
       {showB && (
         <div className="jad-card jad-card-visible jad-sm-scenario">
           <div className="jad-sm-scenario-head">
-            <span className="jad-eyebrow jad-eyebrow--navy">Scenario B</span>
+            <span className="jad-eyebrow jad-eyebrow--navy">Idea B</span>
             {scoreB > 0 && (
               <div className="jad-sm-score-row">
                 <span className="jad-sm-score-num">
