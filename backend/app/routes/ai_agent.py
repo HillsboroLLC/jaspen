@@ -54,6 +54,47 @@ from app.connector_store import get_connector_settings, get_thread_sync_profile,
 from app.jira_sync import sync_wbs_to_jira
 from app.smartsheet_sync import sync_wbs_to_smartsheet
 
+# ── Per-plan rate limits for AI session routes ────────────────────────────────
+# Each function returns a flask-limiter limit string based on the calling
+# user's subscription plan. These stack with the per-route burst limits (C).
+# Tiers: free ≤ essential ≤ team ≤ enterprise.
+
+_PLAN_HOURLY_LIMITS = {
+    'free':       '5 per hour',
+    'essential':  '20 per hour',
+    'team':       '60 per hour',
+    'enterprise': '150 per hour',
+}
+
+_PLAN_DAILY_LIMITS = {
+    'free':       '10 per day',
+    'essential':  '50 per day',
+    'team':       '150 per day',
+    'enterprise': '500 per day',
+}
+
+def _plan_hourly_limit():
+    """Dynamic rate-limit string based on the current user's plan."""
+    try:
+        user_id = get_jwt_identity()
+        user = User.query.get(user_id) if user_id else None
+        plan = to_public_plan(user.subscription_plan) if user else 'free'
+        return _PLAN_HOURLY_LIMITS.get(plan, _PLAN_HOURLY_LIMITS['free'])
+    except Exception:
+        return _PLAN_HOURLY_LIMITS['free']
+
+def _plan_daily_limit():
+    """Dynamic rate-limit string based on the current user's plan."""
+    try:
+        user_id = get_jwt_identity()
+        user = User.query.get(user_id) if user_id else None
+        plan = to_public_plan(user.subscription_plan) if user else 'free'
+        return _PLAN_DAILY_LIMITS.get(plan, _PLAN_DAILY_LIMITS['free'])
+    except Exception:
+        return _PLAN_DAILY_LIMITS['free']
+
+# ─────────────────────────────────────────────────────────────────────────────
+
 from .sessions import (
     load_user_sessions,
     save_user_sessions,
@@ -7923,7 +7964,9 @@ def _persist_thread_insight(user_id, thread_id, filename, insight_payload, summa
 
 @ai_agent_bp.route("/conversation/start", methods=["POST"])
 @jwt_required()
-@limiter.limit("10 per minute")
+@limiter.limit("3 per minute")          # C — burst protection
+@limiter.limit(_plan_hourly_limit)      # A — per-plan hourly cap
+@limiter.limit(_plan_daily_limit)       # B — per-plan daily cap
 def conversation_start():
     try:
         data, attachments = _conversation_request_payload()
@@ -8491,7 +8534,9 @@ def conversation_start():
 
 @ai_agent_bp.route("/conversation/continue", methods=["POST"])
 @jwt_required()
-@limiter.limit("30 per minute")
+@limiter.limit("10 per minute")         # C — tightened burst (was 30)
+@limiter.limit(_plan_hourly_limit)      # A — per-plan hourly cap
+@limiter.limit(_plan_daily_limit)       # B — per-plan daily cap
 def conversation_continue():
     try:
         data, attachments = _conversation_request_payload()
@@ -10169,7 +10214,9 @@ def conversation_undo_mutations():
 
 @ai_agent_bp.route("/conversation/regenerate", methods=["POST"])
 @jwt_required()
-@limiter.limit("10 per minute")
+@limiter.limit("3 per minute")          # C — burst protection
+@limiter.limit(_plan_hourly_limit)      # A — shares the per-plan hourly pool
+@limiter.limit(_plan_daily_limit)       # B — shares the per-plan daily pool
 def conversation_regenerate():
     data = request.get_json() or {}
     user_id = get_jwt_identity()
