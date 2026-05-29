@@ -647,6 +647,13 @@ export default function ConnectorsManage() {
     }));
   }
 
+  function resolveDesiredConnectionStatus(connectorId, draft, connector) {
+    if (connectorId !== 'salesforce_insights') return 'connected';
+    const hasDraftToken = Boolean(String(draft?.salesforce_refresh_token || '').trim());
+    const hasStoredToken = Boolean(connector?.salesforce?.has_refresh_token || connector?.salesforce?.has_access_token);
+    return hasDraftToken || hasStoredToken ? 'connected' : 'disconnected';
+  }
+
   async function saveConnector() {
     if (!selectedConnector || !selectedDraft) return;
     const validationErrors = validateRequiredFields(selectedConnector.id, selectedDraft, selectedConnector);
@@ -665,7 +672,7 @@ export default function ConnectorsManage() {
     try {
       const payload = {
         ...buildUpdatePayload(selectedConnector.id, selectedDraft),
-        connection_status: 'connected',
+        connection_status: resolveDesiredConnectionStatus(selectedConnector.id, selectedDraft, selectedConnector),
       };
       const res = await authFetch(`${API_BASE}/api/v1/connectors/${encodeURIComponent(selectedConnector.id)}`, {
         method: 'PATCH',
@@ -752,7 +759,7 @@ export default function ConnectorsManage() {
     try {
       const payload = {
         ...buildUpdatePayload(selectedConnector.id, selectedDraft),
-        connection_status: 'connected',
+        connection_status: resolveDesiredConnectionStatus(selectedConnector.id, selectedDraft, selectedConnector),
       };
       const saveRes = await authFetch(`${API_BASE}/api/v1/connectors/${encodeURIComponent(selectedConnector.id)}`, {
         method: 'PATCH',
@@ -984,6 +991,9 @@ export default function ConnectorsManage() {
         setError('');
         setMessage('');
         const savePayload = buildUpdatePayload('salesforce_insights', selectedDraft);
+        // Keep status disconnected until OAuth callback completes. This avoids
+        // false "configuration incomplete" failures from stale connected state.
+        savePayload.connection_status = 'disconnected';
         const saveRes = await authFetch(`${API_BASE}/api/v1/connectors/salesforce_insights`, {
           method: 'PATCH',
           credentials: 'include',
