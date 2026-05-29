@@ -216,16 +216,17 @@ def _runtime_fields(connector_id, settings):
         }
 
     if connector_id == "salesforce_insights":
+        # Only client_id and client_secret are manually required for setup.
+        # instance_url and refresh_token are populated automatically during OAuth
+        # and must NOT be treated as missing/required before OAuth is completed.
         return {
             "salesforce_auth_base_url": _text(
                 settings.get("salesforce_auth_base_url")
                 or os.getenv("SALESFORCE_AUTH_BASE_URL")
                 or "https://login.salesforce.com"
             ),
-            "salesforce_instance_url": _text(settings.get("salesforce_instance_url") or os.getenv("SALESFORCE_INSTANCE_URL")),
             "salesforce_client_id": _text(settings.get("salesforce_client_id") or os.getenv("SALESFORCE_CLIENT_ID")),
             "salesforce_client_secret": _text(settings.get("salesforce_client_secret") or os.getenv("SALESFORCE_CLIENT_SECRET")),
-            "salesforce_refresh_token": _text(settings.get("salesforce_refresh_token") or os.getenv("SALESFORCE_REFRESH_TOKEN")),
         }
 
     if connector_id == "snowflake_insights":
@@ -1640,11 +1641,6 @@ def generate_ideas_from_connector():
         return jsonify({"error": "User not found"}), 404
 
     plan_key = to_public_plan(user.subscription_plan)
-    if plan_key not in ("enterprise", "team"):
-        return jsonify({
-            "error": "This feature requires an Enterprise or Team plan.",
-            "requires_upgrade": True,
-        }), 403
 
     payload = request.get_json(silent=True) or {}
     connector_id = _text(payload.get("connector_id"))

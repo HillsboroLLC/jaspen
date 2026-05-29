@@ -211,7 +211,8 @@ export default function Insights() {
           && ['salesforce_insights', 'snowflake_insights', 'servicenow_insights', 'netsuite_insights', 'oracle_fusion_insights'].includes(item.id)
         ));
         setConnectors(ideaConnectors);
-        const isEnt = data?.plan_key === 'enterprise' || data?.plan_key === 'team';
+        // All plans (free and above) can use connector-powered features
+        const isEnt = ['free', 'essential', 'team', 'enterprise'].includes(data?.plan_key);
         setIsEnterprise(Boolean(isEnt));
         if (ideaConnectors.length > 0) {
           setActiveConnectorIdForIdeas(String(ideaConnectors[0].id));

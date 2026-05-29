@@ -3453,13 +3453,14 @@ useEffect(() => {
     scenario_adopt: 'essential',
     wbs_read: 'essential',
     wbs_write: 'essential',
-    jira_sync: 'team',
-    smartsheet_sync: 'team',
-    salesforce_insights: 'enterprise',
-    snowflake_insights: 'enterprise',
-    oracle_fusion_insights: 'enterprise',
-    servicenow_insights: 'enterprise',
-    netsuite_insights: 'enterprise',
+    // All connectors are available on all plans (free and above) per tool_registry.
+    jira_sync: 'free',
+    smartsheet_sync: 'free',
+    salesforce_insights: 'free',
+    snowflake_insights: 'free',
+    oracle_fusion_insights: 'free',
+    servicenow_insights: 'free',
+    netsuite_insights: 'free',
   }), []);
   const canUseTool = useCallback((toolId, mode = 'read') => {
     const entry = toolEntitlementById[String(toolId || '').trim()];
