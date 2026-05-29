@@ -4419,14 +4419,12 @@ useEffect(() => {
               <p className="value">{currentPlanLabel}</p>
             </article>
             <article className="jas-account-summary-card">
-              <p className="label">Thinking power remaining</p>
-              <p className="value">{creditsRemaining == null ? 'Contracted' : Number(creditsRemaining || 0).toLocaleString()}</p>
+              <p className="label">Thinking power</p>
+              <p className="value">{creditsPctRemaining == null ? 'Unlimited' : `${Math.round(creditsPctRemaining)}% remaining`}</p>
             </article>
             <article className="jas-account-summary-card">
-              <p className="label">Monthly limit</p>
-              <p className="value">
-                {monthlyCreditLimit == null ? 'Contracted' : `${Number(monthlyCreditLimit).toLocaleString()} credits`}
-              </p>
+              <p className="label">Resets</p>
+              <p className="value">{formatNextResetDate(billingStatus?.cycle_reset_at) || 'Next cycle'}</p>
             </article>
           </div>
 
@@ -4909,12 +4907,20 @@ useEffect(() => {
             {!billingLoading && monthlyCreditLimit != null && (
               <>
                 <p className="jas-ud-usage-credits-line">
-                  Used <strong>{Number(resolvedMonthlyCreditsUsed || 0).toLocaleString()}</strong> of <strong>{Number(monthlyCreditLimit || 0).toLocaleString()}</strong> credits
+                  <strong style={{ fontSize: '1.1rem' }}>{creditsPctRemaining == null ? 'Unlimited' : `${Math.round(creditsPctRemaining)}%`}</strong>
+                  <span style={{ marginLeft: 6, color: '#64748b', fontSize: '0.8rem' }}>thinking power remaining</span>
                 </p>
-                <p className="jas-ud-usage-credits-line" style={{ marginTop: 4 }}>
-                  <strong>{creditsRemaining == null ? 'Contracted' : Number(creditsRemaining || 0).toLocaleString()}</strong> credits remaining
-                </p>
-                <p className="jas-ud-usage-note">Resets: {formatNextResetDate(billingStatus?.cycle_reset_at)} · {currentPlanLabel}</p>
+                {creditsPctRemaining != null && (
+                  <div style={{ width: '100%', height: 6, borderRadius: 999, background: '#e2e8f0', overflow: 'hidden', margin: '6px 0' }}>
+                    <div style={{
+                      height: '100%', borderRadius: 999,
+                      width: `${Math.round(creditsPctRemaining)}%`,
+                      background: creditsPctRemaining > 50 ? '#7c3aed' : creditsPctRemaining > 20 ? '#f59e0b' : '#dc2626',
+                      transition: 'width 0.4s ease',
+                    }} />
+                  </div>
+                )}
+                <p className="jas-ud-usage-note">Resets {formatNextResetDate(billingStatus?.cycle_reset_at)}</p>
                 {creditsTone !== 'normal' && (
                   <div className="jas-account-actions">
                     <button type="button" className="jas-account-plan-cta" onClick={() => navigate('/account?tab=billing')}>

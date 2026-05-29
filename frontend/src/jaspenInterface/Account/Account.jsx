@@ -1812,19 +1812,28 @@ export default function Account() {
   const packs = catalog?.credit_packs || catalog?.overage_packs || {};
   const remainingTokensValue = status?.credits_remaining;
   const monthlyLimitValue = status?.monthly_credit_limit;
-  const creditsRemainingLabel = remainingTokensValue == null
-    ? 'Contracted'
-    : Number(remainingTokensValue || 0).toLocaleString();
-  const monthlyLimitLabel = monthlyLimitValue == null
-    ? 'Contracted'
-    : Number(monthlyLimitValue || 0).toLocaleString();
-  const thinkingPowerPercentLabel = (() => {
+  // Thinking power as a 0-100 integer (null = contracted/unlimited)
+  const thinkingPowerPct = (() => {
     const remaining = Number(remainingTokensValue);
     const monthly = Number(monthlyLimitValue);
-    if (!Number.isFinite(remaining) || !Number.isFinite(monthly) || monthly <= 0) return 'Usage-based';
-    const pct = Math.max(0, Math.min(100, Math.round((Math.max(0, remaining) / monthly) * 100)));
-    return `${pct}% remaining`;
+    if (!Number.isFinite(remaining) || !Number.isFinite(monthly) || monthly <= 0) return null;
+    return Math.max(0, Math.min(100, Math.round((Math.max(0, remaining) / monthly) * 100)));
   })();
+  const thinkingPowerPercentLabel = thinkingPowerPct == null ? 'Unlimited' : `${thinkingPowerPct}%`;
+  // Reset date formatted as "Jun 9, 2026"
+  const resetDateLabel = (() => {
+    const v = status?.cycle_reset_at;
+    if (!v) return 'next billing cycle';
+    try {
+      const last = new Date(v);
+      if (Number.isNaN(last.getTime())) return 'next billing cycle';
+      const next = new Date(last);
+      next.setMonth(next.getMonth() + 1);
+      return next.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    } catch { return 'next billing cycle'; }
+  })();
+  // Low-power warning threshold: ≤ 20 %
+  const thinkingPowerLow = thinkingPowerPct != null && thinkingPowerPct <= 20;
   const modelTypes = catalog?.model_types || FALLBACK_MODEL_TYPES;
   const orderedModelTypes = MODEL_ORDER.map((key) => modelTypes?.[key]).filter(Boolean);
   const formatModelDisplayName = (model) => {
@@ -1946,10 +1955,13 @@ export default function Account() {
         <div className="account-drawer-footer">
           <section className="account-sidebar-footer-group">
             <p className="account-sidebar-footer-label">THINKING POWER</p>
-            <p className="account-sidebar-footer-value">
-              {monthlyLimitValue == null
-                ? 'Contracted pooled thinking power'
-                : `${Number(monthlyLimitValue || 0).toLocaleString()} credit limit`}
+            <p className="account-sidebar-footer-value" style={{ color: thinkingPowerLow ? '#dc2626' : undefined }}>
+              {thinkingPowerPct == null
+                ? 'Unlimited'
+                : `${thinkingPowerPercentLabel} remaining`}
+            </p>
+            <p className="account-sidebar-footer-value" style={{ fontSize: '0.7rem', color: '#94a3b8', marginTop: 2 }}>
+              Resets {resetDateLabel}
             </p>
           </section>
           <section className="account-sidebar-footer-group">
@@ -1993,17 +2005,13 @@ export default function Account() {
             <span className="label">Current plan</span>
             <strong>{(plans[currentPlan]?.label || currentPlan).toString()}</strong>
           </span>
-          <span className="account-status-chip">
-            <span className="label">Thinking power remaining</span>
-            <strong>{creditsRemainingLabel}</strong>
-          </span>
-          <span className="account-status-chip">
-            <span className="label">Monthly limit</span>
-            <strong>{monthlyLimitLabel}</strong>
-          </span>
-          <span className="account-status-chip">
+          <span className={`account-status-chip${thinkingPowerLow ? ' account-status-chip--warn' : ''}`}>
             <span className="label">Thinking power</span>
-            <strong>{thinkingPowerPercentLabel}</strong>
+            <strong>{thinkingPowerPercentLabel} remaining</strong>
+          </span>
+          <span className="account-status-chip">
+            <span className="label">Resets</span>
+            <strong>{resetDateLabel}</strong>
           </span>
         </div>
 
@@ -2013,6 +2021,7 @@ export default function Account() {
         <section className="account-section">
           <h2 className="account-tab-title">Overview</h2>
           <div className="account-overview-grid">
+            {/* Plan card */}
             <article className="account-overview-card">
               <h3>Current plan</h3>
               <p>{(plans[currentPlan]?.label || currentPlan).toString()}</p>
@@ -2026,38 +2035,44 @@ export default function Account() {
                 </button>
               )}
             </article>
-            <article className="account-overview-card">
-              <h3>Thinking power remaining</h3>
-              <p>{creditsRemainingLabel}</p>
-              {Number(status?.credits_remaining) < Number(status?.monthly_credit_limit) * 0.2 && (
+
+            {/* Thinking Power card — Claude-style percentage + progress bar */}
+            <article className="account-overview-card account-overview-card--thinking-power">
+              <h3>Thinking power</h3>
+              <p className="account-tp-pct" style={{
+                fontSize: '2rem', fontWeight: 700, lineHeight: 1.1, margin: '4px 0 10px',
+                color: thinkingPowerLow ? '#dc2626' : 'inherit',
+              }}>
+                {thinkingPowerPercentLabel}
+                <span style={{ fontSize: '1rem', fontWeight: 400, color: '#64748b', marginLeft: 6 }}>remaining</span>
+              </p>
+
+              {/* Progress bar */}
+              {thinkingPowerPct != null && (
+                <div style={{ width: '100%', height: 8, borderRadius: 999, background: '#e2e8f0', overflow: 'hidden', marginBottom: 10 }}>
+                  <div style={{
+                    height: '100%', borderRadius: 999,
+                    width: `${thinkingPowerPct}%`,
+                    background: thinkingPowerPct > 50 ? '#7c3aed' : thinkingPowerPct > 20 ? '#f59e0b' : '#dc2626',
+                    transition: 'width 0.4s ease',
+                  }} />
+                </div>
+              )}
+
+              <p style={{ fontSize: '0.8rem', color: '#64748b', margin: 0 }}>
+                Resets {resetDateLabel}
+              </p>
+
+              {thinkingPowerLow && (
                 <button
                   type="button"
                   className="account-secondary-btn"
+                  style={{ marginTop: 10 }}
                   onClick={() => guardUnsavedChanges(() => setActiveTab('packs'))}
                 >
-                  Add credits
+                  Get more thinking power
                 </button>
               )}
-            </article>
-            <article className="account-overview-card">
-              <h3>Monthly limit</h3>
-              <p>{monthlyLimitLabel}</p>
-            </article>
-            <article className="account-overview-card">
-              <h3>Next reset</h3>
-              <p style={{ fontSize: '1rem' }}>
-                {(() => {
-                  const v = status?.cycle_reset_at;
-                  if (!v) return 'Next billing cycle';
-                  try {
-                    const last = new Date(v);
-                    if (Number.isNaN(last.getTime())) return 'Next billing cycle';
-                    const next = new Date(last);
-                    next.setMonth(next.getMonth() + 1);
-                    return next.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-                  } catch { return 'Next billing cycle'; }
-                })()}
-              </p>
             </article>
           </div>
         </section>
