@@ -7672,6 +7672,20 @@ useEffect(() => {
 }, [planCategory]);
 
 function formatConnectorContextForAgent(data, connectorType) {
+  if (connectorType === 'jira') {
+    // Backend returns a pre-formatted context_text — use it directly
+    if (typeof data?.context_text === 'string' && data.context_text.trim()) {
+      return data.context_text;
+    }
+    const s = (data && typeof data.summary === 'object') ? data.summary : {};
+    return (
+      `Jira Project: ${s.project_key || 'unknown'}\n` +
+      `Active sprint: ${s.sprint_issue_count || 0} issues | ` +
+      `Blocked: ${s.blocked_count || 0} | ` +
+      `Completed last 14d: ${s.done_last_14d || 0} | ` +
+      `High-priority backlog: ${s.high_priority_backlog || 0}`
+    );
+  }
   if (connectorType === 'snowflake' && Array.isArray(data?.rows)) {
     const meta = typeof data?.summary === 'object' && data.summary ? data.summary : {};
     const table = meta.table || 'unknown_table';
@@ -7727,7 +7741,9 @@ const handleToggleContextSource = useCallback(async (connectorId, label) => {
     let method = 'GET';
     let body = null;
     const sourceMeta = connectedDataSources.find((item) => item.id === connectorId);
-    if (connectorId === 'salesforce_insights') {
+    if (connectorId === 'jira_sync') {
+      url = `${API_BASE}/api/v1/connectors/jira/context/summary?limit=60`;
+    } else if (connectorId === 'salesforce_insights') {
       url = `${API_BASE}/api/v1/connectors/salesforce/pipeline/summary?days=30&limit=50`;
     } else if (connectorId === 'snowflake_insights') {
       url = `${API_BASE}/api/v1/connectors/snowflake/query`;
@@ -7760,11 +7776,13 @@ const handleToggleContextSource = useCallback(async (connectorId, label) => {
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data?.error || `Could not load ${label} data.`);
     const MAX_CONNECTOR_CONTEXT_CHARS = 8000;
-    const sourceType = connectorId === 'snowflake_insights'
-      ? 'snowflake'
-      : connectorId === 'salesforce_insights'
-        ? 'salesforce'
-        : 'generic';
+    const sourceType = connectorId === 'jira_sync'
+      ? 'jira'
+      : connectorId === 'snowflake_insights'
+        ? 'snowflake'
+        : connectorId === 'salesforce_insights'
+          ? 'salesforce'
+          : 'generic';
     const summary = formatConnectorContextForAgent(data, sourceType).slice(0, MAX_CONNECTOR_CONTEXT_CHARS).trim();
     if (!summary) throw new Error(`No ${label} context available.`);
     setContextSourceData((prev) => ({ ...prev, [connectorId]: summary }));

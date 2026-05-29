@@ -35,6 +35,7 @@ from app.connector_store import (
 )
 from app.jira_sync import (
     apply_jira_webhook_to_wbs,
+    fetch_jira_context_summary,
     import_tasks_from_jira,
     jira_check_connection,
     sync_wbs_to_jira,
@@ -1504,6 +1505,36 @@ def salesforce_pipeline_snapshot():
             action="pipeline_summary",
             status="failed",
             message=str(exc),
+        )
+        return jsonify({"error": str(exc)}), 400
+
+
+@connectors_bp.route("/jira/context/summary", methods=["GET"])
+@jwt_required()
+def jira_context_summary():
+    user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    max_issues = request.args.get("limit", 60)
+    try:
+        result = fetch_jira_context_summary(user.id, max_issues=int(max_issues))
+        mark_connector_sync_result(user.id, "jira_sync", "success")
+        append_sync_audit_event(
+            user.id,
+            "jira_sync",
+            action="context_summary",
+            status="success",
+            metadata={
+                "sprint_issue_count": (result.get("summary") or {}).get("sprint_issue_count", 0),
+                "blocked_count": (result.get("summary") or {}).get("blocked_count", 0),
+            },
+        )
+        return jsonify({"success": True, **result}), 200
+    except Exception as exc:
+        mark_connector_sync_result(user.id, "jira_sync", "failed", error_message=str(exc))
+        append_sync_audit_event(
+            user.id, "jira_sync", action="context_summary", status="failed", message=str(exc)
         )
         return jsonify({"error": str(exc)}), 400
 

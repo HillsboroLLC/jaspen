@@ -254,6 +254,137 @@ def jira_check_connection(user_id):
         return {"ok": False, "error": str(exc), "meta": {}}
 
 
+def fetch_jira_context_summary(user_id, max_issues=60):
+    """
+    Fetch a strategic snapshot of the Jira project for use as AI conversation context.
+    Returns open sprint issues, blockers, recent completions, and velocity signals.
+    """
+    config = _jira_runtime_config(user_id)
+    if not _jira_ready(config):
+        missing = [k for k in ("base_url", "project_key", "email", "api_token") if not config.get(k)]
+        raise ValueError("Jira not configured: missing " + ", ".join(missing))
+
+    project = config["project_key"]
+
+    def _search(jql, fields="summary,status,assignee,priority,duedate,updated", max_results=30):
+        path = "/rest/api/3/search"
+        payload = {
+            "jql": jql,
+            "maxResults": max_results,
+            "fields": fields.split(","),
+        }
+        data, _ = _jira_request(config, "POST", path, payload=payload, timeout=20)
+        return data.get("issues") if isinstance(data, dict) else []
+
+    def _safe_field(issue, *keys):
+        obj = (issue.get("fields") or {}) if isinstance(issue, dict) else {}
+        for k in keys:
+            obj = obj.get(k) if isinstance(obj, dict) else None
+            if obj is None:
+                return ""
+        return _text(obj)
+
+    # 1. Active sprint issues
+    try:
+        sprint_issues = _search(
+            f"project = {project} AND sprint in openSprints() ORDER BY priority ASC",
+            max_results=min(max_issues, 40),
+        )
+    except Exception:
+        sprint_issues = []
+
+    # 2. Blocked issues (any sprint or backlog)
+    try:
+        blocked_issues = _search(
+            f"project = {project} AND status = Blocked ORDER BY updated DESC",
+            max_results=15,
+        )
+    except Exception:
+        blocked_issues = []
+
+    # 3. Recently completed (last 14 days)
+    try:
+        done_issues = _search(
+            f"project = {project} AND status = Done AND updated >= -14d ORDER BY updated DESC",
+            max_results=20,
+        )
+    except Exception:
+        done_issues = []
+
+    # 4. High-priority open issues not in sprint
+    try:
+        backlog_high = _search(
+            f"project = {project} AND sprint not in openSprints() AND sprint is EMPTY "
+            f"AND priority in (Highest, High) AND status != Done ORDER BY priority ASC",
+            max_results=10,
+        )
+    except Exception:
+        backlog_high = []
+
+    def _fmt_issue(issue):
+        key = _text(issue.get("key"))
+        summary = _safe_field(issue, "summary")
+        status = _safe_field(issue, "status", "name")
+        assignee = _safe_field(issue, "assignee", "displayName") or "Unassigned"
+        priority = _safe_field(issue, "priority", "name") or "Medium"
+        due = _safe_field(issue, "duedate") or ""
+        due_str = f" | due {due}" if due else ""
+        return f"  [{key}] {summary} — {status} | {assignee} | {priority}{due_str}"
+
+    # Build status count breakdown from sprint issues
+    status_counts = {}
+    for issue in sprint_issues:
+        s = _safe_field(issue, "status", "name") or "Unknown"
+        status_counts[s] = status_counts.get(s, 0) + 1
+
+    status_summary = ", ".join(f"{s}: {c}" for s, c in sorted(status_counts.items())) or "No active sprint"
+
+    lines = [
+        f"Jira Project: {project}",
+        f"Active Sprint: {len(sprint_issues)} issues — {status_summary}",
+        "",
+    ]
+
+    if sprint_issues:
+        lines.append(f"ACTIVE SPRINT ({len(sprint_issues)} issues):")
+        for issue in sprint_issues[:30]:
+            lines.append(_fmt_issue(issue))
+        lines.append("")
+
+    if blocked_issues:
+        lines.append(f"BLOCKED ({len(blocked_issues)} issues):")
+        for issue in blocked_issues:
+            lines.append(_fmt_issue(issue))
+        lines.append("")
+
+    if done_issues:
+        lines.append(f"RECENTLY COMPLETED — last 14 days ({len(done_issues)} issues):")
+        for issue in done_issues[:10]:
+            lines.append(_fmt_issue(issue))
+        lines.append("")
+
+    if backlog_high:
+        lines.append(f"HIGH-PRIORITY BACKLOG ({len(backlog_high)} issues):")
+        for issue in backlog_high:
+            lines.append(_fmt_issue(issue))
+        lines.append("")
+
+    summary = {
+        "project_key": project,
+        "sprint_issue_count": len(sprint_issues),
+        "blocked_count": len(blocked_issues),
+        "done_last_14d": len(done_issues),
+        "high_priority_backlog": len(backlog_high),
+        "status_breakdown": status_counts,
+    }
+
+    return {
+        "success": True,
+        "summary": summary,
+        "context_text": "\n".join(lines),
+    }
+
+
 def sync_wbs_to_jira(user_id, thread_id, project_wbs, thread_sync_profile=None):
     profile = thread_sync_profile or get_thread_sync_profile(user_id, thread_id)
     mode = _text(profile.get("sync_mode") or "import").lower()
