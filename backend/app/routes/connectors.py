@@ -144,6 +144,19 @@ def _salesforce_callback_url():
     if explicit:
         return explicit
 
+    # The OAuth callback MUST resolve to this backend (where the Flask route
+    # lives), NOT the frontend host. Derive the base from the actual request
+    # host so /oauth/start and /oauth/callback always agree and hit a real
+    # route. (FRONTEND_BASE_URL points at the Vercel frontend, which has no
+    # Flask route for the callback — using it silently breaks the flow.)
+    try:
+        host_base = _text(request.host_url).rstrip("/")
+    except Exception:
+        host_base = ""
+    if host_base:
+        host_base = host_base.replace("http://", "https://", 1) if host_base.startswith("http://") and "localhost" not in host_base and "127.0.0.1" not in host_base else host_base
+        return f"{host_base}/api/v1/connectors/salesforce/oauth/callback"
+
     frontend_base = _frontend_base_url().replace("://www.", "://", 1)
     return f"{frontend_base.rstrip('/')}/api/v1/connectors/salesforce/oauth/callback"
 
