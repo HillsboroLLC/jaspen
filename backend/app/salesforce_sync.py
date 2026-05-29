@@ -263,10 +263,16 @@ def fetch_pipeline_summary(user_id, lookback_days=90, max_records=200):
             cached = SALESFORCE_PIPELINE_CACHE.get(cache_key)
             if isinstance(cached, dict) and float(cached.get("expires_at") or 0) > now_ts:
                 return dict(cached.get("payload") or {})
+    # Include the parent Account name so downstream context can reference the
+    # actual company per opportunity. Broaden the filter so ALL open pipeline
+    # shows regardless of close date (open deals are the point of a pipeline
+    # summary), plus any deals that closed within the lookback window. The
+    # previous `CloseDate = LAST_N_DAYS:{days}` filter silently hid open
+    # opportunities and anything older than the window.
     soql = (
-        "SELECT Id, Name, StageName, Amount, CloseDate, Probability, IsClosed "
+        "SELECT Id, Name, Account.Name, StageName, Amount, CloseDate, Probability, IsClosed "
         "FROM Opportunity "
-        f"WHERE IsDeleted = false AND CloseDate = LAST_N_DAYS:{days} "
+        f"WHERE IsDeleted = false AND (IsClosed = false OR CloseDate = LAST_N_DAYS:{days}) "
         "ORDER BY CloseDate DESC "
         f"LIMIT {limit}"
     )
@@ -282,9 +288,18 @@ def fetch_pipeline_summary(user_id, lookback_days=90, max_records=200):
         "stages": {},
     }
 
+    account_names = []
     for row in records:
         if not isinstance(row, dict):
             continue
+        # Flatten the nested Account relationship onto the row so context
+        # consumers don't have to dig into row["Account"]["Name"].
+        account = row.get("Account")
+        account_name = _text(account.get("Name")) if isinstance(account, dict) else ""
+        if account_name:
+            row["AccountName"] = account_name
+            if account_name not in account_names:
+                account_names.append(account_name)
         stage = _text(row.get("StageName") or "Unknown") or "Unknown"
         amount = row.get("Amount")
         probability = row.get("Probability")
@@ -327,6 +342,8 @@ def fetch_pipeline_summary(user_id, lookback_days=90, max_records=200):
         "total_amount": round(totals["total_amount"], 2),
         "weighted_amount": round(totals["weighted_amount"], 2),
         "stage_breakdown": stage_breakdown,
+        "accounts": account_names,
+        "account_count": len(account_names),
     }
 
     result = {

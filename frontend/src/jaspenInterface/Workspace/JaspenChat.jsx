@@ -7723,12 +7723,17 @@ function formatConnectorContextForAgent(data, connectorType) {
     const stageText = stageRows.length
       ? stageRows.map((row) => `${row?.stage || 'Unknown'}: count=${Number(row?.count || 0)}, amount=${Number(row?.amount || 0)}`).join('\n')
       : 'No stage breakdown available.';
-    const preview = records.slice(0, 10).map((row, i) => `Row ${i + 1}: ${JSON.stringify(row)}`).join('\n');
+    const preview = records.slice(0, 25).map((row, i) => `Row ${i + 1}: ${JSON.stringify(row)}`).join('\n');
+    const accountList = Array.isArray(summary?.accounts) ? summary.accounts : [];
+    const accountsText = accountList.length
+      ? accountList.slice(0, 50).join(', ')
+      : 'No account names available.';
     return (
       `Source: Salesforce | Lookback days: ${Number(summary?.lookback_days || 90)}\n` +
       `Opportunity count: ${Number(summary?.opportunity_count || records.length)}\n` +
       `Open: ${Number(summary?.open_count || 0)} | Closed: ${Number(summary?.closed_count || 0)}\n` +
       `Total amount: ${Number(summary?.total_amount || 0)} | Weighted amount: ${Number(summary?.weighted_amount || 0)}\n` +
+      `Accounts (${Number(summary?.account_count || accountList.length)}): ${accountsText}\n` +
       `Stage breakdown:\n${stageText}\n\n` +
       `DATA:\n${preview || 'No records returned.'}`
     );
@@ -7758,7 +7763,7 @@ const handleToggleContextSource = useCallback(async (connectorId, label) => {
     if (connectorId === 'jira_sync') {
       url = `${API_BASE}/api/v1/connectors/jira/context/summary?limit=60`;
     } else if (connectorId === 'salesforce_insights') {
-      url = `${API_BASE}/api/v1/connectors/salesforce/pipeline/summary?days=30&limit=50`;
+      url = `${API_BASE}/api/v1/connectors/salesforce/pipeline/summary?days=90&limit=100`;
     } else if (connectorId === 'snowflake_insights') {
       url = `${API_BASE}/api/v1/connectors/snowflake/query`;
       method = 'POST';
