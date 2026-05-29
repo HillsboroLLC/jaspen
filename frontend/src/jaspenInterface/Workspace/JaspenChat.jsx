@@ -11495,6 +11495,33 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               </button>
             </div>
 
+            {/* Session context pills — objective + active data connectors, always visible in header */}
+            {sessionId && (
+              <div className="jas-session-context-bar">
+                <span className="jas-objective-selection-pill jas-header-pill" title={`Session objective: ${objectiveLabel}`}>
+                  <span className="jas-objective-selection-pill-text">{objectiveLabel}</span>
+                </span>
+                {Array.isArray(connectedDataSources) && connectedDataSources
+                  .filter((src) => activeContextSourceIds.has(src.id))
+                  .map((src) => {
+                    const srcData = contextSourceData[src.id] || '';
+                    const hasError = typeof srcData === 'string' && srcData.startsWith('__error__');
+                    const isLoading = contextSourceLoading && !srcData;
+                    return (
+                      <span
+                        key={src.id}
+                        className={`jas-objective-selection-pill jas-header-pill${hasError ? ' jas-pill-error' : ''}${isLoading ? ' jas-pill-loading' : ''}`}
+                        title={hasError ? srcData.replace('__error__:', '') : `${src.label} data active in this session`}
+                      >
+                        <span className="jas-objective-selection-pill-text">
+                          {isLoading ? `${src.label}…` : src.label}
+                        </span>
+                      </span>
+                    );
+                  })}
+              </div>
+            )}
+
             <nav className="jas-top-tabs" role="tablist" aria-label="Jaspen views">
               <TabButton id="scenario" label="Trade-off" />
 

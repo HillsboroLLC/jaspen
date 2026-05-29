@@ -4472,6 +4472,27 @@
   background: var(--gray-50);
 }
 
+/* ── Session context bar — objective + active connector pills in the workspace header ── */
+.jas-session-context-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 0 2px;
+}
+
+.jas-objective-selection-pill.jas-header-pill {
+  font-size: 0.6875rem;
+  padding: 3px 10px;
+  cursor: default;
+  user-select: none;
+}
+
+.jas-objective-selection-pill.jas-header-pill:hover {
+  /* header pills are read-only — no hover cursor/transform */
+  background: var(--gray-100);
+}
+
 .jas-return-main-btn {
   display: inline-flex;
   align-items: center;
