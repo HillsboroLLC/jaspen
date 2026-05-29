@@ -6539,23 +6539,36 @@ const renderSelectedDataContextPills = (className = '') => {
   if (activeSources.length === 0) return null;
   return (
     <div className={`jas-selected-data-context-pills ${className}`.trim()}>
-      {activeSources.map((source) => (
-        <span key={source.id} className="jas-objective-selection-pill">
-          <span className="jas-objective-selection-pill-text">{source.label}</span>
-          <button
-            type="button"
-            className="jas-objective-selection-pill-clear"
-            onClick={() => {
-              void handleToggleContextSource(source.id, source.label);
-            }}
-            aria-label={`Remove ${source.label} data context`}
-            title={`Remove ${source.label} data context`}
-            disabled={busy} aria-disabled={busy}
+      {activeSources.map((source) => {
+        const srcData = contextSourceData[source.id] || '';
+        const hasError = typeof srcData === 'string' && srcData.startsWith('__error__');
+        const isLoading = contextSourceLoading && !srcData;
+        return (
+          <span
+            key={source.id}
+            className={`jas-objective-selection-pill${hasError ? ' jas-pill-error' : ''}${isLoading ? ' jas-pill-loading' : ''}`}
+            title={hasError ? srcData.replace('__error__:', '') : `${source.label} data loaded as AI context`}
           >
-            <FontAwesomeIcon icon={faTimes} />
-          </button>
-        </span>
-      ))}
+            <span className="jas-objective-selection-pill-text">
+              {isLoading ? `${source.label}…` : source.label}
+            </span>
+            <button
+              type="button"
+              className="jas-objective-selection-pill-clear"
+              onClick={() => {
+                // Clear error state and deactivate
+                setContextSourceData((prev) => { const n = {...prev}; delete n[source.id]; return n; });
+                setActiveContextSourceIds((prev) => { const n = new Set(prev); n.delete(source.id); return n; });
+              }}
+              aria-label={`Remove ${source.label} data context`}
+              title={`Remove ${source.label} data context`}
+              disabled={busy} aria-disabled={busy}
+            >
+              <FontAwesomeIcon icon={faTimes} />
+            </button>
+          </span>
+        );
+      })}
     </div>
   );
 };
@@ -7787,13 +7800,12 @@ const handleToggleContextSource = useCallback(async (connectorId, label) => {
     if (!summary) throw new Error(`No ${label} context available.`);
     setContextSourceData((prev) => ({ ...prev, [connectorId]: summary }));
     showToast(`${label} data loaded as context.`, 'success');
-  } catch {
-    showToast(`Could not load ${label} data.`, 'error');
-    setActiveContextSourceIds((prev) => {
-      const next = new Set(prev);
-      next.delete(connectorId);
-      return next;
-    });
+  } catch (err) {
+    // Keep the pill visible — don't silently remove it. Store an error marker
+    // so the pill shows an error state and the AI knows the fetch failed.
+    const errMsg = err?.message || `Could not load ${label} data.`;
+    setContextSourceData((prev) => ({ ...prev, [connectorId]: `__error__:${errMsg}` }));
+    showToast(errMsg, 'error');
   } finally {
     setContextSourceLoading(false);
   }
@@ -8412,14 +8424,21 @@ const handleSaveStarter = async () => {
       .map((id) => connectedDataSources.find((item) => item.id === id)?.label || id)
       .filter(Boolean);
     const activeContextParts = selectedContextIds
-      .filter((id) => contextSourceData[id])
+      .filter((id) => contextSourceData[id] && !String(contextSourceData[id]).startsWith('__error__'))
       .map((id) => {
         const source = connectedDataSources.find((item) => item.id === id);
         return `[${source?.label || id} Context]\n${contextSourceData[id]}`;
       });
-    if (selectedContextIds.length > 0 && activeContextParts.length === 0) {
+    const erroredSources = selectedContextIds.filter(
+      (id) => typeof contextSourceData[id] === 'string' && contextSourceData[id].startsWith('__error__')
+    );
+    if (selectedContextIds.length > 0 && activeContextParts.length === 0 && erroredSources.length === 0) {
       showToast('Selected data context is still loading. Please wait a moment, then send again.', 'info');
       return;
+    }
+    if (erroredSources.length > 0) {
+      const labels = erroredSources.map((id) => connectedDataSources.find((item) => item.id === id)?.label || id).join(', ');
+      showToast(`${labels} data could not be loaded — sending without that context.`, 'warning');
     }
     const contextPrefix = activeContextParts.length > 0
       ? `${activeContextParts.join('\n\n')}\n\n---\n\n`

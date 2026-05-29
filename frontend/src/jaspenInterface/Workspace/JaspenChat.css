@@ -3840,6 +3840,22 @@
   cursor: not-allowed;
 }
 
+.jas-objective-selection-pill.jas-pill-error {
+  background: #fff1f2;
+  border-color: rgba(220, 38, 38, 0.3);
+  color: #dc2626;
+}
+
+.jas-objective-selection-pill.jas-pill-loading {
+  opacity: 0.7;
+  animation: jas-pill-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes jas-pill-pulse {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+
 .jas-selected-data-context-pills {
   display: inline-flex;
   align-items: center;
