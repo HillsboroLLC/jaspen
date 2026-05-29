@@ -15,6 +15,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faArrowLeft, faDownload, faShare, faRotateLeft, faPaperPlane } from '@fortawesome/free-solid-svg-icons';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 import { Jaspen } from './JaspenClient';
 import TradeoffView from './TradeoffView';
@@ -497,13 +499,35 @@ export default function JaspenWorkspace() {
               key={i}
               style={{
                 alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start',
-                maxWidth:'85%', padding:'8px 12px', borderRadius:10,
+                maxWidth:'90%', padding:'8px 12px', borderRadius:10,
                 background: m.role === 'user' ? '#0f172a' : '#f1f5f9',
                 color: m.role === 'user' ? '#fff' : '#0f172a',
-                fontSize:13, lineHeight:1.45,
+                fontSize:13, lineHeight:1.5,
               }}
             >
-              {m.text}
+              {m.role === 'user' ? (
+                m.text
+              ) : (
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    p: ({ children }) => <p style={{ margin:'0 0 6px', lineHeight:1.5 }}>{children}</p>,
+                    h1: ({ children }) => <p style={{ margin:'6px 0 4px', fontWeight:700, fontSize:14 }}>{children}</p>,
+                    h2: ({ children }) => <p style={{ margin:'6px 0 4px', fontWeight:700, fontSize:13 }}>{children}</p>,
+                    h3: ({ children }) => <p style={{ margin:'6px 0 4px', fontWeight:600, fontSize:13 }}>{children}</p>,
+                    ul: ({ children }) => <ul style={{ margin:'4px 0', paddingLeft:16 }}>{children}</ul>,
+                    ol: ({ children }) => <ol style={{ margin:'4px 0', paddingLeft:16 }}>{children}</ol>,
+                    li: ({ children }) => <li style={{ marginBottom:2, lineHeight:1.45 }}>{children}</li>,
+                    strong: ({ children }) => <strong style={{ fontWeight:600 }}>{children}</strong>,
+                    table: ({ children }) => <table style={{ borderCollapse:'collapse', fontSize:12, margin:'6px 0', width:'100%' }}>{children}</table>,
+                    th: ({ children }) => <th style={{ border:'1px solid #cbd5e1', padding:'3px 6px', background:'#e2e8f0', textAlign:'left' }}>{children}</th>,
+                    td: ({ children }) => <td style={{ border:'1px solid #cbd5e1', padding:'3px 6px' }}>{children}</td>,
+                    code: ({ children }) => <code style={{ background:'#e2e8f0', borderRadius:3, padding:'1px 4px', fontSize:12 }}>{children}</code>,
+                  }}
+                >
+                  {m.pending ? '…' : String(m.text || '')}
+                </ReactMarkdown>
+              )}
             </div>
           ))}
         </div>
