@@ -7195,6 +7195,7 @@ const [preflightQuestions, setPreflightQuestions] = useState([]);
 const [preflightAnswers, setPreflightAnswers] = useState({});
 const [connectedDataSources, setConnectedDataSources] = useState([]);
 const [activeContextSourceIds, setActiveContextSourceIds] = useState(new Set());
+const [usedContextSourceIds, setUsedContextSourceIds] = useState(new Set()); // persistent: accumulates all sources ever successfully sent to AI this session
 const [contextSourceData, setContextSourceData] = useState({});
 const [contextSourceLoading, setContextSourceLoading] = useState(false);
 
@@ -8423,12 +8424,21 @@ const handleSaveStarter = async () => {
     const selectedContextLabels = selectedContextIds
       .map((id) => connectedDataSources.find((item) => item.id === id)?.label || id)
       .filter(Boolean);
-    const activeContextParts = selectedContextIds
-      .filter((id) => contextSourceData[id] && !String(contextSourceData[id]).startsWith('__error__'))
-      .map((id) => {
-        const source = connectedDataSources.find((item) => item.id === id);
-        return `[${source?.label || id} Context]\n${contextSourceData[id]}`;
+    const successfulContextIds = selectedContextIds.filter(
+      (id) => contextSourceData[id] && !String(contextSourceData[id]).startsWith('__error__')
+    );
+    const activeContextParts = successfulContextIds.map((id) => {
+      const source = connectedDataSources.find((item) => item.id === id);
+      return `[${source?.label || id} Context]\n${contextSourceData[id]}`;
+    });
+    // Mark these sources as "used this session" — persists in context bar even after user removes from toolbar
+    if (successfulContextIds.length > 0) {
+      setUsedContextSourceIds((prev) => {
+        const next = new Set(prev);
+        successfulContextIds.forEach((id) => next.add(id));
+        return next;
       });
+    }
     const erroredSources = selectedContextIds.filter(
       (id) => typeof contextSourceData[id] === 'string' && contextSourceData[id].startsWith('__error__')
     );
@@ -12355,25 +12365,21 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
             </span>
           )}
           {Array.isArray(connectedDataSources) && (() => {
-            const activeSrcs = connectedDataSources.filter((src) => activeContextSourceIds.has(src.id));
-            if (activeSrcs.length === 0) return null;
+            // Show ALL sources that were actually used this session — persists even after user removes from toolbar
+            const usedSrcs = connectedDataSources.filter((src) => usedContextSourceIds.has(src.id));
+            if (usedSrcs.length === 0) return null;
             return (
               <>
                 <span className="jas-context-divider" aria-hidden="true" />
-                {activeSrcs.map((src) => {
-                  const srcData = contextSourceData[src.id] || '';
-                  const hasError = typeof srcData === 'string' && srcData.startsWith('__error__');
-                  const isLoading = contextSourceLoading && !srcData;
-                  return (
-                    <span
-                      key={src.id}
-                      className={`jas-context-pill${hasError ? ' jas-context-pill-error' : ''}${isLoading ? ' jas-context-pill-loading' : ''}`}
-                      title={hasError ? srcData.replace('__error__:', '') : `${src.label} data active in this session`}
-                    >
-                      {isLoading ? `${src.label}…` : src.label}
-                    </span>
-                  );
-                })}
+                {usedSrcs.map((src) => (
+                  <span
+                    key={src.id}
+                    className="jas-context-pill jas-context-pill-used"
+                    title={`${src.label} data was used in this session`}
+                  >
+                    {src.label}
+                  </span>
+                ))}
               </>
             );
           })()}

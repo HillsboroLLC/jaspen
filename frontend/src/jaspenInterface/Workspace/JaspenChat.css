@@ -589,6 +589,13 @@
   white-space: nowrap;
 }
 
+.jas-context-pill.jas-context-pill-used {
+  /* "used this session" indicator — slightly warmer than the default gray */
+  background: var(--gray-200);
+  border-color: var(--gray-300);
+  color: var(--navy);
+}
+
 .jas-context-pill.jas-context-pill-error {
   background: #fff1f2;
   border-color: rgba(220, 38, 38, 0.3);
