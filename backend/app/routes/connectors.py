@@ -1422,13 +1422,19 @@ def salesforce_oauth_callback():
             redirect_uri=_salesforce_callback_url(),
             code_verifier=code_verifier or None,
         )
-        updates = {
-            "connection_status": "connected",
-            "salesforce_instance_url": _text(token_payload.get("instance_url") or config.get("instance_url")),
-            "salesforce_access_token": _text(token_payload.get("access_token")),
-            "salesforce_token_type": _text(token_payload.get("token_type") or "Bearer") or "Bearer",
-            "salesforce_token_expires_at": _salesforce_token_expires_at_iso(token_payload),
-        }
+        # Only update token fields when Salesforce actually returned non-empty values.
+        # An empty access_token in updates would overwrite a previously-valid token
+        # (the probe uses the old token as fallback, so it succeeds even when the new
+        # token is empty — silently nuking the working credentials).
+        new_access_token = _text(token_payload.get("access_token"))
+        new_instance_url = _text(token_payload.get("instance_url") or config.get("instance_url"))
+        updates = {"connection_status": "connected"}
+        if new_instance_url:
+            updates["salesforce_instance_url"] = new_instance_url
+        if new_access_token:
+            updates["salesforce_access_token"] = new_access_token
+            updates["salesforce_token_type"] = _text(token_payload.get("token_type") or "Bearer") or "Bearer"
+            updates["salesforce_token_expires_at"] = _salesforce_token_expires_at_iso(token_payload)
         refresh_token = _text(token_payload.get("refresh_token"))
         if refresh_token:
             updates["salesforce_refresh_token"] = refresh_token
