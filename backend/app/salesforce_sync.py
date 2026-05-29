@@ -197,7 +197,13 @@ def _ensure_access_token(user_id):
         return config, None
 
     if not _text(config.get("refresh_token")):
-        raise RuntimeError("Salesforce is not connected. Refresh token missing.")
+        # No refresh token — happens when Salesforce doesn't return one on re-auth
+        # (common with sandbox/dev orgs and already-authorized Connected Apps).
+        # If we have an access token, try it anyway — sandbox tokens often outlast
+        # our local expiry estimate. A 401 from the API will surface a clear error.
+        if access_token:
+            return config, None
+        raise RuntimeError("Salesforce needs to be reconnected. Please go to Data Sources and click 'Connect with Salesforce'.")
 
     token_data, _ = refresh_salesforce_access_token(config)
     new_access_token = _text(token_data.get("access_token"))

@@ -7804,9 +7804,18 @@ const handleToggleContextSource = useCallback(async (connectorId, label) => {
   } catch (err) {
     // Keep the pill visible — don't silently remove it. Store an error marker
     // so the pill shows an error state and the AI knows the fetch failed.
-    const errMsg = err?.message || `Could not load ${label} data.`;
+    const rawMsg = err?.message || `Could not load ${label} data.`;
+    // Detect Salesforce reconnect-needed errors and show a helpful action
+    const needsReconnect = /reconnect|refresh token|not connected/i.test(rawMsg) && connectorId === 'salesforce_insights';
+    const errMsg = needsReconnect
+      ? `Salesforce token expired — please reconnect in Data Sources.`
+      : rawMsg;
     setContextSourceData((prev) => ({ ...prev, [connectorId]: `__error__:${errMsg}` }));
-    showToast(errMsg, 'error');
+    showToast(
+      errMsg,
+      'error',
+      needsReconnect ? { label: 'Reconnect', action: () => window.open('/connectors-manage', '_blank') } : undefined
+    );
   } finally {
     setContextSourceLoading(false);
   }
