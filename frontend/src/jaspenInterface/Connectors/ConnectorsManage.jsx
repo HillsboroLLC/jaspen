@@ -647,13 +647,6 @@ export default function ConnectorsManage() {
     }));
   }
 
-  function resolveDesiredConnectionStatus(connectorId, draft, connector) {
-    if (connectorId !== 'salesforce_insights') return 'connected';
-    const hasDraftToken = Boolean(String(draft?.salesforce_refresh_token || '').trim());
-    const hasStoredToken = Boolean(connector?.salesforce?.has_refresh_token || connector?.salesforce?.has_access_token);
-    return hasDraftToken || hasStoredToken ? 'connected' : 'disconnected';
-  }
-
   async function saveConnector() {
     if (!selectedConnector || !selectedDraft) return;
     const validationErrors = validateRequiredFields(selectedConnector.id, selectedDraft, selectedConnector);
@@ -672,7 +665,7 @@ export default function ConnectorsManage() {
     try {
       const payload = {
         ...buildUpdatePayload(selectedConnector.id, selectedDraft),
-        connection_status: resolveDesiredConnectionStatus(selectedConnector.id, selectedDraft, selectedConnector),
+        connection_status: 'connected',
       };
       const res = await authFetch(`${API_BASE}/api/v1/connectors/${encodeURIComponent(selectedConnector.id)}`, {
         method: 'PATCH',
@@ -759,7 +752,7 @@ export default function ConnectorsManage() {
     try {
       const payload = {
         ...buildUpdatePayload(selectedConnector.id, selectedDraft),
-        connection_status: resolveDesiredConnectionStatus(selectedConnector.id, selectedDraft, selectedConnector),
+        connection_status: 'connected',
       };
       const saveRes = await authFetch(`${API_BASE}/api/v1/connectors/${encodeURIComponent(selectedConnector.id)}`, {
         method: 'PATCH',
