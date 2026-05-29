@@ -471,8 +471,12 @@ export const Jaspen = {
           'You are a market analyst assisting with deep-dive Q&A on a completed Jaspen analysis. Provide conversational, helpful responses that reference the analysis context when relevant.',
         analysis_context,
         analysis_id,
+        // Explicitly include thread_id so the backend session lookup succeeds
+        thread_id: analysis_id,
       },
-      { withSid: true }
+      // Use the thread's own ID as the session identifier so the backend finds
+      // the right session rather than falling back to the localStorage SID.
+      analysis_id ? { sidOverride: analysis_id } : { withSid: true }
     );
     return { text: data.response || data.reply || String(data) };
   },

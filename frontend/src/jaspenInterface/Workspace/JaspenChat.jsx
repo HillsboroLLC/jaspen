@@ -5939,6 +5939,31 @@ useEffect(() => {
   if (analysisResult) setActivePill('scoring');
 }, [analysisResult]); // eslint-disable-line react-hooks/exhaustive-deps
 
+// On session resume: scorecardSnapshots load from the bundle before analysisResult
+// is set (analysisResult requires hasMeaningfulScorecardData to pass). If the pill
+// is still at the initial 'discovery' state and snapshots exist, advance it now.
+// We use a ref so this only fires once — subsequent snapshot changes (user scores
+// a new idea) don't reset a pill the user has explicitly navigated away from.
+const _pillSeededRef = useRef(false);
+useEffect(() => {
+  if (_pillSeededRef.current) return;
+  if (Array.isArray(scorecardSnapshots) && scorecardSnapshots.length > 0) {
+    _pillSeededRef.current = true;
+    setActivePill((prev) => prev === 'discovery' ? 'scoring' : prev);
+  }
+}, [scorecardSnapshots]); // eslint-disable-line react-hooks/exhaustive-deps
+
+// On session resume: if there's already an execution plan, jump straight to
+// the Execution pill so users land in the right place after a page refresh.
+const _wbsPillSeededRef = useRef(false);
+useEffect(() => {
+  if (_wbsPillSeededRef.current) return;
+  if (Array.isArray(threadWbs?.tasks) && threadWbs.tasks.length > 0) {
+    _wbsPillSeededRef.current = true;
+    setActivePill('execution');
+  }
+}, [threadWbs]); // eslint-disable-line react-hooks/exhaustive-deps
+
 // Primary path: artifacts arrive as explicit assistant messages from backend
 // and are rendered directly in thread order. Backward-compat fallback: older
 // threads may still persist artifacts only in snapshot/WBS state; surface them
