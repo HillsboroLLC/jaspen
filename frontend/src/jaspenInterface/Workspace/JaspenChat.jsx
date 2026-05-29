@@ -6485,7 +6485,6 @@ const renderObjectiveTags = (className = '') => {
 };
 
 const renderConnectorContextTags = () => {
-  if (planCategory !== 'enterprise' && planCategory !== 'team') return null;
   if (!Array.isArray(connectedDataSources) || connectedDataSources.length === 0) return null;
   return (
     <div className="jas-connector-context-tags">
@@ -7648,12 +7647,6 @@ const canUndoScorecardManualEdit = scorecardUndoStack.length > 0 && !scorecardEd
 const canRedoScorecardManualEdit = scorecardRedoStack.length > 0 && !scorecardEditHistoryBusy;
 
 useEffect(() => {
-  if (planCategory !== 'enterprise' && planCategory !== 'team') {
-    setConnectedDataSources([]);
-    setActiveContextSourceIds(new Set());
-    setContextSourceData({});
-    return;
-  }
   const loadConnectedSources = async () => {
     try {
       const headers = buildAuthHeaders({}, 'GET');
