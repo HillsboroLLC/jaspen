@@ -7657,7 +7657,7 @@ useEffect(() => {
       });
       if (!response.ok) return;
       const data = await response.json().catch(() => ({}));
-      const allowed = ['salesforce_insights', 'snowflake_insights', 'servicenow_insights', 'netsuite_insights', 'oracle_fusion_insights'];
+      const allowed = ['jira_sync', 'salesforce_insights', 'snowflake_insights', 'servicenow_insights', 'netsuite_insights', 'oracle_fusion_insights'];
       const connected = (Array.isArray(data?.connectors) ? data.connectors : [])
         .filter((item) => item?.connected && allowed.includes(item?.id))
         .map((item) => ({
