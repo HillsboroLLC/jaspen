@@ -826,6 +826,18 @@
   padding: 4px 10px;
   font-style: italic;
 }
+/* Session Uploads sub-section — visually separates user-shared files from
+   agent-created artifacts above. */
+.jas-artifacts-sublabel {
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--gray-100);
+}
+.jas-artifact-item--upload {
+  cursor: default;
+  color: var(--gray-600);
+}
+.jas-artifact-item--upload:hover { background: none; }
 .jas-insights-body {
   flex: 1;
   overflow-y: auto;

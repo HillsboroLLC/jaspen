@@ -1496,6 +1496,10 @@ export default function JaspenChat() {
 
   const [input, setInput] = useState('');
   const [pendingFiles, setPendingFiles] = useState([]);
+  // Files the USER has shared this session (distinct from artifacts the agent
+  // creates). Drives the "Session Uploads" list in the artifacts dropdown so
+  // users can track what they shared vs. what Jaspen produced.
+  const [sessionUploads, setSessionUploads] = useState([]);
   const [sharedProjects, setSharedProjects] = useState([]);
   const [sharedProjectsLoading, setSharedProjectsLoading] = useState(false);
   const [strategyObjective, setStrategyObjective] = useState('balanced');
@@ -4975,31 +4979,61 @@ useEffect(() => {
       recognition.lang = 'en-US';
 
       recognition.onresult = (event) => {
-        let transcript = '';
+        // Only COMMIT finalized results to the input. With interimResults=true
+        // onresult fires repeatedly with the same (growing) interim text; the
+        // old code appended every fire, producing garbled, duplicated text.
+        let finalChunk = '';
         for (let i = event.resultIndex; i < event.results.length; i++) {
-          transcript += event.results[i][0].transcript;
+          const res = event.results[i];
+          if (res && res.isFinal) {
+            finalChunk += res[0].transcript;
+          }
         }
-        // Append to existing input
+        finalChunk = finalChunk.trim();
+        if (!finalChunk) return;
         setInput(prev => {
           const separator = prev && !prev.endsWith(' ') ? ' ' : '';
-          return prev + separator + transcript;
+          return prev + separator + finalChunk;
         });
       };
 
       recognition.onerror = (event) => {
-        console.error('Speech recognition error:', event.error);
+        // 'no-speech' / 'aborted' are benign — the engine just paused or we
+        // stopped it. Keep recording (onend will restart). Only a real
+        // permission/service failure should turn the mic off.
+        const err = event?.error;
+        if (err === 'no-speech' || err === 'aborted') {
+          return;
+        }
+        console.error('Speech recognition error:', err);
+        recognitionRef.current = null;
         setIsRecording(false);
       };
 
       recognition.onend = () => {
-        // Only restart if still recording (user hasn't stopped)
+        // With continuous=true the engine still ends on long pauses. If the
+        // user hasn't toggled the mic off (ref still points at us), restart so
+        // dictation keeps going. The cleanup/stop path nulls the ref first, so
+        // a deliberate stop won't restart.
         if (recognitionRef.current === recognition) {
-          setIsRecording(false);
+          try {
+            recognition.start();
+          } catch (e) {
+            recognitionRef.current = null;
+            setIsRecording(false);
+          }
         }
       };
 
       recognitionRef.current = recognition;
-      recognition.start();
+      try {
+        recognition.start();
+      } catch (e) {
+        // start() throws if called while already started — reset state.
+        console.error('Speech recognition start failed:', e);
+        recognitionRef.current = null;
+        setIsRecording(false);
+      }
     } else {
       // Stop recording
       if (recognitionRef.current) {
@@ -6419,6 +6453,18 @@ const tradeoffEligibleScoredItems = useMemo(() => {
       data: entry?.data && typeof entry.data === 'object' ? entry.data : null,
     }));
 }, [scoredIdeaInsights]);
+
+// Trade-off auto-evolves: as soon as the session has two or more scored ideas,
+// enable the trade-off so it builds (and continuously refreshes) without the
+// user having to ask. The local trade-off artifact is recomputed from the
+// current snapshot pool on every render, so it stays in sync as new ideas are
+// scored. (This only flips the flag on — never off — so the user can still
+// dismiss individual ideas via tradeoff_included overrides.)
+useEffect(() => {
+  if (!tradeoffRequested && tradeoffEligibleScoredItems.length >= 2) {
+    setTradeoffRequested(true);
+  }
+}, [tradeoffRequested, tradeoffEligibleScoredItems.length]);
 
 const renderModelTypeInlinePicker = (className = '') => (
   <div className={`jas-model-picker-inline ${className}`.trim()} ref={modelMenuRef}>
@@ -8547,6 +8593,25 @@ const handleSaveStarter = async () => {
     }
   }
 
+  // Record uploaded files in the session-uploads tracker. Dedupes by
+  // name+size so re-selecting the same file doesn't create duplicate entries.
+  function registerSessionUploads(items) {
+    const list = (Array.isArray(items) ? items : []).filter((f) => f && f.name);
+    if (!list.length) return;
+    setSessionUploads((prev) => {
+      const seen = new Set(prev.map((f) => `${f.name}::${f.size ?? ''}`));
+      const additions = list
+        .filter((f) => !seen.has(`${f.name}::${f.size ?? ''}`))
+        .map((f) => ({
+          name: f.name,
+          size: f.size ?? null,
+          type: f.type || 'application/octet-stream',
+          uploadedAt: new Date().toISOString(),
+        }));
+      return additions.length ? [...prev, ...additions] : prev;
+    });
+  }
+
   function onFilesSelected(e) {
     const picked = Array.from(e.target.files || []);
     if (!picked.length) return;
@@ -8558,23 +8623,13 @@ const handleSaveStarter = async () => {
       file: f,
       preview: f.type?.startsWith('image/') ? URL.createObjectURL(f) : null,
     }));
-    const hasDraftText = Boolean(String(input || '').trim());
-    const hasPending = Array.isArray(pendingFiles) && pendingFiles.length > 0;
-    const canAutoAnalyze =
-      !busy &&
-      !effectiveIsViewer &&
-      !hasDraftText &&
-      !hasPending &&
-      toAdd.length > 0;
-
-    if (canAutoAnalyze) {
-      setPendingFiles(toAdd);
-      window.setTimeout(() => {
-        void onSubmit({ files: toAdd, auto_upload: true });
-      }, 0);
-    } else {
-      setPendingFiles((prev) => [...prev, ...toAdd]);
-    }
+    // Attach-first UX: a selected/dropped file is added as a chip and waits for
+    // the user to type an instruction, then send — matching the standard agent
+    // pattern. We intentionally do NOT auto-submit/auto-analyze on drop, so the
+    // user controls what happens with the file. Also record it in the session
+    // uploads tracker so it's distinguishable from agent-created artifacts.
+    setPendingFiles((prev) => [...prev, ...toAdd]);
+    registerSessionUploads(toAdd);
     e.target.value = '';
   }
 
@@ -9834,6 +9889,8 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
     setCurrentSessionId(null);
     setMessages([]);
     setInput('');
+    setPendingFiles([]);
+    setSessionUploads([]);
     setBusy(false);
     setAnalysisResult(null);
     setTradeoffRequested(false);
@@ -12087,11 +12144,38 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                       .filter((entry) => String(entry?.artifact?.type || '').trim() === 'scorecard')
                       .map((entry) => entry?.artifact?.data)
                       .filter((entry) => hasMeaningfulScorecardData(entry));
-                    const allCards = messageScorecards.length > 0
-                      ? messageScorecards
-                      : (Array.isArray(scorecardSnapshots) && scorecardSnapshots.length > 0
-                        ? scorecardSnapshots
-                        : (analysisResult ? [analysisResult] : []));
+                    // UNION every scorecard source so all scored ideas appear
+                    // (parity with the right-panel "Scored Ideas" list). Previously
+                    // this OR-fell-back to snapshots only when zero message
+                    // scorecards existed, which under-counted: a single message
+                    // artifact would hide 2–3 other scored ideas. Dedupe by a
+                    // stable key (analysis_id / id / created_at).
+                    const _cardKey = (c) => String(
+                      c?.analysis_id || c?.id
+                      || c?.createdAt || c?._createdAt || c?.created_at
+                      || ''
+                    ).trim();
+                    const _mergeCards = (...sources) => {
+                      const seen = new Set();
+                      const out = [];
+                      sources.forEach((src) => {
+                        (Array.isArray(src) ? src : []).forEach((c) => {
+                          if (!hasMeaningfulScorecardData(c)) return;
+                          const k = _cardKey(c);
+                          // When no stable key, fall back to identity so we don't
+                          // collapse genuinely distinct unkeyed cards together.
+                          const dedupeKey = k || `__noKey_${out.length}`;
+                          if (seen.has(dedupeKey)) return;
+                          seen.add(dedupeKey);
+                          out.push(c);
+                        });
+                      });
+                      return out;
+                    };
+                    let allCards = _mergeCards(messageScorecards, scorecardSnapshots);
+                    if (allCards.length === 0 && analysisResult) {
+                      allCards = [analysisResult];
+                    }
                     // Each scorecard stands on its own. Use the AI-generated
                     // project name. Disambiguate only when multiple cards share
                     // the SAME name (different iterations of the same idea) →
@@ -12299,11 +12383,33 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                       )}
                     </div>
                   )}
+                  {/* Session Uploads — files the USER shared this session, kept
+                      visually separate from artifacts Jaspen created so the user
+                      can track their own inputs vs. the agent's outputs. */}
+                  {Array.isArray(sessionUploads) && sessionUploads.length > 0 && (
+                    <>
+                      <p className="jas-artifacts-label jas-artifacts-sublabel">
+                        Session Uploads · {sessionUploads.length}
+                      </p>
+                      {sessionUploads.map((f, i) => (
+                        <div className="jas-artifact-row" key={`${f.name}-${i}`}>
+                          <div
+                            className="jas-artifact-item jas-artifact-item--upload"
+                            title={`Uploaded by you${f.size ? ` · ${Math.max(1, Math.round(f.size / 1024))} KB` : ''}`}
+                          >
+                            <FontAwesomeIcon icon={faPaperclip} />
+                            <span>{f.name}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </>
+                  )}
                   {!analysisResult
                     && (!Array.isArray(scorecardSnapshots) || scorecardSnapshots.length === 0)
                     && !(Array.isArray(displayMessages) && displayMessages.some((entry) => entry?.artifact))
                     && !hasTradeoffArtifact
-                    && !(Array.isArray(threadWbs?.tasks) && threadWbs.tasks.length > 0) && (
+                    && !(Array.isArray(threadWbs?.tasks) && threadWbs.tasks.length > 0)
+                    && !(Array.isArray(sessionUploads) && sessionUploads.length > 0) && (
                     <p className="jas-artifacts-empty">No artifacts yet</p>
                   )}
                 </div>
@@ -13224,35 +13330,16 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                       Score an idea to start comparing. Ask Jaspen to model a change and it will suggest scoring a new one.
                     </p>
                   )}
-                  {!hasTradeoffArtifact ? (
-                    <div className="jas-insights-tradeoff-cta">
-                      <p style={{ fontSize: '0.71rem', color: 'var(--gray-500)', lineHeight: 1.45, marginTop: 10, fontStyle: 'italic' }}>
-                        You have enough scored ideas for a trade-off. Generate it when you are ready.
-                      </p>
-                      <button
-                        type="button"
-                        className="jas-insights-action-btn"
-                        onClick={() => { void requestTradeoffFromInsights({ refresh: false }); }}
-                        disabled={busy || scorecardGenerating || autoVersionGenerating}
-                      >
-                        {busy || scorecardGenerating || autoVersionGenerating ? 'Working…' : 'Build trade-off now'}
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="jas-insights-tradeoff-cta">
-                      <p style={{ fontSize: '0.71rem', color: 'var(--gray-500)', lineHeight: 1.45, marginTop: 10, fontStyle: 'italic' }}>
-                        New scored ideas can shift the result. Refresh when you are ready.
-                      </p>
-                      <button
-                        type="button"
-                        className="jas-insights-action-btn jas-insights-action-btn--ghost"
-                        onClick={() => { void requestTradeoffFromInsights({ refresh: true }); }}
-                        disabled={busy || scorecardGenerating || autoVersionGenerating}
-                      >
-                        {busy || scorecardGenerating || autoVersionGenerating ? 'Working…' : 'Update trade-off'}
-                      </button>
-                    </div>
-                  )}
+                  {/* The trade-off builds and refreshes automatically as ideas
+                      are scored — no manual trigger. Show a passive status note
+                      instead of a button. */}
+                  <div className="jas-insights-tradeoff-cta">
+                    <p style={{ fontSize: '0.71rem', color: 'var(--gray-500)', lineHeight: 1.45, marginTop: 10, fontStyle: 'italic' }}>
+                      {busy || scorecardGenerating || autoVersionGenerating
+                        ? 'Updating the trade-off…'
+                        : 'This trade-off updates automatically as you score new ideas.'}
+                    </p>
+                  </div>
                 </div>
               )}
 
