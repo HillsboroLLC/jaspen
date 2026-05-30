@@ -23,7 +23,7 @@ import {
   faQuestionCircle,
   faPaperPlane, faSpinner, faTimes, faBars, faCheck, faExclamationTriangle,
   faChartLine, faTrash, faPlus, faMinus, faMicrophone,
-  faBolt, faLayerGroup, faPlay, faListCheck, faArrowUpRightFromSquare, faGaugeHigh, faClockRotateLeft, faPaperclip, faArrowUp,
+  faBolt, faLayerGroup, faPlay, faListCheck, faArrowUpRightFromSquare, faGaugeHigh, faClockRotateLeft, faPaperclip, faFolder, faArrowUp,
   faDownload, faChevronDown, faChevronLeft, faChevronRight, faUser, faBell, faLock, faCopy, faThumbsUp, faThumbsDown, faRotate, faPen, faArrowRightArrowLeft,
 } from '@fortawesome/free-solid-svg-icons';
 import {
@@ -969,15 +969,54 @@ function toHistoryMessageShape(message = {}) {
   };
 }
 
+// When a thread is reloaded from the backend, persisted user messages still
+// carry the FULL data-context prefix that was sent to the AI, e.g.:
+//   "[Salesforce Context]\n<raw rows...>\n\n---\n\n<the user's actual message>"
+// The live UI never shows that raw dump — it shows the user's text plus a small
+// "[Data context attached: Salesforce]" marker. This normalizes a reloaded
+// message back to that clean form so (1) the chat bubble doesn't show a wall of
+// raw JSON, and (2) the top-bar "used sources" pill (which scans messages for
+// the "[Data context attached: ...]" marker) keeps working after a refresh.
+function normalizeUserContextText(rawText) {
+  const raw = String(rawText || '');
+  // Only touch messages that BEGIN with a raw "[<Label> Context]" block — these
+  // are the reloaded/persisted ones. Live messages already use the clean marker.
+  if (!/^\s*\[[^\]]+\sContext\]/.test(raw)) {
+    return raw;
+  }
+  const SEP = '\n\n---\n\n';
+  const sepIdx = raw.indexOf(SEP);
+  if (sepIdx === -1) {
+    // Unexpected shape — don't risk mangling the message.
+    return raw;
+  }
+  const block = raw.slice(0, sepIdx);
+  const userText = raw.slice(sepIdx + SEP.length).trim();
+  const labels = [];
+  const re = /\[([^\]]+?)\s+Context\]/g;
+  let m;
+  while ((m = re.exec(block)) !== null) {
+    const label = String(m[1] || '').trim();
+    if (label && !labels.includes(label)) labels.push(label);
+  }
+  const marker = labels.length ? `\n\n[Data context attached: ${labels.join(', ')}]` : '';
+  return `${userText}${marker}`.trim();
+}
+
 function toUiMessages(history = []) {
   return (Array.isArray(history) ? history : [])
     .map((rawMsg, historyIndex) => {
       const msg = toHistoryMessageShape(rawMsg);
       const artifact = msg?.artifact && typeof msg.artifact === 'object' ? msg.artifact : null;
-      const text = String(msg?.content || msg?.text || '').trim();
+      const role = msg?.role === 'user' ? 'user' : 'ai';
+      const rawText = String(msg?.content || msg?.text || '').trim();
+      // Reloaded user messages carry the raw data-context dump — strip it back
+      // to the clean "text + [Data context attached: X]" form. AI messages are
+      // left untouched.
+      const text = role === 'user' ? normalizeUserContextText(rawText) : rawText;
       return {
         id: msg?.id || null,
-        role: msg?.role === 'user' ? 'user' : 'ai',
+        role,
         text,
         artifact: artifact && typeof artifact.type === 'string' ? artifact : null,
         historyIndex,
@@ -4961,6 +5000,47 @@ useEffect(() => {
       />
     </div>
   );
+
+  // Toggle voice dictation. When turning ON we proactively request mic access
+  // via getUserMedia FIRST — this reliably triggers the browser's permission
+  // prompt (the agent-style dialog users expect), whereas webkitSpeechRecognition
+  // alone can silently fail with "not-allowed" when the OS/site grant is missing.
+  // Only after permission is granted do we flip isRecording (the effect below
+  // then starts SpeechRecognition).
+  async function handleToggleMic() {
+    if (isRecording) {
+      setIsRecording(false);
+      return;
+    }
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      showToast('Voice input is not supported in this browser. Try Chrome.', 'warning');
+      return;
+    }
+    try {
+      if (navigator?.mediaDevices?.getUserMedia) {
+        // Requesting the stream surfaces Chrome's permission prompt. We stop the
+        // tracks immediately — SpeechRecognition opens its own stream; we only
+        // needed this to obtain/verify the grant.
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach((track) => track.stop());
+      }
+      setIsRecording(true);
+    } catch (err) {
+      const name = err?.name || '';
+      if (name === 'NotAllowedError' || name === 'SecurityError') {
+        showToast(
+          'Microphone access is blocked. Click the site/lock icon in the address bar and allow Microphone for jaspen.ai (on macOS also enable Chrome under System Settings → Privacy & Security → Microphone), then try again.',
+          'warning',
+          { durationMs: 9000 },
+        );
+      } else if (name === 'NotFoundError' || name === 'NotReadableError') {
+        showToast('No microphone was found. Connect a mic and try again.', 'warning');
+      } else {
+        showToast('Could not start voice input. Please try again.', 'warning');
+      }
+    }
+  }
 
   // === Speech Recognition for Voice Input ===
   useEffect(() => {
@@ -12400,31 +12480,62 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                   )}
                   {/* Session Uploads — files the USER shared this session, kept
                       visually separate from artifacts Jaspen created so the user
-                      can track their own inputs vs. the agent's outputs. */}
-                  {Array.isArray(sessionUploads) && sessionUploads.length > 0 && (
-                    <>
-                      <p className="jas-artifacts-label jas-artifacts-sublabel">
-                        Session Uploads · {sessionUploads.length}
-                      </p>
-                      {sessionUploads.map((f, i) => (
-                        <div className="jas-artifact-row" key={`${f.name}-${i}`}>
-                          <div
-                            className="jas-artifact-item jas-artifact-item--upload"
-                            title={`Uploaded by you${f.size ? ` · ${Math.max(1, Math.round(f.size / 1024))} KB` : ''}`}
-                          >
-                            <FontAwesomeIcon icon={faPaperclip} />
-                            <span>{f.name}</span>
+                      can track their own inputs vs. the agent's outputs. We union
+                      two sources so the list survives a page reload:
+                        1. Persisted message attachments (reload-safe) — every
+                           file that was attached to a sent message.
+                        2. In-memory sessionUploads — files attached but not yet
+                           sent (so they appear the moment they're attached).
+                      Deduped by name+size. Folder (manila) icon distinguishes
+                      user uploads from agent-created artifacts above. */}
+                  {(() => {
+                    const seen = new Set();
+                    const uploads = [];
+                    const addUpload = (name, size) => {
+                      const nm = String(name || '').trim();
+                      if (!nm) return;
+                      const key = `${nm}::${size ?? ''}`;
+                      if (seen.has(key)) return;
+                      seen.add(key);
+                      uploads.push({ name: nm, size: Number.isFinite(size) ? size : null });
+                    };
+                    (Array.isArray(messages) ? messages : []).forEach((m) => {
+                      if (m?.role !== 'user') return;
+                      (Array.isArray(m?.attachments) ? m.attachments : []).forEach((a) => {
+                        addUpload(a?.name, a?.size);
+                      });
+                    });
+                    (Array.isArray(sessionUploads) ? sessionUploads : []).forEach((f) => {
+                      addUpload(f?.name, f?.size);
+                    });
+                    if (uploads.length === 0) return null;
+                    return (
+                      <>
+                        <p className="jas-artifacts-label jas-artifacts-sublabel">
+                          Session Uploads · {uploads.length}
+                        </p>
+                        {uploads.map((f, i) => (
+                          <div className="jas-artifact-row" key={`${f.name}-${i}`}>
+                            <div
+                              className="jas-artifact-item jas-artifact-item--upload"
+                              title={`Uploaded by you${f.size ? ` · ${Math.max(1, Math.round(f.size / 1024))} KB` : ''}`}
+                            >
+                              <FontAwesomeIcon icon={faFolder} />
+                              <span>{f.name}</span>
+                            </div>
                           </div>
-                        </div>
-                      ))}
-                    </>
-                  )}
+                        ))}
+                      </>
+                    );
+                  })()}
                   {!analysisResult
                     && (!Array.isArray(scorecardSnapshots) || scorecardSnapshots.length === 0)
                     && !(Array.isArray(displayMessages) && displayMessages.some((entry) => entry?.artifact))
                     && !hasTradeoffArtifact
                     && !(Array.isArray(threadWbs?.tasks) && threadWbs.tasks.length > 0)
-                    && !(Array.isArray(sessionUploads) && sessionUploads.length > 0) && (
+                    && !(Array.isArray(sessionUploads) && sessionUploads.length > 0)
+                    && !(Array.isArray(messages) && messages.some((m) => m?.role === 'user'
+                      && Array.isArray(m?.attachments) && m.attachments.length > 0)) && (
                     <p className="jas-artifacts-empty">No artifacts yet</p>
                   )}
                 </div>
@@ -12942,7 +13053,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                   aria-label={isRecording ? 'Stop recording' : 'Start recording'}
                   title="Voice"
                   disabled={busy || effectiveIsViewer} aria-disabled={busy || effectiveIsViewer}
-                  onClick={() => setIsRecording(prev => !prev)}
+                  onClick={() => { void handleToggleMic(); }}
                 >
                   <FontAwesomeIcon icon={faMicrophone} />
                 </button>
