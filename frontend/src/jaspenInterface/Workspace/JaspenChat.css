@@ -866,6 +866,18 @@
   transition: opacity var(--transition);
 }
 .jas-artifact-item--clickable:hover .jas-artifact-dl { opacity: 1; }
+.jas-wbs-save-spinner {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border: 2px solid rgba(138, 147, 173, 0.35);
+  border-top-color: #8a93ad;
+  border-radius: 50%;
+  animation: jas-wbs-save-spin 0.7s linear infinite;
+}
+@keyframes jas-wbs-save-spin {
+  to { transform: rotate(360deg); }
+}
 .jas-insights-body {
   flex: 1;
   overflow-y: auto;

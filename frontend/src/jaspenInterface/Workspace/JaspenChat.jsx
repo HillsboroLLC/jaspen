@@ -1670,6 +1670,12 @@ const [savedScenarios, setSavedScenarios] = useState([]);
   const [scenarioMutationVersion, setScenarioMutationVersion] = useState(0);
   const [wbsMutationVersion, setWbsMutationVersion] = useState(0);
   const [threadWbs, setThreadWbs] = useState(null);
+  // Inline execution-plan save status: 'idle' | 'saving' | 'saved' | 'error'.
+  // Surfaced in the WBS header so optimistic edits aren't silently lost.
+  const [wbsSaveState, setWbsSaveState] = useState('idle');
+  const lastGoodWbsRef = useRef(null);      // last snapshot confirmed saved to server
+  const pendingWbsSaveRef = useRef(null);   // { sid, next, prev, failMessage } for a failed save
+  const wbsSavedTimerRef = useRef(null);    // debounce reset of the "Saved ✓" pill
   const [bundleLoading, setBundleLoading] = useState(false);
   const [wbsLoading, setWbsLoading] = useState(false);
   const [exportBusyType, setExportBusyType] = useState(null);
@@ -2292,6 +2298,59 @@ const renderInlineExecutionView = () => {
   });
   const owners = Array.from(ownersMap.entries()).map(([name, count]) => ({ name, count }));
 
+  // Shared optimistic-save helper for all inline WBS edits. Drives the
+  // wbsSaveState indicator in the header and keeps a "last known good"
+  // snapshot so a failed save can be rolled back (offered via the header).
+  const saveWbsOptimistic = (sid, next, prev, failMessage) => {
+    setWbsSaveState('saving');
+    if (wbsSavedTimerRef.current) { clearTimeout(wbsSavedTimerRef.current); wbsSavedTimerRef.current = null; }
+    const attempt = () => {
+      setWbsSaveState('saving');
+      return Jaspen.upsertThreadWbs(sid, next)
+        .then(() => {
+          lastGoodWbsRef.current = next;
+          pendingWbsSaveRef.current = null;
+          setWbsSaveState('saved');
+          if (wbsSavedTimerRef.current) clearTimeout(wbsSavedTimerRef.current);
+          wbsSavedTimerRef.current = setTimeout(() => {
+            setWbsSaveState((s) => (s === 'saved' ? 'idle' : s));
+          }, 2200);
+        })
+        .catch((e) => {
+          console.error('[exec-inline] save failed:', e);
+          pendingWbsSaveRef.current = { sid, next, prev, failMessage };
+          setWbsSaveState('error');
+          showToast(failMessage, 'error', {
+            actionLabel: 'Retry',
+            onAction: attempt,
+          });
+        });
+    };
+    return attempt();
+  };
+
+  // Retry the most recent failed WBS save (driven from the header pill).
+  const retryWbsSave = () => {
+    const p = pendingWbsSaveRef.current;
+    if (!p) return;
+    saveWbsOptimistic(p.sid, p.next, p.prev, p.failMessage);
+  };
+
+  // Roll back to the snapshot from before the failed edit and persist it,
+  // so the user isn't left with an unsaved optimistic change.
+  const undoWbsSave = () => {
+    const p = pendingWbsSaveRef.current;
+    if (!p) return;
+    const restore = (p.prev && Object.keys(p.prev).length) ? p.prev : lastGoodWbsRef.current;
+    if (restore) {
+      setThreadWbs(restore);
+      saveWbsOptimistic(p.sid, restore, p.next, 'Couldn\'t undo that change — try again.');
+    } else {
+      pendingWbsSaveRef.current = null;
+      setWbsSaveState('idle');
+    }
+  };
+
   // Inline edit handler: write to threadWbs then PATCH the whole WBS in a
   // background save. Mirrors the auto-save pattern in JaspenExecutionCanvas.
   const handleTaskUpdate = (taskId, patch) => {
@@ -2303,14 +2362,7 @@ const renderInlineExecutionView = () => {
       arr[idx] = { ...arr[idx], ...patch };
       next.tasks = arr;
       const sid = sessionId || currentSessionId;
-      const attemptSave = () => Jaspen.upsertThreadWbs(sid, next).catch((e) => {
-        console.error('[exec-inline] save failed:', e);
-        showToast('Couldn\'t save that change — try again.', 'error', {
-          actionLabel: 'Retry',
-          onAction: attemptSave,
-        });
-      });
-      attemptSave();
+      saveWbsOptimistic(sid, next, prev, 'Couldn\'t save that change — try again.');
       return next;
     });
   };
@@ -2337,14 +2389,7 @@ const renderInlineExecutionView = () => {
       tasks.splice(insertAt, 0, moved);
       const next = { ...(prev || {}), tasks };
       const sid = sessionId || currentSessionId;
-      const attemptReorderSave = () => Jaspen.upsertThreadWbs(sid, next).catch((e) => {
-        console.error('[exec-inline] reorder save failed:', e);
-        showToast('Couldn\'t save the new order — try again.', 'error', {
-          actionLabel: 'Retry',
-          onAction: attemptReorderSave,
-        });
-      });
-      attemptReorderSave();
+      saveWbsOptimistic(sid, next, prev, 'Couldn\'t save the new order — try again.');
       return next;
     });
   };
@@ -2368,14 +2413,7 @@ const renderInlineExecutionView = () => {
       });
       next.tasks = arr;
       const sid = sessionId || currentSessionId;
-      const attemptAddSave = () => Jaspen.upsertThreadWbs(sid, next).catch((e) => {
-        console.error('[exec-inline] add save failed:', e);
-        showToast('Couldn\'t add the task — try again.', 'error', {
-          actionLabel: 'Retry',
-          onAction: attemptAddSave,
-        });
-      });
-      attemptAddSave();
+      saveWbsOptimistic(sid, next, prev, 'Couldn\'t add the task — try again.');
       return next;
     });
   };
@@ -2487,6 +2525,36 @@ const renderInlineExecutionView = () => {
               <span style={{ fontSize: 13, color: EXEC_COLOR.ink }}>
                 {phases.length} phase{phases.length === 1 ? '' : 's'} · {tasks.length} task{tasks.length === 1 ? '' : 's'}
               </span>
+              {/* Inline save status — keeps optimistic WBS edits from failing silently */}
+              {wbsSaveState === 'saving' && (
+                <span style={{ fontSize: 12, color: EXEC_COLOR.ink, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                  <span className="jas-wbs-save-spinner" /> Saving…
+                </span>
+              )}
+              {wbsSaveState === 'saved' && (
+                <span style={{ fontSize: 12, color: EXEC_COLOR.greenInk, fontWeight: 600 }}>Saved ✓</span>
+              )}
+              {wbsSaveState === 'error' && (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+                  <span style={{ color: '#dc2626', fontWeight: 600 }}>Save failed</span>
+                  <button
+                    type="button"
+                    onClick={retryWbsSave}
+                    style={{
+                      padding: '2px 9px', borderRadius: 6, border: '1px solid #dc2626',
+                      background: '#fff', color: '#dc2626', fontSize: 11.5, fontWeight: 600, cursor: 'pointer',
+                    }}
+                  >Retry</button>
+                  <button
+                    type="button"
+                    onClick={undoWbsSave}
+                    style={{
+                      padding: '2px 9px', borderRadius: 6, border: `1px solid ${EXEC_COLOR.line}`,
+                      background: '#fff', color: EXEC_COLOR.ink, fontSize: 11.5, fontWeight: 500, cursor: 'pointer',
+                    }}
+                  >Undo change</button>
+                </span>
+              )}
             </div>
           </div>
           <ExecViewSwitcher value={inlineExecView} onChange={setInlineExecView} />
