@@ -1557,6 +1557,9 @@ export default function JaspenChat() {
   const lastSendRef = useRef(null);
   const [retryingStream, setRetryingStream] = useState(false);
   const stopActiveStream = useCallback(() => {
+    // Only surface feedback if a stream was actually in flight, so an
+    // accidental/duplicate click doesn't show a misleading toast.
+    const hadActiveStream = Boolean(streamAbortRef.current);
     try {
       streamAbortRef.current?.abort();
     } catch (_) { /* no-op */ }
@@ -1564,7 +1567,12 @@ export default function JaspenChat() {
     setBusy(false);
     setIsStreamingReply(false);
     setStreamToolStatus('');
-  }, []);
+    if (hadActiveStream) {
+      // Brief, clear confirmation — users were double-clicking Stop because the
+      // in-bubble "Stopped." text wasn't an obvious acknowledgement.
+      showToast('Response stopped.', 'info', { durationMs: 2500 });
+    }
+  }, [showToast]);
   const [copiedMessageKey, setCopiedMessageKey] = useState(null);
   const [feedbackBusyKey, setFeedbackBusyKey] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
@@ -10029,7 +10037,10 @@ const handleExportScorecardPdf = useCallback(async ({ threadBundleId, scorecardI
   } catch (err) {
     console.error('[handleExportScorecardPdf] failed', err);
     if (err?.status === 403) setBillingModalOpen(true);
-    showToast(err?.message || 'Failed to export scorecard PDF', 'error');
+    showToast(err?.message || 'Failed to export scorecard PDF', 'error', {
+      actionLabel: 'Retry',
+      onAction: () => handleExportScorecardPdf({ threadBundleId, scorecardId, projectName }),
+    });
   } finally {
     setExportBusyType(null);
   }
@@ -10049,7 +10060,10 @@ const handleExportScorecardPptx = useCallback(async ({ threadBundleId, scorecard
   } catch (err) {
     console.error('[handleExportScorecardPptx] failed', err);
     if (err?.status === 403) setBillingModalOpen(true);
-    showToast(err?.message || 'Failed to export scorecard PowerPoint', 'error');
+    showToast(err?.message || 'Failed to export scorecard PowerPoint', 'error', {
+      actionLabel: 'Retry',
+      onAction: () => handleExportScorecardPptx({ threadBundleId, scorecardId, projectName }),
+    });
   } finally {
     setExportBusyType(null);
   }
@@ -10069,7 +10083,10 @@ const handleExportWbsCsv = useCallback(async ({ threadBundleId, projectName } = 
   } catch (err) {
     console.error('[handleExportWbsCsv] failed', err);
     if (err?.status === 403) setBillingModalOpen(true);
-    showToast(err?.message || 'Failed to export execution plan CSV', 'error');
+    showToast(err?.message || 'Failed to export execution plan CSV', 'error', {
+      actionLabel: 'Retry',
+      onAction: () => handleExportWbsCsv({ threadBundleId, projectName }),
+    });
   } finally {
     setExportBusyType(null);
   }
@@ -10088,7 +10105,10 @@ const handleExportConversationMarkdown = useCallback(async ({ threadBundleId, pr
     showToast('Exported conversation transcript', 'success');
   } catch (err) {
     console.error('[handleExportConversationMarkdown] failed', err);
-    showToast(err?.message || 'Failed to export conversation transcript', 'error');
+    showToast(err?.message || 'Failed to export conversation transcript', 'error', {
+      actionLabel: 'Retry',
+      onAction: () => handleExportConversationMarkdown({ threadBundleId, projectName }),
+    });
   } finally {
     setExportBusyType(null);
   }
@@ -10108,7 +10128,10 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
   } catch (err) {
     console.error('[handleExportConversationPdf] failed', err);
     if (err?.status === 403) setBillingModalOpen(true);
-    showToast(err?.message || 'Failed to export conversation transcript PDF', 'error');
+    showToast(err?.message || 'Failed to export conversation transcript PDF', 'error', {
+      actionLabel: 'Retry',
+      onAction: () => handleExportConversationPdf({ threadBundleId, projectName }),
+    });
   } finally {
     setExportBusyType(null);
   }
