@@ -3882,6 +3882,43 @@ useEffect(() => {
   }, [user?.id, user?.email]);
   const activeThreadId = currentSessionId || sessionId || null;
 
+  // Rehydrate the per-thread Session Uploads list from localStorage whenever the
+  // active thread changes (e.g. on a hard refresh). Files that ARE stored as
+  // message attachments still show via the render union; this covers the rest
+  // (.md, .csv, etc.) that the backend doesn't persist on the message.
+  const prevUploadThreadIdRef = useRef(null);
+  useEffect(() => {
+    const prevId = prevUploadThreadIdRef.current;
+    prevUploadThreadIdRef.current = activeThreadId;
+    if (!activeThreadId) return;
+    let stored = [];
+    try {
+      const raw = localStorage.getItem(`jas_session_uploads_${activeThreadId}`);
+      const parsed = raw ? JSON.parse(raw) : [];
+      stored = Array.isArray(parsed) ? parsed : [];
+    } catch {
+      stored = [];
+    }
+    if (!prevId) {
+      // null -> id: either a hard refresh of an existing thread, or a brand-new
+      // session that just received its id. Merge any in-memory uploads (files
+      // attached before the id existed) with the stored list, dedupe, persist.
+      setSessionUploads((prev) => {
+        const seen = new Set();
+        const out = [];
+        [...(Array.isArray(prev) ? prev : []), ...stored].forEach((f) => {
+          const key = `${f?.name}::${f?.size ?? ''}`;
+          if (f?.name && !seen.has(key)) { seen.add(key); out.push(f); }
+        });
+        persistSessionUploads(out, activeThreadId);
+        return out;
+      });
+    } else if (prevId !== activeThreadId) {
+      // Switched to a different thread: show only that thread's uploads.
+      setSessionUploads(stored);
+    }
+  }, [activeThreadId]);
+
   const preferredFirstName = useMemo(() => {
     const source = (displayName || userName || '').trim();
     if (!source) return 'there';
@@ -8704,8 +8741,26 @@ const handleSaveStarter = async () => {
           type: f.type || 'application/octet-stream',
           uploadedAt: new Date().toISOString(),
         }));
-      return additions.length ? [...prev, ...additions] : prev;
+      const next = additions.length ? [...prev, ...additions] : prev;
+      // Persist per-thread so uploads survive a hard refresh. Non-image/PDF/Word
+      // files (e.g. .md, .csv) aren't stored as message attachments by the
+      // backend, so localStorage is the only thing that rehydrates them.
+      persistSessionUploads(next);
+      return next;
     });
+  }
+
+  // localStorage helpers for upload persistence, keyed by the active thread id.
+  function sessionUploadsStorageKey(id) {
+    const tid = String(id || sessionId || currentSessionId || '').trim();
+    return tid ? `jas_session_uploads_${tid}` : '';
+  }
+  function persistSessionUploads(listToSave, id) {
+    const key = sessionUploadsStorageKey(id);
+    if (!key) return;
+    try {
+      localStorage.setItem(key, JSON.stringify(Array.isArray(listToSave) ? listToSave : []));
+    } catch {}
   }
 
   function onFilesSelected(e) {
@@ -12526,9 +12581,6 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                   aria-label="Toggle session uploads"
                 >
                   <FontAwesomeIcon icon={faFolder} />
-                  {uploads.length > 0 && (
-                    <span className="jas-artifacts-count">{uploads.length}</span>
-                  )}
                 </button>
                 {uploadsOpen && (
                   <div className="jas-artifacts-dropdown" role="menu">
