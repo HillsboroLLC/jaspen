@@ -3,6 +3,31 @@ import React, { createContext, useContext, useState, useEffect, useRef } from 'r
 import { API_BASE } from '../../config/apiBase';
 import { AUTH_EVENTS, authFetch as cookieAuthFetch } from './http';
 
+// Auto sign-out after this much continuous inactivity. The session normally
+// renews itself in the background, so without this an open tab stays logged in
+// indefinitely. We persist the last-activity timestamp so the timeout is also
+// enforced across a hard refresh (e.g. coming back the next day).
+const IDLE_LOGOUT_MS = 8 * 60 * 60 * 1000; // 8 hours
+const LAST_ACTIVITY_STORAGE_KEY = 'jas_last_activity';
+
+function readLastActivity() {
+  try {
+    const raw = window.localStorage.getItem(LAST_ACTIVITY_STORAGE_KEY);
+    const ts = raw ? parseInt(raw, 10) : NaN;
+    return Number.isFinite(ts) ? ts : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeLastActivity(ts) {
+  try {
+    window.localStorage.setItem(LAST_ACTIVITY_STORAGE_KEY, String(ts));
+  } catch {
+    // ignore storage failures (private mode, quota)
+  }
+}
+
 // User roles for LSS system
 export const USER_ROLES = {
   ADMIN: 'admin',
@@ -221,6 +246,14 @@ export function AuthProvider({ children }) {
   // distinguish "session expired" (was logged in, now 401) from "never logged in"
   // (anonymous visitor whose background request returned 401).
   const hadUserRef = useRef(false);
+  // Timestamp (ms) of the user's last interaction, used for idle auto sign-out.
+  const lastActivityRef = useRef(readLastActivity() || Date.now());
+  // The persisted activity timestamp captured at app boot, before any new
+  // activity overwrites it — used for the one-time load-time idle check so a
+  // hard refresh after a long idle period signs the user out.
+  const bootLastActivityRef = useRef(readLastActivity());
+  const didInitialIdleCheckRef = useRef(false);
+  const idleLogoutInFlightRef = useRef(false);
   const clearAuthTokens = () => {
     localStorage.removeItem('access_token');
     localStorage.removeItem('token');
@@ -254,11 +287,62 @@ export function AuthProvider({ children }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
+  // Sign the user out after a long stretch of inactivity. Clears auth state and
+  // sends them to the login screen with an explanatory flag.
+  const performIdleLogout = () => {
+    if (idleLogoutInFlightRef.current) return;
+    idleLogoutInFlightRef.current = true;
+    try {
+      // Best-effort server logout; don't block the redirect on it.
+      authFetch('/api/v1/auth/logout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }).catch(() => {});
+    } catch {}
+    try {
+      clearAuthTokens();
+      localStorage.removeItem('lss_user_roles');
+      localStorage.removeItem(LAST_ACTIVITY_STORAGE_KEY);
+    } catch {}
+    window.location.href = '/?auth=1&signed_out=1&reason=idle';
+  };
+
+  // Track user activity so we can enforce an idle timeout. The timestamp is
+  // persisted to localStorage so the timeout survives a hard refresh.
+  useEffect(() => {
+    const markActive = () => {
+      const now = Date.now();
+      lastActivityRef.current = now;
+      writeLastActivity(now);
+    };
+    // Seed once on mount so a fresh login starts the clock.
+    markActive();
+    const events = ['mousedown', 'keydown', 'scroll', 'touchstart', 'click'];
+    const opts = { passive: true };
+    events.forEach((evt) => window.addEventListener(evt, markActive, opts));
+    return () => {
+      events.forEach((evt) => window.removeEventListener(evt, markActive, opts));
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Re-check auth quietly so UI does not remain in a stale "looks logged in" state.
   // Also silently renews the access token cookie on each tick so the session stays
-  // alive throughout the work session without mid-session logouts.
+  // alive throughout the work session without mid-session logouts — unless the
+  // user has been idle past the idle-logout threshold, in which case we sign out.
   useEffect(() => {
+    const isIdleExpired = () => {
+      const last = lastActivityRef.current || readLastActivity();
+      if (!last) return false;
+      return Date.now() - last > IDLE_LOGOUT_MS;
+    };
+
     const silentRefresh = async () => {
+      // Never renew a session the user has effectively abandoned.
+      if (isIdleExpired()) {
+        performIdleLogout();
+        return;
+      }
       try {
         await authFetch('/api/v1/auth/refresh', { method: 'POST' });
       } catch {
@@ -268,12 +352,20 @@ export function AuthProvider({ children }) {
 
     const onVisible = () => {
       if (document.visibilityState === 'visible') {
+        if (isIdleExpired()) {
+          performIdleLogout();
+          return;
+        }
         silentRefresh().then(() => checkAuthStatus({ silent: true })).catch(() => {});
       }
     };
     document.addEventListener('visibilitychange', onVisible);
 
     const intervalId = window.setInterval(async () => {
+      if (isIdleExpired()) {
+        performIdleLogout();
+        return;
+      }
       await silentRefresh();
       checkAuthStatus({ silent: true });
     }, 5 * 60 * 1000);
@@ -379,6 +471,19 @@ export function AuthProvider({ children }) {
       if (res.ok) {
         const userData = await res.json();
         const normalized = normalizeUser(userData);
+        // Enforce the idle timeout across hard refreshes: if the cookie is still
+        // valid but the user was inactive past the threshold at app boot (e.g.
+        // returning the next day), sign them out instead of restoring the
+        // session. Only runs once, on the first auth check, using the boot-time
+        // timestamp so later background checks don't see overwritten activity.
+        if (!didInitialIdleCheckRef.current) {
+          didInitialIdleCheckRef.current = true;
+          const boot = bootLastActivityRef.current;
+          if (boot && Date.now() - boot > IDLE_LOGOUT_MS) {
+            performIdleLogout();
+            return { authenticated: false, user: null };
+          }
+        }
         // Cookie auth is canonical; remove any stale legacy bearer tokens.
         localStorage.removeItem('access_token');
         localStorage.removeItem('token');
@@ -513,6 +618,13 @@ export function AuthProvider({ children }) {
         localStorage.removeItem('refresh_token');
         const normalized = normalizeUser(data?.user || { email });
         syncSelfServeStorageOwnership(normalized);
+        // Fresh login starts the idle clock and clears any stale boot value so a
+        // leftover timestamp can't immediately sign the new session out.
+        const now = Date.now();
+        lastActivityRef.current = now;
+        bootLastActivityRef.current = now;
+        didInitialIdleCheckRef.current = true;
+        writeLastActivity(now);
         setUser(normalized);
         return { success: true };
       } else {
@@ -545,6 +657,7 @@ export function AuthProvider({ children }) {
     }
     clearAuthTokens();
     localStorage.removeItem('lss_user_roles');
+    localStorage.removeItem(LAST_ACTIVITY_STORAGE_KEY);
 
     setUser(null);
     setCurrentUserRole(null);
@@ -592,6 +705,11 @@ export function AuthProvider({ children }) {
         localStorage.removeItem('refresh_token');
         const normalized = normalizeUser(data?.user || { email, name });
         syncSelfServeStorageOwnership(normalized);
+        const now = Date.now();
+        lastActivityRef.current = now;
+        bootLastActivityRef.current = now;
+        didInitialIdleCheckRef.current = true;
+        writeLastActivity(now);
         setUser(normalized);
         return { success: true };
       } else {

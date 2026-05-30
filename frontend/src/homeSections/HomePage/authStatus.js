@@ -1,6 +1,12 @@
 export function readAuthQueryNotice(search) {
   const params = new URLSearchParams(search || '');
   if (params.get('signed_out') === '1') {
+    if (String(params.get('reason') || '').toLowerCase() === 'idle') {
+      return {
+        tone: 'info',
+        message: 'You were signed out after a long period of inactivity. Please sign in again to continue.',
+      };
+    }
     return {
       tone: 'success',
       message: "You've been signed out.",
