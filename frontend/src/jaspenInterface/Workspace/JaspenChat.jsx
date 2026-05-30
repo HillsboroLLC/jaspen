@@ -1603,6 +1603,7 @@ export default function JaspenChat() {
   // Tracks which stage pill's content the sidebar is showing
   const [activePill, setActivePill] = useState('discovery');
   const [artifactsOpen, setArtifactsOpen] = useState(false);
+  const [uploadsOpen, setUploadsOpen] = useState(false);
   // Scenario results kept at the Workspace level (so Score tab can switch)
 const [resultA, setResultA] = useState(null);
 const [resultB, setResultB] = useState(null);
@@ -12478,70 +12479,80 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                       )}
                     </div>
                   )}
-                  {/* Session Uploads — files the USER shared this session, kept
-                      visually separate from artifacts Jaspen created so the user
-                      can track their own inputs vs. the agent's outputs. We union
-                      two sources so the list survives a page reload:
-                        1. Persisted message attachments (reload-safe) — every
-                           file that was attached to a sent message.
-                        2. In-memory sessionUploads — files attached but not yet
-                           sent (so they appear the moment they're attached).
-                      Deduped by name+size. Folder (manila) icon distinguishes
-                      user uploads from agent-created artifacts above. */}
-                  {(() => {
-                    const seen = new Set();
-                    const uploads = [];
-                    const addUpload = (name, size) => {
-                      const nm = String(name || '').trim();
-                      if (!nm) return;
-                      const key = `${nm}::${size ?? ''}`;
-                      if (seen.has(key)) return;
-                      seen.add(key);
-                      uploads.push({ name: nm, size: Number.isFinite(size) ? size : null });
-                    };
-                    (Array.isArray(messages) ? messages : []).forEach((m) => {
-                      if (m?.role !== 'user') return;
-                      (Array.isArray(m?.attachments) ? m.attachments : []).forEach((a) => {
-                        addUpload(a?.name, a?.size);
-                      });
-                    });
-                    (Array.isArray(sessionUploads) ? sessionUploads : []).forEach((f) => {
-                      addUpload(f?.name, f?.size);
-                    });
-                    if (uploads.length === 0) return null;
-                    return (
-                      <>
-                        <p className="jas-artifacts-label jas-artifacts-sublabel">
-                          Session Uploads · {uploads.length}
-                        </p>
-                        {uploads.map((f, i) => (
-                          <div className="jas-artifact-row" key={`${f.name}-${i}`}>
-                            <div
-                              className="jas-artifact-item jas-artifact-item--upload"
-                              title={`Uploaded by you${f.size ? ` · ${Math.max(1, Math.round(f.size / 1024))} KB` : ''}`}
-                            >
-                              <FontAwesomeIcon icon={faFolder} />
-                              <span>{f.name}</span>
-                            </div>
-                          </div>
-                        ))}
-                      </>
-                    );
-                  })()}
                   {!analysisResult
                     && (!Array.isArray(scorecardSnapshots) || scorecardSnapshots.length === 0)
                     && !(Array.isArray(displayMessages) && displayMessages.some((entry) => entry?.artifact))
                     && !hasTradeoffArtifact
-                    && !(Array.isArray(threadWbs?.tasks) && threadWbs.tasks.length > 0)
-                    && !(Array.isArray(sessionUploads) && sessionUploads.length > 0)
-                    && !(Array.isArray(messages) && messages.some((m) => m?.role === 'user'
-                      && Array.isArray(m?.attachments) && m.attachments.length > 0)) && (
+                    && !(Array.isArray(threadWbs?.tasks) && threadWbs.tasks.length > 0) && (
                     <p className="jas-artifacts-empty">No artifacts yet</p>
                   )}
                 </div>
               )}
             </div>
           )}
+
+          {/* Session Uploads button — mirrors the artifacts button and is
+              ALWAYS visible (even when empty) so users know where their shared
+              files live. Lists files the USER uploaded, distinct from artifacts
+              Jaspen created. The list unions persisted message attachments
+              (reload-safe) with in-memory pending uploads (shown the instant a
+              file is attached, before it's sent). */}
+          {sessionId && (() => {
+            const seen = new Set();
+            const uploads = [];
+            const addUpload = (name, size) => {
+              const nm = String(name || '').trim();
+              if (!nm) return;
+              const key = `${nm}::${size ?? ''}`;
+              if (seen.has(key)) return;
+              seen.add(key);
+              uploads.push({ name: nm, size: Number.isFinite(size) ? size : null });
+            };
+            (Array.isArray(messages) ? messages : []).forEach((m) => {
+              if (m?.role !== 'user') return;
+              (Array.isArray(m?.attachments) ? m.attachments : []).forEach((a) => {
+                addUpload(a?.name, a?.size);
+              });
+            });
+            (Array.isArray(sessionUploads) ? sessionUploads : []).forEach((f) => {
+              addUpload(f?.name, f?.size);
+            });
+            return (
+              <div className="jas-artifacts-wrap">
+                <button
+                  className={`jas-artifacts-btn${uploadsOpen ? ' open' : ''}`}
+                  onClick={() => setUploadsOpen((o) => !o)}
+                  title="Session uploads"
+                  aria-label="Toggle session uploads"
+                >
+                  <FontAwesomeIcon icon={faFolder} />
+                  {uploads.length > 0 && (
+                    <span className="jas-artifacts-count">{uploads.length}</span>
+                  )}
+                </button>
+                {uploadsOpen && (
+                  <div className="jas-artifacts-dropdown" role="menu">
+                    <p className="jas-artifacts-label">Session Uploads</p>
+                    {uploads.length > 0 ? (
+                      uploads.map((f, i) => (
+                        <div className="jas-artifact-row" key={`${f.name}-${i}`}>
+                          <div
+                            className="jas-artifact-item jas-artifact-item--upload"
+                            title={`Uploaded by you${f.size ? ` · ${Math.max(1, Math.round(f.size / 1024))} KB` : ''}`}
+                          >
+                            <FontAwesomeIcon icon={faFolder} />
+                            <span>{f.name}</span>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="jas-artifacts-empty">No uploads yet</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           <div className="jas-context-stages">
             {(() => {

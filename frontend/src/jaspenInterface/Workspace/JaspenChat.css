@@ -734,6 +734,7 @@
   align-items: center;
 }
 .jas-artifacts-btn {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -747,6 +748,21 @@
   font-size: 0.72rem;
   transition: background var(--transition), color var(--transition), border-color var(--transition);
   margin-right: 6px;
+}
+.jas-artifacts-count {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--navy);
+  color: #fff;
+  font-size: 0.6rem;
+  font-weight: 600;
+  line-height: 14px;
+  text-align: center;
 }
 .jas-artifacts-btn:hover,
 .jas-artifacts-btn.open {
