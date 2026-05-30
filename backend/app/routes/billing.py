@@ -29,6 +29,8 @@ from app.billing_config import (
     tokens_to_credits,
     to_public_plan,
     get_usage_meter_state,
+    effective_plan_key,
+    subscription_in_good_standing,
 )
 from app.connector_store import get_all_connector_settings
 from app.tool_registry import get_context_budget, get_tool_entitlements
@@ -237,6 +239,8 @@ def get_billing_status():
         'plan': current_plan,
         'is_admin': admin_override,
         'subscription_status': user.subscription_status,
+        'access_restricted': (not admin_override) and (effective_plan_key(user, current_app.config) != plan_key),
+        'effective_plan_key': plan_key if admin_override else effective_plan_key(user, current_app.config),
         'credits_remaining': credits_remaining,
         'monthly_credit_limit': tokens_to_credits(monthly_limit, precision=0),
         'credits_used': credits_used,

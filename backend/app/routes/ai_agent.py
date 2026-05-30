@@ -28,6 +28,7 @@ from app.billing_config import (
     bootstrap_legacy_credits,
     consume_credits,
     credits_for_completion,
+    effective_plan_key,
     get_allowed_model_types,
     get_default_model_type,
     get_monthly_credit_limit,
@@ -4786,7 +4787,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id):
     if not thread_id:
         return _tool_error("thread_id is required for mutation tools.", code="missing_thread")
 
-    plan_key = to_public_plan(user.subscription_plan)
+    plan_key = effective_plan_key(user, current_app.config)
     tool_input = tool_input if isinstance(tool_input, dict) else {}
 
     from .strategy import (
@@ -8188,7 +8189,7 @@ def conversation_start():
                 credits_remaining=user.credits_remaining,
                 user=user,
             ),
-            "context_budget": get_context_budget(to_public_plan(user.subscription_plan)),
+            "context_budget": get_context_budget(effective_plan_key(user, current_app.config)),
             "credits": _public_credits_payload(charged=0, remaining=user.credits_remaining),
             "readiness": {
                 "percent": ((current_readiness.get("overall") or {}).get("percent")) if isinstance(current_readiness, dict) else 0,
@@ -8263,7 +8264,7 @@ def conversation_start():
                 credits_remaining=user.credits_remaining,
                 user=user,
             ),
-            "context_budget": get_context_budget(to_public_plan(user.subscription_plan)),
+            "context_budget": get_context_budget(effective_plan_key(user, current_app.config)),
             "credits": _public_credits_payload(charged=0, remaining=user.credits_remaining),
             "readiness": {
                 "percent": readiness["overall"]["percent"],
@@ -8297,7 +8298,7 @@ def conversation_start():
             )
         return jsonify(payload), 200
 
-    context_budget = get_context_budget(to_public_plan(user.subscription_plan))
+    context_budget = get_context_budget(effective_plan_key(user, current_app.config))
     preflight_token_hint = _preflight_token_hint_for_conversation(
         user_message,
         chat_history=chat_history,
@@ -8755,7 +8756,7 @@ def conversation_continue():
                 credits_remaining=user.credits_remaining,
                 user=user,
             ),
-            "context_budget": get_context_budget(to_public_plan(user.subscription_plan)),
+            "context_budget": get_context_budget(effective_plan_key(user, current_app.config)),
             "credits": _public_credits_payload(charged=0, remaining=user.credits_remaining),
             "readiness": {
                 "percent": ((current_readiness.get("overall") or {}).get("percent")) if isinstance(current_readiness, dict) else 0,
@@ -8815,7 +8816,7 @@ def conversation_continue():
                 credits_remaining=user.credits_remaining,
                 user=user,
             ),
-            "context_budget": get_context_budget(to_public_plan(user.subscription_plan)),
+            "context_budget": get_context_budget(effective_plan_key(user, current_app.config)),
             "credits": _public_credits_payload(charged=0, remaining=user.credits_remaining),
             "readiness": {
                 "percent": readiness["overall"]["percent"],
@@ -8849,7 +8850,7 @@ def conversation_continue():
             )
         return jsonify(payload), 200
 
-    context_budget = get_context_budget(to_public_plan(user.subscription_plan))
+    context_budget = get_context_budget(effective_plan_key(user, current_app.config))
     preflight_token_hint = _preflight_token_hint_for_conversation(
         user_message,
         chat_history=chat_history,
@@ -10405,7 +10406,7 @@ def conversation_regenerate():
         previous_readiness,
         _compute_readiness(regen_history, session.get("strategy_objective")),
     )
-    context_budget = get_context_budget(to_public_plan(user.subscription_plan))
+    context_budget = get_context_budget(effective_plan_key(user, current_app.config))
     old_response = {
         "content": str(last_msg.get("content") or ""),
         "timestamp": last_msg.get("timestamp"),

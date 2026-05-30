@@ -761,3 +761,48 @@ def get_usage_meter_state(user, app_config, now=None):
 def to_public_plan(plan_key):
     """Safe plan key for public responses."""
     return normalize_plan_key(plan_key)
+
+
+# Subscription statuses that mean the customer is NOT in good standing and must
+# not retain paid-tier entitlements. Stripe webhooks normally also roll the
+# plan back to 'free', but gating on status here is a defense-in-depth backstop
+# for missed/delayed webhooks and for the 'past_due' state (where the plan tier
+# is intentionally left intact while Stripe retries payment).
+RESTRICTED_SUBSCRIPTION_STATUSES = frozenset({
+    'canceled',
+    'cancelled',
+    'unpaid',
+    'incomplete_expired',
+    'past_due',
+    'paused',
+})
+
+
+def subscription_in_good_standing(status):
+    """True when a subscription_status should retain paid entitlements.
+
+    An empty/missing status is treated as good standing so we never strip
+    access from legacy rows or sales-led accounts provisioned outside Stripe.
+    """
+    normalized = str(status or '').strip().lower()
+    if not normalized:
+        return True
+    return normalized not in RESTRICTED_SUBSCRIPTION_STATUSES
+
+
+def effective_plan_key(user, app_config=None):
+    """Plan key to use for *entitlement* decisions (models, tools, context).
+
+    Falls back to 'free' when the subscription is not in good standing, so a
+    canceled / past-due / paused account cannot keep paid-tier access even if
+    subscription_plan hasn't been rolled back yet. Sales-led plans (provisioned
+    outside Stripe consumer billing) are never downgraded by this check.
+    """
+    plan_key = normalize_plan_key(getattr(user, 'subscription_plan', None))
+    if plan_key == 'free':
+        return 'free'
+    if subscription_in_good_standing(getattr(user, 'subscription_status', None)):
+        return plan_key
+    if app_config is not None and is_sales_only_plan(plan_key, app_config):
+        return plan_key
+    return 'free'
