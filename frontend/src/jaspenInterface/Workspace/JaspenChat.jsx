@@ -1552,6 +1552,10 @@ export default function JaspenChat() {
   const manualProgressTimerRef = useRef(null);
   // AbortController for in-flight streams — Stop button calls .abort() on this.
   const streamAbortRef = useRef(null);
+  // Snapshot of the last send so a failed stream can be retried from the bubble
+  // without re-typing. { kind: 'start'|'continue', placeholder, attachments }.
+  const lastSendRef = useRef(null);
+  const [retryingStream, setRetryingStream] = useState(false);
   const stopActiveStream = useCallback(() => {
     try {
       streamAbortRef.current?.abort();
@@ -3201,8 +3205,21 @@ const renderMessageActions = (message, messageKey, idx, total) => {
     && !message?.streaming
     && Boolean(message?.hasMutations)
     && Boolean(message?.canUndo);
+  const canRetryStream = Boolean(message?.streamError) && !isStreamingReply && !retryingStream && !busy;
   return (
     <div className="jas-message-actions">
+      {canRetryStream && (
+        <button
+          type="button"
+          className="jas-message-retry-btn"
+          onClick={retryLastSend}
+          aria-label="Retry sending this message"
+          title="Retry"
+          disabled={retryingStream} aria-disabled={retryingStream}
+        >
+          <FontAwesomeIcon icon={faRotate} /> Retry
+        </button>
+      )}
       <button
         type="button"
         className={`jas-message-copy-btn ${isCopied ? 'is-copied' : ''}`}
@@ -6960,7 +6977,7 @@ useEffect(() => {
     });
   }, []);
 
-  const setStreamingAssistantError = useCallback((messageId, fallbackText, { keepPartial = false } = {}) => {
+  const setStreamingAssistantError = useCallback((messageId, fallbackText, { keepPartial = false, retryable = false } = {}) => {
     setMessages((prev) => prev.map((message) => {
       if (message.id !== messageId) return message;
       const errorNote = fallbackText || 'Sorry — I hit an error. Please try again.';
@@ -6969,6 +6986,9 @@ useEffect(() => {
         ...message,
         text: partialText ? `${partialText}\n\n---\n*${errorNote}*` : errorNote,
         streaming: false,
+        // Flag drives the in-bubble Retry button. Only set when we actually
+        // have a re-sendable last message captured in lastSendRef.
+        streamError: retryable && Boolean(lastSendRef.current),
       };
     }));
   }, []);
@@ -7055,7 +7075,7 @@ useEffect(() => {
         setStreamingAssistantError(placeholderId, 'Stopped.');
         return finalPayload;
       }
-      setStreamingAssistantError(placeholderId, 'Sorry — I hit an error. Please try again.', { keepPartial: true });
+      setStreamingAssistantError(placeholderId, 'Sorry — I hit an error. Please try again.', { keepPartial: true, retryable: true });
       throw streamErr;
     } finally {
       streamAbortRef.current = null;
@@ -7118,7 +7138,7 @@ useEffect(() => {
       return finalPayload;
     } catch (streamErr) {
       setStreamToolStatus('');
-      setStreamingAssistantError(placeholderId, 'Sorry — I hit an error. Please try again.', { keepPartial: true });
+      setStreamingAssistantError(placeholderId, 'Sorry — I hit an error. Please try again.', { keepPartial: true, retryable: true });
       throw streamErr;
     } finally {
       setIsStreamingReply(false);
@@ -7317,6 +7337,28 @@ async function continueConversation(userText, options = {}) {
     return null;
   } finally {
     setBusy(false);
+  }
+}
+
+// Re-send the last user message after a streaming failure. The user message
+// is already in the transcript (sendAIMessage appended it), so we re-invoke
+// the streaming call directly — we do NOT append the user bubble again.
+async function retryLastSend() {
+  const snapshot = lastSendRef.current;
+  if (!snapshot || retryingStream || busy || isStreamingReply) return;
+  // Clear the error flag on the failed assistant bubble(s) so the Retry
+  // button disappears while we re-stream.
+  setMessages((prev) => prev.map((m) => (m.streamError ? { ...m, streamError: false } : m)));
+  setRetryingStream(true);
+  setError(null);
+  try {
+    if (snapshot.kind === 'start' && !sessionId) {
+      await startConversation(snapshot.placeholder, { attachments: snapshot.attachments || [] });
+    } else {
+      await continueConversation(snapshot.placeholder, { attachments: snapshot.attachments || [] });
+    }
+  } finally {
+    setRetryingStream(false);
   }
 }
 
@@ -8739,15 +8781,16 @@ const handleSaveStarter = async () => {
     setPendingFiles([]);
 
     const placeholder = messageText;
+    const sendAttachments = chatFiles.map((item) => item.file).filter(Boolean);
     let resolvedThreadId = sessionId || currentSessionId || null;
     if (!sessionId) {
-      resolvedThreadId = await startConversation(placeholder, {
-        attachments: chatFiles.map((item) => item.file).filter(Boolean),
-      });
+      // Remember this send so the chat bubble can offer a one-click retry if
+      // the stream fails mid-response (see retryLastSend / setStreamingAssistantError).
+      lastSendRef.current = { kind: 'start', placeholder, attachments: sendAttachments };
+      resolvedThreadId = await startConversation(placeholder, { attachments: sendAttachments });
     } else {
-      resolvedThreadId = await continueConversation(placeholder, {
-        attachments: chatFiles.map((item) => item.file).filter(Boolean),
-      });
+      lastSendRef.current = { kind: 'continue', placeholder, attachments: sendAttachments };
+      resolvedThreadId = await continueConversation(placeholder, { attachments: sendAttachments });
     }
 
     if (analysisFiles.length > 0) {

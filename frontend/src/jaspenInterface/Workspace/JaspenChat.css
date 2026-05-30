@@ -3634,6 +3634,33 @@
   cursor: not-allowed;
 }
 
+/* Retry button shown on a chat bubble whose stream failed mid-response. */
+.jas-message-retry-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid #dc2626;
+  background: var(--white);
+  color: #dc2626;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.jas-message-retry-btn:hover:not(:disabled) {
+  background: #dc2626;
+  color: var(--white);
+}
+
+.jas-message-retry-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 .jas-message-bubble > *:first-child,
 .jas-message-content > *:first-child,
 .message-content > *:first-child {
