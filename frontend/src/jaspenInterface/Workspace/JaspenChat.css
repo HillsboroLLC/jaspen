@@ -861,7 +861,7 @@
 }
 .jas-artifact-item--clickable:hover { background: var(--gray-50); }
 .jas-artifact-dl {
-  opacity: 0;
+  opacity: 0.55;
   margin-left: auto;
   transition: opacity var(--transition);
 }

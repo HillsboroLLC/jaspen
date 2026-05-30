@@ -8775,15 +8775,33 @@ const handleSaveStarter = async () => {
   // because the in-session experience does not depend on it.
   async function persistUploadsToServer(items) {
     const list = (Array.isArray(items) ? items : []).filter((f) => f && f.file);
+    let savedCount = 0;
+    let failedCount = 0;
     for (const f of list) {
       try {
         const res = await Jaspen.persistSessionUpload({ file: f.file });
         if (res?.file_id) {
           setSessionUploadFileId(f.name, f.size ?? null, res.file_id);
+          savedCount += 1;
+        } else {
+          failedCount += 1;
         }
       } catch (err) {
-        console.debug('[persistUploadsToServer] failed for', f?.name, err);
+        failedCount += 1;
+        console.error('[persistUploadsToServer] failed for', f?.name, err);
       }
+    }
+    if (savedCount > 0) {
+      showToast(
+        savedCount === 1 ? 'File saved — you can download it from Session Uploads.' : `${savedCount} files saved for download.`,
+        'success'
+      );
+    }
+    if (failedCount > 0) {
+      showToast(
+        failedCount === 1 ? "Couldn't save that file for later download." : `Couldn't save ${failedCount} files for later download.`,
+        'warning'
+      );
     }
   }
 
