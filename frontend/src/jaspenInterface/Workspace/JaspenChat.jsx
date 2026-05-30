@@ -5008,6 +5008,21 @@ useEffect(() => {
         console.error('Speech recognition error:', err);
         recognitionRef.current = null;
         setIsRecording(false);
+        // Surface an actionable message instead of failing silently. The most
+        // common cause is a denied/blocked mic permission, which the user must
+        // grant in the browser (and on macOS, System Settings → Privacy →
+        // Microphone → Chrome) — we can't grant it from JS.
+        if (err === 'not-allowed' || err === 'service-not-allowed') {
+          showToast(
+            'Microphone access is blocked. Click the mic/site icon in your browser address bar and allow microphone for jaspen.ai (on macOS also check System Settings → Privacy & Security → Microphone → Chrome), then try again.',
+            'warning',
+            { durationMs: 9000 },
+          );
+        } else if (err === 'audio-capture') {
+          showToast('No microphone was found. Connect a mic and try again.', 'warning');
+        } else if (err) {
+          showToast('Voice input hit an error. Please try again.', 'warning');
+        }
       };
 
       recognition.onend = () => {
@@ -12485,8 +12500,35 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
             </span>
           )}
           {Array.isArray(connectedDataSources) && (() => {
-            // Show ALL sources that were actually used this session — persists even after user removes from toolbar
-            const usedSrcs = connectedDataSources.filter((src) => usedContextSourceIds.has(src.id));
+            // Show ALL sources that were actually used this session. We union two
+            // signals so the chips survive a page reload (usedContextSourceIds is
+            // in-memory only and resets on refresh):
+            //   1. usedContextSourceIds — live, set when a context send succeeds.
+            //   2. Message history — every context-attached send writes a
+            //      "[Data context attached: <labels>]" marker into the user
+            //      message, which is persisted/reloaded with the thread. We scan
+            //      those markers and map the labels back to source ids.
+            const usedIds = new Set(usedContextSourceIds);
+            const markerRe = /\[Data context attached:\s*([^\]]+)\]/gi;
+            (Array.isArray(messages) ? messages : []).forEach((m) => {
+              const txt = typeof m?.text === 'string' ? m.text : '';
+              if (!txt) return;
+              let match;
+              while ((match = markerRe.exec(txt)) !== null) {
+                String(match[1] || '')
+                  .split(',')
+                  .map((s) => s.trim().toLowerCase())
+                  .filter(Boolean)
+                  .forEach((label) => {
+                    const hit = connectedDataSources.find(
+                      (src) => String(src.label || '').trim().toLowerCase() === label
+                        || String(src.id || '').trim().toLowerCase() === label
+                    );
+                    if (hit) usedIds.add(hit.id);
+                  });
+              }
+            });
+            const usedSrcs = connectedDataSources.filter((src) => usedIds.has(src.id));
             if (usedSrcs.length === 0) return null;
             return (
               <>
