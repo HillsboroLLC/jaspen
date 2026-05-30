@@ -854,6 +854,18 @@
   color: var(--gray-600);
 }
 .jas-artifact-item--upload:hover { background: none; }
+/* Clickable (downloadable) uploads regain affordances and reveal a download
+   glyph on hover. */
+.jas-artifact-item--clickable {
+  cursor: pointer;
+}
+.jas-artifact-item--clickable:hover { background: var(--gray-50); }
+.jas-artifact-dl {
+  opacity: 0;
+  margin-left: auto;
+  transition: opacity var(--transition);
+}
+.jas-artifact-item--clickable:hover .jas-artifact-dl { opacity: 1; }
 .jas-insights-body {
   flex: 1;
   overflow-y: auto;

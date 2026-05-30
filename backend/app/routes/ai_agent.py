@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify, current_app, Response, stream_with_context
+from flask import Blueprint, request, jsonify, current_app, Response, stream_with_context, send_file
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from flask_mail import Message
 from datetime import datetime
@@ -2234,6 +2234,65 @@ def _extract_word_attachment_text(*, content, media_type, filename):
     if decoded:
         return decoded
     return (content or b"").decode("latin-1", errors="ignore").strip()
+
+
+def _chat_attachments_root():
+    # backend/data/user_uploads (shared root with insights datasets)
+    backend_root = os.path.dirname(current_app.root_path)
+    return os.path.join(backend_root, 'data', 'user_uploads')
+
+
+def _chat_attachment_path(user_id, file_id, *, suffix='', create=False):
+    """Resolve a safe, user-namespaced path for a stored chat attachment.
+
+    The path is always confined to the requesting user's own directory, which
+    is what makes the download endpoint's ownership check sound.
+    """
+    base = os.path.realpath(_chat_attachments_root())
+    user_dir = os.path.realpath(os.path.join(base, str(user_id), 'chat_attachments'))
+    if os.path.commonpath([base, user_dir]) != base:
+        raise ValueError('Invalid attachment path')
+    if create:
+        os.makedirs(user_dir, exist_ok=True)
+    safe_id = re.sub(r'[^A-Za-z0-9_-]+', '', str(file_id or ''))
+    if not safe_id:
+        raise ValueError('Invalid attachment id')
+    path = os.path.realpath(os.path.join(user_dir, f'{safe_id}{suffix}'))
+    if os.path.commonpath([base, path]) != base:
+        raise ValueError('Invalid attachment path')
+    return path
+
+
+def _store_chat_attachment_bytes(user_id, raw_bytes, *, name, media_type):
+    """Persist attachment bytes + a small metadata sidecar; return the file id.
+
+    Storing the bytes server-side is what lets a user re-download an attachment
+    later, including from a different device, after the in-memory copy is gone.
+    """
+    file_id = uuid.uuid4().hex
+    data_path = _chat_attachment_path(user_id, file_id, create=True)
+    with open(data_path, 'wb') as fh:
+        fh.write(raw_bytes)
+    try:
+        meta_path = _chat_attachment_path(user_id, file_id, suffix='.json')
+        with open(meta_path, 'w', encoding='utf-8') as fh:
+            json.dump({'name': name, 'type': media_type}, fh)
+    except Exception:
+        current_app.logger.exception('Failed to write chat attachment metadata')
+    return file_id
+
+
+def _load_chat_attachment_meta(user_id, file_id):
+    try:
+        meta_path = _chat_attachment_path(user_id, file_id, suffix='.json')
+    except ValueError:
+        return {}
+    try:
+        with open(meta_path, 'r', encoding='utf-8') as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
 
 
 def _serialize_chat_attachment(attachment):
@@ -9080,6 +9139,73 @@ def conversation_continue():
         "visibility": session.get("visibility") or "private",
         "objective_options": list(STRATEGY_OBJECTIVE_OPTIONS),
     }), 200
+
+
+@ai_agent_bp.route("/uploads", methods=["POST"])
+@jwt_required()
+@limiter.limit("30 per minute")
+def persist_session_upload():
+    """Store an uploaded file server-side so it stays downloadable later.
+
+    Accepts any file type (the session-uploads tracker shows every upload, not
+    just chat-model-supported ones) and returns a file id the client records so
+    the user can re-download it from any device.
+    """
+    user_id = get_jwt_identity()
+    uploaded = request.files.get("file")
+    if not uploaded or not getattr(uploaded, "filename", None):
+        return jsonify({"error": "No file provided"}), 400
+
+    filename = _safe_attachment_name(getattr(uploaded, "filename", "") or "attachment")
+    media_type = str(getattr(uploaded, "mimetype", "") or "").strip() or "application/octet-stream"
+
+    raw = uploaded.read()
+    if not raw:
+        return jsonify({"error": f"{filename} is empty."}), 400
+    if len(raw) > MAX_CONVERSATION_ATTACHMENT_BYTES:
+        max_mb = MAX_CONVERSATION_ATTACHMENT_BYTES // (1024 * 1024)
+        return jsonify({"error": f"{filename} exceeds the {max_mb} MB upload limit."}), 400
+
+    try:
+        file_id = _store_chat_attachment_bytes(user_id, raw, name=filename, media_type=media_type)
+    except Exception:
+        current_app.logger.exception("Failed to persist session upload")
+        return jsonify({"error": "Could not save the file. Please try again."}), 500
+
+    return jsonify({
+        "file_id": file_id,
+        "name": filename,
+        "size": len(raw),
+        "type": media_type,
+    }), 200
+
+
+@ai_agent_bp.route("/attachments/<file_id>/download", methods=["GET"])
+@jwt_required()
+def download_chat_attachment(file_id):
+    """Stream back a previously uploaded chat attachment.
+
+    Ownership is enforced structurally: the file is only ever looked up inside
+    the authenticated user's own directory, so a user can never reach another
+    user's files by guessing an id.
+    """
+    user_id = get_jwt_identity()
+    try:
+        data_path = _chat_attachment_path(user_id, file_id)
+    except ValueError:
+        return jsonify({"error": "Invalid attachment id"}), 400
+    if not os.path.exists(data_path):
+        return jsonify({"error": "Attachment not found or no longer available"}), 404
+
+    meta = _load_chat_attachment_meta(user_id, file_id)
+    download_name = _safe_attachment_name(meta.get("name") or "attachment")
+    media_type = str(meta.get("type") or "").strip() or "application/octet-stream"
+    return send_file(
+        data_path,
+        mimetype=media_type,
+        as_attachment=True,
+        download_name=download_name,
+    )
 
 
 @ai_agent_bp.route("/readiness/spec", methods=["GET"])

@@ -8740,6 +8740,7 @@ const handleSaveStarter = async () => {
           size: f.size ?? null,
           type: f.type || 'application/octet-stream',
           uploadedAt: new Date().toISOString(),
+          fileId: f.fileId || null,
         }));
       const next = additions.length ? [...prev, ...additions] : prev;
       // Persist per-thread so uploads survive a hard refresh. Non-image/PDF/Word
@@ -8748,6 +8749,42 @@ const handleSaveStarter = async () => {
       persistSessionUploads(next);
       return next;
     });
+  }
+
+  // Attach a server-side file id to an already-tracked upload (matched by
+  // name+size) so it becomes downloadable from any device, then re-persist.
+  function setSessionUploadFileId(name, size, fileId) {
+    if (!name || !fileId) return;
+    setSessionUploads((prev) => {
+      let changed = false;
+      const next = (Array.isArray(prev) ? prev : []).map((f) => {
+        if (f && f.name === name && (f.size ?? null) === (size ?? null) && !f.fileId) {
+          changed = true;
+          return { ...f, fileId };
+        }
+        return f;
+      });
+      if (!changed) return prev;
+      persistSessionUploads(next);
+      return next;
+    });
+  }
+
+  // Save selected files to the server (best effort) so they remain
+  // downloadable later. Runs in the background; failures are non-blocking
+  // because the in-session experience does not depend on it.
+  async function persistUploadsToServer(items) {
+    const list = (Array.isArray(items) ? items : []).filter((f) => f && f.file);
+    for (const f of list) {
+      try {
+        const res = await Jaspen.persistSessionUpload({ file: f.file });
+        if (res?.file_id) {
+          setSessionUploadFileId(f.name, f.size ?? null, res.file_id);
+        }
+      } catch (err) {
+        console.debug('[persistUploadsToServer] failed for', f?.name, err);
+      }
+    }
   }
 
   // localStorage helpers for upload persistence, keyed by the active thread id.
@@ -8781,6 +8818,9 @@ const handleSaveStarter = async () => {
     // uploads tracker so it's distinguishable from agent-created artifacts.
     setPendingFiles((prev) => [...prev, ...toAdd]);
     registerSessionUploads(toAdd);
+    // Save the bytes server-side in the background so the file stays
+    // downloadable later (and from other devices), not just this session.
+    void persistUploadsToServer(toAdd);
     e.target.value = '';
   }
 
@@ -12553,24 +12593,30 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               (reload-safe) with in-memory pending uploads (shown the instant a
               file is attached, before it's sent). */}
           {sessionId && (() => {
-            const seen = new Set();
+            const seen = new Map();
             const uploads = [];
-            const addUpload = (name, size) => {
+            const addUpload = (name, size, fileId) => {
               const nm = String(name || '').trim();
               if (!nm) return;
               const key = `${nm}::${size ?? ''}`;
-              if (seen.has(key)) return;
-              seen.add(key);
-              uploads.push({ name: nm, size: Number.isFinite(size) ? size : null });
+              if (seen.has(key)) {
+                // Backfill a file id if a later source has one for the same file.
+                const existing = seen.get(key);
+                if (existing && !existing.fileId && fileId) existing.fileId = fileId;
+                return;
+              }
+              const entry = { name: nm, size: Number.isFinite(size) ? size : null, fileId: fileId || null };
+              seen.set(key, entry);
+              uploads.push(entry);
             };
             (Array.isArray(messages) ? messages : []).forEach((m) => {
               if (m?.role !== 'user') return;
               (Array.isArray(m?.attachments) ? m.attachments : []).forEach((a) => {
-                addUpload(a?.name, a?.size);
+                addUpload(a?.name, a?.size, a?.file_id || a?.fileId);
               });
             });
             (Array.isArray(sessionUploads) ? sessionUploads : []).forEach((f) => {
-              addUpload(f?.name, f?.size);
+              addUpload(f?.name, f?.size, f?.fileId);
             });
             return (
               <div className="jas-artifacts-wrap">
@@ -12586,17 +12632,41 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                   <div className="jas-artifacts-dropdown" role="menu">
                     <p className="jas-artifacts-label">Session Uploads</p>
                     {uploads.length > 0 ? (
-                      uploads.map((f, i) => (
-                        <div className="jas-artifact-row" key={`${f.name}-${i}`}>
-                          <div
-                            className="jas-artifact-item jas-artifact-item--upload"
-                            title={`Uploaded by you${f.size ? ` · ${Math.max(1, Math.round(f.size / 1024))} KB` : ''}`}
-                          >
-                            <FontAwesomeIcon icon={faFolder} />
-                            <span>{f.name}</span>
+                      uploads.map((f, i) => {
+                        const sizeLabel = f.size ? ` · ${Math.max(1, Math.round(f.size / 1024))} KB` : '';
+                        const canDownload = Boolean(f.fileId);
+                        return (
+                          <div className="jas-artifact-row" key={`${f.name}-${i}`}>
+                            {canDownload ? (
+                              <button
+                                type="button"
+                                className="jas-artifact-item jas-artifact-item--upload jas-artifact-item--clickable"
+                                title={`Download${sizeLabel ? ` (${sizeLabel.replace(' · ', '')})` : ''}`}
+                                onClick={async () => {
+                                  try {
+                                    await Jaspen.downloadSessionUpload({ fileId: f.fileId, name: f.name });
+                                  } catch (err) {
+                                    console.error('[downloadSessionUpload] failed', err);
+                                    showToast(`Couldn't download ${f.name}. Please try again.`, 'error');
+                                  }
+                                }}
+                              >
+                                <FontAwesomeIcon icon={faFolder} />
+                                <span>{f.name}</span>
+                                <FontAwesomeIcon icon={faDownload} className="jas-artifact-dl" />
+                              </button>
+                            ) : (
+                              <div
+                                className="jas-artifact-item jas-artifact-item--upload"
+                                title={`Uploaded by you${sizeLabel} · re-attach to enable download`}
+                              >
+                                <FontAwesomeIcon icon={faFolder} />
+                                <span>{f.name}</span>
+                              </div>
+                            )}
                           </div>
-                        </div>
-                      ))
+                        );
+                      })
                     ) : (
                       <p className="jas-artifacts-empty">No uploads yet</p>
                     )}

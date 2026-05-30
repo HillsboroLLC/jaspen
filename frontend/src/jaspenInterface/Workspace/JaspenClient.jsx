@@ -34,6 +34,10 @@ export const endpoints = {
   
   // Analyses
   listAnalyses:   (threadId) => `${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(threadId)}/analyses`,
+
+  // Session uploads (server-side storage so files stay downloadable from anywhere)
+  persistUpload:  `${API_BASE}/api/v1/ai-agent/uploads`,
+  downloadUpload: (fileId) => `${API_BASE}/api/v1/ai-agent/attachments/${encodeURIComponent(fileId)}/download`,
   
   // Legacy chat (keep for now)
   chat:       `${API_BASE}/api/v1/ai-agent/conversation/continue`,
@@ -1176,6 +1180,43 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
     if (thread_id) form.append('thread_id', thread_id);
     if (prompt) form.append('prompt', prompt);
     return postForm(endpoints.analyzeData, form, { withSid: true, retryable: true });
+  },
+
+  // Save an uploaded file server-side so it stays downloadable later from any
+  // device. Returns { file_id, name, size, type }.
+  persistSessionUpload: async ({ file } = {}) => {
+    if (!file) throw new Error('file is required');
+    const form = new FormData();
+    form.append('file', file);
+    return postForm(endpoints.persistUpload, form, { withSid: true, retryable: true });
+  },
+
+  // Fetch a previously stored upload and trigger a browser download.
+  downloadSessionUpload: async ({ fileId, name } = {}) => {
+    if (!fileId) throw new Error('fileId is required');
+    const resp = await fetch(endpoints.downloadUpload(fileId), {
+      method: 'GET',
+      credentials: 'include',
+      cache: 'no-store',
+      headers: buildAuthHeaders({}, 'GET'),
+    });
+    if (!resp.ok) {
+      await parseErrorResponse(resp);
+    }
+    const blob = await resp.blob();
+    const objectUrl = window.URL.createObjectURL(blob);
+    try {
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = name || 'download';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } finally {
+      // Revoke a touch later so the click has time to start the download.
+      window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 1500);
+    }
+    return true;
   },
 
   uploadBatchIdeas: async (file) => {
