@@ -2060,7 +2060,13 @@ Rules:
 - For each dimension, assign a confidence level: "high" (evidence from conversation), "medium" (reasonable inference), "low" (limited signal), or "assumed" (no direct evidence — extrapolated from patterns).
 - For each dimension, identify the source: "conversation" (explicitly stated), "connector" (from connected data source), "inferred" (logical derivation), or "assumed" (industry/pattern-based).
 - For any dimension with confidence "low" or "assumed", populate what_would_improve with a specific, actionable suggestion.
-- The jaspen_score is the weighted average of the 6 dimension scores using the weights above.
+- MISSING-VARIABLE PENALTY (critical): the score must reward how well-evidenced an idea is, not how good it sounds. Score only what THIS idea actually gives you — never borrow context from other ideas. When the inputs needed to judge a dimension are absent or only "assumed", that dimension's score MUST be depressed, not given the benefit of the doubt:
+    - confidence "high"   → no penalty.
+    - confidence "medium" → cap that dimension at 75.
+    - confidence "low"    → cap that dimension at 60.
+    - confidence "assumed"→ cap that dimension at 45.
+  Apply the cap to the dimension score itself (so it flows into the weighted jaspen_score). evidence_quality must reflect the share of dimensions backed by real signal: if most dimensions are "assumed", evidence_quality is low (≤40). A vague or under-specified idea must end up with a meaningfully lower jaspen_score than a fully-evidenced one — that gap is the whole point of the trade-off.
+- The jaspen_score is the weighted average of the 6 (capped) dimension scores using the weights above.
 - score_category: "Excellent" (80-100), "Good" (60-79), "Fair" (40-59), "At Risk" (0-39).
 
 JSON format:
