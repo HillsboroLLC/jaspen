@@ -6061,6 +6061,52 @@ def get_thread_wbs(thread_id):
             except Exception:
                 pass
 
+        # Backfill identity on legacy plans (generated before identity stamping)
+        # so the header + Session Artifacts can name the originating idea instead
+        # of showing a generic "Execution plan" / "AI Generated Project Plan".
+        # Resolve the idea this plan belongs to, stamp it, and persist durably.
+        if isinstance(project_wbs, dict):
+            current_name = str(project_wbs.get('name') or '').strip().lower()
+            needs_backfill = (
+                not str(project_wbs.get('scorecard_name') or '').strip()
+                or current_name in _GENERIC_WBS_NAMES
+            )
+            if needs_backfill:
+                candidate_id = (
+                    scorecard_id
+                    or (str(project_wbs.get('scorecard_id')).strip() if project_wbs.get('scorecard_id') else None)
+                    or (str(td.get('active_execution_scorecard_id')).strip() if isinstance(td, dict) and td.get('active_execution_scorecard_id') else None)
+                )
+                resolved_sc = None
+                if candidate_id:
+                    try:
+                        _kind, _c, _k, _carrier = _find_scorecard_carrier(user_id, thread_id, candidate_id)
+                        if isinstance(_carrier, dict):
+                            resolved_sc = _carrier.get('result') if isinstance(_carrier.get('result'), dict) else _carrier
+                    except Exception:
+                        resolved_sc = None
+                if isinstance(resolved_sc, dict):
+                    before = (
+                        project_wbs.get('scorecard_id'),
+                        project_wbs.get('scorecard_name'),
+                        project_wbs.get('name'),
+                    )
+                    _stamp_wbs_identity(project_wbs, resolved_sc, fallback_id=candidate_id)
+                    after = (
+                        project_wbs.get('scorecard_id'),
+                        project_wbs.get('scorecard_name'),
+                        project_wbs.get('name'),
+                    )
+                    if after != before:
+                        try:
+                            key = str(project_wbs.get('scorecard_id') or candidate_id or '').strip() or None
+                            _store_thread_wbs(td, key, project_wbs)
+                            all_data[thread_id] = td
+                            _save_scenarios(user_id, all_data)
+                            _register_execution_plan_artifact(user_id, thread_id, project_wbs)
+                        except Exception:
+                            current_app.logger.exception("[get_thread_wbs] identity backfill persist failed")
+
         # When the caller didn't scope by ?scorecard_id (legacy __execution__
         # route), surface the idea this stored plan belongs to so the workspace
         # header can still name it instead of falling back to a bare label.
