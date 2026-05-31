@@ -5385,6 +5385,11 @@ def generate_ai_wbs(thread_id):
         normalized_wbs['ai_summary'] = str(raw_wbs.get('summary') or '').strip()
         if scenario_id:
             normalized_wbs['source_scenario_id'] = scenario_id
+        # Stamp the originating idea's id + name so this plan knows which idea it
+        # belongs to (header naming + Session Artifacts registration). Built from
+        # the resolved scorecard, falling back to the explicit CTA scorecard_id.
+        _stamp_wbs_identity(normalized_wbs, current_scorecard, fallback_id=scorecard_id)
+        canonical_scorecard_id = str(normalized_wbs.get('scorecard_id') or scorecard_id or '').strip() or None
 
         limits = get_wbs_limits_for_plan(plan_key)
         max_tasks = limits.get('max_tasks_per_wbs')
@@ -5411,9 +5416,15 @@ def generate_ai_wbs(thread_id):
             }), 403
 
         if commit:
-            _store_thread_wbs(thread_data, scorecard_id, normalized_wbs)
+            # Key the plan under the canonical idea id so it's always registered
+            # to the originating idea (never just the thread-level mirror).
+            _store_thread_wbs(thread_data, canonical_scorecard_id, normalized_wbs)
             all_data[thread_id] = thread_data
             _save_scenarios(user_id, all_data)
+            # Register the plan as a Session Artifact on the originating idea so
+            # it shows up in the artifacts list even though it was built from the
+            # workspace CTA / trade-off table rather than the chat tool.
+            _register_execution_plan_artifact(user_id, thread_id, normalized_wbs)
             _audit_strategy_event(
                 'wbs.generated',
                 user_id=user_id,
@@ -5888,6 +5899,110 @@ def _store_thread_wbs(td, scorecard_id, normalized_wbs):
     td['project_wbs'] = normalized_wbs
 
 
+_GENERIC_WBS_NAMES = {
+    '', 'execution wbs', 'execution plan', 'ai generated project plan',
+    'ai generated program plan',
+}
+_GENERIC_IDEA_NAMES = {
+    '', 'untitled idea', 'jaspen analysis', 'jaspen intake', 'execution wbs',
+    'ai generated project plan',
+}
+
+
+def _wbs_idea_identity(scorecard, fallback_id=None):
+    """Return (canonical_id, display_name) for the idea a plan belongs to,
+    pulled from the resolved scorecard. Mirrors the frontend's name-picking
+    so the plan carries the same identity the scorecard shows."""
+    sc = scorecard if isinstance(scorecard, dict) else {}
+    idea_id = str(sc.get('id') or sc.get('analysis_id') or fallback_id or '').strip()
+    overrides = sc.get('display_overrides') if isinstance(sc.get('display_overrides'), dict) else {}
+    name = ''
+    for cand in (
+        overrides.get('title'), sc.get('name'), sc.get('project_name'),
+        sc.get('label'), sc.get('initiative_name'),
+    ):
+        value = str(cand or '').strip()
+        if value and value.lower() not in _GENERIC_IDEA_NAMES:
+            name = value
+            break
+    return idea_id, name
+
+
+def _stamp_wbs_identity(normalized_wbs, scorecard, fallback_id=None):
+    """Stamp the originating idea's id + name onto a plan so every plan — no
+    matter where it was built — knows which idea it belongs to and can show
+    that idea's name in its header and in the Session Artifacts list."""
+    if not isinstance(normalized_wbs, dict):
+        return normalized_wbs
+    idea_id, idea_name = _wbs_idea_identity(scorecard, fallback_id)
+    if idea_id:
+        normalized_wbs['scorecard_id'] = idea_id
+    if idea_name:
+        normalized_wbs['scorecard_name'] = idea_name
+        normalized_wbs['idea_name'] = idea_name
+        current_name = str(normalized_wbs.get('name') or '').strip()
+        if current_name.lower() in _GENERIC_WBS_NAMES:
+            normalized_wbs['name'] = f'{idea_name} — Execution Plan'
+    return normalized_wbs
+
+
+def _register_execution_plan_artifact(user_id, thread_id, normalized_wbs):
+    """Append (or replace) an execution_plan artifact in the originating
+    session's chat_history so the plan appears in that idea's Session Artifacts
+    list regardless of where it was built (chat tool, workspace CTA, or the
+    trade-off table). Replaces any prior plan artifact for the SAME idea so we
+    don't stack duplicates when a plan is regenerated."""
+    try:
+        sessions = load_user_sessions(user_id) or {}
+        session_key, session = _resolve_session_entry(sessions, thread_id)
+        if not isinstance(session, dict):
+            return False
+        raw = session.get('chat_history')
+        if not isinstance(raw, list):
+            result_blob = session.get('result')
+            raw = (
+                result_blob.get('chat_history')
+                if isinstance(result_blob, dict) and isinstance(result_blob.get('chat_history'), list)
+                else []
+            )
+        sid = str(normalized_wbs.get('scorecard_id') or '').strip()
+        idea_name = str(normalized_wbs.get('scorecard_name') or normalized_wbs.get('idea_name') or '').strip()
+        task_count = len(normalized_wbs.get('tasks') or [])
+        now_iso = datetime.utcnow().isoformat()
+
+        kept = []
+        for msg in raw:
+            if isinstance(msg, dict):
+                art = msg.get('artifact') if isinstance(msg.get('artifact'), dict) else None
+                if art and str(art.get('type') or '') == 'execution_plan':
+                    art_sid = str((art.get('data') or {}).get('scorecard_id') or '').strip()
+                    if sid and art_sid == sid:
+                        continue  # drop the stale plan for this same idea
+            kept.append(msg)
+
+        label = idea_name or 'this idea'
+        plural = '' if task_count == 1 else 's'
+        kept.append({
+            'role': 'assistant',
+            'content': (
+                f'Execution plan ready for "{label}" — {task_count} task{plural}. '
+                'Open the Execution view to review the list, board, and timeline.'
+            ),
+            'text': f'Execution plan ready for "{label}" — {task_count} task{plural}.',
+            'artifact': {'type': 'execution_plan', 'data': normalized_wbs},
+            'timestamp': now_iso,
+        })
+        session['chat_history'] = kept
+        if isinstance(session.get('result'), dict):
+            session['result']['chat_history'] = kept
+        session['timestamp'] = now_iso
+        sessions[session_key or thread_id] = session
+        return save_user_sessions(user_id, sessions)
+    except Exception:
+        current_app.logger.exception("[_register_execution_plan_artifact] failed")
+        return False
+
+
 @strategy_bp.route('/threads/<thread_id>/wbs', methods=['GET'])
 @jwt_required()
 def get_thread_wbs(thread_id):
@@ -5912,9 +6027,17 @@ def get_thread_wbs(thread_id):
             except Exception:
                 pass
 
+        # When the caller didn't scope by ?scorecard_id (legacy __execution__
+        # route), surface the idea this stored plan belongs to so the workspace
+        # header can still name it instead of falling back to a bare label.
+        resolved_scorecard_id = scorecard_id or (
+            str(project_wbs.get('scorecard_id')).strip()
+            if isinstance(project_wbs, dict) and project_wbs.get('scorecard_id')
+            else None
+        )
         return jsonify({
             'thread_id': thread_id,
-            'scorecard_id': scorecard_id,
+            'scorecard_id': resolved_scorecard_id,
             'project_wbs': project_wbs,
             'limits': get_wbs_limits_for_plan(plan_key),
         }), 200

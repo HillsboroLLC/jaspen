@@ -2979,7 +2979,22 @@ const renderInlineExecutionArtifact = (wbs, opts = {}) => {
   });
   const donePct = tasks.length ? Math.round((statusCount.done / tasks.length) * 100) : 0;
   const inProgressPct = tasks.length ? Math.round((statusCount.in_progress / tasks.length) * 100) : 0;
-  const wsHref = opts.threadId ? `/workspace/${encodeURIComponent(opts.threadId)}/__execution__` : null;
+  // Name the idea this plan belongs to (stamped by the backend) so every plan
+  // in the artifacts list shows which idea it came from — not a bare label.
+  const _genericPlanNames = new Set(['', 'execution wbs', 'execution plan', 'ai generated project plan', 'ai generated program plan']);
+  const _planName = String(wbs?.name || '').trim();
+  const ideaName = String(
+    wbs?.scorecard_name || wbs?.idea_name
+    || (_genericPlanNames.has(_planName.toLowerCase()) ? '' : _planName)
+    || ''
+  ).trim();
+  // Open the plan scoped to its originating idea (?idea=) so the workspace
+  // header names it; fall back to the legacy route only when we have no id.
+  const execScorecardId = String(wbs?.scorecard_id || '').trim();
+  const execRoute = execScorecardId
+    ? `__execution__?idea=${encodeURIComponent(execScorecardId)}`
+    : '__execution__';
+  const wsHref = opts.threadId ? `/workspace/${encodeURIComponent(opts.threadId)}/${execRoute}` : null;
   return (
     <div style={{
       background: '#fff', border: '1px solid #e9ecef', borderRadius: 14,
@@ -2991,6 +3006,11 @@ const renderInlineExecutionArtifact = (wbs, opts = {}) => {
           <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 10.5, color: '#a0036c', letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 600 }}>
             Execution plan
           </div>
+          {ideaName && (
+            <div style={{ fontSize: 15, fontWeight: 600, color: '#161f3b', marginTop: 3 }}>
+              {ideaName}
+            </div>
+          )}
           <div style={{ fontSize: 13, color: '#5a6585', marginTop: 4 }}>
             {phases.size} phase{phases.size === 1 ? '' : 's'} · {tasks.length} task{tasks.length === 1 ? '' : 's'} · <strong style={{ color: '#161f3b' }}>{donePct}% done</strong>
           </div>
@@ -3000,7 +3020,7 @@ const renderInlineExecutionArtifact = (wbs, opts = {}) => {
             type="button"
             onClick={() => {
               if (opts.onOpenWorkspaceRoute) {
-                void opts.onOpenWorkspaceRoute(opts.threadId, '__execution__');
+                void opts.onOpenWorkspaceRoute(opts.threadId, execRoute);
               } else {
                 window.open(wsHref, '_blank', 'noopener,noreferrer');
               }
@@ -7627,9 +7647,14 @@ const openExecutionPage = useCallback((threadIdValue) => {
 
 const openWorkspaceRoute = useCallback((threadIdValue, artifactIdValue) => {
   const tid = String(threadIdValue || '').trim();
-  const aid = String(artifactIdValue || '').trim();
-  if (!tid || !aid) return false;
-  const href = `/workspace/${encodeURIComponent(tid)}/${encodeURIComponent(aid)}`;
+  const raw = String(artifactIdValue || '').trim();
+  if (!tid || !raw) return false;
+  // Preserve an optional query suffix (e.g. "__execution__?idea=<id>") so we
+  // don't URL-encode the "?"/"=" and break the route's query string.
+  const qIdx = raw.indexOf('?');
+  const pathPart = qIdx >= 0 ? raw.slice(0, qIdx) : raw;
+  const queryPart = qIdx >= 0 ? raw.slice(qIdx) : '';
+  const href = `/workspace/${encodeURIComponent(tid)}/${encodeURIComponent(pathPart)}${queryPart}`;
   window.open(href, '_blank', 'noopener,noreferrer');
   return true;
 }, []);

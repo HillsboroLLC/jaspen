@@ -5534,6 +5534,12 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             or str(thread_data.get("active_execution_scorecard_id") or "").strip()
             or None
         )
+        # Stamp the originating idea's id + name so the plan names that idea in
+        # its header and in the Session Artifacts list (the chat flow persists
+        # this artifact to chat_history, so no separate registration needed).
+        from .strategy import _stamp_wbs_identity
+        _stamp_wbs_identity(normalized_wbs, scorecard, fallback_id=exec_scorecard_id)
+        exec_scorecard_id = str(normalized_wbs.get("scorecard_id") or exec_scorecard_id or "").strip() or None
         _store_thread_wbs(thread_data, exec_scorecard_id, normalized_wbs)
         all_data[thread_id] = thread_data
         _save_scenarios(user_id, all_data)
