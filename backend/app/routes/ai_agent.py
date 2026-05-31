@@ -494,7 +494,8 @@ _SYSTEM_PROMPT_PREFIX = (
     "When the user asks to rename the initiative, project, or title, call rename_thread with the requested new name. "
     "EDITING THE OPEN SCORECARD: the scorecard the user has open in the workspace is directly editable through chat — edit it IN PLACE, never spawn a duplicate for a change to the idea they're viewing. "
     "(a) For a wording / narrative tweak that does NOT change the underlying analysis (reword the executive summary, key insights, assumptions, risk or recommendation text, rationale), call patch_scorecard — it edits that field in place on the open idea and leaves the score untouched. "
-    "(b) For a change that DOES affect the analysis or score (a different budget, timeline, team, market, pricing, or any assumption that moves the numbers), call generate_scorecard with rescore_scorecard_id set to the OPEN scorecard's id (the Active scorecard ID in the workspace view context). This re-scores that SAME idea in place — you re-evaluate every dimension holistically so the score stays consistent with the new inputs. "
+    "DECISION TEST: ask 'does this change any FACT or ASSUMPTION the score depends on?' If it only changes HOW the text reads — tone, clarity, length, polish, phrasing, grammar — it is a wording tweak: use patch_scorecard and NEVER re-score. Requests like 'make it more executive-friendly', 'make it clearer / punchier / more concise', 'tighten this', 'reword', 'fix the grammar', 'change word X to Y', or 'rewrite the summary' are ALL wording tweaks — the numbers MUST NOT move. Rewriting the same facts in better prose is never a re-score. "
+    "(b) For a change that DOES affect the analysis or score (a different budget, timeline, team, market, pricing, or any assumption that moves the numbers — i.e. the underlying facts change, not just the prose), call generate_scorecard with rescore_scorecard_id set to the OPEN scorecard's id (the Active scorecard ID in the workspace view context). This re-scores that SAME idea in place — you re-evaluate every dimension holistically so the score stays consistent with the new inputs. If you are unsure whether an edit is wording or a real input change, treat it as wording and use patch_scorecard. "
     "You (the AI) may change scores and dimensions this way because you re-factor against all the information; never tell the user a score is 'locked' to you, and never ask which idea they mean for an edit — act on the on-screen one. Only create a brand-new scorecard (generate_scorecard WITHOUT rescore_scorecard_id) for a genuinely new idea or a side-by-side variation the user wants to keep alongside the original. "
     "The workspace includes an Execution tab with three views: a List view grouped by phase, "
     "a Board view showing a Kanban grouped by status (To Do / In Progress / Blocked / Done), "
@@ -1144,8 +1145,9 @@ def _view_context_prompt_suffix(view_context):
         lines.append(
             "- The user is viewing a completed scorecard and can edit it through chat. "
             "Do NOT ask intake questions or ask for previously provided intake data again. "
-            "To edit the scorecard they're viewing, edit it IN PLACE: call patch_scorecard for a wording/narrative tweak, "
-            "or generate_scorecard with rescore_scorecard_id (the active scorecard id) to re-score that same idea after an input change. "
+            "To edit the scorecard they're viewing, edit it IN PLACE: call patch_scorecard for a wording/narrative tweak "
+            "(tone, clarity, length, phrasing, 'more executive-friendly', 'change word X to Y' — these NEVER move the score), "
+            "or generate_scorecard with rescore_scorecard_id (the active scorecard id) to re-score that same idea ONLY when an underlying fact/assumption changes. "
             "Only call generate_scorecard WITHOUT rescore_scorecard_id for a genuinely new idea or a variation they want kept alongside this one. "
             "Never ask which idea they mean — act on the open one. "
             "Use your judgment: confirmations and pure questions don't need a tool call."
@@ -2958,7 +2960,7 @@ def _scorecard_content_prompt_suffix(session, view_context):
         "\n\n[SCORED IDEAS IN THIS THREAD — these are the scorecards the user has generated. "
         "Use this data to answer questions like 'which of these are duplicates / nearly identical / strongest', "
         "to compare or rank ideas, or to reference specific scores when explaining a number. "
-        "To edit the OPEN idea, edit it in place: patch_scorecard for wording, or generate_scorecard with rescore_scorecard_id to re-score it. "
+        "To edit the OPEN idea, edit it in place: patch_scorecard for wording/tone/clarity (never moves the score), or generate_scorecard with rescore_scorecard_id to re-score it ONLY when an underlying fact/assumption changes. "
         "When the user asks to score a genuinely new variation to keep alongside the others, call generate_scorecard (no rescore_scorecard_id). "
         "When they ask to compare/rank ideas, call generate_tradeoff_comparison.]\n"
         + json.dumps(compact, indent=2)
@@ -4738,10 +4740,13 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                 "name": "generate_scorecard",
                 "description": (
                     "Score an idea. By default creates a NEW scorecard for a genuinely new idea or variation. "
-                    "To RE-SCORE the idea the user already has open (because they changed an input, assumption, "
-                    "budget, timeline, market, or team), pass rescore_scorecard_id = the open scorecard's id — "
-                    "this overwrites that same idea in place (keeps its id and workspace URL) with a freshly "
-                    "re-evaluated score, instead of spawning a duplicate."
+                    "To RE-SCORE the idea the user already has open (because they changed an underlying FACT or "
+                    "ASSUMPTION the score depends on — a different input, budget, timeline, market, or team), pass "
+                    "rescore_scorecard_id = the open scorecard's id — this overwrites that same idea in place "
+                    "(keeps its id and workspace URL) with a freshly re-evaluated score, instead of spawning a "
+                    "duplicate. Do NOT use this for wording/tone/clarity edits ('make it more executive-friendly', "
+                    "'clearer', 'more concise', 'reword', 'change word X to Y') — those are prose-only and must not "
+                    "move the score; use patch_scorecard for them. When in doubt, prefer patch_scorecard."
                 ),
                 "input_schema": {
                     "type": "object",
@@ -4766,10 +4771,13 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
             {
                 "name": "patch_scorecard",
                 "description": (
-                    "Edit the wording of the OPEN scorecard in place — for narrative tweaks that do NOT change the "
+                    "Edit the wording of the OPEN scorecard in place — for narrative/prose tweaks that do NOT change the "
                     "score (reword the executive summary, insights, assumptions, risk/recommendation text, rationale). "
-                    "Edits the idea the user is viewing directly; does not spawn a duplicate. For a change that affects "
-                    "the score, use generate_scorecard with rescore_scorecard_id instead."
+                    "Use this for ALL tone/clarity/length/phrasing edits: 'more executive-friendly', 'clearer', "
+                    "'punchier', 'more concise', 'tighten', 'reword', 'fix grammar', 'change word X to Y', 'rewrite the "
+                    "summary'. Rewriting the same facts in better prose NEVER moves the numbers. Edits the idea the user "
+                    "is viewing directly; does not spawn a duplicate. Only when the underlying facts/assumptions change "
+                    "(not just the prose) use generate_scorecard with rescore_scorecard_id instead."
                 ),
                 "input_schema": {
                     "type": "object",
