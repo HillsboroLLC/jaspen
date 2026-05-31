@@ -1147,11 +1147,20 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
     return postJSON(endpoints.aiWbs(threadId), payload, { withSid: true });
   },
 
-  getThreadWbs: async (threadId) =>
-    getJSON(endpoints.threadWbs(threadId), { withSid: true }),
+  getThreadWbs: async (threadId, scorecardId = null) => {
+    const base = endpoints.threadWbs(threadId);
+    const url = scorecardId
+      ? `${base}?scorecard_id=${encodeURIComponent(scorecardId)}`
+      : base;
+    return getJSON(url, { withSid: true });
+  },
 
-  upsertThreadWbs: async (threadId, project_wbs) =>
-    putJSON(endpoints.threadWbs(threadId), { project_wbs }, { withSid: true }),
+  upsertThreadWbs: async (threadId, project_wbs, scorecardId = null) =>
+    putJSON(
+      endpoints.threadWbs(threadId),
+      scorecardId ? { project_wbs, scorecard_id: scorecardId } : { project_wbs },
+      { withSid: true },
+    ),
 
   // Per-artifact Workspace sidebar chat (durable server-side, cross-device).
   getWorkspaceChat: async (threadId, artifactId) =>

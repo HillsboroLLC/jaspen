@@ -12,7 +12,7 @@
 // ============================================================================
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useParams, useNavigate } from 'react-router-dom';
+import { Link, useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faArrowLeft, faDownload, faShare, faRotateLeft, faPaperPlane, faDiagramProject, faSpinner } from '@fortawesome/free-solid-svg-icons';
 import ReactMarkdown from 'react-markdown';
@@ -171,6 +171,22 @@ function _originContextFromBundle(bundle, { limit = 24, maxLen = 4000 } = {}) {
 export default function JaspenWorkspace() {
   const { threadId, scorecardId } = useParams();
   const navigate = useNavigate();
+
+  // View kind + which idea's execution plan is open. Every idea (scorecard)
+  // has its OWN execution plan, so the execution canvas is scoped by
+  // ?idea=<scorecardId>. On a scorecard view the "active idea" is the scorecard
+  // itself; on the execution canvas it comes from the query string. `artifactId`
+  // keys both the per-idea execution chat and the plan storage so ideas never
+  // bleed into each other.
+  const isTradeoff = scorecardId === SENTINEL_TRADEOFF;
+  const isExecution = scorecardId === SENTINEL_EXECUTION;
+  const isScorecard = !isTradeoff && !isExecution;
+  const [searchParams] = useSearchParams();
+  const ideaParam = searchParams.get('idea') || null;
+  const execIdeaId = isExecution ? ideaParam : (isScorecard ? scorecardId : null);
+  const artifactId = isExecution && ideaParam
+    ? `${SENTINEL_EXECUTION}::${ideaParam}`
+    : scorecardId;
   const [bundle, setBundle] = useState(null);
   const [bundleError, setBundleError] = useState(null);
   const [snapshot, setSnapshot] = useState(null);
@@ -183,7 +199,7 @@ export default function JaspenWorkspace() {
   // Per-artifact storage key. The chat is seeded synchronously from localStorage
   // on first render (no empty flash) and re-loaded whenever the artifact key
   // changes (e.g. navigating scorecard → execution in the same mounted view).
-  const chatKey = _chatStorageKey(threadId, scorecardId);
+  const chatKey = _chatStorageKey(threadId, artifactId);
   const [chatHistory, setChatHistory] = useState(() => _readWorkspaceChat(chatKey));
   const firstChatLoadRef = useRef(true);
   const skipChatSaveRef = useRef(false);
@@ -207,9 +223,6 @@ export default function JaspenWorkspace() {
   });
   const dragSectionRef = useRef(null);
 
-  const isTradeoff = scorecardId === SENTINEL_TRADEOFF;
-  const isExecution = scorecardId === SENTINEL_EXECUTION;
-  const isScorecard = !isTradeoff && !isExecution;
   const [wbs, setWbs] = useState(null);
 
   // Execution-plan creation affordance. `buildingPlan` holds the id of the
@@ -231,7 +244,9 @@ export default function JaspenWorkspace() {
       if (scorecard_id) payload.scorecard_id = scorecard_id;
       if (scenario_id) payload.scenario_id = scenario_id;
       await Jaspen.generateAiWbs(threadId, payload);
-      navigate(`/workspace/${threadId}/${SENTINEL_EXECUTION}`);
+      // Open THIS idea's plan (scoped by ?idea=) so each plan stands alone.
+      const ideaQS = scorecard_id ? `?idea=${encodeURIComponent(scorecard_id)}` : '';
+      navigate(`/workspace/${threadId}/${SENTINEL_EXECUTION}${ideaQS}`);
     } catch (err) {
       setBuildPlanError(
         (err && err.message) ? err.message : 'Could not build the execution plan. Please try again.'
@@ -285,7 +300,7 @@ export default function JaspenWorkspace() {
           text: tasks.length
             ? `Here's a draft execution plan for **${seedLabel}** — ${tasks.length} task${tasks.length === 1 ? '' : 's'} across the key workstreams. Open it in the workspace to edit, reassign, and track.`
             : `I generated an execution plan for **${seedLabel}**. Open it in the workspace to review.`,
-          execPlan: { label: seedLabel, tasks: tasks.slice(0, 6), total: tasks.length },
+          execPlan: { label: seedLabel, tasks: tasks.slice(0, 6), total: tasks.length, scorecardId: seed.scorecard_id || null },
         }];
       });
     } catch (err) {
@@ -340,7 +355,10 @@ export default function JaspenWorkspace() {
       // /threads/:tid/wbs directly so the canvas always sees the latest.
       let wbsPromise = Promise.resolve(null);
       if (isExecution) {
-        wbsPromise = Jaspen.getThreadWbs(threadId).catch((e) => {
+        // Scope to the open idea so each plan stands on its own. The server
+        // also records this as the thread's active plan so the chat agent's
+        // WBS mutation tools edit THIS idea, not another.
+        wbsPromise = Jaspen.getThreadWbs(threadId, execIdeaId).catch((e) => {
           console.warn('[Workspace] WBS fetch failed (non-fatal):', e);
           return null;
         });
@@ -393,7 +411,7 @@ export default function JaspenWorkspace() {
     }
     void load();
     return () => { cancelled = true; };
-  }, [threadId, scorecardId, isScorecard]);
+  }, [threadId, scorecardId, isScorecard, execIdeaId]);
 
   // Load this artifact's chat. The server is the source of truth (durable,
   // cross-device); the localStorage cache is only an instant-paint buffer that
@@ -413,7 +431,7 @@ export default function JaspenWorkspace() {
 
     (async () => {
       try {
-        const resp = await Jaspen.getWorkspaceChat(threadId, scorecardId);
+        const resp = await Jaspen.getWorkspaceChat(threadId, artifactId);
         if (cancelled) return;
         const serverMsgs = Array.isArray(resp?.messages) ? resp.messages : [];
         // Adopt the server copy when it has content, or when we have no local
@@ -432,7 +450,7 @@ export default function JaspenWorkspace() {
     })();
 
     return () => { cancelled = true; };
-  }, [chatKey, threadId, scorecardId]);
+  }, [chatKey, threadId, artifactId]);
 
   // Persist on every change: write the local cache immediately (instant,
   // offline-resilient) and debounce a save to the server (authoritative).
@@ -442,12 +460,12 @@ export default function JaspenWorkspace() {
     if (chatSaveTimerRef.current) clearTimeout(chatSaveTimerRef.current);
     const durable = chatHistory.filter((m) => m && !m.pending);
     chatSaveTimerRef.current = setTimeout(() => {
-      Jaspen.saveWorkspaceChat(threadId, scorecardId, durable).catch((e) => {
+      Jaspen.saveWorkspaceChat(threadId, artifactId, durable).catch((e) => {
         console.warn('[Workspace] workspace-chat save failed (kept in local cache):', e);
       });
     }, 600);
     return () => { if (chatSaveTimerRef.current) clearTimeout(chatSaveTimerRef.current); };
-  }, [chatHistory, chatKey, threadId, scorecardId]);
+  }, [chatHistory, chatKey, threadId, artifactId]);
 
   // Debounced auto-save: any change to overrides is persisted ~500ms later.
   useEffect(() => {
@@ -674,6 +692,11 @@ export default function JaspenWorkspace() {
           }))
           .filter((s) => s.name);
       }
+      if (isExecution && execIdeaId) {
+        // Tell the backend which idea's plan is open so the chat agent's WBS
+        // mutation tools (add/update/remove task) edit THIS plan, not another.
+        viewContext.active_scorecard_id = execIdeaId;
+      }
       if (isExecution && Array.isArray(wbs?.tasks)) {
         const byStatus = wbs.tasks.reduce((acc, t) => {
           const raw = String(t?.status || 'todo').toLowerCase().replace(/[\s-]+/g, '_');
@@ -864,7 +887,10 @@ export default function JaspenWorkspace() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => navigate(`/workspace/${threadId}/${SENTINEL_EXECUTION}`)}
+                    onClick={() => navigate(
+                      `/workspace/${threadId}/${SENTINEL_EXECUTION}` +
+                      (m.execPlan.scorecardId ? `?idea=${encodeURIComponent(m.execPlan.scorecardId)}` : '')
+                    )}
                     style={{
                       width:'100%', padding:'8px 10px', border:'none', borderTop:'1px solid #eef1f6',
                       background:'#0f172a', color:'#fff', cursor:'pointer', fontSize:12, fontWeight:600,
@@ -1096,6 +1122,7 @@ export default function JaspenWorkspace() {
           ) : isExecution ? (
             <JaspenExecutionCanvas
               threadId={threadId}
+              scorecardId={execIdeaId}
               bundle={bundle}
               wbs={wbs}
               displayTitle={(() => {

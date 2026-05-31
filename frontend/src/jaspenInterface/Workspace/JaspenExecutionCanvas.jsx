@@ -1075,7 +1075,7 @@ export function TimelineView({ wbs, phases }) {
 
 // ── Main canvas ────────────────────────────────────────────────────────────
 
-export default function JaspenExecutionCanvas({ threadId, bundle, wbs: wbsProp, displayTitle, score, onAskJaspen }) {
+export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bundle, wbs: wbsProp, displayTitle, score, onAskJaspen }) {
   // Local working copy of the WBS. Prefer the explicit wbs prop (fetched
   // from /threads/:tid/wbs which is the authoritative source) over the
   // bundle's project_wbs (which can lag for older threads).
@@ -1110,7 +1110,7 @@ export default function JaspenExecutionCanvas({ threadId, bundle, wbs: wbsProp, 
       try {
         setSaving(true);
         setSaveError(null);
-        await Jaspen.upsertThreadWbs(threadId, wbs);
+        await Jaspen.upsertThreadWbs(threadId, wbs, scorecardId);
       } catch (e) {
         console.error('[ExecutionCanvas] save failed:', e);
         setSaveError(String(e?.message || e || 'Save failed'));
@@ -1119,7 +1119,7 @@ export default function JaspenExecutionCanvas({ threadId, bundle, wbs: wbsProp, 
       }
     }, 600);
     return () => { if (saveTimer.current) window.clearTimeout(saveTimer.current); };
-  }, [wbs, threadId]);
+  }, [wbs, threadId, scorecardId]);
 
   // ── Undo / redo ──────────────────────────────────────────────────────────
   // Keep a ref mirror of the live WBS so mutation helpers can read the current

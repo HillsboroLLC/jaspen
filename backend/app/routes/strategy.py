@@ -5405,7 +5405,7 @@ def generate_ai_wbs(thread_id):
             }), 403
 
         if commit:
-            thread_data['project_wbs'] = normalized_wbs
+            _store_thread_wbs(thread_data, scorecard_id, normalized_wbs)
             all_data[thread_id] = thread_data
             _save_scenarios(user_id, all_data)
             _audit_strategy_event(
@@ -5838,6 +5838,50 @@ def adopt_scenario(scenario_id):
 # WBS ROUTES
 # ============================================================
 
+# ------------------------------------------------------------------
+# Per-idea execution plans
+# ------------------------------------------------------------------
+# Each idea (scorecard) gets its OWN execution plan so plans stand on their
+# own — building or editing one idea's plan never touches another's. Plans are
+# stored under td['wbs_by_scorecard'][scorecard_id]; td['project_wbs'] is kept
+# as a mirror of the last-touched plan for back-compat with readers that don't
+# pass an id and for threads created before per-idea plans existed.
+
+def _resolve_thread_wbs(td, scorecard_id=None):
+    """Return the plan for a specific idea when one exists. Falls back to the
+    legacy thread-level project_wbs only for threads that have no per-idea
+    store yet — never leaks one idea's plan to another once plans are split."""
+    if not isinstance(td, dict):
+        return None
+    by_card = td.get('wbs_by_scorecard') if isinstance(td.get('wbs_by_scorecard'), dict) else {}
+    key = str(scorecard_id or '').strip()
+    if key:
+        if key in by_card:
+            return by_card.get(key)
+        if by_card:
+            # Per-idea store exists but this idea has no plan yet → genuinely
+            # empty. Do NOT fall through to another idea's project_wbs.
+            return None
+    return td.get('project_wbs')
+
+
+def _store_thread_wbs(td, scorecard_id, normalized_wbs):
+    """Persist a plan as the given idea's plan and mirror it to project_wbs as
+    the thread's 'active' plan."""
+    if not isinstance(td, dict):
+        return
+    key = str(scorecard_id or '').strip()
+    if key:
+        by_card = td.get('wbs_by_scorecard')
+        if not isinstance(by_card, dict):
+            by_card = {}
+        by_card[key] = normalized_wbs
+        td['wbs_by_scorecard'] = by_card
+        # Whatever plan was just written becomes the active one for chat edits.
+        td['active_execution_scorecard_id'] = key
+    td['project_wbs'] = normalized_wbs
+
+
 @strategy_bp.route('/threads/<thread_id>/wbs', methods=['GET'])
 @jwt_required()
 def get_thread_wbs(thread_id):
@@ -5847,12 +5891,24 @@ def get_thread_wbs(thread_id):
         if access_err:
             return access_err
 
+        scorecard_id = str(request.args.get('scorecard_id') or '').strip() or None
         all_data = _load_scenarios(user_id)
         td = all_data.get(thread_id, {}) if isinstance(all_data, dict) else {}
-        project_wbs = td.get('project_wbs') if isinstance(td, dict) else None
+        project_wbs = _resolve_thread_wbs(td, scorecard_id)
+
+        # Remember which idea's plan is currently open so the chat agent's WBS
+        # mutation tools (which don't receive view context) edit THIS plan.
+        if scorecard_id and isinstance(td, dict) and td.get('active_execution_scorecard_id') != scorecard_id:
+            td['active_execution_scorecard_id'] = scorecard_id
+            all_data[thread_id] = td
+            try:
+                _save_scenarios(user_id, all_data)
+            except Exception:
+                pass
 
         return jsonify({
             'thread_id': thread_id,
+            'scorecard_id': scorecard_id,
             'project_wbs': project_wbs,
             'limits': get_wbs_limits_for_plan(plan_key),
         }), 200
@@ -5871,13 +5927,15 @@ def upsert_thread_wbs(thread_id):
             return access_err
 
         payload = request.get_json() or {}
+        scorecard_id = str(payload.get('scorecard_id') or request.args.get('scorecard_id') or '').strip() or None
 
         all_data = _load_scenarios(user_id)
         if thread_id not in all_data:
             all_data[thread_id] = _thread_entry()
         td = all_data[thread_id]
 
-        existing_wbs = td.get('project_wbs') if isinstance(td.get('project_wbs'), dict) else None
+        resolved_existing = _resolve_thread_wbs(td, scorecard_id)
+        existing_wbs = resolved_existing if isinstance(resolved_existing, dict) else None
         normalized_wbs = _normalize_project_wbs(payload, existing=existing_wbs)
 
         limits = get_wbs_limits_for_plan(plan_key)
@@ -5928,7 +5986,7 @@ def upsert_thread_wbs(thread_id):
 
         prior_tasks = existing_wbs.get('tasks') if isinstance(existing_wbs, dict) and isinstance(existing_wbs.get('tasks'), list) else []
         next_tasks = normalized_wbs.get('tasks') if isinstance(normalized_wbs.get('tasks'), list) else []
-        td['project_wbs'] = normalized_wbs
+        _store_thread_wbs(td, scorecard_id, normalized_wbs)
         all_data[thread_id] = td
         _save_scenarios(user_id, all_data)
         _audit_strategy_event(

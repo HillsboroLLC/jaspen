@@ -2952,7 +2952,7 @@ def _scorecard_content_prompt_suffix(session, view_context):
     )
 
 
-def _wbs_content_prompt_suffix(user_id, thread_id):
+def _wbs_content_prompt_suffix(user_id, thread_id, active_scorecard_id=None):
     """Inject the current execution plan (WBS) tasks so the chat agent can see
     exactly what is on the user's screen — task titles, IDs, phase, status,
     priority, and owner.
@@ -2964,12 +2964,20 @@ def _wbs_content_prompt_suffix(user_id, thread_id):
     user for a task ID it should already know.
     """
     try:
-        from .strategy import _load_scenarios
+        from .strategy import _load_scenarios, _resolve_thread_wbs
         all_data = _load_scenarios(user_id)
     except Exception:
         return ""
     td = all_data.get(thread_id) if isinstance(all_data, dict) else None
-    project_wbs = td.get("project_wbs") if isinstance(td, dict) else None
+    # Resolve the plan for the idea the user is actually viewing so the agent
+    # sees THIS idea's tasks, not another idea's. Fall back to the active id the
+    # canvas last recorded, then to the thread-level plan.
+    resolve_id = (
+        str(active_scorecard_id or "").strip()
+        or (str(td.get("active_execution_scorecard_id") or "").strip() if isinstance(td, dict) else "")
+        or None
+    )
+    project_wbs = _resolve_thread_wbs(td, resolve_id) if isinstance(td, dict) else None
     if not isinstance(project_wbs, dict):
         return ""
     tasks = project_wbs.get("tasks") if isinstance(project_wbs.get("tasks"), list) else []
@@ -4949,6 +4957,8 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id):
         _normalize_project_wbs,
         _resolve_user_model_selection,
         _resolve_thread_baseline,
+        _resolve_thread_wbs,
+        _store_thread_wbs,
         _sanitize_deltas,
         _save_scenarios,
     )
@@ -5367,7 +5377,14 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id):
         normalized_wbs["ai_generated"] = True
         normalized_wbs["ai_generated_at"] = datetime.utcnow().isoformat()
         normalized_wbs["ai_summary"] = str(raw_wbs.get("summary") or "").strip()
-        thread_data["project_wbs"] = normalized_wbs
+        # Persist under the active idea so each idea's plan stands on its own.
+        exec_scorecard_id = (
+            str(tool_input.get("scorecard_id") or "").strip()
+            or str(adopted_id or "").strip()
+            or str(thread_data.get("active_execution_scorecard_id") or "").strip()
+            or None
+        )
+        _store_thread_wbs(thread_data, exec_scorecard_id, normalized_wbs)
         all_data[thread_id] = thread_data
         _save_scenarios(user_id, all_data)
         sync_status = {"status": "skipped", "reason": "no_pm_tool_selected"}
@@ -5414,7 +5431,16 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id):
         if thread_id not in all_data or not isinstance(all_data.get(thread_id), dict):
             all_data[thread_id] = _thread_entry()
         td = all_data[thread_id]
-        current_wbs = td.get("project_wbs") if isinstance(td.get("project_wbs"), dict) else {"name": "Execution WBS", "tasks": []}
+        # Edit the plan for whichever idea is currently open (the canvas records
+        # this on load); the tool itself gets no view context. Fall back to the
+        # thread-level plan only when no idea is active.
+        active_scorecard_id = (
+            str(tool_input.get("scorecard_id") or "").strip()
+            or str(td.get("active_execution_scorecard_id") or "").strip()
+            or None
+        )
+        resolved_wbs = _resolve_thread_wbs(td, active_scorecard_id)
+        current_wbs = resolved_wbs if isinstance(resolved_wbs, dict) else {"name": "Execution WBS", "tasks": []}
         tasks = list(current_wbs.get("tasks") if isinstance(current_wbs.get("tasks"), list) else [])
 
         if tool_name == "update_wbs_task":
@@ -5508,7 +5534,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id):
             confirmation = f"Removed task '{task_id}' from the WBS."
 
         normalized = _normalize_project_wbs({"project_wbs": {**current_wbs, "tasks": tasks}}, existing=current_wbs)
-        td["project_wbs"] = normalized
+        _store_thread_wbs(td, active_scorecard_id, normalized)
         all_data[thread_id] = td
         if not _save_scenarios(user_id, all_data):
             return _tool_error("Failed to persist WBS changes.", code="persist_failed")
@@ -5667,7 +5693,8 @@ def _generate_assistant_reply_anthropic(
         readiness=readiness,
     )
     system_prompt += _scorecard_content_prompt_suffix(session, view_context)
-    system_prompt += _wbs_content_prompt_suffix(user_id, thread_id)
+    _active_exec_sc = str((_sanitize_view_context(view_context) or {}).get('active_scorecard_id') or '').strip() or None
+    system_prompt += _wbs_content_prompt_suffix(user_id, thread_id, _active_exec_sc)
     if _message_has_data_context_request(user_message):
         system_prompt += (
             "\nConnector-priority instruction: because the user attached data context or requested connector analysis, "
@@ -5901,7 +5928,8 @@ def _stream_assistant_reply_events_anthropic(
         readiness=readiness,
     )
     system_prompt += _scorecard_content_prompt_suffix(session, view_context)
-    system_prompt += _wbs_content_prompt_suffix(user_id, thread_id)
+    _active_exec_sc = str((_sanitize_view_context(view_context) or {}).get('active_scorecard_id') or '').strip() or None
+    system_prompt += _wbs_content_prompt_suffix(user_id, thread_id, _active_exec_sc)
     if _message_has_data_context_request(user_message):
         system_prompt += (
             "\nConnector-priority instruction: because the user attached data context or requested connector analysis, "
