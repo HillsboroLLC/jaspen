@@ -1078,20 +1078,28 @@ def _view_context_prompt_suffix(view_context):
         lines.append(f"- Active tab: {active_tab}")
 
     active_scorecard_id = str(normalized.get("active_scorecard_id") or "").strip()
-    if active_scorecard_id:
-        lines.append(f"- Active scorecard ID: {active_scorecard_id}")
-
     active_scorecard_name = str(normalized.get("active_scorecard_name") or "").strip()
-    if active_scorecard_name:
+    if active_scorecard_id or active_scorecard_name:
         score_part = ""
         active_scorecard_score = normalized.get("active_scorecard_score")
         if active_scorecard_score is not None:
             score_part = f" (score {active_scorecard_score})"
+        # Identify the open idea by name when we have it, otherwise by id —
+        # but ALWAYS emit the behavioral directive so the agent never asks
+        # "which idea?" when one is clearly on screen.
+        if active_scorecard_name:
+            subject = f"the scorecard for: \"{active_scorecard_name}\"{score_part}"
+        else:
+            subject = f"the scorecard with ID {active_scorecard_id}{score_part}"
+        if active_scorecard_id:
+            lines.append(f"- Active scorecard ID: {active_scorecard_id}")
         lines.append(
-            f"- The user is viewing the scorecard for: \"{active_scorecard_name}\"{score_part}. "
-            "This is THE active scorecard. When the user says 'the executive summary', 'the summary', "
-            "'this scorecard', or 'this idea', they mean THIS one — do not ask which idea they mean. "
-            "If multiple ideas exist in the thread, the on-screen one above takes precedence."
+            f"- The user currently has {subject} OPEN on screen. This is THE active scorecard / idea. "
+            "When the user says 'the executive summary', 'the summary', 'this scorecard', 'this idea', "
+            "'make it more executive-friendly', or any unqualified reference, they mean THIS one — "
+            "act on it directly and NEVER ask which of the ideas they mean. "
+            "Only ask for clarification if the user explicitly names a DIFFERENT idea than the one open. "
+            "If multiple ideas exist in the thread, the on-screen one above always takes precedence."
         )
 
     active_scenario_id = str(normalized.get("active_scenario_id") or "").strip()

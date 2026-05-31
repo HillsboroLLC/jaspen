@@ -188,6 +188,11 @@ export default function JaspenWorkspace() {
     ? `${SENTINEL_EXECUTION}::${ideaParam}`
     : scorecardId;
   const [bundle, setBundle] = useState(null);
+  // When the execution plan is opened via the legacy `__execution__` route
+  // (no ?idea= in the URL), the server still tells us which idea this plan
+  // belongs to via the WBS response's scorecard_id. Capture it so the header
+  // can name the idea instead of showing a bare "Execution plan".
+  const [resolvedExecScorecardId, setResolvedExecScorecardId] = useState(null);
   const [bundleError, setBundleError] = useState(null);
   const [snapshot, setSnapshot] = useState(null);
   const [overrides, setOverrides] = useState({});
@@ -374,6 +379,10 @@ export default function JaspenWorkspace() {
       // would leak ANOTHER idea's plan (the bundle only carries the legacy
       // thread-level mirror, not this idea's plan). The bundle fallback is only
       // for legacy threads where we didn't scope by idea at all.
+      // Record which idea the server says this plan belongs to (works even
+      // on the legacy __execution__ route with no ?idea= in the URL).
+      const respScorecardId = wbsResp?.scorecard_id ? String(wbsResp.scorecard_id) : null;
+      setResolvedExecScorecardId(respScorecardId);
       const respWbs = wbsResp?.project_wbs;
       const respHasTasks = respWbs && Array.isArray(respWbs.tasks) && respWbs.tasks.length > 0;
       if (respHasTasks) {
@@ -585,11 +594,15 @@ export default function JaspenWorkspace() {
   // de-duped snapshot list the trade-off table uses, so the execution header
   // names THIS idea (title + score) instead of always the baseline/winner.
   const execIdeaSnap = useMemo(() => {
-    if (!isExecution || !execIdeaId) return null;
+    if (!isExecution) return null;
+    // Prefer the explicit ?idea= from the URL; otherwise fall back to the
+    // idea the server attributed this plan to (legacy __execution__ route).
+    const lookupId = execIdeaId || resolvedExecScorecardId;
+    if (!lookupId) return null;
     return (tradeoffIdeas || []).find(
-      (s) => String(s?.id || s?.analysis_id || '') === String(execIdeaId)
+      (s) => String(s?.id || s?.analysis_id || '') === String(lookupId)
     ) || null;
-  }, [isExecution, execIdeaId, tradeoffIdeas]);
+  }, [isExecution, execIdeaId, resolvedExecScorecardId, tradeoffIdeas]);
 
   const score = Number(rendered?.jaspen_score || 0);
   const ringColor = rendered?._accent_color || '#a0036c';
