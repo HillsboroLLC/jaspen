@@ -131,6 +131,43 @@ function _detectExecPlanIntent(userText, lastAiText) {
   return false;
 }
 
+// Workspace chat persists per artifact (thread + scorecard/sentinel) in
+// localStorage so a hard refresh keeps the conversation. We never persist the
+// transient "pending" placeholder turns.
+function _chatStorageKey(threadId, scorecardId) {
+  return `jw-chat-${threadId}-${scorecardId}`;
+}
+function _readWorkspaceChat(key) {
+  try {
+    const saved = localStorage.getItem(key);
+    if (!saved) return [];
+    const parsed = JSON.parse(saved);
+    return Array.isArray(parsed) ? parsed.filter((m) => m && !m.pending) : [];
+  } catch { return []; }
+}
+function _writeWorkspaceChat(key, history) {
+  try {
+    const durable = (Array.isArray(history) ? history : []).filter((m) => m && !m.pending);
+    if (durable.length === 0) localStorage.removeItem(key);
+    else localStorage.setItem(key, JSON.stringify(durable));
+  } catch { /* quota / disabled storage — non-fatal */ }
+}
+
+// Map the thread's persisted main-conversation messages into the {role,content}
+// shape the agent expects. This is the "context that got the user here" — we
+// hand the agent the originating conversation so a freshly-loaded workspace
+// chat still reasons from the same history the main thread had.
+function _originContextFromBundle(bundle, { limit = 24, maxLen = 4000 } = {}) {
+  const msgs = Array.isArray(bundle?.messages) ? bundle.messages : [];
+  return msgs
+    .map((m) => ({
+      role: (m?.role === 'user' || m?.sender === 'user') ? 'user' : 'assistant',
+      content: String(m?.content ?? m?.text ?? '').trim().slice(0, maxLen),
+    }))
+    .filter((m) => m.content)
+    .slice(-limit);
+}
+
 export default function JaspenWorkspace() {
   const { threadId, scorecardId } = useParams();
   const navigate = useNavigate();
@@ -143,7 +180,13 @@ export default function JaspenWorkspace() {
   const [saveError, setSaveError] = useState(null);
   const [error, setError] = useState(null);
   const [chatInput, setChatInput] = useState('');
-  const [chatHistory, setChatHistory] = useState([]);
+  // Per-artifact storage key. The chat is seeded synchronously from localStorage
+  // on first render (no empty flash) and re-loaded whenever the artifact key
+  // changes (e.g. navigating scorecard → execution in the same mounted view).
+  const chatKey = _chatStorageKey(threadId, scorecardId);
+  const [chatHistory, setChatHistory] = useState(() => _readWorkspaceChat(chatKey));
+  const firstChatLoadRef = useRef(true);
+  const skipChatSaveRef = useRef(false);
   const [chatBusy, setChatBusy] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const saveTimerRef = useRef(null);
@@ -350,6 +393,23 @@ export default function JaspenWorkspace() {
     void load();
     return () => { cancelled = true; };
   }, [threadId, scorecardId, isScorecard]);
+
+  // Swap in the persisted chat for the current artifact when the key changes.
+  // The first render already loaded via the lazy useState initializer, so we
+  // skip it here. We flag the upcoming chatHistory change as a load (not a user
+  // edit) so the persistence effect below doesn't write stale data to the new
+  // key.
+  useEffect(() => {
+    if (firstChatLoadRef.current) { firstChatLoadRef.current = false; return; }
+    skipChatSaveRef.current = true;
+    setChatHistory(_readWorkspaceChat(chatKey));
+  }, [chatKey]);
+
+  // Persist the workspace chat on every change so a hard refresh keeps it.
+  useEffect(() => {
+    if (skipChatSaveRef.current) { skipChatSaveRef.current = false; return; }
+    _writeWorkspaceChat(chatKey, chatHistory);
+  }, [chatHistory, chatKey]);
 
   // Debounced auto-save: any change to overrides is persisted ~500ms later.
   useEffect(() => {
@@ -590,10 +650,16 @@ export default function JaspenWorkspace() {
       }
 
       // Conversation history (Anthropic-friendly role+content shape).
-      const history = nextHistory.map((m) => ({
+      // Prepend the originating thread conversation so the agent has BOTH the
+      // context that led the user into this workspace AND everything they've
+      // said here since. Workspace turns live in localStorage (not in
+      // bundle.messages), so there's no duplication.
+      const originContext = _originContextFromBundle(bundle);
+      const workspaceTurns = nextHistory.map((m) => ({
         role: m.role === 'user' ? 'user' : 'assistant',
         content: String(m.text || ''),
       }));
+      const history = [...originContext, ...workspaceTurns];
 
       const resp = await Jaspen.chat({
         message: text,
