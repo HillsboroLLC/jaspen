@@ -6468,6 +6468,72 @@ def _find_scorecard_carrier(user_id, thread_id, scorecard_id):
     return (None, None, None, None)
 
 
+def apply_scorecard_edit_in_place(user_id, thread_id, scorecard_id, mutate_fn):
+    """Locate the LIVE scorecard for (thread_id, scorecard_id) using the same
+    carrier resolution as the workspace fetch / overrides endpoints, apply
+    ``mutate_fn`` to produce the new full card dict, persist it to whichever
+    store actually holds it (session baseline / scenario / chat artifact), and
+    return the updated card dict.
+
+    This is the single source of truth for editing the OPEN idea in place. It
+    intentionally reuses ``_find_scorecard_carrier`` so a card the workspace can
+    render is always a card we can edit — the weaker in-memory lookup in
+    ai_agent could only see baseline/snapshot cards and missed scenario-store
+    and chat-artifact cards entirely.
+
+    mutate_fn(current_card: dict) -> dict   # returns the FULL merged card
+    Returns the persisted card dict, or None when the scorecard can't be located
+    or the mutation produced nothing usable.
+    """
+    kind, container, key, carrier = _find_scorecard_carrier(user_id, thread_id, scorecard_id)
+    if not kind or not isinstance(carrier, dict):
+        return None
+    result_blob = carrier.get('result') if isinstance(carrier.get('result'), dict) else None
+    if not isinstance(result_blob, dict):
+        return None
+
+    try:
+        updated = mutate_fn(dict(result_blob))
+    except Exception as exc:  # pragma: no cover - defensive
+        current_app.logger.error("[apply_scorecard_edit_in_place] mutate_fn failed: %s", exc)
+        return None
+    if not isinstance(updated, dict) or not updated:
+        return None
+
+    now = datetime.utcnow().isoformat()
+    card_id = str(updated.get('id') or updated.get('analysis_id') or scorecard_id or thread_id)
+    updated.setdefault('id', card_id)
+    updated['updated_at'] = now
+
+    # Mutate the live object in place so any other holder of this reference
+    # (and the carrier) sees the change.
+    result_blob.clear()
+    result_blob.update(updated)
+
+    if kind == 'baseline':
+        # container is the sessions dict; carrier is the session, result_blob is
+        # session['result']. Ground the open idea so chat re-grounds correctly.
+        result_blob['selected_scorecard_id'] = card_id
+        container[key]['result'] = result_blob
+        container[key]['timestamp'] = now
+        save_user_sessions(user_id, container)
+    elif kind == 'chat_artifact':
+        # carrier['result'] IS the live artifact data dict (already mutated
+        # above). Persist the owning session so the edit survives refresh.
+        session_entry = container.get(key) if isinstance(container, dict) else None
+        if isinstance(session_entry, dict):
+            session_entry['timestamp'] = now
+            container[key] = session_entry
+            save_user_sessions(user_id, container)
+    else:
+        # container is the scenarios all_data dict; carrier is the scenario.
+        carrier['result'] = result_blob
+        carrier['updated_at'] = now
+        _save_scenarios(user_id, container)
+
+    return result_blob
+
+
 @strategy_bp.route('/threads/<thread_id>/scorecards/<scorecard_id>', methods=['GET'])
 @jwt_required()
 def get_scorecard_for_workspace(thread_id, scorecard_id):

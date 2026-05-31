@@ -5114,14 +5114,15 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         # open idea just because one is on screen.
         rescore_id = str(tool_input.get("rescore_scorecard_id") or "").strip() or None
         if rescore_id:
-            existing = _find_session_scorecard_ref(session, rescore_id)
-            if isinstance(existing, dict):
+            from .strategy import apply_scorecard_edit_in_place
+
+            def _do_rescore(existing):
                 keep_id = str(existing.get("id") or existing.get("analysis_id") or rescore_id)
                 keep_name = (
                     requested_name if str(tool_input.get("name") or "").strip()
                     else (existing.get("name") or existing.get("project_name") or requested_name)
                 )
-                merged = {
+                return {
                     **(scorecard_payload if isinstance(scorecard_payload, dict) else {}),
                     "id": keep_id,
                     "analysis_id": existing.get("analysis_id") or keep_id,
@@ -5143,19 +5144,16 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                         "model_type": model_selection["model_type"],
                     },
                 }
-                existing.clear()
-                existing.update(merged)
-                if isinstance(session.get("result"), dict):
-                    session["result"]["selected_scorecard_id"] = keep_id
-                session["timestamp"] = datetime.utcnow().isoformat()
-                sessions[session_key or thread_id] = session
-                if not save_user_sessions(user_id, sessions):
-                    return _tool_error("Failed to persist re-scored scorecard.", code="persist_failed")
-                new_score = int(round(float(existing.get("jaspen_score") or 0)))
+
+            updated = apply_scorecard_edit_in_place(user_id, thread_id, rescore_id, _do_rescore)
+            if isinstance(updated, dict):
+                keep_id = str(updated.get("id") or updated.get("analysis_id") or rescore_id)
+                keep_name = str(updated.get("name") or updated.get("project_name") or requested_name)
+                new_score = int(round(float(updated.get("jaspen_score") or 0)))
                 return _tool_success({
                     "tool": tool_name,
                     "confirmation": f"Re-scored '{keep_name}' in place ({new_score}).",
-                    "updated_scorecard": existing,
+                    "updated_scorecard": updated,
                     "scorecard_id": keep_id,
                     "selected_scorecard_id": keep_id,
                     "rescored": True,
@@ -5415,7 +5413,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         })
 
     if tool_name == "patch_scorecard":
-        from .strategy import _merge_scorecard_patch
+        from .strategy import _merge_scorecard_patch, apply_scorecard_edit_in_place
         # Narrative / wording edits only. These do NOT change the score — they
         # rewrite text in place on the idea the user has OPEN. For a change that
         # affects the analysis or score, the agent re-scores in place via
@@ -5428,44 +5426,34 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         if not patch:
             return _tool_error("No patchable scorecard fields provided.", code="no_fields")
 
-        # The open idea wins; fall back to an explicit id, then the baseline.
+        # The open idea wins; fall back to an explicit id, then the thread's
+        # baseline (matched by scorecard_id == thread_id inside the carrier).
         target_id = (
             view_active_scorecard_id
             or str(tool_input.get("scorecard_id") or "").strip()
-            or None
+            or thread_id
         )
 
-        sessions = load_user_sessions(user_id) or {}
-        session_key, target_session = _resolve_user_session(sessions, thread_id)
-        if not isinstance(target_session, dict):
-            return _tool_error("Thread not found.", code="thread_not_found")
+        def _do_patch(card):
+            # Preserve identity + score: _merge_scorecard_patch re-normalizes and
+            # may drop non-standard keys, so carry them back explicitly.
+            # jaspen_score and dimensions come from the base unchanged — a wording
+            # edit never re-scores.
+            merged = _merge_scorecard_patch(card, patch)
+            for k in (
+                "id", "analysis_id", "thread_id", "name", "project_name", "label",
+                "isBaseline", "createdAt", "timestamp", "project_description",
+                "jaspen_score", "dimensions", "component_scores", "display_overrides",
+            ):
+                if card.get(k) is not None and merged.get(k) in (None, "", {}, []):
+                    merged[k] = card.get(k)
+            return merged
 
-        card = _find_session_scorecard_ref(target_session, target_id)
+        card = apply_scorecard_edit_in_place(user_id, thread_id, target_id, _do_patch)
         if not isinstance(card, dict):
             return _tool_error("No scorecard found to edit for this idea.", code="missing_scorecard")
 
-        # Preserve identity + score: _merge_scorecard_patch re-normalizes and may
-        # drop non-standard keys, so carry them back explicitly. jaspen_score and
-        # dimensions come from the base unchanged — a wording edit never re-scores.
-        merged = _merge_scorecard_patch(card, patch)
-        for k in (
-            "id", "analysis_id", "thread_id", "name", "project_name", "label",
-            "isBaseline", "createdAt", "timestamp", "project_description",
-            "jaspen_score", "dimensions", "component_scores", "display_overrides",
-        ):
-            if card.get(k) is not None and merged.get(k) in (None, "", {}, []):
-                merged[k] = card.get(k)
-        card.clear()
-        card.update(merged)
-
         card_id = str(card.get("id") or card.get("analysis_id") or target_id or thread_id)
-        if isinstance(target_session.get("result"), dict):
-            target_session["result"]["selected_scorecard_id"] = card_id
-        target_session["timestamp"] = datetime.utcnow().isoformat()
-        sessions[session_key or thread_id] = target_session
-        if not save_user_sessions(user_id, sessions):
-            return _tool_error("Failed to persist scorecard edit.", code="persist_failed")
-
         changed_fields = list(patch.keys())
         return _tool_success({
             "tool": tool_name,
