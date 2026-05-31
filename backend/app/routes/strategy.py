@@ -4144,6 +4144,13 @@ Rules:
 - Return 10-18 tasks total spread across 4-6 meaningful phases.
 - Phases must follow a logical sequence: Discovery -> Planning -> Build/Execute -> Validate -> Launch -> Operate.
 - CRITICAL: Every task title must be specific to THIS initiative — no generic titles like "Research" or "Planning". Use the conversation, scorecard, and the initiative name above to name exactly what is being done, by whom, for what outcome. Never use "Baseline Analysis" in a task title; use the actual initiative or project name.
+- DETERMINISM: Given the same scorecard, scenario, and instruction, produce the SAME plan every time. Derive tasks mechanically from the inputs below — do not invent variety for its own sake.
+- DRIVE TASKS FROM THE SCORECARD, do not emit a generic template:
+  * For EACH component score below 75, include at least one remediation task that names the weak dimension and the specific gap it closes (lower score = higher priority).
+  * For EACH of the top risks, include a mitigation task that names the risk and its owner.
+  * For EACH key insight / recommendation, include a task that operationalizes it.
+  * Component scores at or above 75 are strengths — reference them to sequence and de-risk, not to create busywork tasks.
+- The number and shape of Execution-phase tasks MUST vary with the scorecard: a weak, high-risk initiative gets more remediation tasks than a strong one. Two different scorecards should not yield interchangeable plans.
 - Assign a realistic suggested_role to every task.
 - Include function and activity_type for every task.
 - Include at least 1 risk-mitigation task, 1 change-management task, and 1 value-capture/measurement task.
@@ -4163,7 +4170,7 @@ Rules:
                 model_selection=model_selection,
                 llm_model=llm_model,
                 strategy_objective=strategy_objective,
-                temperature=0.25,
+                temperature=0,  # Deterministic — same scorecard/scenario/instruction → same plan
                 max_tokens=4096,
             )
         with ThreadPoolExecutor(max_workers=1) as _pool:

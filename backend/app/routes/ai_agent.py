@@ -2927,6 +2927,57 @@ def _scorecard_content_prompt_suffix(session, view_context):
     )
 
 
+def _wbs_content_prompt_suffix(user_id, thread_id):
+    """Inject the current execution plan (WBS) tasks so the chat agent can see
+    exactly what is on the user's screen — task titles, IDs, phase, status,
+    priority, and owner.
+
+    This closes a real grounding gap: the agent's WBS mutation tools read the
+    WBS from the scenarios store, but the chat *prompt context* is built from
+    the session payload, which does NOT carry project_wbs. Without this, the
+    agent can't see a task like "Stakeholder Analysis" and ends up asking the
+    user for a task ID it should already know.
+    """
+    try:
+        from .strategy import _load_scenarios
+        all_data = _load_scenarios(user_id)
+    except Exception:
+        return ""
+    td = all_data.get(thread_id) if isinstance(all_data, dict) else None
+    project_wbs = td.get("project_wbs") if isinstance(td, dict) else None
+    if not isinstance(project_wbs, dict):
+        return ""
+    tasks = project_wbs.get("tasks") if isinstance(project_wbs.get("tasks"), list) else []
+    if not tasks:
+        return ""
+
+    compact = []
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        compact.append({
+            "id": str(task.get("id") or "").strip(),
+            "title": str(task.get("title") or "").strip(),
+            "phase": str(task.get("phase") or "").strip() or None,
+            "status": str(task.get("status") or "todo").strip(),
+            "priority": str(task.get("priority") or "").strip() or None,
+            "owner": str(task.get("owner") or task.get("suggested_role") or "").strip() or None,
+        })
+    if not compact:
+        return ""
+
+    plan_name = str(project_wbs.get("name") or "Execution WBS").strip() or "Execution WBS"
+    return (
+        "\n\n[CURRENT EXECUTION PLAN (WBS) — these are the live tasks on the user's execution plan canvas, "
+        f"plan name '{plan_name}'. This is the AUTHORITATIVE task list. "
+        "When the user references a task by name (e.g. 'Stakeholder Analysis'), match it to its id here and act on it directly — "
+        "do NOT ask the user for a task ID you can already see below. "
+        "To change a task call update_wbs_task; to add one call add_wbs_task (set its phase to an existing phase name when the user names one); "
+        "to remove one call remove_wbs_task. Phase names above are the real phases — reuse them verbatim.]\n"
+        + json.dumps(compact, indent=2)
+    )
+
+
 def _collect_session_scorecards(session):
     """Return every scorecard payload in this thread: baseline + every
     scenario-derived snapshot. Order: oldest → newest. De-duped by id."""
@@ -5591,6 +5642,7 @@ def _generate_assistant_reply_anthropic(
         readiness=readiness,
     )
     system_prompt += _scorecard_content_prompt_suffix(session, view_context)
+    system_prompt += _wbs_content_prompt_suffix(user_id, thread_id)
     if _message_has_data_context_request(user_message):
         system_prompt += (
             "\nConnector-priority instruction: because the user attached data context or requested connector analysis, "
@@ -5824,6 +5876,7 @@ def _stream_assistant_reply_events_anthropic(
         readiness=readiness,
     )
     system_prompt += _scorecard_content_prompt_suffix(session, view_context)
+    system_prompt += _wbs_content_prompt_suffix(user_id, thread_id)
     if _message_has_data_context_request(user_message):
         system_prompt += (
             "\nConnector-priority instruction: because the user attached data context or requested connector analysis, "
