@@ -687,19 +687,26 @@ export default function JaspenWorkspace() {
             )}
           </div>
           <div style={{ display:'flex', gap:8 }}>
-            <button
-              type="button"
-              onClick={resetOverrides}
-              disabled={Object.keys(overrides).length === 0}
-              style={{
-                padding:'8px 12px', borderRadius:8, border:'1px solid #d6dce6',
-                background:'#fff', color:'#0f172a', cursor: Object.keys(overrides).length === 0 ? 'not-allowed' : 'pointer',
-                fontSize:13, opacity: Object.keys(overrides).length === 0 ? 0.5 : 1,
-              }}
-            >
-              <FontAwesomeIcon icon={faRotateLeft} style={{ marginRight:6 }} />
-              Reset
-            </button>
+            {/* Reset only applies to scorecard cosmetic overrides. The
+                execution plan has its own Undo/Redo inside the canvas, and
+                the trade-off surface has nothing to reset — so we hide the
+                button there (it was permanently disabled = "doesn't work"). */}
+            {isScorecard && (
+              <button
+                type="button"
+                onClick={resetOverrides}
+                disabled={Object.keys(overrides).length === 0}
+                title={Object.keys(overrides).length === 0 ? 'No manual edits to reset' : 'Reset manual edits to the original'}
+                style={{
+                  padding:'8px 12px', borderRadius:8, border:'1px solid #d6dce6',
+                  background:'#fff', color:'#0f172a', cursor: Object.keys(overrides).length === 0 ? 'not-allowed' : 'pointer',
+                  fontSize:13, opacity: Object.keys(overrides).length === 0 ? 0.5 : 1,
+                }}
+              >
+                <FontAwesomeIcon icon={faRotateLeft} style={{ marginRight:6 }} />
+                Reset
+              </button>
+            )}
             <button
               type="button"
               onClick={() => window.print()}

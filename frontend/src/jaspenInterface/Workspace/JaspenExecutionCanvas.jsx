@@ -29,7 +29,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faGripVertical, faPlus, faEllipsis, faCheck,
-  faArrowRotateRight,
+  faArrowRotateRight, faArrowRotateLeft,
 } from '@fortawesome/free-solid-svg-icons';
 
 import { Jaspen } from './JaspenClient';
@@ -78,6 +78,7 @@ const PRIORITY_STYLE = {
   medium:   { dot: COLOR.mute, label: 'Medium'  },
   low:      { dot: '#cbd5e1', label: 'Low'      },
 };
+const PRIORITY_ORDER = ['low', 'medium', 'high', 'critical'];
 
 const normalizeStatus = (s) => {
   const v = String(s || '').toLowerCase().replace(/[\s-]/g, '_');
@@ -180,11 +181,18 @@ export const StatusPill = ({ status, onClick, interactive = true }) => {
   );
 };
 
-export const PriorityDot = ({ priority }) => {
+export const PriorityDot = ({ priority, onClick, interactive = false }) => {
   const p = normalizePriority(priority);
   const sty = PRIORITY_STYLE[p];
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: COLOR.navy2 }}>
+    <span
+      onClick={interactive ? onClick : undefined}
+      title={interactive ? 'Click to cycle priority' : undefined}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: COLOR.navy2,
+        cursor: interactive ? 'pointer' : 'default', userSelect: 'none', whiteSpace: 'nowrap',
+      }}
+    >
       <span style={{ width: 7, height: 7, borderRadius: 4, background: sty.dot }} />
       {sty.label}
     </span>
@@ -333,6 +341,12 @@ export function TaskRow({ task, onUpdate, onReorder, isFirst, isLast, phaseName 
     onUpdate?.({ status: next });
   };
 
+  const cyclePriority = () => {
+    const i = PRIORITY_ORDER.indexOf(priority);
+    const next = PRIORITY_ORDER[(i + 1) % PRIORITY_ORDER.length];
+    onUpdate?.({ priority: next });
+  };
+
   // HTML5 drag-drop handlers — write the task id to dataTransfer so the
   // drop target can locate the source. Same logic works across phases.
   const onDragStart = (e) => {
@@ -435,7 +449,7 @@ export function TaskRow({ task, onUpdate, onReorder, isFirst, isLast, phaseName 
       </div>
 
       {/* Priority */}
-      <PriorityDot priority={priority} />
+      <PriorityDot priority={priority} interactive onClick={cyclePriority} />
 
       {/* Owner */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
@@ -1107,6 +1121,72 @@ export default function JaspenExecutionCanvas({ threadId, bundle, wbs: wbsProp, 
     return () => { if (saveTimer.current) window.clearTimeout(saveTimer.current); };
   }, [wbs, threadId]);
 
+  // ── Undo / redo ──────────────────────────────────────────────────────────
+  // Keep a ref mirror of the live WBS so mutation helpers can read the current
+  // value synchronously (no stale closures) and snapshot it before changing.
+  const wbsRef = useRef(wbs);
+  useEffect(() => { wbsRef.current = wbs; }, [wbs]);
+  const undoStack = useRef([]);
+  const redoStack = useRef([]);
+  const [, setHistVer] = useState(0); // bump to re-render undo/redo button states
+
+  // Reset history whenever a fresh WBS is loaded from the server.
+  useEffect(() => {
+    undoStack.current = [];
+    redoStack.current = [];
+    setHistVer((v) => v + 1);
+  }, [threadId]);
+
+  // Apply a new WBS, recording the prior state for undo. `next` may be a value
+  // or a (prev) => next function. Computed against wbsRef so there are no
+  // double-push side effects under StrictMode (unlike a setState updater).
+  const recordAndSet = useCallback((next) => {
+    const prev = wbsRef.current;
+    const resolved = typeof next === 'function' ? next(prev) : next;
+    if (!resolved || resolved === prev) return;
+    undoStack.current.push(prev);
+    if (undoStack.current.length > 60) undoStack.current.shift();
+    redoStack.current = [];
+    setHistVer((v) => v + 1);
+    setWbs(resolved);
+  }, []);
+
+  const undo = useCallback(() => {
+    if (undoStack.current.length === 0) return;
+    const prev = undoStack.current.pop();
+    redoStack.current.push(wbsRef.current);
+    setHistVer((v) => v + 1);
+    setWbs(prev); // persists via the debounced save effect
+  }, []);
+
+  const redo = useCallback(() => {
+    if (redoStack.current.length === 0) return;
+    const next = redoStack.current.pop();
+    undoStack.current.push(wbsRef.current);
+    setHistVer((v) => v + 1);
+    setWbs(next);
+  }, []);
+
+  const canUndo = undoStack.current.length > 0;
+  const canRedo = redoStack.current.length > 0;
+
+  // Keyboard: Cmd/Ctrl+Z = undo, Cmd/Ctrl+Shift+Z (or Ctrl+Y) = redo.
+  useEffect(() => {
+    const onKey = (e) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod) return;
+      const key = String(e.key || '').toLowerCase();
+      // Don't hijack undo while the user is editing a text field.
+      const el = e.target;
+      const tag = String(el?.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || el?.isContentEditable) return;
+      if (key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
+      else if ((key === 'z' && e.shiftKey) || key === 'y') { e.preventDefault(); redo(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [undo, redo]);
+
   // Group tasks by phase (preserve order of first appearance).
   const phases = useMemo(() => {
     const list = Array.isArray(wbs?.tasks) ? wbs.tasks : [];
@@ -1137,7 +1217,7 @@ export default function JaspenExecutionCanvas({ threadId, bundle, wbs: wbsProp, 
   }, [wbs]);
 
   const updateTask = useCallback((taskId, patch) => {
-    setWbs((prev) => {
+    recordAndSet((prev) => {
       const next = { ...(prev || {}) };
       const tasks = Array.isArray(prev?.tasks) ? [...prev.tasks] : [];
       const idx = tasks.findIndex((t) => String(t?.id || '') === String(taskId));
@@ -1146,14 +1226,14 @@ export default function JaspenExecutionCanvas({ threadId, bundle, wbs: wbsProp, 
       next.tasks = tasks;
       return next;
     });
-  }, []);
+  }, [recordAndSet]);
 
   // Reorder a task within or across phases. Logic:
   //   1. Remove the source from its current position
   //   2. Find the target index (or end-of-phase if no targetId)
   //   3. Insert source at that index, updating its `phase` to match the target
   const reorderTask = useCallback(({ sourceId, targetId, position, targetPhase }) => {
-    setWbs((prev) => {
+    recordAndSet((prev) => {
       const tasks = Array.isArray(prev?.tasks) ? [...prev.tasks] : [];
       const srcIdx = tasks.findIndex((t) => String(t?.id || '') === String(sourceId));
       if (srcIdx < 0) return prev;
@@ -1176,11 +1256,11 @@ export default function JaspenExecutionCanvas({ threadId, bundle, wbs: wbsProp, 
       tasks.splice(insertAt, 0, moved);
       return { ...(prev || {}), tasks };
     });
-  }, []);
+  }, [recordAndSet]);
 
   // Board column drop — moves a task into a new status bucket.
   const onColumnDrop = useCallback((sourceId, newStatus) => {
-    setWbs((prev) => {
+    recordAndSet((prev) => {
       const tasks = Array.isArray(prev?.tasks) ? [...prev.tasks] : [];
       const idx = tasks.findIndex((t) => String(t?.id || '') === String(sourceId));
       if (idx < 0) return prev;
@@ -1188,10 +1268,10 @@ export default function JaspenExecutionCanvas({ threadId, bundle, wbs: wbsProp, 
       tasks[idx] = { ...tasks[idx], status: newStatus };
       return { ...(prev || {}), tasks };
     });
-  }, []);
+  }, [recordAndSet]);
 
   const addTask = useCallback((phaseName) => {
-    setWbs((prev) => {
+    recordAndSet((prev) => {
       const next = { ...(prev || {}) };
       const tasks = Array.isArray(prev?.tasks) ? [...prev.tasks] : [];
       tasks.push({
@@ -1210,7 +1290,7 @@ export default function JaspenExecutionCanvas({ threadId, bundle, wbs: wbsProp, 
       next.tasks = tasks;
       return next;
     });
-  }, []);
+  }, [recordAndSet]);
 
   const totalTasks = (wbs?.tasks || []).length;
   const totalPhases = phases.length;
@@ -1338,7 +1418,41 @@ export default function JaspenExecutionCanvas({ threadId, bundle, wbs: wbsProp, 
               )}
             </div>
           </div>
-          <ViewSwitcher value={view} onChange={setView} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <button
+                type="button"
+                onClick={undo}
+                disabled={!canUndo}
+                title="Undo (⌘Z)"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  width: 30, height: 30, borderRadius: 8,
+                  border: `1px solid ${COLOR.line}`, background: '#fff',
+                  color: canUndo ? COLOR.navy : COLOR.mute,
+                  cursor: canUndo ? 'pointer' : 'not-allowed', opacity: canUndo ? 1 : 0.45,
+                }}
+              >
+                <FontAwesomeIcon icon={faArrowRotateLeft} style={{ fontSize: 12 }} />
+              </button>
+              <button
+                type="button"
+                onClick={redo}
+                disabled={!canRedo}
+                title="Redo (⌘⇧Z)"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  width: 30, height: 30, borderRadius: 8,
+                  border: `1px solid ${COLOR.line}`, background: '#fff',
+                  color: canRedo ? COLOR.navy : COLOR.mute,
+                  cursor: canRedo ? 'pointer' : 'not-allowed', opacity: canRedo ? 1 : 0.45,
+                }}
+              >
+                <FontAwesomeIcon icon={faArrowRotateRight} style={{ fontSize: 12 }} />
+              </button>
+            </div>
+            <ViewSwitcher value={view} onChange={setView} />
+          </div>
         </div>
 
         {/* Priority counts strip (replaces owners — easier to read load shape) */}
