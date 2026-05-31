@@ -438,6 +438,17 @@ export default function JaspenWorkspace() {
       // on the legacy __execution__ route with no ?idea= in the URL).
       const respScorecardId = wbsResp?.scorecard_id ? String(wbsResp.scorecard_id) : null;
       setResolvedExecScorecardId(respScorecardId);
+      // Canonicalize the URL: if we landed on the bare `__execution__` route
+      // (no ?idea=) but the server knows which idea this plan belongs to, swap
+      // to the idea-scoped URL. This keeps the per-idea chat key stable so the
+      // conversation never splits between the bare and idea-scoped routes.
+      if (!cancelled && isExecution && !ideaParam && respScorecardId) {
+        navigate(
+          `/workspace/${threadId}/${SENTINEL_EXECUTION}?idea=${encodeURIComponent(respScorecardId)}`,
+          { replace: true }
+        );
+        return;
+      }
       const respWbs = wbsResp?.project_wbs;
       const respHasTasks = respWbs && Array.isArray(respWbs.tasks) && respWbs.tasks.length > 0;
       if (respHasTasks) {

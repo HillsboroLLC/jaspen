@@ -6039,14 +6039,35 @@ def _register_execution_plan_artifact(user_id, thread_id, normalized_wbs):
         task_count = len(normalized_wbs.get('tasks') or [])
         now_iso = datetime.utcnow().isoformat()
 
+        def _plan_signature(plan):
+            """A content fingerprint so plans built across id churn (the same
+            task list re-stamped with a different scorecard_id) are recognized as
+            the SAME plan and don't stack as duplicate artifacts."""
+            try:
+                names = [
+                    str((t or {}).get('title') or (t or {}).get('name') or '').strip().lower()
+                    for t in (plan.get('tasks') or [])
+                    if isinstance(t, dict)
+                ]
+                names = [n for n in names if n]
+                return tuple(names[:12])
+            except Exception:
+                return tuple()
+
+        new_sig = _plan_signature(normalized_wbs)
+
         kept = []
         for msg in raw:
             if isinstance(msg, dict):
                 art = msg.get('artifact') if isinstance(msg.get('artifact'), dict) else None
                 if art and str(art.get('type') or '') == 'execution_plan':
-                    art_sid = str((art.get('data') or {}).get('scorecard_id') or '').strip()
+                    art_data = art.get('data') or {}
+                    art_sid = str(art_data.get('scorecard_id') or '').strip()
                     if sid and art_sid == sid:
                         continue  # drop the stale plan for this same idea
+                    # Same content under a different (churned) id is still a dup.
+                    if new_sig and _plan_signature(art_data) == new_sig:
+                        continue
             kept.append(msg)
 
         label = idea_name or 'this idea'
@@ -6152,6 +6173,40 @@ def get_thread_wbs(thread_id):
                     _register_execution_plan_artifact(user_id, thread_id, project_wbs)
                 except Exception:
                     current_app.logger.exception("[get_thread_wbs] identity backfill persist failed")
+
+        # Orphan-cleanup: prune execution_plan artifacts whose idea id no longer
+        # has a stored plan in wbs_by_scorecard. Earlier identity-backfill churn
+        # (re-keying a plan from id A→B→C) left behind artifacts pointing at
+        # abandoned ids — they show up as phantom duplicates in Session Artifacts.
+        try:
+            by_card = td.get('wbs_by_scorecard') if isinstance(td.get('wbs_by_scorecard'), dict) else {}
+            if by_card:
+                valid_ids = {str(k).strip() for k in by_card.keys() if str(k).strip()}
+                sessions2 = load_user_sessions(user_id) or {}
+                skey2, session2 = _resolve_session_entry(sessions2, thread_id)
+                hist = session2.get('chat_history') if isinstance(session2, dict) else None
+                if isinstance(hist, list):
+                    cleaned = []
+                    removed = False
+                    for msg in hist:
+                        drop = False
+                        if isinstance(msg, dict):
+                            art = msg.get('artifact') if isinstance(msg.get('artifact'), dict) else None
+                            if art and str(art.get('type') or '') == 'execution_plan':
+                                art_sid = str((art.get('data') or {}).get('scorecard_id') or '').strip()
+                                if art_sid and art_sid not in valid_ids:
+                                    drop = True
+                                    removed = True
+                        if not drop:
+                            cleaned.append(msg)
+                    if removed:
+                        session2['chat_history'] = cleaned
+                        if isinstance(session2.get('result'), dict):
+                            session2['result']['chat_history'] = cleaned
+                        sessions2[skey2 or thread_id] = session2
+                        save_user_sessions(user_id, sessions2)
+        except Exception:
+            current_app.logger.exception("[get_thread_wbs] orphan artifact cleanup failed")
 
         # When the caller didn't scope by ?scorecard_id (legacy __execution__
         # route), surface the idea this stored plan belongs to so the workspace
@@ -6309,6 +6364,52 @@ def _sanitize_workspace_chat(raw, max_messages=200):
     return out
 
 
+_EXECUTION_SENTINEL = '__execution__'
+
+
+def _canonical_workspace_artifact_id(td, artifact_id):
+    """Collapse the bare execution sentinel and its idea-scoped variants onto a
+    single canonical key so the same execution plan shares ONE chat regardless of
+    which route (``__execution__`` vs ``__execution__::<id>``) the user arrived by.
+
+    Returns a tuple ``(canonical_id, legacy_ids)`` where ``legacy_ids`` are the
+    other keys whose chat history should be migrated/merged onto the canonical
+    key (the bare sentinel chiefly)."""
+    raw = str(artifact_id or '')
+    if not raw.startswith(_EXECUTION_SENTINEL):
+        return raw, []
+
+    # Pull an explicit idea id off the route variant if present.
+    explicit_id = ''
+    for sep in ('::', '?idea=', '&idea='):
+        if sep in raw:
+            explicit_id = raw.split(sep, 1)[1]
+            break
+    explicit_id = (explicit_id or '').split('&')[0].split('?')[0].strip()
+
+    canonical_idea = explicit_id
+    if not canonical_idea and isinstance(td, dict):
+        canonical_idea = str(td.get('active_execution_scorecard_id') or '').strip()
+    if not canonical_idea and isinstance(td, dict):
+        pw = td.get('project_wbs')
+        if isinstance(pw, dict):
+            canonical_idea = str(pw.get('scorecard_id') or '').strip()
+
+    if canonical_idea:
+        canonical_id = '{}::{}'.format(_EXECUTION_SENTINEL, canonical_idea)
+    else:
+        canonical_id = _EXECUTION_SENTINEL
+
+    # Every other execution-flavored key we might want to fold in.
+    legacy_ids = [_EXECUTION_SENTINEL]
+    if canonical_idea:
+        legacy_ids.append('{}::{}'.format(_EXECUTION_SENTINEL, canonical_idea))
+    if raw not in legacy_ids:
+        legacy_ids.append(raw)
+    legacy_ids = [k for k in legacy_ids if k != canonical_id]
+    return canonical_id, legacy_ids
+
+
 @strategy_bp.route('/threads/<thread_id>/workspace-chat/<artifact_id>', methods=['GET'])
 @jwt_required()
 def get_workspace_chat(thread_id, artifact_id):
@@ -6319,9 +6420,32 @@ def get_workspace_chat(thread_id, artifact_id):
         chats = td.get('workspace_chats') if isinstance(td, dict) else None
         messages = []
         if isinstance(chats, dict):
-            raw = chats.get(str(artifact_id))
-            if isinstance(raw, list):
+            canonical_id, legacy_ids = _canonical_workspace_artifact_id(td, artifact_id)
+            raw = chats.get(canonical_id)
+            if isinstance(raw, list) and raw:
                 messages = raw
+            else:
+                # No canonical chat yet — adopt the richest legacy chat (e.g. the
+                # bare ``__execution__`` history created before idea-scoping) and
+                # migrate it onto the canonical key so future reads/writes align.
+                best = None
+                for k in legacy_ids:
+                    cand = chats.get(k)
+                    if isinstance(cand, list) and len(cand) > (len(best) if best else 0):
+                        best = cand
+                if best:
+                    messages = best
+                    if canonical_id != _EXECUTION_SENTINEL:
+                        try:
+                            chats[canonical_id] = best
+                            for k in legacy_ids:
+                                if k in chats and k != canonical_id:
+                                    chats.pop(k, None)
+                            td['workspace_chats'] = chats
+                            all_data[thread_id] = td
+                            _save_scenarios(user_id, all_data)
+                        except Exception:
+                            pass
         return jsonify({
             'thread_id': thread_id,
             'artifact_id': artifact_id,
@@ -6348,7 +6472,13 @@ def upsert_workspace_chat(thread_id, artifact_id):
         chats = td.get('workspace_chats')
         if not isinstance(chats, dict):
             chats = {}
-        chats[str(artifact_id)] = messages
+        canonical_id, legacy_ids = _canonical_workspace_artifact_id(td, artifact_id)
+        chats[canonical_id] = messages
+        # Drop any stale legacy keys so we never split the same plan's chat again.
+        if canonical_id != _EXECUTION_SENTINEL:
+            for k in legacy_ids:
+                if k in chats and k != canonical_id:
+                    chats.pop(k, None)
         td['workspace_chats'] = chats
         all_data[thread_id] = td
         _save_scenarios(user_id, all_data)
