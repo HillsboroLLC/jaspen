@@ -4870,7 +4870,10 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
             {
                 "name": "generate_execution_plan",
                 "description": (
-                    "Generate or regenerate the detailed execution plan (WBS) for the current initiative."
+                    "Generate or regenerate the detailed execution plan (WBS) for the current initiative. "
+                    "If a plan already exists for this idea, the tool returns plan_exists and asks the user to "
+                    "choose; set regenerate=true ONLY when the user has explicitly asked to replace/rebuild the "
+                    "existing plan."
                 ),
                 "input_schema": {
                     "type": "object",
@@ -4880,6 +4883,10 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                             "items": {"type": "string"},
                         },
                         "timeline_constraint": {"type": "string"},
+                        "regenerate": {
+                            "type": "boolean",
+                            "description": "Set true only when the user explicitly asked to replace/rebuild an existing plan.",
+                        },
                     },
                     "additionalProperties": False,
                 },
@@ -5502,6 +5509,41 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             adopted_scenario = None
         if not isinstance(scorecard, dict):
             return _tool_error("No scorecard context found for this thread.", code="missing_scorecard")
+
+        # If a plan already exists for this idea, don't silently overwrite it.
+        # Unless the user explicitly asked to regenerate (force/regenerate), hand
+        # the frontend a choice card (open the current plan vs. generate a new
+        # one) instead of generating. Done before the LLM call to save cost.
+        from .strategy import _wbs_idea_identity, _existing_committed_plan
+        _force_new = bool(tool_input.get("force") or tool_input.get("regenerate"))
+        _existing_idea_id, _existing_idea_name = _wbs_idea_identity(scorecard, fallback_id=target_idea_id)
+        if not _force_new:
+            _existing_plan = _existing_committed_plan(thread_data, _existing_idea_id)
+            if _existing_plan:
+                _exist_name = (
+                    _existing_plan.get("scorecard_name")
+                    or _existing_plan.get("idea_name")
+                    or _existing_idea_name
+                    or ""
+                )
+                _exist_tasks = len(_existing_plan.get("tasks") or [])
+                return _tool_success({
+                    "tool": tool_name,
+                    "plan_exists": True,
+                    "confirmation": (
+                        f"{_exist_name or 'This idea'} already has an execution plan"
+                        f"{f' ({_exist_tasks} tasks)' if _exist_tasks else ''}. "
+                        "Open the current plan, or generate a new one to replace it?"
+                    ),
+                    "artifact": {
+                        "type": "execution_plan_exists",
+                        "data": {
+                            "scorecard_id": _existing_idea_id or None,
+                            "scorecard_name": _exist_name,
+                            "task_count": _exist_tasks,
+                        },
+                    },
+                })
 
         focus_areas = tool_input.get("focus_areas") if isinstance(tool_input.get("focus_areas"), list) else []
         timeline_constraint = str(tool_input.get("timeline_constraint") or "").strip()

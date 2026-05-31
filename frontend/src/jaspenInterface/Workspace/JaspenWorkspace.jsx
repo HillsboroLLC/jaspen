@@ -235,12 +235,22 @@ export default function JaspenWorkspace() {
   // the trade-off table can show their own spinner; `null` = idle.
   const [buildingPlan, setBuildingPlan] = useState(null);
   const [buildPlanError, setBuildPlanError] = useState(null);
+  // When a plan already exists for the targeted idea, the backend returns
+  // `plan_exists` instead of overwriting. We stash the details here and show a
+  // modal that lets the user open the existing plan or generate a fresh one.
+  const [planExistsPrompt, setPlanExistsPrompt] = useState(null);
+
+  const openExistingPlan = (scorecardId) => {
+    const ideaQS = scorecardId ? `?idea=${encodeURIComponent(scorecardId)}` : '';
+    navigate(`/workspace/${threadId}/${SENTINEL_EXECUTION}${ideaQS}`);
+  };
 
   // Generate (and commit) an execution plan from a scorecard or trade-off
   // idea, then open the execution canvas. AI with heuristic fallback happens
   // server-side inside generate_ai_wbs. `source` is a stable key used only to
-  // scope the per-button spinner.
-  const buildExecutionPlan = async ({ source, scorecard_id, scenario_id } = {}) => {
+  // scope the per-button spinner. `force` skips the "plan already exists" gate
+  // and regenerates a brand-new plan for the idea.
+  const buildExecutionPlan = async ({ source, scorecard_id, scenario_id, force } = {}) => {
     if (buildingPlan) return; // one at a time
     setBuildPlanError(null);
     setBuildingPlan(source || scorecard_id || 'plan');
@@ -248,10 +258,21 @@ export default function JaspenWorkspace() {
       const payload = { commit: true };
       if (scorecard_id) payload.scorecard_id = scorecard_id;
       if (scenario_id) payload.scenario_id = scenario_id;
-      await Jaspen.generateAiWbs(threadId, payload);
+      if (force) payload.force = true;
+      const resp = await Jaspen.generateAiWbs(threadId, payload);
+      // A plan already exists for this idea — let the user choose rather than
+      // silently overwriting it.
+      if (resp?.plan_exists) {
+        setPlanExistsPrompt({
+          scorecardId: resp.scorecard_id || scorecard_id || null,
+          scorecardName: resp.scorecard_name || '',
+          taskCount: Number(resp.task_count || 0),
+          onGenerateNew: () => buildExecutionPlan({ source, scorecard_id, scenario_id, force: true }),
+        });
+        return;
+      }
       // Open THIS idea's plan (scoped by ?idea=) so each plan stands alone.
-      const ideaQS = scorecard_id ? `?idea=${encodeURIComponent(scorecard_id)}` : '';
-      navigate(`/workspace/${threadId}/${SENTINEL_EXECUTION}${ideaQS}`);
+      openExistingPlan(resp?.project_wbs?.scorecard_id || scorecard_id);
     } catch (err) {
       setBuildPlanError(
         (err && err.message) ? err.message : 'Could not build the execution plan. Please try again.'
@@ -296,6 +317,40 @@ export default function JaspenWorkspace() {
 
     try {
       const resp = await Jaspen.generateAiWbs(threadId, { ...seed, commit: true });
+      if (resp?.plan_exists) {
+        setChatHistory((prev) => {
+          const arr = prev.slice(0, -1);
+          return [...arr, {
+            role: 'ai',
+            text: `**${resp.scorecard_name || seedLabel}** already has an execution plan (${Number(resp.task_count || 0)} task${Number(resp.task_count || 0) === 1 ? '' : 's'}). Open the current plan, or generate a new one?`,
+          }];
+        });
+        setPlanExistsPrompt({
+          scorecardId: resp.scorecard_id || seed.scorecard_id || null,
+          scorecardName: resp.scorecard_name || seedLabel,
+          taskCount: Number(resp.task_count || 0),
+          onGenerateNew: async () => {
+            setChatBusy(true);
+            try {
+              const forced = await Jaspen.generateAiWbs(threadId, { ...seed, commit: true, force: true });
+              const fWbs = forced?.project_wbs || forced?.wbs || forced || {};
+              const fTasks = Array.isArray(fWbs?.tasks) ? fWbs.tasks : [];
+              setChatHistory((prev) => [...prev, {
+                role: 'ai',
+                text: fTasks.length
+                  ? `Here's a fresh execution plan for **${seedLabel}** — ${fTasks.length} task${fTasks.length === 1 ? '' : 's'}.`
+                  : `I generated a new execution plan for **${seedLabel}**.`,
+                execPlan: { label: seedLabel, tasks: fTasks.slice(0, 6), total: fTasks.length, scorecardId: seed.scorecard_id || null },
+              }]);
+            } catch (e) {
+              setChatHistory((prev) => [...prev, { role: 'ai', text: `I couldn't regenerate the plan: ${String(e?.message || e || 'unknown error')}.` }]);
+            } finally {
+              setChatBusy(false);
+            }
+          },
+        });
+        return;
+      }
       const planWbs = resp?.project_wbs || resp?.wbs || resp || {};
       const tasks = Array.isArray(planWbs?.tasks) ? planWbs.tasks : [];
       setChatHistory((prev) => {
@@ -854,6 +909,68 @@ export default function JaspenWorkspace() {
           [data-ws-canvas] { overflow: visible !important; padding: 0 !important; }
         }
       `}</style>
+
+      {/* === "Plan already exists" choice modal === */}
+      {planExistsPrompt && (
+        <div
+          role="presentation"
+          onClick={() => setPlanExistsPrompt(null)}
+          style={{
+            position:'fixed', inset:0, zIndex:9999, background:'rgba(15,23,42,0.45)',
+            display:'flex', alignItems:'center', justifyContent:'center', padding:16,
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width:'min(440px, 100%)', background:'#fff', borderRadius:14,
+              boxShadow:'0 20px 60px rgba(15,23,42,0.3)', padding:'22px 22px 18px',
+              fontFamily:'Inter Tight, system-ui, sans-serif',
+            }}
+          >
+            <div style={{ fontSize:16, fontWeight:700, color:'#0f172a', marginBottom:8 }}>
+              Execution plan already exists
+            </div>
+            <div style={{ fontSize:13.5, color:'#475569', lineHeight:1.55, marginBottom:18 }}>
+              {planExistsPrompt.scorecardName ? <><strong>{planExistsPrompt.scorecardName}</strong> already has an execution plan</> : 'This idea already has an execution plan'}
+              {planExistsPrompt.taskCount ? ` (${planExistsPrompt.taskCount} task${planExistsPrompt.taskCount === 1 ? '' : 's'})` : ''}.
+              {' '}Open the current plan, or generate a new one to replace it?
+            </div>
+            <div style={{ display:'flex', gap:10, justifyContent:'flex-end', flexWrap:'wrap' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  const fn = planExistsPrompt.onGenerateNew;
+                  setPlanExistsPrompt(null);
+                  if (typeof fn === 'function') fn();
+                }}
+                style={{
+                  padding:'9px 14px', borderRadius:9, border:'1px solid #cbd5e1',
+                  background:'#fff', color:'#0f172a', fontSize:13, fontWeight:600, cursor:'pointer',
+                }}
+              >
+                Generate new plan
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const sid = planExistsPrompt.scorecardId;
+                  setPlanExistsPrompt(null);
+                  openExistingPlan(sid);
+                }}
+                style={{
+                  padding:'9px 16px', borderRadius:9, border:'1px solid #a0036c',
+                  background:'#a0036c', color:'#fff', fontSize:13, fontWeight:600, cursor:'pointer',
+                }}
+              >
+                Open current plan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* === LEFT SIDEBAR: scoped chat === */}
       <aside

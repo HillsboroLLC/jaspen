@@ -5317,6 +5317,29 @@ def generate_ai_wbs(thread_id):
         if not isinstance(current_scorecard, dict):
             return jsonify({'error': 'No scorecard context found for this thread.'}), 404
 
+        # If a committed plan already exists for THIS idea, don't silently
+        # overwrite it. Unless the caller explicitly forces a regenerate
+        # (force=true), signal the frontend so it can offer "open the existing
+        # plan" vs. "generate a new one". Done before the LLM call to save cost.
+        force_new = bool(payload.get('force') or payload.get('regenerate'))
+        if commit and not force_new:
+            existing_idea_id, _existing_idea_name = _wbs_idea_identity(current_scorecard, fallback_id=scorecard_id)
+            existing_plan = _existing_committed_plan(thread_data, existing_idea_id)
+            if existing_plan:
+                return jsonify({
+                    'plan_exists': True,
+                    'thread_id': thread_id,
+                    'scorecard_id': existing_idea_id or None,
+                    'scorecard_name': (
+                        existing_plan.get('scorecard_name')
+                        or existing_plan.get('idea_name')
+                        or _existing_idea_name
+                        or ''
+                    ),
+                    'plan_name': existing_plan.get('name') or '',
+                    'task_count': len(existing_plan.get('tasks') or []),
+                }), 200
+
         if not preflight_answers:
             has_exec_summary = bool(str(current_scorecard.get('executive_summary') or '').strip())
             score_value = int(current_scorecard.get('jaspen_score') or 0)
@@ -5880,6 +5903,17 @@ def _resolve_thread_wbs(td, scorecard_id=None):
             # empty. Do NOT fall through to another idea's project_wbs.
             return None
     return td.get('project_wbs')
+
+
+def _existing_committed_plan(td, scorecard_id):
+    """Return the already-committed plan for this idea if one exists with at
+    least one task, else None. Used to gate 'create a plan' triggers so we
+    don't silently overwrite an existing plan — the caller offers the user a
+    choice (open the existing plan vs. generate a new one) instead."""
+    plan = _resolve_thread_wbs(td, scorecard_id)
+    if isinstance(plan, dict) and isinstance(plan.get('tasks'), list) and len(plan['tasks']) > 0:
+        return plan
+    return None
 
 
 def _store_thread_wbs(td, scorecard_id, normalized_wbs):

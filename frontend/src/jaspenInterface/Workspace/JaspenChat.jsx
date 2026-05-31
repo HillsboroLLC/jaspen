@@ -1721,6 +1721,10 @@ const [pendingWbsConfirmation, setPendingWbsConfirmation] = useState(null);
   const [scenarioOutputMetrics, setScenarioOutputMetrics] = useState([]);
   const [threadEditOpen, setThreadEditOpen] = useState(false);
   const [postAdoptWbsPrompt, setPostAdoptWbsPrompt] = useState(null);
+  // When a create-plan trigger hits an idea that already has a plan, the
+  // backend returns `plan_exists`; we stash it here and show a choice modal
+  // (open the current plan vs. generate a new one).
+  const [planExistsPrompt, setPlanExistsPrompt] = useState(null);
   const [bundleCurrentScorecard, setBundleCurrentScorecard] = useState(null);
   const [bundleBaselineScorecard, setBundleBaselineScorecard] = useState(null);
   const hasHistory = analysisHistory.length > 0;
@@ -3096,6 +3100,41 @@ const renderConversationMessage = (message, opts = {}) => {
   // Timeline canvas.
   if (message?.artifact?.type === 'execution_plan') {
     return renderInlineExecutionArtifact(message.artifact.data, opts);
+  }
+  // "Plan already exists" choice card — surfaced when a chat-driven build
+  // targets an idea that already has a plan. Offers open vs. regenerate.
+  if (message?.artifact?.type === 'execution_plan_exists') {
+    const d = message.artifact.data || {};
+    const sid = d.scorecard_id || null;
+    const route = sid ? `__execution__?idea=${encodeURIComponent(sid)}` : '__execution__';
+    const tc = Number(d.task_count || 0);
+    return (
+      <div style={{ border:'1px solid #e6eaf2', borderRadius:12, padding:'14px 16px', background:'#fff', maxWidth:420 }}>
+        <div style={{ fontSize:14, fontWeight:700, color:'#0f172a', marginBottom:6 }}>
+          Execution plan already exists
+        </div>
+        <div style={{ fontSize:13, color:'#475569', lineHeight:1.5, marginBottom:14 }}>
+          {d.scorecard_name ? <><strong>{d.scorecard_name}</strong> already has an execution plan</> : 'This idea already has an execution plan'}
+          {tc ? ` (${tc} task${tc === 1 ? '' : 's'})` : ''}. Open the current plan, or generate a new one to replace it?
+        </div>
+        <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+          <button
+            type="button"
+            onClick={() => { if (opts.onOpenWorkspaceRoute) opts.onOpenWorkspaceRoute(opts.threadId, route); }}
+            style={{ padding:'8px 14px', borderRadius:8, border:'1px solid #a0036c', background:'#a0036c', color:'#fff', fontSize:13, fontWeight:600, cursor:'pointer' }}
+          >
+            Open current plan
+          </button>
+          <button
+            type="button"
+            onClick={() => { if (opts.onRegenerateExecutionPlan) opts.onRegenerateExecutionPlan(sid); }}
+            style={{ padding:'8px 14px', borderRadius:8, border:'1px solid #cbd5e1', background:'#fff', color:'#0f172a', fontSize:13, fontWeight:600, cursor:'pointer' }}
+          >
+            Generate new plan
+          </button>
+        </div>
+      </div>
+    );
   }
   const text = String(message?.text || '');
   if (message?.role === 'user') return text;
@@ -8275,6 +8314,44 @@ async function onBeginProject(extraAnswers = null) {
       return;
     }
 
+    if (json?.plan_exists === true) {
+      setBeginBusy(false);
+      setPlanExistsPrompt({
+        threadBundleId: tid,
+        scorecardId: json.scorecard_id || null,
+        scorecardName: json.scorecard_name || '',
+        taskCount: Number(json.task_count || 0),
+        onGenerateNew: async () => {
+          setBeginBusy(true);
+          setBeginMsg('Building your project plan…');
+          try {
+            const forcedResp = await fetch(
+              `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(tid)}/ai-wbs`,
+              {
+                method: 'POST',
+                headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
+                credentials: 'include',
+                body: JSON.stringify({ ...body, force: true }),
+              }
+            );
+            const forcedJson = await forcedResp.json().catch(() => ({}));
+            if (!forcedResp.ok) {
+              setBeginMsg(`Could not generate plan: ${forcedJson?.error || forcedJson?.detail || `HTTP ${forcedResp.status}`}`);
+              setTimeout(() => setBeginBusy(false), 2000);
+              return;
+            }
+            setBeginMsg('Plan ready — opening Execution page…');
+            setTimeout(() => { setBeginBusy(false); openExecutionPage(tid); }, 700);
+          } catch (e) {
+            console.error('[Begin Project] regenerate failed', e);
+            setBeginMsg('Something went wrong. Please try again.');
+            setTimeout(() => setBeginBusy(false), 2000);
+          }
+        },
+      });
+      return;
+    }
+
     if (!resp.ok) {
       const detail = json?.error || json?.detail || `HTTP ${resp.status}`;
       setBeginMsg(`Could not generate plan: ${detail}`);
@@ -9847,7 +9924,22 @@ const sendAIMessage = async () => {
             commit: true,
             model_type: selectedModelType,
             scenario_id: pendingWbsConfirmation.scorecardId || null,
+            scorecard_id: pendingWbsConfirmation.scorecardId || null,
           });
+          if (aiWbs?.plan_exists) {
+            const existsReply = `${aiWbs.scorecard_name || 'This idea'} already has an execution plan${aiWbs.task_count ? ` (${aiWbs.task_count} task${Number(aiWbs.task_count) === 1 ? '' : 's'})` : ''}. Open the current plan or generate a new one?`;
+            setMessages((prev) => [...prev, { role: 'ai', text: existsReply }]);
+            await persistSidebarExchange(aiThreadId, text, existsReply);
+            setPlanExistsPrompt({
+              threadBundleId: aiThreadId,
+              scorecardId: aiWbs.scorecard_id || pendingWbsConfirmation.scorecardId || null,
+              scorecardName: aiWbs.scorecard_name || '',
+              taskCount: Number(aiWbs.task_count || 0),
+              onGenerateNew: () => handleGenerateAiWbsFromScorecard({ threadBundleId: aiThreadId, scorecardId: pendingWbsConfirmation.scorecardId || null, force: true }),
+            });
+            setPendingWbsConfirmation(null);
+            return;
+          }
           const taskCount = Array.isArray(aiWbs?.project_wbs?.tasks) ? aiWbs.project_wbs.tasks.length : 0;
           const wbsReply = `Generated an AI project WBS with ${taskCount} tasks. You can now refine it in the project planning views.`;
           setMessages((prev) => [...prev, { role: 'ai', text: wbsReply }]);
@@ -9911,7 +10003,7 @@ const uiActions = parseUIActions(actionEnvelope);
   }
 };
 
-const handleGenerateAiWbsFromScorecard = useCallback(async ({ threadBundleId, scorecardId } = {}) => {
+const handleGenerateAiWbsFromScorecard = useCallback(async ({ threadBundleId, scorecardId, force } = {}) => {
   const tid = threadBundleId || currentSessionId || sessionId;
   if (!tid) {
     showToast('No active session. Please refresh this thread and try again.', 'error');
@@ -9931,9 +10023,21 @@ const handleGenerateAiWbsFromScorecard = useCallback(async ({ threadBundleId, sc
       scenario_id: scenarioId,
       scorecard_id: scorecardId || null,
       commit: true,
+      force: !!force,
       prompt: 'Generate a recommended project WBS from this scorecard.',
       model_type: selectedModelType,
     });
+    // A plan already exists for this idea — offer a choice instead of clobbering.
+    if (resp?.plan_exists) {
+      setPlanExistsPrompt({
+        threadBundleId: tid,
+        scorecardId: resp.scorecard_id || scorecardId || null,
+        scorecardName: resp.scorecard_name || '',
+        taskCount: Number(resp.task_count || 0),
+        onGenerateNew: () => handleGenerateAiWbsFromScorecard({ threadBundleId, scorecardId, force: true }),
+      });
+      return;
+    }
     const wbsPayload = (
       (resp?.project_wbs && typeof resp.project_wbs === 'object') ? resp.project_wbs
       : ((resp?.wbs && typeof resp.wbs === 'object') ? resp.wbs : null)
@@ -10029,6 +10133,69 @@ const renderPostAdoptWbsPrompt = () => {
             }}
           >
             Generate now
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const renderPlanExistsPrompt = () => {
+  if (!planExistsPrompt) return null;
+  const { scorecardName, taskCount, scorecardId, threadBundleId } = planExistsPrompt;
+  const tid = threadBundleId || currentSessionId || sessionId;
+  return (
+    <div
+      className="jas-modal-backdrop"
+      role="presentation"
+      onClick={() => setPlanExistsPrompt(null)}
+    >
+      <div
+        className="jas-account-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Execution plan already exists"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="jas-account-modal-header">
+          <h3>Execution plan already exists</h3>
+          <button
+            type="button"
+            className="jas-account-modal-close"
+            onClick={() => setPlanExistsPrompt(null)}
+            aria-label="Close"
+          >
+            <FontAwesomeIcon icon={faTimes} />
+          </button>
+        </div>
+        <p style={{ margin: '0 0 16px', color: 'var(--color-text-secondary)' }}>
+          {scorecardName ? <><strong>{scorecardName}</strong> already has an execution plan</> : 'This idea already has an execution plan'}
+          {taskCount ? ` (${taskCount} task${taskCount === 1 ? '' : 's'})` : ''}.
+          {' '}Open the current plan, or generate a new one to replace it?
+        </p>
+        <div className="jas-account-modal-actions">
+          <button
+            type="button"
+            className="jas-account-secondary-btn"
+            onClick={() => {
+              const fn = planExistsPrompt.onGenerateNew;
+              setPlanExistsPrompt(null);
+              if (typeof fn === 'function') fn();
+            }}
+          >
+            Generate new plan
+          </button>
+          <button
+            type="button"
+            className="jas-account-portal-btn"
+            onClick={() => {
+              const sid = scorecardId;
+              setPlanExistsPrompt(null);
+              const route = sid ? `__execution__?idea=${encodeURIComponent(sid)}` : '__execution__';
+              openWorkspaceRoute(tid, route);
+            }}
+          >
+            Open current plan
           </button>
         </div>
       </div>
@@ -11427,6 +11594,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       {renderNameModal()}
       {renderBillingModal()}
       {renderPostAdoptWbsPrompt()}
+      {renderPlanExistsPrompt()}
 
       {/* Scorecard lightbox: dark backdrop, scorecard at larger size, with
           per-artifact actions (Download is wired to print-to-PDF). */}
@@ -11620,6 +11788,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       threadId: sessionId || currentSessionId,
       messages,
       onBuildExecutionPlan: (cid) => void handleGenerateAiWbsFromScorecard({ threadBundleId: sessionId || currentSessionId, scorecardId: cid }),
+      onRegenerateExecutionPlan: (cid) => void handleGenerateAiWbsFromScorecard({ threadBundleId: sessionId || currentSessionId, scorecardId: cid, force: true }),
       buildingExecutionPlanFor,
       onOpenWorkspaceScorecard: (scorecard) => openWorkspaceScorecard(scorecard),
       onOpenWorkspaceRoute: (threadIdValue, artifactIdValue) => openWorkspaceRoute(threadIdValue, artifactIdValue),
@@ -12973,6 +13142,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       {renderNameModal()}
       {renderBillingModal()}
       {renderPostAdoptWbsPrompt()}
+      {renderPlanExistsPrompt()}
       <Onboarding
         open={showOnboarding}
         canGoBack={!displayName}
@@ -13271,6 +13441,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                     threadId: sessionId || currentSessionId,
                     messages,
                     onBuildExecutionPlan: (cid) => void handleGenerateAiWbsFromScorecard({ threadBundleId: sessionId || currentSessionId, scorecardId: cid }),
+                    onRegenerateExecutionPlan: (cid) => void handleGenerateAiWbsFromScorecard({ threadBundleId: sessionId || currentSessionId, scorecardId: cid, force: true }),
                     buildingExecutionPlanFor,
                     onOpenWorkspaceScorecard: (scorecard) => openWorkspaceScorecard(scorecard),
                     onOpenWorkspaceRoute: (threadIdValue, artifactIdValue) => openWorkspaceRoute(threadIdValue, artifactIdValue),
