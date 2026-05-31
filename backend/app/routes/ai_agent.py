@@ -591,6 +591,9 @@ _VIEW_CONTEXT_VIEW_ALIASES = {
     "timeline": "execution",
     "board": "execution",
     "list": "execution",
+    "tradeoff": "scenario",
+    "trade_off": "scenario",
+    "workspace": "summary",
 }
 _VIEW_CONTEXT_TAB_ALIASES = {
     "score": "scorecard",
@@ -599,6 +602,8 @@ _VIEW_CONTEXT_TAB_ALIASES = {
     "scenario": "scenario",
     "scenarios": "scenario",
     "comparison": "comparison",
+    "tradeoff": "comparison",
+    "trade_off": "comparison",
     "assistant": "assistant",
     "chat": "chat",
     "execution": "execution",
@@ -933,6 +938,49 @@ def _sanitize_wbs_summary(raw_summary):
     return cleaned or None
 
 
+def _sanitize_visible_ideas(raw_ideas):
+    """Sanitize the list of ideas/scorecards currently rendered on screen.
+
+    The workspace Trade-off canvas synthesizes its comparison list from several
+    sources (snapshots, baseline, current, scenarios), so the live UI can show
+    more ideas than the session has stored as a single snapshot. Passing the
+    on-screen list lets the chat agent reason about exactly what the user sees
+    (e.g. "you're comparing 3 ideas") instead of undercounting.
+    """
+    if not isinstance(raw_ideas, list):
+        return None
+    cleaned = []
+    for entry in raw_ideas:
+        if not isinstance(entry, dict):
+            # Accept bare strings as names too.
+            name = str(entry or "").strip()
+            if name:
+                cleaned.append({"name": name[:120]})
+            if len(cleaned) >= 12:
+                break
+            continue
+        name = str(
+            entry.get("name")
+            or entry.get("label")
+            or entry.get("project_name")
+            or entry.get("title")
+            or ""
+        ).strip()
+        if not name:
+            continue
+        idea = {"name": name[:120]}
+        score = entry.get("score")
+        if score is None:
+            score = entry.get("jaspen_score")
+        parsed_score = _safe_nonnegative_int(score)
+        if parsed_score is not None:
+            idea["score"] = parsed_score
+        cleaned.append(idea)
+        if len(cleaned) >= 12:
+            break
+    return cleaned or None
+
+
 def _sanitize_view_context(raw_context):
     context = raw_context if isinstance(raw_context, dict) else {}
     cleaned = {}
@@ -965,6 +1013,14 @@ def _sanitize_view_context(raw_context):
     wbs_summary = _sanitize_wbs_summary(context.get("wbs_summary"))
     if wbs_summary:
         cleaned["wbs_summary"] = wbs_summary
+
+    visible_ideas = _sanitize_visible_ideas(
+        context.get("visible_ideas")
+        or context.get("tradeoff_ideas")
+        or context.get("ideas")
+    )
+    if visible_ideas:
+        cleaned["visible_ideas"] = visible_ideas
 
     return cleaned
 
@@ -1032,6 +1088,20 @@ def _view_context_prompt_suffix(view_context):
             lines.append(f"- Execution summary: {total_tasks} tasks")
         else:
             lines.append(f"- Execution summary by status: {breakdown}")
+
+    visible_ideas = normalized.get("visible_ideas") if isinstance(normalized.get("visible_ideas"), list) else []
+    if visible_ideas:
+        rendered_ideas = ", ".join(
+            (f"{idea.get('name')} ({idea.get('score')})" if idea.get("score") is not None else str(idea.get("name")))
+            for idea in visible_ideas
+            if isinstance(idea, dict) and idea.get("name")
+        )
+        if rendered_ideas:
+            lines.append(
+                f"- On screen the user is comparing {len(visible_ideas)} idea(s): {rendered_ideas}. "
+                "Treat THIS as the authoritative set of ideas being compared — do not claim there is only one "
+                "scorecard if multiple are listed here."
+            )
 
     # View-specific behavioral overrides
     if current_view == "summary":

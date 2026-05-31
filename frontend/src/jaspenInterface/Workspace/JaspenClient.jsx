@@ -462,7 +462,7 @@ export const Jaspen = {
   },
 
   // ---------- Unified Chat ----------
-  async chat({ message, conversation_history, analysis_context, analysis_id }) {
+  async chat({ message, conversation_history, analysis_context, view_context, analysis_id }) {
     const data = await postJSON(
       endpoints.chat,
       {
@@ -474,6 +474,10 @@ export const Jaspen = {
         systemPrompt:
           'You are a market analyst assisting with deep-dive Q&A on a completed Jaspen analysis. Provide conversational, helpful responses that reference the analysis context when relevant.',
         analysis_context,
+        // view_context is what the backend actually grounds the prompt on
+        // (current view/tab, the on-screen ideas, WBS summary). analysis_context
+        // is kept for backward-compat but is NOT used for prompt grounding.
+        view_context: view_context && typeof view_context === 'object' ? view_context : undefined,
         analysis_id,
         // Explicitly include thread_id so the backend session lookup succeeds
         thread_id: analysis_id,

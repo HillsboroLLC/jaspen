@@ -307,6 +307,46 @@ export default function JaspenWorkspace() {
     return 'Untitled idea';
   }, [snapshot, overrides, bundle, scorecardId]);
 
+  // Synthesize the Trade-off comparison list ONCE so both the canvas render
+  // and the sidebar chat's view_context see the exact same set of ideas. This
+  // is the fix for "the trade-off chat thinks there's only one scorecard" —
+  // the UI builds 3 ideas from snapshots/baseline/current/scenarios, and we
+  // now hand that same list to the agent as authoritative.
+  const tradeoffIdeas = useMemo(() => {
+    const list = [];
+    const known = new Set();
+    const seed = (s, label, isBaseline) => {
+      if (!s || typeof s !== 'object') return;
+      const id = String(
+        s.id || s.analysis_id || s.analysisId ||
+        (isBaseline ? 'baseline' : `card_${list.length}`)
+      );
+      if (known.has(id)) return;
+      known.add(id);
+      list.push({
+        ...s,
+        id,
+        analysis_id: s.analysis_id || id,
+        label: s.label || label,
+        isBaseline: Boolean(isBaseline || s.isBaseline),
+      });
+    };
+    (Array.isArray(bundle?.scorecard_snapshots) ? bundle.scorecard_snapshots : [])
+      .forEach((s, i) => seed(s, s?.label || `Version ${i + 1}`, s?.isBaseline));
+    seed(bundle?.baseline_scorecard, 'Baseline', true);
+    seed(bundle?.current_scorecard, 'Current', false);
+    (Array.isArray(bundle?.scenarios) ? bundle.scenarios : []).forEach((entry, i) => {
+      const inner = entry?.result || entry?.scorecard || entry?.analysis_result;
+      if (!inner || typeof inner !== 'object') return;
+      seed(
+        { ...inner, label: inner.label || entry?.label || `Scenario ${i + 1}` },
+        entry?.label || `Scenario ${i + 1}`,
+        false,
+      );
+    });
+    return list;
+  }, [bundle]);
+
   const score = Number(rendered?.jaspen_score || 0);
   const ringColor = rendered?._accent_color || '#a0036c';
   const category = score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : score >= 40 ? 'Fair' : 'At Risk';
@@ -381,6 +421,41 @@ export default function JaspenWorkspace() {
           : null,
       };
 
+      // Build the view_context the backend actually grounds on. This is the
+      // contextual-awareness fix: tell the agent which surface is open and
+      // hand it the on-screen ideas (trade-off) or task breakdown (execution).
+      const viewContext = {
+        current_view: isExecution ? 'execution' : isTradeoff ? 'tradeoff' : 'scorecard',
+        active_tab: isExecution ? 'execution' : isTradeoff ? 'tradeoff' : 'scorecard',
+      };
+      if (isScorecard) {
+        viewContext.active_scorecard_id = scorecardId;
+      }
+      if (isTradeoff) {
+        // The same list the canvas renders — names + scores — so the agent
+        // sees every idea being compared, not just the single stored snapshot.
+        viewContext.visible_ideas = (tradeoffIdeas || [])
+          .map((s) => ({
+            name: _pickMeaningful(
+              s?.label, s?.name, s?.project_name, s?.title, s?.initiative_name,
+            ) || 'Untitled idea',
+            score: Number(s?.jaspen_score || s?.score || 0) || undefined,
+          }))
+          .filter((s) => s.name);
+      }
+      if (isExecution && Array.isArray(wbs?.tasks)) {
+        const byStatus = wbs.tasks.reduce((acc, t) => {
+          const raw = String(t?.status || 'todo').toLowerCase().replace(/[\s-]+/g, '_');
+          const key = raw === 'in_progress' || raw === 'inprogress' ? 'in_progress'
+            : raw === 'blocked' ? 'blocked'
+            : raw === 'done' || raw === 'complete' || raw === 'completed' ? 'done'
+            : 'todo';
+          acc[key] = (acc[key] || 0) + 1;
+          return acc;
+        }, {});
+        viewContext.wbs_summary = { total_tasks: wbs.tasks.length, by_status: byStatus };
+      }
+
       // Conversation history (Anthropic-friendly role+content shape).
       const history = nextHistory.map((m) => ({
         role: m.role === 'user' ? 'user' : 'assistant',
@@ -391,6 +466,7 @@ export default function JaspenWorkspace() {
         message: text,
         conversation_history: history,
         analysis_context: ctx,
+        view_context: viewContext,
         analysis_id: threadId,
       });
       const replyText = String(resp?.text || resp?.response || resp?.reply || '').trim()
@@ -657,48 +733,10 @@ export default function JaspenWorkspace() {
             // hide a comparison that actually has data to show.
             <div style={{ height:'100%', display:'flex', flexDirection:'column' }}>
               {(() => {
-                // Mirror what the chat-tab Trade-off view sees. Sources, in
-                // order of preference: bundle.scorecard_snapshots (the
-                // canonical merged list), then baseline_scorecard, then
-                // current_scorecard, then every scenario in bundle.scenarios.
-                // We de-dupe by id so the same scorecard doesn't appear twice.
-                const list = [];
-                const known = new Set();
-                const seed = (s, label, isBaseline) => {
-                  if (!s || typeof s !== 'object') return;
-                  const id = String(
-                    s.id || s.analysis_id || s.analysisId ||
-                    (isBaseline ? 'baseline' : `card_${list.length}`)
-                  );
-                  if (known.has(id)) return;
-                  known.add(id);
-                  list.push({
-                    ...s,
-                    id,
-                    analysis_id: s.analysis_id || id,
-                    label: s.label || label,
-                    isBaseline: Boolean(isBaseline || s.isBaseline),
-                  });
-                };
-                // 1. The canonical merged list (covers historical snapshots).
-                (Array.isArray(bundle?.scorecard_snapshots) ? bundle.scorecard_snapshots : [])
-                  .forEach((s, i) => seed(s, s?.label || `Version ${i + 1}`, s?.isBaseline));
-                // 2. Baseline + current — usually already in (1), but seed
-                //    anyway in case the merged list is empty for legacy threads.
-                seed(bundle?.baseline_scorecard, 'Baseline', true);
-                seed(bundle?.current_scorecard, 'Current', false);
-                // 3. Scenario-derived scorecards — `result` is the standard
-                //    payload key, but we accept the alternates the chat tab
-                //    accepts too.
-                (Array.isArray(bundle?.scenarios) ? bundle.scenarios : []).forEach((entry, i) => {
-                  const inner = entry?.result || entry?.scorecard || entry?.analysis_result;
-                  if (!inner || typeof inner !== 'object') return;
-                  seed(
-                    { ...inner, label: inner.label || entry?.label || `Scenario ${i + 1}` },
-                    entry?.label || `Scenario ${i + 1}`,
-                    false,
-                  );
-                });
+                // Use the shared `tradeoffIdeas` memo so the canvas and the
+                // sidebar chat's view_context render the exact same set of
+                // ideas (snapshots + baseline + current + scenarios, de-duped).
+                const list = tradeoffIdeas;
 
                 // Diagnostic visibility — log every source the Trade-off view
                 // pulled from so the user (and we) can see exactly where the
