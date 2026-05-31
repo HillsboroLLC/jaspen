@@ -111,6 +111,26 @@ function applyOverrides(scorecard, overrides) {
   };
 }
 
+// Chat-driven execution-plan creation. Returns true when the user's message
+// should trigger an inline plan build instead of a normal chat reply. Two
+// paths:
+//   1. A direct ask — "build an execution plan", "create the WBS", etc.
+//   2. An affirmative ("yes", "do it", "go ahead") *immediately after* the AI
+//      offered to build one (we sniff the previous assistant turn for the
+//      offer so a bare "yes" in another context doesn't hijack the chat).
+const _EXEC_PLAN_NOUN = /(execution plan|exec plan|work breakdown|\bwbs\b|project plan|action plan|implementation plan|delivery plan|roll[- ]?out plan)/i;
+const _EXEC_PLAN_VERB = /\b(build|create|generate|make|draft|put together|spin up|give me|map out|lay out|outline|produce|develop)\b/i;
+const _AFFIRMATIVE = /^(yes|yep|yeah|yup|sure|ok|okay|please|please do|do it|go ahead|sounds good|let'?s do it|let'?s go|build it|create it|generate it|make it|that works|go for it|absolutely|definitely)\b/i;
+function _detectExecPlanIntent(userText, lastAiText) {
+  const t = String(userText || '').trim();
+  if (!t) return false;
+  // Direct ask: a build verb + an execution-plan noun in the same message.
+  if (_EXEC_PLAN_VERB.test(t) && _EXEC_PLAN_NOUN.test(t)) return true;
+  // Affirmative right after the AI offered a plan.
+  if (_AFFIRMATIVE.test(t) && _EXEC_PLAN_NOUN.test(String(lastAiText || ''))) return true;
+  return false;
+}
+
 export default function JaspenWorkspace() {
   const { threadId, scorecardId } = useParams();
   const navigate = useNavigate();
@@ -176,6 +196,66 @@ export default function JaspenWorkspace() {
       setBuildingPlan(null);
     }
   };
+
+  // Chat-driven build: generate the plan, then drop an inline sample card into
+  // the conversation with an "Open in workspace" action (instead of jumping
+  // straight to the execution canvas). `nextHistory` is the conversation up to
+  // and including the user's affirmative; we replace the trailing pending
+  // placeholder with the result card.
+  async function buildExecutionPlanFromChat(nextHistory) {
+    // Pick a seed: on a scorecard, this card's scorecard; on the trade-off
+    // surface, the top-scoring idea (and name it so the user knows which).
+    let seed = {};
+    let seedLabel = displayTitle;
+    if (isScorecard) {
+      seed = { scorecard_id: scorecardId };
+      seedLabel = _pickMeaningful(
+        rendered?.project_name, snapshot?.name, snapshot?.project_name, displayTitle,
+      ) || displayTitle;
+    } else if (isTradeoff) {
+      const top = (tradeoffIdeas || [])
+        .map((s) => ({ raw: s, score: Number(s?.jaspen_score || s?.score || 0) }))
+        .sort((a, b) => b.score - a.score)[0]?.raw;
+      if (top) {
+        const sid = String(top?.id || top?.analysis_id || top?.analysisId || '');
+        if (sid) seed.scorecard_id = sid;
+        const scn = top?.scenario_id || top?.scenarioId;
+        if (scn) seed.scenario_id = scn;
+        seedLabel = _pickMeaningful(top?.name, top?.project_name, top?.label, top?.title) || seedLabel;
+      }
+    }
+
+    setChatHistory((prev) => {
+      const arr = prev.slice(0, -1);
+      return [...arr, { role: 'ai', text: `Building an execution plan for **${seedLabel}**…`, pending: true }];
+    });
+
+    try {
+      const resp = await Jaspen.generateAiWbs(threadId, { ...seed, commit: true });
+      const planWbs = resp?.project_wbs || resp?.wbs || resp || {};
+      const tasks = Array.isArray(planWbs?.tasks) ? planWbs.tasks : [];
+      setChatHistory((prev) => {
+        const arr = prev.slice(0, -1);
+        return [...arr, {
+          role: 'ai',
+          text: tasks.length
+            ? `Here's a draft execution plan for **${seedLabel}** — ${tasks.length} task${tasks.length === 1 ? '' : 's'} across the key workstreams. Open it in the workspace to edit, reassign, and track.`
+            : `I generated an execution plan for **${seedLabel}**. Open it in the workspace to review.`,
+          execPlan: { label: seedLabel, tasks: tasks.slice(0, 6), total: tasks.length },
+        }];
+      });
+    } catch (err) {
+      setChatHistory((prev) => {
+        const arr = prev.slice(0, -1);
+        return [...arr, {
+          role: 'ai',
+          text: `I couldn't build the execution plan: ${String(err?.message || err || 'unknown error')}. Want me to try again?`,
+        }];
+      });
+    } finally {
+      setChatBusy(false);
+    }
+  }
 
   // Fetch the artifact on mount. ALWAYS pull the bundle in parallel — even
   // when the focused endpoint succeeds — because the bundle carries the
@@ -435,6 +515,18 @@ export default function JaspenWorkspace() {
     setChatInput('');
     setChatBusy(true);
 
+    // Chat-driven execution-plan creation. On a scorecard or trade-off surface,
+    // if the user asks for an execution plan (or says "yes" right after Jaspen
+    // offered one), build it inline and show a sample card instead of a normal
+    // chat reply. Skip on the execution surface — they're already looking at it.
+    if (!isExecution) {
+      const lastAi = [...chatHistory].reverse().find((m) => m.role === 'ai' && !m.pending);
+      if (_detectExecPlanIntent(text, lastAi?.text)) {
+        await buildExecutionPlanFromChat(nextHistory);
+        return;
+      }
+    }
+
     try {
       // Build a thin analysis_context so the agent grounds replies in this
       // artifact. We keep it compact — only the fields the agent needs to
@@ -644,6 +736,41 @@ export default function JaspenWorkspace() {
                 >
                   {m.pending ? '…' : String(m.text || '')}
                 </ReactMarkdown>
+              )}
+              {m.execPlan && (
+                <div style={{ marginTop:8, background:'#fff', border:'1px solid #e6eaf2', borderRadius:10, overflow:'hidden' }}>
+                  <div style={{ padding:'8px 10px', borderBottom:'1px solid #eef1f6', display:'flex', alignItems:'center', gap:6 }}>
+                    <FontAwesomeIcon icon={faDiagramProject} style={{ color:'#a0036c', fontSize:12 }} />
+                    <span style={{ fontSize:11.5, fontWeight:600, color:'#0f172a' }}>
+                      Execution plan · {m.execPlan.total} task{m.execPlan.total === 1 ? '' : 's'}
+                    </span>
+                  </div>
+                  <div style={{ padding:'6px 10px' }}>
+                    {(m.execPlan.tasks || []).map((t, ti) => (
+                      <div key={ti} style={{ display:'flex', gap:6, alignItems:'baseline', padding:'3px 0', fontSize:11.5, color:'#334155' }}>
+                        <span style={{ color:'#a0036c', fontFamily:'JetBrains Mono,monospace', fontSize:10 }}>{String(ti + 1).padStart(2, '0')}</span>
+                        <span style={{ flex:1, lineHeight:1.4 }}>{String(t?.title || t?.name || t?.task || 'Untitled task')}</span>
+                      </div>
+                    ))}
+                    {m.execPlan.total > (m.execPlan.tasks || []).length && (
+                      <div style={{ fontSize:10.5, color:'#94a3b8', paddingTop:2 }}>
+                        +{m.execPlan.total - (m.execPlan.tasks || []).length} more…
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/workspace/${threadId}/${SENTINEL_EXECUTION}`)}
+                    style={{
+                      width:'100%', padding:'8px 10px', border:'none', borderTop:'1px solid #eef1f6',
+                      background:'#0f172a', color:'#fff', cursor:'pointer', fontSize:12, fontWeight:600,
+                      display:'flex', alignItems:'center', justifyContent:'center', gap:6,
+                    }}
+                  >
+                    <FontAwesomeIcon icon={faDiagramProject} style={{ fontSize:11 }} />
+                    Open in workspace
+                  </button>
+                </div>
               )}
             </div>
           ))}
