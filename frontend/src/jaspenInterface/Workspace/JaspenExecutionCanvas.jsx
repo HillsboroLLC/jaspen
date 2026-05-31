@@ -1075,7 +1075,7 @@ export function TimelineView({ wbs, phases }) {
 
 // ── Main canvas ────────────────────────────────────────────────────────────
 
-export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bundle, wbs: wbsProp, displayTitle, score, onAskJaspen }) {
+export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bundle, wbs: wbsProp, displayTitle, score, isWinner = false, onAskJaspen }) {
   // Local working copy of the WBS. Prefer the explicit wbs prop (fetched
   // from /threads/:tid/wbs which is the authoritative source) over the
   // bundle's project_wbs (which can lag for older threads).
@@ -1381,7 +1381,7 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
       <div style={{ padding: '24px 32px 18px', flex: '0 0 auto' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 18 }}>
           <div style={{ minWidth: 0, flex: 1 }}>
-            <Eyebrow color={COLOR.rose}>✦ &nbsp;Idea · Trade-off winner</Eyebrow>
+            <Eyebrow color={COLOR.rose}>✦ &nbsp;{isWinner ? 'Idea · Trade-off winner' : 'Idea · Execution plan'}</Eyebrow>
             <div style={{ fontSize: 24, fontWeight: 600, color: COLOR.navy, letterSpacing: '-0.018em', marginTop: 8, lineHeight: 1.2 }}>
               {displayTitle || 'Execution plan'}
             </div>

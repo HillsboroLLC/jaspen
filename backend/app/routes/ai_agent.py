@@ -3835,7 +3835,7 @@ def _attach_failover_usage(usage, *, attempted_providers=None, final_provider=No
     return payload
 
 
-def _execute_local_tool(tool_name, tool_input, *, readiness, user, user_id, thread_id, user_turn_count, mutations_this_turn):
+def _execute_local_tool(tool_name, tool_input, *, readiness, user, user_id, thread_id, user_turn_count, mutations_this_turn, view_context=None):
     if tool_name in {"get_readiness_snapshot", "get_data_contract"}:
         return _anthropic_tool_output(tool_name, readiness), mutations_this_turn
     if tool_name == "query_connector_data":
@@ -3859,6 +3859,7 @@ def _execute_local_tool(tool_name, tool_input, *, readiness, user, user_id, thre
         user=user,
         user_id=user_id,
         thread_id=thread_id,
+        view_context=view_context,
     ), next_count
 
 
@@ -4935,7 +4936,7 @@ def _trigger_post_mutation_sync(user_id, thread_id, project_wbs):
     return {"status": "error", "connector_id": connector_id, "reason": reason}
 
 
-def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id):
+def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, view_context=None):
     if not user:
         return _tool_error("User context missing.")
     if not thread_id:
@@ -4943,6 +4944,12 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id):
 
     plan_key = effective_plan_key(user, current_app.config)
     tool_input = tool_input if isinstance(tool_input, dict) else {}
+
+    # The open idea's scorecard id, straight from the view the user is on. This
+    # is the authoritative signal for WHICH idea's execution plan to edit — far
+    # more reliable than the active id we persist as a load side-effect.
+    _vc = _sanitize_view_context(view_context) if view_context else {}
+    view_active_scorecard_id = str(_vc.get("active_scorecard_id") or "").strip() or None
 
     from .strategy import (
         _compute_scenario_scorecard,
@@ -5347,10 +5354,29 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id):
         all_data, thread_data, baseline, _baseline_inputs, session, _objective = _resolve_thread_baseline(user_id, thread_id)
         scenarios = thread_data.get("scenarios") if isinstance(thread_data.get("scenarios"), dict) else {}
         adopted_id = thread_data.get("adopted_scenario_id")
-        adopted_scenario = scenarios.get(adopted_id) if adopted_id in scenarios else None
-        scorecard = adopted_scenario.get("result") if isinstance(adopted_scenario, dict) and isinstance(adopted_scenario.get("result"), dict) else baseline
-        if not isinstance(scorecard, dict) and isinstance(session, dict):
-            scorecard = session.get("result") if isinstance(session.get("result"), dict) else None
+
+        # Build the plan from the SELECTED idea's scorecard — each idea stands on
+        # its own. The open idea (view_context.active_scorecard_id) wins; only if
+        # we can't resolve it do we fall back to adopted/baseline.
+        target_idea_id = (
+            view_active_scorecard_id
+            or str(tool_input.get("scorecard_id") or "").strip()
+            or None
+        )
+        scorecard = None
+        if target_idea_id:
+            for card in _collect_session_scorecards(session):
+                cid = str(card.get("id") or card.get("analysis_id") or "")
+                if cid and cid == target_idea_id:
+                    scorecard = card
+                    break
+        if not isinstance(scorecard, dict):
+            adopted_scenario = scenarios.get(adopted_id) if adopted_id in scenarios else None
+            scorecard = adopted_scenario.get("result") if isinstance(adopted_scenario, dict) and isinstance(adopted_scenario.get("result"), dict) else baseline
+            if not isinstance(scorecard, dict) and isinstance(session, dict):
+                scorecard = session.get("result") if isinstance(session.get("result"), dict) else None
+        else:
+            adopted_scenario = None
         if not isinstance(scorecard, dict):
             return _tool_error("No scorecard context found for this thread.", code="missing_scorecard")
 
@@ -5379,7 +5405,8 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id):
         normalized_wbs["ai_summary"] = str(raw_wbs.get("summary") or "").strip()
         # Persist under the active idea so each idea's plan stands on its own.
         exec_scorecard_id = (
-            str(tool_input.get("scorecard_id") or "").strip()
+            view_active_scorecard_id
+            or str(tool_input.get("scorecard_id") or "").strip()
             or str(adopted_id or "").strip()
             or str(thread_data.get("active_execution_scorecard_id") or "").strip()
             or None
@@ -5435,7 +5462,8 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id):
         # this on load); the tool itself gets no view context. Fall back to the
         # thread-level plan only when no idea is active.
         active_scorecard_id = (
-            str(tool_input.get("scorecard_id") or "").strip()
+            view_active_scorecard_id
+            or str(tool_input.get("scorecard_id") or "").strip()
             or str(td.get("active_execution_scorecard_id") or "").strip()
             or None
         )
@@ -5781,6 +5809,7 @@ def _generate_assistant_reply_anthropic(
                     thread_id=thread_id,
                     user_turn_count=user_turn_count,
                     mutations_this_turn=mutations_this_turn,
+                    view_context=view_context,
                 )
                 if isinstance(result_payload, dict) and result_payload.get("ok"):
                     confirmation = str(result_payload.get("confirmation") or "").strip()
@@ -6057,6 +6086,7 @@ def _stream_assistant_reply_events_anthropic(
                     thread_id=thread_id,
                     user_turn_count=user_turn_count,
                     mutations_this_turn=mutations_this_turn,
+                    view_context=view_context,
                 )
                 if isinstance(result_payload, dict) and result_payload.get("ok"):
                     confirmation = str(result_payload.get("confirmation") or "").strip()
@@ -6296,6 +6326,7 @@ def _generate_assistant_reply_gemini(
                     thread_id=thread_id,
                     user_turn_count=user_turn_count,
                     mutations_this_turn=mutations_this_turn,
+                    view_context=view_context,
                 )
                 if isinstance(result_payload, dict) and result_payload.get("ok"):
                     confirmation = str(result_payload.get("confirmation") or "").strip()
@@ -6535,6 +6566,7 @@ def _stream_assistant_reply_events_gemini(
                     thread_id=thread_id,
                     user_turn_count=user_turn_count,
                     mutations_this_turn=mutations_this_turn,
+                    view_context=view_context,
                 )
                 if isinstance(result_payload, dict) and result_payload.get("ok"):
                     confirmation = str(result_payload.get("confirmation") or "").strip()

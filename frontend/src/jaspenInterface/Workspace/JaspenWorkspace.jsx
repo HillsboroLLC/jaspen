@@ -368,15 +368,23 @@ export default function JaspenWorkspace() {
       if (cancelled) return;
 
       if (b) setBundle(b);
-      // Pick whichever source actually has tasks. Server-side getThreadWbs
-      // wins because that's the same source the chat tab reads from.
-      if (wbsResp && wbsResp?.project_wbs && Array.isArray(wbsResp.project_wbs.tasks) && wbsResp.project_wbs.tasks.length > 0) {
-        setWbs(wbsResp.project_wbs);
+      // Server-side getThreadWbs is authoritative AND scoped to the open idea
+      // (?scorecard_id). When we asked for a specific idea, trust that response
+      // even when it's empty — falling back to the bundle's project_wbs here
+      // would leak ANOTHER idea's plan (the bundle only carries the legacy
+      // thread-level mirror, not this idea's plan). The bundle fallback is only
+      // for legacy threads where we didn't scope by idea at all.
+      const respWbs = wbsResp?.project_wbs;
+      const respHasTasks = respWbs && Array.isArray(respWbs.tasks) && respWbs.tasks.length > 0;
+      if (respHasTasks) {
+        setWbs(respWbs);
+      } else if (execIdeaId && wbsResp && ('project_wbs' in wbsResp)) {
+        // Idea explicitly requested — honor its (possibly empty) plan, no bleed.
+        setWbs(respWbs || { name: 'Execution WBS', tasks: [] });
       } else if (b?.project_wbs && Array.isArray(b.project_wbs.tasks) && b.project_wbs.tasks.length > 0) {
         setWbs(b.project_wbs);
-      } else if (wbsResp?.project_wbs) {
-        // Empty plan — still set so canvas knows we tried
-        setWbs(wbsResp.project_wbs);
+      } else if (respWbs) {
+        setWbs(respWbs);
       }
 
       if (focused) {
@@ -573,6 +581,16 @@ export default function JaspenWorkspace() {
     return list;
   }, [bundle]);
 
+  // The idea whose execution plan is open (?idea=). Resolved from the same
+  // de-duped snapshot list the trade-off table uses, so the execution header
+  // names THIS idea (title + score) instead of always the baseline/winner.
+  const execIdeaSnap = useMemo(() => {
+    if (!isExecution || !execIdeaId) return null;
+    return (tradeoffIdeas || []).find(
+      (s) => String(s?.id || s?.analysis_id || '') === String(execIdeaId)
+    ) || null;
+  }, [isExecution, execIdeaId, tradeoffIdeas]);
+
   const score = Number(rendered?.jaspen_score || 0);
   const ringColor = rendered?._accent_color || '#a0036c';
   const category = score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : score >= 40 ? 'Fair' : 'At Risk';
@@ -694,8 +712,16 @@ export default function JaspenWorkspace() {
       }
       if (isExecution && execIdeaId) {
         // Tell the backend which idea's plan is open so the chat agent's WBS
-        // mutation tools (add/update/remove task) edit THIS plan, not another.
+        // mutation tools (add/update/remove task) edit THIS plan, not another —
+        // and so the agent grounds on THIS idea (name + score), never baseline.
         viewContext.active_scorecard_id = execIdeaId;
+        const ideaName = _pickMeaningful(
+          execIdeaSnap?.name, execIdeaSnap?.project_name, execIdeaSnap?.title,
+          execIdeaSnap?.label,
+        );
+        if (ideaName) viewContext.active_scorecard_name = ideaName;
+        const ideaScore = Number(execIdeaSnap?.jaspen_score || execIdeaSnap?.score || 0);
+        if (ideaScore) viewContext.active_scorecard_score = ideaScore;
       }
       if (isExecution && Array.isArray(wbs?.tasks)) {
         const byStatus = wbs.tasks.reduce((acc, t) => {
@@ -1115,6 +1141,10 @@ export default function JaspenWorkspace() {
                       scorecard_id: idea?.snapId || undefined,
                       scenario_id: idea?._snap?.scenario_id || idea?._snap?.scenarioId || undefined,
                     })}
+                    onOpenIdeaWorkspace={(idea) => {
+                      const ideaId = idea?.snapId || idea?.id;
+                      if (ideaId) navigate(`/workspace/${threadId}/${ideaId}`);
+                    }}
                   />
                 );
               })()}
@@ -1126,24 +1156,26 @@ export default function JaspenWorkspace() {
               bundle={bundle}
               wbs={wbs}
               displayTitle={(() => {
-                // Derive the canvas title: prefer the adopted scorecard's
-                // name, fall back to the first user message.
-                const baseline = bundle?.baseline_scorecard;
-                const fromCard = _pickMeaningful(
-                  baseline?.display_overrides?.title,
-                  baseline?.name,
-                  baseline?.project_name,
-                  baseline?.title,
-                );
-                if (fromCard) return fromCard;
-                const msgs = Array.isArray(bundle?.messages) ? bundle.messages : [];
-                const firstUser = msgs.find(
-                  (m) => (m?.role === 'user' || m?.sender === 'user') &&
-                    String(m?.content || m?.text || '').trim().length > 0,
-                );
-                return _deriveFromMessage(firstUser?.content || firstUser?.text) || 'Execution plan';
+                // The header names the IDEA whose plan is open (?idea=) and
+                // NOTHING else — each idea stands on its own. No baseline /
+                // scenario fallback: that's exactly the cross-idea leakage we're
+                // killing. If we can't resolve the idea, stay generic.
+                if (execIdeaSnap) {
+                  const fromIdea = _pickMeaningful(
+                    execIdeaSnap?.display_overrides?.title,
+                    execIdeaSnap?.name, execIdeaSnap?.project_name,
+                    execIdeaSnap?.title, execIdeaSnap?.label,
+                  );
+                  if (fromIdea) return fromIdea;
+                }
+                // Fall back to the plan's own name, then a neutral label —
+                // never another idea's identity.
+                return _pickMeaningful(wbs?.name) && wbs?.name !== 'AI Generated Project Plan'
+                  ? wbs.name
+                  : 'Execution plan';
               })()}
-              score={Number(bundle?.baseline_scorecard?.jaspen_score || bundle?.current_scorecard?.jaspen_score || 0) || null}
+              score={Number(execIdeaSnap?.jaspen_score || execIdeaSnap?.score || 0) || null}
+              isWinner={!!execIdeaSnap && String(execIdeaSnap?.id || execIdeaSnap?.analysis_id || '') === String(bundle?.selected_scorecard_id || bundle?.adopted_scenario_id || '')}
               onAskJaspen={(text) => {
                 setChatInput(text);
               }}

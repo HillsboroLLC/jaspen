@@ -4,7 +4,7 @@
 
 import React, { useState, useMemo, useRef, useCallback } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faEye, faEyeSlash, faDiagramProject, faSpinner } from '@fortawesome/free-solid-svg-icons';
+import { faEye, faEyeSlash, faDiagramProject, faSpinner, faUpRightFromSquare } from '@fortawesome/free-solid-svg-icons';
 import { Jaspen } from './JaspenClient';
 
 const NAVY   = '#161f3b';
@@ -138,7 +138,7 @@ const DimBar = ({ v, alt }) => {
 // Excluded rows render at 50% opacity, drop the rank/pick badge, and the
 // eye icon flips to eye-slash. Clicking the eye toggles include/exclude
 // (persists via Jaspen.patchScorecardOverrides, fired by the parent).
-const PortfolioRow = ({ d, alt, onSelect, selected, onToggleInclude, onBuildPlan, buildingPlan }) => {
+const PortfolioRow = ({ d, alt, onSelect, selected, onToggleInclude, onBuildPlan, onOpenWorkspace, buildingPlan }) => {
   const excluded = !d.included;
   return (
   <div
@@ -178,6 +178,26 @@ const PortfolioRow = ({ d, alt, onSelect, selected, onToggleInclude, onBuildPlan
       <span style={{ fontFamily:'JetBrains Mono,monospace', fontSize: d.pick ? 18 : 16, fontWeight:600, color:NAVY, letterSpacing:'-0.02em' }}>{d.score}</span>
     </div>
     <div style={{ textAlign:'right' }}><StatusLabel s={d.status} /></div>
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        if (typeof onOpenWorkspace === 'function') onOpenWorkspace(d);
+      }}
+      title="Open this idea in its workspace"
+      aria-label="Open this idea in its workspace"
+      style={{
+        appearance:'none', border:'none', background:'transparent',
+        cursor:'pointer', padding:6, borderRadius:6,
+        color: NAVY,
+        display:'flex', alignItems:'center', justifyContent:'center',
+        transition: 'background 0.12s, color 0.12s',
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(160,3,108,0.08)'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+    >
+      <FontAwesomeIcon icon={faUpRightFromSquare} style={{ fontSize: 12 }} />
+    </button>
     <button
       type="button"
       onClick={(e) => {
@@ -429,7 +449,7 @@ const TradeoffSidebar = ({ ideas, portfolioAnalysis, onAsk, asking }) => {
 // ── Table header ──────────────────────────────────────────────────────────────
 // Last two columns host the build-execution-plan and include/exclude (eye)
 // controls.
-const TABLE_GRID = '32px 28px 1.7fr repeat(6, 1fr) 56px 88px 36px 36px';
+const TABLE_GRID = '32px 28px 1.7fr repeat(6, 1fr) 56px 88px 36px 36px 36px';
 const TableHeader = () => (
   <div style={{
     display:'grid',
@@ -445,6 +465,7 @@ const TableHeader = () => (
     {DIM_KEYS.map(d => <span key={d.key} style={{ textAlign:'center' }}>{d.short}</span>)}
     <span style={{ textAlign:'right' }}>Score</span>
     <span style={{ textAlign:'right' }}>Status</span>
+    <span style={{ textAlign:'center' }} title="Open this idea in its workspace">Open</span>
     <span style={{ textAlign:'center' }} title="Build an execution plan from this idea">Plan</span>
     <span style={{ textAlign:'center' }} title="Include / exclude from trade-off">In</span>
   </div>
@@ -459,6 +480,7 @@ const TradeoffView = ({
   asking = false,
   threadId,            // required to persist include/exclude toggles
   onBuildExecutionPlan, // fn(idea) — generate execution plan from this idea
+  onOpenIdeaWorkspace,  // fn(idea) — open this idea in its standalone workspace
   buildingPlanId,      // id of the idea currently generating (for spinner)
 }) => {
   const [selected, setSelected] = useState(null);
@@ -561,6 +583,7 @@ const TradeoffView = ({
                 selected={selected?._snap?.id === d._snap?.id}
                 onToggleInclude={handleToggleInclude}
                 onBuildPlan={onBuildExecutionPlan}
+                onOpenWorkspace={onOpenIdeaWorkspace}
                 buildingPlan={buildingPlanId != null}
               />
             ))}
