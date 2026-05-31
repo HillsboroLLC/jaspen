@@ -775,6 +775,38 @@ export default function JaspenWorkspace() {
         const arr = prev.slice(0, -1);
         return [...arr, { role: 'ai', text: replyText }];
       });
+
+      // If the agent edited or re-scored the OPEN scorecard in place, reflect
+      // it on the canvas without a manual reload. Prefer the updated scorecard
+      // the agent returned; otherwise re-fetch the authoritative copy.
+      if (isScorecard && scorecardId) {
+        const muts = Array.isArray(resp?.mutations) ? resp.mutations : [];
+        const editedHere = muts.some(
+          (m) => m && m.success && (m.tool === 'patch_scorecard' || m.tool === 'generate_scorecard')
+        );
+        if (editedHere) {
+          const acts = Array.isArray(resp?.actions) ? resp.actions : [];
+          const updated = acts
+            .map((a) => a?.result?.updated_scorecard)
+            .find((sc) => sc && String(sc.id || sc.analysis_id || '') === String(scorecardId));
+          if (updated && typeof updated === 'object') {
+            skipNextSaveRef.current = true;
+            setSnapshot(updated);
+          } else {
+            // No inline payload (or it targeted a re-scored id) — re-fetch.
+            try {
+              const fresh = await Jaspen.getScorecardForWorkspace(threadId, scorecardId);
+              const sc = fresh?.scorecard;
+              if (sc && typeof sc === 'object') {
+                skipNextSaveRef.current = true;
+                setSnapshot(sc);
+              }
+            } catch (e) {
+              console.warn('[workspace] post-edit scorecard refetch failed:', e);
+            }
+          }
+        }
+      }
     } catch (e) {
       console.error('[workspace chat] failed:', e);
       setChatHistory((prev) => {

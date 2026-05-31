@@ -487,7 +487,14 @@ export const Jaspen = {
       // the right session rather than falling back to the localStorage SID.
       analysis_id ? { sidOverride: analysis_id } : { withSid: true }
     );
-    return { text: data.response || data.reply || String(data) };
+    return {
+      text: data.response || data.reply || String(data),
+      // Tool side-effects the agent ran this turn. The workspace uses these to
+      // decide whether to re-fetch the open artifact (e.g. an in-place
+      // scorecard edit/re-score) so the canvas reflects the change live.
+      mutations: Array.isArray(data.mutations) ? data.mutations : [],
+      actions: Array.isArray(data.actions) ? data.actions : [],
+    };
   },
 
   // ---------- Conversational intake (Claude via /api/v1/chat) ----------

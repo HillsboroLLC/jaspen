@@ -492,7 +492,10 @@ _SYSTEM_PROMPT_PREFIX = (
     "a pre-attached context block, call the tool immediately — do not ask for the data first. "
     "When the user asks to modify WBS tasks, call the relevant tools instead of only describing steps. "
     "When the user asks to rename the initiative, project, or title, call rename_thread with the requested new name. "
-    "NEVER call patch_scorecard. Scorecards are immutable snapshots. If the user wants any change reflected in a scorecard — even a tiny wording tweak — generate a new scorecard instead (see SCORECARDS rules below). "
+    "EDITING THE OPEN SCORECARD: the scorecard the user has open in the workspace is directly editable through chat — edit it IN PLACE, never spawn a duplicate for a change to the idea they're viewing. "
+    "(a) For a wording / narrative tweak that does NOT change the underlying analysis (reword the executive summary, key insights, assumptions, risk or recommendation text, rationale), call patch_scorecard — it edits that field in place on the open idea and leaves the score untouched. "
+    "(b) For a change that DOES affect the analysis or score (a different budget, timeline, team, market, pricing, or any assumption that moves the numbers), call generate_scorecard with rescore_scorecard_id set to the OPEN scorecard's id (the Active scorecard ID in the workspace view context). This re-scores that SAME idea in place — you re-evaluate every dimension holistically so the score stays consistent with the new inputs. "
+    "You (the AI) may change scores and dimensions this way because you re-factor against all the information; never tell the user a score is 'locked' to you, and never ask which idea they mean for an edit — act on the on-screen one. Only create a brand-new scorecard (generate_scorecard WITHOUT rescore_scorecard_id) for a genuinely new idea or a side-by-side variation the user wants to keep alongside the original. "
     "The workspace includes an Execution tab with three views: a List view grouped by phase, "
     "a Board view showing a Kanban grouped by status (To Do / In Progress / Blocked / Done), "
     "and a Timeline view displaying a Gantt-style bar chart. The user can see and interact with all three. "
@@ -505,12 +508,12 @@ _SYSTEM_PROMPT_PREFIX = (
     "due_date must be an ISO date string (YYYY-MM-DD) or null. "
     "After any mutation tool succeeds, confirm exactly what changed so the user knows what to look for in the Execution tab. "
     "SCORECARDS: "
-    "Scorecards are immutable snapshots that accumulate inline in the conversation — chat, chat, scorecard, chat, scorecard, etc. "
-    "When the user proposes a new idea, variation, or parameter change that warrants a fresh score, call generate_scorecard. "
+    "Scorecards accumulate inline in the conversation — chat, chat, scorecard, chat, scorecard, etc. The idea the user has OPEN in the workspace is editable in place (see EDITING THE OPEN SCORECARD above). "
+    "When the user proposes a genuinely NEW idea or a variation they want to keep alongside the original, call generate_scorecard (no rescore_scorecard_id). "
+    "When the user asks to change the idea they're viewing, edit it in place: patch_scorecard for wording, or generate_scorecard with rescore_scorecard_id to re-score that same idea. "
     "When the user asks to compare or rank ideas, call generate_tradeoff_comparison. "
     "When the user asks to build an execution plan, call generate_execution_plan. "
-    "Use your judgment about when to score. A confirmation, a correction, an acknowledgment, or a question about an existing scorecard never warrants a new one. A genuinely new idea, a pivoted market, a meaningfully different team or pricing model does. If you're unsure, ask the user before scoring. "
-    "Do not call patch_scorecard or attempt to edit a previous scorecard — they're immutable. "
+    "Use your judgment about when to score. A confirmation, an acknowledgment, or a pure question about an existing scorecard never warrants a tool call. "
     "Refer to ideas by their actual name (not placeholders like 'Scenario A' or 'Original'). Keep the conversation natural — one exchange at a time. "
     "RANKING: If the user asks to rank, compare, or summarize all the ideas modeled in this conversation, "
     "do so directly using the scorecard data available. Present a clear ranked list with the idea name, score, "
@@ -1139,11 +1142,13 @@ def _view_context_prompt_suffix(view_context):
     # View-specific behavioral overrides
     if current_view == "summary":
         lines.append(
-            "- The user is viewing a completed scorecard. "
+            "- The user is viewing a completed scorecard and can edit it through chat. "
             "Do NOT ask intake questions or ask for previously provided intake data again. "
-            "If the user proposes a new variation worth scoring, call generate_scorecard to create a fresh scorecard inline. "
-            "Do NOT call patch_scorecard — scorecards are immutable. "
-            "Use your judgment: confirmations, corrections, and clarifying questions don't need a new scorecard."
+            "To edit the scorecard they're viewing, edit it IN PLACE: call patch_scorecard for a wording/narrative tweak, "
+            "or generate_scorecard with rescore_scorecard_id (the active scorecard id) to re-score that same idea after an input change. "
+            "Only call generate_scorecard WITHOUT rescore_scorecard_id for a genuinely new idea or a variation they want kept alongside this one. "
+            "Never ask which idea they mean — act on the open one. "
+            "Use your judgment: confirmations and pure questions don't need a tool call."
         )
     elif current_view == "scenario":
         lines.append(
@@ -2953,8 +2958,8 @@ def _scorecard_content_prompt_suffix(session, view_context):
         "\n\n[SCORED IDEAS IN THIS THREAD — these are the scorecards the user has generated. "
         "Use this data to answer questions like 'which of these are duplicates / nearly identical / strongest', "
         "to compare or rank ideas, or to reference specific scores when explaining a number. "
-        "Never edit or patch a scorecard — they're immutable snapshots. "
-        "When the user asks to score a new variation, call generate_scorecard. "
+        "To edit the OPEN idea, edit it in place: patch_scorecard for wording, or generate_scorecard with rescore_scorecard_id to re-score it. "
+        "When the user asks to score a genuinely new variation to keep alongside the others, call generate_scorecard (no rescore_scorecard_id). "
         "When they ask to compare/rank ideas, call generate_tradeoff_comparison.]\n"
         + json.dumps(compact, indent=2)
     )
@@ -3052,6 +3057,45 @@ def _collect_session_scorecards(session):
             if isinstance(inner, dict):
                 _push(inner)
     return out
+
+
+def _find_session_scorecard_ref(session, target_id):
+    """Return the LIVE dict object for the scorecard with id == target_id,
+    searching baseline, scorecard_snapshots, and scenarios in that order.
+
+    The returned dict is the same object held in the session structure, so
+    mutating it in place (e.g. card.clear(); card.update(...)) updates stored
+    state — this is the foundation for editing the open idea in place rather
+    than spawning a duplicate snapshot. If target_id is falsy, returns the
+    baseline / first card. Returns None when nothing matches.
+    """
+    if not isinstance(session, dict):
+        return None
+    result_blob = session.get("result") if isinstance(session.get("result"), dict) else {}
+    candidates = []
+    base = result_blob.get("_baseline_scorecard")
+    if isinstance(base, dict):
+        candidates.append(base)
+    elif isinstance(result_blob, dict) and result_blob.get("jaspen_score") is not None:
+        candidates.append(result_blob)
+    for snap in (result_blob.get("scorecard_snapshots") or []):
+        if isinstance(snap, dict):
+            candidates.append(snap)
+    for scen in (session.get("scenarios") or []):
+        if isinstance(scen, dict):
+            inner = scen.get("result") or scen.get("scorecard") or scen.get("analysis_result")
+            if isinstance(inner, dict):
+                candidates.append(inner)
+    if not candidates:
+        return None
+    tid = str(target_id or "").strip()
+    if not tid:
+        return candidates[0]
+    for card in candidates:
+        cid = str(card.get("id") or card.get("analysis_id") or "").strip()
+        if cid and cid == tid:
+            return card
+    return None
 
 
 def _message_has_data_context_request(user_message):
@@ -4692,20 +4736,56 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
         tools.extend([
             {
                 "name": "generate_scorecard",
-                "description": "Generate a new scorecard snapshot for the active thread from the provided idea or variation.",
+                "description": (
+                    "Score an idea. By default creates a NEW scorecard for a genuinely new idea or variation. "
+                    "To RE-SCORE the idea the user already has open (because they changed an input, assumption, "
+                    "budget, timeline, market, or team), pass rescore_scorecard_id = the open scorecard's id — "
+                    "this overwrites that same idea in place (keeps its id and workspace URL) with a freshly "
+                    "re-evaluated score, instead of spawning a duplicate."
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
                         "idea_description": {
                             "type": "string",
-                            "description": "Concise description of the idea/variation to score.",
+                            "description": "Concise description of the idea/variation to score (include the changed inputs when re-scoring).",
                         },
                         "name": {
                             "type": "string",
-                            "description": "Display name for this scorecard snapshot.",
+                            "description": "Display name for this scorecard. When re-scoring, omit to keep the existing name.",
+                        },
+                        "rescore_scorecard_id": {
+                            "type": "string",
+                            "description": "Set to the OPEN scorecard's id to re-score that idea in place. Omit to create a new scorecard.",
                         },
                     },
                     "required": ["idea_description", "name"],
+                    "additionalProperties": False,
+                },
+            },
+            {
+                "name": "patch_scorecard",
+                "description": (
+                    "Edit the wording of the OPEN scorecard in place — for narrative tweaks that do NOT change the "
+                    "score (reword the executive summary, insights, assumptions, risk/recommendation text, rationale). "
+                    "Edits the idea the user is viewing directly; does not spawn a duplicate. For a change that affects "
+                    "the score, use generate_scorecard with rescore_scorecard_id instead."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "scorecard_id": {
+                            "type": "string",
+                            "description": "Optional id of the scorecard to edit. Defaults to the open/on-screen idea.",
+                        },
+                        "executive_summary": {"type": "string"},
+                        "key_insights": {"type": "array", "items": {"type": "string"}},
+                        "assumptions": {"type": "array", "items": {"type": "string"}},
+                        "top_risks": {"type": "array", "items": {"type": "object"}},
+                        "recommendations": {"type": "array", "items": {"type": "object"}},
+                        "component_rationale": {"type": "object"},
+                        "decision_framework": {"type": "object"},
+                    },
                     "additionalProperties": False,
                 },
             },
@@ -4808,7 +4888,6 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                     "additionalProperties": False,
                 },
             },
-            # patch_scorecard was removed: scorecards are immutable snapshots.
         ])
     return tools
 
@@ -5024,6 +5103,64 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 "model_type": model_selection["model_type"],
             },
         }
+
+        # RE-SCORE IN PLACE: when the user edits the OPEN idea in a way that
+        # affects the analysis, the agent passes rescore_scorecard_id so we
+        # overwrite THAT idea (same id, same workspace URL) with a freshly
+        # re-evaluated score instead of spawning a new card. The AI re-factors
+        # every dimension holistically, so the score stays consistent with the
+        # new inputs. (Only the AI changes scores this way — never the user.)
+        # Only honor an explicit rescore request — don't silently overwrite the
+        # open idea just because one is on screen.
+        rescore_id = str(tool_input.get("rescore_scorecard_id") or "").strip() or None
+        if rescore_id:
+            existing = _find_session_scorecard_ref(session, rescore_id)
+            if isinstance(existing, dict):
+                keep_id = str(existing.get("id") or existing.get("analysis_id") or rescore_id)
+                keep_name = (
+                    requested_name if str(tool_input.get("name") or "").strip()
+                    else (existing.get("name") or existing.get("project_name") or requested_name)
+                )
+                merged = {
+                    **(scorecard_payload if isinstance(scorecard_payload, dict) else {}),
+                    "id": keep_id,
+                    "analysis_id": existing.get("analysis_id") or keep_id,
+                    "thread_id": thread_id,
+                    "name": keep_name,
+                    "project_name": keep_name,
+                    "label": existing.get("label") or keep_name,
+                    "isBaseline": bool(existing.get("isBaseline")),
+                    "project_description": idea_description,
+                    "timestamp": generated_at,
+                    "createdAt": existing.get("createdAt") or generated_at,
+                    "display_overrides": existing.get("display_overrides") if isinstance(existing.get("display_overrides"), dict) else existing.get("display_overrides"),
+                    "meta": {
+                        **((scorecard_payload.get("meta") if isinstance(scorecard_payload, dict) and isinstance(scorecard_payload.get("meta"), dict) else {})),
+                        "generated_at": generated_at,
+                        "source": "ai_tool",
+                        "tool": "generate_scorecard",
+                        "rescored": True,
+                        "model_type": model_selection["model_type"],
+                    },
+                }
+                existing.clear()
+                existing.update(merged)
+                if isinstance(session.get("result"), dict):
+                    session["result"]["selected_scorecard_id"] = keep_id
+                session["timestamp"] = datetime.utcnow().isoformat()
+                sessions[session_key or thread_id] = session
+                if not save_user_sessions(user_id, sessions):
+                    return _tool_error("Failed to persist re-scored scorecard.", code="persist_failed")
+                new_score = int(round(float(existing.get("jaspen_score") or 0)))
+                return _tool_success({
+                    "tool": tool_name,
+                    "confirmation": f"Re-scored '{keep_name}' in place ({new_score}).",
+                    "updated_scorecard": existing,
+                    "scorecard_id": keep_id,
+                    "selected_scorecard_id": keep_id,
+                    "rescored": True,
+                })
+            # Fall through to new-idea creation if the id no longer exists.
 
         result_blob = session.get("result") if isinstance(session.get("result"), dict) else {}
         baseline = result_blob.get("_baseline_scorecard") if isinstance(result_blob.get("_baseline_scorecard"), dict) else result_blob if isinstance(result_blob, dict) and result_blob.get("jaspen_score") is not None else None
@@ -5278,11 +5415,11 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         })
 
     if tool_name == "patch_scorecard":
-        from .strategy import (
-            _scorecard_snapshot_state,
-            _merge_scorecard_patch,
-            _normalize_scorecard_payload,
-        )
+        from .strategy import _merge_scorecard_patch
+        # Narrative / wording edits only. These do NOT change the score — they
+        # rewrite text in place on the idea the user has OPEN. For a change that
+        # affects the analysis or score, the agent re-scores in place via
+        # generate_scorecard(rescore_scorecard_id=...) instead.
         patchable = {
             "executive_summary", "key_insights", "assumptions",
             "top_risks", "recommendations", "component_rationale", "decision_framework",
@@ -5291,69 +5428,51 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         if not patch:
             return _tool_error("No patchable scorecard fields provided.", code="no_fields")
 
+        # The open idea wins; fall back to an explicit id, then the baseline.
+        target_id = (
+            view_active_scorecard_id
+            or str(tool_input.get("scorecard_id") or "").strip()
+            or None
+        )
+
         sessions = load_user_sessions(user_id) or {}
-        target_key = thread_id if thread_id in sessions else None
-        target_session = sessions.get(thread_id) if target_key else None
-        if not isinstance(target_session, dict):
-            for ck, cs in sessions.items():
-                if isinstance(cs, dict) and str(cs.get("session_id") or "") == str(thread_id):
-                    target_key, target_session = ck, cs
-                    break
+        session_key, target_session = _resolve_user_session(sessions, thread_id)
         if not isinstance(target_session, dict):
             return _tool_error("Thread not found.", code="thread_not_found")
 
-        session_result = target_session.get("result") if isinstance(target_session.get("result"), dict) else {}
-        snapshot_state = _scorecard_snapshot_state(session_result, thread_id)
-        base_scorecard = _normalize_scorecard_payload(snapshot_state.get("selected_snapshot") or snapshot_state.get("baseline") or {})
-        if not base_scorecard:
-            return _tool_error("No scorecard found for this thread.", code="missing_scorecard")
+        card = _find_session_scorecard_ref(target_session, target_id)
+        if not isinstance(card, dict):
+            return _tool_error("No scorecard found to edit for this idea.", code="missing_scorecard")
 
-        updated_scorecard = _merge_scorecard_patch(base_scorecard, patch)
-        current_selected = snapshot_state.get("selected_snapshot") or snapshot_state.get("baseline") or {}
-        current_id = str(current_selected.get("id") or snapshot_state.get("selected_id") or thread_id)
-        edited_id = current_id if current_id.endswith("__edited") else f"{current_id}__edited"
-        edited_label = current_selected.get("label") or ("Baseline" if current_selected.get("isBaseline") else "Edited")
-        if not edited_label.endswith("(Edited)"):
-            edited_label = f"{edited_label} (Edited)"
-        import time as _time
-        edited_snapshot = {
-            **updated_scorecard,
-            "id": edited_id,
-            "label": edited_label,
-            "isBaseline": False,
-            "createdAt": int(_time.time() * 1000),
-        }
+        # Preserve identity + score: _merge_scorecard_patch re-normalizes and may
+        # drop non-standard keys, so carry them back explicitly. jaspen_score and
+        # dimensions come from the base unchanged — a wording edit never re-scores.
+        merged = _merge_scorecard_patch(card, patch)
+        for k in (
+            "id", "analysis_id", "thread_id", "name", "project_name", "label",
+            "isBaseline", "createdAt", "timestamp", "project_description",
+            "jaspen_score", "dimensions", "component_scores", "display_overrides",
+        ):
+            if card.get(k) is not None and merged.get(k) in (None, "", {}, []):
+                merged[k] = card.get(k)
+        card.clear()
+        card.update(merged)
 
-        next_snapshots = []
-        replaced = False
-        for snap in snapshot_state.get("snapshots") or []:
-            if str(snap.get("id") or "") == edited_id:
-                next_snapshots.append(edited_snapshot)
-                replaced = True
-            else:
-                next_snapshots.append(snap)
-        if not replaced:
-            next_snapshots.append(edited_snapshot)
-
-        next_result = {
-            **session_result,
-            "_baseline_scorecard": session_result.get("_baseline_scorecard") or snapshot_state.get("baseline"),
-            "scorecard_snapshots": next_snapshots,
-            "selected_scorecard_id": edited_id,
-        }
-        target_session["result"] = next_result
-        target_session["analysis_result"] = next_result
+        card_id = str(card.get("id") or card.get("analysis_id") or target_id or thread_id)
+        if isinstance(target_session.get("result"), dict):
+            target_session["result"]["selected_scorecard_id"] = card_id
         target_session["timestamp"] = datetime.utcnow().isoformat()
-        sessions[target_key or thread_id] = target_session
+        sessions[session_key or thread_id] = target_session
         if not save_user_sessions(user_id, sessions):
-            return _tool_error("Failed to persist scorecard patch.", code="persist_failed")
+            return _tool_error("Failed to persist scorecard edit.", code="persist_failed")
 
         changed_fields = list(patch.keys())
         return _tool_success({
             "tool": tool_name,
-            "confirmation": f"Updated {', '.join(changed_fields)} on the scorecard.",
-            "updated_scorecard": edited_snapshot,
-            "selected_scorecard_id": edited_id,
+            "confirmation": f"Updated {', '.join(changed_fields)} on this scorecard.",
+            "updated_scorecard": card,
+            "scorecard_id": card_id,
+            "selected_scorecard_id": card_id,
         })
 
     if tool_name == "generate_execution_plan":
