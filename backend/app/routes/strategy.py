@@ -5955,6 +5955,103 @@ def upsert_thread_wbs(thread_id):
 
 
 # ============================================================
+# WORKSPACE CHAT  (per-artifact sidebar conversation persistence)
+# ============================================================
+# The Workspace sidebar chat is scoped to a single artifact (a scorecard, or
+# the trade-off / execution sentinels). We persist each artifact's conversation
+# server-side under the thread record so it survives a hard refresh and is
+# available on any device — not just the browser that created it.
+
+def _sanitize_workspace_chat(raw, max_messages=200):
+    """Coerce an incoming chat array into a compact, storable shape.
+
+    Each entry is {role: 'user'|'ai', text: str} plus an optional small
+    `execPlan` summary card. We cap history length and field sizes so a long
+    conversation can't bloat the thread record."""
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for m in raw[-max_messages:]:
+        if not isinstance(m, dict):
+            continue
+        role = 'user' if m.get('role') == 'user' else 'ai'
+        text = str(m.get('text') or '')[:20000]
+        entry = {'role': role, 'text': text}
+        ep = m.get('execPlan')
+        if isinstance(ep, dict):
+            tasks = ep.get('tasks') if isinstance(ep.get('tasks'), list) else []
+            try:
+                total = int(ep.get('total') or 0)
+            except (TypeError, ValueError):
+                total = 0
+            entry['execPlan'] = {
+                'label': str(ep.get('label') or '')[:200],
+                'total': total,
+                'tasks': [
+                    {'title': str((t or {}).get('title') or (t or {}).get('name') or '')[:300]}
+                    for t in tasks[:6] if isinstance(t, dict)
+                ],
+            }
+        out.append(entry)
+    return out
+
+
+@strategy_bp.route('/threads/<thread_id>/workspace-chat/<artifact_id>', methods=['GET'])
+@jwt_required()
+def get_workspace_chat(thread_id, artifact_id):
+    try:
+        user_id = get_jwt_identity()
+        all_data = _load_scenarios(user_id)
+        td = all_data.get(thread_id, {}) if isinstance(all_data, dict) else {}
+        chats = td.get('workspace_chats') if isinstance(td, dict) else None
+        messages = []
+        if isinstance(chats, dict):
+            raw = chats.get(str(artifact_id))
+            if isinstance(raw, list):
+                messages = raw
+        return jsonify({
+            'thread_id': thread_id,
+            'artifact_id': artifact_id,
+            'messages': messages,
+        }), 200
+    except Exception as e:
+        current_app.logger.error("[get_workspace_chat] %s", e)
+        return jsonify({'error': str(e)}), 500
+
+
+@strategy_bp.route('/threads/<thread_id>/workspace-chat/<artifact_id>', methods=['PUT', 'PATCH'])
+@jwt_required()
+def upsert_workspace_chat(thread_id, artifact_id):
+    try:
+        user_id = get_jwt_identity()
+        payload = request.get_json() or {}
+        messages = _sanitize_workspace_chat(payload.get('messages'))
+
+        all_data = _load_scenarios(user_id)
+        if thread_id not in all_data:
+            all_data[thread_id] = _thread_entry()
+        td = all_data[thread_id]
+
+        chats = td.get('workspace_chats')
+        if not isinstance(chats, dict):
+            chats = {}
+        chats[str(artifact_id)] = messages
+        td['workspace_chats'] = chats
+        all_data[thread_id] = td
+        _save_scenarios(user_id, all_data)
+
+        return jsonify({
+            'success': True,
+            'thread_id': thread_id,
+            'artifact_id': artifact_id,
+            'messages': messages,
+        }), 200
+    except Exception as e:
+        current_app.logger.error("[upsert_workspace_chat] %s", e)
+        return jsonify({'error': str(e)}), 500
+
+
+# ============================================================
 # THREAD BUNDLE  (hydrates the Scenarios tab + ScoreDashboard)
 # ============================================================
 

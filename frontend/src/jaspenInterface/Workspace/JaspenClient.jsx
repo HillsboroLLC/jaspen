@@ -66,6 +66,7 @@ export const endpoints = {
   aiScenario:       (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/ai-scenario`,
   aiWbs:            (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/ai-wbs`,
   threadWbs:        (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/wbs`,
+  workspaceChat:    (threadId, artifactId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/workspace-chat/${encodeURIComponent(artifactId)}`,
   scorecardSnapshot: (threadId, snapshotId) =>
     `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/scorecard-snapshots/${encodeURIComponent(snapshotId)}`,
   exportScorecardPdf: (threadId, scorecardId = '') =>
@@ -1151,6 +1152,13 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
 
   upsertThreadWbs: async (threadId, project_wbs) =>
     putJSON(endpoints.threadWbs(threadId), { project_wbs }, { withSid: true }),
+
+  // Per-artifact Workspace sidebar chat (durable server-side, cross-device).
+  getWorkspaceChat: async (threadId, artifactId) =>
+    getJSON(endpoints.workspaceChat(threadId, artifactId), { withSid: true }),
+
+  saveWorkspaceChat: async (threadId, artifactId, messages = []) =>
+    putJSON(endpoints.workspaceChat(threadId, artifactId), { messages }, { withSid: true }),
 
   downloadScorecardPdf: async (threadId, { scorecardId } = {}) => {
     if (!threadId) throw new Error('threadId is required');

@@ -187,6 +187,7 @@ export default function JaspenWorkspace() {
   const [chatHistory, setChatHistory] = useState(() => _readWorkspaceChat(chatKey));
   const firstChatLoadRef = useRef(true);
   const skipChatSaveRef = useRef(false);
+  const chatSaveTimerRef = useRef(null);
   const [chatBusy, setChatBusy] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const saveTimerRef = useRef(null);
@@ -394,22 +395,59 @@ export default function JaspenWorkspace() {
     return () => { cancelled = true; };
   }, [threadId, scorecardId, isScorecard]);
 
-  // Swap in the persisted chat for the current artifact when the key changes.
-  // The first render already loaded via the lazy useState initializer, so we
-  // skip it here. We flag the upcoming chatHistory change as a load (not a user
-  // edit) so the persistence effect below doesn't write stale data to the new
-  // key.
+  // Load this artifact's chat. The server is the source of truth (durable,
+  // cross-device); the localStorage cache is only an instant-paint buffer that
+  // covers the window before the server responds and offline reloads. On key
+  // change we first paint from the cache, then reconcile with the server.
   useEffect(() => {
-    if (firstChatLoadRef.current) { firstChatLoadRef.current = false; return; }
-    skipChatSaveRef.current = true;
-    setChatHistory(_readWorkspaceChat(chatKey));
-  }, [chatKey]);
+    let cancelled = false;
 
-  // Persist the workspace chat on every change so a hard refresh keeps it.
+    // Paint the cache immediately on key change (the first render already did
+    // this via the lazy useState initializer). Flag it as a load so the save
+    // effect doesn't echo stale data back under the new key.
+    if (!firstChatLoadRef.current) {
+      skipChatSaveRef.current = true;
+      setChatHistory(_readWorkspaceChat(chatKey));
+    }
+    firstChatLoadRef.current = false;
+
+    (async () => {
+      try {
+        const resp = await Jaspen.getWorkspaceChat(threadId, scorecardId);
+        if (cancelled) return;
+        const serverMsgs = Array.isArray(resp?.messages) ? resp.messages : [];
+        // Adopt the server copy when it has content, or when we have no local
+        // turns to lose. If the server is empty but the cache holds unsynced
+        // turns (e.g. a prior save failed), keep them — the save effect will
+        // push them up and make the server consistent.
+        const local = _readWorkspaceChat(chatKey);
+        if (serverMsgs.length > 0 || local.length === 0) {
+          skipChatSaveRef.current = true;
+          setChatHistory(serverMsgs);
+          _writeWorkspaceChat(chatKey, serverMsgs);
+        }
+      } catch (e) {
+        console.warn('[Workspace] workspace-chat load failed (using local cache):', e);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [chatKey, threadId, scorecardId]);
+
+  // Persist on every change: write the local cache immediately (instant,
+  // offline-resilient) and debounce a save to the server (authoritative).
   useEffect(() => {
     if (skipChatSaveRef.current) { skipChatSaveRef.current = false; return; }
     _writeWorkspaceChat(chatKey, chatHistory);
-  }, [chatHistory, chatKey]);
+    if (chatSaveTimerRef.current) clearTimeout(chatSaveTimerRef.current);
+    const durable = chatHistory.filter((m) => m && !m.pending);
+    chatSaveTimerRef.current = setTimeout(() => {
+      Jaspen.saveWorkspaceChat(threadId, scorecardId, durable).catch((e) => {
+        console.warn('[Workspace] workspace-chat save failed (kept in local cache):', e);
+      });
+    }, 600);
+    return () => { if (chatSaveTimerRef.current) clearTimeout(chatSaveTimerRef.current); };
+  }, [chatHistory, chatKey, threadId, scorecardId]);
 
   // Debounced auto-save: any change to overrides is persisted ~500ms later.
   useEffect(() => {
