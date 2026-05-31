@@ -4,7 +4,7 @@
 
 import React, { useState, useMemo, useRef, useCallback } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faEye, faEyeSlash } from '@fortawesome/free-solid-svg-icons';
+import { faEye, faEyeSlash, faDiagramProject, faSpinner } from '@fortawesome/free-solid-svg-icons';
 import { Jaspen } from './JaspenClient';
 
 const NAVY   = '#161f3b';
@@ -138,14 +138,14 @@ const DimBar = ({ v, alt }) => {
 // Excluded rows render at 50% opacity, drop the rank/pick badge, and the
 // eye icon flips to eye-slash. Clicking the eye toggles include/exclude
 // (persists via Jaspen.patchScorecardOverrides, fired by the parent).
-const PortfolioRow = ({ d, alt, onSelect, selected, onToggleInclude }) => {
+const PortfolioRow = ({ d, alt, onSelect, selected, onToggleInclude, onBuildPlan, buildingPlan }) => {
   const excluded = !d.included;
   return (
   <div
     onClick={() => onSelect(d)}
     style={{
       display: 'grid',
-      gridTemplateColumns: '32px 28px 1.7fr repeat(6, 1fr) 56px 88px 36px',
+      gridTemplateColumns: TABLE_GRID,
       alignItems: 'center', gap: 12,
       padding: '13px 18px',
       borderBottom: `1px solid ${LINE}`,
@@ -178,6 +178,32 @@ const PortfolioRow = ({ d, alt, onSelect, selected, onToggleInclude }) => {
       <span style={{ fontFamily:'JetBrains Mono,monospace', fontSize: d.pick ? 18 : 16, fontWeight:600, color:NAVY, letterSpacing:'-0.02em' }}>{d.score}</span>
     </div>
     <div style={{ textAlign:'right' }}><StatusLabel s={d.status} /></div>
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        if (typeof onBuildPlan === 'function') onBuildPlan(d);
+      }}
+      disabled={Boolean(buildingPlan)}
+      title="Build an execution plan from this idea"
+      aria-label="Build an execution plan from this idea"
+      style={{
+        appearance:'none', border:'none', background:'transparent',
+        cursor: buildingPlan ? 'wait' : 'pointer', padding:6, borderRadius:6,
+        color: ROSE,
+        display:'flex', alignItems:'center', justifyContent:'center',
+        opacity: buildingPlan && !d._isBuilding ? 0.4 : 1,
+        transition: 'background 0.12s, color 0.12s',
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(160,3,108,0.08)'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+    >
+      <FontAwesomeIcon
+        icon={d._isBuilding ? faSpinner : faDiagramProject}
+        spin={Boolean(d._isBuilding)}
+        style={{ fontSize: 13 }}
+      />
+    </button>
     <button
       type="button"
       onClick={(e) => {
@@ -401,11 +427,13 @@ const TradeoffSidebar = ({ ideas, portfolioAnalysis, onAsk, asking }) => {
 };
 
 // ── Table header ──────────────────────────────────────────────────────────────
-// Last column hosts the include/exclude toggle (eye icon).
+// Last two columns host the build-execution-plan and include/exclude (eye)
+// controls.
+const TABLE_GRID = '32px 28px 1.7fr repeat(6, 1fr) 56px 88px 36px 36px';
 const TableHeader = () => (
   <div style={{
     display:'grid',
-    gridTemplateColumns:'32px 28px 1.7fr repeat(6, 1fr) 56px 88px 36px',
+    gridTemplateColumns: TABLE_GRID,
     gap:12, padding:'11px 18px',
     background:'#fff', borderBottom:`1px solid ${LINE}`,
     fontFamily:'JetBrains Mono,monospace',
@@ -417,6 +445,7 @@ const TableHeader = () => (
     {DIM_KEYS.map(d => <span key={d.key} style={{ textAlign:'center' }}>{d.short}</span>)}
     <span style={{ textAlign:'right' }}>Score</span>
     <span style={{ textAlign:'right' }}>Status</span>
+    <span style={{ textAlign:'center' }} title="Build an execution plan from this idea">Plan</span>
     <span style={{ textAlign:'center' }} title="Include / exclude from trade-off">In</span>
   </div>
 );
@@ -429,6 +458,8 @@ const TradeoffView = ({
   onAsk,               // fn(text) — sends to main chat
   asking = false,
   threadId,            // required to persist include/exclude toggles
+  onBuildExecutionPlan, // fn(idea) — generate execution plan from this idea
+  buildingPlanId,      // id of the idea currently generating (for spinner)
 }) => {
   const [selected, setSelected] = useState(null);
 
@@ -524,11 +555,13 @@ const TradeoffView = ({
             {ideas.map((d, i) => (
               <PortfolioRow
                 key={d._snap?.id || i}
-                d={d}
+                d={{ ...d, _isBuilding: buildingPlanId != null && (buildingPlanId === d.snapId || buildingPlanId === d.id) }}
                 alt={i % 2 === 1}
                 onSelect={setSelected}
                 selected={selected?._snap?.id === d._snap?.id}
                 onToggleInclude={handleToggleInclude}
+                onBuildPlan={onBuildExecutionPlan}
+                buildingPlan={buildingPlanId != null}
               />
             ))}
           </div>

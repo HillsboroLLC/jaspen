@@ -12,9 +12,9 @@
 // ============================================================================
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faArrowLeft, faDownload, faShare, faRotateLeft, faPaperPlane } from '@fortawesome/free-solid-svg-icons';
+import { faArrowLeft, faDownload, faShare, faRotateLeft, faPaperPlane, faDiagramProject, faSpinner } from '@fortawesome/free-solid-svg-icons';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -113,6 +113,7 @@ function applyOverrides(scorecard, overrides) {
 
 export default function JaspenWorkspace() {
   const { threadId, scorecardId } = useParams();
+  const navigate = useNavigate();
   const [bundle, setBundle] = useState(null);
   const [bundleError, setBundleError] = useState(null);
   const [snapshot, setSnapshot] = useState(null);
@@ -146,6 +147,35 @@ export default function JaspenWorkspace() {
   const isExecution = scorecardId === SENTINEL_EXECUTION;
   const isScorecard = !isTradeoff && !isExecution;
   const [wbs, setWbs] = useState(null);
+
+  // Execution-plan creation affordance. `buildingPlan` holds the id of the
+  // source (scorecard/scenario) currently generating so per-row buttons in
+  // the trade-off table can show their own spinner; `null` = idle.
+  const [buildingPlan, setBuildingPlan] = useState(null);
+  const [buildPlanError, setBuildPlanError] = useState(null);
+
+  // Generate (and commit) an execution plan from a scorecard or trade-off
+  // idea, then open the execution canvas. AI with heuristic fallback happens
+  // server-side inside generate_ai_wbs. `source` is a stable key used only to
+  // scope the per-button spinner.
+  const buildExecutionPlan = async ({ source, scorecard_id, scenario_id } = {}) => {
+    if (buildingPlan) return; // one at a time
+    setBuildPlanError(null);
+    setBuildingPlan(source || scorecard_id || 'plan');
+    try {
+      const payload = { commit: true };
+      if (scorecard_id) payload.scorecard_id = scorecard_id;
+      if (scenario_id) payload.scenario_id = scenario_id;
+      await Jaspen.generateAiWbs(threadId, payload);
+      navigate(`/workspace/${threadId}/${SENTINEL_EXECUTION}`);
+    } catch (err) {
+      setBuildPlanError(
+        (err && err.message) ? err.message : 'Could not build the execution plan. Please try again.'
+      );
+    } finally {
+      setBuildingPlan(null);
+    }
+  };
 
   // Fetch the artifact on mount. ALWAYS pull the bundle in parallel — even
   // when the focused endpoint succeeds — because the bundle carries the
@@ -718,6 +748,28 @@ export default function JaspenWorkspace() {
                 Reset
               </button>
             )}
+            {isScorecard && (
+              <button
+                type="button"
+                onClick={() => buildExecutionPlan({ source: 'scorecard', scorecard_id: scorecardId })}
+                disabled={Boolean(buildingPlan)}
+                title={buildPlanError || 'Generate an execution plan from this scorecard'}
+                style={{
+                  padding:'8px 12px', borderRadius:8,
+                  border: buildPlanError ? '1px solid #dc2626' : '1px solid #a0036c',
+                  background:'#fff', color: buildPlanError ? '#dc2626' : '#a0036c',
+                  cursor: buildingPlan ? 'wait' : 'pointer', fontSize:13, fontWeight:600,
+                  opacity: buildingPlan ? 0.7 : 1,
+                }}
+              >
+                <FontAwesomeIcon
+                  icon={buildingPlan ? faSpinner : faDiagramProject}
+                  spin={Boolean(buildingPlan)}
+                  style={{ marginRight:6 }}
+                />
+                {buildingPlan ? 'Building…' : 'Build Execution Plan'}
+              </button>
+            )}
             <button
               type="button"
               onClick={() => window.print()}
@@ -800,6 +852,12 @@ export default function JaspenWorkspace() {
                     onAsk={() => { /* no-op for now */ }}
                     asking={false}
                     threadId={threadId}
+                    buildingPlanId={buildingPlan}
+                    onBuildExecutionPlan={(idea) => buildExecutionPlan({
+                      source: idea?.snapId || idea?.id,
+                      scorecard_id: idea?.snapId || undefined,
+                      scenario_id: idea?._snap?.scenario_id || idea?._snap?.scenarioId || undefined,
+                    })}
                   />
                 );
               })()}
