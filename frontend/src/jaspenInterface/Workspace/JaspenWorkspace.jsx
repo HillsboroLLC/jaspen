@@ -430,6 +430,17 @@ export default function JaspenWorkspace() {
       };
       if (isScorecard) {
         viewContext.active_scorecard_id = scorecardId;
+        // Pass the active scorecard's NAME + score so the agent knows exactly
+        // which idea is on screen. The session only persists one scorecard, so
+        // an ID alone isn't resolvable when the user is viewing a synthesized
+        // sibling — this stops the "which of the three?" clarifying question.
+        const activeName = _pickMeaningful(
+          rendered?.project_name, snapshot?.name, snapshot?.project_name,
+          snapshot?.title, snapshot?.initiative_name, displayTitle,
+        );
+        if (activeName) viewContext.active_scorecard_name = activeName;
+        const activeScore = Number(rendered?.jaspen_score || snapshot?.jaspen_score || 0);
+        if (activeScore) viewContext.active_scorecard_score = activeScore;
       }
       if (isTradeoff) {
         // The same list the canvas renders — names + scores — so the agent

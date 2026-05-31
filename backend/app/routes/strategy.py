@@ -3796,11 +3796,32 @@ def _infer_wbs_planning_mode(scorecard, instruction, scenario_payload=None):
     return 'program' if any(marker in haystack for marker in program_markers) else 'project'
 
 
+def _heuristic_wbs_text(value, limit=140):
+    """Pull readable text out of a risk/recommendation entry (str or dict)."""
+    if isinstance(value, str):
+        return value.strip()[:limit]
+    if isinstance(value, dict):
+        for key in ('text', 'risk', 'recommendation', 'action', 'description', 'title', 'name'):
+            candidate = value.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()[:limit]
+    return ''
+
+
 def _heuristic_wbs_suggestion(scorecard, instruction, scenario_payload=None, chat_history=None):
     comps = (scorecard or {}).get('component_scores') if isinstance(scorecard, dict) else {}
     comps = comps if isinstance(comps, dict) else {}
     planning_mode = _infer_wbs_planning_mode(scorecard, instruction, scenario_payload=scenario_payload)
     is_program_mode = planning_mode == 'program'
+
+    # Pull the idea-specific drivers so even the deterministic fallback varies
+    # with THIS scorecard: its weak dimensions, its named risks, and its
+    # recommendations — not a one-size-fits-all skeleton.
+    _sc = scorecard if isinstance(scorecard, dict) else {}
+    top_risks_raw = _sc.get('top_risks') if isinstance(_sc.get('top_risks'), list) else _sc.get('risks')
+    top_risks = [t for t in (_heuristic_wbs_text(r) for r in (top_risks_raw or [])) if t][:4]
+    recommendations_raw = _sc.get('recommendations') if isinstance(_sc.get('recommendations'), list) else []
+    recommendations = [t for t in (_heuristic_wbs_text(r, 160) for r in recommendations_raw) if t][:3]
 
     initiative = str(
         (scorecard or {}).get('initiative_name')
@@ -3891,13 +3912,23 @@ def _heuristic_wbs_suggestion(scorecard, instruction, scenario_payload=None, cha
         })
 
     # Phase 3: Execution (score-driven tasks)
+    # Priority scales with how far below target a dimension is: the weaker the
+    # score, the higher the priority. Deterministic for a given scorecard.
+    def _priority_for(score):
+        s = float(score or 0)
+        if s < 50:
+            return 'high'
+        if s < 65:
+            return 'high'
+        return 'medium'
+
     execution_tasks = []
     if float(comps.get('market_position') or 0) < 75:
         execution_tasks.append({
             'id': 'market_validation',
-            'title': 'Customer and market assumption validation',
-            'description': 'Run structured customer interviews and market tests to sharpen value proposition.',
-            'priority': 'high',
+            'title': f'Customer and market assumption validation for {initiative}',
+            'description': f'Run structured customer interviews and market tests to sharpen the value proposition (market position scored {int(float(comps.get("market_position") or 0))}/100).',
+            'priority': _priority_for(comps.get('market_position')),
             'estimated_days': 10,
             'suggested_role': 'Product Marketing',
             'function': 'Marketing',
@@ -3909,8 +3940,8 @@ def _heuristic_wbs_suggestion(scorecard, instruction, scenario_payload=None, cha
         execution_tasks.append({
             'id': 'process_optimization',
             'title': 'Process bottleneck mapping and handoff automation',
-            'description': 'Identify and remediate top process bottlenecks; automate manual handoffs.',
-            'priority': 'medium',
+            'description': f'Identify and remediate top process bottlenecks; automate manual handoffs (operational efficiency scored {int(float(comps.get("operational_efficiency") or 0))}/100).',
+            'priority': _priority_for(comps.get('operational_efficiency')),
             'estimated_days': 12,
             'suggested_role': 'Operations Lead',
             'function': 'Operations',
@@ -3918,17 +3949,44 @@ def _heuristic_wbs_suggestion(scorecard, instruction, scenario_payload=None, cha
             'depends_on': ['dependency_map'],
             'risk_area': 'operational_efficiency',
         })
+    if float(comps.get('financial_health') or 0) < 75:
+        execution_tasks.append({
+            'id': 'financial_model_hardening',
+            'title': f'Financial model hardening and payback validation for {initiative}',
+            'description': f'Pressure-test unit economics, ramp/payback assumptions, and sensitivity ranges (financial health scored {int(float(comps.get("financial_health") or 0))}/100).',
+            'priority': _priority_for(comps.get('financial_health')),
+            'estimated_days': 8,
+            'suggested_role': 'Finance Analyst',
+            'function': 'Finance',
+            'activity_type': 'financial_modeling',
+            'depends_on': ['resource_plan'],
+            'risk_area': 'financial_health',
+        })
     if float(comps.get('execution_readiness') or 0) < 75:
         execution_tasks.append({
             'id': 'staffing_plan',
             'title': 'Staff critical roles and contingency coverage',
-            'description': 'Confirm owners and contingency coverage for all critical path tasks.',
-            'priority': 'high',
+            'description': f'Confirm owners and contingency coverage for all critical path tasks (execution readiness scored {int(float(comps.get("execution_readiness") or 0))}/100).',
+            'priority': _priority_for(comps.get('execution_readiness')),
             'estimated_days': 6,
             'suggested_role': 'HR Business Partner',
             'function': 'HR',
             'activity_type': 'staffing',
             'depends_on': ['resource_plan'],
+            'risk_area': 'execution_readiness',
+        })
+    # Risk-driven mitigation tasks — one per named top risk on the scorecard.
+    for _i, _risk in enumerate(top_risks):
+        execution_tasks.append({
+            'id': f'risk_mitigation_{_i + 1}',
+            'title': f'Mitigate: {_risk}',
+            'description': f'Define and execute a mitigation for the scorecard risk "{_risk}", with a named owner and a measurable exit criterion.',
+            'priority': 'high' if _i == 0 else 'medium',
+            'estimated_days': 6,
+            'suggested_role': 'Risk Manager',
+            'function': 'PMO',
+            'activity_type': 'risk_management',
+            'depends_on': ['risk_register'],
             'risk_area': 'execution_readiness',
         })
     # Always include a core delivery task
@@ -3944,6 +4002,20 @@ def _heuristic_wbs_suggestion(scorecard, instruction, scenario_payload=None, cha
         'depends_on': ['dependency_map', 'resource_plan'],
         'risk_area': 'execution_readiness',
     })
+    # Recommendation-driven tasks — operationalize what the scorecard advised.
+    for _i, _rec in enumerate(recommendations):
+        execution_tasks.append({
+            'id': f'recommendation_{_i + 1}',
+            'title': f'Action recommendation: {_rec}',
+            'description': f'Operationalize the scorecard recommendation "{_rec}" into concrete deliverables with an owner and due date.',
+            'priority': 'medium',
+            'estimated_days': 7,
+            'suggested_role': 'Project Lead',
+            'function': 'Operations',
+            'activity_type': 'delivery',
+            'depends_on': ['core_delivery'],
+            'risk_area': 'execution_readiness',
+        })
 
     # Phase 4: Change Management & Enablement
     change_tasks = [

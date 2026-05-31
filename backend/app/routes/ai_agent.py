@@ -1002,6 +1002,18 @@ def _sanitize_view_context(raw_context):
     if active_scorecard_id:
         cleaned["active_scorecard_id"] = active_scorecard_id[:120]
 
+    active_scorecard_name = str(
+        context.get("active_scorecard_name")
+        or context.get("scorecard_name")
+        or ""
+    ).strip()
+    if active_scorecard_name:
+        cleaned["active_scorecard_name"] = active_scorecard_name[:160]
+
+    active_scorecard_score = _safe_nonnegative_int(context.get("active_scorecard_score"))
+    if active_scorecard_score is not None:
+        cleaned["active_scorecard_score"] = active_scorecard_score
+
     active_scenario_id = str(
         context.get("active_scenario_id")
         or context.get("scenario_id")
@@ -1068,6 +1080,19 @@ def _view_context_prompt_suffix(view_context):
     active_scorecard_id = str(normalized.get("active_scorecard_id") or "").strip()
     if active_scorecard_id:
         lines.append(f"- Active scorecard ID: {active_scorecard_id}")
+
+    active_scorecard_name = str(normalized.get("active_scorecard_name") or "").strip()
+    if active_scorecard_name:
+        score_part = ""
+        active_scorecard_score = normalized.get("active_scorecard_score")
+        if active_scorecard_score is not None:
+            score_part = f" (score {active_scorecard_score})"
+        lines.append(
+            f"- The user is viewing the scorecard for: \"{active_scorecard_name}\"{score_part}. "
+            "This is THE active scorecard. When the user says 'the executive summary', 'the summary', "
+            "'this scorecard', or 'this idea', they mean THIS one — do not ask which idea they mean. "
+            "If multiple ideas exist in the thread, the on-screen one above takes precedence."
+        )
 
     active_scenario_id = str(normalized.get("active_scenario_id") or "").strip()
     if active_scenario_id:
