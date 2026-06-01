@@ -4375,8 +4375,31 @@ def _stable_wbs_task_id(phase_name, title, used_ids):
     return candidate
 
 
-def _materialize_ai_wbs(wbs_payload):
-    now = datetime.utcnow()
+def _parse_wbs_start_date(value):
+    """Parse an ISO YYYY-MM-DD (or ISO datetime) anchor into a datetime, or None."""
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    # Accept date-only or full ISO timestamps; anchor to start-of-day.
+    for fmt in ('%Y-%m-%d', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%dT%H:%M:%S.%f'):
+        try:
+            parsed = datetime.strptime(text, fmt)
+            return datetime(parsed.year, parsed.month, parsed.day)
+        except Exception:
+            continue
+    # Fallback: take the leading date portion.
+    try:
+        parsed = datetime.strptime(text[:10], '%Y-%m-%d')
+        return datetime(parsed.year, parsed.month, parsed.day)
+    except Exception:
+        return None
+
+
+def _materialize_ai_wbs(wbs_payload, start_date=None):
+    anchor = _parse_wbs_start_date(start_date)
+    now = anchor if anchor is not None else datetime.utcnow()
     tasks_in = []
     phases_in = []
     if isinstance(wbs_payload, dict):
@@ -4536,6 +4559,7 @@ def _materialize_ai_wbs(wbs_payload):
         'description': str(wbs_payload.get('description') or '').strip(),
         'summary': str(wbs_payload.get('summary') or '').strip(),
         'planning_mode': str(wbs_payload.get('planning_mode') or '').strip() or None,
+        'start_date': now.date().isoformat(),
         'phases': phase_rows,
         'tasks': created,
     }
@@ -4558,6 +4582,7 @@ def _normalize_wbs_task(raw_task):
         status = 'todo'
 
     owner = str(raw_task.get('owner') or raw_task.get('suggested_role') or raw_task.get('owner_role') or '').strip()
+    start_date = str(raw_task.get('start_date') or '').strip() or None
     due_date = str(raw_task.get('due_date') or '').strip() or None
     order = raw_task.get('order')
     try:
@@ -4618,6 +4643,7 @@ def _normalize_wbs_task(raw_task):
         'title': title,
         'status': status,
         'owner': owner,
+        'start_date': start_date,
         'due_date': due_date,
         'depends_on': deduped_dep_ids,
         'order': order,
@@ -4675,16 +4701,74 @@ def _normalize_project_wbs(payload, existing=None):
     for task in tasks:
         task['depends_on'] = [dep for dep in task.get('depends_on', []) if dep in valid_ids]
 
+    start_date = str(payload.get('start_date') or base.get('start_date') or '').strip() or None
+
     return {
         'version': int(base.get('version') or payload.get('version') or 1),
         'name': str(payload.get('name') or base.get('name') or 'Execution WBS').strip(),
         'description': str(payload.get('description') or base.get('description') or '').strip(),
         'summary': str(payload.get('summary') or base.get('summary') or '').strip(),
+        'start_date': start_date,
         'phases': incoming_phases,
         'tasks': tasks,
         'created_at': base.get('created_at') or now,
         'updated_at': now,
     }
+
+
+def _wbs_anchor_date(project_wbs):
+    """Current anchor for a plan: stored start_date, else the earliest task start."""
+    if not isinstance(project_wbs, dict):
+        return None
+    anchor = _parse_wbs_start_date(project_wbs.get('start_date'))
+    if anchor is not None:
+        return anchor
+    tasks = project_wbs.get('tasks') if isinstance(project_wbs.get('tasks'), list) else []
+    starts = []
+    for t in tasks:
+        if not isinstance(t, dict):
+            continue
+        parsed = _parse_wbs_start_date(t.get('start_date'))
+        if parsed is not None:
+            starts.append(parsed)
+    return min(starts) if starts else None
+
+
+def _shift_wbs_dates(project_wbs, new_start_date):
+    """Re-anchor an existing plan to new_start_date, shifting every task's
+    start_date and due_date by the same delta. Manual per-task adjustments are
+    preserved because the whole schedule slides by one constant offset.
+
+    Returns (updated_wbs, shifted_days). If the new date can't be parsed or
+    there's no current anchor, the plan is returned unchanged with 0 days.
+    """
+    if not isinstance(project_wbs, dict):
+        return project_wbs, 0
+    new_anchor = _parse_wbs_start_date(new_start_date)
+    if new_anchor is None:
+        return project_wbs, 0
+    current_anchor = _wbs_anchor_date(project_wbs)
+    if current_anchor is None:
+        # No existing schedule to slide; just stamp the new anchor.
+        project_wbs['start_date'] = new_anchor.date().isoformat()
+        return project_wbs, 0
+    delta = (new_anchor.date() - current_anchor.date()).days
+    if delta == 0:
+        project_wbs['start_date'] = new_anchor.date().isoformat()
+        return project_wbs, 0
+
+    shift = timedelta(days=delta)
+    tasks = project_wbs.get('tasks') if isinstance(project_wbs.get('tasks'), list) else []
+    for t in tasks:
+        if not isinstance(t, dict):
+            continue
+        for key in ('start_date', 'due_date'):
+            parsed = _parse_wbs_start_date(t.get(key))
+            if parsed is not None:
+                t[key] = (parsed + shift).date().isoformat()
+    project_wbs['start_date'] = new_anchor.date().isoformat()
+    project_wbs['updated_at'] = datetime.utcnow().isoformat()
+    return project_wbs, delta
 
 
 def _wbs_dependency_count(project_wbs):
@@ -5362,6 +5446,7 @@ def generate_ai_wbs(thread_id):
         preflight_answers = payload.get('preflight_answers') if isinstance(payload.get('preflight_answers'), dict) else {}
         scenario_id = str(payload.get('scenario_id') or '').strip() or None
         scorecard_id = str(payload.get('scorecard_id') or '').strip() or None
+        requested_start_date = str(payload.get('start_date') or '').strip() or None
 
         all_data, thread_data, baseline, _baseline_inputs, session, _strategy_objective = _resolve_thread_baseline(user_id, thread_id)
         scenarios = thread_data.get('scenarios') if isinstance(thread_data.get('scenarios'), dict) else {}
@@ -5506,7 +5591,7 @@ def generate_ai_wbs(thread_id):
             strategy_objective=_strategy_objective,
             chat_history=chat_turns,
         )
-        materialized = _materialize_ai_wbs(raw_wbs)
+        materialized = _materialize_ai_wbs(raw_wbs, start_date=requested_start_date)
         normalized_wbs = _normalize_project_wbs({'project_wbs': materialized}, existing=None)
         normalized_wbs['ai_generated'] = True
         normalized_wbs['ai_generated_at'] = datetime.utcnow().isoformat()
@@ -6424,6 +6509,65 @@ def upsert_thread_wbs(thread_id):
         }), 200
     except Exception as e:
         current_app.logger.error("[upsert_thread_wbs] %s", e)
+        return jsonify({'error': str(e)}), 500
+
+
+@strategy_bp.route('/threads/<thread_id>/wbs/start-date', methods=['POST'])
+@jwt_required()
+def reanchor_thread_wbs_start_date(thread_id):
+    """Re-anchor an existing execution plan to a new project start date.
+
+    Shifts every task's start_date and due_date by the same delta so manual
+    per-task adjustments are preserved (the whole schedule slides). Body:
+    {"start_date": "YYYY-MM-DD", "scorecard_id": "<idea id, optional>"}.
+    """
+    try:
+        user_id = get_jwt_identity()
+        _, plan_key, access_err = _require_tool_access(user_id, 'wbs_write', access='write')
+        if access_err:
+            return access_err
+
+        payload = request.get_json() or {}
+        new_start_date = str(payload.get('start_date') or '').strip() or None
+        if not new_start_date or _parse_wbs_start_date(new_start_date) is None:
+            return jsonify({'error': 'A valid start_date (YYYY-MM-DD) is required.'}), 400
+        scorecard_id = str(payload.get('scorecard_id') or request.args.get('scorecard_id') or '').strip() or None
+
+        all_data = _load_scenarios(user_id)
+        td = all_data.get(thread_id) if isinstance(all_data, dict) else None
+        if not isinstance(td, dict):
+            return jsonify({'error': 'No execution plan found for this thread.'}), 404
+
+        resolved = _resolve_thread_wbs(td, scorecard_id)
+        if not isinstance(resolved, dict) or not isinstance(resolved.get('tasks'), list) or not resolved.get('tasks'):
+            return jsonify({'error': 'No execution plan found for this idea.'}), 404
+
+        updated_wbs, shifted_days = _shift_wbs_dates(resolved, new_start_date)
+        _store_thread_wbs(td, scorecard_id, updated_wbs)
+        all_data[thread_id] = td
+        _save_scenarios(user_id, all_data)
+        _audit_strategy_event(
+            'wbs.start_date_changed',
+            user_id=user_id,
+            details={
+                'thread_id': thread_id,
+                'scorecard_id': scorecard_id,
+                'start_date': updated_wbs.get('start_date'),
+                'shifted_days': shifted_days,
+            },
+        )
+
+        return jsonify({
+            'success': True,
+            'thread_id': thread_id,
+            'scorecard_id': scorecard_id,
+            'start_date': updated_wbs.get('start_date'),
+            'shifted_days': shifted_days,
+            'project_wbs': updated_wbs,
+            'limits': get_wbs_limits_for_plan(plan_key),
+        }), 200
+    except Exception as e:
+        current_app.logger.error("[reanchor_thread_wbs_start_date] %s", e)
         return jsonify({'error': str(e)}), 500
 
 

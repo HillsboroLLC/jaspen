@@ -66,6 +66,7 @@ export const endpoints = {
   aiScenario:       (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/ai-scenario`,
   aiWbs:            (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/ai-wbs`,
   threadWbs:        (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/wbs`,
+  threadWbsStartDate: (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/wbs/start-date`,
   workspaceChat:    (threadId, artifactId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/workspace-chat/${encodeURIComponent(artifactId)}`,
   scorecardSnapshot: (threadId, snapshotId) =>
     `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/scorecard-snapshots/${encodeURIComponent(snapshotId)}`,
@@ -1166,6 +1167,17 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
     putJSON(
       endpoints.threadWbs(threadId),
       scorecardId ? { project_wbs, scorecard_id: scorecardId } : { project_wbs },
+      { withSid: true },
+    ),
+
+  // Re-anchor an existing execution plan to a new project start date. The
+  // backend shifts every task's start/due by the same delta so manual per-task
+  // adjustments are preserved (the whole schedule slides). startDate is a
+  // YYYY-MM-DD string. Returns { project_wbs, start_date, shifted_days }.
+  setThreadWbsStartDate: async (threadId, startDate, scorecardId = null) =>
+    postJSON(
+      endpoints.threadWbsStartDate(threadId),
+      scorecardId ? { start_date: startDate, scorecard_id: scorecardId } : { start_date: startDate },
       { withSid: true },
     ),
 

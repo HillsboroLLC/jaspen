@@ -29,7 +29,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faGripVertical, faPlus, faEllipsis, faCheck,
-  faArrowRotateRight, faArrowRotateLeft,
+  faArrowRotateRight, faArrowRotateLeft, faCalendar,
 } from '@fortawesome/free-solid-svg-icons';
 
 import { Jaspen } from './JaspenClient';
@@ -1178,6 +1178,38 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
   const canUndo = undoStack.current.length > 0;
   const canRedo = redoStack.current.length > 0;
 
+  // ── Project start date ─────────────────────────────────────────────────────
+  // Changing the start date re-anchors the whole plan on the server (every task
+  // slides by the same delta, preserving manual per-task tweaks). We swap in the
+  // server-returned plan rather than recomputing locally.
+  const [startDateSaving, setStartDateSaving] = useState(false);
+  const planStartDate = String(wbs?.start_date || '').slice(0, 10);
+  const handleStartDateChange = useCallback(async (newDate) => {
+    const d = String(newDate || '').slice(0, 10);
+    if (!d || d === planStartDate || !threadId) return;
+    try {
+      setStartDateSaving(true);
+      setSaveError(null);
+      const resp = await Jaspen.setThreadWbsStartDate(threadId, d, scorecardId);
+      const next = resp?.project_wbs;
+      if (next && Array.isArray(next.tasks)) {
+        // Record for undo, then swap in the re-anchored plan. Skip the debounced
+        // PUT — the plan is already persisted server-side by the re-anchor call.
+        undoStack.current.push(wbsRef.current);
+        if (undoStack.current.length > 60) undoStack.current.shift();
+        redoStack.current = [];
+        setHistVer((v) => v + 1);
+        skipNextSave.current = true;
+        setWbs(next);
+      }
+    } catch (e) {
+      console.error('[ExecutionCanvas] start-date change failed:', e);
+      setSaveError(String(e?.message || e || 'Could not change start date'));
+    } finally {
+      setStartDateSaving(false);
+    }
+  }, [threadId, scorecardId, planStartDate]);
+
   // Keyboard: Cmd/Ctrl+Z = undo, Cmd/Ctrl+Shift+Z (or Ctrl+Y) = redo.
   useEffect(() => {
     const onKey = (e) => {
@@ -1435,6 +1467,31 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
               <span style={{ fontSize: 13, color: COLOR.ink }}>
                 {totalPhases} phase{totalPhases === 1 ? '' : 's'} · {totalTasks} task{totalTasks === 1 ? '' : 's'}
               </span>
+              {totalTasks > 0 && (
+                <label
+                  title="Project start date — changing it shifts the whole plan"
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 6,
+                    fontSize: 11.5, color: COLOR.mute, padding: '3px 9px',
+                    background: '#fff', border: `1px solid ${COLOR.line}`, borderRadius: 999,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <FontAwesomeIcon icon={faCalendar} style={{ fontSize: 10, color: COLOR.mute }} />
+                  <span style={{ fontWeight: 600, color: COLOR.navy2 }}>Starts</span>
+                  <input
+                    type="date"
+                    value={planStartDate}
+                    onChange={(e) => handleStartDateChange(e.target.value)}
+                    disabled={startDateSaving}
+                    style={{
+                      border: 'none', background: 'transparent', font: 'inherit',
+                      color: COLOR.navy, padding: 0, cursor: 'pointer', outline: 'none',
+                    }}
+                  />
+                  {startDateSaving && <span style={{ color: COLOR.mute }}>…</span>}
+                </label>
+              )}
               {saving && <span style={{ fontSize: 11.5, color: COLOR.mute }}>Saving…</span>}
               {!saving && saveError && (
                 <span style={{ fontSize: 11.5, color: '#dc2626' }} title={saveError}>Save failed — will retry</span>
