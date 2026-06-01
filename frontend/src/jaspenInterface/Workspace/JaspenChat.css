@@ -2102,6 +2102,28 @@
   color: var(--gray-500);
 }
 
+/* Coming-soon items are disabled (not gated): greyed out, not clickable, no
+   hover affordance. The page still exists — it's just not reachable yet. */
+.jas-ud-item.is-coming-soon,
+.jas-ud-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.jas-ud-item.is-coming-soon:hover {
+  background: none;
+  color: var(--gray-700);
+}
+.jas-ud-item-badge.is-soon {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--gray-100, #f1f3f8);
+  border: 1px solid var(--gray-200, #e4e8f0);
+  color: var(--gray-500, #8a93ad);
+  letter-spacing: 0.02em;
+  font-size: 0.625rem;
+  white-space: nowrap;
+}
+
 .jas-ud-item-ext {
   font-size: 0.625rem;
   color: var(--gray-400);
