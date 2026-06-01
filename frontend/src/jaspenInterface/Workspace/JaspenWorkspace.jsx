@@ -848,7 +848,11 @@ export default function JaspenWorkspace() {
       if (isScorecard && scorecardId) {
         const muts = Array.isArray(resp?.mutations) ? resp.mutations : [];
         const editedHere = muts.some(
-          (m) => m && m.success && (m.tool === 'patch_scorecard' || m.tool === 'generate_scorecard')
+          (m) => m && m.success && (
+            m.tool === 'patch_scorecard'
+            || m.tool === 'generate_scorecard'
+            || m.tool === 'rename_thread'
+          )
         );
         if (editedHere) {
           const acts = Array.isArray(resp?.actions) ? resp.actions : [];

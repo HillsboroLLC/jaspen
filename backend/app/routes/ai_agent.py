@@ -5417,6 +5417,36 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             all_data[thread_id] = td
             _save_scenarios(user_id, all_data)
 
+        # rename_thread (above) renames the THREAD + baseline project_name, but the
+        # user may be viewing a specific idea's card (a synthesized sibling /
+        # chat-artifact / scenario card) whose own name + display_overrides.title
+        # the thread rename never touches. The agent must update WHERE THE USER IS:
+        # if an idea card is open, rename THAT card in place too so its header
+        # reflects the new name immediately. A rename never moves the score.
+        updated_open_card = None
+        if view_active_scorecard_id:
+            try:
+                from .strategy import apply_scorecard_edit_in_place
+
+                def _rename_open_card(card):
+                    merged = dict(card)
+                    merged["name"] = next_name
+                    merged["project_name"] = next_name
+                    merged["label"] = next_name
+                    merged["initiative_name"] = next_name
+                    _ov = merged.get("display_overrides")
+                    _ov = dict(_ov) if isinstance(_ov, dict) else {}
+                    _ov["title"] = next_name
+                    merged["display_overrides"] = _ov
+                    return merged
+
+                updated_open_card = apply_scorecard_edit_in_place(
+                    user_id, thread_id, view_active_scorecard_id, _rename_open_card
+                )
+            except Exception as exc:  # defensive: thread rename already succeeded
+                current_app.logger.warning("[rename_thread] open-card rename failed: %s", exc)
+                updated_open_card = None
+
         _audit_ai_agent_event(
             "thread.renamed",
             target_user_id=user_id,
@@ -5427,12 +5457,22 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             },
         )
 
-        return _tool_success({
+        success_payload = {
             "tool": tool_name,
             "confirmation": f"Renamed this initiative to '{next_name}'.",
             "thread_id": thread_id,
             "new_name": next_name,
-        })
+        }
+        if isinstance(updated_open_card, dict):
+            _open_card_id = str(
+                updated_open_card.get("id")
+                or updated_open_card.get("analysis_id")
+                or view_active_scorecard_id
+            )
+            success_payload["updated_scorecard"] = updated_open_card
+            success_payload["scorecard_id"] = _open_card_id
+            success_payload["selected_scorecard_id"] = _open_card_id
+        return _tool_success(success_payload)
 
     if tool_name == "patch_scorecard":
         from .strategy import _merge_scorecard_patch, apply_scorecard_edit_in_place
