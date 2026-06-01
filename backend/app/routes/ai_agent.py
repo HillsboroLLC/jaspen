@@ -35,6 +35,7 @@ from app.billing_config import (
     get_model_catalog,
     get_usage_meter_state,
     normalize_model_type,
+    normalize_plan_key,
     plan_thinking_budget_usd,
     thinking_power_debit_pct,
     tokens_to_credits,
@@ -5880,6 +5881,32 @@ def _anthropic_content_to_dicts(content_blocks):
     return normalized
 
 
+def _entitlement_plan_key(user):
+    """Org-aware entitlement plan for the chat agent's tool gating.
+
+    A member of a paid organization inherits that org's plan (essential / team /
+    enterprise) for entitlement purposes even when their *personal*
+    subscription_plan is free — the seat is what's paid for, not the individual.
+    The reply/stream functions previously read user.subscription_plan directly,
+    so org members were silently treated as free and lost every mutation tool
+    (rename_thread, patch_scorecard, generate_scorecard, WBS edits). The model
+    then narrated success it could never perform.
+
+    Mirrors auth._effective_plan_for_mfa: the active org's plan wins when present,
+    otherwise fall back to the user's own effective plan.
+    """
+    if not user:
+        return "free"
+    try:
+        active_org, _ = resolve_active_org_for_user(user)
+    except Exception:
+        active_org = None
+    org_plan = normalize_plan_key(getattr(active_org, "plan_key", None)) if active_org else None
+    if org_plan and org_plan != "free":
+        return to_public_plan(org_plan)
+    return to_public_plan(getattr(user, "subscription_plan", None))
+
+
 def _anthropic_text(content_blocks):
     out = []
     for block in (content_blocks or []):
@@ -5940,7 +5967,7 @@ def _generate_assistant_reply_anthropic(
         return fallback_reply, {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, [], [], None
 
     model_name = _anthropic_model_for_selection(model_selection)
-    plan_key = to_public_plan(user.subscription_plan) if user else "free"
+    plan_key = _entitlement_plan_key(user)
     max_tokens = _max_output_tokens_for_plan(plan_key)
     temperature = float(
         current_app.config.get("AI_AGENT_TEMPERATURE")
@@ -6176,7 +6203,7 @@ def _stream_assistant_reply_events_anthropic(
         return
 
     model_name = _anthropic_model_for_selection(model_selection)
-    plan_key = to_public_plan(user.subscription_plan) if user else "free"
+    plan_key = _entitlement_plan_key(user)
     max_tokens = _max_output_tokens_for_plan(plan_key)
     temperature = float(
         current_app.config.get("AI_AGENT_TEMPERATURE")
@@ -6472,7 +6499,7 @@ def _generate_assistant_reply_gemini(
     if not messages:
         messages = [{"role": "user", "content": _wrap_user_message_content(user_message)}]
 
-    plan_key = to_public_plan(user.subscription_plan) if user else "free"
+    plan_key = _entitlement_plan_key(user)
     max_tokens = _max_output_tokens_for_plan(plan_key)
     temperature = float(
         current_app.config.get("AI_AGENT_TEMPERATURE")
@@ -6673,7 +6700,7 @@ def _stream_assistant_reply_events_gemini(
     if not messages:
         messages = [{"role": "user", "content": _wrap_user_message_content(user_message)}]
 
-    plan_key = to_public_plan(user.subscription_plan) if user else "free"
+    plan_key = _entitlement_plan_key(user)
     max_tokens = _max_output_tokens_for_plan(plan_key)
     temperature = float(
         current_app.config.get("AI_AGENT_TEMPERATURE")
