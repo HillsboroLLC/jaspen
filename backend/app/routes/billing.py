@@ -412,11 +412,16 @@ def modify_subscription():
             return jsonify({'msg': 'Subscription item missing id'}), 400
 
         if is_upgrade:
+            # Charge the prorated difference immediately ('always_invoice'):
+            # Stripe finalizes and attempts to pay an invoice for the proration
+            # right now, so the charge shows up as a real transaction and we can
+            # tell — synchronously — whether the card on file was accepted.
             updated = stripe.Subscription.modify(
                 user.stripe_subscription_id,
                 items=[{'id': item_id, 'price': price_id}],
-                proration_behavior='create_prorations',
+                proration_behavior='always_invoice',
                 metadata={'scheduled_plan_change': ''},
+                expand=['latest_invoice'],
             )
         else:
             # Downgrade: schedule for next cycle, no immediate charge/credit.
@@ -436,10 +441,19 @@ def modify_subscription():
 
     if is_upgrade:
         # Guard: only grant the higher tier if Stripe actually accepted payment.
-        # An upgrade can leave the subscription in past_due / incomplete / unpaid
-        # if the prorated charge on the card on file is declined — in that case we
-        # must NOT hand the user premium access (see P0: enforce subscription_status).
-        if user.subscription_status not in ('active', 'trialing'):
+        # With 'always_invoice' the prorated charge is attempted now, so we check
+        # both the subscription status and the proration invoice's payment state.
+        # If the card on file is declined we must NOT hand out premium access
+        # (see P0: enforce subscription_status).
+        invoice_paid = True
+        latest_invoice = updated.get('latest_invoice')
+        if isinstance(latest_invoice, dict):
+            inv_status = str(latest_invoice.get('status') or '').strip().lower()
+            # 'paid' = charged; '' / no invoice = $0 proration (nothing to charge).
+            # Anything else ('open', 'uncollectible', …) means payment didn't land.
+            invoice_paid = inv_status in ('', 'paid')
+        status_ok = user.subscription_status in ('active', 'trialing')
+        if not (status_ok and invoice_paid):
             db.session.commit()  # persist the status change, but keep the old plan
             return jsonify({
                 'success': False,
