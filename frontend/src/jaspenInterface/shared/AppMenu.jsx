@@ -499,6 +499,7 @@ export default function AppMenu() {
             <button className={menuItemClass('/dashboard')} onClick={() => { close(); navigate('/dashboard'); }}>
               <FontAwesomeIcon icon={faListCheck} />
               <span className="jas-ud-item-label">Dashboard</span>
+              <span className="jas-ud-item-badge is-soon">Soon</span>
             </button>
           )}
           {showLockedDashboard && (
@@ -523,17 +524,20 @@ export default function AppMenu() {
           <button className={menuItemClass('/projects')} onClick={() => { close(); navigate('/projects'); }}>
             <FontAwesomeIcon icon={faLayerGroup} />
             <span className="jas-ud-item-label">Projects</span>
+            <span className="jas-ud-item-badge is-soon">Soon</span>
           </button>
 
           <button className={menuItemClass('/scores')} onClick={() => { close(); navigate('/scores'); }}>
             <FontAwesomeIcon icon={faChartLine} />
             <span className="jas-ud-item-label">Scores</span>
+            <span className="jas-ud-item-badge is-soon">Soon</span>
           </button>
 
           {showRealInsights && (
             <button className={menuItemClass('/insights')} onClick={() => { close(); navigate('/insights'); }}>
               <FontAwesomeIcon icon={faChartLine} />
               <span className="jas-ud-item-label">Insights</span>
+              <span className="jas-ud-item-badge is-soon">Soon</span>
             </button>
           )}
           {showLockedInsights && (
@@ -552,6 +556,7 @@ export default function AppMenu() {
             <button className={menuItemClass('/reports')} onClick={() => { close(); navigate('/reports'); }}>
               <FontAwesomeIcon icon={faDownload} />
               <span className="jas-ud-item-label">Reports</span>
+              <span className="jas-ud-item-badge is-soon">Soon</span>
             </button>
           )}
           {showLockedReports && (
@@ -570,6 +575,7 @@ export default function AppMenu() {
             <button className={menuItemClass('/activity')} onClick={() => { close(); navigate('/activity'); }}>
               <FontAwesomeIcon icon={faClockRotateLeft} />
               <span className="jas-ud-item-label">Activity</span>
+              <span className="jas-ud-item-badge is-soon">Soon</span>
             </button>
           )}
           {showLockedActivity && (
