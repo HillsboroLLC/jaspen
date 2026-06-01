@@ -55,12 +55,30 @@ def _normalized_origin(url):
     return f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
 
 
+def _origin_variants(origin):
+    """Return the origin plus its www/apex counterpart.
+
+    The frontend is served at https://www.jaspen.ai while FRONTEND_BASE_URL is
+    often configured as the apex https://jaspen.ai (or vice-versa). Treat the
+    two as equivalent so redirect validation doesn't reject a legitimate
+    same-site return URL.
+    """
+    if not origin:
+        return set()
+    variants = {origin}
+    parsed = urlparse(origin)
+    host = parsed.netloc
+    if host.startswith('www.'):
+        variants.add(f"{parsed.scheme}://{host[4:]}")
+    else:
+        variants.add(f"{parsed.scheme}://www.{host}")
+    return variants
+
+
 def _allowed_frontend_origins():
     origins = set()
     frontend_base = current_app.config.get('FRONTEND_BASE_URL') or 'http://localhost:3000'
-    frontend_origin = _normalized_origin(frontend_base)
-    if frontend_origin:
-        origins.add(frontend_origin)
+    origins |= _origin_variants(_normalized_origin(frontend_base))
 
     raw = (
         current_app.config.get('BILLING_REDIRECT_ALLOWED_ORIGINS')
@@ -68,9 +86,8 @@ def _allowed_frontend_origins():
         or ''
     )
     for item in str(raw).split(','):
-        origin = _normalized_origin(item)
-        if origin:
-            origins.add(origin)
+        origins |= _origin_variants(_normalized_origin(item))
+    origins.discard(None)
     return origins
 
 
