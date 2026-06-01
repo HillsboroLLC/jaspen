@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 import anthropic
+import hashlib
 import json
 import os
 import re
@@ -4354,6 +4355,26 @@ Rules:
         return _heuristic_wbs_suggestion(scorecard, instruction, scenario_payload=scenario_context, chat_history=chat_history)
 
 
+def _stable_wbs_task_id(phase_name, title, used_ids):
+    """Content-derived task id so an identical plan always yields identical ids.
+
+    Hashing (phase + title) keeps a task's id stable across regenerations AND
+    across reordering/insertions (unlike a positional counter), which is what
+    lets Jira/Smartsheet sync recognize the same task instead of duplicating it.
+    On the rare duplicate (same title in the same phase) we append a numeric
+    suffix to stay unique within this plan — still fully deterministic.
+    """
+    basis = f"{str(phase_name or '').strip().lower()}|{str(title or '').strip().lower()}"
+    digest = hashlib.sha1(basis.encode('utf-8')).hexdigest()[:10]
+    base_id = f"task_{digest}"
+    candidate = base_id
+    suffix = 2
+    while candidate in used_ids:
+        candidate = f"{base_id}_{suffix}"
+        suffix += 1
+    return candidate
+
+
 def _materialize_ai_wbs(wbs_payload):
     now = datetime.utcnow()
     tasks_in = []
@@ -4366,6 +4387,7 @@ def _materialize_ai_wbs(wbs_payload):
 
     created = []
     id_aliases = {}
+    used_ids = set()
     phase_rows = []
     running_order = 1
 
@@ -4384,7 +4406,12 @@ def _materialize_ai_wbs(wbs_payload):
                 continue
 
             requested_id = str(raw.get('id') or '').strip()
-            task_id = requested_id or f"task_{uuid.uuid4().hex[:10]}"
+            # Deterministic, content-derived id (not a random UUID) so an
+            # identical plan always materializes to identical task ids. The
+            # model's requested_id is preserved as an alias below so dependency
+            # references still resolve.
+            task_id = _stable_wbs_task_id(phase_name, title, used_ids)
+            used_ids.add(task_id)
             owner = str(raw.get('owner') or raw.get('suggested_role') or raw.get('owner_role') or '').strip()
             priority = str(raw.get('priority') or '').strip().lower()
             if priority not in {'high', 'medium', 'low'}:
