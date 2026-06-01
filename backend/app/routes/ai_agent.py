@@ -511,7 +511,8 @@ _SYSTEM_PROMPT_PREFIX = (
     "SCORECARDS: "
     "Scorecards accumulate inline in the conversation — chat, chat, scorecard, chat, scorecard, etc. The idea the user has OPEN in the workspace is editable in place (see EDITING THE OPEN SCORECARD above). "
     "When the user proposes a genuinely NEW idea or a variation they want to keep alongside the original, call generate_scorecard (no rescore_scorecard_id). "
-    "When the user asks to change the idea they're viewing, edit it in place: patch_scorecard for wording, or generate_scorecard with rescore_scorecard_id to re-score that same idea. "
+    "When the user asks to change the idea they're viewing, edit it in place: patch_scorecard for wording OR for renaming the title (pass the new title in `name`), or generate_scorecard with rescore_scorecard_id to re-score that same idea. "
+    "CRITICAL — never spawn a duplicate on an edit: editing the OPEN idea (wording, title rename, or re-score) must use patch_scorecard or generate_scorecard(rescore_scorecard_id=<open id>) — NEVER generate_scorecard without rescore_scorecard_id, which creates a second card. A title rename or any wording/prose edit is cosmetic: use patch_scorecard and the score MUST NOT move. "
     "When the user asks to compare or rank ideas, call generate_tradeoff_comparison. "
     "When the user asks to build an execution plan, call generate_execution_plan. "
     "Use your judgment about when to score. A confirmation, an acknowledgment, or a pure question about an existing scorecard never warrants a tool call. "
@@ -4772,12 +4773,14 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                 "name": "patch_scorecard",
                 "description": (
                     "Edit the wording of the OPEN scorecard in place — for narrative/prose tweaks that do NOT change the "
-                    "score (reword the executive summary, insights, assumptions, risk/recommendation text, rationale). "
-                    "Use this for ALL tone/clarity/length/phrasing edits: 'more executive-friendly', 'clearer', "
-                    "'punchier', 'more concise', 'tighten', 'reword', 'fix grammar', 'change word X to Y', 'rewrite the "
-                    "summary'. Rewriting the same facts in better prose NEVER moves the numbers. Edits the idea the user "
-                    "is viewing directly; does not spawn a duplicate. Only when the underlying facts/assumptions change "
-                    "(not just the prose) use generate_scorecard with rescore_scorecard_id instead."
+                    "score (reword the executive summary, insights, assumptions, risk/recommendation text, rationale), "
+                    "AND for renaming the idea's title. Use this for ALL tone/clarity/length/phrasing edits: 'more "
+                    "executive-friendly', 'clearer', 'punchier', 'more concise', 'tighten', 'reword', 'fix grammar', "
+                    "'change word X to Y', 'rewrite the summary'. ALSO use it for title/name changes: 'rename this to Y', "
+                    "'remove (No Enterprise Hire) from the title', 'call it Z' — pass the new title in `name`. Rewriting "
+                    "the same facts in better prose, or renaming the title, NEVER moves the numbers. Edits the idea the "
+                    "user is viewing directly; does not spawn a duplicate. Only when the underlying facts/assumptions "
+                    "change (not just the prose) use generate_scorecard with rescore_scorecard_id instead."
                 ),
                 "input_schema": {
                     "type": "object",
@@ -4785,6 +4788,10 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                         "scorecard_id": {
                             "type": "string",
                             "description": "Optional id of the scorecard to edit. Defaults to the open/on-screen idea.",
+                        },
+                        "name": {
+                            "type": "string",
+                            "description": "New title/name for the idea. Use for rename requests (e.g. 'rename this to Y', 'remove X from the title'). A rename never changes the score.",
                         },
                         "executive_summary": {"type": "string"},
                         "key_insights": {"type": "array", "items": {"type": "string"}},
@@ -5438,7 +5445,17 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             "top_risks", "recommendations", "component_rationale", "decision_framework",
         }
         patch = {k: v for k, v in tool_input.items() if k in patchable and v is not None}
-        if not patch:
+
+        # A title/name rename is a free cosmetic edit on the open idea. Accept it
+        # under the aliases the model might use, but normalize to a single value.
+        new_name = ""
+        for _name_key in ("name", "title", "initiative_name", "project_name"):
+            _candidate = str(tool_input.get(_name_key) or "").strip()
+            if _candidate:
+                new_name = _candidate[:200]
+                break
+
+        if not patch and not new_name:
             return _tool_error("No patchable scorecard fields provided.", code="no_fields")
 
         # The open idea wins; fall back to an explicit id, then the thread's
@@ -5454,7 +5471,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             # may drop non-standard keys, so carry them back explicitly.
             # jaspen_score and dimensions come from the base unchanged — a wording
             # edit never re-scores.
-            merged = _merge_scorecard_patch(card, patch)
+            merged = _merge_scorecard_patch(card, patch) if patch else dict(card)
             for k in (
                 "id", "analysis_id", "thread_id", "name", "project_name", "label",
                 "isBaseline", "createdAt", "timestamp", "project_description",
@@ -5462,6 +5479,19 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             ):
                 if card.get(k) is not None and merged.get(k) in (None, "", {}, []):
                     merged[k] = card.get(k)
+            # Apply a rename AFTER the carry-back so it wins. Update every label
+            # field AND the display override so the canvas/header reflect it and
+            # no stale cosmetic override shadows the new title. A rename never
+            # touches jaspen_score/dimensions.
+            if new_name:
+                merged["name"] = new_name
+                merged["project_name"] = new_name
+                merged["label"] = new_name
+                merged["initiative_name"] = new_name
+                _ov = merged.get("display_overrides")
+                _ov = dict(_ov) if isinstance(_ov, dict) else {}
+                _ov["title"] = new_name
+                merged["display_overrides"] = _ov
             return merged
 
         card = apply_scorecard_edit_in_place(user_id, thread_id, target_id, _do_patch)
@@ -5470,6 +5500,8 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
 
         card_id = str(card.get("id") or card.get("analysis_id") or target_id or thread_id)
         changed_fields = list(patch.keys())
+        if new_name:
+            changed_fields.append("title")
         return _tool_success({
             "tool": tool_name,
             "confirmation": f"Updated {', '.join(changed_fields)} on this scorecard.",

@@ -199,6 +199,14 @@ export const PriorityDot = ({ priority, onClick, interactive = false }) => {
   );
 };
 
+// Generic/auto plan-name labels. When wbs.name is one of these (or an
+// auto "<idea> — Execution Plan" label) we show the idea's title instead, so a
+// user-typed custom plan name is what wins in the header.
+const _GENERIC_PLAN_NAMES = new Set([
+  '', 'execution plan', 'execution wbs', 'ai generated project plan',
+  'untitled', 'untitled plan', 'project plan', 'project',
+]);
+
 // ── Editable text (contenteditable + commit on blur) ───────────────────────
 
 export function EditableText({ value, onCommit, multiline = false, style, placeholder = '—' }) {
@@ -1382,9 +1390,29 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 18 }}>
           <div style={{ minWidth: 0, flex: 1 }}>
             <Eyebrow color={COLOR.rose}>✦ &nbsp;{isWinner ? 'Idea · Trade-off winner' : 'Idea · Execution plan'}</Eyebrow>
-            <div style={{ fontSize: 24, fontWeight: 600, color: COLOR.navy, letterSpacing: '-0.018em', marginTop: 8, lineHeight: 1.2 }}>
-              {displayTitle || 'Execution plan'}
-            </div>
+            {/* Editable plan title. Shows a user-set plan name when one exists,
+                otherwise the idea's title. Manual edits persist to wbs.name via
+                the canvas's debounced save (the backend identity-backfill leaves
+                a custom, non-generic name untouched). */}
+            {(() => {
+              const _planName = String(wbs?.name || '').trim();
+              const _isAutoPlanName =
+                !_planName
+                || _GENERIC_PLAN_NAMES.has(_planName.toLowerCase())
+                || /[—-]\s*execution plan$/i.test(_planName);
+              const _titleValue = _isAutoPlanName ? (displayTitle || 'Execution plan') : _planName;
+              return (
+                <EditableText
+                  value={_titleValue}
+                  onCommit={(v) => {
+                    const name = String(v || '').trim();
+                    if (!name || name === _titleValue) return;
+                    recordAndSet((prev) => ({ ...prev, name }));
+                  }}
+                  style={{ fontSize: 24, fontWeight: 600, color: COLOR.navy, letterSpacing: '-0.018em', marginTop: 8, lineHeight: 1.2 }}
+                />
+              );
+            })()}
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
               {typeof score === 'number' && score > 0 && (
                 <>

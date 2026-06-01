@@ -858,6 +858,14 @@ export default function JaspenWorkspace() {
           if (updated && typeof updated === 'object') {
             skipNextSaveRef.current = true;
             setSnapshot(updated);
+            // Re-sync local cosmetic overrides from the authoritative card so a
+            // stale override (e.g. an old display_overrides.title) can't shadow a
+            // chat rename. displayTitle reads ov.title first, so without this the
+            // canvas would keep the old name until a hard refresh.
+            if (updated.display_overrides && typeof updated.display_overrides === 'object') {
+              skipNextSaveRef.current = true;
+              setOverrides(updated.display_overrides);
+            }
           } else {
             // No inline payload (or it targeted a re-scored id) — re-fetch.
             try {
@@ -866,6 +874,10 @@ export default function JaspenWorkspace() {
               if (sc && typeof sc === 'object') {
                 skipNextSaveRef.current = true;
                 setSnapshot(sc);
+                if (sc.display_overrides && typeof sc.display_overrides === 'object') {
+                  skipNextSaveRef.current = true;
+                  setOverrides(sc.display_overrides);
+                }
               }
             } catch (e) {
               console.warn('[workspace] post-edit scorecard refetch failed:', e);
