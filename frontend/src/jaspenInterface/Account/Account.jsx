@@ -357,6 +357,7 @@ export default function Account() {
   const [activeTab, setActiveTab] = useState('overview');
   const [userProfile, setUserProfile] = useState(null);
   const [discardDialog, setDiscardDialog] = useState(null);
+  const [planConfirm, setPlanConfirm] = useState(null);
   const [jaspenOpen, setJaspenOpen] = useState(false);
   const [assistantInput, setAssistantInput] = useState('');
   const [assistantMessages, setAssistantMessages] = useState([
@@ -885,6 +886,42 @@ export default function Account() {
 
   // Tier map mirrors the backend _PLAN_TIER dict — used to detect upgrade vs downgrade.
   const PLAN_TIER_MAP = { free: 0, essential: 1, team: 2, enterprise: 3 };
+
+  // Build a clear "here's what will happen" confirmation before any plan change
+  // touches Stripe — especially the in-place upgrade, which charges the card on
+  // file. The user confirms from the dialog; only then do we call startPlanChange.
+  const requestPlanChange = (planKey, plan) => {
+    const currentPlanKey = status?.plan_key || 'free';
+    const hasSubscription = Boolean(status?.stripe_subscription_id);
+    const label = plan?.label || planKey;
+    const price = priceDisplay(plan);
+    const currentLabel = plans?.[currentPlanKey]?.label || currentPlanKey;
+    const currentTier = PLAN_TIER_MAP[currentPlanKey] ?? 0;
+    const newTier = PLAN_TIER_MAP[planKey] ?? 0;
+
+    let title;
+    let message;
+    let confirmLabel;
+    if (planKey === 'free') {
+      title = 'Cancel your plan?';
+      message = `You'll keep your current ${currentLabel} access until the end of this billing period, then move to the Free plan. No charge now.`;
+      confirmLabel = 'Cancel at period end';
+    } else if (!hasSubscription || currentPlanKey === 'free') {
+      title = `Continue to checkout for ${label}?`;
+      message = `You'll be taken to secure Stripe checkout to enter payment for the ${label} plan (${price}). Nothing is charged until you complete checkout.`;
+      confirmLabel = 'Continue to checkout';
+    } else if (newTier > currentTier) {
+      title = `Upgrade to ${label}?`;
+      message = `A prorated amount for the rest of this billing period will be charged to your card on file now, and you'll then pay ${price}. Your ${label} access starts immediately. If the charge is declined, your plan won't change.`;
+      confirmLabel = `Upgrade to ${label}`;
+    } else {
+      title = `Switch to ${label}?`;
+      message = `You'll keep your current ${currentLabel} access until the end of this billing period, then move to ${label} (${price}). No charge now.`;
+      confirmLabel = `Switch to ${label}`;
+    }
+
+    setPlanConfirm({ planKey, title, message, confirmLabel });
+  };
 
   const startPlanChange = async (planKey) => {
     setPendingAction(planKey);
@@ -2081,6 +2118,20 @@ export default function Account() {
         {activeTab === 'plans' && (
         <section className="account-section">
           <h2 className="account-tab-title">Plans</h2>
+          {Boolean(status?.stripe_customer_id) && (
+            <p className="account-plan-meta" style={{ marginTop: -4, marginBottom: 12 }}>
+              Need to change the card we bill? {' '}
+              <button
+                type="button"
+                className="account-link-btn"
+                onClick={openBillingPortal}
+                disabled={pendingAction === 'portal'} aria-disabled={pendingAction === 'portal'}
+                style={{ background: 'none', border: 'none', padding: 0, color: 'var(--magenta, #c026a6)', cursor: 'pointer', textDecoration: 'underline', font: 'inherit' }}
+              >
+                {pendingAction === 'portal' ? 'Opening…' : 'Update payment method'}
+              </button>
+            </p>
+          )}
           <div className="account-plan-grid">
             {PLAN_ORDER.map((key) => {
               const plan = plans[key];
@@ -2146,7 +2197,7 @@ export default function Account() {
                       <button
                         type="button"
                         className="account-primary-btn"
-                        onClick={() => startPlanChange(key)}
+                        onClick={() => requestPlanChange(key, plan)}
                         disabled={isPending} aria-disabled={isPending}
                       >
                         {isPending ? 'Redirecting...'
@@ -3398,6 +3449,19 @@ export default function Account() {
           confirmVariant={discardDialog?.confirmVariant || 'danger'}
           onConfirm={discardDialog?.onConfirm}
           onCancel={() => setDiscardDialog(null)}
+        />
+        <ConfirmDialog
+          isOpen={Boolean(planConfirm)}
+          title={planConfirm?.title || 'Confirm plan change'}
+          message={planConfirm?.message || ''}
+          confirmLabel={planConfirm?.confirmLabel || 'Confirm'}
+          confirmVariant="primary"
+          onConfirm={() => {
+            const planKey = planConfirm?.planKey;
+            setPlanConfirm(null);
+            if (planKey) startPlanChange(planKey);
+          }}
+          onCancel={() => setPlanConfirm(null)}
         />
       </div>
       <JaspenAiDrawer

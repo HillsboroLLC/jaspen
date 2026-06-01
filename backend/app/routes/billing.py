@@ -435,6 +435,24 @@ def modify_subscription():
     user.subscription_status = str(updated.get('status') or '').strip().lower() or user.subscription_status
 
     if is_upgrade:
+        # Guard: only grant the higher tier if Stripe actually accepted payment.
+        # An upgrade can leave the subscription in past_due / incomplete / unpaid
+        # if the prorated charge on the card on file is declined — in that case we
+        # must NOT hand the user premium access (see P0: enforce subscription_status).
+        if user.subscription_status not in ('active', 'trialing'):
+            db.session.commit()  # persist the status change, but keep the old plan
+            return jsonify({
+                'success': False,
+                'payment_problem': True,
+                'msg': (
+                    "We couldn't complete the upgrade — the payment on your card "
+                    "on file didn't go through. Update your payment method and try "
+                    "again."
+                ),
+                'plan_key': current_plan,
+                'subscription_status': user.subscription_status,
+            }), 402
+
         apply_plan_to_user(user, plan_key, current_app.config, reset_credits=False)
         db.session.commit()
         return jsonify({
