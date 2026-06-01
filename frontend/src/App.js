@@ -42,19 +42,12 @@ import OfflineBanner from './shared/components/OfflineBanner';
 
 // Lazily loaded internal routes for bundle splitting.
 const PricingResult = lazy(() => import('./jaspenInterface/PricingResult/PricingResult'));
-const ComingSoon = lazy(() => import('./jaspenInterface/shared/ComingSoon'));
-// NOTE (launch gating): Dashboard, Projects, Scores, Insights, Reports, and
-// Activity are temporarily served via the shared ComingSoon placeholder while
-// those pages are refined. The real page components are kept imported below
-// (commented) so re-enabling a page is a one-line swap. Plan-based access
-// gating (ProtectedRoute / RequireDashboardAccess + AppMenu locks) is preserved
-// — only what an *entitled* user sees changes.
-// const Dashboard = lazy(() => import('./jaspenInterface/Jaspen Cleanup/Dashboard/Dashboard'));
-// const Projects = lazy(() => import('./jaspenInterface/Projects/Projects'));
-// const Scores = lazy(() => import('./jaspenInterface/Scores/Scores'));
-// const Insights = lazy(() => import('./jaspenInterface/Insights/Insights'));
-// const Reports = lazy(() => import('./jaspenInterface/Reports/Reports'));
-// const Activity = lazy(() => import('./jaspenInterface/Activity/Activity'));
+const Dashboard = lazy(() => import('./jaspenInterface/Jaspen Cleanup/Dashboard/Dashboard'));
+const Projects = lazy(() => import('./jaspenInterface/Projects/Projects'));
+const Scores = lazy(() => import('./jaspenInterface/Scores/Scores'));
+const Insights = lazy(() => import('./jaspenInterface/Insights/Insights'));
+const Reports = lazy(() => import('./jaspenInterface/Reports/Reports'));
+const Activity = lazy(() => import('./jaspenInterface/Activity/Activity'));
 const ConnectorsManage = lazy(() => import('./jaspenInterface/Connectors/ConnectorsManage'));
 const Account = lazy(() => import('./jaspenInterface/Account/Account'));
 const PaymentPage = lazy(() => import('./jaspenInterface/PaymentPage/PaymentPage'));
@@ -113,7 +106,7 @@ function AnimatedAppRoutes({ withShell }) {
               element={
                 <ProtectedRoute>
                   <RequireDashboardAccess>
-                    {withShell(<ComingSoon title="Dashboard" />, { title: 'Dashboard', showHeader: false, fullBleed: true, noPadding: true })}
+                    {withShell(<Dashboard />, { title: 'Dashboard', showHeader: false, fullBleed: true, noPadding: true })}
                   </RequireDashboardAccess>
                 </ProtectedRoute>
               }
@@ -131,12 +124,12 @@ function AnimatedAppRoutes({ withShell }) {
               element={withShell(<ExecutionPlan />, { title: 'Execution | Jaspen', showHeader: false, fullBleed: true, noPadding: true })}
             />
             <Route path="/strategy" element={<Navigate to="/new" replace />} />
-            <Route path="/projects"  element={<ProtectedRoute>{withShell(<ComingSoon title="Projects" />, { title: 'Projects', showHeader: false, fullBleed: true, noPadding: true })}</ProtectedRoute>} />
+            <Route path="/projects"  element={<ProtectedRoute>{withShell(<Projects />, { title: 'Projects', showHeader: false, fullBleed: true, noPadding: true })}</ProtectedRoute>} />
             <Route
               path="/scores"
               element={
                 <ProtectedRoute>
-                  {withShell(<ComingSoon title="Scores" />, { title: 'Scores', showHeader: false, fullBleed: true, noPadding: true })}
+                  {withShell(<Scores />, { title: 'Scores', showHeader: false, fullBleed: true, noPadding: true })}
                 </ProtectedRoute>
               }
             />
@@ -144,7 +137,7 @@ function AnimatedAppRoutes({ withShell }) {
               path="/insights"
               element={
                 <ProtectedRoute>
-                  {withShell(<ComingSoon title="Insights" />, { title: 'Insights', showHeader: false, fullBleed: true, noPadding: true })}
+                  {withShell(<Insights />, { title: 'Insights', showHeader: false, fullBleed: true, noPadding: true })}
                 </ProtectedRoute>
               }
             />
@@ -152,7 +145,7 @@ function AnimatedAppRoutes({ withShell }) {
               path="/reports"
               element={
                 <ProtectedRoute>
-                  {withShell(<ComingSoon title="Reports" />, { title: 'Reports', showHeader: false, fullBleed: true, noPadding: true })}
+                  {withShell(<Reports />, { title: 'Reports', showHeader: false, fullBleed: true, noPadding: true })}
                 </ProtectedRoute>
               }
             />
@@ -160,7 +153,7 @@ function AnimatedAppRoutes({ withShell }) {
               path="/activity"
               element={
                 <ProtectedRoute>
-                  {withShell(<ComingSoon title="Activity" />, { title: 'Activity', showHeader: false, fullBleed: true, noPadding: true })}
+                  {withShell(<Activity />, { title: 'Activity', showHeader: false, fullBleed: true, noPadding: true })}
                 </ProtectedRoute>
               }
             />

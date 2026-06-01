@@ -351,6 +351,19 @@ body.jaspen-sidebar-open .int-page {
   opacity: 0.92;
 }
 
+/* Coming-soon items are disabled (not gated): greyed out, not clickable, and
+   no hover affordance — the page still exists, it's just not reachable yet. */
+.app-menu-host .jas-ud-item.is-coming-soon,
+.app-menu-host .jas-ud-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.app-menu-host .jas-ud-item.is-coming-soon:hover {
+  background: none;
+  color: var(--gray-700);
+}
+
 .app-menu-host .jas-ud-item svg {
   width: 16px;
   height: 16px;
@@ -376,16 +389,18 @@ body.jaspen-sidebar-open .int-page {
   color: var(--gray-500);
 }
 
-/* "Soon" status tag on launch-gated nav items (Dashboard, Projects, Scores,
-   Insights, Reports, Activity). Subtle rose pill so it reads as a status, not
-   an action. */
+/* "Coming soon" tag on the disabled nav items (Dashboard, Projects, Scores,
+   Insights, Reports, Activity). Neutral grey pill — deliberately NOT a colored
+   "upgrade" affordance, since these are disabled-not-gated. */
 .app-menu-host .jas-ud-item-badge.is-soon {
   padding: 1px 7px;
   border-radius: 999px;
-  background: #fbeaf3;
-  border: 1px solid #f1cfe1;
-  color: #a0036c;
-  letter-spacing: 0.04em;
+  background: var(--gray-100, #f1f3f8);
+  border: 1px solid var(--gray-200, #e4e8f0);
+  color: var(--gray-500, #8a93ad);
+  letter-spacing: 0.02em;
+  font-size: 0.625rem;
+  white-space: nowrap;
 }
 
 .app-menu-host .jas-ud-item-ext {

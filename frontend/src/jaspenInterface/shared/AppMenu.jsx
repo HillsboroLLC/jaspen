@@ -204,20 +204,10 @@ export default function AppMenu() {
     effectiveIsCreator ||
     isPlatformAdmin;
 
-  const showRealDashboard =
-    previewPlanCategory !== 'individual' || isPlatformAdmin;
-  const showLockedDashboard =
-    previewPlanCategory === 'individual' && !isPlatformAdmin;
-  const showRealInsights =
-    isPlatformAdmin || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.team;
-  const showLockedInsights = !showRealInsights;
-  const showRealReports =
-    isPlatformAdmin || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.team;
-  const showLockedReports = !showRealReports;
-  const showRealActivity =
-    isPlatformAdmin || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.essential;
-  const showLockedActivity = !showRealActivity;
-  const showRealTeam = !isPlatformAdmin && effectiveCanManageOrg && PLAN_RANK[effectivePlanKey] >= PLAN_RANK.team;
+  // Dashboard / Projects / Scores / Insights / Reports / Activity are shown as
+  // disabled "Coming soon" menu items for launch — their plan-gating vars were
+  // removed since the items render the same (disabled) for every plan.
+  const showRealTeam =!isPlatformAdmin && effectiveCanManageOrg && PLAN_RANK[effectivePlanKey] >= PLAN_RANK.team;
   const showLockedTeam =
     !showRealTeam && previewPlanCategory === 'individual' && !isPlatformAdmin;
   const showRealConnectors = true;
@@ -495,24 +485,13 @@ export default function AppMenu() {
         <div className="jas-ud-section">
           <div className="jas-ud-section-label">Navigate</div>
 
-          {showRealDashboard && (
-            <button className={menuItemClass('/dashboard')} onClick={() => { close(); navigate('/dashboard'); }}>
-              <FontAwesomeIcon icon={faListCheck} />
-              <span className="jas-ud-item-label">Dashboard</span>
-              <span className="jas-ud-item-badge is-soon">Soon</span>
-            </button>
-          )}
-          {showLockedDashboard && (
-            <button
-              className="jas-ud-item is-locked"
-              onClick={() => setBillingModalOpen(true)}
-              title="Upgrade to Team to unlock shared dashboards"
-            >
-              <FontAwesomeIcon icon={faListCheck} />
-              <span className="jas-ud-item-label">Dashboard</span>
-              <span className="jas-ud-item-ext"><FontAwesomeIcon icon={faLock} /></span>
-            </button>
-          )}
+          {/* Coming soon: disabled (not clickable), no lock. The page + its
+              work stay in place; we just keep users out of it for launch. */}
+          <button className="jas-ud-item is-coming-soon" disabled aria-disabled="true" title="Coming soon">
+            <FontAwesomeIcon icon={faListCheck} />
+            <span className="jas-ud-item-label">Dashboard</span>
+            <span className="jas-ud-item-badge is-soon">Coming soon</span>
+          </button>
 
           {canStartOrgProjects && (
             <button className={menuItemClass('/new')} onClick={() => { close(); navigate('/new'); }}>
@@ -521,74 +500,35 @@ export default function AppMenu() {
             </button>
           )}
 
-          <button className={menuItemClass('/projects')} onClick={() => { close(); navigate('/projects'); }}>
+          <button className="jas-ud-item is-coming-soon" disabled aria-disabled="true" title="Coming soon">
             <FontAwesomeIcon icon={faLayerGroup} />
             <span className="jas-ud-item-label">Projects</span>
-            <span className="jas-ud-item-badge is-soon">Soon</span>
+            <span className="jas-ud-item-badge is-soon">Coming soon</span>
           </button>
 
-          <button className={menuItemClass('/scores')} onClick={() => { close(); navigate('/scores'); }}>
+          <button className="jas-ud-item is-coming-soon" disabled aria-disabled="true" title="Coming soon">
             <FontAwesomeIcon icon={faChartLine} />
             <span className="jas-ud-item-label">Scores</span>
-            <span className="jas-ud-item-badge is-soon">Soon</span>
+            <span className="jas-ud-item-badge is-soon">Coming soon</span>
           </button>
 
-          {showRealInsights && (
-            <button className={menuItemClass('/insights')} onClick={() => { close(); navigate('/insights'); }}>
-              <FontAwesomeIcon icon={faChartLine} />
-              <span className="jas-ud-item-label">Insights</span>
-              <span className="jas-ud-item-badge is-soon">Soon</span>
-            </button>
-          )}
-          {showLockedInsights && (
-            <button
-              className="jas-ud-item is-locked"
-              onClick={() => setBillingModalOpen(true)}
-              title="Upgrade to Team to unlock connected insights"
-            >
-              <FontAwesomeIcon icon={faChartLine} />
-              <span className="jas-ud-item-label">Insights</span>
-              <span className="jas-ud-item-ext"><FontAwesomeIcon icon={faLock} /></span>
-            </button>
-          )}
+          <button className="jas-ud-item is-coming-soon" disabled aria-disabled="true" title="Coming soon">
+            <FontAwesomeIcon icon={faChartLine} />
+            <span className="jas-ud-item-label">Insights</span>
+            <span className="jas-ud-item-badge is-soon">Coming soon</span>
+          </button>
 
-          {showRealReports && (
-            <button className={menuItemClass('/reports')} onClick={() => { close(); navigate('/reports'); }}>
-              <FontAwesomeIcon icon={faDownload} />
-              <span className="jas-ud-item-label">Reports</span>
-              <span className="jas-ud-item-badge is-soon">Soon</span>
-            </button>
-          )}
-          {showLockedReports && (
-            <button
-              className="jas-ud-item is-locked"
-              onClick={() => setBillingModalOpen(true)}
-              title="Upgrade to Team to unlock reports"
-            >
-              <FontAwesomeIcon icon={faDownload} />
-              <span className="jas-ud-item-label">Reports</span>
-              <span className="jas-ud-item-ext"><FontAwesomeIcon icon={faLock} /></span>
-            </button>
-          )}
+          <button className="jas-ud-item is-coming-soon" disabled aria-disabled="true" title="Coming soon">
+            <FontAwesomeIcon icon={faDownload} />
+            <span className="jas-ud-item-label">Reports</span>
+            <span className="jas-ud-item-badge is-soon">Coming soon</span>
+          </button>
 
-          {showRealActivity && (
-            <button className={menuItemClass('/activity')} onClick={() => { close(); navigate('/activity'); }}>
-              <FontAwesomeIcon icon={faClockRotateLeft} />
-              <span className="jas-ud-item-label">Activity</span>
-              <span className="jas-ud-item-badge is-soon">Soon</span>
-            </button>
-          )}
-          {showLockedActivity && (
-            <button
-              className="jas-ud-item is-locked"
-              onClick={() => setBillingModalOpen(true)}
-              title="Upgrade to Essential to unlock activity history"
-            >
-              <FontAwesomeIcon icon={faClockRotateLeft} />
-              <span className="jas-ud-item-label">Activity</span>
-              <span className="jas-ud-item-ext"><FontAwesomeIcon icon={faLock} /></span>
-            </button>
-          )}
+          <button className="jas-ud-item is-coming-soon" disabled aria-disabled="true" title="Coming soon">
+            <FontAwesomeIcon icon={faClockRotateLeft} />
+            <span className="jas-ud-item-label">Activity</span>
+            <span className="jas-ud-item-badge is-soon">Coming soon</span>
+          </button>
 
           {showRealTeam && (
             <button className={menuItemClass('/team')} onClick={() => { close(); navigate('/team'); }}>
