@@ -1421,7 +1421,9 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
       <div style={{ padding: '24px 32px 18px', flex: '0 0 auto' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 18 }}>
           <div style={{ minWidth: 0, flex: 1 }}>
-            <Eyebrow color={COLOR.rose}>✦ &nbsp;{isWinner ? 'Idea · Trade-off winner' : 'Idea · Execution plan'}</Eyebrow>
+            <div style={{ display: 'block' }}>
+              <Eyebrow color={COLOR.rose}>✦ &nbsp;{isWinner ? 'Idea · Trade-off winner' : 'Idea · Execution plan'}</Eyebrow>
+            </div>
             {/* Editable plan title. Shows a user-set plan name when one exists,
                 otherwise the idea's title. Manual edits persist to wbs.name via
                 the canvas's debounced save (the backend identity-backfill leaves
