@@ -243,6 +243,38 @@ def create_app():
             "Stripe optional price IDs missing (sales-led plans may be unaffected): %s",
             ", ".join(missing_optional_stripe),
         )
+
+    # —— Live-mode price-ID sanity check —— #
+    # A live secret key paired with a test-mode price ID starts up fine but fails
+    # at checkout with a confusing Stripe error. When running in production with a
+    # live key, retrieve a representative price and assert it's live-mode so the
+    # mismatch surfaces at boot instead of at a customer's first checkout. We only
+    # FAIL on a confirmed mismatch — Stripe network/availability errors are logged
+    # and tolerated so an outage can never block the app from starting.
+    if is_production_env and str(stripe_key).startswith('sk_live_'):
+        _stripe_logger = logging.getLogger(__name__)
+        _price_ids_to_verify = {
+            'PRICE_ID_ESSENTIAL': app.config['STRIPE_PRICE_IDS'].get('essential'),
+            'PRICE_ID_CREDITS_3000': app.config['STRIPE_CREDIT_PACK_PRICE_IDS'].get('credits_3000'),
+        }
+        for _price_label, _price_id in _price_ids_to_verify.items():
+            _price_id = str(_price_id or '').strip()
+            if not _price_id:
+                continue
+            try:
+                _price = stripe.Price.retrieve(_price_id)
+            except Exception as _price_err:  # noqa: BLE001 - tolerate Stripe outages at boot
+                _stripe_logger.warning(
+                    "Could not verify Stripe price live-mode for %s (%s): %s",
+                    _price_label, _price_id, _price_err,
+                )
+                continue
+            if not bool(_price.get('livemode')):
+                raise RuntimeError(
+                    "Stripe live/test mode mismatch: secret key is live (sk_live_...) but "
+                    f"{_price_label}={_price_id} is a TEST-mode price. Update {_price_label} "
+                    "to the live-mode price ID from the Stripe dashboard."
+                )
     app.config['LLM_PROVIDER_MODELS'] = {
         'claude_haiku': (
             os.getenv('MODEL_CLAUDE_HAIKU')
