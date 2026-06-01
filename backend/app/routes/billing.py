@@ -234,11 +234,37 @@ def get_billing_status():
         tool['external_workspace'] = settings.get('external_workspace') or ''
     usage_meta = _usage_warning_fields(cycle_limit, tokens_used)
 
+    # Surface pending-state details from the live Stripe subscription so the UI
+    # can show scheduled cancellations / downgrades and offer an undo. Best
+    # effort only — never let a Stripe hiccup break the status endpoint.
+    cancel_at_period_end = False
+    current_period_end = None
+    scheduled_plan_change = None
+    if user.stripe_subscription_id:
+        try:
+            sub = stripe.Subscription.retrieve(user.stripe_subscription_id)
+            cancel_at_period_end = bool(sub.get('cancel_at_period_end'))
+            cpe = sub.get('current_period_end')
+            if cpe:
+                current_period_end = datetime.utcfromtimestamp(int(cpe)).isoformat()
+            sub_meta = sub.get('metadata') or {}
+            scheduled_raw = str(sub_meta.get('scheduled_plan_change') or '').strip()
+            if scheduled_raw:
+                scheduled_plan_change = to_public_plan(scheduled_raw)
+        except Exception as exc:  # noqa: BLE001 - status must not fail on Stripe
+            current_app.logger.warning(
+                'get_billing_status: could not retrieve Stripe subscription %s: %s',
+                user.stripe_subscription_id, exc,
+            )
+
     return jsonify({
         'plan_key': plan_key,
         'plan': current_plan,
         'is_admin': admin_override,
         'subscription_status': user.subscription_status,
+        'cancel_at_period_end': cancel_at_period_end,
+        'current_period_end': current_period_end,
+        'scheduled_plan_change': scheduled_plan_change,
         'access_restricted': (not admin_override) and (effective_plan_key(user, current_app.config) != plan_key),
         'effective_plan_key': plan_key if admin_override else effective_plan_key(user, current_app.config),
         'credits_remaining': credits_remaining,
@@ -837,3 +863,69 @@ def cancel_subscription():
         }), 200
     except stripe.error.StripeError as e:
         return jsonify({'msg': str(e)}), 400
+
+
+@billing_bp.route('/resume-subscription', methods=['POST'])
+@jwt_required()
+def resume_subscription():
+    """Undo a pending cancellation — keep the subscription running.
+
+    Clears ``cancel_at_period_end`` on the Stripe subscription so the plan
+    renews normally at the next billing date instead of lapsing to free.
+    """
+    user = User.query.get(get_jwt_identity())
+    if not user or not user.stripe_subscription_id:
+        return jsonify({'msg': 'No active subscription'}), 400
+
+    try:
+        sub = stripe.Subscription.modify(user.stripe_subscription_id, cancel_at_period_end=False)
+        return jsonify({
+            'success': True,
+            'msg': 'Your subscription will continue.',
+            'cancel_at_period_end': bool(sub.get('cancel_at_period_end')),
+            'subscription_status': str(sub.get('status') or '').strip().lower() or user.subscription_status,
+        }), 200
+    except stripe.error.StripeError as e:
+        return jsonify({'success': False, 'msg': str(e)}), 400
+
+
+@billing_bp.route('/clear-scheduled-change', methods=['POST'])
+@jwt_required()
+def clear_scheduled_change():
+    """Undo a pending downgrade — keep the current (higher) plan.
+
+    Reverts the Stripe subscription item price back to the user's current
+    plan and clears the ``scheduled_plan_change`` metadata so the queued
+    downgrade does not apply at the next invoice.
+    """
+    user = User.query.get(get_jwt_identity())
+    if not user or not user.stripe_subscription_id:
+        return jsonify({'msg': 'No active subscription'}), 400
+
+    current_plan = to_public_plan(user.subscription_plan)
+    price_id = current_app.config.get('STRIPE_PRICE_IDS', {}).get(current_plan)
+    if not price_id:
+        return jsonify({'msg': f"No Stripe price configured for '{current_plan}'"}), 400
+
+    try:
+        subscription = stripe.Subscription.retrieve(user.stripe_subscription_id)
+        items = (subscription.get('items') or {}).get('data') or []
+        if not items:
+            return jsonify({'msg': 'Subscription has no modifiable items'}), 400
+        item_id = items[0].get('id')
+        # Restore the current plan's price (in case a downgrade price was set)
+        # and clear the scheduled change so nothing applies next cycle.
+        sub = stripe.Subscription.modify(
+            user.stripe_subscription_id,
+            items=[{'id': item_id, 'price': price_id}],
+            proration_behavior='none',
+            metadata={'scheduled_plan_change': ''},
+        )
+        return jsonify({
+            'success': True,
+            'msg': 'Your current plan will continue — the scheduled change was cancelled.',
+            'plan_key': current_plan,
+            'subscription_status': str(sub.get('status') or '').strip().lower() or user.subscription_status,
+        }), 200
+    except stripe.error.StripeError as e:
+        return jsonify({'success': False, 'msg': str(e)}), 400

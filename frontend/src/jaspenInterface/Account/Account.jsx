@@ -1061,6 +1061,60 @@ export default function Account() {
     }
   };
 
+  const resumeSubscription = async () => {
+    setPendingAction('resume');
+    setMessage('');
+
+    try {
+      const response = await authFetch(`${API_BASE}/api/v1/billing/resume-subscription`, {
+        method: 'POST',
+        headers: authHeaders({}, 'POST'),
+        credentials: 'include',
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        if (response.status === 401) {
+          navigate('/?auth=1', { replace: true });
+          return;
+        }
+        throw new Error(data?.msg || 'Unable to resume subscription.');
+      }
+      setMessage(data?.msg || 'Your subscription will continue.');
+      await refreshStatus();
+    } catch (error) {
+      setMessage(error.message || 'Unable to resume subscription.');
+    } finally {
+      setPendingAction('');
+    }
+  };
+
+  const clearScheduledChange = async () => {
+    setPendingAction('clear-scheduled');
+    setMessage('');
+
+    try {
+      const response = await authFetch(`${API_BASE}/api/v1/billing/clear-scheduled-change`, {
+        method: 'POST',
+        headers: authHeaders({}, 'POST'),
+        credentials: 'include',
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        if (response.status === 401) {
+          navigate('/?auth=1', { replace: true });
+          return;
+        }
+        throw new Error(data?.msg || 'Unable to cancel the scheduled change.');
+      }
+      setMessage(data?.msg || 'Your current plan will continue.');
+      await refreshStatus();
+    } catch (error) {
+      setMessage(error.message || 'Unable to cancel the scheduled change.');
+    } finally {
+      setPendingAction('');
+    }
+  };
+
   const buyPack = async (packKey) => {
     setPendingAction(packKey);
     setMessage('');
@@ -2118,6 +2172,77 @@ export default function Account() {
         {activeTab === 'plans' && (
         <section className="account-section">
           <h2 className="account-tab-title">Plans</h2>
+          {(() => {
+            const subStatus = String(status?.subscription_status || '').toLowerCase();
+            const cancelPending = Boolean(status?.cancel_at_period_end);
+            const scheduledPlan = status?.scheduled_plan_change
+              ? String(status.scheduled_plan_change).toLowerCase()
+              : '';
+            const periodEnd = status?.current_period_end
+              ? new Date(status.current_period_end).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+              : '';
+            const scheduledLabel = scheduledPlan ? (plans[scheduledPlan]?.label || scheduledPlan) : '';
+            const pastDue = subStatus === 'past_due' || subStatus === 'unpaid';
+
+            let banner = null;
+            if (pastDue) {
+              banner = {
+                tone: 'warn',
+                title: 'Payment problem on your subscription',
+                body: 'Your last payment didn’t go through. Update your payment method to keep your plan active.',
+                action: { label: pendingAction === 'portal' ? 'Opening…' : 'Update payment method', onClick: openBillingPortal, busy: pendingAction === 'portal' },
+              };
+            } else if (cancelPending) {
+              banner = {
+                tone: 'warn',
+                title: 'Subscription set to cancel',
+                body: periodEnd
+                  ? `Your plan stays active until ${periodEnd}, then switches to Free. You can keep it anytime before then.`
+                  : 'Your plan will switch to Free at the end of the current billing period. You can keep it anytime before then.',
+                action: { label: pendingAction === 'resume' ? 'Keeping…' : 'Keep my plan', onClick: resumeSubscription, busy: pendingAction === 'resume' },
+              };
+            } else if (scheduledPlan) {
+              banner = {
+                tone: 'info',
+                title: `Downgrade to ${scheduledLabel} scheduled`,
+                body: periodEnd
+                  ? `You’ll keep your current plan and credits until ${periodEnd}, then move to ${scheduledLabel}.`
+                  : `You’ll keep your current plan until the next billing date, then move to ${scheduledLabel}.`,
+                action: { label: pendingAction === 'clear-scheduled' ? 'Keeping…' : 'Keep current plan', onClick: clearScheduledChange, busy: pendingAction === 'clear-scheduled' },
+              };
+            }
+            if (!banner) return null;
+            const warn = banner.tone === 'warn';
+            return (
+              <div
+                role="status"
+                style={{
+                  display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16,
+                  padding: '14px 16px', marginBottom: 16, borderRadius: 12,
+                  border: `1px solid ${warn ? 'rgba(193,38,38,0.28)' : 'rgba(38,99,193,0.24)'}`,
+                  background: warn ? 'rgba(193,38,38,0.06)' : 'rgba(38,99,193,0.06)',
+                }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <p style={{ margin: 0, fontWeight: 600, color: warn ? '#9c1c1c' : '#1f3a78', fontSize: '0.9rem' }}>
+                    {banner.title}
+                  </p>
+                  <p style={{ margin: '4px 0 0', color: 'rgba(22,31,59,0.74)', fontSize: '0.82rem' }}>
+                    {banner.body}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="account-primary-btn"
+                  onClick={banner.action.onClick}
+                  disabled={banner.action.busy} aria-disabled={banner.action.busy}
+                  style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                >
+                  {banner.action.label}
+                </button>
+              </div>
+            );
+          })()}
           {Boolean(status?.stripe_customer_id) && (
             <p className="account-plan-meta" style={{ marginTop: -4, marginBottom: 12 }}>
               Need to change the card we bill? {' '}
@@ -2202,7 +2327,8 @@ export default function Account() {
                       >
                         {isPending ? 'Redirecting...'
                           : isUpgrade ? `Upgrade to ${plan.label}`
-                          : `Switch to ${plan.label}`}
+                          : key === 'free' ? 'Cancel subscription'
+                          : `Downgrade to ${plan.label}`}
                       </button>
                     )}
                   </div>
@@ -3213,14 +3339,25 @@ export default function Account() {
           >
             {pendingAction === 'portal' ? 'Opening...' : 'Manage billing'}
           </button>
-          <button
-            type="button"
-            className="account-danger-btn"
-            onClick={cancelAtPeriodEnd}
-            disabled={pendingAction === 'cancel' || !status?.stripe_subscription_id} aria-disabled={pendingAction === 'cancel' || !status?.stripe_subscription_id}
-          >
-            {pendingAction === 'cancel' ? 'Canceling...' : 'Cancel at period end'}
-          </button>
+          {status?.cancel_at_period_end ? (
+            <button
+              type="button"
+              className="account-secondary-btn"
+              onClick={resumeSubscription}
+              disabled={pendingAction === 'resume' || !status?.stripe_subscription_id} aria-disabled={pendingAction === 'resume' || !status?.stripe_subscription_id}
+            >
+              {pendingAction === 'resume' ? 'Keeping...' : 'Keep my plan'}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="account-danger-btn"
+              onClick={cancelAtPeriodEnd}
+              disabled={pendingAction === 'cancel' || !status?.stripe_subscription_id} aria-disabled={pendingAction === 'cancel' || !status?.stripe_subscription_id}
+            >
+              {pendingAction === 'cancel' ? 'Canceling...' : 'Cancel at period end'}
+            </button>
+          )}
         </section>
         )}
 
