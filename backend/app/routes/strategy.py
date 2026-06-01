@@ -6747,6 +6747,10 @@ _ALLOWED_OVERRIDE_KEYS = {
     # hero-strip math, the quadrant, and the ranking pills in the Trade-off
     # view. It still renders in the chat — purely a presentation flag.
     'tradeoff_included',
+    # Qualitative narrative the user can hand-edit. These don't feed the numeric
+    # score (only dimensions do), so they're manual-or-AI editable, not locked.
+    'top_risks',           # list[str]
+    'recommended_scenario',  # str
 }
 
 
@@ -6754,8 +6758,24 @@ def _coerce_override_value(key, value):
     """Best-effort sanitization. Returns the cleaned value, or None to delete."""
     if value is None:
         return None  # caller treats None as "remove this key"
-    if key in {'title', 'subtitle', 'executive_summary', 'narrative', 'theme'}:
-        return str(value).strip()
+    if key in {'title', 'subtitle', 'executive_summary', 'narrative', 'theme',
+               'recommended_scenario'}:
+        s = str(value).strip()
+        return s if s else None
+    if key == 'top_risks':
+        # Accept a list of risks (strings or {risk/label} dicts) or a single
+        # newline-delimited string. Normalize to a clean list[str]; empty → remove.
+        items = []
+        if isinstance(value, str):
+            items = value.split('\n')
+        elif isinstance(value, (list, tuple)):
+            for v in value:
+                if isinstance(v, dict):
+                    items.append(v.get('risk') or v.get('label') or '')
+                else:
+                    items.append(v)
+        cleaned = [str(x).strip() for x in items if str(x).strip()]
+        return cleaned if cleaned else None
     if key == 'accent_color':
         s = str(value).strip()
         # accept '#rrggbb', '#rgb', or named subset; reject anything else

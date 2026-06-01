@@ -49,7 +49,7 @@ const DEFAULT_SCORECARD_SECTIONS = [
   { key: 'score',      label: 'Score',                cols: 4, locked: true },
   { key: 'executive',  label: 'Executive Summary',    cols: 4, locked: false },
   { key: 'dimensions', label: 'Dimensions',           cols: 4, locked: true, dimCols: 2, dimOrder: null },
-  { key: 'risks',      label: 'Top Risks',            cols: 2, locked: true },
+  { key: 'risks',      label: 'Top Risks',            cols: 2, locked: false },
   { key: 'scenario',   label: 'Recommended Scenario', cols: 2, locked: true },
 ];
 
@@ -106,6 +106,10 @@ function applyOverrides(scorecard, overrides) {
     ...scorecard,
     project_name: meaningfulName,
     executive_summary: ov.executive_summary ?? scorecard.executive_summary,
+    // Risks + recommended scenario are qualitative narrative — they don't feed
+    // the numeric score, so they're manually editable (cosmetic override wins).
+    top_risks: ov.top_risks ?? scorecard.top_risks,
+    recommended_scenario: ov.recommended_scenario ?? scorecard.recommended_scenario,
     _accent_color: ov.accent_color ?? scorecard._accent_color ?? null,
     _display_overrides: ov,
   };
@@ -693,6 +697,8 @@ export default function JaspenWorkspace() {
   const recs = Array.isArray(rendered?.recommendations) ? rendered.recommendations : [];
   const nextSteps = Array.isArray(rendered?.next_steps) ? rendered.next_steps : [];
   const recommendedScenario = (() => {
+    // Manual override wins — the user can hand-edit the recommended scenario.
+    if (rendered?.recommended_scenario) return rendered.recommended_scenario;
     if (recs[0]) {
       if (typeof recs[0] === 'string') return recs[0];
       if (recs[0]?.text) return recs[0].text;
@@ -725,6 +731,7 @@ export default function JaspenWorkspace() {
       await Jaspen.patchScorecardOverrides(threadId, scorecardId, {
         title: null, subtitle: null, executive_summary: null,
         accent_color: null, theme: null, narrative: null,
+        top_risks: null, recommended_scenario: null,
       });
     } catch (e) {
       setSaveError(String(e?.message || e || 'Failed to reset'));
@@ -857,11 +864,44 @@ export default function JaspenWorkspace() {
         return [...arr, { role: 'ai', text: replyText }];
       });
 
+      // If the agent mutated anything, reflect it on EVERY surface without a
+      // manual reload. The open card snapshot updates inline below (fast path),
+      // but the sidebar idea list + trade-off table read from `bundle`, and the
+      // execution canvas reads from `wbs` — so re-fetch those too when a
+      // relevant tool ran. This is what kills the "I had to hard-refresh" feel
+      // after a chat rename / re-score / task edit.
+      const muts = Array.isArray(resp?.mutations) ? resp.mutations : [];
+      const anySuccess = muts.some((m) => m && m.success);
+      if (anySuccess) {
+        // Re-pull the bundle so sidebar/trade-off names + scores refresh
+        // (covers rename_thread, generate_scorecard, scenario edits, etc.).
+        try {
+          const fresh = await Jaspen.fetchBundle(threadId);
+          if (fresh) setBundle(fresh);
+        } catch (e) {
+          console.warn('[workspace] post-edit bundle refetch failed:', e);
+        }
+        // Execution view: re-pull the open idea's WBS if a task tool ran.
+        if (isExecution) {
+          const wbsTouched = muts.some(
+            (m) => m && m.success && /wbs|execution|task/i.test(String(m.tool || ''))
+          );
+          if (wbsTouched) {
+            try {
+              const w = await Jaspen.getThreadWbs(threadId, execIdeaId);
+              const pw = w?.project_wbs;
+              if (pw && Array.isArray(pw.tasks)) setWbs(pw);
+            } catch (e) {
+              console.warn('[workspace] post-edit WBS refetch failed:', e);
+            }
+          }
+        }
+      }
+
       // If the agent edited or re-scored the OPEN scorecard in place, reflect
       // it on the canvas without a manual reload. Prefer the updated scorecard
       // the agent returned; otherwise re-fetch the authoritative copy.
       if (isScorecard && scorecardId) {
-        const muts = Array.isArray(resp?.mutations) ? resp.mutations : [];
         const editedHere = muts.some(
           (m) => m && m.success && (
             m.tool === 'patch_scorecard'
@@ -1421,8 +1461,10 @@ export default function JaspenWorkspace() {
                     !rendered?.executive_summary &&
                     rendered?._display_overrides?.executive_summary === undefined) return null;
                 if (section.key === 'risks' &&
-                    !(Array.isArray(rendered?.top_risks) && rendered.top_risks.length > 0)) return null;
-                if (section.key === 'scenario' && !recommendedScenario) return null;
+                    !(Array.isArray(rendered?.top_risks) && rendered.top_risks.length > 0) &&
+                    rendered?._display_overrides?.top_risks === undefined) return null;
+                if (section.key === 'scenario' && !recommendedScenario &&
+                    rendered?._display_overrides?.recommended_scenario === undefined) return null;
 
                 const isCollapsed = section.collapsed;
 
@@ -1622,21 +1664,33 @@ export default function JaspenWorkspace() {
                         />
                       )}
 
-                      {section.key === 'risks' && Array.isArray(rendered?.top_risks) && rendered.top_risks.length > 0 && (
-                        <ul style={{ margin:0, paddingLeft:0, listStyle:'none', fontSize:13, color:'#334155', lineHeight:1.65 }}>
-                          {rendered.top_risks.slice(0, 5).map((r, i) => (
-                            <li key={i} style={{ marginBottom:6, paddingLeft:14, position:'relative' }}>
-                              <span style={{ position:'absolute', left:0, color:'#94a3b8' }}>·</span>
-                              {typeof r === 'string' ? r : (r?.risk || r?.label || '—')}
-                            </li>
-                          ))}
-                        </ul>
+                      {section.key === 'risks' && (
+                        // Manually editable — one risk per line. Risks are
+                        // qualitative and don't change the score, so they're not
+                        // locked. AI edits flow through chat; this is the manual
+                        // path. pre-line keeps the line breaks in read mode.
+                        <EditableText
+                          multiline
+                          value={(Array.isArray(rendered?.top_risks) ? rendered.top_risks : [])
+                            .map((r) => (typeof r === 'string' ? r : (r?.risk || r?.label || '')))
+                            .filter(Boolean)
+                            .join('\n')}
+                          onCommit={(v) => {
+                            const arr = String(v || '')
+                              .split('\n').map((s) => s.trim()).filter(Boolean);
+                            setOverride('top_risks', arr.length ? arr : null);
+                          }}
+                          style={{ fontSize:13, color:'#334155', lineHeight:1.65, whiteSpace:'pre-line' }}
+                        />
                       )}
 
-                      {section.key === 'scenario' && recommendedScenario && (
-                        <div style={{ fontSize:13, color:ringColor, lineHeight:1.65, fontStyle:'italic' }}>
-                          + {recommendedScenario}
-                        </div>
+                      {section.key === 'scenario' && (
+                        <EditableText
+                          multiline
+                          value={recommendedScenario || ''}
+                          onCommit={(v) => setOverride('recommended_scenario', v && v.trim() ? v.trim() : null)}
+                          style={{ fontSize:13, color:ringColor, lineHeight:1.65, fontStyle:'italic', whiteSpace:'pre-line' }}
+                        />
                       )}
                     </div>
                   </div>
@@ -1649,7 +1703,7 @@ export default function JaspenWorkspace() {
               marginTop:32, paddingTop:18, borderTop:'1px solid #e6eaf2',
               fontSize:12, color:'#64748b',
             }}>
-              Click any heading or summary above to edit. Scores and risks stay locked — use the chat to rescore.
+              Click any heading, summary, risk, or scenario above to edit. Only the score and dimensions stay locked — use the chat to rescore those.
             </div>
           </div>
           )}
