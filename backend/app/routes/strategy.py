@@ -2000,6 +2000,81 @@ def _require_tool_access(user_id, tool_id, access='read'):
     return user, plan_key, None
 
 
+# Confidence → max allowed dimension score. The model assigns a raw 0-100 and a
+# confidence; Python enforces the cap so an "assumed" dimension can never inflate
+# the score. Kept in lockstep with the cap rules stated in the scoring prompt.
+_CONFIDENCE_CAPS = {"high": 100, "medium": 75, "low": 60, "assumed": 45}
+
+# component_scores is a flat mirror of four dimension scores — keep it in sync so
+# downstream readers that use component_scores see the same capped values.
+_COMPONENT_DIMENSION_MIRROR = (
+    ("financial_health", "financial_viability"),
+    ("operational_efficiency", "execution_readiness"),
+    ("market_position", "market_opportunity"),
+    ("execution_readiness", "execution_readiness"),
+)
+
+
+def _recompute_jaspen_score(payload, weights):
+    """Make scoring deterministic: same dimensions + objective → same score.
+
+    The LLM judges each dimension (a 0-100 score + a confidence). Python — not the
+    model — then (1) applies the confidence cap, (2) computes the weighted average
+    using the objective's `weights`, and (3) derives score_category. This removes
+    LLM arithmetic drift and guarantees the published caps are actually enforced.
+
+    Defensive: if the payload has no usable dimensions we leave the model's value
+    untouched rather than zeroing a card we can't recompute.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    dims = payload.get("dimensions")
+    if not isinstance(dims, dict) or not dims:
+        return payload
+
+    acc = 0.0
+    total_w = 0.0
+    for dim_key, w in (weights or {}).items():
+        dim = dims.get(dim_key)
+        if not isinstance(dim, dict):
+            continue
+        try:
+            raw_val = float(dim.get("score"))
+        except (TypeError, ValueError):
+            continue
+        raw_val = max(0.0, min(100.0, raw_val))
+        conf = str(dim.get("confidence") or "").strip().lower()
+        cap = _CONFIDENCE_CAPS.get(conf, 100)
+        capped = min(raw_val, cap)
+        # Write the capped value back so the dimension bar matches what fed the
+        # score (otherwise the UI would show an uncapped bar above a capped total).
+        dim["score"] = int(round(capped))
+        acc += capped * float(w)
+        total_w += float(w)
+
+    if total_w <= 0:
+        return payload
+
+    score = int(round(acc / total_w))
+    score = max(0, min(100, score))
+    payload["jaspen_score"] = score
+    payload["score_category"] = (
+        "Excellent" if score >= 80
+        else "Good" if score >= 60
+        else "Fair" if score >= 40
+        else "At Risk"
+    )
+
+    comp = payload.get("component_scores")
+    if isinstance(comp, dict):
+        for comp_key, dim_key in _COMPONENT_DIMENSION_MIRROR:
+            dim = dims.get(dim_key)
+            if isinstance(dim, dict) and dim.get("score") is not None:
+                comp[comp_key] = dim["score"]
+
+    return payload
+
+
 def _generate_jaspen_scorecard(
     client,
     project_description,
@@ -2066,8 +2141,7 @@ Rules:
     - confidence "low"    → cap that dimension at 60.
     - confidence "assumed"→ cap that dimension at 45.
   Apply the cap to the dimension score itself (so it flows into the weighted jaspen_score). evidence_quality must reflect the share of dimensions backed by real signal: if most dimensions are "assumed", evidence_quality is low (≤40). A vague or under-specified idea must end up with a meaningfully lower jaspen_score than a fully-evidenced one — that gap is the whole point of the trade-off.
-- The jaspen_score is the weighted average of the 6 (capped) dimension scores using the weights above.
-- score_category: "Excellent" (80-100), "Good" (60-79), "Fair" (40-59), "At Risk" (0-39).
+- Score EACH dimension honestly with its confidence; the system computes jaspen_score and score_category deterministically from your dimension scores + confidence caps + the objective weights. Do NOT try to back-solve dimensions to hit a target overall score — judge each dimension on its own merits. (For reference only: jaspen_score is the weighted average of the 6 capped dimension scores; categories are Excellent 80-100, Good 60-79, Fair 40-59, At Risk 0-39. Provide your best estimate of jaspen_score and score_category, but the system value is authoritative.)
 
 JSON format:
 
@@ -2248,7 +2322,11 @@ The executive_summary must read like a concise leadership briefing. It should ne
         )
         analysis_text = response.choices[0].message.content
 
-    return _normalize_scorecard_payload(_extract_json_object(analysis_text))
+    parsed = _normalize_scorecard_payload(_extract_json_object(analysis_text))
+    # Deterministic final step: recompute the score from the (capped) dimensions
+    # in Python instead of trusting the model's arithmetic. `weights` is the
+    # objective-specific weight map resolved above.
+    return _recompute_jaspen_score(parsed, weights)
 
 
 @strategy_bp.route('/analyze', methods=['POST'])
