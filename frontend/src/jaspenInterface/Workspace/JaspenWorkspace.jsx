@@ -209,6 +209,7 @@ export default function JaspenWorkspace() {
   const firstChatLoadRef = useRef(true);
   const skipChatSaveRef = useRef(false);
   const chatSaveTimerRef = useRef(null);
+  const chatScrollRef = useRef(null);
   const [chatBusy, setChatBusy] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const saveTimerRef = useRef(null);
@@ -549,6 +550,20 @@ export default function JaspenWorkspace() {
     }, 600);
     return () => { if (chatSaveTimerRef.current) clearTimeout(chatSaveTimerRef.current); };
   }, [chatHistory, chatKey, threadId, artifactId]);
+
+  // Pin the sidebar chat to the most recent message. On reload the thread would
+  // otherwise render scrolled to the top, forcing the user to scroll down to
+  // see where they left off. Runs on mount and whenever the history changes so
+  // new replies stay in view.
+  useEffect(() => {
+    const el = chatScrollRef.current;
+    if (!el) return;
+    // rAF so the scroll happens after the new messages have laid out.
+    const id = requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight;
+    });
+    return () => cancelAnimationFrame(id);
+  }, [chatHistory]);
 
   // Debounced auto-save: any change to overrides is persisted ~500ms later.
   useEffect(() => {
@@ -1037,7 +1052,7 @@ export default function JaspenWorkspace() {
         </div>
 
         {/* Chat thread */}
-        <div style={{ flex:1, overflow:'auto', padding:'12px 16px', display:'flex', flexDirection:'column', gap:10 }}>
+        <div ref={chatScrollRef} style={{ flex:1, overflow:'auto', padding:'12px 16px', display:'flex', flexDirection:'column', gap:10 }}>
           {chatHistory.length === 0 && (
             <div style={{ fontSize:12, color:'#94a3b8', lineHeight:1.5 }}>
               {isExecution
