@@ -1657,7 +1657,10 @@ export default function JaspenWorkspace() {
                         <DimensionBars
                           dims={rendered?.dimensions || {}}
                           cols={section.dimCols ?? 2}
-                          dimOrder={section.dimOrder ?? null}
+                          dimOrder={section.dimOrder
+                            ?? (Array.isArray(rendered?.rubric?.criteria)
+                              ? rendered.rubric.criteria.map((c) => c?.key).filter(Boolean)
+                              : null)}
                           onReorder={(newOrder) => setSectionLayout(prev =>
                             prev.map((s, i) => i === idx ? { ...s, dimOrder: newOrder } : s)
                           )}
@@ -1828,9 +1831,13 @@ function DimensionBars({ dims, cols = 2, dimOrder, onReorder }) {
     <div style={{ display:'grid', gridTemplateColumns:`repeat(${cols}, 1fr)`, gap:'14px 32px' }}>
       {ordered.map(({ key, dim }, dimIdx) => {
         const score = Number(dim?.score || 0);
-        const label = _DIMENSION_LABELS[key]
+        // Prefer the payload's own label (custom rubric); fall back to the built-in map.
+        const label = dim?.label
+          || _DIMENSION_LABELS[key]
           || key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-        const barColor = _RISK_DIMENSIONS.has(key) ? COLOR_RISK_ORANGE : COLOR_NAVY;
+        // Custom rubric criteria carry their own is_risk flag; otherwise use the built-in set.
+        const isRisk = (dim && typeof dim.is_risk === 'boolean') ? dim.is_risk : _RISK_DIMENSIONS.has(key);
+        const barColor = isRisk ? COLOR_RISK_ORANGE : COLOR_NAVY;
 
         const handleDimDragStart = (e) => {
           dragDimRef.current = dimIdx;

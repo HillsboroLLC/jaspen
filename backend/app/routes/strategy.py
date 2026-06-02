@@ -2076,6 +2076,52 @@ def _recompute_jaspen_score(payload, weights):
     return payload
 
 
+# Default 6-dimension JSON block for the scorecard prompt (DEFAULT mode). Single braces:
+# this is interpolated as a value into the f-string template, so its braces stay literal.
+_DEFAULT_SCORECARD_DIMENSIONS_BLOCK = '''        "market_opportunity": {
+            "score": <0-100>,
+            "confidence": "<high|medium|low|assumed>",
+            "source": "<conversation|connector|inferred|assumed>",
+            "rationale": "<1-2 sentences>",
+            "what_would_improve": "<specific action or null if confidence is high>"
+        },
+        "financial_viability": {
+            "score": <0-100>,
+            "confidence": "<high|medium|low|assumed>",
+            "source": "<conversation|connector|inferred|assumed>",
+            "rationale": "<1-2 sentences>",
+            "what_would_improve": "<specific action or null if confidence is high>"
+        },
+        "execution_readiness": {
+            "score": <0-100>,
+            "confidence": "<high|medium|low|assumed>",
+            "source": "<conversation|connector|inferred|assumed>",
+            "rationale": "<1-2 sentences>",
+            "what_would_improve": "<specific action or null if confidence is high>"
+        },
+        "strategic_alignment": {
+            "score": <0-100>,
+            "confidence": "<high|medium|low|assumed>",
+            "source": "<conversation|connector|inferred|assumed>",
+            "rationale": "<1-2 sentences>",
+            "what_would_improve": "<specific action or null if confidence is high>"
+        },
+        "risk_profile": {
+            "score": <0-100, where higher = lower risk>,
+            "confidence": "<high|medium|low|assumed>",
+            "source": "<conversation|connector|inferred|assumed>",
+            "rationale": "<1-2 sentences>",
+            "what_would_improve": "<specific action or null if confidence is high>"
+        },
+        "evidence_quality": {
+            "score": <0-100>,
+            "confidence": "<high|medium|low|assumed>",
+            "source": "<conversation|connector|inferred|assumed>",
+            "rationale": "<1-2 sentences>",
+            "what_would_improve": "<specific action or null if confidence is high>"
+        }'''
+
+
 def _generate_jaspen_scorecard(
     client,
     project_description,
@@ -2083,6 +2129,7 @@ def _generate_jaspen_scorecard(
     *,
     model_selection=None,
     strategy_objective='balanced',
+    rubric=None,
 ):
     """Run the existing LLM scoring flow and return parsed scorecard JSON.
 
@@ -2112,8 +2159,104 @@ def _generate_jaspen_scorecard(
         "balanced":           {"market_opportunity": 0.18, "financial_viability": 0.20, "execution_readiness": 0.18, "strategic_alignment": 0.16, "risk_profile": 0.16, "evidence_quality": 0.12},
     }
     obj_key = _normalize_strategy_objective(strategy_objective) or "balanced"
-    weights = _DIM_WEIGHTS.get(obj_key, _DIM_WEIGHTS["balanced"])
-    weights_note = " | ".join(f"{k}: {int(v*100)}%" for k, v in weights.items())
+
+    # --- Mode resolution: user-defined rubric (CUSTOM) vs built-in dimensions (DEFAULT) ---
+    rubric_criteria = None
+    if isinstance(rubric, dict):
+        _raw_criteria = rubric.get("criteria")
+        if isinstance(_raw_criteria, list):
+            rubric_criteria = [
+                c for c in _raw_criteria
+                if isinstance(c, dict) and str(c.get("key") or "").strip()
+            ]
+    custom_mode = bool(rubric_criteria and len(rubric_criteria) >= 2)
+
+    if custom_mode:
+        # Weights come straight from the user's rubric. Renormalize to sum 1.0 if needed.
+        weights = {}
+        for c in rubric_criteria:
+            try:
+                weights[c["key"]] = float(c.get("weight") or 0.0)
+            except (TypeError, ValueError):
+                weights[c["key"]] = 0.0
+        _wsum = sum(weights.values()) or 1.0
+        if abs(_wsum - 1.0) > 0.02:
+            weights = {k: (v / _wsum) for k, v in weights.items()}
+
+        # Human-readable criteria list for the prompt: "Label (18%) — description".
+        _criteria_lines = []
+        for c in rubric_criteria:
+            pct = int(round(weights.get(c["key"], 0.0) * 100))
+            desc = str(c.get("description") or "").strip()
+            risk_tag = " [risk criterion: higher score = lower risk]" if c.get("is_risk") else ""
+            line = f'- {c.get("label") or c["key"]} ({pct}%){risk_tag}'
+            if desc:
+                line += f" — {desc}"
+            _criteria_lines.append(line)
+        criteria_block = "\n".join(_criteria_lines)
+
+        # Build the JSON "dimensions" block dynamically — one entry per criterion,
+        # keyed by the criterion's slug, with the same shape used in default mode.
+        _dim_snippets = []
+        for c in rubric_criteria:
+            note = ", where higher = lower risk" if c.get("is_risk") else ""
+            _dim_snippets.append(
+                f'        "{c["key"]}": {{\n'
+                f'            "score": <0-100{note}>,\n'
+                f'            "confidence": "<high|medium|low|assumed>",\n'
+                f'            "source": "<conversation|connector|inferred|assumed>",\n'
+                f'            "rationale": "<1-2 sentences>",\n'
+                f'            "what_would_improve": "<specific action or null if confidence is high>"\n'
+                f'        }}'
+            )
+        dimensions_block = ",\n".join(_dim_snippets)
+        score_ref_count = len(rubric_criteria)
+
+        objective_section = (
+            "Scoring mode: CUSTOM RUBRIC. Score this option ONLY against the user's criteria below.\n"
+            "Each criterion is scored 0-100 where 100 = best possible on THAT criterion. For "
+            "cost-type criteria (e.g. cost of operations), 100 = most cost-favorable. Judge each "
+            "criterion strictly on its own definition, using only evidence about THIS option — "
+            "never borrow context from other options.\n\n"
+            "Scoring criteria (weight in parentheses):\n" + criteria_block
+        )
+        focus_block = (
+            "Score each criterion strictly on its own definition above. Do NOT inject financial "
+            "framings (EBITDA, ROI, NPV, valuation) unless a criterion explicitly calls for it — "
+            "leave those JSON fields null otherwise. The overall score is the deterministic "
+            "weighted sum of the criterion scores; do not back-solve to hit a target."
+        )
+        # Only relevant if the rubric actually has an evidence_quality-style criterion.
+        evidence_quality_note = (
+            ' evidence_quality must reflect the share of dimensions backed by real signal:'
+            ' if most dimensions are "assumed", evidence_quality is low (≤40).'
+            if any(c["key"] == "evidence_quality" for c in rubric_criteria) else ""
+        )
+    else:
+        weights = _DIM_WEIGHTS.get(obj_key, _DIM_WEIGHTS["balanced"])
+        weights_note = " | ".join(f"{k}: {int(v*100)}%" for k, v in weights.items())
+        score_ref_count = 6
+        objective_section = (
+            f"Strategy Objective: {obj_key}\n"
+            f"Objective Guidance: {_scorecard_objective_guidance(strategy_objective)}\n"
+            f"Dimension Weights for this objective: {weights_note}"
+        )
+        dimensions_block = _DEFAULT_SCORECARD_DIMENSIONS_BLOCK
+        evidence_quality_note = (
+            ' evidence_quality must reflect the share of dimensions backed by real signal:'
+            ' if most dimensions are "assumed", evidence_quality is low (≤40).'
+        )
+        focus_block = (
+            "Focus on:\n"
+            "1. EBITDA protection and optimization\n"
+            "2. ROI maximization opportunities\n"
+            "3. Time-to-market acceleration\n"
+            "4. Operational efficiency improvements\n"
+            "5. Market positioning and competitive advantage\n\n"
+            "Provide specific, actionable insights with quantified financial impacts where the "
+            "conversation supports them. When it does not, keep the affected field null and "
+            "explain the gap in assumptions."
+        )
 
     system_prompt = (
         "You are a Jaspen strategy analyst specializing in commercialization strategy. "
@@ -2124,9 +2267,7 @@ You are a Jaspen strategy analyst. Analyze the following initiative and return a
 
 Project Description: {project_description}
 
-Strategy Objective: {obj_key}
-Objective Guidance: {_scorecard_objective_guidance(strategy_objective)}
-Dimension Weights for this objective: {weights_note}
+{objective_section}
 
 Return a single valid JSON object only. No markdown fences, no commentary outside the JSON.
 
@@ -2141,58 +2282,17 @@ Rules:
     - confidence "medium" → cap that dimension at 75.
     - confidence "low"    → cap that dimension at 60.
     - confidence "assumed"→ cap that dimension at 45.
-  Apply the cap to the dimension score itself (so it flows into the weighted jaspen_score). evidence_quality must reflect the share of dimensions backed by real signal: if most dimensions are "assumed", evidence_quality is low (≤40). A vague or under-specified idea must end up with a meaningfully lower jaspen_score than a fully-evidenced one — that gap is the whole point of the trade-off.
-- Score EACH dimension honestly with its confidence; the system computes jaspen_score and score_category deterministically from your dimension scores + confidence caps + the objective weights. Do NOT try to back-solve dimensions to hit a target overall score — judge each dimension on its own merits. (For reference only: jaspen_score is the weighted average of the 6 capped dimension scores; categories are Excellent 80-100, Good 60-79, Fair 40-59, At Risk 0-39. Provide your best estimate of jaspen_score and score_category, but the system value is authoritative.)
+  Apply the cap to the dimension score itself (so it flows into the weighted jaspen_score).{evidence_quality_note} A vague or under-specified idea must end up with a meaningfully lower jaspen_score than a fully-evidenced one — that gap is the whole point of the trade-off.
+- Score EACH dimension honestly with its confidence; the system computes jaspen_score and score_category deterministically from your dimension scores + confidence caps + the configured weights. Do NOT try to back-solve dimensions to hit a target overall score — judge each dimension on its own merits. (For reference only: jaspen_score is the weighted average of the {score_ref_count} capped dimension scores; categories are Excellent 80-100, Good 60-79, Fair 40-59, At Risk 0-39. Provide your best estimate of jaspen_score and score_category, but the system value is authoritative.)
 
 JSON format:
 
 {{
     "name": "<a short, specific name for THIS idea — derived from the conversation, max 60 chars. Never use generic phrases like 'Baseline Analysis', 'Jaspen Project', 'Strategy Analysis', 'Initiative', or 'Untitled'. Use the actual product, market, or initiative the user is describing (e.g. 'AI HR analytics for mid-market', 'Usage-based AP invoice PLG', 'Restaurant inventory copilot').>",
-    "jaspen_score": <weighted average of 6 dimension scores, 0-100>,
+    "jaspen_score": <weighted average of {score_ref_count} dimension scores, 0-100>,
     "score_category": "<Excellent|Good|Fair|At Risk>",
     "dimensions": {{
-        "market_opportunity": {{
-            "score": <0-100>,
-            "confidence": "<high|medium|low|assumed>",
-            "source": "<conversation|connector|inferred|assumed>",
-            "rationale": "<1-2 sentences>",
-            "what_would_improve": "<specific action or null if confidence is high>"
-        }},
-        "financial_viability": {{
-            "score": <0-100>,
-            "confidence": "<high|medium|low|assumed>",
-            "source": "<conversation|connector|inferred|assumed>",
-            "rationale": "<1-2 sentences>",
-            "what_would_improve": "<specific action or null if confidence is high>"
-        }},
-        "execution_readiness": {{
-            "score": <0-100>,
-            "confidence": "<high|medium|low|assumed>",
-            "source": "<conversation|connector|inferred|assumed>",
-            "rationale": "<1-2 sentences>",
-            "what_would_improve": "<specific action or null if confidence is high>"
-        }},
-        "strategic_alignment": {{
-            "score": <0-100>,
-            "confidence": "<high|medium|low|assumed>",
-            "source": "<conversation|connector|inferred|assumed>",
-            "rationale": "<1-2 sentences>",
-            "what_would_improve": "<specific action or null if confidence is high>"
-        }},
-        "risk_profile": {{
-            "score": <0-100, where higher = lower risk>,
-            "confidence": "<high|medium|low|assumed>",
-            "source": "<conversation|connector|inferred|assumed>",
-            "rationale": "<1-2 sentences>",
-            "what_would_improve": "<specific action or null if confidence is high>"
-        }},
-        "evidence_quality": {{
-            "score": <0-100>,
-            "confidence": "<high|medium|low|assumed>",
-            "source": "<conversation|connector|inferred|assumed>",
-            "rationale": "<1-2 sentences>",
-            "what_would_improve": "<specific action or null if confidence is high>"
-        }}
+{dimensions_block}
     }},
     "component_scores": {{
         "financial_health": <same as financial_viability score>,
@@ -2283,14 +2383,7 @@ JSON format:
     ]
 }}
 
-Focus on:
-1. EBITDA protection and optimization
-2. ROI maximization opportunities
-3. Time-to-market acceleration
-4. Operational efficiency improvements
-5. Market positioning and competitive advantage
-
-Provide specific, actionable insights with quantified financial impacts where the conversation supports them. When it does not, keep the affected field null and explain the gap in assumptions.
+{focus_block}
 
 The executive_summary must read like a concise leadership briefing. It should never repeat raw prompt text or user questions.
 """
@@ -2324,9 +2417,23 @@ The executive_summary must read like a concise leadership briefing. It should ne
         analysis_text = response.choices[0].message.content
 
     parsed = _normalize_scorecard_payload(_extract_json_object(analysis_text))
+
+    # In custom mode, attach the rubric and per-dimension labels so the frontend can
+    # render the user's criteria without a hardcoded label map. Do this BEFORE the
+    # deterministic rollup so labels survive on the capped dimensions.
+    if custom_mode and isinstance(parsed, dict):
+        parsed["rubric"] = rubric
+        dims = parsed.get("dimensions")
+        if isinstance(dims, dict):
+            for c in rubric_criteria:
+                dim = dims.get(c["key"])
+                if isinstance(dim, dict):
+                    dim["label"] = c.get("label") or c["key"]
+                    dim["is_risk"] = bool(c.get("is_risk"))
+
     # Deterministic final step: recompute the score from the (capped) dimensions
     # in Python instead of trusting the model's arithmetic. `weights` is the
-    # objective-specific weight map resolved above.
+    # rubric weight map (custom mode) or the objective preset (default mode).
     return _recompute_jaspen_score(parsed, weights)
 
 

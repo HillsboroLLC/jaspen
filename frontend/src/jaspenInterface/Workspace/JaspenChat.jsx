@@ -2670,16 +2670,34 @@ const renderScorecardCard = (result, opts = {}) => {
   const offset = circumference - (score / 100) * circumference;
   const dims = result?.dimensions || {};
 
-  const primaryDims = [
-    { key: 'strategic_alignment', label: 'Strategic fit',   isRisk: false },
-    { key: 'financial_viability', label: 'Cost efficiency', isRisk: false },
-    { key: 'execution_readiness', label: 'Time-to-value',   isRisk: false },
-    { key: 'risk_profile',        label: 'Execution risk',  isRisk: true  },
-  ];
-  const secondaryDims = [
-    { key: 'market_opportunity', label: 'Market Opportunity' },
-    { key: 'evidence_quality',   label: 'Evidence Quality'   },
-  ];
+  // Custom rubric: render the user's own criteria (label + is_risk straight from
+  // the payload). Otherwise fall back to Jaspen's built-in 6 dimensions.
+  const rubricCriteria = Array.isArray(result?.rubric?.criteria) ? result.rubric.criteria : null;
+  let primaryDims;
+  let secondaryDims;
+  if (rubricCriteria && rubricCriteria.length >= 2) {
+    const mapped = rubricCriteria
+      .filter((c) => c && c.key)
+      .map((c) => ({
+        key: c.key,
+        label: c.label || dims[c.key]?.label || c.key,
+        isRisk: !!(c.is_risk ?? dims[c.key]?.is_risk),
+      }));
+    // First four in the primary grid, the rest in the secondary row.
+    primaryDims = mapped.slice(0, 4);
+    secondaryDims = mapped.slice(4);
+  } else {
+    primaryDims = [
+      { key: 'strategic_alignment', label: 'Strategic fit',   isRisk: false },
+      { key: 'financial_viability', label: 'Cost efficiency', isRisk: false },
+      { key: 'execution_readiness', label: 'Time-to-value',   isRisk: false },
+      { key: 'risk_profile',        label: 'Execution risk',  isRisk: true  },
+    ];
+    secondaryDims = [
+      { key: 'market_opportunity', label: 'Market Opportunity' },
+      { key: 'evidence_quality',   label: 'Evidence Quality'   },
+    ];
+  }
 
   const risks = result?.top_risks || [];
   const recs = result?.recommendations || [];
@@ -2760,7 +2778,7 @@ const renderScorecardCard = (result, opts = {}) => {
       {/* Secondary dims if populated */}
       {secondaryDims.some(({ key }) => (dims[key]?.score || result?.component_scores?.[key] || 0) > 0) && (
         <div className="jas-scorecard-dims-secondary">
-          {secondaryDims.map(d => renderDimBar({ ...d, isRisk: false }))}
+          {secondaryDims.map(d => renderDimBar({ ...d, isRisk: !!d.isRisk }))}
         </div>
       )}
 
@@ -13761,7 +13779,20 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                     ? scoreSource.top_risks[0]
                     : (scoreSource.top_risks[0]?.risk || scoreSource.top_risks[0]?.text || ''))
                   : '';
-                const dimensionDefs = [
+                // Custom rubric: coach against the user's own criteria (using each
+                // criterion's description as the improvement tip). Else built-in 6.
+                const scoreRubricCriteria = Array.isArray(scoreSource?.rubric?.criteria)
+                  ? scoreSource.rubric.criteria
+                  : null;
+                const dimensionDefs = (scoreRubricCriteria && scoreRubricCriteria.length >= 2)
+                  ? scoreRubricCriteria
+                      .filter((c) => c && c.key)
+                      .map((c) => ({
+                        key: c.key,
+                        label: c.label || dimensions[c.key]?.label || c.key,
+                        tip: c.description || 'Add more evidence to firm up this criterion.',
+                      }))
+                  : [
                   { key: 'strategic_alignment', label: 'Strategic Fit', tip: 'Clarify how this aligns with your top strategic priorities.' },
                   { key: 'financial_viability', label: 'Cost Efficiency', tip: 'Provide budget guardrails, ROI targets, and payback thresholds.' },
                   { key: 'execution_readiness', label: 'Time-to-Value', tip: 'Provide team capacity, timeline constraints, and owner bandwidth.' },

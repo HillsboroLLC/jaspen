@@ -23,6 +23,39 @@ const DIM_KEYS = [
   { key: 'evidence_quality',     label: 'Data confidence', short: 'Data'      },
 ];
 
+// Short column header derived from a free-text criterion label.
+function shortLabel(label) {
+  const s = String(label || '').trim();
+  if (!s) return '—';
+  if (s.length <= 9) return s;
+  const first = s.split(/\s+/)[0];
+  return first.length <= 9 ? first : first.slice(0, 9);
+}
+
+// Resolve the dimension columns to render. If any snapshot carries a custom
+// rubric, use the user's criteria (key/label/weight/is_risk, in rubric order).
+// Otherwise fall back to Jaspen's built-in 6 dimensions.
+function resolveDimDefs(snapshots) {
+  const withRubric = (Array.isArray(snapshots) ? snapshots : []).find(
+    (s) => Array.isArray(s?.rubric?.criteria) && s.rubric.criteria.length >= 2
+  );
+  if (withRubric) {
+    return withRubric.rubric.criteria
+      .filter((c) => c && c.key)
+      .map((c) => ({
+        key: c.key,
+        label: c.label || c.key,
+        short: shortLabel(c.label || c.key),
+        weight: Number(c.weight) || 0,
+        isRisk: !!c.is_risk,
+      }));
+  }
+  return DIM_KEYS;
+}
+
+// Shared table grid: dimension columns flex between the fixed lead/trailing ones.
+const tableGrid = (n) => `32px 28px 1.7fr repeat(${n}, 1fr) 56px 88px 36px 36px 36px`;
+
 // Derive a 2-char ID from project name
 function shortId(name) {
   const words = String(name || '').trim().split(/\s+/);
@@ -52,7 +85,7 @@ function dimScore(snap, key) {
 // Excluded ideas are kept in the returned list (so the table can render
 // them greyed at the bottom) but are skipped when computing hero-strip
 // math, the quadrant, and the ranking pills 1/2/3.
-function deriveIdeas(snapshots) {
+function deriveIdeas(snapshots, dimDefs = DIM_KEYS) {
   // Score-desc sort across all snapshots so rank numbers match the original
   // intent. We assign ranks AFTER splitting included/excluded — only
   // included ideas earn a 1/2/3 pick badge.
@@ -62,7 +95,7 @@ function deriveIdeas(snapshots) {
   let includedSeen = 0;
   return sorted.map((snap, i) => {
     const score = Math.round(Number(snap.jaspen_score ?? snap.score ?? 0));
-    const dims  = DIM_KEYS.map(({ key }) => Number(dimScore(snap, key).toFixed(1)));
+    const dims  = dimDefs.map(({ key }) => Number(dimScore(snap, key).toFixed(1)));
     const name  = snap.project_name || snap.name || snap.label || `Idea ${i + 1}`;
     const sub   = snap.recommendations?.[0]
       ? (typeof snap.recommendations[0] === 'string'
@@ -138,14 +171,14 @@ const DimBar = ({ v, alt }) => {
 // Excluded rows render at 50% opacity, drop the rank/pick badge, and the
 // eye icon flips to eye-slash. Clicking the eye toggles include/exclude
 // (persists via Jaspen.patchScorecardOverrides, fired by the parent).
-const PortfolioRow = ({ d, alt, onSelect, selected, onToggleInclude, onBuildPlan, onOpenWorkspace, buildingPlan }) => {
+const PortfolioRow = ({ d, alt, onSelect, selected, onToggleInclude, onBuildPlan, onOpenWorkspace, buildingPlan, colCount = 6 }) => {
   const excluded = !d.included;
   return (
   <div
     onClick={() => onSelect(d)}
     style={{
       display: 'grid',
-      gridTemplateColumns: TABLE_GRID,
+      gridTemplateColumns: tableGrid(colCount),
       alignItems: 'center', gap: 12,
       padding: '13px 18px',
       borderBottom: `1px solid ${LINE}`,
@@ -449,11 +482,10 @@ const TradeoffSidebar = ({ ideas, portfolioAnalysis, onAsk, asking }) => {
 // ── Table header ──────────────────────────────────────────────────────────────
 // Last two columns host the build-execution-plan and include/exclude (eye)
 // controls.
-const TABLE_GRID = '32px 28px 1.7fr repeat(6, 1fr) 56px 88px 36px 36px 36px';
-const TableHeader = () => (
+const TableHeader = ({ dimDefs = DIM_KEYS }) => (
   <div style={{
     display:'grid',
-    gridTemplateColumns: TABLE_GRID,
+    gridTemplateColumns: tableGrid(dimDefs.length),
     gap:12, padding:'11px 18px',
     background:'#fff', borderBottom:`1px solid ${LINE}`,
     fontFamily:'JetBrains Mono,monospace',
@@ -462,7 +494,7 @@ const TableHeader = () => (
     <span>#</span>
     <span />
     <span>Idea</span>
-    {DIM_KEYS.map(d => <span key={d.key} style={{ textAlign:'center' }}>{d.short}</span>)}
+    {dimDefs.map(d => <span key={d.key} style={{ textAlign:'center' }} title={d.label}>{d.short}</span>)}
     <span style={{ textAlign:'right' }}>Score</span>
     <span style={{ textAlign:'right' }}>Status</span>
     <span style={{ textAlign:'center' }} title="Open this idea in its workspace">Open</span>
@@ -510,12 +542,34 @@ const TradeoffView = ({
   // Sort: included first (score-desc), then excluded at the bottom
   // (score-desc within themselves). Drives both rank assignment and
   // table render order.
+  // Columns: custom rubric criteria when present, else the built-in 6 dimensions.
+  const dimDefs = useMemo(() => resolveDimDefs(effectiveSnapshots), [effectiveSnapshots]);
+
   const ideas = useMemo(() => {
-    const all = deriveIdeas(effectiveSnapshots);
+    const all = deriveIdeas(effectiveSnapshots, dimDefs);
     const inc = all.filter((d) => d.included);
     const exc = all.filter((d) => !d.included);
     return [...inc, ...exc];
-  }, [effectiveSnapshots]);
+  }, [effectiveSnapshots, dimDefs]);
+
+  // Quadrant axes: default to the two highest-weighted criteria for a custom
+  // rubric (y = highest, x = second). Otherwise keep Strategic fit vs Cost.
+  const quadAxes = useMemo(() => {
+    if (dimDefs === DIM_KEYS) {
+      return { xDim: 1, yDim: 0, xLabel: 'Cost efficiency', yLabel: 'Strategic fit' };
+    }
+    const byWeight = dimDefs
+      .map((d, i) => ({ i, w: Number(d.weight) || 0 }))
+      .sort((a, b) => b.w - a.w);
+    const yIdx = byWeight[0]?.i ?? 0;
+    const xIdx = byWeight[1]?.i ?? (dimDefs.length > 1 ? 1 : 0);
+    return {
+      xDim: xIdx,
+      yDim: yIdx,
+      xLabel: dimDefs[xIdx]?.label || 'Criterion',
+      yLabel: dimDefs[yIdx]?.label || 'Criterion',
+    };
+  }, [dimDefs]);
 
   const handleToggleInclude = useCallback((idea, nextIncluded) => {
     const snapId = idea?.snapId;
@@ -562,23 +616,24 @@ const TradeoffView = ({
           <div style={{ background:'#fff', border:`1px solid ${LINE}`, borderRadius:12, padding:'14px 16px' }}>
             <div style={{ display:'flex', alignItems:'baseline', justifyContent:'space-between', marginBottom:10 }}>
               <span style={{ fontSize:10.5, fontWeight:600, letterSpacing:'0.06em', color:MUTED, textTransform:'uppercase', fontFamily:'JetBrains Mono,monospace' }}>
-                Strategic fit vs. Cost efficiency · all {ideas.length}
+                {quadAxes.yLabel} vs. {quadAxes.xLabel} · all {ideas.length}
               </span>
-              <span style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, color:MUTED }}>x: cost · y: fit</span>
+              <span style={{ fontFamily:'JetBrains Mono,monospace', fontSize:10, color:MUTED }}>x: {shortLabel(quadAxes.xLabel)} · y: {shortLabel(quadAxes.yLabel)}</span>
             </div>
-            <TradeoffQuadrant ideas={ideas} xDim={1} yDim={0} xLabel="Cost efficiency" yLabel="Strategic fit" />
+            <TradeoffQuadrant ideas={ideas} xDim={quadAxes.xDim} yDim={quadAxes.yDim} xLabel={quadAxes.xLabel} yLabel={quadAxes.yLabel} />
           </div>
         </div>
 
         {/* Ranked table */}
         <div style={{ background:'#fff', border:`1px solid ${LINE}`, borderRadius:12, overflow:'hidden', flex:1, display:'flex', flexDirection:'column', minHeight:0 }}>
-          <TableHeader />
+          <TableHeader dimDefs={dimDefs} />
           <div style={{ overflow:'auto', flex:1 }}>
             {ideas.map((d, i) => (
               <PortfolioRow
                 key={d._snap?.id || i}
                 d={{ ...d, _isBuilding: buildingPlanId != null && (buildingPlanId === d.snapId || buildingPlanId === d.id) }}
                 alt={i % 2 === 1}
+                colCount={dimDefs.length}
                 onSelect={setSelected}
                 selected={selected?._snap?.id === d._snap?.id}
                 onToggleInclude={handleToggleInclude}
