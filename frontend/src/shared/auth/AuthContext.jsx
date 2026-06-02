@@ -417,7 +417,6 @@ export function AuthProvider({ children }) {
         '/enterprise-admin',
         '/knowledge',
         '/jaspen-admin',
-        '/payment',
       ];
       const isProtectedPath = protectedPrefixes.some((prefix) => window.location.pathname.startsWith(prefix));
       if (isProtectedPath) {

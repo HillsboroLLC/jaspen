@@ -50,7 +50,6 @@ const Reports = lazy(() => import('./jaspenInterface/Reports/Reports'));
 const Activity = lazy(() => import('./jaspenInterface/Activity/Activity'));
 const ConnectorsManage = lazy(() => import('./jaspenInterface/Connectors/ConnectorsManage'));
 const Account = lazy(() => import('./jaspenInterface/Account/Account'));
-const PaymentPage = lazy(() => import('./jaspenInterface/PaymentPage/PaymentPage'));
 const JaspenAdmin = lazy(() => import('./jaspenInterface/Admin/JaspenAdmin'));
 const Knowledge = lazy(() => import('./jaspenInterface/Knowledge/Knowledge'));
 const Team = lazy(() => import('./jaspenInterface/Team/Team'));
@@ -232,7 +231,6 @@ function AnimatedAppRoutes({ withShell }) {
                 </ProtectedRoute>
               }
             />
-            <Route path="/payment"   element={<ProtectedRoute>{withShell(<PaymentPage />, { title: 'Payment' })}</ProtectedRoute>} />
 
             <Route path="*" element={withShell(<NotFoundPage />, { title: 'Page not found', showHeader: false, fullBleed: true, noPadding: true })} />
           </Routes>
