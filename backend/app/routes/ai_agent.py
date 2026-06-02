@@ -5230,24 +5230,33 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         for c in criteria:
             c["weight"] = round(c["weight"] / total, 4)
 
-        sessions = load_user_sessions(user_id) or {}
-        session_key, session = _resolve_user_session(sessions, thread_id)
-        if not isinstance(session, dict):
-            return _tool_error("Thread not found.", code="thread_not_found")
-        session["scoring_rubric"] = {
+        rubric_obj = {
             "criteria": criteria,
             "source": "user",
             "created_at": _iso_now(),
         }
-        if not save_user_sessions(user_id, sessions):
-            return _tool_error("Could not save the scoring rubric.", code="persist_failed")
+        # Best-effort immediate persist so a generate_scorecard later in THIS same
+        # turn (which reloads sessions from the DB) can already see the rubric.
+        # On the very first turn of a brand-new thread the session row does not
+        # exist yet — that is NOT an error: the main turn handler also copies this
+        # rubric onto the durable session object it saves at end of turn (see
+        # _apply_rubric_action_to_session), so the rubric survives either way.
+        try:
+            sessions = load_user_sessions(user_id) or {}
+            _key, _sess = _resolve_user_session(sessions, thread_id)
+            if isinstance(_sess, dict):
+                _sess["scoring_rubric"] = rubric_obj
+                save_user_sessions(user_id, sessions)
+        except Exception:
+            current_app.logger.exception("set_scoring_rubric best-effort persist failed")
 
         summary = ", ".join(
             f'{c["label"]} {int(round(c["weight"] * 100))}%' for c in criteria
         )
         return {
             "ok": True,
-            "rubric": session["scoring_rubric"],
+            "tool": tool_name,
+            "rubric": rubric_obj,
             "confirmation": f"Scoring rubric saved: {summary}.",
         }
 
@@ -7791,6 +7800,29 @@ def _artifact_entries_from_actions(actions):
     return artifact_entries
 
 
+def _apply_rubric_action_to_session(session, actions):
+    """Copy a successful set_scoring_rubric result onto the durable session object.
+
+    Tool handlers run against their own DB reload and cannot reach the session
+    object the main turn handler persists; the end-of-turn save does a FULL
+    payload replace, so a rubric written only inside the handler would be wiped.
+    Routing it here — alongside where scorecard artifacts are folded in — makes
+    the rubric land on the object that actually gets saved, so it survives the
+    turn (and the brand-new-thread first turn, where the row didn't exist yet).
+    """
+    if not isinstance(session, dict) or not isinstance(actions, list):
+        return
+    for action in actions:
+        if not isinstance(action, dict):
+            continue
+        result = action.get("result") if isinstance(action.get("result"), dict) else {}
+        if not result.get("ok") or str(result.get("tool") or "") != "set_scoring_rubric":
+            continue
+        rubric = result.get("rubric")
+        if isinstance(rubric, dict) and isinstance(rubric.get("criteria"), list):
+            session["scoring_rubric"] = rubric
+
+
 def _extract_baseline_inputs(baseline):
     if not isinstance(baseline, dict):
         return {}
@@ -9071,6 +9103,7 @@ def conversation_start():
                 mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
                 undo_snapshot = state.get("undo_snapshot") if isinstance(state.get("undo_snapshot"), dict) else None
                 artifact_messages = _artifact_entries_from_actions(actions)
+                _apply_rubric_action_to_session(session, actions)
 
                 credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
                 credit_settlement = _settle_reserved_credits(
@@ -9229,6 +9262,7 @@ def conversation_start():
 
     undo_available = _has_successful_mutations(mutations) and isinstance(undo_snapshot, dict)
     artifact_messages = _artifact_entries_from_actions(actions)
+    _apply_rubric_action_to_session(session, actions)
     chat_history.append(_assistant_chat_entry(
         assistant_reply,
         mutations=mutations,
@@ -9623,6 +9657,7 @@ def conversation_continue():
                 mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
                 undo_snapshot = state.get("undo_snapshot") if isinstance(state.get("undo_snapshot"), dict) else None
                 artifact_messages = _artifact_entries_from_actions(actions)
+                _apply_rubric_action_to_session(session, actions)
 
                 credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
                 credit_settlement = _settle_reserved_credits(
@@ -9780,6 +9815,7 @@ def conversation_continue():
 
     undo_available = _has_successful_mutations(mutations) and isinstance(undo_snapshot, dict)
     artifact_messages = _artifact_entries_from_actions(actions)
+    _apply_rubric_action_to_session(session, actions)
     chat_history.append(_assistant_chat_entry(
         assistant_reply,
         mutations=mutations,
