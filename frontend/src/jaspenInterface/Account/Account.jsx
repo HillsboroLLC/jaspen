@@ -2317,7 +2317,7 @@ export default function Account() {
 
                   <div className="account-plan-action-row">
                     {isCurrent ? null : isSalesOnly ? (
-                      <a href="/login" className="account-primary-btn">Talk to sales</a>
+                      <a href="mailto:hello@jaspen.ai" className="account-primary-btn">Talk to sales</a>
                     ) : (
                       <button
                         type="button"
@@ -2332,6 +2332,21 @@ export default function Account() {
                       </button>
                     )}
                   </div>
+                  {key === 'enterprise' && !isSalesOnly && (
+                    <p
+                      className="account-plan-meta"
+                      style={{ marginTop: 8, fontSize: '0.78rem', textAlign: 'center' }}
+                    >
+                      Need more than the baseline?{' '}
+                      <a
+                        href="mailto:hello@jaspen.ai?subject=Enterprise%20plan%20%E2%80%94%20custom%20capacity"
+                        style={{ color: 'var(--magenta, #c026a6)', textDecoration: 'underline' }}
+                      >
+                        Contact sales
+                      </a>{' '}
+                      for custom seats, capacity, and pricing.
+                    </p>
+                  )}
                 </article>
               );
             })}
