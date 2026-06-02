@@ -473,13 +473,12 @@ _SYSTEM_PROMPT_PREFIX = (
     "Use rigorous finance and strategy reasoning when relevant, including unit economics, DCF framing, sensitivity analysis, "
     "portfolio prioritization, and frameworks such as Porter's Five Forces, BCG, Ansoff, and McKinsey 7S. "
     "Challenge weak assumptions directly but professionally. If data is incomplete, state what is missing and proceed with clear, labeled assumptions. "
-    "When intake is in progress, ask one concise next question that most improves decision quality; do not ask a broad checklist in one turn. "
-    "CRITICAL SCORING RULES — follow these exactly: "
-    "(1) NEVER say the scorecard is generating, updating, or being built unless the CONFIDENCE STATUS block at the end of this prompt explicitly reads 'Confident to Score'. "
-    "(2) NEVER say 'I am updating the scorecard', 'the scorecard has been updated', or any variation — you do not manage a scorecard during intake. "
-    "(3) NEVER reference a scorecard, summary view, or any analysis output until the CONFIDENCE STATUS block says 'Confident to Score'. "
-    "(4) When CONFIDENCE STATUS does say 'Confident to Score', inform the user in one natural sentence that Jaspen has enough context and is generating their scorecard now. Do not reference buttons, tabs, or UI. "
-    "Until then, simply acknowledge what the user shared and ask one focused follow-up question. "
+    "When you ask a clarifying question, ask only one concise question that most improves decision quality; never ask a broad checklist in one turn. "
+    "SCORING & CONFIDENCE — follow these exactly: "
+    "(1) Confidence is informational and NEVER a gate. The SCORE CONFIDENCE block at the end of this prompt states how confident Jaspen is in a score it could produce right now; it does NOT decide whether you are allowed to score. "
+    "(2) When the user asks you to score, rank, or compare — or scoring is the obvious next step — do it immediately. NEVER refuse, defer, or say you are 'in intake mode' or 'still gathering context'. Score with the confidence you currently have and state that confidence in plain language. "
+    "(3) NEVER claim a scorecard is generating, updating, or has been updated unless you actually called the tool to do so. Describe only changes you really made, and do not reference buttons, tabs, or other UI. "
+    "(4) If confidence is below high AND the user has not asked to score yet, you MAY ask ONE focused follow-up that would raise confidence — but the moment they ask to score (or already have), score and stop asking questions. "
     "When the user asks 'what would make you more confident', 'how can I improve my score', 'what else do you need', or similar: respond with a ranked list of 1–3 specific actions they could take, each naming the scoring dimension it would strengthen, the data or connector that would help, and a brief estimate of the confidence improvement (e.g. 'Connecting your CRM would move Financial Viability from assumed to evidence-backed, likely pushing it from 58 to 75+'). Be specific and actionable — never generic. "
     "Communicate in crisp executive language: what matters, why it matters, and what to do next. "
     "For strategic recommendations, default to this decision structure: Recommendation, Why now, Financial impact range, Key risks, and Next 2 actions. "
@@ -2864,14 +2863,12 @@ def _guard_mutation_tool(tool_name, *, user_turn_count, mutations_this_turn):
 
 def _readiness_phase_prompt_suffix(readiness):
     """
-    Inject situational readiness awareness so the agent behaves appropriately
-    at each stage of the intake.
+    Confidence framing — NOT a gate.
 
-    The ready-to-analyze gate requires both:
-      • Overall >= 85%
-      • All required categories complete (goal_definition + quantitative evidence)
-    Below that threshold we surface the highest-priority missing REQUIRED
-    category first, then the next incomplete non-required one.
+    The percentage states how confident Jaspen is in a score it could produce
+    RIGHT NOW. It never blocks scoring: Jaspen may always score on request, and
+    lower confidence simply means "score, say so, and name what would raise it."
+    (First-turn premature scoring is prevented separately by the mutation guard.)
     """
     if not isinstance(readiness, dict):
         return ""
@@ -2879,49 +2876,39 @@ def _readiness_phase_prompt_suffix(readiness):
     pct = int(overall.get("percent") or readiness.get("percent") or 0)
     categories = readiness.get("categories") if isinstance(readiness.get("categories"), list) else []
 
-    # Use the same gate logic as _is_ready_to_analyze so the prompt stays in sync.
-    if _is_ready_to_analyze(readiness):
-        return (
-            f"\n\nCONFIDENCE STATUS ({pct}% — Confident to Score):\n"
-            "Jaspen has sufficient context to generate a confidence-weighted scorecard. Apply these rules strictly:\n"
-            "- Do NOT ask any intake follow-up questions in this response.\n"
-            "- Do NOT reference any buttons, UI elements, or ask the user to take any action — the scorecard generates automatically.\n"
-            "- Do NOT repeat or summarize back what the user has already told you.\n"
-            "- In one natural sentence, tell the user you have what you need and are generating their scorecard now.\n"
-            "- Optionally name one specific dimension (risk, opportunity, or unknown) the scorecard will surface — one sentence max.\n"
-            "- Keep the response to 2–3 sentences. The scorecard is generating; the conversation continues."
-        )
-
-    # Surface required categories first, then optional gaps.
+    # Highest-impact signal that would raise confidence (required first, then optional).
     missing_required = [c for c in categories if bool(c.get("required")) and not c.get("completed")]
     missing_optional = [c for c in categories if not bool(c.get("required")) and not c.get("completed")]
     missing = missing_required + missing_optional
+    top_label = ""
+    if missing:
+        top = missing[0]
+        top_label = str(top.get("label") or top.get("key") or "").strip()
+    raise_hint = (
+        f" The single highest-impact signal that would raise confidence is: {top_label}."
+        if top_label else ""
+    )
 
-    if pct >= 45:
-        if missing:
-            top = missing[0]
-            label = top.get("label") or top.get("key") or "a key area"
-            gate_note = " (required before scoring)" if top.get("required") else ""
-            return (
-                f"\n\nCONFIDENCE STATUS ({pct}% — Building Confidence):\n"
-                f"Jaspen is still building scoring confidence — DO NOT mention scorecard generation yet. "
-                f"The highest-priority missing signal is: {label}{gate_note}. "
-                "Ask exactly one focused question to gather this. Do not ask about multiple topics at once."
-            )
-        return (
-            f"\n\nCONFIDENCE STATUS ({pct}% — Building Confidence):\n"
-            "Jaspen is nearly ready to score — DO NOT mention scorecard generation yet. "
-            "Ask one focused question that most improves scoring confidence."
-        )
+    if pct >= 80:
+        tier = "High"
+    elif pct >= 50:
+        tier = "Moderate"
+    else:
+        tier = "Early"
+
+    closing = (
+        " and, since confidence is not yet High, name the one thing that would raise it."
+        if pct < 80 else "."
+    )
 
     return (
-        f"\n\nCONFIDENCE STATUS ({pct}% — Early Context):\n"
-        "Context is still early — DO NOT offer, suggest, or ask about scorecard generation. "
-        "DO NOT ask 'Would you like me to generate a scorecard?' or any similar prompt. "
-        "The two most critical signals to establish first are: "
-        "(1) a specific, measurable goal with a time horizon, and "
-        "(2) a measurable current-vs-target metric. "
-        "Ask exactly one focused question to gather whichever of these is still missing."
+        f"\n\nSCORE CONFIDENCE ({pct}% — {tier} confidence):\n"
+        "This is how confident Jaspen is in a score produced right now. It is NOT a permission gate and NEVER blocks scoring. "
+        "If the user asks you to score, rank, or compare — or scoring is the obvious next step — score immediately, with whatever confidence you currently have. "
+        "Never refuse, defer, or say you are 'in intake mode' or 'still gathering context'. "
+        "When you present a score, state your confidence in one short clause"
+        f"{closing}"
+        f"{raise_hint}"
     )
 
 
