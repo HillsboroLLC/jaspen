@@ -6505,15 +6505,18 @@ const hasTradeoffArtifact = useMemo(
   };
 
   const deriveLabel = (value, fallbackLabel) => {
-    const candidate = String(
-      value?.display_overrides?.title
-      || value?.label
-      || value?.name
-      || value?.project_name
-      || value?.initiative_name
-      || fallbackLabel
-      || ''
+    const labelCandidate = String(value?.display_overrides?.title || value?.label || '').trim();
+    const nameCandidate = String(
+      value?.name || value?.project_name || value?.initiative_name || ''
     ).trim();
+    // Prefer a real idea name over a generic 'Baseline'/'Scorecard' label — the
+    // first scored idea is internally tagged "Baseline", which must not bury its
+    // actual name (e.g. "LinkedIn Ads") in the scored-ideas list / trade-off.
+    let candidate = labelCandidate;
+    if (!candidate || isBaselineLikeLabel(candidate)) {
+      candidate = nameCandidate || candidate;
+    }
+    if (!candidate) candidate = String(fallbackLabel || '').trim();
     if (!candidate) return null;
     return isBaselineLikeLabel(candidate) ? 'Scorecard' : _capTitleSmart(candidate);
   };
