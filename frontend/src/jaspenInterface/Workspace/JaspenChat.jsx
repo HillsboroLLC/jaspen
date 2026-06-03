@@ -4078,6 +4078,22 @@ useEffect(() => {
   }, [user?.id, user?.email]);
   const activeThreadId = currentSessionId || sessionId || null;
 
+  // When a chat turn finishes streaming, refresh the bundle once so any scorecards
+  // the agent just queued get scored + rendered immediately — without the user
+  // having to refresh the page or switch sessions. refreshBundle internally kicks
+  // off drainScoreQueue when it sees a pending queue.
+  const prevStreamingRef = useRef(false);
+  useEffect(() => {
+    const wasStreaming = prevStreamingRef.current;
+    prevStreamingRef.current = isStreamingReply;
+    if (wasStreaming && !isStreamingReply && activeThreadId) {
+      const t = setTimeout(() => { void refreshBundle(activeThreadId); }, 500);
+      return () => clearTimeout(t);
+    }
+    return undefined;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isStreamingReply, activeThreadId]);
+
   // Rehydrate the per-thread Session Uploads list from localStorage whenever the
   // active thread changes (e.g. on a hard refresh). Files that ARE stored as
   // message attachments still show via the render union; this covers the rest
