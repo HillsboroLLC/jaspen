@@ -463,6 +463,8 @@ def create_app():
     from .routes.teams import teams_bp
     from .routes.monitoring import monitoring_bp
     from .routes.strategy import strategy_bp, analyze_project
+    from .routes.studio import studio_bp
+    from . import models_studio  # noqa: F401  register Studio tables with SQLAlchemy
 
     app.register_blueprint(auth_bp,      url_prefix='/api/v1/auth')
     app.register_blueprint(admin_bp,     url_prefix='/api/v1/admin')
@@ -480,6 +482,7 @@ def create_app():
     app.register_blueprint(teams_bp, url_prefix='/api/v1/teams')
     app.register_blueprint(monitoring_bp, url_prefix='/api/v1/monitoring')
     app.register_blueprint(strategy_bp, url_prefix='/api/v1/strategy')
+    app.register_blueprint(studio_bp, url_prefix='/api/v1/studio')
     app.add_url_rule(
         '/api/v1/ai-agent/analyze',
         endpoint='ai_agent_analyze',
