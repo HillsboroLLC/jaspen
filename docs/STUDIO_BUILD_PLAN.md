@@ -21,6 +21,19 @@
   OR an upload to inform deterministic scoring.
 - **Outputs are downloadable** as PDF / Excel / Word (and viewable in-app).
 - **Execution plan** supports the administrative work of actually executing.
+- **The USER owns the criteria/variables/rubric.** The app never fabricates
+  criteria on the user's behalf. If the user has none yet, the app may *propose* a
+  starter rubric **as a choice box the user edits/approves** — but it becomes the
+  user's the moment it exists; nothing is silently imposed.
+- **Buckets/groups are the user's own groupings** of their criteria (e.g. Impact
+  vs Fit, or "Strategic Fit") — named by the user, not a hardcoded generic set.
+- **Insights are session-specific:** the sidebar reflects the user's actual
+  criteria and what would raise confidence in *their* scores — never boilerplate.
+- **Agent choice prompts are a first-class interaction.** The agent offers the
+  user option-boxes (like the planning UI we used) to pick direction — confidence
+  threshold to auto-generate, export format, which idea to score first, theming,
+  etc. — and can warn/push back (e.g. "100% confidence is rarely reachable").
+  Confirmed in scope for the first pass.
 
 ## The canonical flow
 1. User brings **one idea or many**.
