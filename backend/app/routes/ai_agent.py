@@ -4263,6 +4263,7 @@ def _persist_credit_deduction(user_id, remaining):
         meter["tokens_used_this_month"] = max(0, cycle_limit - int(remaining))
         prefs["thinking_power"] = meter
         fresh_user.ui_preferences = copy.deepcopy(prefs)
+        from sqlalchemy.orm.attributes import flag_modified as _flag_modified
         _flag_modified(fresh_user, "ui_preferences")
         db.session.commit()
     except Exception:
@@ -5192,37 +5193,74 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
     )
 
     if tool_name == "set_scoring_rubric":
+        # Be liberal in what we accept — models phrase this tool's input many
+        # ways (criteria as a list of dicts, a {name: weight} map, a JSON string,
+        # label under "name"/"criterion"/"factor", weights as "18%" strings, etc).
+        # Rejecting any of those silently is what made the rubric never save.
         raw = tool_input.get("criteria")
+        if raw is None:
+            raw = tool_input.get("rubric") or tool_input.get("weights") or tool_input.get("factors")
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except Exception:
+                raw = None
+        if isinstance(raw, dict):
+            if isinstance(raw.get("criteria"), list):
+                raw = raw["criteria"]
+            else:
+                # {"Technical Talent": 18, "Cost": 6} → list of {label, weight}
+                raw = [{"label": k, "weight": v} for k, v in raw.items()]
+
         if not isinstance(raw, list) or len(raw) < 2:
-            return _tool_error("Provide at least 2 scoring criteria.", code="invalid_rubric")
+            current_app.logger.warning("set_scoring_rubric rejected input shape: %r", tool_input)
+            return _tool_error(
+                "Provide at least 2 scoring criteria, each with a label and a weight.",
+                code="invalid_rubric",
+            )
         if len(raw) > 12:
             return _tool_error("A rubric can have at most 12 criteria.", code="invalid_rubric")
+
+        def _coerce_weight(v):
+            if isinstance(v, bool):
+                return 0.0
+            if isinstance(v, (int, float)):
+                return float(v)
+            if isinstance(v, str):
+                m = re.search(r"-?\d+(?:\.\d+)?", v)
+                return float(m.group()) if m else 0.0
+            return 0.0
 
         criteria = []
         used_keys = set()
         for c in raw:
+            if isinstance(c, (list, tuple)) and len(c) >= 2:
+                c = {"label": c[0], "weight": c[1]}
             if not isinstance(c, dict):
                 continue
-            label = str(c.get("label") or "").strip()
+            label = str(
+                c.get("label") or c.get("name") or c.get("criterion")
+                or c.get("factor") or c.get("title") or c.get("dimension") or ""
+            ).strip()
             if not label:
                 continue
             key = _slugify(label)
             while key in used_keys:
                 key = f"{key}_2"
             used_keys.add(key)
-            try:
-                weight = float(c.get("weight"))
-            except (TypeError, ValueError):
-                weight = 0.0
+            weight = max(0.0, _coerce_weight(
+                c.get("weight", c.get("weight_pct", c.get("percentage", c.get("pct", c.get("value", 0)))))
+            ))
             criteria.append({
                 "key": key,
                 "label": label,
-                "weight": max(0.0, weight),
+                "weight": weight,
                 "is_risk": bool(c.get("is_risk")),
-                "description": (str(c.get("description") or "").strip() or None),
+                "description": (str(c.get("description") or c.get("notes") or c.get("what_it_measures") or "").strip() or None),
             })
 
         if len(criteria) < 2:
+            current_app.logger.warning("set_scoring_rubric: <2 valid criteria parsed from: %r", tool_input)
             return _tool_error("Provide at least 2 valid criteria (each needs a label).", code="invalid_rubric")
 
         # Accept weights given as 0..1 or 0..100; normalize so they sum to 1.0.
