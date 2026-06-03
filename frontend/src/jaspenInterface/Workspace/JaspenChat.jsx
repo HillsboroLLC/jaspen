@@ -2141,30 +2141,23 @@ const refreshBundle = async (tid, { fallbackTid } = {}) => {
   }
 };
 
-// Score queued ideas sequentially — one fast request per card — until the
-// thread's scoring queue is empty. Each scored card is appended server-side and
-// surfaced by the refreshBundle below, so the user watches them stream in.
+// Score every queued idea in ONE model pass (the 'build the Excel' path), then
+// refresh so all the cards render together. One request, one generation — no
+// per-card loop, no timeout.
 const drainScoreQueue = async (tid) => {
   if (!tid || scoreDrainingRef.current) return;
   scoreDrainingRef.current = true;
+  showToast('Scoring all options against your rubric…', 'success');
   try {
-    let guard = 0;
-    while (guard++ < 30) {
-      let r;
-      try {
-        r = await Jaspen.scoreNext(tid);
-      } catch (err) {
-        console.error('[scoreNext]', err);
-        break;
-      }
-      if (!r) break;
-      if (r.scorecard) {
-        const left = typeof r.remaining === 'number' ? r.remaining : 0;
-        showToast(left > 0 ? `Scored ${r.name} — ${left} to go…` : `Scored ${r.name} — all done.`, 'success');
-        await refreshBundle(tid);
-      }
-      if (r.done || (typeof r.remaining === 'number' && r.remaining <= 0)) break;
+    const r = await Jaspen.scoreBatch(tid);
+    const n = (r && typeof r.count === 'number') ? r.count : (Array.isArray(r?.scored) ? r.scored.length : 0);
+    if (n > 0) {
+      showToast(`Scored ${n} option${n === 1 ? '' : 's'} — building the comparison.`, 'success');
     }
+    await refreshBundle(tid);
+  } catch (err) {
+    console.error('[scoreBatch]', err);
+    showToast('Could not score the queued options — try again.', 'error');
   } finally {
     scoreDrainingRef.current = false;
   }

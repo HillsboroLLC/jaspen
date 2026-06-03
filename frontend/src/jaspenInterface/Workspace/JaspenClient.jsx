@@ -66,6 +66,7 @@ export const endpoints = {
   aiScenario:       (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/ai-scenario`,
   aiWbs:            (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/ai-wbs`,
   scoreNext:        (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/score-next`,
+  scoreBatch:       (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/score-batch`,
   threadWbs:        (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/wbs`,
   threadWbsStartDate: (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/wbs/start-date`,
   workspaceChat:    (threadId, artifactId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/workspace-chat/${encodeURIComponent(artifactId)}`,
@@ -1334,6 +1335,10 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
   // Score exactly one queued idea; client loops this until { done: true }.
   scoreNext: async (threadId) =>
     postJSON(endpoints.scoreNext(threadId), {}, { withSid: true }),
+
+  // Score ALL queued ideas in one model pass (the 'build the Excel' path).
+  scoreBatch: async (threadId) =>
+    postJSON(endpoints.scoreBatch(threadId), {}, { withSid: true }),
 
   scorecardAssistant: async (threadId, payload = {}) =>
     postJSON(endpoints.scorecardAssistant(threadId), payload, { withSid: true }),

@@ -534,9 +534,9 @@ _SYSTEM_PROMPT_PREFIX = (
     "and one-line rationale for each. This also applies when the user uploads a file containing multiple ideas "
     "and asks you to rank or compare them — work through them conversationally and score each one on request.\n"
     "\n"
-    "CUSTOM SCORING RUBRIC: If the user supplies their own scoring criteria and weights (e.g. a list of factors each with a percentage), FIRST call set_scoring_rubric with those exact criteria and weights before scoring anything. Then confirm the saved rubric back to them in plain language (list each criterion and its normalized weight) and explain that every option's score will be the deterministic weighted sum of those criteria. Never invent, drop, or alter the user's weights — pass them exactly as given. After the rubric is saved, follow the present-shortlist-before-scoring and batching rules below as normal. set_scoring_rubric is reversible configuration, so it is allowed on the first turn and does not count against the per-turn scoring limit.\n"
+    "CUSTOM SCORING RUBRIC: If the user supplies their own scoring criteria and weights (e.g. a list of factors each with a percentage), FIRST call set_scoring_rubric with those exact criteria and weights before scoring anything. Then confirm the saved rubric back to them in plain language (list each criterion and its normalized weight) and explain that every option's score will be the deterministic weighted sum of those criteria. Never invent, drop, or alter the user's weights — pass them exactly as given. If the user organizes the criteria into groups (e.g. 'Impact' variables vs 'Fit' variables), pass each criterion's group on the 'group' field so every option gets a sub-score per group and can be placed on a 2-group quadrant. After the rubric is saved, follow the present-shortlist-before-scoring and batching rules below as normal. set_scoring_rubric is reversible configuration, so it is allowed on the first turn and does not count against the per-turn scoring limit.\n"
     "PRESENT YOUR SHORTLIST BEFORE YOU SCORE: When the user asks you to BOTH propose options AND score them (e.g. 'propose 5-6 cities, then score each'), or any time this is the first turn of the conversation, do NOT call generate_scorecard in the same reply where you present your list. First give the full shortlist with your one-line rationale for each as your written message, then ask the user to confirm before scoring (e.g. 'Want me to score these?'). Only call the scoring tools AFTER they confirm in a later turn. This matters: if you call generate_scorecard before the user has confirmed, the system blocks it and your reply is rewritten into a bare confirmation prompt — so the user LOSES the shortlist and rationale you just wrote. Presenting first, then scoring after confirmation, keeps all of your analysis on screen. "
-    "SCORING MANY IDEAS AT ONCE: To score MORE THAN ONE idea (e.g. 'score these 8 cities', 'compare these 5 vendors', an uploaded list of options), call queue_scorecards ONCE with EVERY idea — each as {name, description}. Do NOT call generate_scorecard yourself for a multi-idea request and do NOT try to score them in your reply. queue_scorecards hands the whole list to the system, which scores them one at a time automatically; each scorecard appears on its own as it finishes and the trade-off comparison builds as they land. After calling it, tell the user in one sentence that you've queued all N and they'll appear as each is scored (name them if there are only a few). If a scoring rubric is set, every queued idea is scored against it. For scoring exactly ONE idea, use generate_scorecard instead.\n"
+    "SCORING MANY IDEAS AT ONCE: To score MORE THAN ONE idea (e.g. 'score these 8 cities', 'compare these 5 vendors', an uploaded list of options), call queue_scorecards ONCE with EVERY idea — each as {name, description}. Do NOT call generate_scorecard yourself for a multi-idea request and do NOT try to score them in your reply. queue_scorecards hands the whole list to the system, which scores them all in a single pass against the criteria and renders the cards together, then builds the trade-off comparison. After calling it, tell the user in one sentence that you've queued all N and the scored cards will appear in a moment (name them if there are only a few). If a scoring rubric is set, every queued idea is scored against it. For scoring exactly ONE idea, use generate_scorecard instead.\n"
     "NEVER narrate tool-call mechanics to the user. Do not mention internal tool names, field names (e.g. 'idea_description'), error codes, or that you are 'retrying' or 'correcting' a call. If a tool call fails, silently issue a corrected call and speak only about the strategy result the user cares about. The user should never see the plumbing.\n"
     "\n"
     "IMPORTANT RULES:\n"
@@ -4850,6 +4850,10 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                                         "type": "boolean",
                                         "description": "True if higher score means lower risk (display only).",
                                     },
+                                    "group": {
+                                        "type": "string",
+                                        "description": "Optional group this criterion belongs to, e.g. 'Impact' or 'Fit'. If the user organizes criteria into groups, pass the group on each criterion so the scorecard reports a sub-score per group. Omit if there are no groups.",
+                                    },
                                 },
                                 "required": ["label", "weight"],
                                 "additionalProperties": False,
@@ -4888,6 +4892,10 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                                     "description": {
                                         "type": "string",
                                         "description": "One line of context for this specific idea so it scores accurately.",
+                                    },
+                                    "locked": {
+                                        "type": "boolean",
+                                        "description": "True if this option is a required/strategic anchor that is included regardless of how it ranks (it gets a 'Strategic Necessity' tier).",
                                     },
                                 },
                                 "required": ["name"],
@@ -5289,11 +5297,19 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             weight = max(0.0, _coerce_weight(
                 c.get("weight", c.get("weight_pct", c.get("percentage", c.get("pct", c.get("value", 0)))))
             ))
+            # Optional grouping (e.g. "Impact" vs "Fit"). When the user organizes
+            # criteria into groups, the scorecard reports a sub-score per group and
+            # can place options on a 2-group quadrant. Stays generic — any labels,
+            # or none at all (flat rubric) if the user doesn't group them.
+            group = str(
+                c.get("group") or c.get("category") or c.get("section") or c.get("bucket") or ""
+            ).strip() or None
             criteria.append({
                 "key": key,
                 "label": label,
                 "weight": weight,
                 "is_risk": bool(c.get("is_risk")),
+                "group": group,
                 "description": (str(c.get("description") or c.get("notes") or c.get("what_it_measures") or "").strip() or None),
             })
 
@@ -5386,7 +5402,8 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 it.get("description") or it.get("idea_description")
                 or it.get("notes") or it.get("rationale") or it.get("desc") or ""
             ).strip() or name
-            queue.append({"name": name, "description": desc})
+            locked = bool(it.get("locked") or it.get("is_locked") or it.get("required") or it.get("anchor"))
+            queue.append({"name": name, "description": desc, "locked": locked})
         if not queue:
             current_app.logger.warning("queue_scorecards: no valid names parsed from: %r", tool_input)
             return _tool_error("Each idea needs a name.", code="invalid_queue")
@@ -5409,7 +5426,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             "queued_count": len(queue),
             "confirmation": (
                 f"Queued {len(queue)} ideas to score against your rubric: {names}. "
-                "Scoring them one at a time now — each card will appear as it finishes."
+                "Scoring all of them now — the cards will appear together in a moment."
             ),
         }
 

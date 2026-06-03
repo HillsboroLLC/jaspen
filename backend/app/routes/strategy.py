@@ -2437,6 +2437,232 @@ The executive_summary must read like a concise leadership briefing. It should ne
     return _recompute_jaspen_score(parsed, weights)
 
 
+def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective='balanced',
+                               model_selection=None, llm_model=None):
+    """Score MANY ideas in a SINGLE model pass — the 'build the Excel' approach.
+
+    One call returns a grid of every idea scored on every criterion (score +
+    a one-line put/take). Python then computes each idea's DETERMINISTIC weighted
+    total. This is far cheaper/faster than one full generation per idea and never
+    runs many sequential LLM calls inside a request, so it can't time out the way
+    the old per-idea loop did. Fully generic across any idea type; if a rubric is
+    given, ideas are scored against it, otherwise the standard dimensions are used.
+    Returns a list of fully-scored scorecard payloads (same shape the single-card
+    path produces), in the same order as `ideas`.
+    """
+    ideas = [i for i in (ideas or []) if isinstance(i, dict) and str(i.get('name') or '').strip()]
+    if not ideas:
+        return []
+
+    rubric_criteria = None
+    if isinstance(rubric, dict) and isinstance(rubric.get('criteria'), list):
+        rubric_criteria = [c for c in rubric['criteria'] if isinstance(c, dict) and str(c.get('key') or '').strip()]
+    custom_mode = bool(rubric_criteria and len(rubric_criteria) >= 2)
+
+    if custom_mode:
+        weights = {}
+        for c in rubric_criteria:
+            try:
+                weights[c['key']] = float(c.get('weight') or 0.0)
+            except (TypeError, ValueError):
+                weights[c['key']] = 0.0
+        _wsum = sum(weights.values()) or 1.0
+        if abs(_wsum - 1.0) > 0.02:
+            weights = {k: v / _wsum for k, v in weights.items()}
+        dim_keys = [c['key'] for c in rubric_criteria]
+        label_by_key = {c['key']: (c.get('label') or c['key']) for c in rubric_criteria}
+        risk_by_key = {c['key']: bool(c.get('is_risk')) for c in rubric_criteria}
+        group_by_key = {c['key']: (str(c.get('group')).strip() if c.get('group') else None) for c in rubric_criteria}
+        groups = []
+        for c in rubric_criteria:
+            g = str(c.get('group')).strip() if c.get('group') else None
+            if g and g not in groups:
+                groups.append(g)
+        _crit_lines = []
+        for c in rubric_criteria:
+            pct = int(round(weights.get(c['key'], 0.0) * 100))
+            risk = " [risk criterion: a HIGHER score means LOWER risk]" if c.get('is_risk') else ""
+            grp = (str(c.get('group')).strip() if c.get('group') else "")
+            gtag = f" [group: {grp}]" if grp else ""
+            desc = str(c.get('description') or '').strip()
+            _crit_lines.append(f'  - "{c["key"]}" = {c.get("label") or c["key"]} ({pct}% weight){gtag}{risk}' + (f": {desc}" if desc else ""))
+        criteria_block = "\n".join(_crit_lines)
+        criteria_note = "Score ONLY against these user-defined criteria."
+    else:
+        weights = {"market_opportunity": 0.18, "financial_viability": 0.20, "execution_readiness": 0.18,
+                   "strategic_alignment": 0.16, "risk_profile": 0.16, "evidence_quality": 0.12}
+        dim_keys = list(weights.keys())
+        label_by_key = {"market_opportunity": "Market Opportunity", "financial_viability": "Cost Efficiency",
+                        "execution_readiness": "Time-to-value", "strategic_alignment": "Strategic Fit",
+                        "risk_profile": "Execution Risk", "evidence_quality": "Evidence Quality"}
+        risk_by_key = {"risk_profile": True}
+        group_by_key = {}
+        groups = []
+        criteria_block = "\n".join(f'  - "{k}" = {label_by_key[k]} ({int(round(weights[k] * 100))}% weight)' for k in dim_keys)
+        criteria_note = "Score against these standard dimensions."
+
+    has_groups = len(groups) >= 2
+
+    _ideas_lines = []
+    for idx, i in enumerate(ideas):
+        nm = str(i.get('name')).strip()
+        d = str(i.get('description') or '').strip()
+        lock = " [LOCKED — required strategic anchor: include regardless of rank; tier = Strategic Necessity]" if i.get('locked') else ""
+        _ideas_lines.append(f'  {idx + 1}. "{nm}"{lock}' + (f' — {d}' if d and d != nm else ''))
+    ideas_block = "\n".join(_ideas_lines)
+    keys_csv = ", ".join(f'"{k}"' for k in dim_keys)
+
+    groups_note = ""
+    if has_groups:
+        groups_note = (
+            f"\nThe criteria are organized into these groups: {', '.join(groups)}. "
+            "Reason about each option's strength on each group, not just overall.\n"
+        )
+
+    tier_vocab = '"Leading Candidate", "Secondary Candidate", "Strategic Necessity", "Monitor / Niche"'
+
+    system_prompt = (
+        "You are a rigorous strategy analyst building a decision dossier. You score multiple options against a fixed "
+        "set of weighted criteria and return STRICT JSON only — no prose outside the JSON. Judge each option honestly "
+        "and independently on each criterion using a 0-100 scale where 100 is best on that criterion (for cost-type "
+        "criteria, 100 = most favorable). Give each criterion a short, specific rationale stating the key 'put' "
+        "(strength) or 'take' (weakness). Do not inflate scores — a weak option must score meaningfully lower. You also "
+        "assign each option a role and tier and write a short portfolio recommendation across all of them."
+    )
+    user_prompt = (
+        f"Build a decision dossier scoring these {len(ideas)} options against the criteria below. {criteria_note}"
+        f"{groups_note}\n"
+        f"CRITERIA (json key = meaning (weight)[group]):\n{criteria_block}\n\n"
+        f"OPTIONS:\n{ideas_block}\n\n"
+        "Return ONLY this JSON shape (no markdown, no commentary):\n"
+        "{\n"
+        '  "portfolio_summary": {\n'
+        '    "structure": "<one line: how many fall in each tier>",\n'
+        '    "recommended_sequence": "<2-4 sentences: which to commit to, which to develop next, which to monitor, and in what order>"\n'
+        "  },\n"
+        '  "options": [\n'
+        "    {\n"
+        '      "name": "<exact option name, copied verbatim>",\n'
+        f'      "tier": <one of {tier_vocab}; LOCKED options are "Strategic Necessity">,\n'
+        '      "primary_role": "<short role this option would play, e.g. \'Customer-density & operations hub\'>",\n'
+        '      "strategic_rationale": "<2-3 sentence leadership read on this option>",\n'
+        '      "dimensions": {\n'
+        f'        // EXACTLY one entry for EACH key: {keys_csv}\n'
+        '        "<criterion_key>": { "score": <0-100>, "confidence": "<high|medium|low|assumed>", "rationale": "<one specific line: the put or take>" }\n'
+        "      },\n"
+        '      "key_strengths": ["<top put>", "..."],\n'
+        '      "key_considerations": ["<top take / risk / caveat>", "..."]\n'
+        "    }\n"
+        "    // ...one object per option, in the same order...\n"
+        "  ]\n"
+        "}\n"
+        "Every option MUST include every criterion key. Output JSON only."
+    )
+
+    text, _usage = _strategy_generate_reply(
+        [{"role": "user", "content": user_prompt}],
+        system_prompt=system_prompt,
+        model_selection=model_selection,
+        llm_model=llm_model,
+        strategy_objective=strategy_objective,
+        max_tokens=8000,
+        temperature=0,
+    )
+    parsed = _extract_json_object(text)
+    options = []
+    portfolio_summary = None
+    if isinstance(parsed, dict):
+        options = parsed.get("options") or parsed.get("ideas") or parsed.get("results") or []
+        ps = parsed.get("portfolio_summary")
+        if isinstance(ps, dict):
+            portfolio_summary = {
+                "structure": str(ps.get("structure") or "").strip(),
+                "recommended_sequence": str(ps.get("recommended_sequence") or ps.get("sequence") or "").strip(),
+            }
+    if not isinstance(options, list):
+        options = []
+    by_name = {}
+    for o in options:
+        if isinstance(o, dict) and str(o.get("name") or "").strip():
+            by_name[str(o.get("name")).strip().lower()] = o
+
+    _valid_tiers = {"leading candidate", "secondary candidate", "strategic necessity", "monitor / niche", "monitor/niche"}
+
+    results = []
+    for idea in ideas:
+        nm = str(idea.get('name')).strip()
+        locked = bool(idea.get('locked'))
+        o = by_name.get(nm.lower()) or {}
+        ai_dims = o.get("dimensions") if isinstance(o.get("dimensions"), dict) else {}
+        dims = {}
+        for key in dim_keys:
+            d = ai_dims.get(key) if isinstance(ai_dims.get(key), dict) else {}
+            try:
+                score = float(d.get("score"))
+            except (TypeError, ValueError):
+                score = 0.0
+            score = max(0.0, min(100.0, score))
+            conf = str(d.get("confidence") or "medium").strip().lower()
+            if conf not in ("high", "medium", "low", "assumed"):
+                conf = "medium"
+            dims[key] = {
+                "score": score,
+                "confidence": conf,
+                "source": "inferred",
+                "rationale": str(d.get("rationale") or "").strip(),
+                "what_would_improve": None,
+                "label": label_by_key.get(key, key),
+                "is_risk": bool(risk_by_key.get(key)),
+                "group": group_by_key.get(key),
+            }
+        strengths = [str(s).strip() for s in (o.get("key_strengths") or []) if str(s).strip()]
+        considerations = [str(s).strip() for s in (o.get("key_considerations") or o.get("key_risks") or []) if str(s).strip()]
+
+        # Tier: honor LOCKED → Strategic Necessity; else validate the AI's tier.
+        tier = str(o.get("tier") or "").strip()
+        if locked:
+            tier = "Strategic Necessity"
+        elif tier.lower() not in _valid_tiers:
+            tier = ""  # filled in after we know the score, below
+
+        payload = {
+            "executive_summary": str(o.get("strategic_rationale") or o.get("executive_summary") or "").strip(),
+            "strategic_rationale": str(o.get("strategic_rationale") or "").strip(),
+            "primary_role": str(o.get("primary_role") or "").strip(),
+            "dimensions": dims,
+            "key_insights": strengths,
+            "top_risks": [{"risk": r, "text": r} for r in considerations],
+            "key_considerations": considerations,
+            "recommendations": [],
+            "assumptions": [],
+            "locked": locked,
+        }
+        if custom_mode:
+            payload["rubric"] = rubric
+        scored = _recompute_jaspen_score(payload, weights)
+
+        # Deterministic per-group sub-scores from the (capped) dimension scores.
+        if has_groups:
+            scored_dims = scored.get("dimensions") if isinstance(scored.get("dimensions"), dict) else dims
+            group_scores = {}
+            for g in groups:
+                gkeys = [k for k in dim_keys if group_by_key.get(k) == g]
+                gw = sum(weights.get(k, 0.0) for k in gkeys) or 1.0
+                gtot = sum(float(scored_dims.get(k, {}).get("score") or 0.0) * weights.get(k, 0.0) for k in gkeys)
+                group_scores[g] = round(gtot / gw, 1)
+            scored["group_scores"] = group_scores
+            scored["groups"] = list(groups)
+
+        # If the AI didn't give a valid tier, derive one from the overall score band.
+        if not tier:
+            js = float(scored.get("jaspen_score") or 0.0)
+            tier = "Leading Candidate" if js >= 78 else "Secondary Candidate" if js >= 68 else "Monitor / Niche"
+        scored["tier"] = tier
+        results.append(scored)
+
+    return results, portfolio_summary
+
+
 @strategy_bp.route('/analyze', methods=['POST'])
 @jwt_required()
 @limiter.limit("5 per minute")
@@ -5612,6 +5838,146 @@ def score_next_queued(thread_id):
         return jsonify({'error': str(e)}), 500
 
 
+@strategy_bp.route('/threads/<thread_id>/score-batch', methods=['POST'])
+@jwt_required()
+def score_batch_queued(thread_id):
+    """Score ALL queued ideas in ONE model pass, then persist each as a scorecard.
+
+    The 'build the Excel' path: a single generation scores every idea on every
+    criterion, Python computes the deterministic weighted totals, and each idea is
+    stored as its own card (first = thread baseline, the rest = scenario snapshots)
+    so the workspace + trade-off render them together. One request, one LLM call —
+    no synchronous per-idea loop that could time out. Generic across any idea type.
+    """
+    try:
+        user_id = get_jwt_identity()
+        user = User.query.get(user_id)
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+
+        from .ai_agent import _artifact_chat_entry, _resolve_user_session
+
+        sessions = load_user_sessions(user_id) or {}
+        session_key, session = _resolve_user_session(sessions, thread_id)
+        if not isinstance(session, dict):
+            return jsonify({'error': 'Thread not found'}), 404
+
+        body = request.get_json(silent=True) or {}
+        ideas = body.get('ideas') if isinstance(body.get('ideas'), list) else None
+        if not ideas:
+            ideas = session.get('scorecard_queue') if isinstance(session.get('scorecard_queue'), list) else []
+        ideas = [i for i in ideas if isinstance(i, dict) and str(i.get('name') or '').strip()]
+        if not ideas:
+            return jsonify({'ok': True, 'scored': [], 'count': 0, 'done': True})
+
+        model_selection, model_error = _resolve_user_model_selection(user)
+        if model_error:
+            return jsonify(model_error), 403
+
+        plan_key = effective_plan_key(user, current_app.config)
+        strategy_objective = _normalize_strategy_objective(session.get('strategy_objective'))
+        rubric = session.get('scoring_rubric') if isinstance(session.get('scoring_rubric'), dict) else None
+        client = get_llm_client()
+
+        cards, portfolio_summary = _generate_batch_scorecards(
+            client, ideas, rubric=rubric, strategy_objective=strategy_objective,
+            model_selection=model_selection, llm_model=model_selection['llm_model'],
+        )
+
+        scored_out = []
+        for idea, payload in zip(ideas, cards):
+            if not isinstance(payload, dict):
+                continue
+            name = str(idea.get('name')).strip()
+            description = str(idea.get('description') or '').strip() or name
+            analysis_id = str(uuid.uuid4())
+            generated_at = datetime.utcnow().isoformat()
+            scorecard = {
+                **payload,
+                'id': analysis_id,
+                'analysis_id': analysis_id,
+                'thread_id': thread_id,
+                'project_name': name,
+                'name': name,
+                'project_description': description,
+                'timestamp': generated_at,
+                'createdAt': generated_at,
+                'label': name,
+                'meta': {
+                    **(payload.get('meta') if isinstance(payload.get('meta'), dict) else {}),
+                    'generated_at': generated_at,
+                    'source': 'ai_tool',
+                    'tool': 'score_batch',
+                    'model_type': model_selection['model_type'],
+                },
+            }
+
+            # Reload fresh each iteration so prior writes in this loop are visible.
+            sessions = load_user_sessions(user_id) or {}
+            session_key, session = _resolve_user_session(sessions, thread_id)
+            if not isinstance(session, dict):
+                break
+            result_blob = session.get('result') if isinstance(session.get('result'), dict) else {}
+            baseline = result_blob if isinstance(result_blob, dict) and result_blob.get('jaspen_score') is not None else None
+            has_baseline = isinstance(baseline, dict) and baseline.get('jaspen_score') is not None
+
+            if not has_baseline:
+                normalized_baseline = _normalize_scorecard_payload(scorecard)
+                scorecard['_baseline_scorecard'] = normalized_baseline
+                scorecard['scorecard_snapshots'] = []
+                scorecard['selected_scorecard_id'] = analysis_id
+                session['result'] = scorecard
+                session['analysis_history'] = [{
+                    'analysis_id': analysis_id, 'id': analysis_id, 'created_at': generated_at,
+                    'label': name, 'thread_id': thread_id, 'result': scorecard,
+                }]
+                session['analyses'] = session['analysis_history']
+                session['adopted_analysis_id'] = analysis_id
+                session['baseline_inputs'] = _extract_baseline_inputs(scorecard)
+            else:
+                try:
+                    _create_scenario_record(
+                        user_id, thread_id, deltas={}, label=name, baseline=baseline,
+                        scenario_id=analysis_id, plan_key=plan_key, result=scorecard,
+                        metadata={'ai_rationale': 'Created from score_batch.', 'strategy_objective': strategy_objective},
+                    )
+                except PermissionError:
+                    # Scenario cap reached on this plan — keep what we already scored.
+                    pass
+
+            entry = _artifact_chat_entry({'type': 'scorecard', 'data': scorecard})
+            if entry:
+                chat_history = session.get('chat_history') if isinstance(session.get('chat_history'), list) else []
+                chat_history.append(entry)
+                session['chat_history'] = chat_history
+            session['name'] = session.get('name') or name
+            session['timestamp'] = generated_at
+            sessions[session_key or thread_id] = session
+            save_user_sessions(user_id, sessions)
+            scored_out.append({'name': name, 'score': scorecard.get('jaspen_score'), 'id': analysis_id})
+
+        # Clear the queue and store the portfolio summary for the thread.
+        sessions = load_user_sessions(user_id) or {}
+        session_key, session = _resolve_user_session(sessions, thread_id)
+        if isinstance(session, dict):
+            session['scorecard_queue'] = []
+            if isinstance(portfolio_summary, dict) and (portfolio_summary.get('structure') or portfolio_summary.get('recommended_sequence')):
+                session['portfolio_summary'] = portfolio_summary
+            sessions[session_key or thread_id] = session
+            save_user_sessions(user_id, sessions)
+
+        return jsonify({
+            'ok': True,
+            'scored': scored_out,
+            'count': len(scored_out),
+            'portfolio_summary': portfolio_summary,
+            'done': True,
+        })
+    except Exception as e:
+        current_app.logger.exception('[score_batch_queued] %s', e)
+        return jsonify({'error': str(e)}), 500
+
+
 @strategy_bp.route('/threads/<thread_id>/ai-wbs', methods=['POST'])
 @jwt_required()
 def generate_ai_wbs(thread_id):
@@ -7089,6 +7455,7 @@ def get_thread_bundle(thread_id):
             },
             'messages': (session.get('chat_history') if isinstance(session, dict) and isinstance(session.get('chat_history'), list) else []),
             'scorecard_queue': (session.get('scorecard_queue') if isinstance(session, dict) and isinstance(session.get('scorecard_queue'), list) else []),
+            'portfolio_summary': (session.get('portfolio_summary') if isinstance(session, dict) and isinstance(session.get('portfolio_summary'), dict) else None),
             'baseline_scorecard': baseline,
             'current_scorecard': current_scorecard,
             'scorecard_snapshots': merged_snapshots,
