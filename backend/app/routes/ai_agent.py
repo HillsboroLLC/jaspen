@@ -5342,10 +5342,24 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         # the /score-next endpoint (driven by the client), so no single request
         # runs many slow generations and times out. Each idea keeps its own name,
         # so nothing is ever scored as "Untitled".
+        current_app.logger.warning("queue_scorecards raw input: %r", tool_input)
         raw = tool_input.get("ideas")
         if not isinstance(raw, list):
-            raw = tool_input.get("scorecards") or tool_input.get("options") or tool_input.get("items")
+            raw = (
+                tool_input.get("scorecards") or tool_input.get("options")
+                or tool_input.get("items") or tool_input.get("cities")
+                or tool_input.get("list") or tool_input.get("names")
+            )
+        # Some models pass a bare {name: description} map, or a JSON string.
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except Exception:
+                raw = [s.strip() for s in raw.split(",") if s.strip()]
+        if isinstance(raw, dict):
+            raw = [{"name": k, "description": v} for k, v in raw.items()]
         if not isinstance(raw, list) or len(raw) < 1:
+            current_app.logger.warning("queue_scorecards rejected (not a list): %r", tool_input)
             return _tool_error("Provide a list of ideas to score (each needs a name).", code="invalid_queue")
         if len(raw) > 20:
             return _tool_error("Queue at most 20 ideas at once.", code="invalid_queue")
@@ -5358,7 +5372,9 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 continue
             name = str(
                 it.get("name") or it.get("idea") or it.get("label")
-                or it.get("title") or it.get("option") or ""
+                or it.get("title") or it.get("option") or it.get("city")
+                or it.get("place") or it.get("location") or it.get("metro")
+                or it.get("vendor") or it.get("product") or it.get("item") or ""
             ).strip()
             if not name:
                 continue
@@ -5368,10 +5384,11 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             seen.add(k)
             desc = str(
                 it.get("description") or it.get("idea_description")
-                or it.get("notes") or it.get("rationale") or ""
+                or it.get("notes") or it.get("rationale") or it.get("desc") or ""
             ).strip() or name
             queue.append({"name": name, "description": desc})
         if not queue:
+            current_app.logger.warning("queue_scorecards: no valid names parsed from: %r", tool_input)
             return _tool_error("Each idea needs a name.", code="invalid_queue")
         # Best-effort immediate persist; also folded onto the durable session by
         # _apply_queue_action_to_session in the main turn handler (so it survives
