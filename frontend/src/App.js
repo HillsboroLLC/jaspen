@@ -56,6 +56,7 @@ const Team = lazy(() => import('./jaspenInterface/Team/Team'));
 const EnterpriseAdmin = lazy(() => import('./jaspenInterface/EnterpriseAdmin/EnterpriseAdmin'));
 const JaspenChat = lazy(() => import('./jaspenInterface/Workspace/JaspenChat'));
 const JaspenWorkspace = lazy(() => import('./jaspenInterface/Workspace/JaspenWorkspace'));
+const StudioApp = lazy(() => import('./studio/StudioApp'));
 const ExecutionPlan = lazy(() => import('./jaspenInterface/ExecutionPlan/ExecutionPlan'));
 
 function AnimatedAppRoutes({ withShell }) {
@@ -113,6 +114,10 @@ function AnimatedAppRoutes({ withShell }) {
             <Route
               path="/new"
               element={withShell(<JaspenChat />, { title: 'Jaspen', showHeader: false, fullBleed: true, noPadding: true })}
+            />
+            <Route
+              path="/studio"
+              element={<ProtectedRoute>{withShell(<StudioApp />, { title: 'Studio | Jaspen', showHeader: false, fullBleed: true, noPadding: true })}</ProtectedRoute>}
             />
             <Route
               path="/workspace/:threadId/:scorecardId"
