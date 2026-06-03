@@ -264,3 +264,165 @@ def score_ideas(workspace_id):
         'count': len(created),
         'portfolio_summary': portfolio_summary,
     })
+
+
+def _persist_scored_artifacts(ws, user, ideas, cards):
+    """Create one standalone StudioArtifact row per scored idea."""
+    base_position = (
+        db.session.query(db.func.coalesce(db.func.max(StudioArtifact.position), -1))
+        .filter_by(workspace_id=ws.id).scalar()
+    )
+    try:
+        pos = int(base_position) + 1
+    except (TypeError, ValueError):
+        pos = 0
+    created = []
+    for idea, payload in zip(ideas, cards):
+        if not isinstance(payload, dict):
+            continue
+        art = StudioArtifact(
+            workspace_id=ws.id, user_id=ws.user_id,
+            organization_id=getattr(user, 'active_organization_id', None),
+            type='scorecard', name=idea['name'],
+            data={**payload, 'project_description': idea.get('description') or idea['name'], 'locked': bool(idea.get('locked'))},
+            position=pos,
+        )
+        pos += 1
+        db.session.add(art)
+        created.append(art)
+    return created
+
+
+@studio_bp.route('/workspaces/<workspace_id>/chat', methods=['POST'])
+@jwt_required()
+def studio_chat(workspace_id):
+    """Conversational agent for the Studio. The user talks naturally; the model
+    replies AND emits a structured action (set the user's rubric, score ideas).
+    The backend executes that action deterministically and returns the reply plus
+    any new standalone artifacts. Stays scoped to business idea-vetting."""
+    user_id, user = _current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    ws = _owned_workspace(user_id, workspace_id)
+    if not ws:
+        return jsonify({'error': 'Workspace not found'}), 404
+
+    body = request.get_json(silent=True) or {}
+    message = str(body.get('message') or '').strip()
+    if not message:
+        return jsonify({'error': 'Empty message.'}), 400
+    history = body.get('history') if isinstance(body.get('history'), list) else []
+
+    from .strategy import (
+        _strategy_generate_reply, _extract_json_object, _generate_batch_scorecards,
+        get_llm_client, _resolve_user_model_selection,
+    )
+    model_selection, model_error = _resolve_user_model_selection(user)
+    if model_error:
+        return jsonify(model_error), 403
+
+    existing_rubric = ws.rubric if isinstance(ws.rubric, dict) and ws.rubric.get('criteria') else None
+    rubric_summary = (
+        ", ".join(f'{c.get("label")} {int(round((c.get("weight") or 0)*100))}%'
+                  + (f" [{c.get('group')}]" if c.get('group') else "")
+                  for c in existing_rubric['criteria'])
+        if existing_rubric else "(none set yet)"
+    )
+    existing_names = [a.name for a in StudioArtifact.query.filter_by(workspace_id=ws.id, archived_at=None).all()]
+
+    system_prompt = (
+        "You are Jaspen Studio — a conversational decision agent that helps people and teams VET BUSINESS/STRATEGIC "
+        "IDEAS: score options against the user's own criteria, rank them, and surface trade-offs. Be warm, concise, "
+        "and proactive, like a sharp analyst. SCOPE: only help with vetting/scoring/comparing ideas, options, "
+        "vendors, markets, hires, investments, strategies, and the like. If the user asks about unrelated personal "
+        "matters, politely steer back — do not engage off-topic.\n\n"
+        "RULES:\n"
+        "- The USER owns the criteria. Never invent criteria for them. If they have none, ask what criteria/weights "
+        "matter (you may suggest a starter set for them to approve, but it's theirs).\n"
+        "- When the user gives criteria + weights (and optional groups like Impact/Fit), set the rubric.\n"
+        "- When the user gives options to score and a rubric exists, score them. If they give both at once, do both.\n"
+        "- Scoring is deterministic; you never make up the final numbers — the system computes them. Just reply "
+        "conversationally about what you're doing.\n"
+        "- Keep replies short and natural. Name what you scored / what you still need.\n\n"
+        f"CURRENT RUBRIC: {rubric_summary}\n"
+        f"ALREADY SCORED IN THIS WORKSPACE: {', '.join(existing_names) if existing_names else '(none)'}\n\n"
+        "Respond with STRICT JSON only (no prose outside it):\n"
+        "{\n"
+        '  "reply": "<your natural message to the user>",\n'
+        '  "action": {\n'
+        '    "type": "chat" | "set_rubric" | "score" | "set_rubric_and_score",\n'
+        '    "criteria": [ {"label": "...", "weight": <number, % or 0-1>, "group": "<optional>", "is_risk": <optional bool>} ],\n'
+        '    "ideas": [ {"name": "...", "description": "<optional>", "locked": <optional bool>} ]\n'
+        "  }\n"
+        "}\n"
+        "Include criteria only for set_rubric/set_rubric_and_score; ideas only for score/set_rubric_and_score. "
+        "Use 'chat' when you're just talking or asking a question."
+    )
+
+    convo = []
+    for m in history[-12:]:
+        role = 'assistant' if str(m.get('role')) == 'assistant' else 'user'
+        content = str(m.get('content') or m.get('text') or '').strip()
+        if content:
+            convo.append({"role": role, "content": content})
+    convo.append({"role": "user", "content": message})
+
+    try:
+        text, _usage = _strategy_generate_reply(
+            convo, system_prompt=system_prompt, model_selection=model_selection,
+            llm_model=model_selection['llm_model'], strategy_objective='balanced',
+            max_tokens=1500, temperature=0.3,
+        )
+    except Exception as e:
+        current_app.logger.exception('[studio_chat] model call failed')
+        return jsonify({'error': 'The agent had trouble responding. Try again.'}), 200
+
+    parsed = _extract_json_object(text) or {}
+    reply = str(parsed.get('reply') or '').strip() or "Okay."
+    action = parsed.get('action') if isinstance(parsed.get('action'), dict) else {}
+    atype = str(action.get('type') or 'chat')
+
+    new_rubric = None
+    new_artifacts = []
+    portfolio_summary = None
+
+    # Apply a rubric if the agent set one.
+    if atype in ('set_rubric', 'set_rubric_and_score') and isinstance(action.get('criteria'), list):
+        norm = _normalize_rubric(action['criteria'])
+        if norm:
+            ws.rubric = norm
+            new_rubric = norm
+            existing_rubric = norm
+            db.session.commit()
+
+    # Score ideas if asked and a rubric is available.
+    if atype in ('score', 'set_rubric_and_score') and isinstance(action.get('ideas'), list):
+        ideas = []
+        for it in action['ideas']:
+            if isinstance(it, str):
+                it = {'name': it}
+            if not isinstance(it, dict):
+                continue
+            name = str(it.get('name') or it.get('label') or '').strip()
+            if not name:
+                continue
+            ideas.append({'name': name, 'description': str(it.get('description') or '').strip() or name,
+                          'locked': bool(it.get('locked') or it.get('required') or it.get('anchor'))})
+        if ideas and existing_rubric:
+            client = get_llm_client()
+            cards, portfolio_summary = _generate_batch_scorecards(
+                client, ideas, rubric=existing_rubric, strategy_objective='balanced',
+                model_selection=model_selection, llm_model=model_selection['llm_model'],
+            )
+            created = _persist_scored_artifacts(ws, user, ideas, cards)
+            ws.updated_at = datetime.utcnow()
+            db.session.commit()
+            new_artifacts = [a.to_dict() for a in created]
+
+    return jsonify({
+        'ok': True,
+        'reply': reply,
+        'rubric': ws.rubric if isinstance(ws.rubric, dict) else None,
+        'new_artifacts': new_artifacts,
+        'portfolio_summary': portfolio_summary,
+    })

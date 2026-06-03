@@ -158,3 +158,50 @@
   .st-body { flex-direction: column; }
   .st-rail { width: auto; border-right: none; border-bottom: 1px solid var(--color-border-default, #dbe3ee); }
 }
+
+/* ---- conversational chat layout (mirrors /new) ---- */
+.st-chat { flex: 1; overflow-y: auto; padding: 24px 0; display: flex; flex-direction: column; gap: 18px; }
+
+.st-greeting { max-width: 720px; margin: 8vh auto 0; text-align: center; padding: 0 24px; }
+.st-greeting-h { font-size: 1.6rem; font-weight: 800; letter-spacing: -0.02em; color: var(--color-brand-navy, #161f3b); }
+.st-greeting-sub { margin-top: 12px; font-size: 0.95rem; line-height: 1.7; color: var(--color-text-secondary, #4b5563); }
+.st-greeting-sub em { color: var(--color-brand-magenta, #a0036c); font-style: italic; }
+
+.st-msg { width: 100%; max-width: 880px; margin: 0 auto; padding: 0 24px; display: flex; flex-direction: column; gap: 12px; }
+.st-msg--user { align-items: flex-end; }
+.st-msg--assistant { align-items: stretch; }
+
+.st-bubble {
+  display: inline-block; max-width: 80%; white-space: pre-wrap; line-height: 1.55; font-size: 0.95rem;
+  padding: 11px 15px; border-radius: 14px;
+}
+.st-msg--user .st-bubble { background: var(--color-brand-navy, #161f3b); color: #fff; border-bottom-right-radius: 4px; }
+.st-msg--assistant .st-bubble {
+  background: var(--color-surface-default, #fff); color: var(--color-text-primary, #161f3b);
+  border: 1px solid var(--color-border-default, #dbe3ee); border-bottom-left-radius: 4px; align-self: flex-start;
+}
+.st-typing { color: var(--color-text-muted, #6b7280); font-style: italic; }
+
+/* artifact grid inside an assistant turn */
+.st-msg .st-grid { margin-top: 4px; }
+.st-msg .st-portfolio { margin-bottom: 4px; }
+
+.st-composer {
+  flex-shrink: 0; display: flex; align-items: flex-end; gap: 10px;
+  max-width: 880px; width: 100%; margin: 0 auto; padding: 14px 24px 22px;
+}
+.st-composer-input {
+  flex: 1; resize: none; max-height: 160px; min-height: 46px;
+  padding: 13px 16px; font-size: 0.95rem; font-family: inherit; line-height: 1.4;
+  border: 1px solid var(--color-border-strong, #b8c4d6); border-radius: 16px;
+  background: var(--color-surface-default, #fff); color: inherit; box-shadow: var(--shadow-sm);
+}
+.st-composer-input:focus { outline: none; border-color: var(--color-brand-magenta, #a0036c); }
+.st-send {
+  flex: 0 0 auto; width: 46px; height: 46px; border-radius: 50%; border: none; cursor: pointer;
+  background: var(--color-brand-magenta, #a0036c); color: #fff; font-size: 1.2rem; font-weight: 700;
+}
+.st-send:hover { background: #87035c; }
+.st-send:disabled { opacity: 0.45; cursor: default; }
+
+.st-error--bar { max-width: 880px; margin: 0 auto 8px; }
