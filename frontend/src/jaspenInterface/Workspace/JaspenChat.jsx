@@ -13566,6 +13566,21 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
             </div>
           </div>
 
+          <div
+            className="jas-chat-disclaimer"
+            style={{
+              fontSize: '0.72rem',
+              color: 'var(--color-text-muted, #6b7280)',
+              textAlign: 'center',
+              margin: '7px auto 0',
+              maxWidth: 720,
+              lineHeight: 1.4,
+            }}
+          >
+            <span style={{ color: 'var(--color-brand-magenta, #a0036c)', fontWeight: 700 }}>*</span>
+            {" Confidence doesn’t mean correctness. AI can make mistakes. Please review your data for accuracy."}
+          </div>
+
           {renderObjectiveTags('jas-chat-objective-tags')}
           {renderConnectorContextTags()}
 
