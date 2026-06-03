@@ -414,11 +414,15 @@ _MUTATION_TOOLS = {
     "rename_thread",
     "patch_scorecard",
     "set_scoring_rubric",
+    "queue_scorecards",
 }
 # Mutation tools that are reversible config (not content generation): allowed on the
-# first turn and NOT counted toward MAX_MUTATIONS_PER_TURN.
+# first turn and NOT counted toward MAX_MUTATIONS_PER_TURN. queue_scorecards just
+# records intent (one lightweight call); the actual scoring happens one-per-request
+# via the /score-next endpoint, so it doesn't belong under the per-turn scoring cap.
 _EXEMPT_MUTATION_TOOLS = {
     "set_scoring_rubric",
+    "queue_scorecards",
 }
 _INJECTION_PATTERNS = [
     re.compile(r"ignore\s+(all\s+)?(previous|prior|above)\s+(instructions|prompts|rules)", re.I),
@@ -532,12 +536,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "\n"
     "CUSTOM SCORING RUBRIC: If the user supplies their own scoring criteria and weights (e.g. a list of factors each with a percentage), FIRST call set_scoring_rubric with those exact criteria and weights before scoring anything. Then confirm the saved rubric back to them in plain language (list each criterion and its normalized weight) and explain that every option's score will be the deterministic weighted sum of those criteria. Never invent, drop, or alter the user's weights — pass them exactly as given. After the rubric is saved, follow the present-shortlist-before-scoring and batching rules below as normal. set_scoring_rubric is reversible configuration, so it is allowed on the first turn and does not count against the per-turn scoring limit.\n"
     "PRESENT YOUR SHORTLIST BEFORE YOU SCORE: When the user asks you to BOTH propose options AND score them (e.g. 'propose 5-6 cities, then score each'), or any time this is the first turn of the conversation, do NOT call generate_scorecard in the same reply where you present your list. First give the full shortlist with your one-line rationale for each as your written message, then ask the user to confirm before scoring (e.g. 'Want me to score these?'). Only call the scoring tools AFTER they confirm in a later turn. This matters: if you call generate_scorecard before the user has confirmed, the system blocks it and your reply is rewritten into a bare confirmation prompt — so the user LOSES the shortlist and rationale you just wrote. Presenting first, then scoring after confirmation, keeps all of your analysis on screen. "
-    "BATCHING WHEN SCORING MANY IDEAS: Each scorecard is a full, separate generation, and at most THREE scorecards can be created per turn. "
-    "So when the user asks you to score MORE THAN THREE ideas at once (e.g. 'score these 8 cities', or an uploaded list of many options), do NOT attempt them all at once. Instead, work in batches of three: "
-    "score the first three ideas this turn, then in your reply tell the user exactly which ones you scored and how many remain, e.g. 'Scored 3 of 8 — Austin, SF Bay Area, and Boston. The trade-off comparison is building below. Want me to score the next 3 (Atlanta, Detroit, Denver)?' "
-    "Then wait for the user to confirm before scoring the next batch. The trade-off comparison updates automatically as each batch lands, so the user sees the ranking grow. "
-    "Never silently drop ideas or claim you scored more than three in a single turn. Always name the remaining ideas so the user knows what is left. "
-    "When only one or two ideas remain in the final batch, score those and tell the user the full set is complete.\n"
+    "SCORING MANY IDEAS AT ONCE: To score MORE THAN ONE idea (e.g. 'score these 8 cities', 'compare these 5 vendors', an uploaded list of options), call queue_scorecards ONCE with EVERY idea — each as {name, description}. Do NOT call generate_scorecard yourself for a multi-idea request and do NOT try to score them in your reply. queue_scorecards hands the whole list to the system, which scores them one at a time automatically; each scorecard appears on its own as it finishes and the trade-off comparison builds as they land. After calling it, tell the user in one sentence that you've queued all N and they'll appear as each is scored (name them if there are only a few). If a scoring rubric is set, every queued idea is scored against it. For scoring exactly ONE idea, use generate_scorecard instead.\n"
     "NEVER narrate tool-call mechanics to the user. Do not mention internal tool names, field names (e.g. 'idea_description'), error codes, or that you are 'retrying' or 'correcting' a call. If a tool call fails, silently issue a corrected call and speak only about the strategy result the user cares about. The user should never see the plumbing.\n"
     "\n"
     "IMPORTANT RULES:\n"
@@ -4862,6 +4861,45 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                 },
             },
             {
+                "name": "queue_scorecards",
+                "description": (
+                    "Queue MULTIPLE ideas to be scored — use this whenever the user wants to evaluate "
+                    "more than one option at once (e.g. 'score these 8 cities', 'compare these 5 vendors', "
+                    "an uploaded list of ideas). Pass EVERY idea with its exact name and a one-line "
+                    "description. The ideas are then scored one at a time automatically and each scorecard "
+                    "appears as it finishes — so you do NOT call generate_scorecard yourself for a multi-idea "
+                    "request, and nothing is ever scored as 'Untitled'. For scoring just ONE idea, use "
+                    "generate_scorecard instead. Works for any kind of idea; if a scoring rubric is set, every "
+                    "queued idea is scored against it."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "ideas": {
+                            "type": "array",
+                            "description": "Every idea to score. Include all of them — do not omit any.",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {
+                                        "type": "string",
+                                        "description": "The idea's exact name/label, e.g. 'Austin, TX' or 'Vendor A'. Never leave blank.",
+                                    },
+                                    "description": {
+                                        "type": "string",
+                                        "description": "One line of context for this specific idea so it scores accurately.",
+                                    },
+                                },
+                                "required": ["name"],
+                                "additionalProperties": False,
+                            },
+                        },
+                    },
+                    "required": ["ideas"],
+                    "additionalProperties": False,
+                },
+            },
+            {
                 "name": "patch_scorecard",
                 "description": (
                     "Edit the wording of the OPEN scorecard in place — for narrative/prose tweaks that do NOT change the "
@@ -5296,6 +5334,66 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             "tool": tool_name,
             "rubric": rubric_obj,
             "confirmation": f"Scoring rubric saved: {summary}.",
+        }
+
+    if tool_name == "queue_scorecards":
+        # Drop a set of ideas (ANY kind — products, vendors, cities, strategies)
+        # into the thread's scoring queue. They are then scored ONE PER REQUEST by
+        # the /score-next endpoint (driven by the client), so no single request
+        # runs many slow generations and times out. Each idea keeps its own name,
+        # so nothing is ever scored as "Untitled".
+        raw = tool_input.get("ideas")
+        if not isinstance(raw, list):
+            raw = tool_input.get("scorecards") or tool_input.get("options") or tool_input.get("items")
+        if not isinstance(raw, list) or len(raw) < 1:
+            return _tool_error("Provide a list of ideas to score (each needs a name).", code="invalid_queue")
+        if len(raw) > 20:
+            return _tool_error("Queue at most 20 ideas at once.", code="invalid_queue")
+        queue = []
+        seen = set()
+        for it in raw:
+            if isinstance(it, str):
+                it = {"name": it}
+            if not isinstance(it, dict):
+                continue
+            name = str(
+                it.get("name") or it.get("idea") or it.get("label")
+                or it.get("title") or it.get("option") or ""
+            ).strip()
+            if not name:
+                continue
+            k = name.lower()
+            if k in seen:
+                continue
+            seen.add(k)
+            desc = str(
+                it.get("description") or it.get("idea_description")
+                or it.get("notes") or it.get("rationale") or ""
+            ).strip() or name
+            queue.append({"name": name, "description": desc})
+        if not queue:
+            return _tool_error("Each idea needs a name.", code="invalid_queue")
+        # Best-effort immediate persist; also folded onto the durable session by
+        # _apply_queue_action_to_session in the main turn handler (so it survives
+        # the end-of-turn full-payload save, like the scoring rubric).
+        try:
+            sessions = load_user_sessions(user_id) or {}
+            _key, _sess = _resolve_user_session(sessions, thread_id)
+            if isinstance(_sess, dict):
+                _sess["scorecard_queue"] = queue
+                save_user_sessions(user_id, sessions)
+        except Exception:
+            current_app.logger.exception("queue_scorecards best-effort persist failed")
+        names = ", ".join(q["name"] for q in queue)
+        return {
+            "ok": True,
+            "tool": tool_name,
+            "queue": queue,
+            "queued_count": len(queue),
+            "confirmation": (
+                f"Queued {len(queue)} ideas to score against your rubric: {names}. "
+                "Scoring them one at a time now — each card will appear as it finishes."
+            ),
         }
 
     if tool_name == "generate_scorecard":
@@ -7854,11 +7952,17 @@ def _apply_rubric_action_to_session(session, actions):
         if not isinstance(action, dict):
             continue
         result = action.get("result") if isinstance(action.get("result"), dict) else {}
-        if not result.get("ok") or str(result.get("tool") or "") != "set_scoring_rubric":
+        if not result.get("ok"):
             continue
-        rubric = result.get("rubric")
-        if isinstance(rubric, dict) and isinstance(rubric.get("criteria"), list):
-            session["scoring_rubric"] = rubric
+        tool = str(result.get("tool") or "")
+        if tool == "set_scoring_rubric":
+            rubric = result.get("rubric")
+            if isinstance(rubric, dict) and isinstance(rubric.get("criteria"), list):
+                session["scoring_rubric"] = rubric
+        elif tool == "queue_scorecards":
+            queue = result.get("queue")
+            if isinstance(queue, list):
+                session["scorecard_queue"] = queue
 
 
 def _extract_baseline_inputs(baseline):

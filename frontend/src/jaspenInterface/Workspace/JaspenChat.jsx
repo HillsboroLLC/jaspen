@@ -1945,6 +1945,8 @@ const baselineRef = useRef(null);
   const hydratedScorecardRef = useRef(new Set());
   // Prevent duplicate auto-scoring triggers per session
   const autoScoringTriggeredRef = useRef(false);
+  // Guards the queued-scorecard drain loop so only one runs at a time per client.
+  const scoreDrainingRef = useRef(false);
 
   // Pull messages, latest analysis id, and saved scenarios from backend
 const refreshBundle = async (tid, { fallbackTid } = {}) => {
@@ -2121,6 +2123,12 @@ const refreshBundle = async (tid, { fallbackTid } = {}) => {
     if (bundleMessages.some((m) => m.role === 'user' && _tradeoffRe.test(m.text || ''))) {
       setTradeoffRequested(true);
     }
+    // If the agent queued a batch of ideas to score, drain that queue one card
+    // at a time (each is its own fast request, so no synchronous batch can time
+    // out). The guard inside drainScoreQueue makes the recursive refresh safe.
+    if (Array.isArray(bundle?.scorecard_queue) && bundle.scorecard_queue.length > 0 && !scoreDrainingRef.current) {
+      void drainScoreQueue(tid);
+    }
   } catch (e) {
     showToast(e?.message || 'We could not refresh this thread right now.', 'error', {
       actionLabel: 'Retry',
@@ -2130,6 +2138,35 @@ const refreshBundle = async (tid, { fallbackTid } = {}) => {
     });
   } finally {
     setBundleLoading(false);
+  }
+};
+
+// Score queued ideas sequentially — one fast request per card — until the
+// thread's scoring queue is empty. Each scored card is appended server-side and
+// surfaced by the refreshBundle below, so the user watches them stream in.
+const drainScoreQueue = async (tid) => {
+  if (!tid || scoreDrainingRef.current) return;
+  scoreDrainingRef.current = true;
+  try {
+    let guard = 0;
+    while (guard++ < 30) {
+      let r;
+      try {
+        r = await Jaspen.scoreNext(tid);
+      } catch (err) {
+        console.error('[scoreNext]', err);
+        break;
+      }
+      if (!r) break;
+      if (r.scorecard) {
+        const left = typeof r.remaining === 'number' ? r.remaining : 0;
+        showToast(left > 0 ? `Scored ${r.name} — ${left} to go…` : `Scored ${r.name} — all done.`, 'success');
+        await refreshBundle(tid);
+      }
+      if (r.done || (typeof r.remaining === 'number' && r.remaining <= 0)) break;
+    }
+  } finally {
+    scoreDrainingRef.current = false;
   }
 };
 

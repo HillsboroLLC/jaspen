@@ -65,6 +65,7 @@ export const endpoints = {
   adoptScenario:    (scenarioId, threadId) => `${API_BASE}/api/v1/strategy/scenarios/${encodeURIComponent(scenarioId)}/adopt${threadId ? `?thread_id=${encodeURIComponent(threadId)}` : ''}`,
   aiScenario:       (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/ai-scenario`,
   aiWbs:            (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/ai-wbs`,
+  scoreNext:        (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/score-next`,
   threadWbs:        (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/wbs`,
   threadWbsStartDate: (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/wbs/start-date`,
   workspaceChat:    (threadId, artifactId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/workspace-chat/${encodeURIComponent(artifactId)}`,
@@ -1329,6 +1330,10 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
   // Threads bundle
   getThreadBundle: async (threadId, { msg_limit = 50, scn_limit = 50 } = {}) =>
     getJSON(endpoints.threadBundle(threadId, msg_limit, scn_limit), { withSid: true }),
+
+  // Score exactly one queued idea; client loops this until { done: true }.
+  scoreNext: async (threadId) =>
+    postJSON(endpoints.scoreNext(threadId), {}, { withSid: true }),
 
   scorecardAssistant: async (threadId, payload = {}) =>
     postJSON(endpoints.scorecardAssistant(threadId), payload, { withSid: true }),

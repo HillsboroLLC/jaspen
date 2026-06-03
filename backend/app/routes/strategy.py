@@ -5517,6 +5517,101 @@ def create_ai_scenario(thread_id):
         return jsonify({'error': str(e)}), 500
 
 
+@strategy_bp.route('/threads/<thread_id>/score-next', methods=['POST'])
+@jwt_required()
+def score_next_queued(thread_id):
+    """Score exactly ONE queued idea for this thread and return it.
+
+    The client calls this in a loop until remaining == 0, so each request runs a
+    single (fast) scorecard generation — never a synchronous multi-card batch that
+    blows the gunicorn timeout. Reuses the same generate_scorecard path the agent
+    uses, so persistence + rubric behavior are identical. Fully generic across any
+    idea type; if the thread has a scoring rubric, each idea is scored against it.
+    """
+    try:
+        user_id = get_jwt_identity()
+        user = User.query.get(user_id)
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+
+        from .ai_agent import (
+            _execute_mutation_tool,
+            _artifact_chat_entry,
+            _resolve_user_session,
+        )
+
+        sessions = load_user_sessions(user_id) or {}
+        session_key, session = _resolve_user_session(sessions, thread_id)
+        if not isinstance(session, dict):
+            return jsonify({'error': 'Thread not found'}), 404
+
+        queue = [
+            q for q in (session.get('scorecard_queue') or [])
+            if isinstance(q, dict) and str(q.get('name') or '').strip()
+        ]
+        if not queue:
+            return jsonify({'done': True, 'remaining': 0, 'scorecard': None})
+
+        item = queue[0]
+        name = str(item.get('name') or '').strip()
+        description = str(item.get('description') or '').strip() or name
+
+        result = _execute_mutation_tool(
+            'generate_scorecard',
+            {'name': name, 'idea_description': description},
+            user=user,
+            user_id=user_id,
+            thread_id=thread_id,
+        )
+
+        # Reload AFTER generate_scorecard's own persist so we don't clobber it,
+        # then fold the scorecard artifact into chat_history (the durable home the
+        # bundle reads) and pop this idea from the queue.
+        sessions2 = load_user_sessions(user_id) or {}
+        _key2, session2 = _resolve_user_session(sessions2, thread_id)
+        if not isinstance(session2, dict):
+            session2, sessions2 = session, sessions
+
+        remaining_queue = [
+            q for q in (session2.get('scorecard_queue') or [])
+            if isinstance(q, dict) and str(q.get('name') or '').strip().lower() != name.lower()
+        ]
+        session2['scorecard_queue'] = remaining_queue
+
+        if not (isinstance(result, dict) and result.get('ok')):
+            # Don't loop forever on a bad item — it's already removed from the queue.
+            sessions2[session_key or thread_id] = session2
+            save_user_sessions(user_id, sessions2)
+            return jsonify({
+                'ok': False,
+                'error': (result or {}).get('error') or 'Failed to score idea.',
+                'name': name,
+                'remaining': len(remaining_queue),
+                'done': len(remaining_queue) == 0,
+            })
+
+        artifact = result.get('artifact') if isinstance(result.get('artifact'), dict) else None
+        entry = _artifact_chat_entry(artifact) if artifact else None
+        if entry:
+            chat_history = session2.get('chat_history') if isinstance(session2.get('chat_history'), list) else []
+            chat_history.append(entry)
+            session2['chat_history'] = chat_history
+        session2['timestamp'] = datetime.utcnow().isoformat()
+        sessions2[session_key or thread_id] = session2
+        save_user_sessions(user_id, sessions2)
+
+        return jsonify({
+            'ok': True,
+            'scorecard': result.get('scorecard'),
+            'name': name,
+            'remaining': len(remaining_queue),
+            'done': len(remaining_queue) == 0,
+        })
+    except Exception as e:
+        current_app.logger.exception("[score_next_queued] %s", e)
+        return jsonify({'error': str(e)}), 500
+
+
 @strategy_bp.route('/threads/<thread_id>/ai-wbs', methods=['POST'])
 @jwt_required()
 def generate_ai_wbs(thread_id):
@@ -6993,6 +7088,7 @@ def get_thread_bundle(thread_id):
                 'status': (session or {}).get('status') if isinstance(session, dict) else 'in_progress',
             },
             'messages': (session.get('chat_history') if isinstance(session, dict) and isinstance(session.get('chat_history'), list) else []),
+            'scorecard_queue': (session.get('scorecard_queue') if isinstance(session, dict) and isinstance(session.get('scorecard_queue'), list) else []),
             'baseline_scorecard': baseline,
             'current_scorecard': current_scorecard,
             'scorecard_snapshots': merged_snapshots,
