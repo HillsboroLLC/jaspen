@@ -1947,6 +1947,8 @@ const baselineRef = useRef(null);
   const autoScoringTriggeredRef = useRef(false);
   // Guards the queued-scorecard drain loop so only one runs at a time per client.
   const scoreDrainingRef = useRef(false);
+  // Visible progress while a one-pass batch scoring runs. { count } or null.
+  const [batchScoring, setBatchScoring] = useState(null);
 
   // Pull messages, latest analysis id, and saved scenarios from backend
 const refreshBundle = async (tid, { fallbackTid } = {}) => {
@@ -2127,7 +2129,7 @@ const refreshBundle = async (tid, { fallbackTid } = {}) => {
     // at a time (each is its own fast request, so no synchronous batch can time
     // out). The guard inside drainScoreQueue makes the recursive refresh safe.
     if (Array.isArray(bundle?.scorecard_queue) && bundle.scorecard_queue.length > 0 && !scoreDrainingRef.current) {
-      void drainScoreQueue(tid);
+      void drainScoreQueue(tid, bundle.scorecard_queue.length);
     }
   } catch (e) {
     showToast(e?.message || 'We could not refresh this thread right now.', 'error', {
@@ -2144,22 +2146,21 @@ const refreshBundle = async (tid, { fallbackTid } = {}) => {
 // Score every queued idea in ONE model pass (the 'build the Excel' path), then
 // refresh so all the cards render together. One request, one generation — no
 // per-card loop, no timeout.
-const drainScoreQueue = async (tid) => {
+const drainScoreQueue = async (tid, queuedCount = 0) => {
   if (!tid || scoreDrainingRef.current) return;
   scoreDrainingRef.current = true;
-  showToast('Scoring all options against your rubric…', 'success');
+  setBatchScoring({ count: queuedCount || 0 });
   try {
     const r = await Jaspen.scoreBatch(tid);
     const n = (r && typeof r.count === 'number') ? r.count : (Array.isArray(r?.scored) ? r.scored.length : 0);
-    if (n > 0) {
-      showToast(`Scored ${n} option${n === 1 ? '' : 's'} — building the comparison.`, 'success');
-    }
     await refreshBundle(tid);
+    if (n > 0) showToast(`Scored ${n} option${n === 1 ? '' : 's'}.`, 'success');
   } catch (err) {
     console.error('[scoreBatch]', err);
     showToast('Could not score the queued options — try again.', 'error');
   } finally {
     scoreDrainingRef.current = false;
+    setBatchScoring(null);
   }
 };
 
@@ -13500,6 +13501,21 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               ))}
             </div>
           )}
+
+          {batchScoring ? (
+            <div
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'center',
+                margin: '0 auto 10px', maxWidth: 720, padding: '10px 14px',
+                background: 'var(--color-surface-subtle, #f8fafc)',
+                border: '1px solid var(--color-border-default, #dbe3ee)',
+                borderRadius: 10, fontSize: '0.85rem', color: 'var(--color-text-secondary, #4b5563)',
+              }}
+            >
+              <span aria-hidden="true">⏳</span>
+              {`Scoring your ${batchScoring.count || ''} option${batchScoring.count === 1 ? '' : 's'} against your rubric — this takes ~30–60s. The scorecards will appear above as soon as they're ready.`}
+            </div>
+          ) : null}
 
           <div className="jas-chat-input-box">
             <textarea
