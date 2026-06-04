@@ -1708,12 +1708,48 @@ export default function JaspenWorkspace() {
               })}
             </div>
 
+            {/* Custom blocks — free-form sections the user (or agent) can add,
+                like adding an element in a deck/spreadsheet. Stored in
+                display_overrides.custom_blocks; editable / removable here. */}
+            {(() => {
+              const blocks = Array.isArray(overrides?.custom_blocks) ? overrides.custom_blocks : [];
+              const updateBlocks = (next) => setOverride('custom_blocks', next.length ? next : null);
+              return (
+                <div style={{ marginTop:20, display:'flex', flexDirection:'column', gap:14 }}>
+                  {blocks.map((blk, bi) => (
+                    <div key={blk?.id || bi} style={{ background:'#fff', border:'1px solid #e6eaf2', borderRadius:10, padding:'14px 16px', position:'relative' }}>
+                      <button
+                        onClick={() => updateBlocks(blocks.filter((_, i) => i !== bi))}
+                        title="Remove block"
+                        style={{ position:'absolute', top:8, right:10, border:'none', background:'transparent', color:'#94a3b8', cursor:'pointer', fontSize:18, lineHeight:1 }}
+                      >×</button>
+                      <EditableText
+                        value={blk?.heading || ''}
+                        onCommit={(v) => updateBlocks(blocks.map((b, i) => i === bi ? { ...b, heading: v } : b))}
+                        style={{ fontSize:11, fontWeight:600, color:'#64748b', letterSpacing:'0.06em', textTransform:'uppercase', marginBottom:8, display:'block' }}
+                      />
+                      <EditableText
+                        multiline
+                        value={blk?.body || ''}
+                        onCommit={(v) => updateBlocks(blocks.map((b, i) => i === bi ? { ...b, body: v } : b))}
+                        style={{ fontSize:13, color:'#334155', lineHeight:1.65, whiteSpace:'pre-line' }}
+                      />
+                    </div>
+                  ))}
+                  <button
+                    onClick={() => updateBlocks([...blocks, { id: `blk_${Date.now()}`, heading: 'New section', body: '' }])}
+                    style={{ alignSelf:'flex-start', border:'1px dashed #c7d2da', background:'#fff', color:'#475569', borderRadius:8, padding:'8px 14px', fontSize:13, cursor:'pointer', fontWeight:500 }}
+                  >+ Add block</button>
+                </div>
+              );
+            })()}
+
             {/* Footer hint */}
             <div style={{
               marginTop:32, paddingTop:18, borderTop:'1px solid #e6eaf2',
               fontSize:12, color:'#64748b',
             }}>
-              Click any heading, summary, risk, or scenario above to edit. Only the score and dimensions stay locked — use the chat to rescore those.
+              Click any heading, summary, risk, or scenario above to edit, or “+ Add block” to add your own section. Only the score and dimensions stay locked — use the chat to rescore those.
             </div>
           </div>
           )}
