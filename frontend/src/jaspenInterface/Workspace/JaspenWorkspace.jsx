@@ -214,6 +214,12 @@ export default function JaspenWorkspace() {
   const skipChatSaveRef = useRef(false);
   const chatSaveTimerRef = useRef(null);
   const chatScrollRef = useRef(null);
+  // Auto-grow the workspace composer as the user types (and reset after send).
+  const chatComposerRef = useRef(null);
+  useEffect(() => {
+    const el = chatComposerRef.current;
+    if (el) { el.style.height = 'auto'; el.style.height = `${Math.min(el.scrollHeight, 140)}px`; }
+  }, [chatInput]);
   const [chatBusy, setChatBusy] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const saveTimerRef = useRef(null);
@@ -1178,15 +1184,16 @@ export default function JaspenWorkspace() {
 
         {/* Chat input */}
         <div style={{ padding:'10px 12px 14px', borderTop:'1px solid #e6eaf2' }}>
-          <div style={{ display:'flex', alignItems:'center', gap:6, background:'#f7f8fa', borderRadius:10, padding:'8px 10px' }}>
-            <input
-              type="text"
+          <div style={{ display:'flex', alignItems:'flex-end', gap:6, background:'#f7f8fa', borderRadius:10, padding:'8px 10px' }}>
+            <textarea
+              ref={chatComposerRef}
+              rows={1}
               value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); } }}
               placeholder={chatBusy ? 'Jaspen is replying…' : 'Describe a change…'}
               disabled={chatBusy}
-              style={{ flex:1, border:'none', outline:'none', background:'transparent', fontSize:13, color:'#0f172a' }}
+              style={{ flex:1, border:'none', outline:'none', background:'transparent', fontSize:13, color:'#0f172a', resize:'none', maxHeight:140, overflowY:'auto', lineHeight:1.45, fontFamily:'inherit', padding:0 }}
             />
             <button
               onClick={sendChat}
