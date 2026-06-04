@@ -37,6 +37,7 @@ import { Jaspen, storage } from './JaspenClient';
 // Tab components
 import ScoreDashboard   from './ScoreDashboard';
 import TradeoffView     from './TradeoffView';
+import { computeTradeoffInsights } from './tradeoffInsights';
 import {
   COLOR as EXEC_COLOR,
   Eyebrow,
@@ -2971,29 +2972,15 @@ const renderInlineTradeoffArtifact = (data, opts = {}) => {
   const avg = total ? (ranked.reduce((s, x) => s + Number(x?.jaspen_score ?? x?.score ?? 0), 0) / total).toFixed(1) : '0';
   const wsHref = opts.threadId ? `/workspace/${encodeURIComponent(opts.threadId)}/__tradeoff__` : null;
 
-  // ── Insight computations from the dimension grid ──
-  const _dimsOf = (s) => (s?.dimensions && typeof s.dimensions === 'object') ? s.dimensions : {};
-  const _allDimKeys = ranked.length ? Object.keys(_dimsOf(ranked[0])) : [];
-  // Key differentiator = the criterion that spreads the options the most.
-  let keyDiff = null;
-  if (_allDimKeys.length && included.length > 1) {
-    let bestSpread = -1;
-    _allDimKeys.forEach((k) => {
-      const vals = included.map((s) => Number(_dimsOf(s)[k]?.score ?? 0));
-      const spread = Math.max(...vals) - Math.min(...vals);
-      if (spread > bestSpread) {
-        bestSpread = spread;
-        keyDiff = { label: _dimsOf(ranked[0])[k]?.label || k, spread: Math.round(spread) };
-      }
-    });
-  }
-  // Per-option: strongest and weakest criterion (the "wins on / loses on").
+  // Insights via the shared helper → identical content in card, sidebar, Workspace.
+  const _ti = computeTradeoffInsights(
+    included.map((s) => ({ name: s?.project_name || s?.name || s?.label || '', dimensions: s?.dimensions }))
+  );
+  const keyDiff = _ti.keyDifferentiator;
+  const _perOptByName = new Map(_ti.perOption.map((p) => [String(p.name).toLowerCase(), p]));
   const _winLose = (s) => {
-    const entries = Object.entries(_dimsOf(s)).map(([k, v]) => ({ label: v?.label || k, score: Number(v?.score ?? 0) }));
-    if (entries.length < 2) return null;
-    const best = entries.reduce((a, b) => (b.score > a.score ? b : a));
-    const worst = entries.reduce((a, b) => (b.score < a.score ? b : a));
-    return (best.label === worst.label) ? null : { best, worst };
+    const p = _perOptByName.get(String(s?.project_name || s?.name || s?.label || '').toLowerCase());
+    return (p && p.bestLabel && p.worstLabel) ? { best: { label: p.bestLabel }, worst: { label: p.worstLabel } } : null;
   };
 
   return (
@@ -14096,6 +14083,29 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                       Score an idea to start comparing. Ask Jaspen to model a change and it will suggest scoring a new one.
                     </p>
                   )}
+                  {(() => {
+                    const ti = computeTradeoffInsights(
+                      tradeoffEligibleScoredItems.map((it) => ({ name: it?.label, dimensions: it?.data?.dimensions }))
+                    );
+                    if (!ti.keyDifferentiator && !ti.perOption.some((p) => p.bestLabel)) return null;
+                    return (
+                      <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+                        <p className="jas-insights-tips-label" style={{ marginBottom: 8 }}>What separates them</p>
+                        {ti.keyDifferentiator && (
+                          <p style={{ fontSize: '0.73rem', color: 'var(--gray-700, #374151)', lineHeight: 1.45, marginBottom: 8 }}>
+                            <strong>{ti.keyDifferentiator.label}</strong> is the biggest differentiator — a {ti.keyDifferentiator.spread}-point spread.
+                          </p>
+                        )}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                          {ti.perOption.filter((p) => p.bestLabel).slice(0, 4).map((p, i) => (
+                            <p key={`tipo-${i}`} style={{ fontSize: '0.71rem', color: 'var(--gray-600, #4b5563)', lineHeight: 1.4, margin: 0 }}>
+                              <strong style={{ color: 'var(--gray-800, #1f2937)' }}>{p.name}</strong> — strongest on {p.bestLabel}, weakest on {p.worstLabel}
+                            </p>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {/* The trade-off builds and refreshes automatically as ideas
                       are scored — no manual trigger. Show a passive status note
                       instead of a button. */}

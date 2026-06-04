@@ -6,6 +6,7 @@ import React, { useState, useMemo, useRef, useCallback } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faEye, faEyeSlash, faDiagramProject, faSpinner, faUpRightFromSquare } from '@fortawesome/free-solid-svg-icons';
 import { Jaspen } from './JaspenClient';
+import { computeTradeoffInsights } from './tradeoffInsights';
 
 const NAVY   = '#161f3b';
 const ROSE   = '#a0036c';
@@ -552,6 +553,14 @@ const TradeoffView = ({
     return [...inc, ...exc];
   }, [effectiveSnapshots, dimDefs]);
 
+  // "What separates them" — same shared helper as the inline card + sidebar
+  // (card ↔ workspace parity: if it's on the visual, it's here too).
+  const tradeoffInsights = useMemo(() => computeTradeoffInsights(
+    (Array.isArray(effectiveSnapshots) ? effectiveSnapshots : [])
+      .filter((s) => s?.display_overrides?.tradeoff_included !== false)
+      .map((s) => ({ name: s?.project_name || s?.name || s?.label || '', dimensions: s?.dimensions }))
+  ), [effectiveSnapshots]);
+
   // Quadrant axes: default to the two highest-weighted criteria for a custom
   // rubric (y = highest, x = second). Otherwise keep Strategic fit vs Cost.
   const quadAxes = useMemo(() => {
@@ -623,6 +632,26 @@ const TradeoffView = ({
             <TradeoffQuadrant ideas={ideas} xDim={quadAxes.xDim} yDim={quadAxes.yDim} xLabel={quadAxes.xLabel} yLabel={quadAxes.yLabel} />
           </div>
         </div>
+
+        {(tradeoffInsights.keyDifferentiator || tradeoffInsights.perOption.some((p) => p.bestLabel)) && (
+          <div style={{ background:'#fff', border:`1px solid ${LINE}`, borderRadius:12, padding:'16px 20px' }}>
+            <div style={{ fontSize:10.5, fontWeight:600, letterSpacing:'0.06em', color:MUTED, textTransform:'uppercase', fontFamily:'JetBrains Mono,monospace', marginBottom:10 }}>
+              What separates them
+            </div>
+            {tradeoffInsights.keyDifferentiator && (
+              <div style={{ fontSize:13.5, color:NAVY, marginBottom:10 }}>
+                <strong>{tradeoffInsights.keyDifferentiator.label}</strong> is the biggest differentiator — a {tradeoffInsights.keyDifferentiator.spread}-point spread across these options.
+              </div>
+            )}
+            <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+              {tradeoffInsights.perOption.filter((p) => p.bestLabel).map((p, i) => (
+                <div key={`twl-${i}`} style={{ fontSize:12.5, color:MUTED, lineHeight:1.5 }}>
+                  <strong style={{ color:NAVY }}>{p.name}</strong> — strongest on {p.bestLabel}, weakest on {p.worstLabel}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Ranked table */}
         <div style={{ background:'#fff', border:`1px solid ${LINE}`, borderRadius:12, overflow:'hidden', flex:1, display:'flex', flexDirection:'column', minHeight:0 }}>
