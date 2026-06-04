@@ -19,6 +19,8 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 import { Jaspen } from './JaspenClient';
+import { authFetch } from '../../shared/auth/http';
+import { API_BASE } from '../../config/apiBase';
 import TradeoffView from './TradeoffView';
 import JaspenExecutionCanvas from './JaspenExecutionCanvas';
 
@@ -716,6 +718,31 @@ export default function JaspenWorkspace() {
 
   // Set or remove a single cosmetic override. Auto-save fires from the
   // useEffect above on the next tick (debounced).
+  // Download the current scorecard as Excel / Word via the backend exporter.
+  async function downloadExport(format, ext, label) {
+    try {
+      const url = `${API_BASE}/api/v1/export/threads/${encodeURIComponent(threadId)}/scorecard/${format}?scorecard_id=${encodeURIComponent(scorecardId)}`;
+      const res = await authFetch(url);
+      if (!res.ok) {
+        let msg = `${label} export failed.`;
+        try { const j = await res.json(); if (j?.error) msg = j.error; } catch { /* not json */ }
+        setSaveError(msg);
+        return;
+      }
+      const blob = await res.blob();
+      const cd = res.headers.get('Content-Disposition') || '';
+      const m = cd.match(/filename="?([^"]+)"?/);
+      const fname = (m && m[1]) || `scorecard.${ext}`;
+      const objUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objUrl; a.download = fname;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(objUrl), 1500);
+    } catch {
+      setSaveError(`${label} export failed.`);
+    }
+  }
+
   function setOverride(key, value) {
     setOverrides((prev) => {
       const next = { ...prev };
@@ -1326,6 +1353,28 @@ export default function JaspenWorkspace() {
               <FontAwesomeIcon icon={faDownload} style={{ marginRight:6 }} />
               Download PDF
             </button>
+            {isScorecard && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => downloadExport('xlsx', 'xlsx', 'Excel')}
+                  title="Download as Excel"
+                  style={{ padding:'8px 12px', borderRadius:8, border:'1px solid #d6dce6', background:'#fff', color:'#0f172a', cursor:'pointer', fontSize:13 }}
+                >
+                  <FontAwesomeIcon icon={faDownload} style={{ marginRight:6 }} />
+                  Excel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => downloadExport('docx', 'docx', 'Word')}
+                  title="Download as Word"
+                  style={{ padding:'8px 12px', borderRadius:8, border:'1px solid #d6dce6', background:'#fff', color:'#0f172a', cursor:'pointer', fontSize:13 }}
+                >
+                  <FontAwesomeIcon icon={faDownload} style={{ marginRight:6 }} />
+                  Word
+                </button>
+              </>
+            )}
             <button
               type="button"
               onClick={() => navigator.clipboard?.writeText(window.location.href)}

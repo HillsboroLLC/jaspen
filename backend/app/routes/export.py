@@ -20,6 +20,8 @@ export_bp = Blueprint("export", __name__)
 PPTX_MIMETYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 CSV_MIMETYPE = "text/csv; charset=utf-8"
 PDF_MIMETYPE = "application/pdf"
+XLSX_MIMETYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+DOCX_MIMETYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 MARKDOWN_MIMETYPE = "text/markdown; charset=utf-8"
 
 
@@ -73,6 +75,8 @@ def _require_export_plan(plan_key, export_type):
         "pdf": "PDF export",
         "pptx": "PowerPoint export",
         "csv": "WBS CSV export",
+        "xlsx": "Excel export",
+        "docx": "Word export",
     }.get(export_type, "Export")
     return (
         jsonify(
@@ -835,6 +839,202 @@ def _wbs_csv_bytes(project_wbs):
             }
         )
     return output.getvalue().encode("utf-8")
+
+
+def _scorecard_dim_keys(scorecard):
+    dims = scorecard.get("dimensions") if isinstance(scorecard.get("dimensions"), dict) else {}
+    rubric = scorecard.get("rubric") if isinstance(scorecard.get("rubric"), dict) else {}
+    ordered = [c.get("key") for c in (rubric.get("criteria") or []) if isinstance(c, dict) and c.get("key")]
+    keys = [k for k in ordered if k in dims] or list(dims.keys())
+    return dims, keys
+
+
+def _scorecard_risk_texts(scorecard):
+    risks = scorecard.get("top_risks") if isinstance(scorecard.get("top_risks"), list) else []
+    out = []
+    for r in risks:
+        t = r if isinstance(r, str) else (r.get("risk") or r.get("text") or "" if isinstance(r, dict) else "")
+        if str(t).strip():
+            out.append(str(t).strip())
+    return out
+
+
+def _xlsx_bytes(scorecard, *, org=None):
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    except Exception as exc:
+        raise RuntimeError("openpyxl is required for Excel export.") from exc
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Scorecard"
+    navy = "161F3B"
+    hdr_font = Font(bold=True, color="FFFFFF", size=11)
+    hdr_fill = PatternFill("solid", fgColor=navy)
+    thin = Side(style="thin", color="DBE3EE")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    wrap = Alignment(wrap_text=True, vertical="top")
+
+    name = scorecard.get("project_name") or "Untitled Idea"
+    ws["A1"] = name
+    ws["A1"].font = Font(bold=True, size=16, color=navy)
+    ws["A2"] = f"{(org.name if org else 'Personal Workspace')} · Generated {scorecard.get('updated_at') or _iso_now()}"
+    ws["A2"].font = Font(size=9, color="6B7280")
+    ws["A3"] = "Overall Score"
+    ws["A3"].font = Font(bold=True)
+    ws["B3"] = scorecard.get("jaspen_score")
+    ws["B3"].font = Font(bold=True, color="A0036C")
+    if scorecard.get("score_category"):
+        ws["C3"] = scorecard.get("score_category")
+
+    dims, keys = _scorecard_dim_keys(scorecard)
+    row = 5
+    for c, h in enumerate(["Criterion", "Score (0-100)", "Confidence", "Rationale"], start=1):
+        cell = ws.cell(row=row, column=c, value=h)
+        cell.font = hdr_font
+        cell.fill = hdr_fill
+        cell.border = border
+    row += 1
+    for k in keys:
+        d = dims.get(k) if isinstance(dims.get(k), dict) else {}
+        ws.cell(row=row, column=1, value=d.get("label") or k).border = border
+        ws.cell(row=row, column=2, value=d.get("score")).border = border
+        ws.cell(row=row, column=3, value=str(d.get("confidence") or "")).border = border
+        rc = ws.cell(row=row, column=4, value=str(d.get("rationale") or ""))
+        rc.border = border
+        rc.alignment = wrap
+        row += 1
+
+    if scorecard.get("executive_summary"):
+        row += 1
+        ws.cell(row=row, column=1, value="Executive Summary").font = Font(bold=True, color=navy)
+        row += 1
+        ws.cell(row=row, column=1, value=str(scorecard.get("executive_summary"))).alignment = wrap
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=4)
+        row += 2
+
+    risk_texts = _scorecard_risk_texts(scorecard)
+    if risk_texts:
+        ws.cell(row=row, column=1, value="Top Risks").font = Font(bold=True, color=navy)
+        row += 1
+        for t in risk_texts:
+            ws.cell(row=row, column=1, value=f"• {t}").alignment = wrap
+            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=4)
+            row += 1
+
+    for col, width in {"A": 28, "B": 14, "C": 14, "D": 64}.items():
+        ws.column_dimensions[col].width = width
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _docx_bytes(scorecard, *, org=None):
+    try:
+        from docx import Document
+        from docx.shared import Pt, RGBColor
+    except Exception as exc:
+        raise RuntimeError("python-docx is required for Word export.") from exc
+
+    doc = Document()
+    magenta = RGBColor(0xA0, 0x03, 0x6C)
+    name = scorecard.get("project_name") or "Untitled Idea"
+    doc.add_heading(name, level=0)
+    sub = doc.add_paragraph(f"{(org.name if org else 'Personal Workspace')} · Generated {scorecard.get('updated_at') or _iso_now()}")
+    if sub.runs:
+        sub.runs[0].font.size = Pt(9)
+        sub.runs[0].font.color.rgb = RGBColor(0x6B, 0x72, 0x80)
+
+    p = doc.add_paragraph()
+    r = p.add_run(f"Overall Score: {_display_value(scorecard.get('jaspen_score'))}")
+    r.bold = True
+    r.font.size = Pt(14)
+    r.font.color.rgb = magenta
+    if scorecard.get("score_category"):
+        p.add_run(f"  ({scorecard.get('score_category')})")
+
+    if scorecard.get("executive_summary"):
+        doc.add_heading("Executive Summary", level=1)
+        doc.add_paragraph(str(scorecard.get("executive_summary")))
+
+    dims, keys = _scorecard_dim_keys(scorecard)
+    if keys:
+        doc.add_heading("Scoring", level=1)
+        table = doc.add_table(rows=1, cols=3)
+        try:
+            table.style = "Light Grid Accent 1"
+        except Exception:
+            pass
+        hdr = table.rows[0].cells
+        hdr[0].text, hdr[1].text, hdr[2].text = "Criterion", "Score", "Rationale"
+        for k in keys:
+            d = dims.get(k) if isinstance(dims.get(k), dict) else {}
+            cells = table.add_row().cells
+            cells[0].text = str(d.get("label") or k)
+            cells[1].text = "" if d.get("score") is None else str(d.get("score"))
+            cells[2].text = str(d.get("rationale") or "")
+
+    risk_texts = _scorecard_risk_texts(scorecard)
+    if risk_texts:
+        doc.add_heading("Top Risks", level=1)
+        for t in risk_texts:
+            doc.add_paragraph(t, style="List Bullet")
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+@export_bp.route("/threads/<thread_id>/scorecard/xlsx", methods=["GET"])
+@jwt_required()
+def export_scorecard_xlsx(thread_id):
+    user = User.query.filter_by(id=str(get_jwt_identity())).first()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    sessions = load_user_sessions(user.id) or {}
+    session = _resolve_thread_session(sessions, thread_id)
+    if not isinstance(session, dict):
+        return jsonify({"error": "Thread not found"}), 404
+    plan_key, org, _membership = _resolve_export_context(user, session)
+    access_error = _require_export_plan(plan_key, "xlsx")
+    if access_error:
+        return access_error
+    scorecard, error_response = _scorecard_record_for_export(session, thread_id, scorecard_id=request.args.get("scorecard_id"))
+    if error_response:
+        return error_response
+    try:
+        payload = _xlsx_bytes(scorecard, org=org)
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc), "code": "xlsx_dependency_missing"}), 503
+    filename = f"{_safe_filename_base(scorecard.get('project_name'))}-scorecard.xlsx"
+    return _send_bytes(payload, filename=filename, mimetype=XLSX_MIMETYPE)
+
+
+@export_bp.route("/threads/<thread_id>/scorecard/docx", methods=["GET"])
+@jwt_required()
+def export_scorecard_docx(thread_id):
+    user = User.query.filter_by(id=str(get_jwt_identity())).first()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    sessions = load_user_sessions(user.id) or {}
+    session = _resolve_thread_session(sessions, thread_id)
+    if not isinstance(session, dict):
+        return jsonify({"error": "Thread not found"}), 404
+    plan_key, org, _membership = _resolve_export_context(user, session)
+    access_error = _require_export_plan(plan_key, "docx")
+    if access_error:
+        return access_error
+    scorecard, error_response = _scorecard_record_for_export(session, thread_id, scorecard_id=request.args.get("scorecard_id"))
+    if error_response:
+        return error_response
+    try:
+        payload = _docx_bytes(scorecard, org=org)
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc), "code": "docx_dependency_missing"}), 503
+    filename = f"{_safe_filename_base(scorecard.get('project_name'))}-scorecard.docx"
+    return _send_bytes(payload, filename=filename, mimetype=DOCX_MIMETYPE)
 
 
 @export_bp.route("/threads/<thread_id>/scorecard/pdf", methods=["GET"])
