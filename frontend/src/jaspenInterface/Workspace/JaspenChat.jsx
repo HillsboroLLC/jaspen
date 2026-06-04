@@ -2943,8 +2943,24 @@ const renderScorecardCard = (result, opts = {}) => {
 // Compact summary card for the chat thread. Shows top 3 ranked ideas + a
 // session-avg figure. Full table + quadrant lives in Workspace.
 const renderInlineTradeoffArtifact = (data, opts = {}) => {
-  const snaps = Array.isArray(data?.snapshots) ? data.snapshots : [];
-  if (snaps.length === 0) return null;
+  const rawSnaps = Array.isArray(data?.snapshots) ? data.snapshots : [];
+  if (rawSnaps.length === 0) return null;
+  // Backfill per-criterion dimensions from the live scorecard snapshots when the
+  // trade-off artifact stored a trimmed copy (older sessions) — so the "What
+  // separates them" insights below always have data to compute from.
+  const allSnaps = Array.isArray(opts.allSnapshots) ? opts.allSnapshots : [];
+  const findFull = (s) => {
+    const id = String(s?.id || s?.analysis_id || '').trim();
+    const nm = String(s?.project_name || s?.name || s?.label || '').trim().toLowerCase();
+    return (id && allSnaps.find((x) => String(x?.id || x?.analysis_id || '').trim() === id))
+        || (nm && allSnaps.find((x) => String(x?.project_name || x?.name || x?.label || '').trim().toLowerCase() === nm))
+        || null;
+  };
+  const snaps = rawSnaps.map((s) => {
+    if (s?.dimensions && typeof s.dimensions === 'object' && Object.keys(s.dimensions).length) return s;
+    const full = findFull(s);
+    return (full?.dimensions) ? { ...s, dimensions: full.dimensions } : s;
+  });
   // Only count snapshots where tradeoff_included !== false
   const included = snaps.filter((s) => s?.display_overrides?.tradeoff_included !== false);
   const ranked = [...included].sort(
@@ -11857,6 +11873,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
     renderMessage={(m) => renderConversationMessage(m, {
       autoVersionGenerating,
       threadId: sessionId || currentSessionId,
+      allSnapshots: scorecardSnapshots,
       messages,
       onBuildExecutionPlan: (cid) => void handleGenerateAiWbsFromScorecard({ threadBundleId: sessionId || currentSessionId, scorecardId: cid }),
       onRegenerateExecutionPlan: (cid) => void handleGenerateAiWbsFromScorecard({ threadBundleId: sessionId || currentSessionId, scorecardId: cid, force: true }),
@@ -13510,6 +13527,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
 	                  <div className="jas-message-bubble">{renderConversationMessage(m, {
                     autoVersionGenerating,
                     threadId: sessionId || currentSessionId,
+                    allSnapshots: scorecardSnapshots,
                     messages,
                     onBuildExecutionPlan: (cid) => void handleGenerateAiWbsFromScorecard({ threadBundleId: sessionId || currentSessionId, scorecardId: cid }),
                     onRegenerateExecutionPlan: (cid) => void handleGenerateAiWbsFromScorecard({ threadBundleId: sessionId || currentSessionId, scorecardId: cid, force: true }),
