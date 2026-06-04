@@ -14064,17 +14064,36 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                       const displayLabel = snap?.label && !isBaselineLikeLabel(snap.label)
                         ? snap.label
                         : `Scorecard ${i + 1}`;
+                      // Drill-in: click a score → see THAT idea's specific insight.
+                      const rid = String(snap?.id || snap?.data?.id || snap?.data?.analysis_id || '').trim();
+                      const isSel = Boolean(rid && rid === String(effectiveSelectedScorecardId || '').trim());
+                      const dimEntries = (snap?.data?.dimensions && typeof snap.data.dimensions === 'object')
+                        ? Object.values(snap.data.dimensions).map((v) => ({ label: v?.label || '', score: Number(v?.score ?? 0) })).filter((e) => e.label)
+                        : [];
+                      const best = dimEntries.length >= 2 ? dimEntries.reduce((a, b) => (b.score > a.score ? b : a)) : null;
+                      const worst = dimEntries.length >= 2 ? dimEntries.reduce((a, b) => (b.score < a.score ? b : a)) : null;
                       return (
-                        <div key={snap?.id || i} className="jas-insights-scenario-row">
-                          <span className="jas-insights-scenario-label">{displayLabel}</span>
-                          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <span className="jas-insights-scenario-score">{s ?? '—'}<span style={{ fontWeight: 400, color: 'var(--gray-400)' }}>/100</span></span>
-                            {delta !== null && (
-                              <span style={{ fontSize: '0.68rem', fontWeight: 600, color: deltaColor }}>
-                                {delta > 0 ? `+${delta}` : delta}
-                              </span>
-                            )}
-                          </span>
+                        <div key={snap?.id || i}>
+                          <div
+                            className={`jas-insights-scenario-row${isSel ? ' is-selected' : ''}`}
+                            onClick={() => { if (rid) setSelectedScorecardId(rid); }}
+                            style={{ cursor: rid ? 'pointer' : 'default' }}
+                          >
+                            <span className="jas-insights-scenario-label">{displayLabel}</span>
+                            <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <span className="jas-insights-scenario-score">{s ?? '—'}<span style={{ fontWeight: 400, color: 'var(--gray-400)' }}>/100</span></span>
+                              {delta !== null && (
+                                <span style={{ fontSize: '0.68rem', fontWeight: 600, color: deltaColor }}>
+                                  {delta > 0 ? `+${delta}` : delta}
+                                </span>
+                              )}
+                            </span>
+                          </div>
+                          {isSel && best && worst && best.label !== worst.label && (
+                            <p style={{ fontSize: '0.69rem', color: 'var(--gray-600, #4b5563)', lineHeight: 1.4, margin: '2px 0 6px 4px' }}>
+                              Strongest on {best.label}, weakest on {worst.label}.
+                            </p>
+                          )}
                         </div>
                       );
                     });
