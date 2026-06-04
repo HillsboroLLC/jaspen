@@ -5,15 +5,25 @@
 > ranked trade-off render live, with connectors + disclaimer present. Backup/restore
 > point: branch `backup/pre-studio-20260603`, tag `pre-studio-baseline`.
 
-## A. Quick polish (start here next session)
-1. **Richer trade-off insights** (the data already exists, just not rendered):
-   surface in the trade-off view → the portfolio recommendation (commit/develop/
-   monitor sequence), the **key differentiator** (which criterion separates the
-   winner), and a one-line "wins on X / loses on Y" per option.
-   Source: `score-batch` already returns `portfolio_summary`; each card has
-   `tier`, `key_insights`, `key_considerations`. Wire into TradeoffView.
-2. **Verify the "LinkedIn Ads" label fix** post-deploy (top idea was showing as
-   "Scorecard" — patched in 1016022; confirm it sticks).
+## A. Insights placement + lifecycle (start here next session)
+> CORRECTION from review: the "What separates them" block was added to the inline
+> trade-off CARD (works — key differentiator + per-option strongest/weakest). But:
+1. **Trade-off insights belong in the RIGHT SIDE PANEL** (Jaspen Insights), not just
+   the card. Surface there: key differentiator, per-option wins/losses, and the
+   portfolio recommendation (`score-batch` already returns `portfolio_summary`).
+2. **PRINCIPLE — card ↔ workspace parity:** anything shown on an artifact's visual
+   MUST also appear in that artifact's Workspace view. "What separates them" is on
+   the chat card but missing from `TradeoffView` (the Workspace trade-off) — fix
+   that, and treat parity as a rule for all artifacts going forward.
+3. **Side-panel lifecycle — anchored, not infinite:** the insights sidebar shows
+   *evolving* insights as the user interacts with the chat; they stay accessible
+   from that point forward, but **freeze/anchor once the user moves on** — an old
+   idea's insights must not keep mutating indefinitely. Design: snapshot the
+   insight set per interaction moment; show the live one while active, keep prior
+   ones as accessible (frozen) history.
+- DONE: "LinkedIn Ads"/baseline label fix (1016022) — verified.
+- DONE (card only): inline trade-off "What separates them" (fb9079a) + dimension
+  backfill for old sessions (f345c1c). Re-home to sidebar + add to Workspace.
 
 ## B. Core capabilities the vision needs
 3. **Uploads** — score ideas from Word / PowerPoint / Excel files (parse the doc
