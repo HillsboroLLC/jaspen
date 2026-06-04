@@ -56,6 +56,10 @@
 14. Keep sanity-checking scores across more domains (held up well so far).
 15. Confirm the progress banner + live-render behave on slower/longer batches.
 
+> RESTORE POINTS: `backup-20260604-1955` (tag) / `backup/20260604-1955` (branch) @ f1e9ace
+> — taken after B1+B2 upload/agent-batch fixes. Earlier: `pre-studio-baseline` tag.
+> Dead-code removal (/studio etc.) deferred to its own backup→remove→test→restore session.
+
 ## 🔴 BUGS FOUND IN 6/4 PM TEST (triage first — diagnosed, not yet fixed)
 > Root finding: there is ONE codebase / ONE deploy. The "two experiences" were the
 > SAME code taking two different agent paths, not an old vs new version.
