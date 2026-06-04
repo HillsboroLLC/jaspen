@@ -60,3 +60,12 @@
 - `ARCHITECTURE_VISION.md` — the target model + principles.
 - `STUDIO_BUILD_PLAN.md` — the compartmentalized build plan + decisions.
 - `LEGACY_REMOVAL_LIST.md` — what to retire once the new path is proven.
+
+## Exports — re-activation backlog (currently MVP: PDF + Word only)
+- **PowerPoint (.pptx):** condense the scorecard to **1–2 slides** (currently spreads
+  too far), then re-enable in the Download/Share menu (remove `disabled` flag in
+  JaspenWorkspace.jsx).
+- **Excel (.xlsx):** polish the grid (ideally the full trade-off comparison grid, the
+  user's native format) + verify openpyxl deployed, then re-enable.
+- **True sharing:** "Copy link" copies an access-gated URL today. Build real public/
+  shared links (view without login) later.
