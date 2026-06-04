@@ -56,6 +56,32 @@
 14. Keep sanity-checking scores across more domains (held up well so far).
 15. Confirm the progress banner + live-render behave on slower/longer batches.
 
+## 🔴 BUGS FOUND IN 6/4 PM TEST (triage first — diagnosed, not yet fixed)
+> Root finding: there is ONE codebase / ONE deploy. The "two experiences" were the
+> SAME code taking two different agent paths, not an old vs new version.
+B1. **Agent reliability — falls into the single-card generic fallback.** When the user
+    gives multiple options (+ criteria), the agent should ALWAYS `set_scoring_rubric`
+    then `queue_scorecards` (batch). Sometimes it skips both and calls
+    `generate_scorecard` on ONE idea, which hits the built-in default 6-dim rubric
+    (Strategic Fit / Cost Efficiency / Time-to-value / Execution Risk / Market
+    Opportunity / Evidence Quality + Recommended Scenario — `strategy.py:2492`). That
+    default is a legit fallback, but the agent shouldn't land there for a multi-option
+    request. Fix = strengthen the prompt / add a guard so multi-idea always batches;
+    consider auto-proposing a rubric instead of silently using the default.
+B2. **Uploads mis-routed by file type.** `JaspenChat.jsx:845 isChatAttachmentFile` only
+    treats image/PDF/Word as chat attachments. Excel/CSV/PPTX/txt go to the SEPARATE
+    `analyzeUploadedFiles` path and are NEVER attached to the agent convo → agent says
+    "I don't see a file" + returns an unrelated analysis. Fix = route all supported
+    types to the agent (or at minimum hand the agent the extracted text + a clear note
+    of what was uploaded). Also surface which path a file took in the UI.
+B3. **Attachments are per-message only.** Once the user sends a follow-up without
+    re-attaching, the model no longer has the file (no persisted attachment in the
+    replayed history). Decide: persist last upload's extracted text into thread context
+    so follow-ups can reference it.
+B4. **Workspace page won't scroll.** Canvas scrolls (`JaspenWorkspace.jsx:1408`) but the
+    stacked-ideas block is a short fixed-height box — only the inner box scrolls, page
+    can't reveal more. Fix the nested overflow/height so the whole page scrolls.
+
 ## NEXT SESSION — LB's punch list (2026-06-04, do these first)
 > Connectors confirmed still working — nothing was deleted; the scoring rework tied
 > into the existing bones, so uploads/connectors are intact. Verify, don't rebuild.
