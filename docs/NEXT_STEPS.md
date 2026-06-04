@@ -59,7 +59,14 @@
 ## 🔴 BUGS FOUND IN 6/4 PM TEST (triage first — diagnosed, not yet fixed)
 > Root finding: there is ONE codebase / ONE deploy. The "two experiences" were the
 > SAME code taking two different agent paths, not an old vs new version.
-B1. **Agent reliability — falls into the single-card generic fallback.** When the user
+B1. ✅ FIXED (36bcd81, NEEDS DO DEPLOY) — added a HARD RULE to the agent prompt:
+    multi-option requests must always queue_scorecards (batch) + set_scoring_rubric
+    first when the user gave criteria; never drop to a single generic-rubric card.
+B2. ✅ FIXED (36bcd81, frontend/Vercel) — data files (Excel/CSV/etc.) are now read
+    BEFORE the message sends and folded into the agent's context, so the agent sees
+    the file instead of replying "I don't see a file" with a disconnected analysis.
+    NOTE: image/PDF/Word still go through the native attachment path (unchanged).
+~~B1 (original).~~ **Agent reliability — falls into the single-card generic fallback.** When the user
     gives multiple options (+ criteria), the agent should ALWAYS `set_scoring_rubric`
     then `queue_scorecards` (batch). Sometimes it skips both and calls
     `generate_scorecard` on ONE idea, which hits the built-in default 6-dim rubric
