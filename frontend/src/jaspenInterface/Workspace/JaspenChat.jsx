@@ -8937,8 +8937,22 @@ const handleSaveStarter = async () => {
       const labels = erroredSources.map((id) => connectedDataSources.find((item) => item.id === id)?.label || id).join(', ');
       showToast(`${labels} data could not be loaded — sending without that context.`, 'warning');
     }
-    const contextPrefix = activeContextParts.length > 0
-      ? `${activeContextParts.join('\n\n')}\n\n---\n\n`
+    // B2 fix: read any data files (Excel/CSV/etc.) BEFORE sending and fold their
+    // insight into the message context, so the agent actually receives the file
+    // content instead of replying "I don't see a file" and getting a disconnected
+    // analysis afterward.
+    let dataInsightEvents = [];
+    const dataContextParts = [];
+    if (analysisFiles.length > 0) {
+      showToast(`Reading ${analysisFiles.length} file${analysisFiles.length === 1 ? '' : 's'}…`, 'info');
+      const dataRes = await gatherDataFileInsights(analysisFiles, sessionId || currentSessionId || null, text);
+      dataInsightEvents = dataRes.events;
+      dataContextParts.push(...dataRes.parts);
+    }
+
+    const mergedContextParts = [...dataContextParts, ...activeContextParts];
+    const contextPrefix = mergedContextParts.length > 0
+      ? `${mergedContextParts.join('\n\n')}\n\n---\n\n`
       : '';
 
     const displayMessageText = (text || '').trim() || (
@@ -8977,8 +8991,21 @@ const handleSaveStarter = async () => {
       resolvedThreadId = await continueConversation(placeholder, { attachments: sendAttachments });
     }
 
-    if (analysisFiles.length > 0) {
-      await analyzeUploadedFiles(analysisFiles, resolvedThreadId, text);
+    // Data files were already read pre-send (B2 fix above) and folded into the agent
+    // message; just mirror those insights into the analysis panel — no second pass.
+    if (dataInsightEvents.length > 0 && analysisResult) {
+      setAnalysisResult((prev) => ({
+        ...(prev || {}),
+        ai_insights: [
+          ...(Array.isArray(prev?.ai_insights) ? prev.ai_insights : []),
+          ...dataInsightEvents.map((evt) => ({
+            file_name: evt.fileName,
+            summary: evt.summary,
+            insight: evt.insight,
+            timestamp: new Date().toISOString(),
+          })),
+        ].slice(-10),
+      }));
     }
   }
 
@@ -9187,6 +9214,33 @@ const handleSaveStarter = async () => {
         }));
       }
     }
+  }
+
+  // B2 fix: analyze data files (Excel/CSV/etc.) and RETURN their insight text so the
+  // caller can fold it into the agent message as context BEFORE sending. This is the
+  // side-effect-free counterpart to analyzeUploadedFiles — no chat message is appended
+  // here, so the file content reaches the agent instead of arriving disconnected after
+  // the agent has already replied "I don't see a file."
+  async function gatherDataFileInsights(filesToAnalyze, threadForInsights, promptText = '') {
+    const validFiles = (Array.isArray(filesToAnalyze) ? filesToAnalyze : []).filter((f) => f?.file);
+    if (validFiles.length === 0) return { parts: [], events: [] };
+    const events = [];
+    for (const item of validFiles) {
+      try {
+        const resp = await Jaspen.analyzeDataFile({
+          file: item.file,
+          thread_id: threadForInsights || undefined,
+          prompt: promptText || undefined,
+        });
+        const summary = String(resp?.insight?.insight_text || '').trim();
+        if (summary) events.push({ fileName: item.name, summary, insight: resp?.insight || null });
+      } catch (err) {
+        console.error('[gatherDataFileInsights] failed', err);
+        showToast(`Failed to read ${item.name}`, 'error');
+      }
+    }
+    const parts = events.map((evt) => `[${evt.fileName} data]\n${evt.summary}`);
+    return { parts, events };
   }
 
   // === AI Assistant Handlers ===
