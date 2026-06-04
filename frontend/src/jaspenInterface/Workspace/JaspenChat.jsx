@@ -2954,6 +2954,32 @@ const renderInlineTradeoffArtifact = (data, opts = {}) => {
   const total = included.length;
   const avg = total ? (ranked.reduce((s, x) => s + Number(x?.jaspen_score ?? x?.score ?? 0), 0) / total).toFixed(1) : '0';
   const wsHref = opts.threadId ? `/workspace/${encodeURIComponent(opts.threadId)}/__tradeoff__` : null;
+
+  // ── Insight computations from the dimension grid ──
+  const _dimsOf = (s) => (s?.dimensions && typeof s.dimensions === 'object') ? s.dimensions : {};
+  const _allDimKeys = ranked.length ? Object.keys(_dimsOf(ranked[0])) : [];
+  // Key differentiator = the criterion that spreads the options the most.
+  let keyDiff = null;
+  if (_allDimKeys.length && included.length > 1) {
+    let bestSpread = -1;
+    _allDimKeys.forEach((k) => {
+      const vals = included.map((s) => Number(_dimsOf(s)[k]?.score ?? 0));
+      const spread = Math.max(...vals) - Math.min(...vals);
+      if (spread > bestSpread) {
+        bestSpread = spread;
+        keyDiff = { label: _dimsOf(ranked[0])[k]?.label || k, spread: Math.round(spread) };
+      }
+    });
+  }
+  // Per-option: strongest and weakest criterion (the "wins on / loses on").
+  const _winLose = (s) => {
+    const entries = Object.entries(_dimsOf(s)).map(([k, v]) => ({ label: v?.label || k, score: Number(v?.score ?? 0) }));
+    if (entries.length < 2) return null;
+    const best = entries.reduce((a, b) => (b.score > a.score ? b : a));
+    const worst = entries.reduce((a, b) => (b.score < a.score ? b : a));
+    return (best.label === worst.label) ? null : { best, worst };
+  };
+
   return (
     <div style={{
       background: '#fff', border: '1px solid #e9ecef', borderRadius: 14,
@@ -3009,6 +3035,31 @@ const renderInlineTradeoffArtifact = (data, opts = {}) => {
       {total > 3 && (
         <div style={{ fontSize: 11.5, color: '#8a93ad', marginTop: 8, fontFamily: 'JetBrains Mono, monospace' }}>
           + {total - 3} more in Workspace
+        </div>
+      )}
+
+      {(keyDiff || top3.some((s) => _winLose(s))) && (
+        <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid #f1f3f5' }}>
+          <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 10.5, color: '#a0036c', letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 600, marginBottom: 8 }}>
+            What separates them
+          </div>
+          {keyDiff && (
+            <div style={{ fontSize: 12.5, color: '#161f3b', marginBottom: 10 }}>
+              <strong>{keyDiff.label}</strong> is the biggest differentiator — a {keyDiff.spread}-point spread across these options.
+            </div>
+          )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            {top3.map((s, i) => {
+              const wl = _winLose(s);
+              if (!wl) return null;
+              const name = s?.project_name || s?.name || s?.label || `Idea ${i + 1}`;
+              return (
+                <div key={`wl-${s?.id || i}`} style={{ fontSize: 12, color: '#5a6585', lineHeight: 1.5 }}>
+                  <strong style={{ color: '#161f3b' }}>{name}</strong> — strongest on {wl.best.label}, weakest on {wl.worst.label}
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>
