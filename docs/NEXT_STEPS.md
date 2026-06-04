@@ -73,6 +73,10 @@
 6. **Unify "Back to Jaspen" link across ALL pages** — adopt the workspace-page version
    of the "Back to Jaspen" link on every non-primary-interface page, and REMOVE any
    other back-to-Jaspen buttons/links so there's exactly one consistent control.
+7. **Primary objective tags actually work** — LB can't tell from the UI if they do.
+   Claude must TRACE end-to-end: where the primary objective is set, whether it's
+   persisted, whether it's passed into scoring/the rubric, and whether it visibly
+   affects the scorecard output. Investigate (not just visually verify) + fix.
 
 ## Reference docs
 - `ARCHITECTURE_VISION.md` — the target model + principles.
