@@ -207,6 +207,8 @@ export default function JaspenWorkspace() {
   const [saveError, setSaveError] = useState(null);
   const [error, setError] = useState(null);
   const [chatInput, setChatInput] = useState('');
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
   // Per-artifact storage key. The chat is seeded synchronously from localStorage
   // on first render (no empty flash) and re-loaded whenever the artifact key
   // changes (e.g. navigating scorecard → execution in the same mounted view).
@@ -740,6 +742,16 @@ export default function JaspenWorkspace() {
       setTimeout(() => URL.revokeObjectURL(objUrl), 1500);
     } catch {
       setSaveError(`${label} export failed.`);
+    }
+  }
+
+  async function copyShareLink() {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 1800);
+    } catch {
+      setSaveError('Could not copy the link.');
     }
   }
 
@@ -1345,44 +1357,46 @@ export default function JaspenWorkspace() {
                 {buildingPlan ? 'Building…' : 'Build Execution Plan'}
               </button>
             )}
-            <button
-              type="button"
-              onClick={() => window.print()}
-              style={{ padding:'8px 12px', borderRadius:8, border:'1px solid #d6dce6', background:'#fff', color:'#0f172a', cursor:'pointer', fontSize:13 }}
-            >
-              <FontAwesomeIcon icon={faDownload} style={{ marginRight:6 }} />
-              Download PDF
-            </button>
-            {isScorecard && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => downloadExport('xlsx', 'xlsx', 'Excel')}
-                  title="Download as Excel"
-                  style={{ padding:'8px 12px', borderRadius:8, border:'1px solid #d6dce6', background:'#fff', color:'#0f172a', cursor:'pointer', fontSize:13 }}
-                >
-                  <FontAwesomeIcon icon={faDownload} style={{ marginRight:6 }} />
-                  Excel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => downloadExport('docx', 'docx', 'Word')}
-                  title="Download as Word"
-                  style={{ padding:'8px 12px', borderRadius:8, border:'1px solid #d6dce6', background:'#fff', color:'#0f172a', cursor:'pointer', fontSize:13 }}
-                >
-                  <FontAwesomeIcon icon={faDownload} style={{ marginRight:6 }} />
-                  Word
-                </button>
-              </>
-            )}
-            <button
-              type="button"
-              onClick={() => navigator.clipboard?.writeText(window.location.href)}
-              style={{ padding:'8px 12px', borderRadius:8, border:'none', background:'#0f172a', color:'#fff', cursor:'pointer', fontSize:13 }}
-            >
-              <FontAwesomeIcon icon={faShare} style={{ marginRight:6 }} />
-              Share
-            </button>
+            <div style={{ position:'relative' }}>
+              <button
+                type="button"
+                onClick={() => setExportMenuOpen((o) => !o)}
+                style={{ padding:'8px 14px', borderRadius:8, border:'none', background:'#0f172a', color:'#fff', cursor:'pointer', fontSize:13, fontWeight:500, display:'flex', alignItems:'center', gap:6 }}
+              >
+                <FontAwesomeIcon icon={faDownload} />
+                Download / Share
+                <span style={{ fontSize:10, opacity:0.8 }}>▾</span>
+              </button>
+              {exportMenuOpen && (
+                <>
+                  <div onClick={() => setExportMenuOpen(false)} style={{ position:'fixed', inset:0, zIndex:40 }} />
+                  <div style={{ position:'absolute', top:'calc(100% + 6px)', right:0, zIndex:41, background:'#fff', border:'1px solid #e6eaf2', borderRadius:10, boxShadow:'0 8px 24px rgba(22,31,59,0.12)', minWidth:210, padding:6, display:'flex', flexDirection:'column' }}>
+                    {[
+                      ...(isScorecard ? [
+                        { label:'Download PDF', act:() => downloadExport('pdf','pdf','PDF') },
+                        { label:'Download Excel', act:() => downloadExport('xlsx','xlsx','Excel') },
+                        { label:'Download Word', act:() => downloadExport('docx','docx','Word') },
+                        { label:'Download PowerPoint', act:() => downloadExport('pptx','pptx','PowerPoint') },
+                      ] : []),
+                      { label: linkCopied ? 'Link copied ✓' : 'Copy link', act: copyShareLink, keepOpen:true, divider:true },
+                    ].map((it, i) => (
+                      <React.Fragment key={i}>
+                        {it.divider && isScorecard && <div style={{ height:1, background:'#eef1f6', margin:'4px 2px' }} />}
+                        <button
+                          type="button"
+                          onClick={() => { it.act(); if (!it.keepOpen) setExportMenuOpen(false); }}
+                          style={{ textAlign:'left', padding:'8px 10px', border:'none', background:'transparent', color: it.label.includes('copied') ? '#0d7a3e' : '#0f172a', cursor:'pointer', fontSize:13, borderRadius:6 }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = '#f5f7fa'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                        >
+                          {it.label}
+                        </button>
+                      </React.Fragment>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         </div>
 
