@@ -56,6 +56,24 @@
 14. Keep sanity-checking scores across more domains (held up well so far).
 15. Confirm the progress banner + live-render behave on slower/longer batches.
 
+## NEXT SESSION — LB's punch list (2026-06-04, do these first)
+> Connectors confirmed still working — nothing was deleted; the scoring rework tied
+> into the existing bones, so uploads/connectors are intact. Verify, don't rebuild.
+1. **Agent add block** — let the AI add scorecard sections via chat (mirror the
+   user-facing "+ Add block" in JaspenWorkspace.jsx; agent writes to `custom_blocks`).
+2. **Workspace chat starts at the BOTTOM, not the top** — auto-scroll the workspace
+   chat panel to the latest message on open (main + sidebar chats).
+3. **AI-agent options function in ALL chats** — wire the agent option-boxes/tools into
+   the main chat AND the sidebar chats in the workspace, INCLUDING the execution
+   workspace (not just the primary /new chat).
+4. **User-custom colors / theming** — let users specify their own brand colors in
+   instructions + workspace so requested scorecards render in their palette (per-artifact
+   theme override; carries into the visual + exports). Ties to C.10.
+5. **(LB testing)** — LB will exercise the app and flag glaring issues to fix next session.
+6. **Unify "Back to Jaspen" link across ALL pages** — adopt the workspace-page version
+   of the "Back to Jaspen" link on every non-primary-interface page, and REMOVE any
+   other back-to-Jaspen buttons/links so there's exactly one consistent control.
+
 ## Reference docs
 - `ARCHITECTURE_VISION.md` — the target model + principles.
 - `STUDIO_BUILD_PLAN.md` — the compartmentalized build plan + decisions.
