@@ -170,6 +170,12 @@ def _scorecard_record_for_export(session, thread_id, scorecard_id=None):
         "recommendations": recommendations,
         "updated_at": selected.get("created_at") or result.get("timestamp") or session.get("timestamp"),
         "scenario_variants": _scorecard_variants_for_export(session, thread_id, selected_scorecard_id=scorecard_id),
+        # Full content for rich exports (Excel/Word): the per-criterion grid, the
+        # written summary, and the rubric (for ordering/labels).
+        "dimensions": result.get("dimensions") if isinstance(result.get("dimensions"), dict) else {},
+        "executive_summary": _safe_text(result.get("executive_summary"), 4000) or None,
+        "rubric": result.get("rubric") if isinstance(result.get("rubric"), dict) else None,
+        "top_risks": risks,
     }
     return payload, None
 
