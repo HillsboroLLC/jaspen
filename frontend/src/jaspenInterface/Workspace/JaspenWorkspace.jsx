@@ -1374,9 +1374,11 @@ export default function JaspenWorkspace() {
                     {[
                       ...(isScorecard ? [
                         { label:'Download PDF', act:() => downloadExport('pdf','pdf','PDF') },
-                        { label:'Download Excel', act:() => downloadExport('xlsx','xlsx','Excel') },
                         { label:'Download Word', act:() => downloadExport('docx','docx','Word') },
-                        { label:'Download PowerPoint', act:() => downloadExport('pptx','pptx','PowerPoint') },
+                        // MVP: Excel + PowerPoint are visible but disabled until polished
+                        // (PPTX needs condensing to 1–2 slides; Excel grid pending).
+                        { label:'Download Excel', disabled:true },
+                        { label:'Download PowerPoint', disabled:true },
                       ] : []),
                       { label: linkCopied ? 'Link copied ✓' : 'Copy link', act: copyShareLink, keepOpen:true, divider:true },
                     ].map((it, i) => (
@@ -1384,12 +1386,14 @@ export default function JaspenWorkspace() {
                         {it.divider && isScorecard && <div style={{ height:1, background:'#eef1f6', margin:'4px 2px' }} />}
                         <button
                           type="button"
-                          onClick={() => { it.act(); if (!it.keepOpen) setExportMenuOpen(false); }}
-                          style={{ textAlign:'left', padding:'8px 10px', border:'none', background:'transparent', color: it.label.includes('copied') ? '#0d7a3e' : '#0f172a', cursor:'pointer', fontSize:13, borderRadius:6 }}
-                          onMouseEnter={(e) => { e.currentTarget.style.background = '#f5f7fa'; }}
+                          disabled={Boolean(it.disabled)}
+                          onClick={() => { if (it.disabled) return; it.act?.(); if (!it.keepOpen) setExportMenuOpen(false); }}
+                          style={{ textAlign:'left', padding:'8px 10px', border:'none', background:'transparent', color: it.disabled ? '#aab2c0' : (it.label.includes('copied') ? '#0d7a3e' : '#0f172a'), cursor: it.disabled ? 'default' : 'pointer', fontSize:13, borderRadius:6, display:'flex', justifyContent:'space-between', alignItems:'center', gap:10 }}
+                          onMouseEnter={(e) => { if (!it.disabled) e.currentTarget.style.background = '#f5f7fa'; }}
                           onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
                         >
-                          {it.label}
+                          <span>{it.label}</span>
+                          {it.disabled && <span style={{ fontSize:10, color:'#aab2c0', fontWeight:600 }}>Soon</span>}
                         </button>
                       </React.Fragment>
                     ))}
