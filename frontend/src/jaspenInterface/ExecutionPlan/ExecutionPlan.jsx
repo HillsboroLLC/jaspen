@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import BackToJaspen from '../../shared/components/BackToJaspen';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faCheck, faCopy, faRotate, faSpinner, faThumbsDown, faThumbsUp, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons';
 import AppMenu from '../shared/AppMenu';
@@ -576,13 +577,7 @@ export default function ExecutionPlan() {
 
   const pageActions = (
     <div className="execution-plan-actions">
-      <button
-        type="button"
-        className="int-btn int-btn-ghost"
-        onClick={() => navigate(threadId ? `/new?sid=${encodeURIComponent(threadId)}` : '/new')}
-      >
-        Back to Jaspen
-      </button>
+      <BackToJaspen to={threadId ? `/new?sid=${encodeURIComponent(threadId)}` : '/new'} />
       <button
         type="button"
         className="int-btn int-btn-primary"

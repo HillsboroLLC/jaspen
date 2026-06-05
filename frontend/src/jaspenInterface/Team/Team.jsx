@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import BackToJaspen from '../../shared/components/BackToJaspen';
 import { API_BASE } from '../../config/apiBase';
 import { useAuth } from '../../shared/auth/AuthContext';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
@@ -731,13 +732,10 @@ export default function Team({ mode = 'team' }) {
               : 'Manage members, invitations, role capacity, and shared project visibility.'}
           </p>
         </div>
-        <button
-          type="button"
-          className="team-btn ghost team-back-btn int-btn int-btn-ghost"
-          onClick={() => navigate(routePreviewRole ? '/jaspen-admin' : '/new')}
-        >
-          {routePreviewRole ? 'Back to Jaspen Admin' : 'Back to Jaspen'}
-        </button>
+        <BackToJaspen
+          to={routePreviewRole ? '/jaspen-admin' : '/new'}
+          label={routePreviewRole ? 'Back to Jaspen Admin' : 'Back to Jaspen'}
+        />
       </header>
 
       <section className="team-toolbar">

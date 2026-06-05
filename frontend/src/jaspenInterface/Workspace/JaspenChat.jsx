@@ -6263,8 +6263,28 @@ if (rawHistory.length > 0) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allowedModelTypes]);
 
-  const scrollToEnd = () => endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  useEffect(scrollToEnd, [messages, busy]);
+  const scrollToEnd = (behavior = 'smooth') => endRef.current?.scrollIntoView({ behavior });
+  useEffect(() => { scrollToEnd('smooth'); }, [messages, busy]);
+
+  // On initial thread restore the chat would otherwise render at the TOP — the
+  // smooth scroll above fires before the scorecards/artifacts finish laying out,
+  // so it lands mid-page. Jump INSTANTLY to the bottom once messages first populate,
+  // and re-pin a couple of times as late-rendering artifacts change the height.
+  const didInitialScrollRef = useRef(false);
+  useEffect(() => {
+    if (didInitialScrollRef.current) return;
+    if (!Array.isArray(messages) || messages.length === 0) return;
+    didInitialScrollRef.current = true;
+    const jump = () => scrollToEnd('auto');
+    const raf = requestAnimationFrame(jump);
+    const t1 = window.setTimeout(jump, 120);
+    const t2 = window.setTimeout(jump, 400);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+    };
+  }, [messages]);
 
   const syncAiDrawerToBottom = useCallback(() => {
     const node = aiMessagesRef.current;

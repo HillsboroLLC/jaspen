@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import BackToJaspen from '../../shared/components/BackToJaspen';
 import { API_BASE } from '../../config/apiBase';
 import { getPlanConnectorSentence } from '../../shared/billing/planConnectors';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
@@ -2081,13 +2082,7 @@ export default function Account() {
                 Jaspen Admin
               </button>
             )}
-            <button
-              type="button"
-              onClick={() => guardUnsavedChanges(() => navigate('/new'))}
-              className="account-secondary-btn"
-            >
-              Back to Jaspen
-            </button>
+            <BackToJaspen onClick={() => guardUnsavedChanges(() => navigate('/new'))} />
           </div>
         </div>
 
