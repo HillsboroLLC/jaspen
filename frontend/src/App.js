@@ -288,6 +288,7 @@ export default function App() {
         showHeader={options.showHeader !== false}
         fullBleed={options.fullBleed}
         noPadding={options.noPadding}
+        backToJaspen={options.backToJaspen}
       >
         {node}
       </AppShell>

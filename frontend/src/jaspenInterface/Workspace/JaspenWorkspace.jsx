@@ -1142,12 +1142,6 @@ export default function JaspenWorkspace() {
           position: 'relative',
         }}
       >
-        <div style={{ padding:'14px 16px', borderBottom:'1px solid #e6eaf2', display:'flex', alignItems:'center', gap:10 }}>
-          <Link to={`/new?sid=${encodeURIComponent(threadId)}`} style={{ color:'#475569', textDecoration:'none', fontSize:13 }}>
-            <FontAwesomeIcon icon={faArrowLeft} style={{ marginRight:6 }} />
-            Back to Jaspen
-          </Link>
-        </div>
         <div style={{ padding:'14px 16px', borderBottom:'1px solid #e6eaf2' }}>
           <div style={{ fontSize:12, color:'#64748b', textTransform:'uppercase', letterSpacing:'0.06em', fontWeight:600 }}>
             Workspace · Beta
@@ -1326,26 +1320,6 @@ export default function JaspenWorkspace() {
         {sidebarOpen ? '‹' : '›'}
       </button>
 
-      {/* When the sidebar (which holds the "Back to Jaspen" link) is collapsed, the
-          user otherwise has no way back. Show a compact back link at top-left ONLY
-          while collapsed, so it's never doubled with the sidebar's own. */}
-      {!sidebarOpen && (
-        <Link
-          to={`/new?sid=${encodeURIComponent(threadId)}`}
-          title="Back to Jaspen"
-          style={{
-            position:'absolute', top:14, left:30, zIndex:11,
-            display:'inline-flex', alignItems:'center', gap:6,
-            padding:'6px 10px', borderRadius:8, border:'1px solid #e6eaf2',
-            background:'#fff', color:'#475569', textDecoration:'none', fontSize:13,
-            boxShadow:'0 1px 2px rgba(15,23,42,0.04)',
-          }}
-        >
-          <FontAwesomeIcon icon={faArrowLeft} />
-          Back to Jaspen
-        </Link>
-      )}
-
       {/* === CENTER: canvas === */}
       <main data-ws-main style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden' }}>
         <div data-ws-topbar style={{ padding:'18px 28px', borderBottom:'1px solid #e6eaf2', background:'#fff', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
@@ -1496,6 +1470,17 @@ export default function JaspenWorkspace() {
                 </>
               )}
             </div>
+            {/* Single, always-visible Back to Jaspen link, right of Download/Share —
+                replaces the sidebar + collapsed variants so there's one consistent
+                control across surfaces. Preserves the thread via ?sid. */}
+            <Link
+              to={`/new?sid=${encodeURIComponent(threadId)}`}
+              title="Back to Jaspen"
+              style={{ display:'inline-flex', alignItems:'center', gap:6, color:'#475569', textDecoration:'none', fontSize:13, paddingLeft:4, whiteSpace:'nowrap' }}
+            >
+              <FontAwesomeIcon icon={faArrowLeft} />
+              Back to Jaspen
+            </Link>
           </div>
         </div>
 

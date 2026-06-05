@@ -68,7 +68,7 @@ const ACCOUNT_TAB_KEYS = new Set([
   'overview',
   'plans',
   'packs',
-  'security',
+  'settings',
 ]);
 const DEFAULT_SYNC_MODES = ['import', 'push', 'two_way'];
 const DEFAULT_CONFLICT_POLICIES = ['latest_wins', 'prefer_external', 'prefer_jaspen', 'manual_review'];
@@ -1944,7 +1944,8 @@ export default function Account() {
     { key: 'overview', label: 'Overview', icon: faChartLine },
     { key: 'plans', label: 'Plans', icon: faLayerGroup },
     { key: 'packs', label: 'Credit packs', icon: faBolt },
-    { key: 'security', label: 'Security', icon: faShieldHalved },
+    // Account-level settings (MFA etc.) live in their own tab, NOT mixed into billing.
+    { key: 'settings', label: 'Settings', icon: faGear },
   ];
   const modalConnectorLabel = connectorApiLabel(jiraConfigModal.connectorId);
   const isJiraModal = jiraConfigModal.connectorId === 'jira_sync';
@@ -2066,7 +2067,7 @@ export default function Account() {
             <p className="account-eyebrow">Account</p>
             <h1>Billing & Usage</h1>
             <p className="account-subtext">
-              Manage plan access, thinking power usage, and available connectors for your workspace.
+              Manage your plan, thinking power usage, and account settings.
             </p>
           </div>
           <div className="account-header-actions">
@@ -3151,7 +3152,7 @@ export default function Account() {
         </section>
         )}
 
-        {activeTab === 'security' && (
+        {activeTab === 'settings' && (
         <section className="account-section">
           <h2 className="account-tab-title">Security</h2>
           <div className="account-security-grid">
