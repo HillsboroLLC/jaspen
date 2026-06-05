@@ -245,6 +245,7 @@ export default function JaspenWorkspace() {
     return DEFAULT_SCORECARD_SECTIONS.map((s) => ({ ...s, collapsed: false }));
   });
   const dragSectionRef = useRef(null);
+  const dragBlockRef = useRef(null);
 
   const [wbs, setWbs] = useState(null);
 
@@ -1826,32 +1827,67 @@ export default function JaspenWorkspace() {
               ];
               const addBlock = (type) => {
                 const def = BLOCK_TYPES.find((t) => t.key === type) || BLOCK_TYPES[0];
-                updateBlocks([...blocks, { id: `blk_${Date.now()}`, type: def.key, heading: def.defaultHeading, body: '' }]);
+                updateBlocks([...blocks, { id: `blk_${Date.now()}`, type: def.key, heading: def.defaultHeading, body: '', cols: 4 }]);
+              };
+              const moveBlock = (from, to) => {
+                if (from == null || from === to) return;
+                const next = [...blocks];
+                const [m] = next.splice(from, 1);
+                next.splice(to, 0, m);
+                updateBlocks(next);
               };
               return (
-                <div style={{ marginTop:20, display:'flex', flexDirection:'column', gap:14 }}>
+                // Same 4-col grid as the built-in sections so custom blocks can be
+                // dragged to reorder and resized (¼/½/¾/full) just like them.
+                <div style={{ marginTop:20, display:'grid', gridTemplateColumns:'repeat(4, 1fr)', gap:14 }}>
                   {blocks.map((blk, bi) => {
                     const blockType = String(blk?.type || 'text');
+                    const cols = Math.min(4, Math.max(1, Number(blk?.cols) || 4));
+                    const baseStyle = { gridColumn:`span ${cols}`, borderRadius:10, padding:'12px 14px', boxSizing:'border-box' };
                     const containerStyle = blockType === 'callout'
-                      ? { background:`${accent}0d`, border:`1px solid ${accent}33`, borderLeft:`3px solid ${accent}`, borderRadius:10, padding:'14px 16px', position:'relative' }
-                      : { background:'#fff', border:'1px solid #e6eaf2', borderRadius:10, padding:'14px 16px', position:'relative' };
+                      ? { ...baseStyle, background:`${accent}0d`, border:`1px solid ${accent}33`, borderLeft:`3px solid ${accent}` }
+                      : { ...baseStyle, background:'#fff', border:'1px solid #e6eaf2' };
                     const bodyStyle = blockType === 'quote'
                       ? { fontSize:13.5, color:'#334155', lineHeight:1.65, whiteSpace:'pre-line', fontStyle:'italic', borderLeft:'3px solid #e6eaf2', paddingLeft:12 }
                       : { fontSize:13, color:'#334155', lineHeight:1.65, whiteSpace:'pre-line' };
                     return (
-                    <div key={blk?.id || bi} style={containerStyle}>
-                      <button
-                        onClick={() => updateBlocks(blocks.filter((_, i) => i !== bi))}
-                        title="Remove block"
-                        onMouseEnter={(e) => { e.currentTarget.style.color = '#94a3b8'; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.color = '#cbd5e1'; }}
-                        style={{ position:'absolute', top:10, right:10, border:'none', background:'transparent', color:'#cbd5e1', cursor:'pointer', fontSize:13, lineHeight:1, padding:2 }}
-                      >×</button>
-                      <EditableText
-                        value={blk?.heading || ''}
-                        onCommit={(v) => updateBlocks(blocks.map((b, i) => i === bi ? { ...b, heading: v } : b))}
-                        style={{ fontSize:11, fontWeight:600, color: blockType === 'callout' ? accent : '#64748b', letterSpacing:'0.06em', textTransform:'uppercase', marginBottom:8, display:'block' }}
-                      />
+                    <div
+                      key={blk?.id || bi}
+                      draggable
+                      onDragStart={(e) => { dragBlockRef.current = bi; e.dataTransfer.effectAllowed = 'move'; }}
+                      onDragOver={(e) => { e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(); const after = e.clientX > r.left + r.width / 2; e.currentTarget.dataset.after = after ? '1' : '0'; e.currentTarget.style.borderRight = after ? `2px solid ${accent}` : ''; e.currentTarget.style.borderLeft = after ? '' : `2px solid ${accent}`; }}
+                      onDragLeave={(e) => { e.currentTarget.style.borderRight = ''; e.currentTarget.style.borderLeft = ''; delete e.currentTarget.dataset.after; }}
+                      onDrop={(e) => { e.preventDefault(); const after = e.currentTarget.dataset.after === '1'; e.currentTarget.style.borderRight = ''; e.currentTarget.style.borderLeft = ''; delete e.currentTarget.dataset.after; const from = dragBlockRef.current; dragBlockRef.current = null; if (from == null || from === bi) return; let to = after ? bi + 1 : bi; if (from < to) to -= 1; moveBlock(from, to); }}
+                      style={containerStyle}
+                    >
+                      <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8 }}>
+                        <span style={{ fontSize:14, color:'#cbd5e1', cursor:'grab', userSelect:'none' }} title="Drag to reorder">⠿</span>
+                        <div style={{ flex:1, minWidth:0 }}>
+                          <EditableText
+                            value={blk?.heading || ''}
+                            onCommit={(v) => updateBlocks(blocks.map((b, i) => i === bi ? { ...b, heading: v } : b))}
+                            style={{ fontSize:11, fontWeight:600, color: blockType === 'callout' ? accent : '#64748b', letterSpacing:'0.06em', textTransform:'uppercase', display:'block' }}
+                          />
+                        </div>
+                        <div style={{ display:'flex', gap:2, flexShrink:0, alignItems:'center' }} title={`Width: ${cols}/4`}>
+                          {[1, 2, 3, 4].map((n) => (
+                            <button
+                              key={n}
+                              type="button"
+                              onClick={() => updateBlocks(blocks.map((b, i) => i === bi ? { ...b, cols: n } : b))}
+                              title={n === 1 ? '¼ width' : n === 2 ? '½ width' : n === 3 ? '¾ width' : 'Full width'}
+                              style={{ width:9, height:14, borderRadius:2, border:'none', cursor:'pointer', padding:0, background: n <= cols ? '#0f172a' : '#e2e8f0' }}
+                            />
+                          ))}
+                        </div>
+                        <button
+                          onClick={() => updateBlocks(blocks.filter((_, i) => i !== bi))}
+                          title="Remove block"
+                          onMouseEnter={(e) => { e.currentTarget.style.color = '#94a3b8'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.color = '#cbd5e1'; }}
+                          style={{ border:'none', background:'transparent', color:'#cbd5e1', cursor:'pointer', fontSize:14, lineHeight:1, padding:2, flexShrink:0 }}
+                        >×</button>
+                      </div>
                       <EditableText
                         multiline
                         value={blk?.body || ''}
@@ -1861,10 +1897,10 @@ export default function JaspenWorkspace() {
                     </div>
                     );
                   })}
-                  <div style={{ position:'relative', alignSelf:'flex-start' }}>
+                  <div style={{ gridColumn:'1 / -1', position:'relative' }}>
                     <button
                       onClick={() => setAddBlockMenuOpen((o) => !o)}
-                      style={{ border:'1px dashed #c7d2da', background:'#fff', color:'#475569', borderRadius:8, padding:'8px 14px', fontSize:13, cursor:'pointer', fontWeight:500, display:'flex', alignItems:'center', gap:6 }}
+                      style={{ border:'1px dashed #c7d2da', background:'#fff', color:'#475569', borderRadius:8, padding:'8px 14px', fontSize:13, cursor:'pointer', fontWeight:500, display:'inline-flex', alignItems:'center', gap:6 }}
                     >+ Add block <span style={{ fontSize:10, opacity:0.7 }}>▾</span></button>
                     {addBlockMenuOpen && (
                       <>
