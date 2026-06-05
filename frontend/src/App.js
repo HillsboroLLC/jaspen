@@ -128,12 +128,12 @@ function AnimatedAppRoutes({ withShell }) {
               element={withShell(<ExecutionPlan />, { title: 'Execution | Jaspen', showHeader: false, fullBleed: true, noPadding: true })}
             />
             <Route path="/strategy" element={<Navigate to="/new" replace />} />
-            <Route path="/projects"  element={<ProtectedRoute>{withShell(<Projects />, { title: 'Projects', showHeader: false, fullBleed: true, noPadding: true })}</ProtectedRoute>} />
+            <Route path="/projects"  element={<ProtectedRoute>{withShell(<Projects />, { title: 'Projects', showHeader: false, fullBleed: true, noPadding: true, backToJaspen: true })}</ProtectedRoute>} />
             <Route
               path="/scores"
               element={
                 <ProtectedRoute>
-                  {withShell(<Scores />, { title: 'Scores', showHeader: false, fullBleed: true, noPadding: true })}
+                  {withShell(<Scores />, { title: 'Scores', showHeader: false, fullBleed: true, noPadding: true, backToJaspen: true })}
                 </ProtectedRoute>
               }
             />
@@ -141,7 +141,7 @@ function AnimatedAppRoutes({ withShell }) {
               path="/insights"
               element={
                 <ProtectedRoute>
-                  {withShell(<Insights />, { title: 'Insights', showHeader: false, fullBleed: true, noPadding: true })}
+                  {withShell(<Insights />, { title: 'Insights', showHeader: false, fullBleed: true, noPadding: true, backToJaspen: true })}
                 </ProtectedRoute>
               }
             />
@@ -149,7 +149,7 @@ function AnimatedAppRoutes({ withShell }) {
               path="/reports"
               element={
                 <ProtectedRoute>
-                  {withShell(<Reports />, { title: 'Reports', showHeader: false, fullBleed: true, noPadding: true })}
+                  {withShell(<Reports />, { title: 'Reports', showHeader: false, fullBleed: true, noPadding: true, backToJaspen: true })}
                 </ProtectedRoute>
               }
             />
@@ -157,7 +157,7 @@ function AnimatedAppRoutes({ withShell }) {
               path="/activity"
               element={
                 <ProtectedRoute>
-                  {withShell(<Activity />, { title: 'Activity', showHeader: false, fullBleed: true, noPadding: true })}
+                  {withShell(<Activity />, { title: 'Activity', showHeader: false, fullBleed: true, noPadding: true, backToJaspen: true })}
                 </ProtectedRoute>
               }
             />
@@ -165,7 +165,7 @@ function AnimatedAppRoutes({ withShell }) {
               path="/connectors-manage"
               element={
                 <ProtectedRoute>
-                  {withShell(<ConnectorsManage />, { title: 'Data Sources', showHeader: false, fullBleed: true, noPadding: true })}
+                  {withShell(<ConnectorsManage />, { title: 'Data Sources', showHeader: false, fullBleed: true, noPadding: true, backToJaspen: true })}
                 </ProtectedRoute>
               }
             />
@@ -205,7 +205,7 @@ function AnimatedAppRoutes({ withShell }) {
                     title: 'Enterprise Admin',
                     showHeader: false,
                     fullBleed: true,
-                    noPadding: true,
+                    noPadding: true, backToJaspen: true,
                   })}
                 </ProtectedRoute>
               }
@@ -218,7 +218,7 @@ function AnimatedAppRoutes({ withShell }) {
                     title: 'Knowledge',
                     showHeader: false,
                     fullBleed: true,
-                    noPadding: true,
+                    noPadding: true, backToJaspen: true,
                   })}
                 </ProtectedRoute>
               }
@@ -231,7 +231,7 @@ function AnimatedAppRoutes({ withShell }) {
                     title: 'Jaspen Admin',
                     showHeader: false,
                     fullBleed: true,
-                    noPadding: true,
+                    noPadding: true, backToJaspen: true,
                   })}
                 </ProtectedRoute>
               }

@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import BackToJaspen from '../../shared/components/BackToJaspen';
 import { API_BASE } from '../../config/apiBase';
 import { buildAuthHeaders } from '../../shared/auth/http';
 import ConfirmDialog from '../../shared/components/ConfirmDialog';
@@ -802,7 +801,6 @@ export default function JaspenAdmin() {
               Search users and manage tier, credits, connectors, and recovery actions from one control plane.
             </p>
           </div>
-          <BackToJaspen />
         </div>
 
         <div className="jas-admin-search">

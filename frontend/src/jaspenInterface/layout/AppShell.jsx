@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { SectionHeader } from '../../homeSections/homeUi';
+import BackToJaspen from '../../shared/components/BackToJaspen';
 
 export default function AppShell({
   title,
@@ -9,6 +10,10 @@ export default function AppShell({
   showHeader = true,
   fullBleed = false,
   noPadding = false,
+  // When true, render ONE consistent "Back to Jaspen" link at the top of the page,
+  // in the same place on every page, regardless of each page's own header. This is
+  // the single back-to-Jaspen system for non-primary app pages.
+  backToJaspen = false,
   className = '',
   contentClassName = '',
   children,
@@ -29,6 +34,11 @@ export default function AppShell({
   return (
     <div className={className}>
       <a href="#app-main-content" className="app-skip-link">Skip to main content</a>
+      {backToJaspen && (
+        <div style={{ padding: '14px 16px 0' }}>
+          <BackToJaspen />
+        </div>
+      )}
       {showHeader && header !== null && (
         <div style={{ padding: '24px 0 8px' }}>
           <div className={containerClass}>

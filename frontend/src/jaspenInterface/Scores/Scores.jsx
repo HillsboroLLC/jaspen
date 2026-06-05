@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import BackToJaspen from '../../shared/components/BackToJaspen';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faArrowUpRightFromSquare, faChartLine, faDownload, faChevronDown, faChevronUp, faTimes, faTrash } from '@fortawesome/free-solid-svg-icons';
 import { List } from 'react-window';
@@ -797,7 +796,6 @@ export default function Scores() {
             <p>All completed analyses and adopted scenarios</p>
           </div>
           <div className="scores-toolbar-actions">
-            <BackToJaspen />
             <button type="button" className="scores-primary-btn int-btn int-btn-primary" onClick={exportCsv} disabled={exportingCsv || loading || total === 0} aria-disabled={exportingCsv || loading || total === 0}>
               {exportingCsv ? 'Exporting...' : 'Export CSV'}
             </button>
