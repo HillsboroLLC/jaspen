@@ -7690,13 +7690,23 @@ def _coerce_override_value(key, value):
             btype = str(b.get('type') or 'text').strip().lower()
             if btype not in ('text', 'callout', 'quote'):
                 btype = 'text'
-            try:
-                cols = int(b.get('cols') or 4)
-            except (TypeError, ValueError):
-                cols = 4
-            cols = min(4, max(1, cols))
             bid = str(b.get('id') or '').strip()[:64] or f'blk_{len(cleaned)}'
-            cleaned.append({'id': bid, 'type': btype, 'heading': heading, 'body': body, 'cols': cols})
+            entry = {'id': bid, 'type': btype, 'heading': heading, 'body': body}
+            # Grid layout (react-grid-layout): position + size on a 12-col grid.
+            for fld, lo, hi, default in (('x', 0, 11, 0), ('y', 0, 999, 0), ('w', 1, 12, 6), ('h', 1, 999, 4)):
+                try:
+                    val = int(b.get(fld))
+                except (TypeError, ValueError):
+                    val = None
+                if val is not None:
+                    entry[fld] = min(hi, max(lo, val))
+            # Legacy width (1..4) kept if present for back-compat.
+            if b.get('cols') is not None:
+                try:
+                    entry['cols'] = min(4, max(1, int(b.get('cols'))))
+                except (TypeError, ValueError):
+                    pass
+            cleaned.append(entry)
         return cleaned if cleaned else None
     if key == 'tradeoff_included':
         # Coerce truthy/falsy strings and numbers. Default to True if ambiguous.

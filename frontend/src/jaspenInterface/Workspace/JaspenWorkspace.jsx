@@ -23,7 +23,15 @@ import { authFetch } from '../../shared/auth/http';
 import { API_BASE } from '../../config/apiBase';
 import TradeoffView from './TradeoffView';
 import ChoicePrompt, { parseChoicePrompt } from './ChoicePrompt';
+import GridLayout, { WidthProvider } from 'react-grid-layout';
+import 'react-grid-layout/css/styles.css';
+import 'react-resizable/css/styles.css';
 import JaspenExecutionCanvas from './JaspenExecutionCanvas';
+
+// Custom scorecard blocks live on a true 12-col grid: drag the handle to move,
+// drag the corner to resize to ANY size (not 4 fixed widths). WidthProvider makes
+// the grid fill the scorecard card width.
+const BlockGrid = WidthProvider(GridLayout);
 
 // Sentinel scorecardId values that route the canvas to a non-scorecard
 // artifact view. Keep these in sync with the entry-point links in
@@ -1069,6 +1077,10 @@ export default function JaspenWorkspace() {
   return (
     <div data-ws-root style={{ display:'flex', height:'100vh', background:'#f7f8fa', fontFamily:'Inter Tight, system-ui, sans-serif', position:'relative' }}>
       <style>{`
+        /* Custom-block grid: brand-tinted drag placeholder + always-visible SE resize handle */
+        .jw-block-grid .react-grid-placeholder { background: rgba(160, 3, 108, 0.12) !important; border-radius: 10px; }
+        .jw-block-grid .react-resizable-handle { opacity: 0.55; }
+        .jw-block-grid .react-grid-item:hover .react-resizable-handle { opacity: 1; }
         @media print {
           * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
           [data-ws-sidebar] { display: none !important; }
@@ -1885,93 +1897,87 @@ export default function JaspenWorkspace() {
               ];
               const addBlock = (type) => {
                 const def = BLOCK_TYPES.find((t) => t.key === type) || BLOCK_TYPES[0];
-                updateBlocks([...blocks, { id: `blk_${Date.now()}`, type: def.key, heading: def.defaultHeading, body: '', cols: 4 }]);
+                // Place the new tile in a fresh row below the others.
+                const maxY = blocks.reduce((m, b) => Math.max(m, (Number.isFinite(b?.y) ? b.y : 0) + (Number.isFinite(b?.h) ? b.h : 4)), 0);
+                updateBlocks([...blocks, { id: `blk_${Date.now()}`, type: def.key, heading: def.defaultHeading, body: '', x: 0, y: maxY, w: 6, h: 4 }]);
               };
-              const moveBlock = (from, to) => {
-                if (from == null || from === to) return;
-                const next = [...blocks];
-                const [m] = next.splice(from, 1);
-                next.splice(to, 0, m);
-                updateBlocks(next);
+              // Map blocks -> grid layout. Migrate legacy `cols` (1..4) to 12-col width.
+              const gridLayout = blocks.map((b, i) => {
+                const w = Number.isFinite(b?.w) ? b.w : (b?.cols ? Math.min(12, Math.max(2, b.cols * 3)) : 6);
+                const h = Number.isFinite(b?.h) ? b.h : 4;
+                const x = Number.isFinite(b?.x) ? b.x : 0;
+                const y = Number.isFinite(b?.y) ? b.y : i * 4;
+                return { i: String(b?.id || `blk_${i}`), x, y, w, h, minW: 2, minH: 2 };
+              });
+              const onGridLayoutChange = (next) => {
+                const byId = {};
+                next.forEach((l) => { byId[l.i] = l; });
+                let changed = false;
+                const updated = blocks.map((b) => {
+                  const l = byId[String(b?.id)];
+                  if (!l) return b;
+                  if (b.x !== l.x || b.y !== l.y || b.w !== l.w || b.h !== l.h) changed = true;
+                  return { ...b, x: l.x, y: l.y, w: l.w, h: l.h };
+                });
+                if (changed) updateBlocks(updated);
               };
               return (
-                // Same 4-col grid as the built-in sections so custom blocks can be
-                // dragged to reorder and resized (¼/½/¾/full) just like them.
-                <div style={{ marginTop:20, display:'grid', gridTemplateColumns:'repeat(4, 1fr)', gap:14 }}>
-                  {blocks.map((blk, bi) => {
-                    const blockType = String(blk?.type || 'text');
-                    const cols = Math.min(4, Math.max(1, Number(blk?.cols) || 4));
-                    const baseStyle = { gridColumn:`span ${cols}`, borderRadius:10, padding:'12px 14px', boxSizing:'border-box' };
-                    const containerStyle = blockType === 'callout'
-                      ? { ...baseStyle, background:`${accent}0d`, border:`1px solid ${accent}33`, borderLeft:`3px solid ${accent}` }
-                      : { ...baseStyle, background:'#fff', border:'1px solid #e6eaf2' };
-                    const bodyStyle = blockType === 'quote'
-                      ? { fontSize:13.5, color:'#334155', lineHeight:1.65, whiteSpace:'pre-line', fontStyle:'italic', borderLeft:'3px solid #e6eaf2', paddingLeft:12 }
-                      : { fontSize:13, color:'#334155', lineHeight:1.65, whiteSpace:'pre-line' };
-                    return (
-                    <div
-                      key={blk?.id || bi}
-                      draggable
-                      onDragStart={(e) => { dragBlockRef.current = bi; e.dataTransfer.effectAllowed = 'move'; }}
-                      onDragOver={(e) => { e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(); const after = e.clientX > r.left + r.width / 2; e.currentTarget.dataset.after = after ? '1' : '0'; e.currentTarget.style.borderRight = after ? `2px solid ${accent}` : ''; e.currentTarget.style.borderLeft = after ? '' : `2px solid ${accent}`; }}
-                      onDragLeave={(e) => { e.currentTarget.style.borderRight = ''; e.currentTarget.style.borderLeft = ''; delete e.currentTarget.dataset.after; }}
-                      onDrop={(e) => { e.preventDefault(); const after = e.currentTarget.dataset.after === '1'; e.currentTarget.style.borderRight = ''; e.currentTarget.style.borderLeft = ''; delete e.currentTarget.dataset.after; const from = dragBlockRef.current; dragBlockRef.current = null; if (from == null || from === bi) return; let to = after ? bi + 1 : bi; if (from < to) to -= 1; moveBlock(from, to); }}
-                      style={containerStyle}
+                <div style={{ marginTop:20 }}>
+                  {blocks.length > 0 && (
+                    <BlockGrid
+                      className="jw-block-grid"
+                      layout={gridLayout}
+                      cols={12}
+                      rowHeight={28}
+                      margin={[14, 14]}
+                      isDraggable
+                      isResizable
+                      draggableHandle=".blk-drag-handle"
+                      resizeHandles={['se']}
+                      onLayoutChange={onGridLayoutChange}
                     >
-                      <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8 }}>
-                        <span style={{ fontSize:14, color:'#cbd5e1', cursor:'grab', userSelect:'none' }} title="Drag to reorder">⠿</span>
-                        <div style={{ flex:1, minWidth:0 }}>
-                          <EditableText
-                            value={blk?.heading || ''}
-                            onCommit={(v) => updateBlocks(blocks.map((b, i) => i === bi ? { ...b, heading: v } : b))}
-                            style={{ fontSize:11, fontWeight:600, color: blockType === 'callout' ? accent : '#64748b', letterSpacing:'0.06em', textTransform:'uppercase', display:'block' }}
-                          />
-                        </div>
-                        <div style={{ display:'flex', gap:2, flexShrink:0, alignItems:'center' }} title={`Width: ${cols}/4`}>
-                          {[1, 2, 3, 4].map((n) => (
-                            <button
-                              key={n}
-                              type="button"
-                              onClick={() => updateBlocks(blocks.map((b, i) => i === bi ? { ...b, cols: n } : b))}
-                              title={n === 1 ? '¼ width' : n === 2 ? '½ width' : n === 3 ? '¾ width' : 'Full width'}
-                              style={{ width:9, height:14, borderRadius:2, border:'none', cursor:'pointer', padding:0, background: n <= cols ? '#0f172a' : '#e2e8f0' }}
+                      {blocks.map((blk, bi) => {
+                        const blockType = String(blk?.type || 'text');
+                        const baseStyle = { height:'100%', boxSizing:'border-box', borderRadius:10, padding:'10px 12px', display:'flex', flexDirection:'column', overflow:'hidden' };
+                        const containerStyle = blockType === 'callout'
+                          ? { ...baseStyle, background:`${accent}0d`, border:`1px solid ${accent}33`, borderLeft:`3px solid ${accent}` }
+                          : { ...baseStyle, background:'#fff', border:'1px solid #e6eaf2' };
+                        const bodyStyle = blockType === 'quote'
+                          ? { fontSize:13.5, color:'#334155', lineHeight:1.6, whiteSpace:'pre-line', fontStyle:'italic', borderLeft:'3px solid #e6eaf2', paddingLeft:12, overflow:'auto', flex:1 }
+                          : { fontSize:13, color:'#334155', lineHeight:1.6, whiteSpace:'pre-line', overflow:'auto', flex:1 };
+                        return (
+                          <div key={String(blk?.id || bi)} style={containerStyle}>
+                            <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
+                              <span className="blk-drag-handle" style={{ fontSize:14, color:'#cbd5e1', cursor:'grab', userSelect:'none' }} title="Drag to move">⠿</span>
+                              <div style={{ flex:1, minWidth:0 }}>
+                                <EditableText
+                                  value={blk?.heading || ''}
+                                  onCommit={(v) => updateBlocks(blocks.map((b, i) => i === bi ? { ...b, heading: v } : b))}
+                                  style={{ fontSize:11, fontWeight:600, color: blockType === 'callout' ? accent : '#64748b', letterSpacing:'0.06em', textTransform:'uppercase', display:'block' }}
+                                />
+                              </div>
+                              {confirmDeleteBlockId === (blk?.id || bi) ? (
+                                <span style={{ display:'flex', alignItems:'center', gap:6, flexShrink:0 }}>
+                                  <span style={{ fontSize:11, color:'#94a3b8' }}>Delete?</span>
+                                  <button onClick={() => { updateBlocks(blocks.filter((_, i) => i !== bi)); setConfirmDeleteBlockId(null); }} title="Confirm delete" style={{ border:'none', background:'transparent', color:'#dc2626', cursor:'pointer', fontSize:12, fontWeight:600, padding:2 }}>Yes</button>
+                                  <button onClick={() => setConfirmDeleteBlockId(null)} title="Keep" style={{ border:'none', background:'transparent', color:'#64748b', cursor:'pointer', fontSize:12, padding:2 }}>No</button>
+                                </span>
+                              ) : (
+                                <button onClick={() => setConfirmDeleteBlockId(blk?.id || bi)} title="Remove block" onMouseEnter={(e) => { e.currentTarget.style.color = '#94a3b8'; }} onMouseLeave={(e) => { e.currentTarget.style.color = '#cbd5e1'; }} style={{ border:'none', background:'transparent', color:'#cbd5e1', cursor:'pointer', fontSize:14, lineHeight:1, padding:2, flexShrink:0 }}>×</button>
+                              )}
+                            </div>
+                            <EditableText
+                              multiline
+                              value={blk?.body || ''}
+                              onCommit={(v) => updateBlocks(blocks.map((b, i) => i === bi ? { ...b, body: v } : b))}
+                              style={bodyStyle}
                             />
-                          ))}
-                        </div>
-                        {confirmDeleteBlockId === (blk?.id || bi) ? (
-                          <span style={{ display:'flex', alignItems:'center', gap:6, flexShrink:0 }}>
-                            <span style={{ fontSize:11, color:'#94a3b8' }}>Delete?</span>
-                            <button
-                              onClick={() => { updateBlocks(blocks.filter((_, i) => i !== bi)); setConfirmDeleteBlockId(null); }}
-                              title="Confirm delete"
-                              style={{ border:'none', background:'transparent', color:'#dc2626', cursor:'pointer', fontSize:12, fontWeight:600, padding:2 }}
-                            >Yes</button>
-                            <button
-                              onClick={() => setConfirmDeleteBlockId(null)}
-                              title="Keep"
-                              style={{ border:'none', background:'transparent', color:'#64748b', cursor:'pointer', fontSize:12, padding:2 }}
-                            >No</button>
-                          </span>
-                        ) : (
-                          <button
-                            onClick={() => setConfirmDeleteBlockId(blk?.id || bi)}
-                            title="Remove block"
-                            onMouseEnter={(e) => { e.currentTarget.style.color = '#94a3b8'; }}
-                            onMouseLeave={(e) => { e.currentTarget.style.color = '#cbd5e1'; }}
-                            style={{ border:'none', background:'transparent', color:'#cbd5e1', cursor:'pointer', fontSize:14, lineHeight:1, padding:2, flexShrink:0 }}
-                          >×</button>
-                        )}
-                      </div>
-                      <EditableText
-                        multiline
-                        value={blk?.body || ''}
-                        onCommit={(v) => updateBlocks(blocks.map((b, i) => i === bi ? { ...b, body: v } : b))}
-                        style={bodyStyle}
-                      />
-                    </div>
-                    );
-                  })}
-                  <div style={{ gridColumn:'1 / -1', position:'relative' }}>
+                          </div>
+                        );
+                      })}
+                    </BlockGrid>
+                  )}
+                  <div style={{ position:'relative', marginTop: blocks.length ? 8 : 0 }}>
                     <button
                       onClick={() => setAddBlockMenuOpen((o) => !o)}
                       style={{ border:'1px dashed #c7d2da', background:'#fff', color:'#475569', borderRadius:8, padding:'8px 14px', fontSize:13, cursor:'pointer', fontWeight:500, display:'inline-flex', alignItems:'center', gap:6 }}
