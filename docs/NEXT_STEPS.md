@@ -124,10 +124,11 @@ B5. ✅ FIXED (8035079, NEEDS DO DEPLOY) — `_generate_batch_scorecards` now ch
 ## NEXT SESSION — LB's punch list (2026-06-04, do these first)
 > Connectors confirmed still working — nothing was deleted; the scoring rework tied
 > into the existing bones, so uploads/connectors are intact. Verify, don't rebuild.
-1. **Agent add block** — let the AI add scorecard sections via chat (mirror the
-   user-facing "+ Add block" in JaspenWorkspace.jsx; agent writes to `custom_blocks`).
-2. **Workspace chat starts at the BOTTOM, not the top** — auto-scroll the workspace
-   chat panel to the latest message on open (main + sidebar chats).
+1. ✅ DONE (dd56d16, NEEDS DO DEPLOY) — patch_scorecard accepts add_blocks=[{heading,
+   body}] → appends to display_overrides.custom_blocks (same place the UI "+ Add block"
+   writes). Verify on credited account: "add a section on X" to an open scorecard.
+2. ✅ DONE (00f83fb, frontend) — main /new chat jumps instantly to latest message on
+   initial thread restore; Workspace sidebar chat already pinned to bottom.
 3. **AI-agent options function in ALL chats** — wire the agent option-boxes/tools into
    the main chat AND the sidebar chats in the workspace, INCLUDING the execution
    workspace (not just the primary /new chat).
@@ -135,13 +136,13 @@ B5. ✅ FIXED (8035079, NEEDS DO DEPLOY) — `_generate_batch_scorecards` now ch
    instructions + workspace so requested scorecards render in their palette (per-artifact
    theme override; carries into the visual + exports). Ties to C.10.
 5. **(LB testing)** — LB will exercise the app and flag glaring issues to fix next session.
-6. **Unify "Back to Jaspen" link across ALL pages** — adopt the workspace-page version
-   of the "Back to Jaspen" link on every non-primary-interface page, and REMOVE any
-   other back-to-Jaspen buttons/links so there's exactly one consistent control.
-7. **Primary objective tags actually work** — LB can't tell from the UI if they do.
-   Claude must TRACE end-to-end: where the primary objective is set, whether it's
-   persisted, whether it's passed into scoring/the rubric, and whether it visibly
-   affects the scorecard output. Investigate (not just visually verify) + fix.
+6. ✅ DONE (00f83fb, frontend) — shared <BackToJaspen> component on Execution plan,
+   Admin, Scores, Team, Account; removed the bespoke per-page back buttons.
+7. ✅ DONE (e8278ef, NEEDS DO DEPLOY) — traced: objective WAS persisted + passed to
+   the batch scorer but never injected into the batch prompt (only the single-card path
+   used it), so it had no effect on multi-idea scoring. Now injects an OBJECTIVE LENS
+   into the batch prompt (tilts generic dims; respects custom-rubric weights). Verify on
+   a credited account: same ideas under Cost vs Growth should shift scores/ranking.
 
 ## Reference docs
 - `ARCHITECTURE_VISION.md` — the target model + principles.
