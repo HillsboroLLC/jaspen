@@ -93,7 +93,12 @@ B4. **Workspace page won't scroll.** Canvas scrolls (`JaspenWorkspace.jsx:1408`)
     stacked-ideas block is a short fixed-height box — only the inner box scrolls, page
     can't reveal more. Fix the nested overflow/height so the whole page scrolls.
 
-B5. **10-idea batch scoring errors out ("Sorry — I hit an error").** Reproducible:
+B5. ✅ FIXED (8035079, NEEDS DO DEPLOY) — `_generate_batch_scorecards` now chunks
+    >5 ideas into sub-batches (same rubric), merges cards, re-derives tiers from global
+    score bands, pads failed chunks with None to keep caller alignment. Remaining: a
+    true all-ideas portfolio_summary (currently first chunk only); watch gunicorn
+    timeout for very large sets (each chunk = 1 sequential LLM call).
+~~B5 (original).~~ **10-idea batch scoring errors out ("Sorry — I hit an error").** Reproducible:
     upload 10 ideas, agent sets rubric + queues all 10 (B1 working), but scoring
     fails. Root cause (high confidence): `score_batch_queued` scores ALL ideas in ONE
     LLM call at `max_tokens=8000` (`strategy.py:2568`). 10 ideas × ~6 criteria +
