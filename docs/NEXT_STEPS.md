@@ -89,7 +89,11 @@ B3. **Attachments are per-message only.** Once the user sends a follow-up withou
     re-attaching, the model no longer has the file (no persisted attachment in the
     replayed history). Decide: persist last upload's extracted text into thread context
     so follow-ups can reference it.
-B6. **Out-of-credits shows a generic error, not a clear message.** VERIFIED 6/4: a Free
+B6. ✅ FIXED (d8e7bfe, frontend/Vercel) — streaming client now parseErrorResponse() on
+    !resp.ok so a 402 fires the credits-exhausted billing modal + toast; chat bubble
+    shows "You're out of thinking power…" (retry disabled) instead of the generic error.
+    (Original note below.)
+~~B6 (original).~~ **Out-of-credits shows a generic error, not a clear message.** VERIFIED 6/4: a Free
     account at 0% thinking power failed batch scoring with "Sorry — I hit an error"
     (the generic stream-error fallback) instead of "You're out of thinking power —
     add credits / upgrade." This misled us into chasing a code bug that wasn't there
