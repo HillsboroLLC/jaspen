@@ -1336,6 +1336,20 @@ export default function JaspenWorkspace() {
               </button>
             )}
             {isScorecard && (
+              // #4 custom colors: set the scorecard's brand accent. Writes
+              // display_overrides.accent_color -> rendered._accent_color -> ringColor,
+              // which the score ring, category label, recommendation, and primary
+              // action all use. Carried into PDF/Word exports server-side.
+              <input
+                type="color"
+                value={/^#[0-9a-fA-F]{6}$/.test(ringColor) ? ringColor : '#a0036c'}
+                onChange={(e) => setOverride('accent_color', e.target.value)}
+                title="Scorecard accent color"
+                aria-label="Scorecard accent color"
+                style={{ width:30, height:30, padding:2, border:'1px solid #e6eaf2', borderRadius:8, background:'#fff', cursor:'pointer' }}
+              />
+            )}
+            {isScorecard && (
               <button
                 type="button"
                 onClick={() => buildExecutionPlan({ source: 'scorecard', scorecard_id: scorecardId })}
@@ -1343,8 +1357,8 @@ export default function JaspenWorkspace() {
                 title={buildPlanError || 'Generate an execution plan from this scorecard'}
                 style={{
                   padding:'8px 12px', borderRadius:8,
-                  border: buildPlanError ? '1px solid #dc2626' : '1px solid #a0036c',
-                  background:'#fff', color: buildPlanError ? '#dc2626' : '#a0036c',
+                  border: buildPlanError ? '1px solid #dc2626' : `1px solid ${ringColor}`,
+                  background:'#fff', color: buildPlanError ? '#dc2626' : ringColor,
                   cursor: buildingPlan ? 'wait' : 'pointer', fontSize:13, fontWeight:600,
                   opacity: buildingPlan ? 0.7 : 1,
                 }}
