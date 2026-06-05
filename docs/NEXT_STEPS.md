@@ -148,6 +148,11 @@ B5. ✅ FIXED (8035079, NEEDS DO DEPLOY) — `_generate_batch_scorecards` now ch
 4. **User-custom colors / theming** — let users specify their own brand colors in
    instructions + workspace so requested scorecards render in their palette (per-artifact
    theme override; carries into the visual + exports). Ties to C.10.
+4. ✅ DONE (e1abaf4 fe / cbc95fd be, NEEDS DO DEPLOY for B+C) — custom accent color:
+   (A) workspace color picker → display_overrides.accent_color → ring/label/recommendation
+   /Build-Execution-Plan use it; (B) agent sets it via chat ('use our brand color #hex')
+   through patch_scorecard.accent_color; (C) PDF score + Word heading honor it in exports.
+   PPTX/XLSX still magenta (disabled in menu). Verify on credited account.
 5. **(LB testing)** — LB will exercise the app and flag glaring issues to fix next session.
 6. ✅ DONE (00f83fb, frontend) — shared <BackToJaspen> component on Execution plan,
    Admin, Scores, Team, Account; removed the bespoke per-page back buttons.
