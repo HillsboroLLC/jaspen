@@ -137,9 +137,10 @@ B5. ✅ FIXED (8035079, NEEDS DO DEPLOY) — `_generate_batch_scorecards` now ch
 ## NEXT SESSION — LB's punch list (2026-06-04, do these first)
 > Connectors confirmed still working — nothing was deleted; the scoring rework tied
 > into the existing bones, so uploads/connectors are intact. Verify, don't rebuild.
-1. ✅ DONE (dd56d16, NEEDS DO DEPLOY) — patch_scorecard accepts add_blocks=[{heading,
-   body}] → appends to display_overrides.custom_blocks (same place the UI "+ Add block"
-   writes). Verify on credited account: "add a section on X" to an open scorecard.
+1. ✅ DONE (dd56d16 be / 1a37380 fe) — agent add-block via patch_scorecard.add_blocks
+   (→ display_overrides.custom_blocks). PLUS workspace "+ Add block" is now an ELEMENT
+   PICKER (Text / Callout / Quote); each block carries a `type`. Agent blocks default to
+   text. (Element-picker = the "workspace tools" item on LB's 6/4 plan.)
 2. ✅ DONE (00f83fb, frontend) — main /new chat jumps instantly to latest message on
    initial thread restore; Workspace sidebar chat already pinned to bottom.
 3. **AI-agent CHOICE PROMPTS in all chats** (= the C.9 choice-prompt primitive / the
