@@ -1940,12 +1940,23 @@ export default function Account() {
   // Unified billing page: money + plan + usage only. Connectors live on Data Sources
   // (/connectors-manage), Knowledge on /knowledge, Models in app settings, Admin on
   // /jaspen-admin — so they're removed from this page rather than duplicated here.
-  // Billing drawer items only. Account-level Settings (MFA etc.) is its OWN top-level
-  // tab (the "Settings" vertical tab), not nested inside the billing menu.
-  const sidebarItems = [
-    { key: 'overview', label: 'Overview', icon: faChartLine },
-    { key: 'plans', label: 'Plans', icon: faLayerGroup },
-    { key: 'packs', label: 'Credit packs', icon: faBolt },
+  // One "Account" drawer with two sections: Billing and Settings. Each holds its own
+  // items so the IA is clear (billing artifacts vs account/security settings).
+  const drawerGroups = [
+    {
+      group: 'Billing',
+      items: [
+        { key: 'overview', label: 'Overview', icon: faChartLine },
+        { key: 'plans', label: 'Plans', icon: faLayerGroup },
+        { key: 'packs', label: 'Credit packs', icon: faBolt },
+      ],
+    },
+    {
+      group: 'Settings',
+      items: [
+        { key: 'settings', label: 'Security', icon: faShieldHalved },
+      ],
+    },
   ];
   const modalConnectorLabel = connectorApiLabel(jiraConfigModal.connectorId);
   const isJiraModal = jiraConfigModal.connectorId === 'jira_sync';
@@ -1995,30 +2006,17 @@ export default function Account() {
     >
       <AppMenu />
 
-      {/* BILLING vertical tab — visible only when drawer is closed */}
+      {/* ACCOUNT vertical tab — opens the drawer with Billing + Settings sections. */}
       {!billingDrawerOpen && (
         <button
           type="button"
           className="billing-tab"
           onClick={openBillingDrawer}
-          aria-label="Open billing menu"
+          aria-label="Open account menu"
           aria-expanded={false}
           aria-controls="billing-drawer"
         >
-          Billing
-        </button>
-      )}
-
-      {/* SETTINGS vertical tab — its own top-level section (MFA + future), a sibling
-          of Billing rather than a billing sub-tab. */}
-      {!billingDrawerOpen && (
-        <button
-          type="button"
-          className={`billing-tab settings-tab${activeTab === 'settings' ? ' is-active' : ''}`}
-          onClick={() => { setBillingDrawerOpen(false); setActiveTab('settings'); }}
-          aria-label="Open settings"
-        >
-          Settings
+          Account
         </button>
       )}
 
@@ -2029,30 +2027,40 @@ export default function Account() {
         aria-label="Billing navigation"
       >
         <div className="account-drawer-head">
-          <p className="account-drawer-title">Billing menu</p>
+          <p className="account-drawer-title">Account menu</p>
           <button
             type="button"
             className="account-drawer-close"
             onClick={() => setBillingDrawerOpen(false)}
-            aria-label="Close billing menu"
+            aria-label="Close account menu"
           >
             ✕
           </button>
         </div>
-        <nav className="account-drawer-nav" aria-label="Billing sections">
-          {sidebarItems.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              className={`account-sidebar-item${activeTab === item.key ? ' is-active' : ''}`}
-              onClick={() => guardUnsavedChanges(() => setActiveTab(item.key))}
-              aria-label={item.label}
-            >
-              <span className="account-sidebar-icon">
-                <FontAwesomeIcon icon={item.icon} />
-              </span>
-              <span className="account-sidebar-label">{item.label}</span>
-            </button>
+        <nav className="account-drawer-nav" aria-label="Account sections">
+          {drawerGroups.map((grp) => (
+            <div key={grp.group} className="account-drawer-group">
+              <p
+                className="account-drawer-group-label"
+                style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#94a3b8', margin: '14px 4px 6px' }}
+              >
+                {grp.group}
+              </p>
+              {grp.items.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={`account-sidebar-item${activeTab === item.key ? ' is-active' : ''}`}
+                  onClick={() => guardUnsavedChanges(() => setActiveTab(item.key))}
+                  aria-label={item.label}
+                >
+                  <span className="account-sidebar-icon">
+                    <FontAwesomeIcon icon={item.icon} />
+                  </span>
+                  <span className="account-sidebar-label">{item.label}</span>
+                </button>
+              ))}
+            </div>
           ))}
         </nav>
         <div className="account-drawer-footer">

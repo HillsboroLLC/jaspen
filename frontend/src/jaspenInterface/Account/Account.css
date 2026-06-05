@@ -44,11 +44,6 @@ body.jaspen-sidebar-open .account-page {
     padding: 8px 12px;
   }
 
-  .settings-tab {
-    top: auto !important;
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 210px);
-  }
-
   body.jaspen-sidebar-open .billing-tab {
     left: 0;
   }
@@ -178,17 +173,6 @@ body.jaspen-sidebar-open .account-page {
 }
 
 body.jaspen-sidebar-open .billing-tab {
-  left: 320px;
-}
-
-/* Settings vertical tab — sits just below the Billing tab. */
-.settings-tab {
-  top: 432px;
-}
-.settings-tab.is-active {
-  background: #0f1629;
-}
-body.jaspen-sidebar-open .settings-tab {
   left: 320px;
 }
 
