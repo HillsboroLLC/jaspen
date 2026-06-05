@@ -93,6 +93,13 @@ B4. **Workspace page won't scroll.** Canvas scrolls (`JaspenWorkspace.jsx:1408`)
     stacked-ideas block is a short fixed-height box — only the inner box scrolls, page
     can't reveal more. Fix the nested overflow/height so the whole page scrolls.
 
+B5b. ✅ FIXED (4471416, NEEDS DO DEPLOY) — real failure was the AGENT TURN (long
+    pre-analysis + tool thrash → stream error), upstream of the scoring engine. Now:
+    queue_scorecards caps to 5 ideas (stashes the rest in scorecard_queue_overflow),
+    and the prompt makes the agent tell the user it scores 5 at a time + offer to
+    continue with the next 5. Keeps the chunking fix below as defense-in-depth.
+    TODO later: wire "continue" to auto-pull from scorecard_queue_overflow (today the
+    agent re-queues the next 5 from context, which works but isn't guaranteed).
 B5. ✅ FIXED (8035079, NEEDS DO DEPLOY) — `_generate_batch_scorecards` now chunks
     >5 ideas into sub-batches (same rubric), merges cards, re-derives tiers from global
     score bands, pads failed chunks with None to keep caller alignment. Remaining: a
