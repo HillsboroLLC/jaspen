@@ -142,9 +142,24 @@ B5. ✅ FIXED (8035079, NEEDS DO DEPLOY) — `_generate_batch_scorecards` now ch
    writes). Verify on credited account: "add a section on X" to an open scorecard.
 2. ✅ DONE (00f83fb, frontend) — main /new chat jumps instantly to latest message on
    initial thread restore; Workspace sidebar chat already pinned to bottom.
-3. **AI-agent options function in ALL chats** — wire the agent option-boxes/tools into
-   the main chat AND the sidebar chats in the workspace, INCLUDING the execution
-   workspace (not just the primary /new chat).
+3. **AI-agent CHOICE PROMPTS in all chats** (= the C.9 choice-prompt primitive / the
+   "survey pop-up"). CLARIFIED 6/4: LB means option boxes "like how you [Claude] are
+   asking me this question" — the agent presents a question + selectable options (click
+   to answer, or type your own), inside the chats. NOTE: the workspace sidebar +
+   execution chats ALREADY share the same agent + tools as /new (Jaspen.chat →
+   conversation/continue), so tool access is NOT the gap — the gap is this interactive
+   choice UI. BUILD SPEC (needs credited account to verify the agent emitting it):
+   - Backend: new tool `ask_choice(question, options:[{label, description?}],
+     allow_multi?, allow_text?)`; surface it in the reply payload as a structured
+     artifact (ride the existing mutations/artifact pipeline — see
+     appendArtifactMessagesFromPayload / normalizeMutationResults in JaspenChat).
+   - Prompt: during discovery, when the next question has discrete options, call
+     ask_choice instead of prose (one question at a time). Keep prose fallback.
+   - Frontend: render the choice as clickable option cards in BOTH renderers —
+     JaspenChat (renderConversationMessage) AND the workspace sidebar's own
+     chatHistory.map (JaspenWorkspace). Click an option → send its label as the next
+     user turn; "Other" focuses the text input. Multi-select → send joined labels.
+   - Verify on each surface: scorecard / trade-off / execution sidebar + /new.
 4. **User-custom colors / theming** — let users specify their own brand colors in
    instructions + workspace so requested scorecards render in their palette (per-artifact
    theme override; carries into the visual + exports). Ties to C.10.
