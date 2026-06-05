@@ -106,7 +106,7 @@ function AnimatedAppRoutes({ withShell }) {
               element={
                 <ProtectedRoute>
                   <RequireDashboardAccess>
-                    {withShell(<Dashboard />, { title: 'Dashboard', showHeader: false, fullBleed: true, noPadding: true })}
+                    {withShell(<Dashboard />, { title: 'Dashboard', showHeader: false, fullBleed: true, noPadding: true, backToJaspen: true })}
                   </RequireDashboardAccess>
                 </ProtectedRoute>
               }
