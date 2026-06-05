@@ -7639,6 +7639,10 @@ _ALLOWED_OVERRIDE_KEYS = {
     # score (only dimensions do), so they're manual-or-AI editable, not locked.
     'top_risks',           # list[str]
     'recommended_scenario',  # str
+    # Free-form sections the user/agent add to a scorecard (the "+ Add block" /
+    # element picker). list[{id,type,heading,body,cols}]. Without this in the
+    # whitelist the PATCH silently dropped them → blocks vanished on refresh.
+    'custom_blocks',
 }
 
 
@@ -7672,6 +7676,28 @@ def _coerce_override_value(key, value):
         if s.startswith('#') and len(s) in (4, 7):
             return s
         return None
+    if key == 'custom_blocks':
+        if not isinstance(value, (list, tuple)):
+            return None
+        cleaned = []
+        for b in value:
+            if not isinstance(b, dict):
+                continue
+            heading = str(b.get('heading') or '').strip()[:200]
+            body = str(b.get('body') or '').strip()[:5000]
+            if not heading and not body:
+                continue
+            btype = str(b.get('type') or 'text').strip().lower()
+            if btype not in ('text', 'callout', 'quote'):
+                btype = 'text'
+            try:
+                cols = int(b.get('cols') or 4)
+            except (TypeError, ValueError):
+                cols = 4
+            cols = min(4, max(1, cols))
+            bid = str(b.get('id') or '').strip()[:64] or f'blk_{len(cleaned)}'
+            cleaned.append({'id': bid, 'type': btype, 'heading': heading, 'body': body, 'cols': cols})
+        return cleaned if cleaned else None
     if key == 'tradeoff_included':
         # Coerce truthy/falsy strings and numbers. Default to True if ambiguous.
         if isinstance(value, bool):

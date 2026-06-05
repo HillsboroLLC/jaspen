@@ -11,7 +11,7 @@
 //          stay read-only — a rescore is a separate conversation.
 // ============================================================================
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faArrowLeft, faDownload, faShare, faRotateLeft, faPaperPlane, faDiagramProject, faSpinner } from '@fortawesome/free-solid-svg-icons';
@@ -212,6 +212,10 @@ export default function JaspenWorkspace() {
   const [linkCopied, setLinkCopied] = useState(false);
   // Element picker for "+ Add block": choose a block TYPE (text / callout / quote).
   const [addBlockMenuOpen, setAddBlockMenuOpen] = useState(false);
+  // Two-step delete confirm for custom blocks (the × shouldn't nuke a section in one click).
+  const [confirmDeleteBlockId, setConfirmDeleteBlockId] = useState(null);
+  // "Saved just now" flash for the force-save button.
+  const [savedFlash, setSavedFlash] = useState(false);
   // Per-artifact storage key. The chat is seeded synchronously from localStorage
   // on first render (no empty flash) and re-loaded whenever the artifact key
   // changes (e.g. navigating scorecard → execution in the same mounted view).
@@ -582,6 +586,24 @@ export default function JaspenWorkspace() {
     });
     return () => cancelAnimationFrame(id);
   }, [chatHistory]);
+
+  // Force-save: flush the pending override save immediately (the "Save" button).
+  // Some users want the reassurance of an explicit save even though edits auto-save.
+  const flushSave = useCallback(async () => {
+    if (!threadId || !scorecardId) return;
+    if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+    try {
+      setSaving(true);
+      setSaveError(null);
+      await Jaspen.patchScorecardOverrides(threadId, scorecardId, overrides);
+      setSavedFlash(true);
+      window.setTimeout(() => setSavedFlash(false), 1800);
+    } catch (e) {
+      setSaveError(String(e?.message || e || 'Failed to save'));
+    } finally {
+      setSaving(false);
+    }
+  }, [threadId, scorecardId, overrides]);
 
   // Debounced auto-save: any change to overrides is persisted ~500ms later.
   useEffect(() => {
@@ -1337,6 +1359,23 @@ export default function JaspenWorkspace() {
             )}
           </div>
           <div style={{ display:'flex', gap:8 }}>
+            {/* Force-save: explicit reassurance even though edits auto-save. */}
+            {isScorecard && (
+              <button
+                type="button"
+                onClick={flushSave}
+                disabled={saving}
+                title="Save now"
+                style={{
+                  padding:'8px 12px', borderRadius:8, border:'1px solid #d6dce6',
+                  background: savedFlash ? '#ecfdf3' : '#fff',
+                  color: savedFlash ? '#0d7a3e' : '#0f172a',
+                  cursor: saving ? 'wait' : 'pointer', fontSize:13, fontWeight:500,
+                }}
+              >
+                {saving ? 'Saving…' : savedFlash ? 'Saved ✓' : 'Save'}
+              </button>
+            )}
             {/* Reset only applies to scorecard cosmetic overrides. The
                 execution plan has its own Undo/Redo inside the canvas, and
                 the trade-off surface has nothing to reset — so we hide the
@@ -1880,13 +1919,29 @@ export default function JaspenWorkspace() {
                             />
                           ))}
                         </div>
-                        <button
-                          onClick={() => updateBlocks(blocks.filter((_, i) => i !== bi))}
-                          title="Remove block"
-                          onMouseEnter={(e) => { e.currentTarget.style.color = '#94a3b8'; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.color = '#cbd5e1'; }}
-                          style={{ border:'none', background:'transparent', color:'#cbd5e1', cursor:'pointer', fontSize:14, lineHeight:1, padding:2, flexShrink:0 }}
-                        >×</button>
+                        {confirmDeleteBlockId === (blk?.id || bi) ? (
+                          <span style={{ display:'flex', alignItems:'center', gap:6, flexShrink:0 }}>
+                            <span style={{ fontSize:11, color:'#94a3b8' }}>Delete?</span>
+                            <button
+                              onClick={() => { updateBlocks(blocks.filter((_, i) => i !== bi)); setConfirmDeleteBlockId(null); }}
+                              title="Confirm delete"
+                              style={{ border:'none', background:'transparent', color:'#dc2626', cursor:'pointer', fontSize:12, fontWeight:600, padding:2 }}
+                            >Yes</button>
+                            <button
+                              onClick={() => setConfirmDeleteBlockId(null)}
+                              title="Keep"
+                              style={{ border:'none', background:'transparent', color:'#64748b', cursor:'pointer', fontSize:12, padding:2 }}
+                            >No</button>
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => setConfirmDeleteBlockId(blk?.id || bi)}
+                            title="Remove block"
+                            onMouseEnter={(e) => { e.currentTarget.style.color = '#94a3b8'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.color = '#cbd5e1'; }}
+                            style={{ border:'none', background:'transparent', color:'#cbd5e1', cursor:'pointer', fontSize:14, lineHeight:1, padding:2, flexShrink:0 }}
+                          >×</button>
+                        )}
                       </div>
                       <EditableText
                         multiline
