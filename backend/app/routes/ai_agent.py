@@ -523,6 +523,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "Scorecards accumulate inline in the conversation — chat, chat, scorecard, chat, scorecard, etc. The idea the user has OPEN in the workspace is editable in place (see EDITING THE OPEN SCORECARD above). "
     "When the user proposes a genuinely NEW idea or a variation they want to keep alongside the original, call generate_scorecard (no rescore_scorecard_id). "
     "When the user asks to change the idea they're viewing, edit it in place: patch_scorecard for wording OR for renaming the title (pass the new title in `name`), or generate_scorecard with rescore_scorecard_id to re-score that same idea. "
+    "ADD A SECTION: when the user wants to ADD a new section/note/block to the open scorecard that isn't one of the standard fields (e.g. 'add a section on regulatory risk', 'add a go-to-market note', 'add a block about competitors'), call patch_scorecard with `add_blocks` — a list of {heading, body}. This appends a free-form section to the card and NEVER moves the score. "
     "CRITICAL — never spawn a duplicate on an edit: editing the OPEN idea (wording, title rename, or re-score) must use patch_scorecard or generate_scorecard(rescore_scorecard_id=<open id>) — NEVER generate_scorecard without rescore_scorecard_id, which creates a second card. A title rename or any wording/prose edit is cosmetic: use patch_scorecard and the score MUST NOT move. "
     "When the user asks to compare or rank ideas, call generate_tradeoff_comparison. "
     "When the user asks to build an execution plan, call generate_execution_plan. "
@@ -5021,6 +5022,17 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                         "recommendations": {"type": "array", "items": {"type": "object"}},
                         "component_rationale": {"type": "object"},
                         "decision_framework": {"type": "object"},
+                        "add_blocks": {
+                            "type": "array",
+                            "description": "Add one or more NEW free-form sections to the open scorecard (like adding a slide/section). Each is {heading, body}. Use when the user asks to add a section, note, or extra context that isn't an existing field — e.g. 'add a section on regulatory risk', 'add a go-to-market note'. Appended below the standard scorecard; never moves the score.",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "heading": {"type": "string", "description": "Short section title."},
+                                    "body": {"type": "string", "description": "Section content."},
+                                },
+                            },
+                        },
                     },
                     "additionalProperties": False,
                 },
@@ -5968,7 +5980,32 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 new_name = _candidate[:200]
                 break
 
-        if not patch and not new_name:
+        # ADD BLOCK: let the agent append a new free-form section to the open scorecard
+        # (mirrors the user-facing "+ Add block" → display_overrides.custom_blocks).
+        raw_blocks = (
+            tool_input.get("add_blocks") or tool_input.get("add_block")
+            or tool_input.get("custom_blocks")
+        )
+        if isinstance(raw_blocks, dict):
+            raw_blocks = [raw_blocks]
+        new_blocks = []
+        if isinstance(raw_blocks, list):
+            for b in raw_blocks:
+                if isinstance(b, str):
+                    b = {"body": b}
+                if not isinstance(b, dict):
+                    continue
+                heading = str(b.get("heading") or b.get("title") or b.get("label") or "").strip()[:160]
+                body = str(b.get("body") or b.get("text") or b.get("content") or "").strip()
+                if not heading and not body:
+                    continue
+                new_blocks.append({
+                    "id": f"blk_{uuid.uuid4().hex[:10]}",
+                    "heading": heading or "New section",
+                    "body": body,
+                })
+
+        if not patch and not new_name and not new_blocks:
             return _tool_error("No patchable scorecard fields provided.", code="no_fields")
 
         # The open idea wins; fall back to an explicit id, then the thread's
@@ -6005,6 +6042,16 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 _ov = dict(_ov) if isinstance(_ov, dict) else {}
                 _ov["title"] = new_name
                 merged["display_overrides"] = _ov
+            # Append any new free-form sections to display_overrides.custom_blocks
+            # (read AFTER the rename so we don't clobber a title override).
+            if new_blocks:
+                _ovb = merged.get("display_overrides")
+                _ovb = dict(_ovb) if isinstance(_ovb, dict) else {}
+                existing_blocks = _ovb.get("custom_blocks")
+                existing_blocks = list(existing_blocks) if isinstance(existing_blocks, list) else []
+                existing_blocks.extend(new_blocks)
+                _ovb["custom_blocks"] = existing_blocks
+                merged["display_overrides"] = _ovb
             return merged
 
         card = apply_scorecard_edit_in_place(user_id, thread_id, target_id, _do_patch)
@@ -6015,6 +6062,8 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         changed_fields = list(patch.keys())
         if new_name:
             changed_fields.append("title")
+        if new_blocks:
+            changed_fields.append("custom_blocks")
         return _tool_success({
             "tool": tool_name,
             "confirmation": f"Updated {', '.join(changed_fields)} on this scorecard.",
