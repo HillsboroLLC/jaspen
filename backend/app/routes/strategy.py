@@ -2570,6 +2570,25 @@ def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective
 
     tier_vocab = '"Leading Candidate", "Secondary Candidate", "Strategic Necessity", "Monitor / Niche"'
 
+    # OBJECTIVE LENS: the user's primary objective (balanced/cost/speed/growth) must
+    # actually influence batch scoring — previously it was ignored here, so the tag in
+    # the UI had no effect on multi-idea results. With a CUSTOM rubric the user's weights
+    # stay authoritative (objective only shapes rationale + tie-breaks); with the generic
+    # dimensions the objective tilts the weighting as designed.
+    _obj_norm = _normalize_strategy_objective(strategy_objective)
+    _obj_guidance = _scorecard_objective_guidance(strategy_objective)
+    if custom_mode:
+        objective_note = (
+            f"\nOBJECTIVE LENS — the user's strategic objective is '{_obj_norm}'. {_obj_guidance} "
+            "Apply this as a tie-breaker and to shape your rationales and the portfolio recommendation, "
+            "but DO NOT override the user's criterion weights above — those are authoritative.\n"
+        )
+    else:
+        objective_note = (
+            f"\nOBJECTIVE LENS — the user's strategic objective is '{_obj_norm}'. {_obj_guidance} "
+            "Let this tilt how you judge the standard dimensions and which options rise to the top.\n"
+        )
+
     system_prompt = (
         "You are a rigorous strategy analyst building a decision dossier. You score multiple options against a fixed "
         "set of weighted criteria and return STRICT JSON only — no prose outside the JSON. Judge each option honestly "
@@ -2580,7 +2599,8 @@ def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective
     )
     user_prompt = (
         f"Build a decision dossier scoring these {len(ideas)} options against the criteria below. {criteria_note}"
-        f"{groups_note}\n"
+        f"{groups_note}"
+        f"{objective_note}\n"
         f"CRITERIA (json key = meaning (weight)[group]):\n{criteria_block}\n\n"
         f"OPTIONS:\n{ideas_block}\n\n"
         "Return ONLY this JSON shape (no markdown, no commentary):\n"
