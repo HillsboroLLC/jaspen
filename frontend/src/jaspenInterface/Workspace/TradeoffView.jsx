@@ -653,10 +653,13 @@ const TradeoffView = ({
           </div>
         )}
 
-        {/* Ranked table */}
-        <div style={{ background:'#fff', border:`1px solid ${LINE}`, borderRadius:12, overflow:'hidden', flex:1, display:'flex', flexDirection:'column', minHeight:0 }}>
+        {/* Ranked table — grows to fit ALL rows so the whole page scrolls as one
+            region (the main column above is overflow:auto). Previously this was
+            flex:1 with its own inner scroll, trapping the stacked ideas in a short
+            box while the page couldn't reveal the rest. */}
+        <div style={{ background:'#fff', border:`1px solid ${LINE}`, borderRadius:12, overflow:'hidden', display:'flex', flexDirection:'column' }}>
           <TableHeader dimDefs={dimDefs} />
-          <div style={{ overflow:'auto', flex:1 }}>
+          <div>
             {ideas.map((d, i) => (
               <PortfolioRow
                 key={d._snap?.id || i}
