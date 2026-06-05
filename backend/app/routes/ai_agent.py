@@ -528,6 +528,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "When the user proposes a genuinely NEW idea or a variation they want to keep alongside the original, call generate_scorecard (no rescore_scorecard_id). "
     "When the user asks to change the idea they're viewing, edit it in place: patch_scorecard for wording OR for renaming the title (pass the new title in `name`), or generate_scorecard with rescore_scorecard_id to re-score that same idea. "
     "ADD A SECTION: when the user wants to ADD a new section/note/block to the open scorecard that isn't one of the standard fields (e.g. 'add a section on regulatory risk', 'add a go-to-market note', 'add a block about competitors'), call patch_scorecard with `add_blocks` — a list of {heading, body}. This appends a free-form section to the card and NEVER moves the score. "
+    "BRAND COLOR: when the user asks for their brand color or a custom accent (e.g. 'use our brand blue #0A66C2', 'make the scorecard match our colors', 'change the accent to green'), call patch_scorecard with `accent_color` as a #RRGGBB hex. If they name a color without a hex, pick a sensible hex for it. This recolors the live scorecard and its exports; it never moves the score. "
     "CRITICAL — never spawn a duplicate on an edit: editing the OPEN idea (wording, title rename, or re-score) must use patch_scorecard or generate_scorecard(rescore_scorecard_id=<open id>) — NEVER generate_scorecard without rescore_scorecard_id, which creates a second card. A title rename or any wording/prose edit is cosmetic: use patch_scorecard and the score MUST NOT move. "
     "When the user asks to compare or rank ideas, call generate_tradeoff_comparison. "
     "When the user asks to build an execution plan, call generate_execution_plan. "
@@ -5051,6 +5052,10 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                         "recommendations": {"type": "array", "items": {"type": "object"}},
                         "component_rationale": {"type": "object"},
                         "decision_framework": {"type": "object"},
+                        "accent_color": {
+                            "type": "string",
+                            "description": "Set the scorecard's brand accent color as a #RRGGBB hex (e.g. '#0A66C2'). Use when the user asks for their brand color / a custom color (e.g. 'use our blue #0A66C2', 'make it match our brand'). Applies to the live scorecard and exports; never moves the score.",
+                        },
                         "add_blocks": {
                             "type": "array",
                             "description": "Add one or more NEW free-form sections to the open scorecard (like adding a slide/section). Each is {heading, body}. Use when the user asks to add a section, note, or extra context that isn't an existing field — e.g. 'add a section on regulatory risk', 'add a go-to-market note'. Appended below the standard scorecard; never moves the score.",
@@ -6034,7 +6039,16 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     "body": body,
                 })
 
-        if not patch and not new_name and not new_blocks:
+        # ACCENT COLOR: set the scorecard's brand accent (#RRGGBB) on the open card.
+        new_accent = ""
+        _accent_raw = str(tool_input.get("accent_color") or tool_input.get("brand_color") or "").strip()
+        if _accent_raw:
+            if not _accent_raw.startswith("#"):
+                _accent_raw = "#" + _accent_raw
+            if re.fullmatch(r"#[0-9a-fA-F]{6}", _accent_raw):
+                new_accent = _accent_raw.upper()
+
+        if not patch and not new_name and not new_blocks and not new_accent:
             return _tool_error("No patchable scorecard fields provided.", code="no_fields")
 
         # The open idea wins; fall back to an explicit id, then the thread's
@@ -6071,6 +6085,13 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 _ov = dict(_ov) if isinstance(_ov, dict) else {}
                 _ov["title"] = new_name
                 merged["display_overrides"] = _ov
+            # Apply a brand accent color to the open card (display_overrides.accent_color
+            # → rendered._accent_color → the score ring + accents + exports).
+            if new_accent:
+                _ova = merged.get("display_overrides")
+                _ova = dict(_ova) if isinstance(_ova, dict) else {}
+                _ova["accent_color"] = new_accent
+                merged["display_overrides"] = _ova
             # Append any new free-form sections to display_overrides.custom_blocks
             # (read AFTER the rename so we don't clobber a title override).
             if new_blocks:
@@ -6093,6 +6114,8 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             changed_fields.append("title")
         if new_blocks:
             changed_fields.append("custom_blocks")
+        if new_accent:
+            changed_fields.append("accent_color")
         return _tool_success({
             "tool": tool_name,
             "confirmation": f"Updated {', '.join(changed_fields)} on this scorecard.",

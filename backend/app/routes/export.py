@@ -176,8 +176,21 @@ def _scorecard_record_for_export(session, thread_id, scorecard_id=None):
         "executive_summary": _safe_text(result.get("executive_summary"), 4000) or None,
         "rubric": result.get("rubric") if isinstance(result.get("rubric"), dict) else None,
         "top_risks": risks,
+        # #4 custom colors: carry the user's brand accent into exports.
+        "accent_color": (
+            str((result.get("display_overrides") or {}).get("accent_color") or result.get("_accent_color") or "").strip()
+            or None
+        ),
     }
     return payload, None
+
+
+def _accent_hex(scorecard, default="#A0036C"):
+    """Validated brand accent for exports, falling back to Jaspen magenta."""
+    raw = str((scorecard or {}).get("accent_color") or "").strip()
+    if re.fullmatch(r"#[0-9a-fA-F]{6}", raw):
+        return raw.upper()
+    return default
 
 
 def _display_value(value):
@@ -330,7 +343,8 @@ def _scorecard_pdf_bytes(scorecard, *, org=None):
 
     try:
         navy = colors.HexColor("#161F3B")
-        magenta = colors.HexColor("#A0036C")
+        accent_hex = _accent_hex(scorecard)
+        magenta = colors.HexColor(accent_hex)
         ice = colors.HexColor("#EFF9FC")
         ink = colors.HexColor("#1F2937")
         slate = colors.HexColor("#475569")
@@ -408,7 +422,7 @@ def _scorecard_pdf_bytes(scorecard, *, org=None):
             [[
                 Paragraph(_safe_text(project_name, 180), title_style),
                 Paragraph(
-                    f"<b>Jaspen Score</b><br/><font color='#A0036C' size='18'><b>{score_text}</b></font>",
+                    f"<b>Jaspen Score</b><br/><font color='{accent_hex}' size='18'><b>{score_text}</b></font>",
                     ParagraphStyle(
                         "ScoreChip",
                         parent=styles["Normal"],
@@ -945,7 +959,8 @@ def _docx_bytes(scorecard, *, org=None):
         raise RuntimeError("python-docx is required for Word export.") from exc
 
     doc = Document()
-    magenta = RGBColor(0xA0, 0x03, 0x6C)
+    _ah = _accent_hex(scorecard)
+    magenta = RGBColor(int(_ah[1:3], 16), int(_ah[3:5], 16), int(_ah[5:7], 16))
     name = scorecard.get("project_name") or "Untitled Idea"
     doc.add_heading(name, level=0)
     sub = doc.add_paragraph(f"{(org.name if org else 'Personal Workspace')} · Generated {scorecard.get('updated_at') or _iso_now()}")
