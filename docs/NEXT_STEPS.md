@@ -143,6 +143,26 @@ B5. ✅ FIXED (8035079, NEEDS DO DEPLOY) — `_generate_batch_scorecards` now ch
    like the built-in sections (⠿ handle + 4-seg width picker; cols+order stored per-block).
    TODO: custom_blocks aren't yet rendered in PDF/Word exports — add when convenient.
 
+## BILLING UNIFICATION (in progress, 6/5)
+- ✅ DONE (a238893) — removed Connectors/Knowledge/Models/Admin tabs from the billing
+  page; now Overview / Plans / Credit packs / Security. (Tab content left as unreachable
+  code; prune the ~700 lines later.) LB-confirmed keep set: Plan & subscription, Credit
+  packs, Payment method (new); remove set: Connectors, Knowledge, Models, Admin.
+- NEXT: (a) merge Overview+Plans into one clean "Plan & subscription" view (current plan,
+  price, upgrade/downgrade/cancel). (b) Add a "Payment method" section using Stripe
+  Payment Element (custom UI, card field is the only Stripe iframe; no hosted redirect).
+  (c) Prune the dead connector/knowledge/model/admin JSX from Account.jsx.
+- TEST → LIVE checklist (LB drives the key/live parts; Claude can't flip keys/enter cards):
+  1. Backend MUST enforce subscription_status (P0 #3) before live — canceled/past_due
+     users keep access until then.
+  2. Confirm PRICE_ID_* env vars are LIVE-mode ids; STRIPE_SECRET_KEY=sk_live_*;
+     STRIPE_WEBHOOK_SECRET = live signing secret; FLASK_ENV=production.
+  3. Register the live webhook endpoint; verify customer.subscription.deleted sets
+     subscription_plan='free'.
+  4. E2E test in Stripe TEST first: signup → checkout (Payment Element) → webhook →
+     plan active → cancel → access revoked within one webhook cycle.
+- THEN: set up a dev environment; only promote tested changes to production.
+
 ## STRIPE — custom checkout (LB exploring, 6/5)
 - YES: use Stripe Elements / Payment Element for a fully custom checkout UI — only the
   card field is a small Stripe-hosted iframe (PCI); no redirect to Stripe's hosted page.
