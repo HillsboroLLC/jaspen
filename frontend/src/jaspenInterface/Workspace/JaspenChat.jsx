@@ -37,6 +37,7 @@ import { Jaspen, storage } from './JaspenClient';
 // Tab components
 import ScoreDashboard   from './ScoreDashboard';
 import TradeoffView     from './TradeoffView';
+import ChoicePrompt, { parseChoicePrompt } from './ChoicePrompt';
 import { computeTradeoffInsights } from './tradeoffInsights';
 import {
   COLOR as EXEC_COLOR,
@@ -3278,8 +3279,15 @@ const renderConversationMessage = (message, opts = {}) => {
       </div>
     );
   }
-  const text = String(message?.text || '');
-  if (message?.role === 'user') return text;
+  const rawText = String(message?.text || '');
+  if (message?.role === 'user') return rawText;
+
+  // Choice-prompt primitive: pull a [[choice]] block out of the assistant text and
+  // render it as clickable option cards. Only the most recent message's card is
+  // interactive (older ones are disabled so history stays clean).
+  const { text, choice } = parseChoicePrompt(rawText);
+  const isLastMessage = opts.lastMessage ? message === opts.lastMessage : true;
+  const choiceDisabled = !isLastMessage || Boolean(message?.streaming);
 
   return (
     <>
@@ -3307,6 +3315,13 @@ const renderConversationMessage = (message, opts = {}) => {
       >
         {text}
       </ReactMarkdown>
+      {choice && (
+        <ChoicePrompt
+          choice={choice}
+          disabled={choiceDisabled}
+          onChoose={(v) => { if (opts.onSendText) opts.onSendText(v); }}
+        />
+      )}
     </>
   );
 };
@@ -11990,6 +12005,8 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       buildingExecutionPlanFor,
       onOpenWorkspaceScorecard: (scorecard) => openWorkspaceScorecard(scorecard),
       onOpenWorkspaceRoute: (threadIdValue, artifactIdValue) => openWorkspaceRoute(threadIdValue, artifactIdValue),
+      onSendText: (txt) => void onSubmit({ text: txt, force: true }),
+      lastMessage: Array.isArray(messages) && messages.length ? messages[messages.length - 1] : null,
     })}
     renderAttachments={(m) => renderMessageAttachments(m)}
     renderActions={(m, key, idx, total) => renderMessageActions(m, key, idx, total)}
@@ -13644,6 +13661,8 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                     buildingExecutionPlanFor,
                     onOpenWorkspaceScorecard: (scorecard) => openWorkspaceScorecard(scorecard),
                     onOpenWorkspaceRoute: (threadIdValue, artifactIdValue) => openWorkspaceRoute(threadIdValue, artifactIdValue),
+                    onSendText: (txt) => void onSubmit({ text: txt, force: true }),
+                    lastMessage: Array.isArray(displayMessages) && displayMessages.length ? displayMessages[displayMessages.length - 1] : null,
                   })}</div>
 	                  {renderMessageAttachments(m)}
 	                  {renderMessageActions(m, `main:${idx}`, idx, displayMessages.length)}

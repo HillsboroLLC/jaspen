@@ -22,6 +22,7 @@ import { Jaspen } from './JaspenClient';
 import { authFetch } from '../../shared/auth/http';
 import { API_BASE } from '../../config/apiBase';
 import TradeoffView from './TradeoffView';
+import ChoicePrompt, { parseChoicePrompt } from './ChoicePrompt';
 import JaspenExecutionCanvas from './JaspenExecutionCanvas';
 
 // Sentinel scorecardId values that route the canvas to a non-scorecard
@@ -787,8 +788,10 @@ export default function JaspenWorkspace() {
     }
   }
 
-  async function sendChat() {
-    const text = chatInput.trim();
+  async function sendChat(overrideText) {
+    // overrideText is a string when a choice-prompt option is clicked; otherwise
+    // this is a normal send (onClick passes an event, which we ignore).
+    const text = (typeof overrideText === 'string' ? overrideText : chatInput).trim();
     if (!text || chatBusy) return;
     // Optimistic user message
     const userTurn = { role: 'user', text };
@@ -1147,9 +1150,13 @@ export default function JaspenWorkspace() {
                 : 'Ask Jaspen to rewrite copy, adjust tone, or tweak styling — or click anything on the canvas to edit directly.'}
             </div>
           )}
-          {chatHistory.map((m, i) => (
+          {chatHistory.map((m, i) => {
+            const isAi = m.role !== 'user';
+            const parsed = isAi && !m.pending ? parseChoicePrompt(m.text) : { text: m.text, choice: null };
+            const isLastMsg = i === chatHistory.length - 1;
+            return (
+            <React.Fragment key={i}>
             <div
-              key={i}
               style={{
                 alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start',
                 maxWidth:'90%', padding:'8px 12px', borderRadius:10,
@@ -1178,7 +1185,7 @@ export default function JaspenWorkspace() {
                     code: ({ children }) => <code style={{ background:'#e2e8f0', borderRadius:3, padding:'1px 4px', fontSize:12 }}>{children}</code>,
                   }}
                 >
-                  {m.pending ? '…' : String(m.text || '')}
+                  {m.pending ? '…' : String(parsed.text || '')}
                 </ReactMarkdown>
               )}
               {m.execPlan && (
@@ -1220,7 +1227,19 @@ export default function JaspenWorkspace() {
                 </div>
               )}
             </div>
-          ))}
+            {parsed.choice && (
+              <div style={{ alignSelf:'flex-start', maxWidth:'94%' }}>
+                <ChoicePrompt
+                  choice={parsed.choice}
+                  accent={ringColor}
+                  disabled={!isLastMsg || chatBusy}
+                  onChoose={(v) => sendChat(v)}
+                />
+              </div>
+            )}
+            </React.Fragment>
+            );
+          })}
         </div>
 
         {/* Chat input */}
