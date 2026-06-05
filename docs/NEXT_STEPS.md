@@ -100,11 +100,11 @@ B6. ✅ FIXED (d8e7bfe, frontend/Vercel) — streaming client now parseErrorResp
     in the streaming/score path and surface a specific, friendly message + upgrade CTA
     (analyze_project already returns a 'Thinking power limit reached' payload — mirror
     that on the conversation/score-batch path so the chat shows it clearly).
-B4. ✅ FIXED (d27ea3b, frontend/Vercel) — LB confirmed it was the TRADE-OFF view. The
-    ranked table was flex:1 with its own inner scroll (trapped rows in a short box); now
-    it grows to fit all rows and the main column is the single page-scroll region.
-    (Execution canvas still uses its intentional fixed-viewport layout — revisit only if
-    LB hits the same on that screen.)
+B4. ✅ FIXED (4733fde, frontend/Vercel) — first attempt (d27ea3b) made it WORSE (nested
+    overflow chain didn't bound → couldn't scroll past the fold). Redone with a `flow`
+    prop on TradeoffView: workspace grows to content + the canvas (overflow:auto) scrolls
+    the whole page; chat-inline keeps its fixed card. Also dropped the height:100% wrapper.
+    POLISH (same commit): custom-block remove × is now subtle (13px, #cbd5e1, hover-darken).
 
 B5b. ✅ FIXED (4471416, NEEDS DO DEPLOY) — real failure was the AGENT TURN (long
     pre-analysis + tool thrash → stream error), upstream of the scoring engine. Now:
