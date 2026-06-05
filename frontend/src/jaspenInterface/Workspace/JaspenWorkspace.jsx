@@ -209,6 +209,8 @@ export default function JaspenWorkspace() {
   const [chatInput, setChatInput] = useState('');
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  // Element picker for "+ Add block": choose a block TYPE (text / callout / quote).
+  const [addBlockMenuOpen, setAddBlockMenuOpen] = useState(false);
   // Per-artifact storage key. The chat is seeded synchronously from localStorage
   // on first render (no empty flash) and re-loaded whenever the artifact key
   // changes (e.g. navigating scorecard → execution in the same mounted view).
@@ -1796,10 +1798,29 @@ export default function JaspenWorkspace() {
             {(() => {
               const blocks = Array.isArray(overrides?.custom_blocks) ? overrides.custom_blocks : [];
               const updateBlocks = (next) => setOverride('custom_blocks', next.length ? next : null);
+              const accent = ringColor;
+              // A small, strategic set of element types — not boiling the ocean.
+              const BLOCK_TYPES = [
+                { key: 'text', label: 'Text section', hint: 'Heading + paragraph', defaultHeading: 'New section' },
+                { key: 'callout', label: 'Callout', hint: 'Highlighted note box', defaultHeading: 'Note' },
+                { key: 'quote', label: 'Quote', hint: 'Italic, attributed', defaultHeading: 'Quote' },
+              ];
+              const addBlock = (type) => {
+                const def = BLOCK_TYPES.find((t) => t.key === type) || BLOCK_TYPES[0];
+                updateBlocks([...blocks, { id: `blk_${Date.now()}`, type: def.key, heading: def.defaultHeading, body: '' }]);
+              };
               return (
                 <div style={{ marginTop:20, display:'flex', flexDirection:'column', gap:14 }}>
-                  {blocks.map((blk, bi) => (
-                    <div key={blk?.id || bi} style={{ background:'#fff', border:'1px solid #e6eaf2', borderRadius:10, padding:'14px 16px', position:'relative' }}>
+                  {blocks.map((blk, bi) => {
+                    const blockType = String(blk?.type || 'text');
+                    const containerStyle = blockType === 'callout'
+                      ? { background:`${accent}0d`, border:`1px solid ${accent}33`, borderLeft:`3px solid ${accent}`, borderRadius:10, padding:'14px 16px', position:'relative' }
+                      : { background:'#fff', border:'1px solid #e6eaf2', borderRadius:10, padding:'14px 16px', position:'relative' };
+                    const bodyStyle = blockType === 'quote'
+                      ? { fontSize:13.5, color:'#334155', lineHeight:1.65, whiteSpace:'pre-line', fontStyle:'italic', borderLeft:'3px solid #e6eaf2', paddingLeft:12 }
+                      : { fontSize:13, color:'#334155', lineHeight:1.65, whiteSpace:'pre-line' };
+                    return (
+                    <div key={blk?.id || bi} style={containerStyle}>
                       <button
                         onClick={() => updateBlocks(blocks.filter((_, i) => i !== bi))}
                         title="Remove block"
@@ -1810,20 +1831,42 @@ export default function JaspenWorkspace() {
                       <EditableText
                         value={blk?.heading || ''}
                         onCommit={(v) => updateBlocks(blocks.map((b, i) => i === bi ? { ...b, heading: v } : b))}
-                        style={{ fontSize:11, fontWeight:600, color:'#64748b', letterSpacing:'0.06em', textTransform:'uppercase', marginBottom:8, display:'block' }}
+                        style={{ fontSize:11, fontWeight:600, color: blockType === 'callout' ? accent : '#64748b', letterSpacing:'0.06em', textTransform:'uppercase', marginBottom:8, display:'block' }}
                       />
                       <EditableText
                         multiline
                         value={blk?.body || ''}
                         onCommit={(v) => updateBlocks(blocks.map((b, i) => i === bi ? { ...b, body: v } : b))}
-                        style={{ fontSize:13, color:'#334155', lineHeight:1.65, whiteSpace:'pre-line' }}
+                        style={bodyStyle}
                       />
                     </div>
-                  ))}
-                  <button
-                    onClick={() => updateBlocks([...blocks, { id: `blk_${Date.now()}`, heading: 'New section', body: '' }])}
-                    style={{ alignSelf:'flex-start', border:'1px dashed #c7d2da', background:'#fff', color:'#475569', borderRadius:8, padding:'8px 14px', fontSize:13, cursor:'pointer', fontWeight:500 }}
-                  >+ Add block</button>
+                    );
+                  })}
+                  <div style={{ position:'relative', alignSelf:'flex-start' }}>
+                    <button
+                      onClick={() => setAddBlockMenuOpen((o) => !o)}
+                      style={{ border:'1px dashed #c7d2da', background:'#fff', color:'#475569', borderRadius:8, padding:'8px 14px', fontSize:13, cursor:'pointer', fontWeight:500, display:'flex', alignItems:'center', gap:6 }}
+                    >+ Add block <span style={{ fontSize:10, opacity:0.7 }}>▾</span></button>
+                    {addBlockMenuOpen && (
+                      <>
+                        <div onClick={() => setAddBlockMenuOpen(false)} style={{ position:'fixed', inset:0, zIndex:40 }} />
+                        <div style={{ position:'absolute', top:'calc(100% + 6px)', left:0, zIndex:41, background:'#fff', border:'1px solid #e6eaf2', borderRadius:10, boxShadow:'0 8px 24px rgba(22,31,59,0.12)', minWidth:210, padding:6, display:'flex', flexDirection:'column' }}>
+                          {BLOCK_TYPES.map((t) => (
+                            <button
+                              key={t.key}
+                              onClick={() => { addBlock(t.key); setAddBlockMenuOpen(false); }}
+                              onMouseEnter={(e) => { e.currentTarget.style.background = '#f5f7fa'; }}
+                              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                              style={{ textAlign:'left', padding:'8px 10px', border:'none', background:'transparent', borderRadius:6, cursor:'pointer' }}
+                            >
+                              <div style={{ fontSize:13, color:'#0f172a', fontWeight:500 }}>{t.label}</div>
+                              <div style={{ fontSize:11, color:'#94a3b8', marginTop:1 }}>{t.hint}</div>
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </div>
               );
             })()}
