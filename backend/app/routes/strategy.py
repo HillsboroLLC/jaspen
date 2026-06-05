@@ -2452,7 +2452,56 @@ def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective
     """
     ideas = [i for i in (ideas or []) if isinstance(i, dict) and str(i.get('name') or '').strip()]
     if not ideas:
-        return []
+        return [], None
+
+    # CHUNKING: scoring every idea in ONE pass overflows the model's output budget
+    # once there are many ideas (10+ truncates the JSON at max_tokens=8000 → parse
+    # fails → the whole batch errors). Split large sets into sub-batches scored against
+    # the SAME rubric, then merge. Each chunk re-enters this function at a safe size
+    # (<= BATCH_CHUNK_SIZE) and runs the single-pass body below. A failed chunk is
+    # skipped so the ideas that DID score still render (partial success > total fail).
+    BATCH_CHUNK_SIZE = 5
+    if len(ideas) > BATCH_CHUNK_SIZE:
+        all_results = []
+        chunk_summaries = []
+        for start in range(0, len(ideas), BATCH_CHUNK_SIZE):
+            chunk = ideas[start:start + BATCH_CHUNK_SIZE]
+            try:
+                c_results, c_summary = _generate_batch_scorecards(
+                    client, chunk, rubric=rubric, strategy_objective=strategy_objective,
+                    model_selection=model_selection, llm_model=llm_model,
+                )
+            except Exception:
+                current_app.logger.exception(
+                    '[_generate_batch_scorecards] chunk %s-%s failed', start, start + len(chunk)
+                )
+                c_results, c_summary = [], None
+            # Keep positional alignment with `ideas`: the caller zips ideas↔cards and
+            # adds each idea's name by position, so a failed/short chunk MUST be padded
+            # with None (the caller skips non-dict payloads) or names would shift.
+            c_results = list(c_results or [])
+            if len(c_results) < len(chunk):
+                c_results = c_results + [None] * (len(chunk) - len(c_results))
+            all_results.extend(c_results[:len(chunk)])
+            if c_summary:
+                chunk_summaries.append(c_summary)
+        # Re-derive tiers from the GLOBAL absolute score bands so per-chunk relativity
+        # doesn't skew them (locked Strategic-Necessity anchors are preserved).
+        for scored in all_results:
+            if not isinstance(scored, dict):
+                continue
+            if str(scored.get('tier') or '') == 'Strategic Necessity':
+                continue
+            js = float(scored.get('jaspen_score') or 0.0)
+            scored['tier'] = (
+                'Leading Candidate' if js >= 78
+                else 'Secondary Candidate' if js >= 68
+                else 'Monitor / Niche'
+            )
+        # Portfolio summary is per-chunk; surface the first as a stopgap (a true
+        # all-ideas summary would need a second synthesis pass — deferred).
+        merged_summary = chunk_summaries[0] if chunk_summaries else None
+        return all_results, merged_summary
 
     rubric_criteria = None
     if isinstance(rubric, dict) and isinstance(rubric.get('criteria'), list):
