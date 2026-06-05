@@ -1416,7 +1416,7 @@ export default function JaspenWorkspace() {
             // older threads `bundle.scorecard_snapshots` may be empty even
             // when a baseline exists — TradeoffView's empty state would then
             // hide a comparison that actually has data to show.
-            <div style={{ height:'100%', display:'flex', flexDirection:'column' }}>
+            <div style={{ display:'flex', flexDirection:'column' }}>
               {(() => {
                 // Use the shared `tradeoffIdeas` memo so the canvas and the
                 // sidebar chat's view_context render the exact same set of
@@ -1461,6 +1461,7 @@ export default function JaspenWorkspace() {
 
                 return (
                   <TradeoffView
+                    flow
                     scorecardSnapshots={list}
                     strategyObjective={bundle?.strategy_objective || 'balanced'}
                     portfolioAnalysis={null}
@@ -1788,7 +1789,9 @@ export default function JaspenWorkspace() {
                       <button
                         onClick={() => updateBlocks(blocks.filter((_, i) => i !== bi))}
                         title="Remove block"
-                        style={{ position:'absolute', top:8, right:10, border:'none', background:'transparent', color:'#94a3b8', cursor:'pointer', fontSize:18, lineHeight:1 }}
+                        onMouseEnter={(e) => { e.currentTarget.style.color = '#94a3b8'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.color = '#cbd5e1'; }}
+                        style={{ position:'absolute', top:10, right:10, border:'none', background:'transparent', color:'#cbd5e1', cursor:'pointer', fontSize:13, lineHeight:1, padding:2 }}
                       >×</button>
                       <EditableText
                         value={blk?.heading || ''}

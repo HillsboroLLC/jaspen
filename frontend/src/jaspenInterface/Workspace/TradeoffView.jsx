@@ -515,6 +515,9 @@ const TradeoffView = ({
   onBuildExecutionPlan, // fn(idea) — generate execution plan from this idea
   onOpenIdeaWorkspace,  // fn(idea) — open this idea in its standalone workspace
   buildingPlanId,      // id of the idea currently generating (for spinner)
+  flow = false,        // true = grow to content + let the PARENT scroll (workspace
+                       // full page); false = fixed-viewport card with inner scroll
+                       // (inline chat). Avoids trapping rows in a short box.
 }) => {
   const [selected, setSelected] = useState(null);
 
@@ -604,9 +607,9 @@ const TradeoffView = ({
   }
 
   return (
-    <div style={{ flex:1, display:'flex', minHeight:0, background:BG_ALT, fontFamily:"'Inter Tight', system-ui, sans-serif" }}>
+    <div style={{ display:'flex', background:BG_ALT, fontFamily:"'Inter Tight', system-ui, sans-serif", ...(flow ? {} : { flex:1, minHeight:0 }) }}>
       {/* Main content */}
-      <div style={{ flex:1, display:'flex', flexDirection:'column', padding:'20px 24px', gap:14, overflow:'auto', minWidth:0 }}>
+      <div style={{ flex:1, display:'flex', flexDirection:'column', padding:'20px 24px', gap:14, minWidth:0, ...(flow ? {} : { overflow:'auto' }) }}>
 
         {/* Hero + quadrant */}
         <div style={{ display:'grid', gridTemplateColumns:'1fr 390px', gap:14 }}>
@@ -653,13 +656,12 @@ const TradeoffView = ({
           </div>
         )}
 
-        {/* Ranked table — grows to fit ALL rows so the whole page scrolls as one
-            region (the main column above is overflow:auto). Previously this was
-            flex:1 with its own inner scroll, trapping the stacked ideas in a short
-            box while the page couldn't reveal the rest. */}
-        <div style={{ background:'#fff', border:`1px solid ${LINE}`, borderRadius:12, overflow:'hidden', display:'flex', flexDirection:'column' }}>
+        {/* Ranked table. In `flow` mode it grows to fit ALL rows so the parent
+            (workspace canvas) scrolls the whole page; otherwise it's a fixed box
+            with its own inner scroll (inline chat). */}
+        <div style={{ background:'#fff', border:`1px solid ${LINE}`, borderRadius:12, overflow:'hidden', display:'flex', flexDirection:'column', ...(flow ? {} : { flex:1, minHeight:0 }) }}>
           <TableHeader dimDefs={dimDefs} />
-          <div>
+          <div style={flow ? undefined : { overflow:'auto', flex:1 }}>
             {ideas.map((d, i) => (
               <PortfolioRow
                 key={d._snap?.id || i}
