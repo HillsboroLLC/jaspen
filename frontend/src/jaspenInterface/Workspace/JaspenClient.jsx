@@ -635,6 +635,13 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
       isForm: hasAttachments,
     });
 
+    // A non-OK response here (e.g. 402 out of thinking power) is NOT an SSE stream —
+    // parse it so the user gets a clear message (and the credits-exhausted event
+    // fires) instead of a generic "hit an error" bubble.
+    if (!resp.ok) {
+      await parseErrorResponse(resp);
+    }
+
     const reader = resp.body?.getReader();
     if (!reader) {
       throw new Error('Streaming not supported by this browser.');
@@ -719,6 +726,13 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
       signal: abortSignal,
     });
 
+    // A non-OK response here (e.g. 402 out of thinking power) is NOT an SSE stream —
+    // parse it so the user gets a clear message (and the credits-exhausted event
+    // fires) instead of a generic "hit an error" bubble.
+    if (!resp.ok) {
+      await parseErrorResponse(resp);
+    }
+
     const reader = resp.body?.getReader();
     if (!reader) {
       throw new Error('Streaming not supported by this browser.');
@@ -779,6 +793,13 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
         model_type: model_type || undefined,
       }),
     });
+
+    // A non-OK response here (e.g. 402 out of thinking power) is NOT an SSE stream —
+    // parse it so the user gets a clear message (and the credits-exhausted event
+    // fires) instead of a generic "hit an error" bubble.
+    if (!resp.ok) {
+      await parseErrorResponse(resp);
+    }
 
     const reader = resp.body?.getReader();
     if (!reader) {

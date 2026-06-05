@@ -868,6 +868,21 @@ function isChatAttachmentFile(fileLike) {
   );
 }
 
+// When a stream fails because the user is out of thinking power, show a CLEAR
+// message (not the generic "hit an error") and don't offer a retry — retrying
+// won't help until they add credits. Returns the message, or null if not a
+// credit error.
+const CREDIT_ERROR_CODES = new Set(['credits_exhausted', 'insufficient_credits', 'thinking_power_exhausted']);
+function creditErrorMessage(err) {
+  if (!err) return null;
+  const code = String(err?.data?.code || '').trim().toLowerCase();
+  if (err?.status === 402 || CREDIT_ERROR_CODES.has(code)) {
+    return String(err?.message || '').trim()
+      || "You're out of thinking power. Add credits or upgrade to keep working.";
+  }
+  return null;
+}
+
 function buildMessageAttachmentMeta(fileLike) {
   const fallbackType = isPdfLikeFile(fileLike)
     ? 'application/pdf'
@@ -7260,7 +7275,12 @@ useEffect(() => {
         setStreamingAssistantError(placeholderId, 'Stopped.');
         return finalPayload;
       }
-      setStreamingAssistantError(placeholderId, 'Sorry — I hit an error. Please try again.', { keepPartial: true, retryable: true });
+      const creditMsg = creditErrorMessage(streamErr);
+      setStreamingAssistantError(
+        placeholderId,
+        creditMsg || 'Sorry — I hit an error. Please try again.',
+        { keepPartial: true, retryable: !creditMsg },
+      );
       throw streamErr;
     } finally {
       streamAbortRef.current = null;
@@ -7323,7 +7343,12 @@ useEffect(() => {
       return finalPayload;
     } catch (streamErr) {
       setStreamToolStatus('');
-      setStreamingAssistantError(placeholderId, 'Sorry — I hit an error. Please try again.', { keepPartial: true, retryable: true });
+      const creditMsg = creditErrorMessage(streamErr);
+      setStreamingAssistantError(
+        placeholderId,
+        creditMsg || 'Sorry — I hit an error. Please try again.',
+        { keepPartial: true, retryable: !creditMsg },
+      );
       throw streamErr;
     } finally {
       setIsStreamingReply(false);
