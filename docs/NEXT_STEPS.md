@@ -143,7 +143,17 @@ B5. ✅ FIXED (8035079, NEEDS DO DEPLOY) — `_generate_batch_scorecards` now ch
    like the built-in sections (⠿ handle + 4-seg width picker; cols+order stored per-block).
    TODO: custom_blocks aren't yet rendered in PDF/Word exports — add when convenient.
 
-## BUILT-IN SECTIONS ON THE UNIFIED GRID (LB 6/5 — next focused build)
+## BUILT-IN SECTIONS GRID — ✅ DONE (5b28325), follow-up: single unified grid
+- DONE: built-in sections (score/exec/dimensions/risks/scenario) now render in a BlockGrid
+  with drag (⠿ handle) + SE-corner resize; layout (x/y/w/h) persists per section.key in
+  sectionLayout (localStorage — no backend deploy needed). Width dial + collapse removed.
+- FOLLOW-UP (stretch from below): merge built-in sections AND custom blocks into ONE
+  BlockGrid so tiles interleave/rearrange together (currently two stacked grids). Split
+  onLayoutChange by key: section keys -> sectionLayout, blk_ ids -> custom_blocks.
+- NEEDS LIVE TEST: drag/resize each section, refresh (localStorage persists), confirm
+  content (ring, DimensionBars, editable text) still renders + Reset still clears layout.
+
+## (superseded) BUILT-IN SECTIONS ON THE UNIFIED GRID (LB 6/5 — next focused build)
 - Goal: built-in scorecard sections (score / executive / dimensions / risks / scenario)
   get the SAME react-grid-layout behavior as custom blocks — drag the ⠿ handle to move,
   drag the SE corner to resize to any size. Ideally ONE grid so built-in + custom tiles
