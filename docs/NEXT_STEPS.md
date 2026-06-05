@@ -137,10 +137,18 @@ B5. ✅ FIXED (8035079, NEEDS DO DEPLOY) — `_generate_batch_scorecards` now ch
 ## NEXT SESSION — LB's punch list (2026-06-04, do these first)
 > Connectors confirmed still working — nothing was deleted; the scoring rework tied
 > into the existing bones, so uploads/connectors are intact. Verify, don't rebuild.
-1. ✅ DONE (dd56d16 be / 1a37380 fe) — agent add-block via patch_scorecard.add_blocks
-   (→ display_overrides.custom_blocks). PLUS workspace "+ Add block" is now an ELEMENT
-   PICKER (Text / Callout / Quote); each block carries a `type`. Agent blocks default to
-   text. (Element-picker = the "workspace tools" item on LB's 6/4 plan.)
+1. ✅ DONE (dd56d16 be / 1a37380 + dc588dd fe) — agent add-block via
+   patch_scorecard.add_blocks (→ display_overrides.custom_blocks). Workspace "+ Add block"
+   is an ELEMENT PICKER (Text / Callout / Quote). Blocks are now ALSO draggable + resizable
+   like the built-in sections (⠿ handle + 4-seg width picker; cols+order stored per-block).
+   TODO: custom_blocks aren't yet rendered in PDF/Word exports — add when convenient.
+
+## STRIPE — custom checkout (LB exploring, 6/5)
+- YES: use Stripe Elements / Payment Element for a fully custom checkout UI — only the
+  card field is a small Stripe-hosted iframe (PCI); no redirect to Stripe's hosted page.
+  stripe.confirmPayment() on submit; Customer Portal OR custom API for upgrade/downgrade/
+  cancel. BLOCKER before live: backend must ENFORCE subscription_status (P0 #3). Claude
+  cannot enter card numbers or flip live keys — LB does that.
 2. ✅ DONE (00f83fb, frontend) — main /new chat jumps instantly to latest message on
    initial thread restore; Workspace sidebar chat already pinned to bottom.
 3. ✅ BUILT (b69e6cc, NEEDS DO DEPLOY + credited account to verify) — choice-prompt
