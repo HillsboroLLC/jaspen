@@ -93,6 +93,22 @@ B4. **Workspace page won't scroll.** Canvas scrolls (`JaspenWorkspace.jsx:1408`)
     stacked-ideas block is a short fixed-height box — only the inner box scrolls, page
     can't reveal more. Fix the nested overflow/height so the whole page scrolls.
 
+B5. **10-idea batch scoring errors out ("Sorry — I hit an error").** Reproducible:
+    upload 10 ideas, agent sets rubric + queues all 10 (B1 working), but scoring
+    fails. Root cause (high confidence): `score_batch_queued` scores ALL ideas in ONE
+    LLM call at `max_tokens=8000` (`strategy.py:2568`). 10 ideas × ~6 criteria +
+    rationales overflows 8000 → truncated JSON → parse fails. 3–4 ideas fit (why
+    morning worked). FIX = chunk into sub-batches (~5) against the SAME rubric and
+    merge cards + portfolio_summary; do NOT just raise max_tokens (risks model output
+    cap). Confirm with one server log line from `[score_batch_queued]`.
+    Note: also handle partial failures gracefully (render the cards that DID score).
+
+## DEFERRED FEATURE NOTE (LB intent, 6/4)
+- **Choice-prompt pop-up (C.9):** when LB said "do the survey thing," she means a
+  pop-up option box where the agent asks a question and the user can SELECT or type an
+  answer (not chat-only Q&A). Build the choice-prompt primitive so the discovery survey
+  uses selectable option boxes. Future — not a tonight item.
+
 ## NEXT SESSION — LB's punch list (2026-06-04, do these first)
 > Connectors confirmed still working — nothing was deleted; the scoring rework tied
 > into the existing bones, so uploads/connectors are intact. Verify, don't rebuild.
