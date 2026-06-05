@@ -100,11 +100,11 @@ B6. ✅ FIXED (d8e7bfe, frontend/Vercel) — streaming client now parseErrorResp
     in the streaming/score path and surface a specific, friendly message + upgrade CTA
     (analyze_project already returns a 'Thinking power limit reached' payload — mirror
     that on the conversation/score-batch path so the chat shows it clearly).
-B4. ⏳ NEEDS LB INPUT — traced all 3 workspace canvases: SCORECARD already scrolls
-    (maxWidth:980/margin:auto, no height cap). TRADE-OFF (TradeoffView 657/659) and
-    EXECUTION (JaspenExecutionCanvas 895/934) use INTENTIONAL fixed-viewport dashboards
-    where an inner list scrolls — "only inner box scrolls" is by design there. Need LB to
-    confirm WHICH screen felt wrong (+ screenshot) before changing a deliberate layout.
+B4. ✅ FIXED (d27ea3b, frontend/Vercel) — LB confirmed it was the TRADE-OFF view. The
+    ranked table was flex:1 with its own inner scroll (trapped rows in a short box); now
+    it grows to fit all rows and the main column is the single page-scroll region.
+    (Execution canvas still uses its intentional fixed-viewport layout — revisit only if
+    LB hits the same on that screen.)
 
 B5b. ✅ FIXED (4471416, NEEDS DO DEPLOY) — real failure was the AGENT TURN (long
     pre-analysis + tool thrash → stream error), upstream of the scoring engine. Now:
