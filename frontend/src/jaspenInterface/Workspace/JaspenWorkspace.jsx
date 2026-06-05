@@ -1326,6 +1326,26 @@ export default function JaspenWorkspace() {
         {sidebarOpen ? '‹' : '›'}
       </button>
 
+      {/* When the sidebar (which holds the "Back to Jaspen" link) is collapsed, the
+          user otherwise has no way back. Show a compact back link at top-left ONLY
+          while collapsed, so it's never doubled with the sidebar's own. */}
+      {!sidebarOpen && (
+        <Link
+          to={`/new?sid=${encodeURIComponent(threadId)}`}
+          title="Back to Jaspen"
+          style={{
+            position:'absolute', top:14, left:30, zIndex:11,
+            display:'inline-flex', alignItems:'center', gap:6,
+            padding:'6px 10px', borderRadius:8, border:'1px solid #e6eaf2',
+            background:'#fff', color:'#475569', textDecoration:'none', fontSize:13,
+            boxShadow:'0 1px 2px rgba(15,23,42,0.04)',
+          }}
+        >
+          <FontAwesomeIcon icon={faArrowLeft} />
+          Back to Jaspen
+        </Link>
+      )}
+
       {/* === CENTER: canvas === */}
       <main data-ws-main style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden' }}>
         <div data-ws-topbar style={{ padding:'18px 28px', borderBottom:'1px solid #e6eaf2', background:'#fff', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
