@@ -89,6 +89,14 @@ B3. **Attachments are per-message only.** Once the user sends a follow-up withou
     re-attaching, the model no longer has the file (no persisted attachment in the
     replayed history). Decide: persist last upload's extracted text into thread context
     so follow-ups can reference it.
+B6. **Out-of-credits shows a generic error, not a clear message.** VERIFIED 6/4: a Free
+    account at 0% thinking power failed batch scoring with "Sorry — I hit an error"
+    (the generic stream-error fallback) instead of "You're out of thinking power —
+    add credits / upgrade." This misled us into chasing a code bug that wasn't there
+    (Essential account scored all 10 fine). FIX: detect the credit-exhaustion response
+    in the streaming/score path and surface a specific, friendly message + upgrade CTA
+    (analyze_project already returns a 'Thinking power limit reached' payload — mirror
+    that on the conversation/score-batch path so the chat shows it clearly).
 B4. **Workspace page won't scroll.** Canvas scrolls (`JaspenWorkspace.jsx:1408`) but the
     stacked-ideas block is a short fixed-height box — only the inner box scrolls, page
     can't reveal more. Fix the nested overflow/height so the whole page scrolls.
