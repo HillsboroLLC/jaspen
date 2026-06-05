@@ -1634,20 +1634,52 @@ export default function JaspenWorkspace() {
               style={{ fontSize:24, fontWeight:600, color:'#0f172a', letterSpacing:'-0.01em' }}
             />
 
-            {/* Section grid — 4-column so sections can snap to 25/50/75/100% */}
-            <div style={{ display:'grid', gridTemplateColumns:'repeat(4, 1fr)', gap:20, marginTop:28 }}>
-              {sectionLayout.map((section, idx) => {
-                // Skip sections with no data
-                if (section.key === 'executive' &&
-                    !rendered?.executive_summary &&
-                    rendered?._display_overrides?.executive_summary === undefined) return null;
-                if (section.key === 'risks' &&
-                    !(Array.isArray(rendered?.top_risks) && rendered.top_risks.length > 0) &&
-                    rendered?._display_overrides?.top_risks === undefined) return null;
-                if (section.key === 'scenario' && !recommendedScenario &&
-                    rendered?._display_overrides?.recommended_scenario === undefined) return null;
-
-                const isCollapsed = section.collapsed;
+            {/* Built-in sections on the SAME kind of grid as custom blocks: drag the
+                ⠿ handle to move, drag the SE corner to resize to any size (no more 4
+                fixed widths). */}
+            {(() => {
+              const _visibleSections = sectionLayout.filter((s) => {
+                if (s.key === 'executive') return !!rendered?.executive_summary || rendered?._display_overrides?.executive_summary !== undefined;
+                if (s.key === 'risks') return (Array.isArray(rendered?.top_risks) && rendered.top_risks.length > 0) || rendered?._display_overrides?.top_risks !== undefined;
+                if (s.key === 'scenario') return !!recommendedScenario || rendered?._display_overrides?.recommended_scenario !== undefined;
+                return true;
+              });
+              return (
+              <BlockGrid
+                className="jw-block-grid"
+                style={{ marginTop: 28 }}
+                cols={12}
+                rowHeight={28}
+                margin={[16, 16]}
+                isDraggable
+                isResizable
+                draggableHandle=".blk-drag-handle"
+                resizeHandles={['se']}
+                layout={_visibleSections.map((s, i) => ({
+                  i: s.key,
+                  x: Number.isFinite(s.x) ? s.x : 0,
+                  y: Number.isFinite(s.y) ? s.y : i * 5,
+                  w: Number.isFinite(s.w) ? s.w : Math.min(12, Math.max(3, (s.cols || 4) * 3)),
+                  h: Number.isFinite(s.h) ? s.h : 5,
+                  minW: 3, minH: 2,
+                }))}
+                onLayoutChange={(nl) => {
+                  const byId = {};
+                  nl.forEach((l) => { byId[l.i] = l; });
+                  setSectionLayout((prev) => {
+                    let ch = false;
+                    const u = prev.map((s) => {
+                      const l = byId[s.key];
+                      if (!l) return s;
+                      if (s.x !== l.x || s.y !== l.y || s.w !== l.w || s.h !== l.h) ch = true;
+                      return { ...s, x: l.x, y: l.y, w: l.w, h: l.h };
+                    });
+                    return ch ? u : prev;
+                  });
+                }}
+              >
+              {_visibleSections.map((section, idx) => {
+                const isCollapsed = false;
 
                 const toggleCollapse = () => {
                   setSectionLayout((prev) =>
@@ -1711,28 +1743,16 @@ export default function JaspenWorkspace() {
                 return (
                   <div
                     key={section.key}
-                    draggable
-                    onDragStart={handleDragStart}
-                    onDragOver={handleDragOver}
-                    onDragLeave={handleDragLeave}
-                    onDrop={handleDrop}
-                    style={{
-                      gridColumn: `span ${section.cols}`,
-                      background: isCollapsed ? '#fafbfc' : '#fff',
-                      borderRadius: 8,
-                      padding: isCollapsed ? 0 : '12px',
-                      transition: 'all 0.15s',
-                      boxSizing: 'border-box',
-                    }}
+                    style={{ height:'100%', boxSizing:'border-box', background:'#fff', border:'1px solid #e6eaf2', borderRadius:10, padding:'10px 12px', display:'flex', flexDirection:'column', overflow:'hidden' }}
                   >
                     {/* Section header bar */}
                     <div style={{
                       display:'flex', alignItems:'center', gap:8,
-                      padding:'6px 0', marginBottom: isCollapsed ? 0 : 12,
+                      padding:'2px 0 8px', marginBottom: 0,
                       cursor:'default', borderBottom:'1px solid #e6eaf2',
                     }}>
                       {/* Drag handle */}
-                      <span style={{ fontSize:14, color:'#cbd5e1', cursor:'grab', userSelect:'none' }}>⠿</span>
+                      <span className="blk-drag-handle" style={{ fontSize:14, color:'#cbd5e1', cursor:'grab', userSelect:'none' }} title="Drag to move">⠿</span>
                       {/* Label */}
                       <span style={{
                         fontSize:11, fontWeight:600, color:'#64748b',
@@ -1747,25 +1767,6 @@ export default function JaspenWorkspace() {
                           fontSize:9, color:'#94a3b8',
                         }}>LOCKED</span>
                       )}
-                      {/* Grid width picker — 4 segments = 25/50/75/100% */}
-                      <div
-                        style={{ display:'flex', gap:2, flexShrink:0, alignItems:'center' }}
-                        title={`Width: ${section.cols}/4 columns`}
-                      >
-                        {[1,2,3,4].map((n) => (
-                          <button
-                            key={n}
-                            type="button"
-                            onClick={() => setSectionLayout(prev => prev.map((s, i) => i === idx ? { ...s, cols: n } : s))}
-                            title={n === 1 ? '¼ width' : n === 2 ? '½ width' : n === 3 ? '¾ width' : 'Full width'}
-                            style={{
-                              width:9, height:14, borderRadius:2, border:'none', cursor:'pointer', padding:0,
-                              background: n <= section.cols ? '#0f172a' : '#e2e8f0',
-                              transition:'background 0.1s',
-                            }}
-                          />
-                        ))}
-                      </div>
                       {/* Dimensions-specific: inner bar column picker */}
                       {section.key === 'dimensions' && (
                         <div
@@ -1776,7 +1777,7 @@ export default function JaspenWorkspace() {
                             <button
                               key={n}
                               type="button"
-                              onClick={() => setSectionLayout(prev => prev.map((s, i) => i === idx ? { ...s, dimCols: n } : s))}
+                              onClick={() => setSectionLayout(prev => prev.map((s) => s.key === 'dimensions' ? { ...s, dimCols: n } : s))}
                               title={n === 1 ? '1-column bars' : '2-column bars'}
                               style={{
                                 width:9, height:14, borderRadius:2, border:'none', cursor:'pointer', padding:0,
@@ -1787,19 +1788,10 @@ export default function JaspenWorkspace() {
                           ))}
                         </div>
                       )}
-                      {/* Collapse toggle */}
-                      <button
-                        type="button"
-                        onClick={toggleCollapse}
-                        title={isCollapsed ? 'Expand' : 'Collapse'}
-                        style={{ fontSize:11, color:'#94a3b8', cursor:'pointer', background:'none', border:'none', padding:'2px 4px' }}
-                      >
-                        {isCollapsed ? '›' : '⌄'}
-                      </button>
                     </div>
 
-                    {/* Section content */}
-                    <div style={{ display: isCollapsed ? 'none' : 'block' }}>
+                    {/* Section content — scrolls within the tile */}
+                    <div style={{ overflow:'auto', flex:1, paddingTop:8 }}>
                       {section.key === 'score' && (
                         <div style={{ display:'flex', alignItems:'center', gap:24 }}>
                           <div style={{ position:'relative', width:96, height:96 }}>
@@ -1843,7 +1835,7 @@ export default function JaspenWorkspace() {
                               ? rendered.rubric.criteria.map((c) => c?.key).filter(Boolean)
                               : null)}
                           onReorder={(newOrder) => setSectionLayout(prev =>
-                            prev.map((s, i) => i === idx ? { ...s, dimOrder: newOrder } : s)
+                            prev.map((s) => s.key === 'dimensions' ? { ...s, dimOrder: newOrder } : s)
                           )}
                         />
                       )}
@@ -1880,7 +1872,9 @@ export default function JaspenWorkspace() {
                   </div>
                 );
               })}
-            </div>
+              </BlockGrid>
+              );
+            })()}
 
             {/* Custom blocks — free-form sections the user (or agent) can add,
                 like adding an element in a deck/spreadsheet. Stored in
