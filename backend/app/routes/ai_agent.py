@@ -401,6 +401,10 @@ MAX_MUTATIONS_PER_TURN = 3
 MAX_CONVERSATION_ATTACHMENTS = 5
 MAX_CONVERSATION_ATTACHMENT_BYTES = 10 * 1024 * 1024
 MAX_CONVERSATION_ATTACHMENT_TEXT_CHARS = 15_000
+# B3: how much of a word/data upload's extracted text we persist on the chat-history
+# entry so FOLLOW-UP turns can still reference the file without re-attaching it. Smaller
+# than the full per-turn budget above to keep replayed history from bloating.
+PERSISTED_UPLOAD_EXCERPT_CHARS = 4_000
 USER_MESSAGE_OPEN_TAG = "<user_message>"
 USER_MESSAGE_CLOSE_TAG = "</user_message>"
 _MUTATION_TOOLS = {
@@ -2524,12 +2528,21 @@ def _serialize_chat_attachment(attachment):
     kind = str(attachment.get("kind") or _attachment_kind_for_media_type(media_type)).strip().lower()
     if not kind:
         return None
-    return {
+    serialized = {
         "name": _safe_attachment_name(attachment.get("name")),
         "size": int(attachment.get("size") or 0),
         "type": media_type,
         "kind": kind,
     }
+    # B3: keep a capped excerpt of the extracted text for word/data uploads so the
+    # model can still reference the file on later turns (the base64 itself is never
+    # replayed into history). Display only uses name/size/type, so this extra field
+    # is invisible in the UI.
+    if kind in ("word", "data"):
+        excerpt = str(attachment.get("text_content") or "").strip()
+        if excerpt:
+            serialized["text_excerpt"] = excerpt[:PERSISTED_UPLOAD_EXCERPT_CHARS]
+    return serialized
 
 
 def _conversation_attachment_blocks(attachments):
@@ -4384,12 +4397,28 @@ def _anthropic_messages_from_history(chat_history, max_turns=14):
     normalized = []
     for msg in (chat_history or []):
         text = _message_text(msg)
+        role = str((msg or {}).get("role") or "").lower()
+        is_assistant = role in ("assistant", "ai", "bot")
+        # B3: re-attach persisted upload excerpts so the model keeps the file's
+        # content on later turns even though the original base64 isn't replayed.
+        if not is_assistant:
+            atts = msg.get("attachments") if isinstance(msg, dict) else None
+            excerpt_blocks = []
+            for att in (atts if isinstance(atts, list) else []):
+                if not isinstance(att, dict):
+                    continue
+                ex = str(att.get("text_excerpt") or "").strip()
+                if ex:
+                    nm = _safe_attachment_name(att.get("name") or "file")
+                    excerpt_blocks.append(f"[Earlier upload — {nm}]\n{ex}")
+            if excerpt_blocks:
+                joined = "\n\n".join(excerpt_blocks)
+                text = f"{text}\n\n{joined}".strip() if text else joined
         if not text:
             continue
-        role = str((msg or {}).get("role") or "").lower()
         normalized.append({
-            "role": "assistant" if role in ("assistant", "ai", "bot") else "user",
-            "content": text if role in ("assistant", "ai", "bot") else _wrap_user_message_content(text),
+            "role": "assistant" if is_assistant else "user",
+            "content": text if is_assistant else _wrap_user_message_content(text),
         })
 
     if max_turns and len(normalized) > max_turns:
