@@ -794,15 +794,29 @@ export default function JaspenWorkspace() {
   }
 
   async function resetOverrides() {
+    // Warn: reset is destructive — it removes added sections AND all formatting.
+    const ok = window.confirm(
+      'Reset this scorecard to the original?\n\n'
+      + 'This will DELETE any sections you added and reset ALL formatting — section '
+      + 'sizes, order, brand color, and any edited text. This cannot be undone.'
+    );
+    if (!ok) return;
     skipNextSaveRef.current = true; // we'll do the save ourselves to clear remote
     setOverrides({});
+    // Also reset the built-in section layout (sizes / order / collapse), which lives
+    // in localStorage separately from display_overrides — this is the "formatting"
+    // that a plain overrides-clear used to leave behind.
+    setSectionLayout(DEFAULT_SCORECARD_SECTIONS.map((s) => ({ ...s, collapsed: false })));
+    try { localStorage.removeItem(`jw-layout-${threadId}-${scorecardId}`); } catch {}
     try {
       setSaving(true);
-      // Pass nulls for each known key so the backend removes them.
+      // Pass nulls for each known key so the backend removes them — INCLUDING
+      // custom_blocks, so added sections don't reappear on reload.
       await Jaspen.patchScorecardOverrides(threadId, scorecardId, {
         title: null, subtitle: null, executive_summary: null,
         accent_color: null, theme: null, narrative: null,
         top_risks: null, recommended_scenario: null,
+        custom_blocks: null,
       });
     } catch (e) {
       setSaveError(String(e?.message || e || 'Failed to reset'));
