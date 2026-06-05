@@ -1940,12 +1940,12 @@ export default function Account() {
   // Unified billing page: money + plan + usage only. Connectors live on Data Sources
   // (/connectors-manage), Knowledge on /knowledge, Models in app settings, Admin on
   // /jaspen-admin — so they're removed from this page rather than duplicated here.
+  // Billing drawer items only. Account-level Settings (MFA etc.) is its OWN top-level
+  // tab (the "Settings" vertical tab), not nested inside the billing menu.
   const sidebarItems = [
     { key: 'overview', label: 'Overview', icon: faChartLine },
     { key: 'plans', label: 'Plans', icon: faLayerGroup },
     { key: 'packs', label: 'Credit packs', icon: faBolt },
-    // Account-level settings (MFA etc.) live in their own tab, NOT mixed into billing.
-    { key: 'settings', label: 'Settings', icon: faGear },
   ];
   const modalConnectorLabel = connectorApiLabel(jiraConfigModal.connectorId);
   const isJiraModal = jiraConfigModal.connectorId === 'jira_sync';
@@ -2009,6 +2009,19 @@ export default function Account() {
         </button>
       )}
 
+      {/* SETTINGS vertical tab — its own top-level section (MFA + future), a sibling
+          of Billing rather than a billing sub-tab. */}
+      {!billingDrawerOpen && (
+        <button
+          type="button"
+          className={`billing-tab settings-tab${activeTab === 'settings' ? ' is-active' : ''}`}
+          onClick={() => { setBillingDrawerOpen(false); setActiveTab('settings'); }}
+          aria-label="Open settings"
+        >
+          Settings
+        </button>
+      )}
+
       {/* BILLING drawer */}
       <div
         id="billing-drawer"
@@ -2065,9 +2078,11 @@ export default function Account() {
         <div className="account-header-row">
           <div className="account-title-wrap">
             <p className="account-eyebrow">Account</p>
-            <h1>Billing & Usage</h1>
+            <h1>{activeTab === 'settings' ? 'Settings' : 'Billing & Usage'}</h1>
             <p className="account-subtext">
-              Manage your plan, thinking power usage, and account settings.
+              {activeTab === 'settings'
+                ? 'Manage your account security and preferences.'
+                : 'Manage your plan, thinking power usage, and account settings.'}
             </p>
           </div>
           <div className="account-header-actions">
