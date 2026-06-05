@@ -143,7 +143,16 @@ B5. ✅ FIXED (8035079, NEEDS DO DEPLOY) — `_generate_batch_scorecards` now ch
    text. (Element-picker = the "workspace tools" item on LB's 6/4 plan.)
 2. ✅ DONE (00f83fb, frontend) — main /new chat jumps instantly to latest message on
    initial thread restore; Workspace sidebar chat already pinned to bottom.
-3. **AI-agent CHOICE PROMPTS in all chats** (= the C.9 choice-prompt primitive / the
+3. ✅ BUILT (b69e6cc, NEEDS DO DEPLOY + credited account to verify) — choice-prompt
+   primitive. Agent emits [[choice]]{json}[[/choice]]; shared ChoicePrompt.jsx parses +
+   renders clickable option cards in BOTH /new (renderConversationMessage) and the
+   workspace sidebar (chatHistory.map). Click → sends label (onSubmit/sendChat); Other =
+   type your own; multi-select joins; only latest card interactive. Prompt instructs the
+   agent to use it for small discrete-answer questions, one at a time. VERIFY: trigger a
+   question with discrete options on each surface; confirm cards render + clicking answers.
+   FOLLOW-UPS if needed: tune when the agent chooses to use it; consider a real tool
+   instead of the text convention if reliability is shaky.
+~~3 (original).~~ **AI-agent CHOICE PROMPTS in all chats** (= the C.9 choice-prompt primitive / the
    "survey pop-up"). CLARIFIED 6/4: LB means option boxes "like how you [Claude] are
    asking me this question" — the agent presents a question + selectable options (click
    to answer, or type your own), inside the chats. NOTE: the workspace sidebar +
