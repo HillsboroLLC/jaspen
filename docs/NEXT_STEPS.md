@@ -85,10 +85,9 @@ B2. **Uploads mis-routed by file type.** `JaspenChat.jsx:845 isChatAttachmentFil
     "I don't see a file" + returns an unrelated analysis. Fix = route all supported
     types to the agent (or at minimum hand the agent the extracted text + a clear note
     of what was uploaded). Also surface which path a file took in the UI.
-B3. **Attachments are per-message only.** Once the user sends a follow-up without
-    re-attaching, the model no longer has the file (no persisted attachment in the
-    replayed history). Decide: persist last upload's extracted text into thread context
-    so follow-ups can reference it.
+B3. ✅ FIXED (52cf7cd, NEEDS DO DEPLOY) — word/data uploads persist a 4k text excerpt
+    on the chat-history entry; replayed user turns re-inject it so follow-ups keep the
+    file content without re-attaching. UI display unaffected.
 B6. ✅ FIXED (d8e7bfe, frontend/Vercel) — streaming client now parseErrorResponse() on
     !resp.ok so a 402 fires the credits-exhausted billing modal + toast; chat bubble
     shows "You're out of thinking power…" (retry disabled) instead of the generic error.
@@ -101,9 +100,11 @@ B6. ✅ FIXED (d8e7bfe, frontend/Vercel) — streaming client now parseErrorResp
     in the streaming/score path and surface a specific, friendly message + upgrade CTA
     (analyze_project already returns a 'Thinking power limit reached' payload — mirror
     that on the conversation/score-batch path so the chat shows it clearly).
-B4. **Workspace page won't scroll.** Canvas scrolls (`JaspenWorkspace.jsx:1408`) but the
-    stacked-ideas block is a short fixed-height box — only the inner box scrolls, page
-    can't reveal more. Fix the nested overflow/height so the whole page scrolls.
+B4. ⏳ NEEDS LB INPUT — traced all 3 workspace canvases: SCORECARD already scrolls
+    (maxWidth:980/margin:auto, no height cap). TRADE-OFF (TradeoffView 657/659) and
+    EXECUTION (JaspenExecutionCanvas 895/934) use INTENTIONAL fixed-viewport dashboards
+    where an inner list scrolls — "only inner box scrolls" is by design there. Need LB to
+    confirm WHICH screen felt wrong (+ screenshot) before changing a deliberate layout.
 
 B5b. ✅ FIXED (4471416, NEEDS DO DEPLOY) — real failure was the AGENT TURN (long
     pre-analysis + tool thrash → stream error), upstream of the scoring engine. Now:
