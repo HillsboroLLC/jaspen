@@ -143,6 +143,20 @@ B5. ✅ FIXED (8035079, NEEDS DO DEPLOY) — `_generate_batch_scorecards` now ch
    like the built-in sections (⠿ handle + 4-seg width picker; cols+order stored per-block).
    TODO: custom_blocks aren't yet rendered in PDF/Word exports — add when convenient.
 
+## SETTINGS — make it a TOP-LEVEL tab, not a billing sub-tab (LB 6/5, do at 12:50 ET)
+- Current (wrong): Account.jsx billing menu = Overview / Plans / Credit packs / Settings
+  (Settings nested INSIDE the billing menu). Functional (MFA reachable) but wrong IA.
+- Wanted: "Settings" is its OWN top-level tab — a SIBLING of "Billing", not nested under
+  it. The left rail shows vertical tabs (JASPEN / BILLING); add a SETTINGS rail tab too.
+  When on Settings, the page header should read "Settings" (not "Billing & Usage"), with
+  MFA first and "other things listed once we get there".
+- Implementation notes: the rail tabs (JASPEN/BILLING vertical labels) are the top-level
+  switch — find that component (likely the collapsed BillingMenu / AppMenu in Account.jsx
+  or its layout) and add a SETTINGS section parallel to billing. Move the MFA block out of
+  the billing menu's 'settings' sub-tab into the new top-level Settings section. Remove
+  'settings' from the billing sidebarItems (back to Overview/Plans/Credit packs only).
+  Header title becomes conditional: "Billing & Usage" vs "Settings".
+
 ## BILLING UNIFICATION (in progress, 6/5)
 - ✅ DONE (a238893) — removed Connectors/Knowledge/Models/Admin tabs from the billing
   page; now Overview / Plans / Credit packs / Security. (Tab content left as unreachable
