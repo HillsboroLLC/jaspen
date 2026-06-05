@@ -539,6 +539,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "PRESENT YOUR SHORTLIST BEFORE YOU SCORE: When the user asks you to BOTH propose options AND score them (e.g. 'propose 5-6 cities, then score each'), or any time this is the first turn of the conversation, do NOT call generate_scorecard in the same reply where you present your list. First give the full shortlist with your one-line rationale for each as your written message, then ask the user to confirm before scoring (e.g. 'Want me to score these?'). Only call the scoring tools AFTER they confirm in a later turn. This matters: if you call generate_scorecard before the user has confirmed, the system blocks it and your reply is rewritten into a bare confirmation prompt — so the user LOSES the shortlist and rationale you just wrote. Presenting first, then scoring after confirmation, keeps all of your analysis on screen. "
     "SCORING MANY IDEAS AT ONCE: To score MORE THAN ONE idea (e.g. 'score these 8 cities', 'compare these 5 vendors', an uploaded list of options), call queue_scorecards ONCE with EVERY idea — each as {name, description}. Do NOT call generate_scorecard yourself for a multi-idea request and do NOT try to score them in your reply. queue_scorecards hands the whole list to the system, which scores them all in a single pass against the criteria and renders the cards together, then builds the trade-off comparison. After calling it, tell the user in one sentence that you've queued all N and the scored cards will appear in a moment (name them if there are only a few). If a scoring rubric is set, every queued idea is scored against it. For scoring exactly ONE idea, use generate_scorecard instead. "
     "HARD RULE — multi-option requests ALWAYS batch: if the user gave two or more options to compare, you MUST use queue_scorecards for the whole set. NEVER score them one at a time with generate_scorecard, and NEVER abandon the batch midway to 'use the standard approach' — that produces a single card on the generic default rubric and breaks the comparison. If the user also gave their own criteria/weights, call set_scoring_rubric FIRST so the batch is scored on THEIR rubric, not the generic default. Only fall back to the generic default dimensions when the user has given no criteria and explicitly wants a quick score.\n"
+    "BATCH SIZE — SCORE AT MOST 5 AT A TIME: Jaspen scores up to FIVE ideas per batch so results stay reliable. If the user has more than five, call queue_scorecards with just the first five (or the five the user prioritizes); the system stashes the rest. Tell the user plainly that you score five at a time, name which five are running now and which are next, and offer to continue with the next five once these render (they can say 'continue'). When they continue, queue the next five. Keep your written reply SHORT when scoring a batch — do NOT write a long per-idea analysis before queuing; queue the ideas and let the scorecards carry the detail. A big pre-analysis wastes the turn and makes scoring unreliable.\n"
     "NEW IDEAS MID-CONVERSATION: When the user introduces a NEW option AFTER others have already been scored in this thread (e.g. 'what about a hybrid plan?', 'add Denver', 'also compare Vendor X'), treat it exactly like the original ideas: score it against the SAME existing rubric (queue_scorecards for one or more new ones, or generate_scorecard for a single one) so it is added to the running set and stacked into the trade-off comparison alongside the others. Never start over or drop the earlier ideas — the comparison grows. Briefly confirm you've added and scored the new option so the user sees it joined the lineup.\n"
     "NEVER narrate tool-call mechanics to the user. Do not mention internal tool names, field names (e.g. 'idea_description'), error codes, or that you are 'retrying' or 'correcting' a call. If a tool call fails, silently issue a corrected call and speak only about the strategy result the user cares about. The user should never see the plumbing.\n"
     "\n"
@@ -5489,6 +5490,15 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         if not queue:
             current_app.logger.warning("queue_scorecards: no valid names parsed from: %r", tool_input)
             return _tool_error("Each idea needs a name.", code="invalid_queue")
+        # RELIABILITY CAP: scoring more than ~5 ideas in one batch is where the turn
+        # gets unreliable (long pre-analysis + large generation -> the stream errors).
+        # Queue the first MAX_BATCH_SCORE and stash the rest so the user can continue in
+        # the next round. The tool result tells the agent to surface this to the user.
+        MAX_BATCH_SCORE = 5
+        overflow = []
+        if len(queue) > MAX_BATCH_SCORE:
+            overflow = queue[MAX_BATCH_SCORE:]
+            queue = queue[:MAX_BATCH_SCORE]
         # Best-effort immediate persist; also folded onto the durable session by
         # _apply_queue_action_to_session in the main turn handler (so it survives
         # the end-of-turn full-payload save, like the scoring rubric).
@@ -5497,19 +5507,35 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             _key, _sess = _resolve_user_session(sessions, thread_id)
             if isinstance(_sess, dict):
                 _sess["scorecard_queue"] = queue
+                # Remainder waits here; the next queue_scorecards call (on "continue")
+                # scores it. Cleared implicitly when a new queue is set.
+                _sess["scorecard_queue_overflow"] = overflow
                 save_user_sessions(user_id, sessions)
         except Exception:
             current_app.logger.exception("queue_scorecards best-effort persist failed")
         names = ", ".join(q["name"] for q in queue)
+        if overflow:
+            overflow_names = ", ".join(q["name"] for q in overflow)
+            total = len(queue) + len(overflow)
+            confirmation = (
+                f"Queued the first {len(queue)} of {total} ideas to score against the rubric: {names}. "
+                f"Jaspen scores up to {MAX_BATCH_SCORE} at a time so the results stay reliable. "
+                f"Tell the user these {len(queue)} are scoring now and that the remaining "
+                f"{len(overflow)} ({overflow_names}) are next — invite them to say 'continue' "
+                f"(or 'score the next 5') and then queue those in the following turn."
+            )
+        else:
+            confirmation = (
+                f"Queued {len(queue)} ideas to score against your rubric: {names}. "
+                "Scoring all of them now — the cards will appear together in a moment."
+            )
         return {
             "ok": True,
             "tool": tool_name,
             "queue": queue,
             "queued_count": len(queue),
-            "confirmation": (
-                f"Queued {len(queue)} ideas to score against your rubric: {names}. "
-                "Scoring all of them now — the cards will appear together in a moment."
-            ),
+            "overflow_count": len(overflow),
+            "confirmation": confirmation,
         }
 
     if tool_name == "generate_scorecard":
