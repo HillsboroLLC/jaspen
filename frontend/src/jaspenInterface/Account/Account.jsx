@@ -62,15 +62,13 @@ const FALLBACK_MODEL_TYPES = {
     min_plan: 'enterprise',
   },
 };
+// Billing page tabs (unified). connectors/knowledge/models/admin were removed —
+// they each have their own page. Deep-links to those now fall back to overview.
 const ACCOUNT_TAB_KEYS = new Set([
   'overview',
   'plans',
-  'connectors',
   'packs',
   'security',
-  'models',
-  'knowledge',
-  'admin',
 ]);
 const DEFAULT_SYNC_MODES = ['import', 'push', 'two_way'];
 const DEFAULT_CONFLICT_POLICIES = ['latest_wins', 'prefer_external', 'prefer_jaspen', 'manual_review'];
@@ -1939,15 +1937,14 @@ export default function Account() {
     return planRank >= requiredRank;
   };
   const isAdminUser = adminState.checked && adminState.isAdmin;
+  // Unified billing page: money + plan + usage only. Connectors live on Data Sources
+  // (/connectors-manage), Knowledge on /knowledge, Models in app settings, Admin on
+  // /jaspen-admin — so they're removed from this page rather than duplicated here.
   const sidebarItems = [
     { key: 'overview', label: 'Overview', icon: faChartLine },
     { key: 'plans', label: 'Plans', icon: faLayerGroup },
-    { key: 'connectors', label: 'Connectors', icon: faPlug },
     { key: 'packs', label: 'Credit packs', icon: faBolt },
     { key: 'security', label: 'Security', icon: faShieldHalved },
-    { key: 'models', label: 'Models', icon: faLayerGroup },
-    ...(isAdminUser ? [{ key: 'admin', label: 'System admin', icon: faGear }] : []),
-    { key: 'knowledge', label: 'Knowledge', icon: faBookOpen },
   ];
   const modalConnectorLabel = connectorApiLabel(jiraConfigModal.connectorId);
   const isJiraModal = jiraConfigModal.connectorId === 'jira_sync';
