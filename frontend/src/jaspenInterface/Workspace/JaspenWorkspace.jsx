@@ -57,11 +57,11 @@ const _GENERIC_TITLE_PATTERNS = [/^version\s+\d+$/i, /^v\d+$/i, /^scenario\s+[a-
 // cols is out of 4 — the outer grid uses repeat(4, 1fr)
 // 1 = 25%  2 = 50%  3 = 75%  4 = 100%
 const DEFAULT_SCORECARD_SECTIONS = [
-  { key: 'score',      label: 'Score',                cols: 4, locked: true },
-  { key: 'executive',  label: 'Executive Summary',    cols: 4, locked: false },
-  { key: 'dimensions', label: 'Dimensions',           cols: 4, locked: true, dimCols: 2, dimOrder: null },
-  { key: 'risks',      label: 'Top Risks',            cols: 2, locked: false },
-  { key: 'scenario',   label: 'Recommended Scenario', cols: 2, locked: true },
+  { key: 'score',      label: 'Score',                cols: 4, locked: true,  x: 0, y: 0,  w: 12, h: 4 },
+  { key: 'executive',  label: 'Executive Summary',    cols: 4, locked: false, x: 0, y: 4,  w: 12, h: 5 },
+  { key: 'dimensions', label: 'Dimensions',           cols: 4, locked: true,  dimCols: 2, dimOrder: null, x: 0, y: 9, w: 12, h: 8 },
+  { key: 'risks',      label: 'Top Risks',            cols: 2, locked: false, x: 0, y: 17, w: 6,  h: 6 },
+  { key: 'scenario',   label: 'Recommended Scenario', cols: 2, locked: true,  x: 6, y: 17, w: 6,  h: 6 },
 ];
 
 function _pickMeaningful(...candidates) {

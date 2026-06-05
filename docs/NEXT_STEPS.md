@@ -143,6 +143,29 @@ B5. ✅ FIXED (8035079, NEEDS DO DEPLOY) — `_generate_batch_scorecards` now ch
    like the built-in sections (⠿ handle + 4-seg width picker; cols+order stored per-block).
    TODO: custom_blocks aren't yet rendered in PDF/Word exports — add when convenient.
 
+## BUILT-IN SECTIONS ON THE UNIFIED GRID (LB 6/5 — next focused build)
+- Goal: built-in scorecard sections (score / executive / dimensions / risks / scenario)
+  get the SAME react-grid-layout behavior as custom blocks — drag the ⠿ handle to move,
+  drag the SE corner to resize to any size. Ideally ONE grid so built-in + custom tiles
+  interleave and rearrange together. (LB note in-app: "this page doesn't let me rearrange
+  the tile.")
+- Groundwork DONE: DEFAULT_SCORECARD_SECTIONS now carries x/y/w/h (JaspenWorkspace.jsx:59).
+  react-grid-layout already imported as BlockGrid; custom blocks already use it.
+- BUILD PLAN:
+  1. Replace the section grid (`<div display:grid repeat(4,1fr)>` + sectionLayout.map,
+     ~lines 1637-1883) with a BlockGrid. Each section = a grid item keyed by section.key;
+     preserve the per-key content VERBATIM (score ring, DimensionBars, EditableText for
+     exec/risks/scenario). Drop the 4-seg WIDTH dial + collapse; keep the LOCKED badge and
+     the dimensions dimCols/dimOrder controls (content controls, not layout).
+  2. Put the ⠿ handle with className "blk-drag-handle"; content in an overflow:auto box.
+  3. onLayoutChange → setSectionLayout (persisted to localStorage as today) by section.key.
+  4. Migrate legacy localStorage entries (cols, no x/y/w/h) → w = cols*3.
+  5. UNIFY (stretch): render built-in sections AND custom blocks as children of ONE
+     BlockGrid; onLayoutChange splits results — section keys -> sectionLayout (localStorage),
+     blk_ ids -> custom_blocks (display_overrides). Keep the hasData() filter for
+     executive/risks/scenario so layout `i`s match children exactly.
+  6. RISK: this is the CORE artifact; test add/move/resize/refresh + Reset before shipping.
+
 ## SETTINGS — make it a TOP-LEVEL tab, not a billing sub-tab (LB 6/5, do at 12:50 ET)
 - Current (wrong): Account.jsx billing menu = Overview / Plans / Credit packs / Settings
   (Settings nested INSIDE the billing menu). Functional (MFA reachable) but wrong IA.
