@@ -842,8 +842,30 @@ function isImageLikeFile(fileLike) {
   return type.startsWith('image/') || /\.(png|jpe?g|gif|webp)$/i.test(name);
 }
 
+// Spreadsheets / CSVs / plain text now go through the chat-attachment path so the
+// agent receives the ACTUAL cell content (extracted server-side), not just a
+// statistical summary. Previously these fell to the stats-only analyze endpoint,
+// so the agent could "see" a file existed but couldn't read the rows.
+function isDataDocLikeFile(fileLike) {
+  const type = String(fileLike?.type || '').toLowerCase();
+  const name = String(fileLike?.name || '').toLowerCase();
+  return (
+    type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    || type === 'application/vnd.ms-excel'
+    || type === 'text/csv'
+    || type === 'text/tab-separated-values'
+    || type === 'text/plain'
+    || /\.(xlsx|xls|csv|tsv|txt)$/i.test(name)
+  );
+}
+
 function isChatAttachmentFile(fileLike) {
-  return isImageLikeFile(fileLike) || isPdfLikeFile(fileLike) || isWordLikeFile(fileLike);
+  return (
+    isImageLikeFile(fileLike)
+    || isPdfLikeFile(fileLike)
+    || isWordLikeFile(fileLike)
+    || isDataDocLikeFile(fileLike)
+  );
 }
 
 function buildMessageAttachmentMeta(fileLike) {
@@ -851,7 +873,9 @@ function buildMessageAttachmentMeta(fileLike) {
     ? 'application/pdf'
     : isWordLikeFile(fileLike)
       ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-      : 'application/octet-stream';
+      : isDataDocLikeFile(fileLike)
+        ? 'text/csv'
+        : 'application/octet-stream';
   return {
     name: fileLike?.name || 'attachment',
     size: Number(fileLike?.size || 0),

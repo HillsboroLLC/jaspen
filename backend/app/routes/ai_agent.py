@@ -533,6 +533,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "do so directly using the scorecard data available. Present a clear ranked list with the idea name, score, "
     "and one-line rationale for each. This also applies when the user uploads a file containing multiple ideas "
     "and asks you to rank or compare them — work through them conversationally and score each one on request.\n"
+    "AMBIGUOUS UPLOAD — RUN THE GUIDED SURVEY, ONE QUESTION AT A TIME: when the user uploads a file whose structure or intent is unclear (e.g. rows/columns you can read but can't confidently map to options or criteria), do NOT dump a multi-part list of questions. Lead the short guided survey the same way you would in conversation: ask the SINGLE highest-value question first — usually 'what does each row represent?' — acknowledge their answer, then ask the next one (what decision are you making, then which criteria matter most). One question per turn, conversational, always moving. Only after you understand the rows and criteria do you propose a starter rubric for them to approve.\n"
     "\n"
     "CUSTOM SCORING RUBRIC: If the user supplies their own scoring criteria and weights (e.g. a list of factors each with a percentage), FIRST call set_scoring_rubric with those exact criteria and weights before scoring anything. Then confirm the saved rubric back to them in plain language (list each criterion and its normalized weight) and explain that every option's score will be the deterministic weighted sum of those criteria. Never invent, drop, or alter the user's weights — pass them exactly as given. If the user organizes the criteria into groups (e.g. 'Impact' variables vs 'Fit' variables), pass each criterion's group on the 'group' field so every option gets a sub-score per group and can be placed on a 2-group quadrant. After the rubric is saved, follow the present-shortlist-before-scoring and batching rules below as normal. set_scoring_rubric is reversible configuration, so it is allowed on the first turn and does not count against the per-turn scoring limit.\n"
     "PRESENT YOUR SHORTLIST BEFORE YOU SCORE: When the user asks you to BOTH propose options AND score them (e.g. 'propose 5-6 cities, then score each'), or any time this is the first turn of the conversation, do NOT call generate_scorecard in the same reply where you present your list. First give the full shortlist with your one-line rationale for each as your written message, then ask the user to confirm before scoring (e.g. 'Want me to score these?'). Only call the scoring tools AFTER they confirm in a later turn. This matters: if you call generate_scorecard before the user has confirmed, the system blocks it and your reply is rewritten into a bare confirmation prompt — so the user LOSES the shortlist and rationale you just wrote. Presenting first, then scoring after confirmation, keeps all of your analysis on screen. "
@@ -2344,6 +2345,25 @@ def _normalize_attachment_media_type(uploaded_file):
         return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     if lower_name.endswith(".doc"):
         return "application/msword"
+    # Spreadsheets / delimited / plain text — extracted to readable text for the agent.
+    if raw_type in {
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-excel",
+        "text/csv",
+        "text/tab-separated-values",
+        "text/plain",
+    }:
+        return raw_type
+    if lower_name.endswith(".xlsx"):
+        return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    if lower_name.endswith(".xls"):
+        return "application/vnd.ms-excel"
+    if lower_name.endswith(".csv"):
+        return "text/csv"
+    if lower_name.endswith(".tsv"):
+        return "text/tab-separated-values"
+    if lower_name.endswith(".txt"):
+        return "text/plain"
     return ""
 
 
@@ -2358,7 +2378,59 @@ def _attachment_kind_for_media_type(media_type):
         return "word"
     if media_type.startswith("image/"):
         return "image"
+    if media_type in {
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-excel",
+        "text/csv",
+        "text/tab-separated-values",
+        "text/plain",
+    }:
+        return "data"
     return ""
+
+
+def _extract_data_attachment_text(*, content, media_type, filename):
+    """Extract a readable text rendering (cell values / rows) from a spreadsheet,
+    CSV/TSV, or plain-text upload so the agent sees the ACTUAL content, not just stats."""
+    media_type = str(media_type or "").strip().lower()
+    safe_name = _safe_attachment_name(filename)
+
+    if media_type in {
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-excel",
+    }:
+        try:
+            import openpyxl  # noqa: WPS433
+        except Exception:
+            raise ValueError("Spreadsheet support requires openpyxl.")
+        try:
+            wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+        except Exception as exc:
+            raise ValueError(f"Could not parse spreadsheet ({safe_name}): {exc}")
+        lines = []
+        for ws in wb.worksheets:
+            lines.append(f"# Sheet: {ws.title}")
+            row_count = 0
+            for row in ws.iter_rows(values_only=True):
+                cells = ["" if c is None else str(c) for c in row]
+                if not any(cell.strip() for cell in cells):
+                    continue
+                lines.append(" | ".join(cells))
+                row_count += 1
+                if row_count >= 500:
+                    lines.append("… (additional rows truncated)")
+                    break
+        try:
+            wb.close()
+        except Exception:
+            pass
+        return "\n".join(lines).strip()
+
+    # CSV / TSV / plain text — decode directly.
+    decoded = (content or b"").decode("utf-8", errors="ignore").strip()
+    if decoded:
+        return decoded
+    return (content or b"").decode("latin-1", errors="ignore").strip()
 
 
 def _extract_word_attachment_text(*, content, media_type, filename):
@@ -2486,14 +2558,15 @@ def _conversation_attachment_blocks(attachments):
                     "data": encoded,
                 },
             })
-        elif kind == "word":
+        elif kind in ("word", "data"):
             extracted_text = str(attachment.get("text_content") or "").strip()
             attachment_name = _safe_attachment_name(attachment.get("name") or "document")
+            label = "Word Document" if kind == "word" else "Uploaded File (cell/row content)"
             if extracted_text:
                 blocks.append({
                     "type": "text",
                     "text": (
-                        f"[Word Document: {attachment_name}]\n"
+                        f"[{label}: {attachment_name}]\n"
                         f"{extracted_text[:MAX_CONVERSATION_ATTACHMENT_TEXT_CHARS]}"
                     ),
                 })
@@ -2559,12 +2632,19 @@ def _extract_conversation_attachments():
             "kind": kind,
             "data": base64.b64encode(content).decode("ascii"),
         }
-        if kind == "word":
-            text_content = _extract_word_attachment_text(
-                content=content,
-                media_type=media_type,
-                filename=filename,
-            )
+        if kind in ("word", "data"):
+            if kind == "word":
+                text_content = _extract_word_attachment_text(
+                    content=content,
+                    media_type=media_type,
+                    filename=filename,
+                )
+            else:
+                text_content = _extract_data_attachment_text(
+                    content=content,
+                    media_type=media_type,
+                    filename=filename,
+                )
             if not text_content:
                 raise ValueError(f"{filename} does not contain readable text.")
             attachment_payload["text_content"] = text_content[:MAX_CONVERSATION_ATTACHMENT_TEXT_CHARS]
