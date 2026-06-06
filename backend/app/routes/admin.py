@@ -131,10 +131,14 @@ def _normalize_feedback_payload(value):
     if feedback_value not in {"up", "down"}:
         return None
     updated_at = str(value.get("updated_at") or "").strip() or None
-    return {
+    feedback = {
         "value": feedback_value,
         "updated_at": updated_at,
     }
+    note = str(value.get("note") or "").strip()
+    if note:
+        feedback["note"] = note[:1000]
+    return feedback
 
 
 def _message_excerpt(content, max_len=220):
@@ -185,6 +189,7 @@ def _collect_message_feedback(user_id=None, value=None, query=None, limit=100):
                 str(row.name or ""),
                 str(row.session_id or ""),
                 excerpt,
+                feedback.get("note") or "",
             ])).lower()
             if lowered_query and lowered_query not in searchable:
                 continue
@@ -196,6 +201,7 @@ def _collect_message_feedback(user_id=None, value=None, query=None, limit=100):
                 "user_email": getattr(user, "email", None),
                 "user_name": getattr(user, "name", None),
                 "feedback_value": feedback["value"],
+                "feedback_note": feedback.get("note"),
                 "feedback_updated_at": feedback.get("updated_at"),
                 "message_index": idx,
                 "message_excerpt": excerpt,

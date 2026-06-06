@@ -260,6 +260,7 @@ body.jaspen-sidebar-open .jas-tab-assistant {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .jas-message-copy-btn,
@@ -300,6 +301,78 @@ body.jaspen-sidebar-open .jas-tab-assistant {
 
 .jas-message-feedback-btn:disabled {
   opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.jas-message-feedback-note {
+  flex: 1 0 100%;
+  max-width: min(520px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.jas-message-feedback-note textarea {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  border: 1px solid var(--border, #e9ecef);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--navy, #161f3b);
+  background: var(--white, #ffffff);
+  font: inherit;
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+
+.jas-message-feedback-note textarea:focus {
+  outline: none;
+  border-color: var(--navy, #161f3b);
+  box-shadow: 0 0 0 3px rgba(22, 31, 59, 0.08);
+}
+
+.jas-message-feedback-note-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.jas-message-feedback-note-skip,
+.jas-message-feedback-note-save {
+  border-radius: 6px;
+  padding: 7px 12px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all var(--transition, 0.2s ease);
+}
+
+.jas-message-feedback-note-skip {
+  border: 1px solid var(--border, #e9ecef);
+  background: var(--white, #ffffff);
+  color: var(--gray-700, #495057);
+}
+
+.jas-message-feedback-note-save {
+  border: 1px solid var(--navy, #161f3b);
+  background: var(--navy, #161f3b);
+  color: var(--white, #ffffff);
+}
+
+.jas-message-feedback-note-skip:hover:not(:disabled) {
+  border-color: var(--navy, #161f3b);
+  color: var(--navy, #161f3b);
+}
+
+.jas-message-feedback-note-save:hover:not(:disabled) {
+  background: #1e2a4f;
+}
+
+.jas-message-feedback-note-skip:disabled,
+.jas-message-feedback-note-save:disabled {
+  opacity: 0.55;
   cursor: not-allowed;
 }
 

@@ -1063,6 +1063,7 @@ function toUiMessages(history = []) {
         historyIndex,
         timestamp: msg?.timestamp || msg?.created_at || null,
         feedbackValue: String(msg?.feedback?.value || '').trim().toLowerCase() || null,
+        feedbackNote: String(msg?.feedback?.note || '').trim() || null,
         hasMutations: Array.isArray(msg?.mutations) && msg.mutations.length > 0,
         canUndo: Boolean(msg?.undo?.available),
         undoApplied: Boolean(msg?.undo?.applied),
@@ -1616,6 +1617,8 @@ export default function JaspenChat() {
   }, [showToast]);
   const [copiedMessageKey, setCopiedMessageKey] = useState(null);
   const [feedbackBusyKey, setFeedbackBusyKey] = useState(null);
+  const [feedbackPrompt, setFeedbackPrompt] = useState(null);
+  const [feedbackNoteDraft, setFeedbackNoteDraft] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [error, setError] = useState(null);
   const recognitionRef = useRef(null);
@@ -3405,6 +3408,32 @@ const handleCopyInviteLink = async () => {
   }
 };
 
+const saveMessageFeedback = async (message, value, feedbackKey, note) => {
+  if (!activeThreadId || !Number.isInteger(message?.historyIndex)) return false;
+  setFeedbackBusyKey(feedbackKey);
+  const normalizedNote = typeof note === 'string'
+    ? note.trim()
+    : (typeof message?.feedbackNote === 'string' ? message.feedbackNote.trim() : undefined);
+  try {
+    await Jaspen.messageFeedback(activeThreadId, message.historyIndex, value, normalizedNote);
+    setMessages((prev) => prev.map((entry) => (
+      entry?.historyIndex === message.historyIndex
+        ? {
+          ...entry,
+          feedbackValue: value,
+          feedbackNote: normalizedNote !== undefined ? normalizedNote || null : entry.feedbackNote || null,
+        }
+        : entry
+    )));
+    return true;
+  } catch (feedbackError) {
+    showToast('Failed to save feedback.', 'error');
+    return false;
+  } finally {
+    setFeedbackBusyKey((current) => (current === feedbackKey ? null : current));
+  }
+};
+
 const renderMessageActions = (message, messageKey, idx, total) => {
   if (message?.role === 'user') return null;
   const isCopied = copiedMessageKey === messageKey;
@@ -3412,6 +3441,7 @@ const renderMessageActions = (message, messageKey, idx, total) => {
   const isLatestAssistant = idx === total - 1;
   const feedbackKey = `${messageKey}:feedback`;
   const isFeedbackBusy = feedbackBusyKey === feedbackKey;
+  const isFeedbackPromptOpen = feedbackPrompt?.key === feedbackKey;
   const canRegenerate = Boolean(activeThreadId)
     && isLatestAssistant
     && !isStreamingReply
@@ -3458,17 +3488,11 @@ const renderMessageActions = (message, messageKey, idx, total) => {
         className={`jas-message-feedback-btn ${message?.feedbackValue === 'up' ? 'is-active' : ''}`}
         onClick={async () => {
           if (!canFeedback || isFeedbackBusy) return;
-          setFeedbackBusyKey(feedbackKey);
-          try {
-            await Jaspen.messageFeedback(activeThreadId, message.historyIndex, 'up');
-            setMessages((prev) => prev.map((entry) => (
-              entry?.historyIndex === message.historyIndex ? { ...entry, feedbackValue: 'up' } : entry
-            )));
+          const saved = await saveMessageFeedback(message, 'up', feedbackKey);
+          if (saved) {
+            setFeedbackPrompt({ key: feedbackKey, value: 'up', messageIndex: message.historyIndex });
+            setFeedbackNoteDraft(message?.feedbackNote || '');
             showToast('Feedback saved.', 'success');
-          } catch (feedbackError) {
-            showToast('Failed to save feedback.', 'error');
-          } finally {
-            setFeedbackBusyKey((current) => (current === feedbackKey ? null : current));
           }
         }}
         aria-label="Thumbs up"
@@ -3482,17 +3506,11 @@ const renderMessageActions = (message, messageKey, idx, total) => {
         className={`jas-message-feedback-btn ${message?.feedbackValue === 'down' ? 'is-active is-negative' : ''}`}
         onClick={async () => {
           if (!canFeedback || isFeedbackBusy) return;
-          setFeedbackBusyKey(feedbackKey);
-          try {
-            await Jaspen.messageFeedback(activeThreadId, message.historyIndex, 'down');
-            setMessages((prev) => prev.map((entry) => (
-              entry?.historyIndex === message.historyIndex ? { ...entry, feedbackValue: 'down' } : entry
-            )));
+          const saved = await saveMessageFeedback(message, 'down', feedbackKey);
+          if (saved) {
+            setFeedbackPrompt({ key: feedbackKey, value: 'down', messageIndex: message.historyIndex });
+            setFeedbackNoteDraft(message?.feedbackNote || '');
             showToast('Feedback saved.', 'success');
-          } catch (feedbackError) {
-            showToast('Failed to save feedback.', 'error');
-          } finally {
-            setFeedbackBusyKey((current) => (current === feedbackKey ? null : current));
           }
         }}
         aria-label="Thumbs down"
@@ -3524,6 +3542,55 @@ const renderMessageActions = (message, messageKey, idx, total) => {
         >
           <FontAwesomeIcon icon={faClockRotateLeft} />
         </button>
+      )}
+      {isFeedbackPromptOpen && (
+        <form
+          className="jas-message-feedback-note"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            const saved = await saveMessageFeedback(
+              message,
+              feedbackPrompt.value,
+              feedbackKey,
+              feedbackNoteDraft
+            );
+            if (saved) {
+              setFeedbackPrompt(null);
+              setFeedbackNoteDraft('');
+              showToast('Thanks for the extra context.', 'success');
+            }
+          }}
+        >
+          <textarea
+            value={feedbackNoteDraft}
+            onChange={(event) => setFeedbackNoteDraft(event.target.value.slice(0, 1000))}
+            placeholder="Optional: what made this response helpful or not?"
+            aria-label="Optional feedback note"
+            maxLength={1000}
+            rows={3}
+            disabled={isFeedbackBusy}
+          />
+          <div className="jas-message-feedback-note-actions">
+            <button
+              type="button"
+              className="jas-message-feedback-note-skip"
+              onClick={() => {
+                setFeedbackPrompt(null);
+                setFeedbackNoteDraft('');
+              }}
+              disabled={isFeedbackBusy}
+            >
+              Skip
+            </button>
+            <button
+              type="submit"
+              className="jas-message-feedback-note-save"
+              disabled={isFeedbackBusy || !feedbackNoteDraft.trim()}
+            >
+              Save note
+            </button>
+          </div>
+        </form>
       )}
     </div>
   );

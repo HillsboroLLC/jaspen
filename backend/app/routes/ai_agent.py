@@ -8112,10 +8112,14 @@ def _normalize_message_feedback(value):
     if reaction not in {"up", "down"}:
         return None
     updated_at = str(value.get("updated_at") or "").strip() or _iso_now()
-    return {
+    feedback = {
         "value": reaction,
         "updated_at": updated_at,
     }
+    note = str(value.get("note") or "").strip()
+    if note:
+        feedback["note"] = note[:1000]
+    return feedback
 
 
 def _assistant_chat_entry(content, *, mutations=None, regenerated=False, alternatives=None, undo=None):
@@ -11337,6 +11341,7 @@ def set_thread_message_feedback(thread_id, message_index):
     reaction = str(data.get("value") or "").strip().lower()
     if reaction not in {"up", "down"}:
         return jsonify({"error": "value must be 'up' or 'down'"}), 400
+    note = str(data.get("note") or "").strip()[:1000]
 
     user_id = get_jwt_identity()
     sessions = load_user_sessions(user_id) or {}
@@ -11356,6 +11361,8 @@ def set_thread_message_feedback(thread_id, message_index):
         "value": reaction,
         "updated_at": _iso_now(),
     }
+    if note:
+        feedback["note"] = note
     updated_chat_history = list(chat_history)
     updated_target = dict(target)
     updated_target["feedback"] = feedback
@@ -11375,6 +11382,7 @@ def set_thread_message_feedback(thread_id, message_index):
                 "thread_id": str(session.get("session_id") or session_key or thread_id),
                 "message_index": int(message_index),
                 "value": reaction,
+                "has_note": bool(note),
             },
         )
 

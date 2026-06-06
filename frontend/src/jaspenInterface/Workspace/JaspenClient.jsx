@@ -844,10 +844,12 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
     }
     return donePayload;
   },
-  async messageFeedback(threadId, messageIndex, value) {
+  async messageFeedback(threadId, messageIndex, value, note) {
+    const payload = { value };
+    if (typeof note === 'string') payload.note = note;
     return postJSON(
       endpoints.messageFeedback(threadId, messageIndex),
-      { value },
+      payload,
       { withSid: true }
     );
   },
