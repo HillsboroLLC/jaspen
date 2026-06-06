@@ -91,6 +91,37 @@ N6. FEEDBACK capture — easy in-chat user feedback as they interact (Manus-styl
 N7. BILLING config knobs (later): a "cancel immediately" dev/test path; expose
     upgrade/downgrade proration policy. (Low.)
 
+## ⏸️ PARKED — tweak list (LB 6/6, power-saving; revisit ~6/16 after budget reset)
+Restore point for the N1/N3/N4 work: tag `restore-n1n3n4-20260606`,
+branch `backup/n1n3n4-20260606`, commit fc025c0. Tree clean.
+
+LB to do before ship (no Claude power needed):
+- [ ] STRIPE: flip to LIVE keys in DO systemd env — STRIPE_SECRET_KEY (sk_live_),
+      STRIPE_PUBLISHABLE_KEY (pk_live_), STRIPE_WEBHOOK_SECRET (live signing secret),
+      STRIPE_PRICE_IDS (live price ids); daemon-reload + restart gunicorn-sekki.
+      Register the LIVE webhook endpoint in the Stripe live dashboard.
+- [ ] SMTP / email security hardening (LB's task).
+- [ ] DEPLOY N3 backend: `cd ~/sekki-platform && git pull origin main &&
+      sudo systemctl restart gunicorn-sekki.service` (N1/N4 already live via Vercel).
+
+Live-test (no power needed) after deploy:
+- [ ] N1: new session + new prompt → NO stale scorecards without hard refresh.
+- [ ] N3: a few different cards → confidence now VARIES (not stuck at 55%).
+- [ ] N4: add block → drag beside Top Risks → resize → refresh (persists) → Reset
+      clears layout; ring / DimensionBars / editable text still render.
+
+Next code tweaks when power/budget returns, cheapest first:
+1. N5 (CHEAPEST) — choice-prompt tuning: adjust WHEN the agent emits the [[choice]]
+   panel + verify it's deployed. Mostly prompt/threshold; ~1 small edit.
+2. N3 follow-up (if needed after live test) — if dimension labels themselves skew
+   (e.g. model defaults everything to "medium" → ~70 everywhere), nudge the scoring
+   prompt to assign high/low more decisively. Only if the calibration still feels flat.
+3. N4 polish (if live test flags it) — the old HTML5 drag handlers + dragSectionRef in
+   the section map are now dead (react-grid-layout handles drag); remove for clarity.
+4. N2 — score even when user asks for a table/alt format (deferred; LB wants table-first).
+5. N6 (HEAVIEST) — Manus-style in-chat 👍/👎 + note per message, with a review surface.
+   New feature: UI + storage + retrieval. Save for a real build session.
+
 ## 🔴 BUGS FOUND IN 6/4 PM TEST (triage first — diagnosed, not yet fixed)
 > Root finding: there is ONE codebase / ONE deploy. The "two experiences" were the
 > SAME code taking two different agent paths, not an old vs new version.
