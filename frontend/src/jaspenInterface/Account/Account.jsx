@@ -1004,31 +1004,12 @@ export default function Account() {
     }
   };
 
-  const openBillingPortal = async () => {
-    setPendingAction('portal');
+  // "Update payment method" / "Manage billing" — open our OWN embedded card form
+  // (Stripe Payment Element via SetupIntent) instead of redirecting to the Stripe-
+  // hosted Customer Portal / invoice page.
+  const openBillingPortal = () => {
     setMessage('');
-
-    try {
-      const response = await authFetch(`${API_BASE}/api/v1/billing/create-portal-session`, {
-        method: 'POST',
-        headers: authHeaders({ 'Content-Type': 'application/json' }, 'POST'),
-        credentials: 'include',
-        body: JSON.stringify({ return_url: `${window.location.origin}/account` }),
-      });
-      const data = await response.json();
-      if (!response.ok || !data?.url) {
-        if (response.status === 401) {
-          navigate('/?auth=1', { replace: true });
-          return;
-        }
-        throw new Error(data?.msg || 'Online billing management is not available for this account yet.');
-      }
-      window.location.href = data.url;
-    } catch (error) {
-      setMessage(error.message || 'Unable to open billing settings.');
-    } finally {
-      setPendingAction('');
-    }
+    setEmbeddedCheckout({ mode: 'update_payment' });
   };
 
   const cancelAtPeriodEnd = async () => {
@@ -3631,13 +3612,15 @@ export default function Account() {
         />
         {embeddedCheckout && (
           <StripeCheckout
+            mode={embeddedCheckout.mode || 'subscribe'}
             planKey={embeddedCheckout.planKey}
             planLabel={embeddedCheckout.planLabel}
             priceLabel={embeddedCheckout.priceLabel}
             onClose={() => setEmbeddedCheckout(null)}
             onSuccess={async () => {
+              const wasUpdate = embeddedCheckout.mode === 'update_payment';
               setEmbeddedCheckout(null);
-              setMessage('Subscription started — welcome aboard!');
+              setMessage(wasUpdate ? 'Your payment method was updated.' : 'Subscription started — welcome aboard!');
               await refreshStatus();
             }}
           />

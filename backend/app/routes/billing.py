@@ -489,6 +489,24 @@ def create_subscription_embedded():
 
     customer_id = _ensure_customer_for_user(user)
 
+    # Reuse an existing INCOMPLETE subscription for this price instead of creating a
+    # new one every time the user re-opens the modal (which piled up draft invoices).
+    try:
+        existing = stripe.Subscription.list(customer=customer_id, status='incomplete', limit=20)
+        for sub in existing.get('data', []):
+            items = (sub.get('items') or {}).get('data') or []
+            if any(((it.get('price') or {}).get('id')) == price_id for it in items):
+                reuse_secret = _subscription_payment_client_secret(sub)
+                if reuse_secret:
+                    return jsonify({
+                        'subscription_id': sub.id,
+                        'client_secret': reuse_secret,
+                        'plan_key': plan_key,
+                        'publishable_key': current_app.config.get('STRIPE_PUBLISHABLE_KEY') or '',
+                    }), 200
+    except stripe.error.StripeError:
+        pass
+
     try:
         subscription = stripe.Subscription.create(
             customer=customer_id,
@@ -522,6 +540,57 @@ def create_subscription_embedded():
         'plan_key': plan_key,
         'publishable_key': current_app.config.get('STRIPE_PUBLISHABLE_KEY') or '',
     }), 200
+
+
+@billing_bp.route('/create-setup-intent', methods=['POST'])
+@jwt_required()
+def create_setup_intent_embedded():
+    """For the EMBEDDED 'update / add payment method' flow (no Stripe portal).
+
+    Returns a SetupIntent client_secret so the user can save a card in our own UI.
+    After confirmSetup succeeds the frontend calls /set-default-payment-method.
+    """
+    user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({'msg': 'User not found'}), 404
+    customer_id = _ensure_customer_for_user(user)
+    try:
+        si = stripe.SetupIntent.create(
+            customer=customer_id,
+            payment_method_types=['card'],
+            usage='off_session',
+            metadata={'user_id': str(user.id)},
+        )
+    except stripe.error.StripeError as exc:
+        current_app.logger.exception('create-setup-intent failed')
+        return jsonify({'msg': str(getattr(exc, 'user_message', None) or 'Could not start.')}), 400
+    return jsonify({
+        'client_secret': si.client_secret,
+        'publishable_key': current_app.config.get('STRIPE_PUBLISHABLE_KEY') or '',
+    }), 200
+
+
+@billing_bp.route('/set-default-payment-method', methods=['POST'])
+@jwt_required()
+def set_default_payment_method():
+    """Make a saved card the default for invoices + the active subscription."""
+    user = User.query.get(get_jwt_identity())
+    if not user or not user.stripe_customer_id:
+        return jsonify({'msg': 'No billing account found.'}), 404
+    pm_id = (request.get_json() or {}).get('payment_method_id')
+    if not pm_id:
+        return jsonify({'msg': 'Missing payment_method_id'}), 400
+    try:
+        stripe.Customer.modify(
+            user.stripe_customer_id,
+            invoice_settings={'default_payment_method': pm_id},
+        )
+        if user.stripe_subscription_id:
+            stripe.Subscription.modify(user.stripe_subscription_id, default_payment_method=pm_id)
+    except stripe.error.StripeError as exc:
+        current_app.logger.exception('set-default-payment-method failed')
+        return jsonify({'msg': str(getattr(exc, 'user_message', None) or 'Could not update the card.')}), 400
+    return jsonify({'ok': True}), 200
 
 
 # Plan tier used to detect upgrade vs downgrade direction.
