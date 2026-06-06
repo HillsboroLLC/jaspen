@@ -107,6 +107,17 @@ def _validated_frontend_redirect(url, *, fallback_path):
     return candidate
 
 
+def _plan_key_for_price_id(price_id, app_config):
+    """Reverse-map a Stripe price id -> our plan_key (STRIPE_PRICE_IDS is plan->price)."""
+    if not price_id:
+        return None
+    mapping = app_config.get('STRIPE_PRICE_IDS', {}) or {}
+    for plan_key, pid in mapping.items():
+        if pid == price_id:
+            return normalize_plan_key(plan_key)
+    return None
+
+
 def _ensure_customer_for_user(user):
     if user.stripe_customer_id:
         return user.stripe_customer_id
@@ -982,46 +993,63 @@ def stripe_webhook():
                 event_id, inv.get('subscription'), inv.get('customer'),
             )
         if user:
-            # Check whether a deferred downgrade was scheduled on this subscription.
-            # Downgrades store the target plan key in Stripe subscription metadata
-            # under 'scheduled_plan_change' so they take effect at the next cycle.
             subscription_id = inv.get('subscription')
-            scheduled_plan_key = None
+            sub = None
             if subscription_id:
                 try:
                     sub = stripe.Subscription.retrieve(subscription_id)
-                    metadata = (sub.get('metadata') or {})
-                    raw_scheduled = str(metadata.get('scheduled_plan_change') or '').strip()
-                    if raw_scheduled:
-                        scheduled_plan_key = normalize_plan_key(raw_scheduled)
                 except stripe.error.StripeError as exc:
                     current_app.logger.warning(
-                        "invoice.payment_succeeded: could not retrieve subscription %s to check scheduled downgrade: %s",
+                        "invoice.payment_succeeded: could not retrieve subscription %s: %s",
                         subscription_id, exc,
                     )
 
+            meta = (sub.get('metadata') or {}) if sub is not None else {}
+            # Deferred downgrade scheduled at a prior cycle.
+            raw_scheduled = str(meta.get('scheduled_plan_change') or '').strip()
+            scheduled_plan_key = normalize_plan_key(raw_scheduled) if raw_scheduled else None
+            # Plan this subscription should grant — from our metadata (set by both the
+            # embedded and hosted flows) or, failing that, reverse-mapped from the price.
+            sub_plan_key = None
+            if sub is not None:
+                pk = str(meta.get('plan_key') or '').strip()
+                sub_plan_key = normalize_plan_key(pk) if pk else None
+                if not sub_plan_key or sub_plan_key == 'free':
+                    items = (sub.get('items') or {}).get('data') or []
+                    price_id = (items[0].get('price') or {}).get('id') if items else None
+                    sub_plan_key = _plan_key_for_price_id(price_id, current_app.config)
+
             if scheduled_plan_key:
-                # Apply the deferred downgrade — this also resets credits for the new plan.
+                # Deferred downgrade takes effect now (also resets credits for the new plan).
                 apply_plan_to_user(user, scheduled_plan_key, current_app.config, reset_credits=True)
-                # Clear the scheduled flag so it doesn't fire again next cycle.
+                user.stripe_subscription_id = subscription_id
                 try:
                     stripe.Subscription.modify(subscription_id, metadata={'scheduled_plan_change': ''})
                 except stripe.error.StripeError as exc:
                     current_app.logger.warning(
-                        "invoice.payment_succeeded: could not clear scheduled_plan_change metadata for sub %s: %s",
+                        "invoice.payment_succeeded: could not clear scheduled_plan_change for sub %s: %s",
                         subscription_id, exc,
                     )
                 current_app.logger.info(
-                    "invoice.payment_succeeded: applied deferred downgrade to plan=%s for user=%s "
-                    "(credits_remaining=%s, credits_reset_at=%s)",
-                    scheduled_plan_key, user.id, user.credits_remaining, user.credits_reset_at,
+                    "invoice.payment_succeeded: applied deferred downgrade to plan=%s for user=%s",
+                    scheduled_plan_key, user.id,
+                )
+            elif sub_plan_key and sub_plan_key != 'free':
+                # ACTIVATE / re-affirm the subscription's plan. This is how the EMBEDDED
+                # subscribe flow grants the plan (it never fires checkout.session.completed)
+                # and it persists the subscription id so later cancel/update events resolve
+                # the user. On a normal renewal the plan already matches — harmless.
+                apply_plan_to_user(user, sub_plan_key, current_app.config, reset_credits=True)
+                user.stripe_subscription_id = subscription_id
+                current_app.logger.info(
+                    "invoice.payment_succeeded: applied plan=%s for user=%s (sub=%s)",
+                    sub_plan_key, user.id, subscription_id,
                 )
             else:
-                # Normal monthly renewal — just reset credits for the current plan.
+                # Couldn't resolve a paid plan — treat as a renewal (reset credits only).
                 reset_user_monthly_credits(user, current_app.config, force=True)
                 current_app.logger.info(
-                    "invoice.payment_succeeded: reset credits for user=%s (credits_remaining=%s, credits_reset_at=%s)",
-                    user.id, user.credits_remaining, user.credits_reset_at,
+                    "invoice.payment_succeeded: reset credits for user=%s (no plan resolved)", user.id,
                 )
 
             user.subscription_status = 'active'
