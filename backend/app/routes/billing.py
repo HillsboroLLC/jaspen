@@ -402,6 +402,52 @@ def billing_config():
     }), 200
 
 
+def _subscription_payment_client_secret(subscription):
+    """Get the client_secret to confirm payment for an incomplete subscription,
+    resilient to Stripe API version differences:
+      - older versions:        invoice.payment_intent.client_secret
+      - 2025-03-31 'basil'+:    invoice.confirmation_secret.client_secret
+      - trials / nothing-due:   subscription.pending_setup_intent.client_secret
+    Re-fetches the invoice with the correct expand so we don't depend on whatever
+    field name the create call's API version used.
+    """
+    def _cs(obj):
+        if obj is None:
+            return None
+        if hasattr(obj, 'get'):
+            return obj.get('client_secret')
+        return getattr(obj, 'client_secret', None)
+
+    invoice_ref = subscription.get('latest_invoice') if hasattr(subscription, 'get') else None
+    invoice_id = invoice_ref.get('id') if hasattr(invoice_ref, 'get') else invoice_ref
+    if invoice_id:
+        for expand in (['confirmation_secret'], ['payment_intent']):
+            try:
+                inv = stripe.Invoice.retrieve(invoice_id, expand=expand)
+            except stripe.error.StripeError:
+                continue
+            secret = _cs(inv.get('confirmation_secret'))
+            if secret:
+                return secret
+            pi = inv.get('payment_intent')
+            if isinstance(pi, str):
+                try:
+                    pi = stripe.PaymentIntent.retrieve(pi)
+                except stripe.error.StripeError:
+                    pi = None
+            secret = _cs(pi)
+            if secret:
+                return secret
+
+    psi = subscription.get('pending_setup_intent') if hasattr(subscription, 'get') else None
+    if isinstance(psi, str):
+        try:
+            psi = stripe.SetupIntent.retrieve(psi)
+        except stripe.error.StripeError:
+            psi = None
+    return _cs(psi)
+
+
 @billing_bp.route('/create-subscription', methods=['POST'])
 @jwt_required()
 def create_subscription_embedded():
@@ -449,7 +495,6 @@ def create_subscription_embedded():
             items=[{'price': price_id}],
             payment_behavior='default_incomplete',
             payment_settings={'save_default_payment_method': 'on_subscription'},
-            expand=['latest_invoice.payment_intent'],
             metadata={
                 'user_id': str(user.id),
                 'plan_key': plan_key,
@@ -460,10 +505,15 @@ def create_subscription_embedded():
         current_app.logger.exception('create-subscription (embedded) failed')
         return jsonify({'msg': str(getattr(exc, 'user_message', None) or 'Could not start the subscription.')}), 400
 
-    latest_invoice = subscription.get('latest_invoice')
-    payment_intent = latest_invoice.get('payment_intent') if isinstance(latest_invoice, dict) else None
-    client_secret = payment_intent.get('client_secret') if isinstance(payment_intent, dict) else None
+    client_secret = _subscription_payment_client_secret(subscription)
     if not client_secret:
+        try:
+            current_app.logger.error(
+                'create-subscription: no client_secret (sub=%s status=%s)',
+                getattr(subscription, 'id', '?'), subscription.get('status'),
+            )
+        except Exception:
+            pass
         return jsonify({'msg': 'Could not initialize payment for this plan.'}), 400
 
     return jsonify({
