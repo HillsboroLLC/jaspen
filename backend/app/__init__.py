@@ -159,15 +159,8 @@ def create_app():
         STRIPE_WEBHOOK_SECRET          = os.getenv('STRIPE_WEBHOOK_SECRET'),
         # Publishable key is safe to expose to the browser (served via /billing/config)
         # so the embedded Payment Element can load Stripe.js. Test or live, mirrors the
-        # secret key's mode. Accept a few common env-var names so it "just works"
-        # however it was set on the server.
-        STRIPE_PUBLISHABLE_KEY         = (
-            os.getenv('STRIPE_PUBLISHABLE_KEY')
-            or os.getenv('STRIPE_PUBLIC_KEY')
-            or os.getenv('STRIPE_PUBLISHABLE')
-            or os.getenv('REACT_APP_STRIPE_PUBLISHABLE_KEY')
-            or os.getenv('STRIPE_PK')
-        ),
+        # secret key's mode.
+        STRIPE_PUBLISHABLE_KEY         = os.getenv('STRIPE_PUBLISHABLE_KEY'),
 
         # Anthropic
         ANTHROPIC_API_KEY              = os.getenv('ANTHROPIC_API_KEY') or os.getenv('CLAUDE_API_KEY'),
