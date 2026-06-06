@@ -210,7 +210,28 @@ B5. ✅ FIXED (8035079, NEEDS DO DEPLOY) — `_generate_batch_scorecards` now ch
      plan active → cancel → access revoked within one webhook cycle.
 - THEN: set up a dev environment; only promote tested changes to production.
 
-## STRIPE — custom checkout (LB exploring, 6/5)
+## STRIPE — EMBEDDED CHECKOUT ✅ BUILT (0afa99d), test→live checklist
+- DONE: in-page Payment Element (no redirect, branded). Backend /billing/config +
+  /billing/create-subscription; frontend StripeCheckout.jsx modal wired into Account Plans
+  for NEW subscribers. Existing paid up/downgrades still use modify-subscription.
+- TO TEST (test mode):
+  1. Set backend env STRIPE_PUBLISHABLE_KEY=pk_test_... (secret key already sk_test_...).
+     Without it the modal says "Payments are not configured yet."
+  2. Deploy backend (pull + restart gunicorn). Vercel builds the frontend.
+  3. Confirm the Stripe WEBHOOK endpoint is registered in the TEST dashboard → your
+     api.jaspen.ai/api/v1/billing/webhook, and STRIPE_WEBHOOK_SECRET is set. The modal
+     shows success on PAYMENT, but the PLAN flips to paid via the webhook
+     (invoice.payment_succeeded / customer.subscription.updated). No webhook = no plan flip.
+  4. Test: Free account → Plans → Upgrade → confirm → modal → card 4242 4242 4242 4242,
+     any future date / any CVC / any ZIP → Subscribe → success → plan shows paid.
+- BEFORE GOING LIVE (P0s):
+  - ENFORCE subscription_status: canceled/past_due users still keep paid access today
+    (billing webhook updates the field but nothing GATES on it). Wire a check before live.
+  - Swap to live keys: STRIPE_SECRET_KEY=sk_live_, STRIPE_PUBLISHABLE_KEY=pk_live_, live
+    PRICE_ID_*, live STRIPE_WEBHOOK_SECRET, register the live webhook endpoint.
+  - (App already refuses to start in prod with a test secret key — good.)
+
+## (superseded) STRIPE — custom checkout (LB exploring, 6/5)
 - YES: use Stripe Elements / Payment Element for a fully custom checkout UI — only the
   card field is a small Stripe-hosted iframe (PCI); no redirect to Stripe's hosted page.
   stripe.confirmPayment() on submit; Customer Portal OR custom API for upgrade/downgrade/
