@@ -6083,6 +6083,7 @@ useEffect(() => {
         setSessionId(null);
         setCurrentSessionId(null);
         setAnalysisResult(null);
+        setScorecardSnapshots([]);
         setMessages([]);
         setTradeoffRequested(false);
         setStrategyObjective('balanced');
@@ -10640,6 +10641,9 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
     setSessionUploads([]);
     setBusy(false);
     setAnalysisResult(null);
+    // Clear scorecard artifacts from the prior session — otherwise a brand-new
+    // session renders the previous session's scorecards until a hard refresh.
+    setScorecardSnapshots([]);
     setTradeoffRequested(false);
     setError(null);
     setSavedScenarios([]);
@@ -11107,6 +11111,7 @@ if (!baselineRef.current) baselineRef.current = normalizedFallback._baseline_sco
       setSessionId(null);
       setCurrentSessionId(null);
       setAnalysisResult(null);
+      setScorecardSnapshots([]);
       setMessages([]);
       setTradeoffRequested(false);
       setView('intake');
@@ -11186,6 +11191,7 @@ if (!baselineRef.current) baselineRef.current = normalizedFallback._baseline_sco
           setSessionId(null);
           setCurrentSessionId(null);
           setAnalysisResult(null);
+          setScorecardSnapshots([]);
           setMessages([]);
           setTradeoffRequested(false);
           setView('intake');
@@ -11215,6 +11221,7 @@ if (!baselineRef.current) baselineRef.current = normalizedFallback._baseline_sco
             setSessionId(null);
             setCurrentSessionId(null);
             setAnalysisResult(null);
+            setScorecardSnapshots([]);
             setMessages([]);
             setTradeoffRequested(false);
             setView('intake');
