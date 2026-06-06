@@ -133,18 +133,26 @@ function CheckoutForm({ mode, planLabel, priceLabel, onSuccess }) {
   );
 }
 
-export default function StripeCheckout({ mode = 'subscribe', planKey, planLabel, priceLabel, onSuccess, onClose }) {
+export default function StripeCheckout({ mode = 'subscribe', planKey, planLabel, priceLabel, plans = [], onSuccess, onClose }) {
+  const isUpdate = mode === 'update_payment';
+  const [selectedPlanKey, setSelectedPlanKey] = useState(planKey);
   const [clientSecret, setClientSecret] = useState('');
   const [stripePromise, setStripePromise] = useState(null);
   const [loadError, setLoadError] = useState('');
-  const isUpdate = mode === 'update_payment';
+
+  const selectedPlan = plans.find((p) => p.key === selectedPlanKey);
+  const effLabel = selectedPlan?.label || planLabel;
+  const effPrice = selectedPlan?.priceLabel || priceLabel;
+  const showSwitcher = !isUpdate && plans.length > 1;
 
   useEffect(() => {
     let alive = true;
+    setClientSecret(''); // show loading while (re)initializing for the chosen plan
+    setLoadError('');
     (async () => {
       try {
         const endpoint = isUpdate ? 'create-setup-intent' : 'create-subscription';
-        const body = isUpdate ? {} : { plan_key: planKey };
+        const body = isUpdate ? {} : { plan_key: selectedPlanKey };
         const resp = await authFetch(`${API_BASE}/api/v1/billing/${endpoint}`, {
           method: 'POST',
           headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
@@ -157,13 +165,13 @@ export default function StripeCheckout({ mode = 'subscribe', planKey, planLabel,
         if (!data.client_secret) throw new Error('Payment could not be initialized.');
         if (!data.publishable_key) throw new Error('Payments are not configured yet.');
         setClientSecret(data.client_secret);
-        setStripePromise(loadStripe(data.publishable_key));
+        setStripePromise((prev) => prev || loadStripe(data.publishable_key));
       } catch (e) {
         if (alive) setLoadError(String(e?.message || e));
       }
     })();
     return () => { alive = false; };
-  }, [planKey, isUpdate]);
+  }, [selectedPlanKey, isUpdate]);
 
   return (
     <div
@@ -172,29 +180,58 @@ export default function StripeCheckout({ mode = 'subscribe', planKey, planLabel,
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        style={{ width: '100%', maxWidth: 460, background: '#fff', borderRadius: 16, boxShadow: '0 20px 60px rgba(15,23,42,0.25)', overflow: 'hidden' }}
+        style={{ width: '100%', maxWidth: 500, background: '#fff', borderRadius: 16, boxShadow: '0 20px 60px rgba(15,23,42,0.25)', overflow: 'hidden', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}
       >
-        <div style={{ background: NAVY, color: '#fff', padding: '18px 20px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+        <div style={{ background: NAVY, color: '#fff', padding: '18px 20px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexShrink: 0 }}>
           <div>
             <div style={{ fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#cbd5e1', fontWeight: 600 }}>
               {isUpdate ? 'Payment method' : 'Subscribe'}
             </div>
             <div style={{ fontSize: 18, fontWeight: 700, marginTop: 2 }}>
-              {isUpdate ? 'Update your card' : `${planLabel} plan`}
+              {isUpdate ? 'Update your card' : `${effLabel} plan`}
             </div>
-            {!isUpdate && priceLabel && <div style={{ fontSize: 13, color: '#cbd5e1', marginTop: 2 }}>{priceLabel}</div>}
+            {!isUpdate && effPrice && <div style={{ fontSize: 13, color: '#cbd5e1', marginTop: 2 }}>{effPrice} · billed monthly · cancel anytime</div>}
           </div>
           <button type="button" onClick={onClose} aria-label="Close" style={{ border: 'none', background: 'transparent', color: '#cbd5e1', fontSize: 20, cursor: 'pointer', lineHeight: 1, padding: 2 }}>×</button>
         </div>
 
-        <div style={{ padding: 20 }}>
+        <div style={{ padding: 20, overflowY: 'auto' }}>
+          {/* Inline plan switcher — change plan without closing the modal */}
+          {showSwitcher && (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#94a3b8', marginBottom: 8 }}>Plan</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {plans.map((p) => {
+                  const active = p.key === selectedPlanKey;
+                  return (
+                    <button
+                      key={p.key}
+                      type="button"
+                      onClick={() => { if (p.key !== selectedPlanKey) setSelectedPlanKey(p.key); }}
+                      style={{
+                        flex: 1, textAlign: 'left', borderRadius: 10, padding: '10px 12px', cursor: 'pointer',
+                        border: `1px solid ${active ? MAGENTA : '#e6eaf2'}`,
+                        background: active ? `${MAGENTA}0d` : '#fff',
+                        boxShadow: active ? `0 0 0 1px ${MAGENTA}` : 'none',
+                      }}
+                    >
+                      <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a' }}>{p.label}</div>
+                      <div style={{ fontSize: 12, color: '#64748b', marginTop: 1 }}>{p.priceLabel}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {loadError ? (
             <div style={{ fontSize: 13, color: '#dc2626', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '10px 12px' }}>
               {loadError}
             </div>
           ) : (clientSecret && stripePromise) ? (
-            <Elements stripe={stripePromise} options={{ clientSecret, appearance: APPEARANCE }}>
-              <CheckoutForm mode={mode} planLabel={planLabel} priceLabel={priceLabel} onSuccess={onSuccess} />
+            // key forces a clean Elements remount when the plan (clientSecret) changes.
+            <Elements key={clientSecret} stripe={stripePromise} options={{ clientSecret, appearance: APPEARANCE }}>
+              <CheckoutForm mode={mode} planLabel={effLabel} priceLabel={effPrice} onSuccess={onSuccess} />
             </Elements>
           ) : (
             <div style={{ padding: '32px 0', textAlign: 'center', color: '#64748b', fontSize: 13 }}>Loading secure checkout…</div>

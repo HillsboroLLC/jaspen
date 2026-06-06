@@ -3616,6 +3616,9 @@ export default function Account() {
             planKey={embeddedCheckout.planKey}
             planLabel={embeddedCheckout.planLabel}
             priceLabel={embeddedCheckout.priceLabel}
+            plans={Object.entries(plans)
+              .filter(([k, p]) => k !== 'free' && !p?.sales_only)
+              .map(([k, p]) => ({ key: k, label: p?.label || k, priceLabel: priceDisplay(p) }))}
             onClose={() => setEmbeddedCheckout(null)}
             onSuccess={async () => {
               const wasUpdate = embeddedCheckout.mode === 'update_payment';
