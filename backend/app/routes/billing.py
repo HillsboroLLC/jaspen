@@ -390,6 +390,90 @@ def create_checkout_session():
     return jsonify({'sessionId': session.id, 'url': session.url}), 200
 
 
+@billing_bp.route('/config', methods=['GET'])
+def billing_config():
+    """Public Stripe config for the embedded Payment Element.
+
+    The publishable key is designed to be exposed to the browser. Serving it from
+    the backend keeps the frontend in lock-step with the backend's test/live mode.
+    """
+    return jsonify({
+        'publishable_key': current_app.config.get('STRIPE_PUBLISHABLE_KEY') or '',
+    }), 200
+
+
+@billing_bp.route('/create-subscription', methods=['POST'])
+@jwt_required()
+def create_subscription_embedded():
+    """Start a subscription for the EMBEDDED Payment Element (no redirect).
+
+    Creates an incomplete subscription and returns the PaymentIntent client_secret
+    so the frontend confirms payment in-page with our own branding. On success the
+    webhook (invoice.payment_succeeded / customer.subscription.updated) activates the
+    plan. We do NOT persist the subscription id here — abandoned/incomplete subs would
+    leave a dangling id; the webhook reconciles via the (persisted) customer id +
+    metadata. Existing paid subscribers upgrade/downgrade via /modify-subscription
+    instead (their card is already on file — no Payment Element needed).
+    """
+    user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({'msg': 'User not found'}), 404
+
+    data = request.get_json() or {}
+    raw_plan_key = data.get('plan_key') or data.get('plan')
+    plan_key = normalize_plan_key(raw_plan_key)
+    if not raw_plan_key:
+        return jsonify({'msg': 'Missing plan_key'}), 400
+
+    plan_catalog = get_plan_catalog(current_app.config)
+    if plan_key not in plan_catalog:
+        return jsonify({'msg': f'Unknown plan_key {raw_plan_key}'}), 400
+    if plan_key == 'free':
+        return jsonify({'msg': 'The Free plan does not require payment.'}), 400
+    if is_sales_only_plan(plan_key, current_app.config):
+        return jsonify({
+            'msg': f'{plan_catalog[plan_key]["label"]} is sales-led. Please contact sales.',
+            'contact_sales': True,
+            'plan_key': plan_key,
+        }), 400
+
+    price_id = current_app.config.get('STRIPE_PRICE_IDS', {}).get(plan_key)
+    if not price_id:
+        return jsonify({'msg': f"No Stripe price configured for '{plan_key}'."}), 400
+
+    customer_id = _ensure_customer_for_user(user)
+
+    try:
+        subscription = stripe.Subscription.create(
+            customer=customer_id,
+            items=[{'price': price_id}],
+            payment_behavior='default_incomplete',
+            payment_settings={'save_default_payment_method': 'on_subscription'},
+            expand=['latest_invoice.payment_intent'],
+            metadata={
+                'user_id': str(user.id),
+                'plan_key': plan_key,
+                'checkout_type': 'subscription_embedded',
+            },
+        )
+    except stripe.error.StripeError as exc:
+        current_app.logger.exception('create-subscription (embedded) failed')
+        return jsonify({'msg': str(getattr(exc, 'user_message', None) or 'Could not start the subscription.')}), 400
+
+    latest_invoice = subscription.get('latest_invoice')
+    payment_intent = latest_invoice.get('payment_intent') if isinstance(latest_invoice, dict) else None
+    client_secret = payment_intent.get('client_secret') if isinstance(payment_intent, dict) else None
+    if not client_secret:
+        return jsonify({'msg': 'Could not initialize payment for this plan.'}), 400
+
+    return jsonify({
+        'subscription_id': subscription.id,
+        'client_secret': client_secret,
+        'plan_key': plan_key,
+        'publishable_key': current_app.config.get('STRIPE_PUBLISHABLE_KEY') or '',
+    }), 200
+
+
 # Plan tier used to detect upgrade vs downgrade direction.
 _PLAN_TIER = {'free': 0, 'essential': 1, 'team': 2, 'enterprise': 3}
 

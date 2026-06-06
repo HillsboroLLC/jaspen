@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import BackToJaspen from '../../shared/components/BackToJaspen';
+import StripeCheckout from './StripeCheckout';
 import { API_BASE } from '../../config/apiBase';
 import { getPlanConnectorSentence } from '../../shared/billing/planConnectors';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
@@ -357,6 +358,8 @@ export default function Account() {
   const [userProfile, setUserProfile] = useState(null);
   const [discardDialog, setDiscardDialog] = useState(null);
   const [planConfirm, setPlanConfirm] = useState(null);
+  // Embedded Stripe checkout modal (Payment Element) — { planKey, planLabel, priceLabel }.
+  const [embeddedCheckout, setEmbeddedCheckout] = useState(null);
   const [jaspenOpen, setJaspenOpen] = useState(false);
   const [assistantInput, setAssistantInput] = useState('');
   const [assistantMessages, setAssistantMessages] = useState([
@@ -906,9 +909,9 @@ export default function Account() {
       message = `You'll keep your current ${currentLabel} access until the end of this billing period, then move to the Free plan. No charge now.`;
       confirmLabel = 'Cancel at period end';
     } else if (!hasSubscription || currentPlanKey === 'free') {
-      title = `Continue to checkout for ${label}?`;
-      message = `You'll be taken to secure Stripe checkout to enter payment for the ${label} plan (${price}). Nothing is charged until you complete checkout.`;
-      confirmLabel = 'Continue to checkout';
+      title = `Subscribe to ${label}?`;
+      message = `Enter your payment details securely to start the ${label} plan (${price}). You won't leave this page, and nothing is charged until you submit. Cancel anytime.`;
+      confirmLabel = 'Continue';
     } else if (newTier > currentTier) {
       title = `Upgrade to ${label}?`;
       message = `A prorated amount for the rest of this billing period will be charged to your card on file now, and you'll then pay ${price}. Your ${label} access starts immediately. If the charge is declined, your plan won't change.`;
@@ -950,22 +953,17 @@ export default function Account() {
         return;
       }
 
-      // ── New subscriber (free plan or no Stripe subscription): Stripe checkout ──
+      // ── New subscriber (free plan or no Stripe subscription): open the EMBEDDED
+      //    Stripe Payment Element in-page (no redirect, our branding). The modal
+      //    creates the subscription + confirms payment; on success we refresh.
       if (!hasSubscription || currentPlanKey === 'free') {
-        const response = await authFetch(`${API_BASE}/api/v1/billing/create-checkout-session`, {
-          method: 'POST',
-          headers: authHeaders({ 'Content-Type': 'application/json' }, 'POST'),
-          credentials: 'include',
-          body: JSON.stringify({ plan_key: planKey }),
+        const planInfo = plans?.[planKey] || catalog?.plans?.[planKey] || {};
+        setEmbeddedCheckout({
+          planKey,
+          planLabel: planInfo.label || planKey,
+          priceLabel: priceDisplay(planInfo),
         });
-        const data = await response.json();
-        if (!response.ok) {
-          if (response.status === 401) { navigate('/?auth=1', { replace: true }); return; }
-          throw new Error(data?.msg || 'Unable to start plan change.');
-        }
-        if (data?.url) { window.location.href = data.url; return; }
-        setMessage('Plan updated successfully.');
-        await refreshStatus();
+        setPendingAction('');
         return;
       }
 
@@ -3631,6 +3629,19 @@ export default function Account() {
           }}
           onCancel={() => setPlanConfirm(null)}
         />
+        {embeddedCheckout && (
+          <StripeCheckout
+            planKey={embeddedCheckout.planKey}
+            planLabel={embeddedCheckout.planLabel}
+            priceLabel={embeddedCheckout.priceLabel}
+            onClose={() => setEmbeddedCheckout(null)}
+            onSuccess={async () => {
+              setEmbeddedCheckout(null);
+              setMessage('Subscription started — welcome aboard!');
+              await refreshStatus();
+            }}
+          />
+        )}
       </div>
       <JaspenAiDrawer
         isOpen={jaspenOpen}

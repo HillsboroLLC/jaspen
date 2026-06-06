@@ -157,6 +157,10 @@ def create_app():
         # Stripe
         STRIPE_SECRET_KEY              = os.getenv('STRIPE_SECRET_KEY'),
         STRIPE_WEBHOOK_SECRET          = os.getenv('STRIPE_WEBHOOK_SECRET'),
+        # Publishable key is safe to expose to the browser (served via /billing/config)
+        # so the embedded Payment Element can load Stripe.js. Test or live, mirrors the
+        # secret key's mode.
+        STRIPE_PUBLISHABLE_KEY         = os.getenv('STRIPE_PUBLISHABLE_KEY'),
 
         # Anthropic
         ANTHROPIC_API_KEY              = os.getenv('ANTHROPIC_API_KEY') or os.getenv('CLAUDE_API_KEY'),
