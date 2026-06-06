@@ -1644,7 +1644,49 @@ export default function JaspenWorkspace() {
                 if (s.key === 'scenario') return !!recommendedScenario || rendered?._display_overrides?.recommended_scenario !== undefined;
                 return true;
               });
+              // ── Custom blocks live on the SAME grid as built-in sections so a new
+              //    block (e.g. a risk-mitigation list) can sit right next to a built-in
+              //    card (e.g. Top Risks). One BlockGrid; onLayoutChange is split by key
+              //    below — section keys -> sectionLayout, blk_ ids -> custom_blocks.
+              const blocks = Array.isArray(overrides?.custom_blocks) ? overrides.custom_blocks : [];
+              const updateBlocks = (next) => setOverride('custom_blocks', next.length ? next : null);
+              const accent = ringColor;
+              // A small, strategic set of element types — not boiling the ocean.
+              const BLOCK_TYPES = [
+                { key: 'text', label: 'Text section', hint: 'Heading + paragraph', defaultHeading: 'New section' },
+                { key: 'callout', label: 'Callout', hint: 'Highlighted note box', defaultHeading: 'Note' },
+                { key: 'quote', label: 'Quote', hint: 'Italic, attributed', defaultHeading: 'Quote' },
+              ];
+              const addBlock = (type) => {
+                const def = BLOCK_TYPES.find((t) => t.key === type) || BLOCK_TYPES[0];
+                // Place the new tile in a fresh row below everything else on the grid.
+                const sectionMaxY = _visibleSections.reduce((m, s) => Math.max(m, (Number.isFinite(s?.y) ? s.y : 0) + (Number.isFinite(s?.h) ? s.h : 5)), 0);
+                const blockMaxY = blocks.reduce((m, b) => Math.max(m, (Number.isFinite(b?.y) ? b.y : 0) + (Number.isFinite(b?.h) ? b.h : 4)), 0);
+                const maxY = Math.max(sectionMaxY, blockMaxY);
+                updateBlocks([...blocks, { id: `blk_${Date.now()}`, type: def.key, heading: def.defaultHeading, body: '', x: 0, y: maxY, w: 6, h: 4 }]);
+              };
+
+              // Built-in section layout items (keyed by section.key).
+              const _sectionLayoutItems = _visibleSections.map((s, i) => ({
+                i: s.key,
+                x: Number.isFinite(s.x) ? s.x : 0,
+                y: Number.isFinite(s.y) ? s.y : i * 5,
+                w: Number.isFinite(s.w) ? s.w : Math.min(12, Math.max(3, (s.cols || 4) * 3)),
+                h: Number.isFinite(s.h) ? s.h : 5,
+                minW: 3, minH: 2,
+              }));
+              // Custom block layout items (keyed by blk id). Migrate legacy `cols`.
+              const _blockLayoutItems = blocks.map((b, i) => {
+                const w = Number.isFinite(b?.w) ? b.w : (b?.cols ? Math.min(12, Math.max(2, b.cols * 3)) : 6);
+                const h = Number.isFinite(b?.h) ? b.h : 4;
+                const x = Number.isFinite(b?.x) ? b.x : 0;
+                const y = Number.isFinite(b?.y) ? b.y : (_sectionLayoutItems.length + i) * 4;
+                return { i: String(b?.id || `blk_${i}`), x, y, w, h, minW: 2, minH: 2 };
+              });
+              const _sectionKeySet = new Set(_visibleSections.map((s) => s.key));
+
               return (
+              <>
               <BlockGrid
                 className="jw-block-grid"
                 style={{ marginTop: 28 }}
@@ -1655,27 +1697,30 @@ export default function JaspenWorkspace() {
                 isResizable
                 draggableHandle=".blk-drag-handle"
                 resizeHandles={['se']}
-                layout={_visibleSections.map((s, i) => ({
-                  i: s.key,
-                  x: Number.isFinite(s.x) ? s.x : 0,
-                  y: Number.isFinite(s.y) ? s.y : i * 5,
-                  w: Number.isFinite(s.w) ? s.w : Math.min(12, Math.max(3, (s.cols || 4) * 3)),
-                  h: Number.isFinite(s.h) ? s.h : 5,
-                  minW: 3, minH: 2,
-                }))}
+                layout={[..._sectionLayoutItems, ..._blockLayoutItems]}
                 onLayoutChange={(nl) => {
                   const byId = {};
                   nl.forEach((l) => { byId[l.i] = l; });
+                  // Built-in sections -> sectionLayout (localStorage).
                   setSectionLayout((prev) => {
                     let ch = false;
                     const u = prev.map((s) => {
                       const l = byId[s.key];
-                      if (!l) return s;
+                      if (!l || !_sectionKeySet.has(s.key)) return s;
                       if (s.x !== l.x || s.y !== l.y || s.w !== l.w || s.h !== l.h) ch = true;
                       return { ...s, x: l.x, y: l.y, w: l.w, h: l.h };
                     });
                     return ch ? u : prev;
                   });
+                  // Custom blocks -> display_overrides.custom_blocks.
+                  let blkChanged = false;
+                  const updatedBlocks = blocks.map((b) => {
+                    const l = byId[String(b?.id)];
+                    if (!l) return b;
+                    if (b.x !== l.x || b.y !== l.y || b.w !== l.w || b.h !== l.h) blkChanged = true;
+                    return { ...b, x: l.x, y: l.y, w: l.w, h: l.h };
+                  });
+                  if (blkChanged) updateBlocks(updatedBlocks);
                 }}
               >
               {_visibleSections.map((section, idx) => {
@@ -1872,65 +1917,10 @@ export default function JaspenWorkspace() {
                   </div>
                 );
               })}
-              </BlockGrid>
-              );
-            })()}
-
-            {/* Custom blocks — free-form sections the user (or agent) can add,
-                like adding an element in a deck/spreadsheet. Stored in
-                display_overrides.custom_blocks; editable / removable here. */}
-            {(() => {
-              const blocks = Array.isArray(overrides?.custom_blocks) ? overrides.custom_blocks : [];
-              const updateBlocks = (next) => setOverride('custom_blocks', next.length ? next : null);
-              const accent = ringColor;
-              // A small, strategic set of element types — not boiling the ocean.
-              const BLOCK_TYPES = [
-                { key: 'text', label: 'Text section', hint: 'Heading + paragraph', defaultHeading: 'New section' },
-                { key: 'callout', label: 'Callout', hint: 'Highlighted note box', defaultHeading: 'Note' },
-                { key: 'quote', label: 'Quote', hint: 'Italic, attributed', defaultHeading: 'Quote' },
-              ];
-              const addBlock = (type) => {
-                const def = BLOCK_TYPES.find((t) => t.key === type) || BLOCK_TYPES[0];
-                // Place the new tile in a fresh row below the others.
-                const maxY = blocks.reduce((m, b) => Math.max(m, (Number.isFinite(b?.y) ? b.y : 0) + (Number.isFinite(b?.h) ? b.h : 4)), 0);
-                updateBlocks([...blocks, { id: `blk_${Date.now()}`, type: def.key, heading: def.defaultHeading, body: '', x: 0, y: maxY, w: 6, h: 4 }]);
-              };
-              // Map blocks -> grid layout. Migrate legacy `cols` (1..4) to 12-col width.
-              const gridLayout = blocks.map((b, i) => {
-                const w = Number.isFinite(b?.w) ? b.w : (b?.cols ? Math.min(12, Math.max(2, b.cols * 3)) : 6);
-                const h = Number.isFinite(b?.h) ? b.h : 4;
-                const x = Number.isFinite(b?.x) ? b.x : 0;
-                const y = Number.isFinite(b?.y) ? b.y : i * 4;
-                return { i: String(b?.id || `blk_${i}`), x, y, w, h, minW: 2, minH: 2 };
-              });
-              const onGridLayoutChange = (next) => {
-                const byId = {};
-                next.forEach((l) => { byId[l.i] = l; });
-                let changed = false;
-                const updated = blocks.map((b) => {
-                  const l = byId[String(b?.id)];
-                  if (!l) return b;
-                  if (b.x !== l.x || b.y !== l.y || b.w !== l.w || b.h !== l.h) changed = true;
-                  return { ...b, x: l.x, y: l.y, w: l.w, h: l.h };
-                });
-                if (changed) updateBlocks(updated);
-              };
-              return (
-                <div style={{ marginTop:20 }}>
-                  {blocks.length > 0 && (
-                    <BlockGrid
-                      className="jw-block-grid"
-                      layout={gridLayout}
-                      cols={12}
-                      rowHeight={28}
-                      margin={[14, 14]}
-                      isDraggable
-                      isResizable
-                      draggableHandle=".blk-drag-handle"
-                      resizeHandles={['se']}
-                      onLayoutChange={onGridLayoutChange}
-                    >
-                      {blocks.map((blk, bi) => {
+              {/* Custom blocks render as children of the SAME grid (above) so they
+                  can sit beside built-in sections; their layout is split out in the
+                  grid's onLayoutChange. */}
+              {blocks.map((blk, bi) => {
                         const blockType = String(blk?.type || 'text');
                         const baseStyle = { height:'100%', boxSizing:'border-box', borderRadius:10, padding:'10px 12px', display:'flex', flexDirection:'column', overflow:'hidden' };
                         const containerStyle = blockType === 'callout'
@@ -1969,9 +1959,8 @@ export default function JaspenWorkspace() {
                           </div>
                         );
                       })}
-                    </BlockGrid>
-                  )}
-                  <div style={{ position:'relative', marginTop: blocks.length ? 8 : 0 }}>
+              </BlockGrid>
+              <div style={{ position:'relative', marginTop: 12 }}>
                     <button
                       onClick={() => setAddBlockMenuOpen((o) => !o)}
                       style={{ border:'1px dashed #c7d2da', background:'#fff', color:'#475569', borderRadius:8, padding:'8px 14px', fontSize:13, cursor:'pointer', fontWeight:500, display:'inline-flex', alignItems:'center', gap:6 }}
@@ -1996,7 +1985,7 @@ export default function JaspenWorkspace() {
                       </>
                     )}
                   </div>
-                </div>
+              </>
               );
             })()}
 
