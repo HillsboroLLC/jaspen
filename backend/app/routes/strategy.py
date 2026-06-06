@@ -792,6 +792,38 @@ def _list_has_values(items):
     return isinstance(items, list) and any(item not in (None, '', [], {}) for item in items)
 
 
+# Maps each per-dimension confidence label the LLM assigns to a percentage. These
+# are deliberately spread out (not clustered) so a card's overall data_confidence
+# reflects its actual evidential grounding rather than snapping to a fixed value.
+_DIMENSION_CONFIDENCE_PCT = {"high": 92, "medium": 70, "low": 48, "assumed": 30}
+
+
+def _data_confidence_from_dimensions(dimensions, *, conversation_turns=0):
+    """Derive overall data_confidence (%) from the LLM's per-dimension confidence
+    labels. Returns an int 0-100, or None if there are no usable dimensions (caller
+    falls back to the legacy heuristic).
+
+    Confidence is the mean of each dimension's mapped percentage, with a small
+    grounding bonus for a substantive conversation (more turns → more real signal).
+    """
+    if not isinstance(dimensions, dict) or not dimensions:
+        return None
+    vals = []
+    for dim in dimensions.values():
+        if not isinstance(dim, dict):
+            continue
+        conf = str(dim.get("confidence") or "").strip().lower()
+        pct = _DIMENSION_CONFIDENCE_PCT.get(conf)
+        if pct is not None:
+            vals.append(pct)
+    if not vals:
+        return None
+    base = sum(vals) / len(vals)
+    # Up to +8 for a well-developed conversation (caps at ~8 turns).
+    grounding_bonus = min(8, max(0, conversation_turns)) if conversation_turns else 0
+    return int(round(max(15, min(100, base + grounding_bonus))))
+
+
 def _section_provenance(has_values, *, estimated=False, uploaded=False):
     if not has_values:
         return 'missing'
@@ -1061,16 +1093,28 @@ def _normalize_scorecard_payload(payload):
     if isinstance(source_meta, dict):
         conversation_turns = _safe_int(source_meta.get('conversation_turns')) or 0
 
-    confidence_pct = min(
-        100,
-        max(
-            20,
-            (30 if conversation_turns >= 5 else 10)
-            + (25 if has_financials else 0)
-            + (20 if has_team_context else 0)
-            + (25 if assumptions_count < 3 else 10),
-        ),
+    # Prefer deriving confidence from the LLM's own per-dimension confidence labels
+    # (high/medium/low/assumed) — that is the real signal of how grounded the score
+    # is, and it varies card-to-card. The old turn-count heuristic bucketed to a few
+    # fixed values (e.g. 10+25+0+20 = a sticky 55%), which is why every batch card
+    # looked the same. Fall back to the heuristic only when there are no dimensions.
+    dimension_confidence_pct = _data_confidence_from_dimensions(
+        normalized.get('dimensions'),
+        conversation_turns=conversation_turns,
     )
+    if dimension_confidence_pct is not None:
+        confidence_pct = dimension_confidence_pct
+    else:
+        confidence_pct = min(
+            100,
+            max(
+                20,
+                (30 if conversation_turns >= 5 else 10)
+                + (25 if has_financials else 0)
+                + (20 if has_team_context else 0)
+                + (25 if assumptions_count < 3 else 10),
+            ),
+        )
     normalized['data_confidence'] = int(confidence_pct)
 
     score_value = _safe_int(normalized.get('jaspen_score')) or 0
