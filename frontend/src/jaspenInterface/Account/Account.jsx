@@ -11,6 +11,7 @@ import {
   faBookOpen,
   faBolt,
   faChartLine,
+  faFileInvoiceDollar,
   faGear,
   faLayerGroup,
   faPlug,
@@ -69,6 +70,7 @@ const ACCOUNT_TAB_KEYS = new Set([
   'overview',
   'plans',
   'packs',
+  'invoices',
   'settings',
 ]);
 const DEFAULT_SYNC_MODES = ['import', 'push', 'two_way'];
@@ -360,6 +362,24 @@ export default function Account() {
   const [planConfirm, setPlanConfirm] = useState(null);
   // Embedded Stripe checkout modal (Payment Element) — { planKey, planLabel, priceLabel }.
   const [embeddedCheckout, setEmbeddedCheckout] = useState(null);
+  // Invoices tab: null = loading, [] = loaded/empty.
+  const [invoices, setInvoices] = useState(null);
+
+  useEffect(() => {
+    if (activeTab !== 'invoices') return undefined;
+    let alive = true;
+    setInvoices(null);
+    (async () => {
+      try {
+        const resp = await authFetch(`${API_BASE}/api/v1/billing/invoices`, { credentials: 'include' });
+        const data = await resp.json().catch(() => ({}));
+        if (alive) setInvoices(Array.isArray(data.invoices) ? data.invoices : []);
+      } catch {
+        if (alive) setInvoices([]);
+      }
+    })();
+    return () => { alive = false; };
+  }, [activeTab]);
   const [jaspenOpen, setJaspenOpen] = useState(false);
   const [assistantInput, setAssistantInput] = useState('');
   const [assistantMessages, setAssistantMessages] = useState([
@@ -1931,6 +1951,7 @@ export default function Account() {
         { key: 'overview', label: 'Overview', icon: faChartLine },
         { key: 'plans', label: 'Plans', icon: faLayerGroup },
         { key: 'packs', label: 'Credit packs', icon: faBolt },
+        { key: 'invoices', label: 'Invoices', icon: faFileInvoiceDollar },
       ],
     },
     {
@@ -3092,6 +3113,55 @@ export default function Account() {
               </div>
             </div>
           </div>
+        )}
+
+        {activeTab === 'invoices' && (
+        <section className="account-section">
+          <h2 className="account-tab-title">Invoices</h2>
+          <p className="account-subtext" style={{ marginBottom: 16 }}>Your payment history.</p>
+          {invoices === null ? (
+            <div style={{ color: '#64748b', fontSize: 14, padding: '12px 0' }}>Loading…</div>
+          ) : invoices.length === 0 ? (
+            <div style={{ color: '#64748b', fontSize: 14, padding: '12px 0' }}>No invoices yet. Charges will appear here after your first payment.</div>
+          ) : (
+            <div style={{ border: '1px solid #e6eaf2', borderRadius: 12, overflow: 'hidden' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5 }}>
+                <thead>
+                  <tr style={{ background: '#f8fafc', textAlign: 'left' }}>
+                    <th style={{ padding: '10px 16px', fontWeight: 600, color: '#64748b' }}>Date</th>
+                    <th style={{ padding: '10px 16px', fontWeight: 600, color: '#64748b' }}>Amount</th>
+                    <th style={{ padding: '10px 16px', fontWeight: 600, color: '#64748b' }}>Status</th>
+                    <th style={{ padding: '10px 16px', fontWeight: 600, color: '#64748b', textAlign: 'right' }}>Receipt</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {invoices.map((inv) => {
+                    const paid = String(inv.status || '').toLowerCase() === 'paid';
+                    const url = inv.invoice_pdf || inv.hosted_invoice_url;
+                    return (
+                      <tr key={inv.id} style={{ borderTop: '1px solid #eef1f6' }}>
+                        <td style={{ padding: '11px 16px', color: '#0f172a' }}>
+                          {inv.created ? new Date(inv.created * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                        </td>
+                        <td style={{ padding: '11px 16px', color: '#0f172a', fontWeight: 500 }}>
+                          ${((inv.amount || 0) / 100).toFixed(2)} {inv.currency}
+                        </td>
+                        <td style={{ padding: '11px 16px' }}>
+                          <span style={{ fontSize: 11.5, fontWeight: 600, padding: '2px 8px', borderRadius: 999, background: paid ? '#ecfdf3' : '#fff7ed', color: paid ? '#0d7a3e' : '#b45309', textTransform: 'capitalize' }}>
+                            {inv.status || 'open'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '11px 16px', textAlign: 'right' }}>
+                          {url ? <a href={url} target="_blank" rel="noreferrer" style={{ color: '#a0036c', fontWeight: 500, textDecoration: 'none' }}>View</a> : <span style={{ color: '#cbd5e1' }}>—</span>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
         )}
 
         {activeTab === 'packs' && (

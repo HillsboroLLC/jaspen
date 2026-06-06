@@ -402,6 +402,35 @@ def billing_config():
     }), 200
 
 
+@billing_bp.route('/invoices', methods=['GET'])
+@jwt_required()
+def list_invoices():
+    """Simple in-app payment history (date / amount / status) — so the user never
+    has to leave for the Stripe-hosted invoice page."""
+    user = User.query.get(get_jwt_identity())
+    if not user or not user.stripe_customer_id:
+        return jsonify({'invoices': []}), 200
+    try:
+        resp = stripe.Invoice.list(customer=user.stripe_customer_id, limit=24)
+    except stripe.error.StripeError:
+        current_app.logger.exception('list_invoices failed')
+        return jsonify({'invoices': []}), 200
+    out = []
+    for inv in resp.get('data', []):
+        amount = inv.get('amount_paid') or inv.get('total') or 0
+        out.append({
+            'id': inv.get('id'),
+            'number': inv.get('number'),
+            'created': inv.get('created'),
+            'amount': amount,  # cents
+            'currency': (inv.get('currency') or 'usd').upper(),
+            'status': inv.get('status'),
+            'hosted_invoice_url': inv.get('hosted_invoice_url'),
+            'invoice_pdf': inv.get('invoice_pdf'),
+        })
+    return jsonify({'invoices': out}), 200
+
+
 def _subscription_payment_client_secret(subscription):
     """Get the client_secret to confirm payment for an incomplete subscription,
     resilient to Stripe API version differences:
