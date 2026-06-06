@@ -114,6 +114,12 @@ function CheckoutForm({ mode, planLabel, priceLabel, onSuccess }) {
           {error}
         </div>
       )}
+      {!isUpdate && (
+        <div style={{ marginTop: 14, fontSize: 11.5, color: '#64748b', lineHeight: 1.5 }}>
+          By subscribing, you agree to be charged {priceLabel} now and on a recurring monthly
+          basis until you cancel. You can cancel anytime in your account settings.
+        </div>
+      )}
       <button
         type="submit"
         disabled={!stripe || submitting}

@@ -512,7 +512,10 @@ def create_subscription_embedded():
             customer=customer_id,
             items=[{'price': price_id}],
             payment_behavior='default_incomplete',
-            payment_settings={'save_default_payment_method': 'on_subscription'},
+            # card-only so the embedded form shows the full card fields (and so it's
+            # testable without Stripe Link's SMS step). To allow Link/wallets later,
+            # drop payment_method_types and/or enable them in the Stripe dashboard.
+            payment_settings={'save_default_payment_method': 'on_subscription', 'payment_method_types': ['card']},
             metadata={
                 'user_id': str(user.id),
                 'plan_key': plan_key,

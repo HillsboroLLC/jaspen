@@ -2803,8 +2803,8 @@ def analyze_project():
                 'error': 'Thinking power limit reached',
                 'required_credits': analysis_credit_cost,
                 'credits_remaining': user.credits_remaining,
-                'plan_key': to_public_plan(user.subscription_plan),
-                'monthly_credit_limit': get_monthly_credit_limit(user.subscription_plan, current_app.config),
+                'plan_key': to_public_plan(effective_plan_key(user, current_app.config)),
+                'monthly_credit_limit': get_monthly_credit_limit(effective_plan_key(user, current_app.config), current_app.config),
                 'suggestion': 'Purchase a credit pack or upgrade your plan.',
             }), 402
 

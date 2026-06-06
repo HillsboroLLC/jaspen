@@ -901,6 +901,13 @@ export default function Account() {
     const currentTier = PLAN_TIER_MAP[currentPlanKey] ?? 0;
     const newTier = PLAN_TIER_MAP[planKey] ?? 0;
 
+    // New subscriber: open the embedded checkout DIRECTLY — no separate confirm step.
+    // The modal itself carries the plan, price, disclaimer, and payment on one card.
+    if (planKey !== 'free' && (!hasSubscription || currentPlanKey === 'free')) {
+      setEmbeddedCheckout({ planKey, planLabel: label, priceLabel: price });
+      return;
+    }
+
     let title;
     let message;
     let confirmLabel;
@@ -908,10 +915,6 @@ export default function Account() {
       title = 'Cancel your plan?';
       message = `You'll keep your current ${currentLabel} access until the end of this billing period, then move to the Free plan. No charge now.`;
       confirmLabel = 'Cancel at period end';
-    } else if (!hasSubscription || currentPlanKey === 'free') {
-      title = `Subscribe to ${label}?`;
-      message = `Enter your payment details securely to start the ${label} plan (${price}). You won't leave this page, and nothing is charged until you submit. Cancel anytime.`;
-      confirmLabel = 'Continue';
     } else if (newTier > currentTier) {
       title = `Upgrade to ${label}?`;
       message = `A prorated amount for the rest of this billing period will be charged to your card on file now, and you'll then pay ${price}. Your ${label} access starts immediately. If the charge is declined, your plan won't change.`;
