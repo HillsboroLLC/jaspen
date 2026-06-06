@@ -60,6 +60,26 @@
 > — taken after B1+B2 upload/agent-batch fixes. Earlier: `pre-studio-baseline` tag.
 > Dead-code removal (/studio etc.) deferred to its own backup→remove→test→restore session.
 
+## 🔴 NEW (LB 6/6 testing — prioritize)
+N1. BUG — new session shows STALE scorecards: open a new session + new prompt → it
+    renders scorecards from a PRIOR session in that chat; hard refresh shows the real
+    response. State/cache not cleared on new session. (Core-flow correctness — high.)
+N2. AGENT — won't score when the user asks for a different FORMAT: user asked for a
+    "table instead" and the agent skipped scoring entirely. Scoring is the moat; it
+    should still score and ALSO honor the requested presentation. (High.)
+N3. CONFIDENCE stuck ~55% — almost always 55% for batch/group scores; an individual
+    follow-up (workforce impact) came back 40%. Likely group-vs-individual calibration.
+    Review how confidence is computed/surfaced for batch vs single. (Trust — high.)
+N4. REPOSITION — can't move a NEW custom element next to a built-in card (e.g. a risk-
+    mitigation list next to Top Risks). = the single-unified-grid merge (built-in +
+    custom on ONE grid). Already spec'd above. (LB keeps hitting it — med-high.)
+N5. CHOICE-PROMPT didn't trigger when it should have — tune when the agent emits the
+    [[choice]] option panel (and verify it's deployed). (Polish.)
+N6. FEEDBACK capture — easy in-chat user feedback as they interact (Manus-style 👍/👎 +
+    optional note per message), surfaced for review. (New feature — good for launch.)
+N7. BILLING config knobs (later): a "cancel immediately" dev/test path; expose
+    upgrade/downgrade proration policy. (Low.)
+
 ## 🔴 BUGS FOUND IN 6/4 PM TEST (triage first — diagnosed, not yet fixed)
 > Root finding: there is ONE codebase / ONE deploy. The "two experiences" were the
 > SAME code taking two different agent paths, not an old vs new version.
