@@ -61,18 +61,29 @@
 > Dead-code removal (/studio etc.) deferred to its own backup→remove→test→restore session.
 
 ## 🔴 NEW (LB 6/6 testing — prioritize)
-N1. BUG — new session shows STALE scorecards: open a new session + new prompt → it
-    renders scorecards from a PRIOR session in that chat; hard refresh shows the real
-    response. State/cache not cleared on new session. (Core-flow correctness — high.)
+N1. ✅ DONE (fe, Vercel) — new session showed STALE scorecards. Root cause:
+    `scorecardSnapshots` was never reset on session transitions. Now cleared in every
+    reset path in JaspenChat.jsx (handleNewAnalysis, delete-active-session single +
+    purge, clear-history, initial load with no ?sid=). NEEDS LIVE TEST: new session +
+    new prompt should NOT show prior scorecards without a hard refresh.
 N2. AGENT — won't score when the user asks for a different FORMAT: user asked for a
     "table instead" and the agent skipped scoring entirely. Scoring is the moat; it
-    should still score and ALSO honor the requested presentation. (High.)
-N3. CONFIDENCE stuck ~55% — almost always 55% for batch/group scores; an individual
-    follow-up (workforce impact) came back 40%. Likely group-vs-individual calibration.
-    Review how confidence is computed/surfaced for batch vs single. (Trust — high.)
-N4. REPOSITION — can't move a NEW custom element next to a built-in card (e.g. a risk-
-    mitigation list next to Top Risks). = the single-unified-grid merge (built-in +
-    custom on ONE grid). Already spec'd above. (LB keeps hitting it — med-high.)
+    should still score and ALSO honor the requested presentation. (High.) — DEFERRED
+    (LB: table-vs-scorecard may be useful to the user first; they can request a
+    scorecard later. Revisit.)
+N3. ✅ DONE (be — NEEDS DO DEPLOY) — confidence was stuck ~55%. Root cause: the coarse
+    4-term heuristic (turns + has_financials + team + assumptions) summed to a fixed 55
+    for the common batch case. Now `data_confidence` is derived from the LLM's own
+    per-dimension confidence labels (high/medium/low/assumed → 92/70/48/30, averaged,
+    + small grounding bonus) via `_data_confidence_from_dimensions` in strategy.py;
+    legacy heuristic only as fallback when a card has no scored dimensions. NEEDS DO
+    DEPLOY + live test (different cards should now show varied, label-driven confidence).
+N4. ✅ DONE (fe, Vercel) — REPOSITION: built-in sections + custom blocks now render on
+    ONE BlockGrid (JaspenWorkspace.jsx). A new block (e.g. risk-mitigation list) drops
+    in below the furthest tile and can be dragged beside any built-in card. onLayoutChange
+    splits by key: section keys → sectionLayout (localStorage), blk_ ids → custom_blocks.
+    NEEDS LIVE TEST: add block, drag it next to Top Risks, resize, refresh (persists),
+    Reset still clears layout; built-in content (ring/DimensionBars/editable text) intact.
 N5. CHOICE-PROMPT didn't trigger when it should have — tune when the agent emits the
     [[choice]] option panel (and verify it's deployed). (Polish.)
 N6. FEEDBACK capture — easy in-chat user feedback as they interact (Manus-style 👍/👎 +
