@@ -3118,6 +3118,7 @@ export default function Account() {
                 <thead>
                   <tr style={{ background: '#f8fafc', textAlign: 'left' }}>
                     <th style={{ padding: '10px 16px', fontWeight: 600, color: '#64748b' }}>Date</th>
+                    <th style={{ padding: '10px 16px', fontWeight: 600, color: '#64748b' }}>Description</th>
                     <th style={{ padding: '10px 16px', fontWeight: 600, color: '#64748b' }}>Amount</th>
                     <th style={{ padding: '10px 16px', fontWeight: 600, color: '#64748b' }}>Status</th>
                     <th style={{ padding: '10px 16px', fontWeight: 600, color: '#64748b', textAlign: 'right' }}>Receipt</th>
@@ -3131,6 +3132,9 @@ export default function Account() {
                       <tr key={inv.id} style={{ borderTop: '1px solid #eef1f6' }}>
                         <td style={{ padding: '11px 16px', color: '#0f172a' }}>
                           {inv.created ? new Date(inv.created * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                        </td>
+                        <td style={{ padding: '11px 16px', color: '#0f172a' }}>
+                          {inv.description || inv.number || 'Payment'}
                         </td>
                         <td style={{ padding: '11px 16px', color: '#0f172a', fontWeight: 500 }}>
                           ${((inv.amount || 0) / 100).toFixed(2)} {inv.currency}

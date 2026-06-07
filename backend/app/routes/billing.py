@@ -569,24 +569,53 @@ def list_invoices():
     user = User.query.get(get_jwt_identity())
     if not user or not user.stripe_customer_id:
         return jsonify({'invoices': []}), 200
+    out = []
     try:
         resp = stripe.Invoice.list(customer=user.stripe_customer_id, limit=24)
     except stripe.error.StripeError:
         current_app.logger.exception('list_invoices failed')
-        return jsonify({'invoices': []}), 200
-    out = []
-    for inv in resp.get('data', []):
-        amount = inv.get('amount_paid') or inv.get('total') or 0
-        out.append({
-            'id': inv.get('id'),
-            'number': inv.get('number'),
-            'created': inv.get('created'),
-            'amount': amount,  # cents
-            'currency': (inv.get('currency') or 'usd').upper(),
-            'status': inv.get('status'),
-            'hosted_invoice_url': inv.get('hosted_invoice_url'),
-            'invoice_pdf': inv.get('invoice_pdf'),
-        })
+    else:
+        for inv in resp.get('data', []):
+            amount = inv.get('amount_paid') or inv.get('total') or 0
+            out.append({
+                'id': inv.get('id'),
+                'number': inv.get('number'),
+                'description': inv.get('description') or inv.get('number') or 'Subscription',
+                'created': inv.get('created'),
+                'amount': amount,  # cents
+                'currency': (inv.get('currency') or 'usd').upper(),
+                'status': inv.get('status'),
+                'hosted_invoice_url': inv.get('hosted_invoice_url'),
+                'invoice_pdf': inv.get('invoice_pdf'),
+            })
+
+    try:
+        intents = stripe.PaymentIntent.list(
+            customer=user.stripe_customer_id,
+            limit=24,
+            expand=['data.latest_charge'],
+        )
+    except stripe.error.StripeError:
+        current_app.logger.exception('list_invoices credit-pack payments failed')
+    else:
+        for intent in intents.get('data', []):
+            metadata = intent.get('metadata') or {}
+            if str(metadata.get('checkout_type') or '').strip() not in {'credit_pack', 'overage_pack'}:
+                continue
+            charge = intent.get('latest_charge')
+            receipt_url = charge.get('receipt_url') if isinstance(charge, dict) else None
+            out.append({
+                'id': intent.get('id'),
+                'number': None,
+                'description': intent.get('description') or 'Credit pack',
+                'created': intent.get('created'),
+                'amount': intent.get('amount_received') or intent.get('amount') or 0,
+                'currency': (intent.get('currency') or 'usd').upper(),
+                'status': 'paid' if intent.get('status') == 'succeeded' else intent.get('status'),
+                'hosted_invoice_url': receipt_url,
+                'invoice_pdf': None,
+            })
+    out.sort(key=lambda item: int(item.get('created') or 0), reverse=True)
     return jsonify({'invoices': out}), 200
 
 
