@@ -173,7 +173,7 @@ body.jaspen-sidebar-open .account-page {
 }
 
 body.jaspen-sidebar-open .billing-tab {
-  left: 320px;
+  display: none;
 }
 
 /* ── Mutual exclusion: hide other tabs when Billing drawer is open ── */

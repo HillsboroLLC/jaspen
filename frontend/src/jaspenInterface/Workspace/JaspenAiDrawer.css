@@ -84,7 +84,7 @@ body.jaspen-sidebar-open .jas-ai-drawer.jas-drawer-open {
 }
 
 body.jaspen-sidebar-open .jas-tab-assistant {
-  left: var(--sidebar-width, 320px);
+  display: none;
 }
 
 .jas-ai-header {

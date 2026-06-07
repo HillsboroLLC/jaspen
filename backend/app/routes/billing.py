@@ -602,6 +602,8 @@ def list_invoices():
             metadata = intent.get('metadata') or {}
             if str(metadata.get('checkout_type') or '').strip() not in {'credit_pack', 'overage_pack'}:
                 continue
+            if intent.get('status') != 'succeeded':
+                continue
             charge = intent.get('latest_charge')
             receipt_url = charge.get('receipt_url') if isinstance(charge, dict) else None
             out.append({
