@@ -380,21 +380,59 @@ export default function AppMenu() {
   }, [updateUiPreferences, user?.ui_preferences]);
 
   const startBillingPlanChange = useCallback(
-    (planKey) => {
+    async (planKey) => {
       setBillingActionLoading(planKey);
-      setBillingModalOpen(false);
-      navigate('/account?tab=plans');
-      window.setTimeout(() => setBillingActionLoading(null), 0);
+      try {
+        const res = await fetch(
+          `${API_BASE}/api/v1/billing/create-checkout-session`,
+          {
+            method: 'POST',
+            headers: {
+              ...buildAuthHeaders({}, 'POST'),
+              'Content-Type': 'application/json',
+            },
+            credentials: 'include',
+            body: JSON.stringify({ plan_key: planKey }),
+          },
+        );
+        const data = await res.json().catch(() => ({}));
+        if (data?.checkout_url) {
+          window.location.href = data.checkout_url;
+        } else {
+          setBillingMessage(data?.msg || 'Unable to start checkout.');
+        }
+      } catch (err) {
+        setBillingMessage(err.message || 'Unable to start checkout.');
+      } finally {
+        setBillingActionLoading(null);
+      }
     },
-    [navigate],
+    [],
   );
 
-  const openBillingPortal = useCallback(() => {
+  const openBillingPortal = useCallback(async () => {
     setBillingActionLoading('portal');
-    setBillingModalOpen(false);
-    navigate('/account');
-    window.setTimeout(() => setBillingActionLoading(null), 0);
-  }, [navigate]);
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/v1/billing/create-portal-session`,
+        {
+          method: 'POST',
+          headers: buildAuthHeaders({}, 'POST'),
+          credentials: 'include',
+        },
+      );
+      const data = await res.json().catch(() => ({}));
+      if (data?.portal_url) {
+        window.location.href = data.portal_url;
+      } else {
+        setBillingMessage(data?.msg || 'Unable to open billing portal.');
+      }
+    } catch (err) {
+      setBillingMessage(err.message || 'Unable to open billing portal.');
+    } finally {
+      setBillingActionLoading(null);
+    }
+  }, []);
 
   const openDisplayNameEditor = useCallback(() => {
     setNameError('');
@@ -797,7 +835,7 @@ export default function AppMenu() {
                       disabled={billingActionLoading === key}
                     >
                       {billingActionLoading === key
-                        ? 'Opening...'
+                        ? 'Redirecting...'
                         : 'Select plan'}
                     </button>
                   )}

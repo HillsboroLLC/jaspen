@@ -1117,15 +1117,30 @@ export default function Account() {
   };
 
   const buyPack = async (packKey) => {
+    setPendingAction(packKey);
     setMessage('');
-    const pack = packs?.[packKey] || catalog?.credit_packs?.[packKey] || catalog?.overage_packs?.[packKey] || {};
-    const price = Number(pack.price_usd);
-    setEmbeddedCheckout({
-      mode: 'credit_pack',
-      packKey,
-      packLabel: pack.label || `${Number(pack.credits || 0).toLocaleString()} credits`,
-      priceLabel: `$${Number.isFinite(price) ? price : pack.price_usd}`,
-    });
+
+    try {
+      const response = await authFetch(`${API_BASE}/api/v1/billing/create-credit-pack-checkout-session`, {
+        method: 'POST',
+        headers: authHeaders({ 'Content-Type': 'application/json' }, 'POST'),
+        credentials: 'include',
+        body: JSON.stringify({ pack_key: packKey }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data?.url) {
+        if (response.status === 401) {
+          navigate('/?auth=1', { replace: true });
+          return;
+        }
+        throw new Error(data?.msg || 'Unable to start credit pack checkout.');
+      }
+      window.location.href = data.url;
+    } catch (error) {
+      setMessage(error.message || 'Unable to start credit pack checkout.');
+    } finally {
+      setPendingAction('');
+    }
   };
 
   const updateConnector = async (connectorId, updates) => {
@@ -2329,7 +2344,7 @@ export default function Account() {
                         onClick={() => requestPlanChange(key, plan)}
                         disabled={isPending} aria-disabled={isPending}
                       >
-                        {isPending ? 'Processing...'
+                        {isPending ? 'Redirecting...'
                           : isUpgrade ? `Upgrade to ${plan.label}`
                           : key === 'free' ? 'Cancel subscription'
                           : `Downgrade to ${plan.label}`}
@@ -3167,7 +3182,7 @@ export default function Account() {
                     onClick={() => buyPack(key)}
                     disabled={isPending} aria-disabled={isPending}
                   >
-                    {isPending ? 'Opening...' : `Purchase for $${pack.price_usd}`}
+                    {isPending ? 'Redirecting...' : `Purchase for $${pack.price_usd}`}
                   </button>
                 </article>
               );
@@ -3673,8 +3688,6 @@ export default function Account() {
             mode={embeddedCheckout.mode || 'subscribe'}
             planKey={embeddedCheckout.planKey}
             planLabel={embeddedCheckout.planLabel}
-            packKey={embeddedCheckout.packKey}
-            packLabel={embeddedCheckout.packLabel}
             priceLabel={embeddedCheckout.priceLabel}
             plans={Object.entries(plans)
               .filter(([k, p]) => k !== 'free' && !p?.sales_only)
@@ -3682,15 +3695,8 @@ export default function Account() {
             onClose={() => setEmbeddedCheckout(null)}
             onSuccess={async () => {
               const wasUpdate = embeddedCheckout.mode === 'update_payment';
-              const wasPack = embeddedCheckout.mode === 'credit_pack';
               setEmbeddedCheckout(null);
-              setMessage(
-                wasUpdate
-                  ? 'Your payment method was updated.'
-                  : wasPack
-                  ? 'Credit pack purchased. Your thinking power will update as soon as Stripe confirms the payment.'
-                  : 'Subscription started — welcome aboard!'
-              );
+              setMessage(wasUpdate ? 'Your payment method was updated.' : 'Subscription started — welcome aboard!');
               await refreshStatus();
             }}
           />

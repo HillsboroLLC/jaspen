@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import MarketingPageLayout from './MarketingPageLayout';
 import { API_BASE } from '../../config/apiBase';
 import { useAuth } from '../../shared/auth/AuthContext';
+import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import Seo from '../../shared/components/Seo';
 import { PLAN_ORDER, PLAN_RANK } from '../../shared/constants/appConstants';
 
@@ -70,7 +70,6 @@ const FALLBACK_MODEL_TYPES = {
 const MODEL_ORDER = ['pluto', 'orbit', 'titan'];
 
 export default function PricingPage() {
-  const navigate = useNavigate();
   const { user, loading } = useAuth();
   const [plans, setPlans] = useState(FALLBACK_PLANS);
   const [packs, setPacks] = useState(FALLBACK_PACKS);
@@ -124,7 +123,7 @@ export default function PricingPage() {
       });
   }, []);
 
-  // Route signed-in users with ?plan=essential to the internal Account billing UI.
+  // Auto-start checkout if user arrived with ?plan=essential (frictionless flow)
   useEffect(() => {
     if (loading || !user || autoCheckoutFiredRef.current) return;
     const params = new URLSearchParams(window.location.search || '');
@@ -140,7 +139,8 @@ export default function PricingPage() {
       document.title,
       `${window.location.pathname}${newSearch ? `?${newSearch}` : ''}#plans`,
     );
-    setTimeout(() => navigate('/account?tab=plans'), 400);
+    // Small delay so the page renders before redirecting to Stripe
+    setTimeout(() => beginCheckout(planParam), 400);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, user]);
 
@@ -169,7 +169,7 @@ export default function PricingPage() {
     return planRank >= requiredRank;
   };
 
-  const beginCheckout = (planKey) => {
+  const beginCheckout = async (planKey) => {
     if (!user) {
       window.location.href = '/?auth=1';
       return;
@@ -177,11 +177,32 @@ export default function PricingPage() {
 
     setPendingKey(planKey);
     setStatusMessage('');
-    navigate('/account?tab=plans');
-    window.setTimeout(() => setPendingKey(''), 0);
+    try {
+      const response = await authFetch(`${API_BASE}/api/v1/billing/create-checkout-session`, {
+        method: 'POST',
+        headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
+        body: JSON.stringify({ plan_key: planKey }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.msg || 'Unable to start checkout right now.');
+      }
+
+      if (data?.url) {
+        window.location.href = data.url;
+        return;
+      }
+
+      setStatusMessage('Plan updated successfully.');
+    } catch (err) {
+      setStatusMessage(err.message || 'Unable to start checkout right now.');
+    } finally {
+      setPendingKey('');
+    }
   };
 
-  const buyCreditPack = (packKey) => {
+  const buyCreditPack = async (packKey) => {
     if (!user) {
       window.location.href = '/?auth=1';
       return;
@@ -189,11 +210,27 @@ export default function PricingPage() {
 
     setPendingKey(packKey);
     setStatusMessage('');
-    navigate('/account?tab=packs');
-    window.setTimeout(() => setPendingKey(''), 0);
+    try {
+      const response = await authFetch(`${API_BASE}/api/v1/billing/create-credit-pack-checkout-session`, {
+        method: 'POST',
+        headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
+        body: JSON.stringify({ pack_key: packKey }),
+      });
+
+      const data = await response.json();
+      if (!response.ok || !data?.url) {
+        throw new Error(data?.msg || 'Unable to open credit pack checkout.');
+      }
+
+      window.location.href = data.url;
+    } catch (err) {
+      setStatusMessage(err.message || 'Unable to open credit pack checkout.');
+    } finally {
+      setPendingKey('');
+    }
   };
 
-  const openPortal = () => {
+  const openPortal = async () => {
     if (!user) {
       window.location.href = '/?auth=1';
       return;
@@ -201,8 +238,22 @@ export default function PricingPage() {
 
     setPendingKey('portal');
     setStatusMessage('');
-    navigate('/account');
-    window.setTimeout(() => setPendingKey(''), 0);
+    try {
+      const response = await authFetch(`${API_BASE}/api/v1/billing/create-portal-session`, {
+        method: 'POST',
+        headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
+        body: JSON.stringify({ return_url: `${window.location.origin}/pages/pricing#plans` }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data?.url) {
+        throw new Error(data?.msg || 'Unable to open billing settings.');
+      }
+      window.location.href = data.url;
+    } catch (err) {
+      setStatusMessage(err.message || 'Unable to open billing settings.');
+    } finally {
+      setPendingKey('');
+    }
   };
 
   return (
@@ -291,8 +342,8 @@ export default function PricingPage() {
                     onClick={() => beginCheckout(plan.plan_key)}
                     disabled={loading} aria-disabled={loading}
                   >
-                      {loading
-                      ? 'Opening...'
+                    {loading
+                      ? 'Redirecting...'
                       : isFree
                       ? 'Stay on Free'
                       : `Get ${plan.label}`}
@@ -362,7 +413,7 @@ export default function PricingPage() {
                       onClick={() => buyCreditPack(pack.pack_key)}
                       disabled={loading} aria-disabled={loading}
                     >
-                      {loading ? 'Opening...' : 'Buy credit pack'}
+                      {loading ? 'Redirecting...' : 'Buy credit pack'}
                     </button>
                   </article>
                 );
