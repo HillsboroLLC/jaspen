@@ -631,6 +631,16 @@ _VIEW_CONTEXT_VIEW_ALIASES = {
     "tradeoff": "scenario",
     "trade_off": "scenario",
     "workspace": "summary",
+    "connectors": "connectors",
+    "connectors_manage": "connectors",
+    "data_sources": "connectors",
+    "insights": "insights",
+    "account": "account",
+    "billing": "account",
+    "knowledge": "knowledge",
+    "docs": "knowledge",
+    "team": "team",
+    "general": "general",
 }
 _VIEW_CONTEXT_TAB_ALIASES = {
     "score": "scorecard",
@@ -780,6 +790,7 @@ _PROCESSING_INTENT_TERMS = frozenset([
 ])
 _JUDGMENT_VIEWS = frozenset(["summary", "scenario"])
 _PROCESSING_VIEWS = frozenset(["monitoring"])
+_LIGHT_QA_VIEWS = frozenset(["account", "knowledge", "team", "connectors", "insights", "general"])
 
 
 def _classify_turn_intent(view_context, user_message):
@@ -791,6 +802,8 @@ def _classify_turn_intent(view_context, user_message):
         return "processing"
     if current_view in _PROCESSING_VIEWS:
         return "processing"
+    if current_view in _LIGHT_QA_VIEWS:
+        return "standard"
     if any(term in text for term in _PROCESSING_INTENT_TERMS):
         return "processing"
     if current_view in _JUDGMENT_VIEWS:
@@ -1197,6 +1210,34 @@ def _view_context_prompt_suffix(view_context):
             "- IMPORTANT: The user is on the Execution Plan tab. Focus on tasks, owners, deadlines, and dependencies. "
             "Use add_wbs_task, update_wbs_task, remove_wbs_task, generate_execution_plan, or set_execution_start_date (to start/shift the whole schedule to a date) as needed. "
             "Do NOT ask intake questions."
+        )
+    elif current_view == "account":
+        lines.append(
+            "- The user is on the Account / Billing page. Help them understand their plan, thinking-power credit usage, "
+            "reset date, credit packs, invoices, and account settings. Explain and interpret only; you cannot change the plan, "
+            "buy credits, cancel billing, or alter settings. Point them to the on-page controls for actions."
+        )
+        if active_tab:
+            lines.append(f"- They are viewing the '{active_tab}' section of Account.")
+    elif current_view == "knowledge":
+        lines.append(
+            "- The user is on the Knowledge / Docs page. Answer product workflow questions about Jaspen, including discovery, "
+            "scoring, scenarios, execution planning, connectors, and account setup. Prefer concise, step-oriented answers."
+        )
+    elif current_view == "team":
+        lines.append(
+            "- The user is on the Team page. Help with members, roles, seats, team access, and shared-project visibility. "
+            "Explain seat math and roles; actual invites, removals, and role changes happen through the on-page controls."
+        )
+    elif current_view == "connectors":
+        lines.append(
+            "- The user is on the Data Sources / Connectors page. Help with connector setup, sync modes, conflict policy, "
+            "and health checks for Jira, Smartsheet, Salesforce, Snowflake, Oracle Fusion, ServiceNow, and NetSuite."
+        )
+    elif current_view == "insights":
+        lines.append(
+            "- The user is on the Insights page. Help interpret generated insights, priorities, risks, and follow-up actions. "
+            "Keep answers grounded in what the page is likely showing and avoid inventing unavailable live data."
         )
     else:
         lines.append(

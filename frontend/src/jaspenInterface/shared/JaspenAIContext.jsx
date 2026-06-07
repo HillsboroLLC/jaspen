@@ -33,12 +33,17 @@ export function JaspenAIProvider({ children }) {
 
   const getViewContext = useCallback(() => {
     const p = location.pathname;
+    const params = new URLSearchParams(location.search);
+    const activeTab = params.get('tab') || undefined;
     if (p === '/new') return { current_view: 'workspace' };
     if (p === '/execution-plan') return { current_view: 'execution' };
     if (p === '/connectors-manage') return { current_view: 'connectors' };
     if (p === '/insights') return { current_view: 'insights' };
+    if (p === '/account') return { current_view: 'account', active_tab: activeTab };
+    if (p === '/knowledge') return { current_view: 'knowledge' };
+    if (p === '/team') return { current_view: 'team' };
     return { current_view: 'general' };
-  }, [location.pathname]);
+  }, [location.pathname, location.search]);
 
   // Reset standalone session when leaving standalone mode entirely
   useEffect(() => {
