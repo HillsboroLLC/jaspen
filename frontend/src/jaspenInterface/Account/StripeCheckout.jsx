@@ -157,7 +157,7 @@ function CheckoutForm({ mode, planLabel, priceLabel, onSuccess }) {
         {submitting ? 'Processing...' : isUpdate ? 'Save card' : isCreditPack ? `Purchase — ${priceLabel}` : `Subscribe — ${priceLabel}`}
       </button>
       <div style={{ marginTop: 10, fontSize: 11, color: '#94a3b8', textAlign: 'center' }}>
-        Secure payment processing.{(!isUpdate && !isCreditPack) ? ' Cancel anytime.' : ''}
+        Securely processed by Stripe.{(!isUpdate && !isCreditPack) ? ' Cancel anytime.' : ''}
       </div>
     </form>
   );

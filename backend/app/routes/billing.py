@@ -516,7 +516,7 @@ def create_checkout_session():
 
     price_id = current_app.config.get('STRIPE_PRICE_IDS', {}).get(plan_key)
     if not price_id:
-        return jsonify({'msg': f"No billing price configured for '{plan_key}'"}), 400
+        return jsonify({'msg': f"No Stripe price configured for '{plan_key}'"}), 400
 
     customer_id = _ensure_customer_for_user(user)
 
@@ -564,7 +564,8 @@ def billing_config():
 @billing_bp.route('/invoices', methods=['GET'])
 @jwt_required()
 def list_invoices():
-    """Simple in-app payment history (date / amount / status)."""
+    """Simple in-app payment history (date / amount / status) — so the user never
+    has to leave for the Stripe-hosted invoice page."""
     user = User.query.get(get_jwt_identity())
     if not user or not user.stripe_customer_id:
         return jsonify({'invoices': []}), 200
@@ -593,18 +594,13 @@ def list_invoices():
         metadata = intent.get('metadata') if isinstance(intent.get('metadata'), dict) else {}
         if str(metadata.get('checkout_type') or '').strip() not in {'credit_pack', 'overage_pack'}:
             continue
-        if str(intent.get('status') or '').strip().lower() != 'succeeded':
-            continue
-        amount = intent.get('amount_received') or 0
-        if int(amount or 0) <= 0:
-            continue
         out.append({
             'id': intent.get('id'),
             'number': metadata.get('pack_key') or intent.get('id'),
             'created': intent.get('created'),
-            'amount': amount,
+            'amount': intent.get('amount_received') or intent.get('amount') or 0,
             'currency': (intent.get('currency') or 'usd').upper(),
-            'status': 'paid',
+            'status': intent.get('status'),
             'description': intent.get('description') or f"Jaspen {metadata.get('credits') or ''} credits".strip(),
             'source': 'payment_intent',
             'hosted_invoice_url': None,
@@ -697,7 +693,7 @@ def create_subscription_embedded():
 
     price_id = current_app.config.get('STRIPE_PRICE_IDS', {}).get(plan_key)
     if not price_id:
-        return jsonify({'msg': f"No billing price configured for '{plan_key}'."}), 400
+        return jsonify({'msg': f"No Stripe price configured for '{plan_key}'."}), 400
 
     customer_id = _ensure_customer_for_user(user)
 
@@ -856,7 +852,7 @@ def modify_subscription():
 
     price_id = current_app.config.get('STRIPE_PRICE_IDS', {}).get(plan_key)
     if not price_id:
-        return jsonify({'msg': f"No billing price configured for '{plan_key}'"}), 400
+        return jsonify({'msg': f"No Stripe price configured for '{plan_key}'"}), 400
 
     current_plan = to_public_plan(user.subscription_plan)
     current_tier = _PLAN_TIER.get(current_plan, 0)
@@ -973,7 +969,7 @@ def _create_credit_pack_checkout_session():
 
     price_id = pack.get('stripe_price_id')
     if not price_id:
-        return jsonify({'msg': f"No billing price configured for '{pack_key}'"}), 400
+        return jsonify({'msg': f"No Stripe price configured for '{pack_key}'"}), 400
 
     customer_id = _ensure_customer_for_user(user)
 
@@ -1126,7 +1122,7 @@ def create_portal_session():
         return jsonify({'msg': 'User not found'}), 404
 
     if not user.stripe_customer_id:
-        return jsonify({'msg': 'No billing account found for this user'}), 400
+        return jsonify({'msg': 'No Stripe customer found for this account'}), 400
 
     data = request.get_json(silent=True) or {}
     try:
@@ -1455,7 +1451,7 @@ def clear_scheduled_change():
     current_plan = to_public_plan(user.subscription_plan)
     price_id = current_app.config.get('STRIPE_PRICE_IDS', {}).get(current_plan)
     if not price_id:
-        return jsonify({'msg': f"No billing price configured for '{current_plan}'"}), 400
+        return jsonify({'msg': f"No Stripe price configured for '{current_plan}'"}), 400
 
     try:
         subscription = stripe.Subscription.retrieve(user.stripe_subscription_id)

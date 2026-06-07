@@ -58,7 +58,7 @@ const Privacy = () => {
 
         <section className="policy-section">
           <h2>Billing and Third-Party Services</h2>
-          <p>We use trusted service providers for critical functionality. For example, billing and subscription payments may be processed by third-party payment providers. We only share data necessary for those services to operate.</p>
+          <p>We use trusted service providers for critical functionality. For example, billing and subscription payments may be processed by Stripe. We only share data necessary for those services to operate.</p>
         </section>
 
         <section className="policy-section">

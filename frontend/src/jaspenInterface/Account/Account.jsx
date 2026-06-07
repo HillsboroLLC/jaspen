@@ -1889,28 +1889,14 @@ export default function Account() {
   const packs = catalog?.credit_packs || catalog?.overage_packs || {};
   const remainingTokensValue = status?.credits_remaining;
   const monthlyLimitValue = status?.monthly_credit_limit;
-  const cycleLimitValue = status?.cycle_credit_limit ?? monthlyLimitValue;
-  const creditsUsedValue = status?.credits_used;
-  const purchasedCreditsValue = status?.purchased_credits_this_cycle ?? status?.overage_credits_this_cycle;
-  const currentPlanLabel = plans[currentPlan]?.label || (currentPlan[0]?.toUpperCase() + currentPlan.slice(1));
   // Thinking power as a 0-100 integer (null = contracted/unlimited)
   const thinkingPowerPct = (() => {
     const remaining = Number(remainingTokensValue);
-    const cycle = Number(cycleLimitValue);
-    if (!Number.isFinite(remaining) || !Number.isFinite(cycle) || cycle <= 0) return null;
-    return Math.max(0, Math.min(100, Math.round((Math.max(0, remaining) / cycle) * 100)));
+    const monthly = Number(monthlyLimitValue);
+    if (!Number.isFinite(remaining) || !Number.isFinite(monthly) || monthly <= 0) return null;
+    return Math.max(0, Math.min(100, Math.round((Math.max(0, remaining) / monthly) * 100)));
   })();
   const thinkingPowerPercentLabel = thinkingPowerPct == null ? 'Unlimited' : `${thinkingPowerPct}%`;
-  const sidebarCreditsUsed = (() => {
-    const direct = Number(creditsUsedValue);
-    if (Number.isFinite(direct)) return Math.max(0, direct);
-    const remaining = Number(remainingTokensValue);
-    const cycle = Number(cycleLimitValue);
-    if (Number.isFinite(remaining) && Number.isFinite(cycle)) return Math.max(0, cycle - remaining);
-    return null;
-  })();
-  const sidebarCreditsRemaining = Number(remainingTokensValue);
-  const sidebarPurchasedCredits = Number(purchasedCreditsValue);
   // Reset date formatted as "Jun 9, 2026"
   const resetDateLabel = (() => {
     const v = status?.cycle_reset_at;
@@ -2073,32 +2059,6 @@ export default function Account() {
                 ? 'Unlimited'
                 : `${thinkingPowerPercentLabel} remaining`}
             </p>
-            {thinkingPowerPct != null && (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
-                <div style={{ border: '1px solid #e6eaf2', borderRadius: 8, padding: '7px 8px', background: '#fbfcfe' }}>
-                  <p className="account-sidebar-footer-label" style={{ margin: 0, fontSize: '0.62rem' }}>Used</p>
-                  <p className="account-sidebar-footer-value" style={{ marginTop: 3 }}>
-                    {sidebarCreditsUsed == null ? '0' : Number(sidebarCreditsUsed || 0).toLocaleString()}
-                  </p>
-                </div>
-                <div style={{ border: '1px solid #e6eaf2', borderRadius: 8, padding: '7px 8px', background: '#fbfcfe' }}>
-                  <p className="account-sidebar-footer-label" style={{ margin: 0, fontSize: '0.62rem' }}>Remaining</p>
-                  <p className="account-sidebar-footer-value" style={{ marginTop: 3 }}>
-                    {Number.isFinite(sidebarCreditsRemaining) ? Number(sidebarCreditsRemaining || 0).toLocaleString() : 'Unlimited'}
-                  </p>
-                </div>
-              </div>
-            )}
-            {Number.isFinite(sidebarPurchasedCredits) && sidebarPurchasedCredits > 0 && (
-              <p className="account-sidebar-footer-value" style={{ fontSize: '0.7rem', color: '#64748b', marginTop: 8 }}>
-                Includes {Number(sidebarPurchasedCredits).toLocaleString()} purchased credits.
-              </p>
-            )}
-            {monthlyLimitValue != null && (
-              <p className="account-sidebar-footer-value" style={{ fontSize: '0.7rem', color: '#94a3b8', marginTop: 6 }}>
-                Monthly limit: {Number(monthlyLimitValue || 0).toLocaleString()} credits on {currentPlanLabel}.
-              </p>
-            )}
             <p className="account-sidebar-footer-value" style={{ fontSize: '0.7rem', color: '#94a3b8', marginTop: 2 }}>
               Resets {resetDateLabel}
             </p>
@@ -3601,7 +3561,7 @@ export default function Account() {
                         />
                       </label>
                       <label htmlFor="account-admin-stripe-customer-id">
-                        Billing customer id
+                        Stripe customer id
                         <input
                           id="account-admin-stripe-customer-id"
                           type="text"
@@ -3613,7 +3573,7 @@ export default function Account() {
                         />
                       </label>
                       <label htmlFor="account-admin-stripe-subscription-id">
-                        Billing subscription id
+                        Stripe subscription id
                         <input
                           id="account-admin-stripe-subscription-id"
                           type="text"
@@ -3734,7 +3694,7 @@ export default function Account() {
                 wasUpdate
                   ? 'Your payment method was updated.'
                   : wasPack
-                  ? 'Credit pack purchased. Your thinking power has been updated.'
+                  ? 'Credit pack purchased. Your thinking power will update as soon as Stripe confirms the payment.'
                   : 'Subscription started — welcome aboard!'
               );
               await refreshStatus();
