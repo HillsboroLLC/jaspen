@@ -42,7 +42,7 @@ const Terms = () => {
           <h2>Billing and Subscriptions</h2>
           <ul>
             <li>Paid plans are billed according to selected pricing and plan terms</li>
-            <li>Billing may be processed by third-party providers such as Stripe</li>
+            <li>Billing may be processed by trusted third-party payment providers</li>
             <li>You are responsible for applicable taxes and payment method validity</li>
             <li>Sales-led plans may require signed order forms or separate commercial terms</li>
           </ul>
