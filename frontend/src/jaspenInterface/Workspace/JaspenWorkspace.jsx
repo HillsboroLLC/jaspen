@@ -893,6 +893,18 @@ export default function JaspenWorkspace() {
         if (activeName) viewContext.active_scorecard_name = activeName;
         const activeScore = Number(rendered?.jaspen_score || snapshot?.jaspen_score || 0);
         if (activeScore) viewContext.active_scorecard_score = activeScore;
+        const customBlocks = Array.isArray(overrides?.custom_blocks) ? overrides.custom_blocks : [];
+        const visibleCustomBlocks = customBlocks
+          .map((block) => ({
+            id: String(block?.id || '').trim(),
+            heading: String(block?.heading || block?.title || '').trim(),
+            body: String(block?.body || block?.text || '').trim(),
+          }))
+          .filter((block) => block.heading || block.body)
+          .slice(0, 12);
+        if (visibleCustomBlocks.length) {
+          viewContext.custom_blocks = visibleCustomBlocks;
+        }
       }
       if (isTradeoff) {
         // The same list the canvas renders — names + scores — so the agent

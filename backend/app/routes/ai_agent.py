@@ -1043,6 +1043,42 @@ def _sanitize_visible_ideas(raw_ideas):
     return cleaned or None
 
 
+def _sanitize_custom_blocks(raw_blocks):
+    if not isinstance(raw_blocks, list):
+        return None
+    cleaned = []
+    for entry in raw_blocks:
+        if isinstance(entry, str):
+            entry = {"body": entry}
+        if not isinstance(entry, dict):
+            continue
+        heading = str(
+            entry.get("heading")
+            or entry.get("title")
+            or entry.get("label")
+            or ""
+        ).strip()
+        body = str(
+            entry.get("body")
+            or entry.get("text")
+            or entry.get("content")
+            or ""
+        ).strip()
+        block_id = str(entry.get("id") or "").strip()
+        if not heading and not body:
+            continue
+        block = {}
+        if block_id:
+            block["id"] = block_id[:120]
+        block["heading"] = (heading or "New section")[:160]
+        if body:
+            block["body"] = body[:500]
+        cleaned.append(block)
+        if len(cleaned) >= 12:
+            break
+    return cleaned or None
+
+
 def _sanitize_view_context(raw_context):
     context = raw_context if isinstance(raw_context, dict) else {}
     cleaned = {}
@@ -1099,6 +1135,14 @@ def _sanitize_view_context(raw_context):
     )
     if visible_ideas:
         cleaned["visible_ideas"] = visible_ideas
+
+    custom_blocks = _sanitize_custom_blocks(
+        context.get("custom_blocks")
+        or context.get("visible_custom_blocks")
+        or context.get("scorecard_custom_blocks")
+    )
+    if custom_blocks:
+        cleaned["custom_blocks"] = custom_blocks
 
     return cleaned
 
@@ -1176,6 +1220,25 @@ def _view_context_prompt_suffix(view_context):
     if active_scenario_id:
         lines.append(f"- Active scenario ID: {active_scenario_id}")
 
+    custom_blocks = normalized.get("custom_blocks") if isinstance(normalized.get("custom_blocks"), list) else []
+    if custom_blocks:
+        rendered_blocks = []
+        for block in custom_blocks:
+            if not isinstance(block, dict):
+                continue
+            heading = str(block.get("heading") or "").strip()
+            if not heading:
+                continue
+            body = str(block.get("body") or "").strip()
+            body_preview = f": {body[:120]}" if body else ""
+            rendered_blocks.append(f"{heading}{body_preview}")
+        if rendered_blocks:
+            lines.append(
+                "- Custom blocks visible on this scorecard: "
+                + "; ".join(rendered_blocks)
+                + ". If the user asks to fill or update one of these named blocks, call patch_scorecard with add_blocks using the same heading or id; do not update top_risks or another standard field unless they explicitly ask for that field."
+            )
+
     wbs_summary = normalized.get("wbs_summary") if isinstance(normalized.get("wbs_summary"), dict) else {}
     total_tasks = wbs_summary.get("total_tasks")
     by_status = wbs_summary.get("by_status") if isinstance(wbs_summary.get("by_status"), dict) else {}
@@ -1207,7 +1270,7 @@ def _view_context_prompt_suffix(view_context):
             )
 
     # View-specific behavioral overrides
-    if current_view == "summary":
+    if current_view in ("summary", "scorecard"):
         lines.append(
             "- The user is viewing a completed scorecard and can edit it through chat. "
             "Do NOT ask intake questions or ask for previously provided intake data again. "
