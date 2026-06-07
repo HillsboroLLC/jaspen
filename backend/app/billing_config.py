@@ -534,11 +534,16 @@ def add_credits(user, amount):
     if plan_key in SHARED_POOL_PLANS:
         pool = _resolve_org_pool(user, {}, now=datetime.utcnow(), force_reset=False)
         if pool is not None:
-            meter = pool["meter"]
+            org = pool["organization"]
+            settings = org.settings if isinstance(org.settings, dict) else {}
+            meter = settings.get("thinking_power") if isinstance(settings.get("thinking_power"), dict) else {}
             meter["overage_tokens"] = _coerce_non_negative_int(meter.get("overage_tokens")) + amount
             meter["cycle_limit"] = _coerce_non_negative_int(meter.get("cycle_limit")) + amount
             meter["remaining"] = int(meter.get("remaining", 0)) + amount
             meter["tokens_used_this_month"] = max(0, int(meter.get("cycle_limit", 0)) - int(meter.get("remaining", 0)))
+            settings["thinking_power"] = meter
+            org.settings = deepcopy(settings)
+            _flag_modified(org, "settings")
             user.credits_remaining = int(meter.get("remaining", 0))
             user.credits_reset_at = datetime.utcnow()
             return
