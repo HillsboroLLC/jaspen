@@ -5292,20 +5292,21 @@ useEffect(() => {
             )}
             {!billingLoading && monthlyCreditLimit != null && (
               <>
-                <div className="jas-ud-usage-grid jas-ud-usage-grid-compact">
-                  <div className="jas-ud-usage-stat">
-                    <span>Used</span>
-                    <strong>{Number(resolvedMonthlyCreditsUsed || 0).toLocaleString()}</strong>
+                <p className="jas-ud-usage-credits-line">
+                  <strong style={{ fontSize: '1.1rem' }}>{creditsPctRemaining == null ? 'Unlimited' : `${Math.round(creditsPctRemaining)}%`}</strong>
+                  <span style={{ marginLeft: 6, color: '#64748b', fontSize: '0.8rem' }}>thinking power remaining</span>
+                </p>
+                {creditsPctRemaining != null && (
+                  <div style={{ width: '100%', height: 6, borderRadius: 999, background: '#e2e8f0', overflow: 'hidden', margin: '6px 0' }}>
+                    <div style={{
+                      height: '100%', borderRadius: 999,
+                      width: `${Math.round(creditsPctRemaining)}%`,
+                      background: creditsPctRemaining > 50 ? '#7c3aed' : creditsPctRemaining > 20 ? '#f59e0b' : '#dc2626',
+                      transition: 'width 0.4s ease',
+                    }} />
                   </div>
-                  <div className="jas-ud-usage-stat">
-                    <span>Remaining</span>
-                    <strong>{Number(creditsRemaining || 0).toLocaleString()}</strong>
-                  </div>
-                </div>
-                <p className="jas-ud-usage-note">Thinking power remaining: {creditsPctRemaining == null ? 'Unlimited' : `${Math.round(creditsPctRemaining)}% remaining`}</p>
-                <p className="jas-ud-usage-note">Monthly limit: {Number(monthlyCreditLimit || 0).toLocaleString()} credits on {currentPlanLabel}.</p>
-                <p className="jas-ud-usage-note">Resets: {formatNextResetDate(billingStatus?.cycle_reset_at)}</p>
-                <p className="jas-ud-usage-note">Current plan: {currentPlanLabel}</p>
+                )}
+                <p className="jas-ud-usage-note">Resets {formatNextResetDate(billingStatus?.cycle_reset_at)}</p>
                 {creditsTone !== 'normal' && (
                   <div className="jas-account-actions">
                     <button type="button" className="jas-account-plan-cta" onClick={() => navigate('/account?tab=billing')}>
