@@ -1,0 +1,17 @@
+[Unit]
+Description=Jaspen monthly feedback digest
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=sekki
+Group=sekki
+WorkingDirectory=/home/sekki/sekki-platform/backend
+ExecStart=/bin/bash /home/sekki/sekki-platform/backend/scripts/run_monthly_feedback_digest.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+
+[Install]
+WantedBy=multi-user.target

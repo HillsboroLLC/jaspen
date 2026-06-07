@@ -1,6 +1,6 @@
 import logging
 import os
-from datetime import timedelta
+from datetime import datetime, timedelta
 import json
 import click
 from flask import Flask, jsonify
@@ -313,6 +313,9 @@ def create_app():
     app.config['AI_AGENT_CREDITS_PER_1K_TOKENS'] = float(os.getenv('AI_AGENT_CREDITS_PER_1K_TOKENS', '1.0'))
     app.config['AI_AGENT_MIN_CREDIT_CHARGE'] = int(os.getenv('AI_AGENT_MIN_CREDIT_CHARGE', '1'))
     app.config['AI_AGENT_CREDIT_MULTIPLIERS'] = os.getenv('AI_AGENT_CREDIT_MULTIPLIERS_JSON', '')
+    app.config['FEEDBACK_DIGEST_RECIPIENTS'] = os.getenv('FEEDBACK_DIGEST_RECIPIENTS', '')
+    app.config['FEEDBACK_DIGEST_USE_AI'] = _as_bool(os.getenv('FEEDBACK_DIGEST_USE_AI'), default=True)
+    app.config['FEEDBACK_DIGEST_ANTHROPIC_MODEL'] = os.getenv('FEEDBACK_DIGEST_ANTHROPIC_MODEL', '')
     app.config['ADMIN_USER_IDS'] = os.getenv('ADMIN_USER_IDS', '')
     app.config['ADMIN_EMAILS'] = os.getenv('ADMIN_EMAILS', '')
     app.config['ADMIN_BLOCKED_EMAILS'] = os.getenv('ADMIN_BLOCKED_EMAILS', '')
@@ -602,5 +605,46 @@ def create_app():
             "credits_reset": int(updated),
             "credits_skipped": int(skipped),
         }))
+
+    @app.cli.group("feedback")
+    def feedback_cli():
+        """Feedback maintenance commands."""
+
+    @feedback_cli.command("digest-monthly")
+    @click.option("--dry-run", is_flag=True, help="Build the digest without sending email.")
+    @click.option("--no-ai", is_flag=True, help="Skip AI synthesis and use deterministic summary text.")
+    @click.option("--recipient", multiple=True, help="Email recipient. Can be passed more than once.")
+    @click.option("--start-date", default=None, help="Inclusive start date in YYYY-MM-DD format.")
+    @click.option("--end-date", default=None, help="Exclusive end date in YYYY-MM-DD format.")
+    def monthly_feedback_digest_cli(dry_run, no_ai, recipient, start_date, end_date):
+        """Email a monthly digest of assistant message feedback."""
+        from app.feedback_digest import build_feedback_digest, previous_month_range, send_feedback_digest
+
+        start_at, end_at = previous_month_range()
+        if start_date:
+            start_at = datetime.fromisoformat(start_date)
+        if end_date:
+            end_at = datetime.fromisoformat(end_date)
+        use_ai = bool(app.config.get("FEEDBACK_DIGEST_USE_AI", True)) and not no_ai
+        digest = build_feedback_digest(start_at, end_at, use_ai=use_ai)
+        result = send_feedback_digest(
+            digest,
+            recipients=list(recipient) if recipient else None,
+            dry_run=dry_run,
+        )
+        click.echo(json.dumps({
+            "dry_run": bool(dry_run),
+            "sent": bool(result.get("sent")),
+            "recipients": result.get("recipients", []),
+            "subject": result.get("subject"),
+            "period_start": digest["start_at"].date().isoformat(),
+            "period_end_exclusive": digest["end_at"].date().isoformat(),
+            "feedback_total": int(digest["summary"].get("total") or 0),
+            "up_count": int(digest["summary"].get("up_count") or 0),
+            "down_count": int(digest["summary"].get("down_count") or 0),
+            "note_count": int(digest["summary"].get("note_count") or 0),
+            "used_ai": bool(use_ai),
+            "body_preview": result.get("body", "")[:1200] if dry_run else None,
+        }, default=str))
 
     return app

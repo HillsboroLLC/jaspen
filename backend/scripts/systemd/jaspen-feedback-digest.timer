@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Jaspen monthly feedback digest
+
+[Timer]
+OnCalendar=*-*-01 01:10:00 UTC
+Persistent=true
+Unit=jaspen-feedback-digest.service
+
+[Install]
+WantedBy=timers.target
