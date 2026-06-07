@@ -6,6 +6,7 @@ import { authFetch, buildAuthHeaders } from '../../../shared/auth/http';
 import Seo from '../../../shared/components/Seo';
 import AppMenu from '../../shared/AppMenu';
 import JaspenAiDrawer from '../../Workspace/JaspenAiDrawer';
+import { sendPageAssistantMessage } from '../../shared/pageAssistant';
 import {
   ArcElement,
   BarElement,
@@ -106,6 +107,8 @@ export default function Dashboard() {
   const [themeVersion, setThemeVersion] = useState(0);
   const [jaspenOpen, setJaspenOpen] = useState(false);
   const [assistantInput, setAssistantInput] = useState('');
+  const [assistantBusy, setAssistantBusy] = useState(false);
+  const [assistantSessionId, setAssistantSessionId] = useState(null);
   const [assistantMessages, setAssistantMessages] = useState([
     {
       role: 'assistant',
@@ -218,20 +221,6 @@ export default function Dashboard() {
     setJaspenOpen(true);
   }, []);
 
-  const sendAssistant = useCallback(() => {
-    const text = String(assistantInput || '').trim();
-    if (!text) return;
-    setAssistantMessages((prev) => ([
-      ...prev,
-      { role: 'user', text },
-      {
-        role: 'assistant',
-        text: 'Use Project Snapshot -> Open to jump into a thread and apply changes. I can also summarize score and status trends here before you move into execution.',
-      },
-    ]));
-    setAssistantInput('');
-  }, [assistantInput]);
-
   const organization = data?.organization || {};
   const membership = data?.membership || {};
   const metrics = data?.metrics || {};
@@ -246,6 +235,32 @@ export default function Dashboard() {
     if (scope === 'creator') return 'Creator view';
     return 'Dashboard view';
   }, [data?.scope]);
+
+  const sendAssistant = useCallback(async () => {
+    const text = String(assistantInput || '').trim();
+    if (!text || assistantBusy) return;
+    setAssistantInput('');
+    await sendPageAssistantMessage({
+      text,
+      messages: assistantMessages,
+      setMessages: setAssistantMessages,
+      sessionId: assistantSessionId,
+      setSessionId: setAssistantSessionId,
+      setBusy: setAssistantBusy,
+      viewContext: {
+        current_view: 'dashboard',
+        active_tab: scopeLabel,
+        page_facts: [
+          `Dashboard scope: ${scopeLabel}.`,
+          organization?.name ? `Organization: ${organization.name}.` : '',
+          `Projects visible: ${projects.length}.`,
+          `Activity items visible: ${activity.length}.`,
+          `Insight cards visible: ${widgetCards.length}.`,
+          `Insight charts visible: ${widgetCharts.length}.`,
+        ].filter(Boolean).join(' '),
+      },
+    });
+  }, [activity.length, assistantBusy, assistantInput, assistantMessages, assistantSessionId, organization?.name, projects.length, scopeLabel, widgetCards.length, widgetCharts.length]);
 
   if (loading) {
     return (
@@ -262,7 +277,7 @@ export default function Dashboard() {
           input={assistantInput}
           onInputChange={setAssistantInput}
           onSend={sendAssistant}
-          busy={false}
+          busy={assistantBusy}
           starterPrompts={[
             'What should leadership focus on first?',
             'Which projects are at risk right now?',
@@ -482,7 +497,7 @@ export default function Dashboard() {
         input={assistantInput}
         onInputChange={setAssistantInput}
         onSend={sendAssistant}
-        busy={false}
+        busy={assistantBusy}
         starterPrompts={[
           'What should leadership focus on first?',
           'Which projects are at risk right now?',

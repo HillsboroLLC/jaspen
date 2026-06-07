@@ -6,6 +6,7 @@ import Team from '../Team/Team';
 import './EnterpriseAdmin.css';
 import AppMenu from '../shared/AppMenu';
 import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
+import { sendPageAssistantMessage } from '../shared/pageAssistant';
 
 const TAB_TEAM = 'team';
 const TAB_SSO = 'sso';
@@ -141,6 +142,8 @@ export default function EnterpriseAdmin() {
   const [auditFilterDateEnd, setAuditFilterDateEnd] = useState('');
   const [jaspenOpen, setJaspenOpen] = useState(false);
   const [assistantInput, setAssistantInput] = useState('');
+  const [assistantBusy, setAssistantBusy] = useState(false);
+  const [assistantSessionId, setAssistantSessionId] = useState(null);
   const [assistantMessages, setAssistantMessages] = useState([
     {
       role: 'assistant',
@@ -379,19 +382,33 @@ export default function EnterpriseAdmin() {
     setJaspenOpen(true);
   }, []);
 
-  const sendAssistant = useCallback(() => {
+  const sendAssistant = useCallback(async () => {
     const text = String(assistantInput || '').trim();
-    if (!text) return;
-    setAssistantMessages((prev) => ([
-      ...prev,
-      { role: 'user', text },
-      {
-        role: 'assistant',
-        text: 'Use these tabs to set SSO, governance, and audit settings; I can help evaluate tradeoffs before you apply changes.',
-      },
-    ]));
+    if (!text || assistantBusy) return;
     setAssistantInput('');
-  }, [assistantInput]);
+    await sendPageAssistantMessage({
+      text,
+      messages: assistantMessages,
+      setMessages: setAssistantMessages,
+      sessionId: assistantSessionId,
+      setSessionId: setAssistantSessionId,
+      setBusy: setAssistantBusy,
+      viewContext: {
+        current_view: 'enterprise_admin',
+        active_tab: activeTab,
+        page_facts: [
+          org?.name ? `Organization: ${org.name}.` : '',
+          `Members visible: ${members.length}.`,
+          `Connectors visible: ${connectors.length}.`,
+          `SSO configured: ${ssoConfigured ? 'yes' : 'no'}.`,
+          `Require SSO: ${ssoForm.require_sso ? 'yes' : 'no'}.`,
+          `Retention policy: ${governanceForm.retention_policy}.`,
+          `PII masking: ${governanceForm.pii_masking ? 'on' : 'off'}.`,
+          `Audit events visible: ${filteredAuditEvents.length}.`,
+        ].filter(Boolean).join(' '),
+      },
+    });
+  }, [activeTab, assistantBusy, assistantInput, assistantMessages, assistantSessionId, connectors.length, filteredAuditEvents.length, governanceForm.pii_masking, governanceForm.retention_policy, members.length, org?.name, ssoConfigured, ssoForm.require_sso]);
 
   if (loading) {
     return (
@@ -408,7 +425,7 @@ export default function EnterpriseAdmin() {
           input={assistantInput}
           onInputChange={setAssistantInput}
           onSend={sendAssistant}
-          busy={false}
+          busy={assistantBusy}
           starterPrompts={[
             'How should we set retention policy?',
             'What should we audit first?',
@@ -750,7 +767,7 @@ export default function EnterpriseAdmin() {
         input={assistantInput}
         onInputChange={setAssistantInput}
         onSend={sendAssistant}
-        busy={false}
+        busy={assistantBusy}
         starterPrompts={[
           'How should we set retention policy?',
           'What should we audit first?',

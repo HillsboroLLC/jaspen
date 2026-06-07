@@ -16,6 +16,7 @@ import EmptyState from '../../homeSections/homeUi/EmptyState';
 import './Projects.css';
 import AppMenu from '../shared/AppMenu';
 import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
+import { sendPageAssistantMessage } from '../shared/pageAssistant';
 
 const STATUS_OPTIONS = ['All', 'Active', 'Completed', 'Archived'];
 const GROUP_OPTIONS = ['None', 'Category', 'Status'];
@@ -90,6 +91,8 @@ export default function Projects() {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [jaspenOpen, setJaspenOpen] = useState(false);
   const [assistantInput, setAssistantInput] = useState('');
+  const [assistantBusy, setAssistantBusy] = useState(false);
+  const [assistantSessionId, setAssistantSessionId] = useState(null);
   const [assistantMessages, setAssistantMessages] = useState([
     {
       role: 'assistant',
@@ -311,19 +314,32 @@ export default function Projects() {
     setJaspenOpen(true);
   }, []);
 
-  const sendAssistant = useCallback(() => {
+  const sendAssistant = useCallback(async () => {
     const text = String(assistantInput || '').trim();
-    if (!text) return;
-    setAssistantMessages((prev) => [
-      ...prev,
-      { role: 'user', text },
-      {
-        role: 'assistant',
-        text: 'I can rank these projects for you. Ask me for the top project to execute next and why.',
-      },
-    ]);
+    if (!text || assistantBusy) return;
     setAssistantInput('');
-  }, [assistantInput]);
+    await sendPageAssistantMessage({
+      text,
+      messages: assistantMessages,
+      setMessages: setAssistantMessages,
+      sessionId: assistantSessionId,
+      setSessionId: setAssistantSessionId,
+      setBusy: setAssistantBusy,
+      viewContext: {
+        current_view: 'projects',
+        active_tab: viewMode,
+        page_facts: [
+          `Projects visible after filters: ${filtered.length}.`,
+          `Total loaded projects: ${projects.length}.`,
+          `Selected projects: ${selectedIds.size}.`,
+          `Status filter: ${statusFilter}.`,
+          `Group by: ${groupBy}.`,
+          `Sort: ${sortBy} ${sortDir}.`,
+          search.trim() ? `Search query: ${search.trim()}.` : '',
+        ].filter(Boolean).join(' '),
+      },
+    });
+  }, [assistantBusy, assistantInput, assistantMessages, assistantSessionId, filtered.length, groupBy, projects.length, search, selectedIds.size, sortBy, sortDir, statusFilter, viewMode]);
 
   return (
     <div className={`projects-page int-page${jaspenOpen ? ' drawer-open' : ''}`}>
@@ -539,7 +555,7 @@ export default function Projects() {
         input={assistantInput}
         onInputChange={setAssistantInput}
         onSend={sendAssistant}
-        busy={false}
+        busy={assistantBusy}
         starterPrompts={[
           'Which project should I do first?',
           'Show me projects with highest execution risk.',

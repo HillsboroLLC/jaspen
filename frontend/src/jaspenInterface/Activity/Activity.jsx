@@ -10,6 +10,7 @@ import EmptyState from '../../homeSections/homeUi/EmptyState';
 import './Activity.css';
 import AppMenu from '../shared/AppMenu';
 import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
+import { sendPageAssistantMessage } from '../shared/pageAssistant';
 
 const TYPE_OPTIONS = [
   { value: '', label: 'All activity' },
@@ -85,6 +86,8 @@ export default function Activity() {
   const [error, setError] = useState('');
   const [jaspenOpen, setJaspenOpen] = useState(false);
   const [assistantInput, setAssistantInput] = useState('');
+  const [assistantBusy, setAssistantBusy] = useState(false);
+  const [assistantSessionId, setAssistantSessionId] = useState(null);
   const [assistantMessages, setAssistantMessages] = useState([
     {
       role: 'assistant',
@@ -160,19 +163,31 @@ export default function Activity() {
     setJaspenOpen(true);
   }, []);
 
-  const sendAssistant = useCallback(() => {
+  const sendAssistant = useCallback(async () => {
     const text = String(assistantInput || '').trim();
-    if (!text) return;
-    setAssistantMessages((prev) => [
-      ...prev,
-      { role: 'user', text },
-      {
-        role: 'assistant',
-        text: 'I can group events by risk level and tell you which threads need intervention first.',
-      },
-    ]);
+    if (!text || assistantBusy) return;
     setAssistantInput('');
-  }, [assistantInput]);
+    await sendPageAssistantMessage({
+      text,
+      messages: assistantMessages,
+      setMessages: setAssistantMessages,
+      sessionId: assistantSessionId,
+      setSessionId: setAssistantSessionId,
+      setBusy: setAssistantBusy,
+      viewContext: {
+        current_view: 'activity',
+        active_tab: typeFilter || 'all',
+        page_facts: [
+          `Activity events visible: ${events.length}.`,
+          `Total matching events: ${total}.`,
+          `Current page range: ${start}-${end}.`,
+          typeFilter ? `Type filter: ${typeLabelByValue[typeFilter] || typeFilter}.` : 'Type filter: All activity.',
+          fromDate ? `From date filter: ${fromDate}.` : '',
+          toDate ? `To date filter: ${toDate}.` : '',
+        ].filter(Boolean).join(' '),
+      },
+    });
+  }, [assistantBusy, assistantInput, assistantMessages, assistantSessionId, end, events.length, fromDate, start, toDate, total, typeFilter, typeLabelByValue]);
 
   function goToPage(rawValue) {
     if (totalPages <= 0) return;
@@ -346,7 +361,7 @@ export default function Activity() {
         input={assistantInput}
         onInputChange={setAssistantInput}
         onSend={sendAssistant}
-        busy={false}
+        busy={assistantBusy}
         starterPrompts={[
           'Where is execution getting blocked?',
           'Which thread needs attention first?',

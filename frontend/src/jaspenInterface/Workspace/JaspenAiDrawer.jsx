@@ -1,6 +1,8 @@
 import React, { useRef } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faPaperPlane, faTimes } from '@fortawesome/free-solid-svg-icons';
+import { faPaperPlane, faRobot, faTimes } from '@fortawesome/free-solid-svg-icons';
 import './JaspenAiDrawer.css';
 
 export default function JaspenAiDrawer({
@@ -32,13 +34,48 @@ export default function JaspenAiDrawer({
   extraPanel = null,
   footer = null,
   inputExtras = null,
+  modeLabel = 'Page Context',
 }) {
   const internalEndRef = useRef(null);
   const endRef = externalEndRef || internalEndRef;
 
   const defaultRenderMessage = (msg) => {
     const text = msg?.text ?? msg?.content ?? '';
-    return <span>{typeof text === 'string' ? text : JSON.stringify(text)}</span>;
+    if (!text && msg?.streaming) {
+      return (
+        <span className="jas-msg-typing" aria-label="Jaspen is responding">
+          <span /><span /><span />
+        </span>
+      );
+    }
+    const renderedText = typeof text === 'string' ? text : JSON.stringify(text);
+    if (msg?.role === 'user') return <span>{renderedText}</span>;
+    return (
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          h1: ({ children }) => <h1 className="jas-md-h1">{children}</h1>,
+          h2: ({ children }) => <h2 className="jas-md-h2">{children}</h2>,
+          h3: ({ children }) => <h3 className="jas-md-h3">{children}</h3>,
+          h4: ({ children }) => <h4 className="jas-md-h4">{children}</h4>,
+          p: ({ children }) => <p className="jas-md-paragraph">{children}</p>,
+          pre: ({ children }) => <pre className="jas-md-pre">{children}</pre>,
+          code: ({ inline, className, children, ...props }) => (
+            inline ? (
+              <code className={`jas-md-inline-code ${className || ''}`.trim()} {...props}>{children}</code>
+            ) : (
+              <code className={`jas-md-code ${className || ''}`.trim()} {...props}>{children}</code>
+            )
+          ),
+          ul: ({ children }) => <ul className="jas-md-list">{children}</ul>,
+          ol: ({ children }) => <ol className="jas-md-list jas-md-list-ordered">{children}</ol>,
+          table: ({ children }) => <div className="jas-md-table-wrap"><table className="jas-md-table">{children}</table></div>,
+          a: ({ children, ...props }) => <a {...props} target="_blank" rel="noreferrer">{children}</a>,
+        }}
+      >
+        {renderedText}
+      </ReactMarkdown>
+    );
   };
 
   const renderMsg = renderMessage || defaultRenderMessage;
@@ -81,7 +118,13 @@ export default function JaspenAiDrawer({
         aria-label="Jaspen assistant drawer"
       >
         <div className="jas-ai-header">
-          <div className="jas-ai-title"><span>Jaspen</span></div>
+          <div className="jas-ai-title">
+            <FontAwesomeIcon icon={faRobot} className="jas-ai-title-icon" />
+            <div>
+              <span>Jaspen</span>
+              <small>{modeLabel}</small>
+            </div>
+          </div>
           <button className="jas-close-btn" onClick={onClose} aria-label="Close assistant drawer">
             <FontAwesomeIcon icon={faTimes} />
           </button>

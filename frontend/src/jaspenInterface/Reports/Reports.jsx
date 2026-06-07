@@ -9,6 +9,7 @@ import EmptyState from '../../homeSections/homeUi/EmptyState';
 import './Reports.css';
 import AppMenu from '../shared/AppMenu';
 import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
+import { sendPageAssistantMessage } from '../shared/pageAssistant';
 
 const REPORT_TYPES = [
   { value: 'executive_summary', label: 'Executive Summary' },
@@ -47,6 +48,8 @@ export default function Reports() {
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [jaspenOpen, setJaspenOpen] = useState(false);
   const [assistantInput, setAssistantInput] = useState('');
+  const [assistantBusy, setAssistantBusy] = useState(false);
+  const [assistantSessionId, setAssistantSessionId] = useState(null);
   const [assistantMessages, setAssistantMessages] = useState([
     {
       role: 'assistant',
@@ -129,19 +132,30 @@ export default function Reports() {
     setJaspenOpen(true);
   }, []);
 
-  const sendAssistant = useCallback(() => {
+  const sendAssistant = useCallback(async () => {
     const text = String(assistantInput || '').trim();
-    if (!text) return;
-    setAssistantMessages((prev) => [
-      ...prev,
-      { role: 'user', text },
-      {
-        role: 'assistant',
-        text: 'Use Executive Summary for leadership and Detailed Analysis for operator reviews.',
-      },
-    ]);
+    if (!text || assistantBusy) return;
+    const selected = threads.find((item) => item.threadId === selectedThreadId) || null;
     setAssistantInput('');
-  }, [assistantInput]);
+    await sendPageAssistantMessage({
+      text,
+      messages: assistantMessages,
+      setMessages: setAssistantMessages,
+      sessionId: assistantSessionId,
+      setSessionId: setAssistantSessionId,
+      setBusy: setAssistantBusy,
+      viewContext: {
+        current_view: 'reports',
+        active_tab: reportType,
+        page_facts: [
+          `Completed analyses visible: ${threads.length}.`,
+          `Saved reports visible: ${reports.length}.`,
+          selected ? `Selected analysis: ${selected.name}.` : 'No analysis is selected.',
+          `Selected report format: ${reportType}.`,
+        ].join(' '),
+      },
+    });
+  }, [assistantBusy, assistantInput, assistantMessages, assistantSessionId, reportType, reports.length, selectedThreadId, threads]);
 
   const selectedThread = useMemo(
     () => threads.find((item) => item.threadId === selectedThreadId) || null,
@@ -355,7 +369,7 @@ export default function Reports() {
         input={assistantInput}
         onInputChange={setAssistantInput}
         onSend={sendAssistant}
-        busy={false}
+        busy={assistantBusy}
         starterPrompts={[
           'Which report format should I use for leadership?',
           'What should I include in the narrative summary?',

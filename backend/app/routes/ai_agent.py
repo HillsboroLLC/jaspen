@@ -640,6 +640,14 @@ _VIEW_CONTEXT_VIEW_ALIASES = {
     "knowledge": "knowledge",
     "docs": "knowledge",
     "team": "team",
+    "projects": "projects",
+    "portfolio": "projects",
+    "reports": "reports",
+    "activity": "activity",
+    "admin": "admin",
+    "jaspen_admin": "admin",
+    "enterprise_admin": "enterprise_admin",
+    "dashboard": "dashboard",
     "general": "general",
 }
 _VIEW_CONTEXT_TAB_ALIASES = {
@@ -790,7 +798,10 @@ _PROCESSING_INTENT_TERMS = frozenset([
 ])
 _JUDGMENT_VIEWS = frozenset(["summary", "scenario"])
 _PROCESSING_VIEWS = frozenset(["monitoring"])
-_LIGHT_QA_VIEWS = frozenset(["account", "knowledge", "team", "connectors", "insights", "general"])
+_LIGHT_QA_VIEWS = frozenset([
+    "account", "knowledge", "team", "connectors", "insights", "projects",
+    "reports", "activity", "admin", "enterprise_admin", "dashboard", "general"
+])
 
 
 def _classify_turn_intent(view_context, user_message):
@@ -1246,6 +1257,36 @@ def _view_context_prompt_suffix(view_context):
         lines.append(
             "- The user is on the Insights page. Help interpret generated insights, priorities, risks, and follow-up actions. "
             "Keep answers grounded in what the page is likely showing and avoid inventing unavailable live data."
+        )
+    elif current_view == "projects":
+        lines.append(
+            "- The user is on the Projects portfolio page. Help prioritize visible projects by score, status, execution risk, "
+            "selection, grouping, and filters. Explain what the visible data implies; opening, archiving, and exporting happen through on-page controls."
+        )
+    elif current_view == "reports":
+        lines.append(
+            "- The user is on the Reports page. Help choose report formats, interpret completed analyses, and suggest executive vs. detailed reporting focus. "
+            "Report generation and downloads happen through on-page controls."
+        )
+    elif current_view == "activity":
+        lines.append(
+            "- The user is on the Activity page. Help summarize visible activity, detect drift, identify threads needing attention, "
+            "and explain filters or timeline patterns. Do not invent events beyond the page facts."
+        )
+    elif current_view == "admin":
+        lines.append(
+            "- The user is on the Jaspen Admin page. Help sanity-check access controls, user status, credit operations, model access, and feedback themes. "
+            "Do not perform or recommend irreversible admin actions without asking the user to use the page controls and confirm."
+        )
+    elif current_view == "enterprise_admin":
+        lines.append(
+            "- The user is on the Enterprise Admin page. Help evaluate SSO, governance, retention, audit, compliance, member, and connector controls. "
+            "Explain tradeoffs and readiness; settings changes happen through on-page controls."
+        )
+    elif current_view == "dashboard":
+        lines.append(
+            "- The user is on a dashboard page. Help interpret portfolio signals, activity summaries, insight widgets, and what needs attention next. "
+            "Use only the page facts supplied by the UI for live counts or names."
         )
     else:
         lines.append(

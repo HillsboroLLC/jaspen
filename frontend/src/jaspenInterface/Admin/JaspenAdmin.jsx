@@ -8,6 +8,7 @@ import Feedback from './Feedback';
 import './JaspenAdmin.css';
 import AppMenu from '../shared/AppMenu';
 import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
+import { sendPageAssistantMessage } from '../shared/pageAssistant';
 
 
 const PLAN_OPTIONS = ['free', 'essential', 'team', 'enterprise'];
@@ -177,6 +178,8 @@ export default function JaspenAdmin() {
   const [modelAccessLoading, setModelAccessLoading] = useState(false);
   const [jaspenOpen, setJaspenOpen] = useState(false);
   const [assistantInput, setAssistantInput] = useState('');
+  const [assistantBusy, setAssistantBusy] = useState(false);
+  const [assistantSessionId, setAssistantSessionId] = useState(null);
   const [assistantMessages, setAssistantMessages] = useState([
     {
       role: 'assistant',
@@ -726,18 +729,32 @@ export default function JaspenAdmin() {
     setJaspenOpen(true);
   };
 
-  const sendAssistant = () => {
+  const sendAssistant = async () => {
     const text = String(assistantInput || '').trim();
-    if (!text) return;
-    setAssistantMessages((prev) => ([
-      ...prev,
-      { role: 'user', text },
-      {
-        role: 'assistant',
-        text: 'Use this page to manage user access, credits, and controls; I can help sanity-check before saving.',
-      },
-    ]));
+    if (!text || assistantBusy) return;
     setAssistantInput('');
+    await sendPageAssistantMessage({
+      text,
+      messages: assistantMessages,
+      setMessages: setAssistantMessages,
+      sessionId: assistantSessionId,
+      setSessionId: setAssistantSessionId,
+      setBusy: setAssistantBusy,
+      viewContext: {
+        current_view: 'admin',
+        page_facts: [
+          `Users visible: ${users.length}.`,
+          selectedUser ? `Selected user plan: ${selectedUser.subscription_plan || 'unknown'}.` : 'No user is selected.',
+          selectedUser ? `Selected user status: ${selectedUser.status || 'unknown'}.` : '',
+          `Connectors visible for selected user: ${connectors.length}.`,
+          `Recent sessions visible for selected user: ${sessions.length}.`,
+          `Audit events visible for selected user: ${auditEvents.length}.`,
+          `Feedback items visible: ${feedbackItems.length}.`,
+          `Pending access reviews: ${pendingAccessCount}.`,
+          `Rejected access reviews: ${rejectedAccessCount}.`,
+        ].filter(Boolean).join(' '),
+      },
+    });
   };
 
   if (isLoading) {
@@ -753,7 +770,7 @@ export default function JaspenAdmin() {
           input={assistantInput}
           onInputChange={setAssistantInput}
           onSend={sendAssistant}
-          busy={false}
+          busy={assistantBusy}
           starterPrompts={[
             'Which access controls should be enabled?',
             'How should I handle pending approvals?',
@@ -778,7 +795,7 @@ export default function JaspenAdmin() {
           input={assistantInput}
           onInputChange={setAssistantInput}
           onSend={sendAssistant}
-          busy={false}
+          busy={assistantBusy}
           starterPrompts={[
             'Which access controls should be enabled?',
             'How should I handle pending approvals?',
@@ -1412,7 +1429,7 @@ export default function JaspenAdmin() {
         input={assistantInput}
         onInputChange={setAssistantInput}
         onSend={sendAssistant}
-        busy={false}
+        busy={assistantBusy}
         starterPrompts={[
           'Which access controls should be enabled?',
           'How should I handle pending approvals?',

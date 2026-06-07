@@ -743,7 +743,7 @@ export default function Team({ mode = 'team' }) {
           input={assistantInput}
           onInputChange={setAssistantInput}
           onSend={sendAssistant}
-          busy={false}
+          busy={assistantBusy}
           starterPrompts={[
             'Who should have admin access?',
             'How should I set seat limits?',
