@@ -256,12 +256,16 @@ def _fulfill_credit_pack_payment_intent(intent, *, expected_user=None):
 def _sync_credit_pack_payment_intents_for_user(user, *, limit=20):
     if not user or not user.stripe_customer_id:
         return 0
-    granted = 0
     try:
         resp = stripe.PaymentIntent.list(customer=user.stripe_customer_id, limit=limit)
     except stripe.error.StripeError:
         current_app.logger.exception("Could not list credit-pack payment intents for user=%s", getattr(user, 'id', None))
         return 0
+
+    usage_state = get_usage_meter_state(user, current_app.config)
+    reset_at = usage_state.get('reset_at')
+    reset_cutoff = int(reset_at.timestamp()) if isinstance(reset_at, datetime) else None
+    current_overage_tokens = int(usage_state.get('overage_tokens') or 0)
 
     credit_pack_intents = []
     paid_pack_tokens = 0
@@ -270,6 +274,8 @@ def _sync_credit_pack_payment_intents_for_user(user, *, limit=20):
         if str(metadata.get('checkout_type') or '').strip() not in {'credit_pack', 'overage_pack'}:
             continue
         if str(intent.get('status') or '').strip().lower() != 'succeeded':
+            continue
+        if reset_cutoff is not None and int(intent.get('created') or 0) < reset_cutoff:
             continue
         tokens = _credit_pack_tokens_from_metadata(metadata)
         if tokens <= 0:
@@ -280,38 +286,41 @@ def _sync_credit_pack_payment_intents_for_user(user, *, limit=20):
     if not credit_pack_intents:
         return 0
 
-    usage_state = get_usage_meter_state(user, current_app.config)
-    current_overage_tokens = int(usage_state.get('overage_tokens') or 0)
+    missing_tokens = max(0, paid_pack_tokens - current_overage_tokens)
 
     credit_pack_intents.sort(key=lambda item: int(item.get('created') or 0), reverse=True)
 
     for intent in credit_pack_intents:
         fulfillment_key = _credit_pack_fulfillment_key(intent.get('id'))
-        existing = StripeWebhookEvent.query.filter_by(stripe_event_id=fulfillment_key).first() if fulfillment_key else None
-        if existing and bool(existing.processed):
+        if not fulfillment_key:
             continue
-        if current_overage_tokens >= paid_pack_tokens:
-            current_app.logger.info(
-                "credit pack payment_intent=%s appears already reflected in overage tokens for user=%s",
-                intent.get('id'), getattr(user, 'id', None),
+        existing = StripeWebhookEvent.query.filter_by(stripe_event_id=fulfillment_key).first()
+        if existing is None:
+            db.session.add(
+                StripeWebhookEvent(
+                    stripe_event_id=fulfillment_key,
+                    event_type='credit_pack.payment_reconciled',
+                    processed=True,
+                    processed_at=datetime.utcnow(),
+                )
             )
-            continue
-        intent_tokens = _credit_pack_tokens_from_metadata(
-            intent.get('metadata') if isinstance(intent.get('metadata'), dict) else {}
+        else:
+            existing.event_type = existing.event_type or 'credit_pack.payment_reconciled'
+            existing.processed = True
+            existing.processed_at = existing.processed_at or datetime.utcnow()
+
+    if missing_tokens > 0:
+        add_credits(user, missing_tokens)
+        current_app.logger.info(
+            "reconciled embedded credit packs user=%s paid_tokens=%s previous_overage=%s missing_tokens=%s",
+            getattr(user, 'id', None), paid_pack_tokens, current_overage_tokens, missing_tokens,
         )
-        if current_overage_tokens + intent_tokens > paid_pack_tokens:
-            current_app.logger.info(
-                "skipping credit pack payment_intent=%s because current overage is already near paid total for user=%s",
-                intent.get('id'), getattr(user, 'id', None),
-            )
-            continue
-        result = _fulfill_credit_pack_payment_intent(intent, expected_user=user)
-        if result.get('granted'):
-            granted += 1
-            current_overage_tokens += int(result.get('tokens') or 0)
-    if granted:
         db.session.commit()
-    return granted
+        return 1
+
+    if credit_pack_intents:
+        db.session.commit()
+    return 0
 
 
 @billing_bp.route('/plans', methods=['GET'])
@@ -598,6 +607,16 @@ def list_invoices():
         amount = intent.get('amount_received') or 0
         if int(amount or 0) <= 0:
             continue
+        receipt_url = None
+        latest_charge = intent.get('latest_charge')
+        if isinstance(latest_charge, dict):
+            receipt_url = latest_charge.get('receipt_url')
+        elif latest_charge:
+            try:
+                charge = stripe.Charge.retrieve(latest_charge)
+                receipt_url = charge.get('receipt_url')
+            except stripe.error.StripeError:
+                current_app.logger.info('list_invoices: could not load charge receipt for %s', intent.get('id'))
         out.append({
             'id': intent.get('id'),
             'number': metadata.get('pack_key') or intent.get('id'),
@@ -607,7 +626,7 @@ def list_invoices():
             'status': 'paid',
             'description': intent.get('description') or f"Jaspen {metadata.get('credits') or ''} credits".strip(),
             'source': 'payment_intent',
-            'hosted_invoice_url': None,
+            'hosted_invoice_url': receipt_url,
             'invoice_pdf': None,
         })
     out.sort(key=lambda item: int(item.get('created') or 0), reverse=True)
