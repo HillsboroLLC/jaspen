@@ -264,7 +264,11 @@ def _sync_credit_pack_payment_intents_for_user(user, *, limit=20):
 
     usage_state = get_usage_meter_state(user, current_app.config)
     reset_at = usage_state.get('reset_at')
-    reset_cutoff = int(reset_at.timestamp()) if isinstance(reset_at, datetime) else None
+    month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    reset_candidates = [month_start]
+    if isinstance(reset_at, datetime):
+        reset_candidates.append(reset_at)
+    reset_cutoff = int(min(reset_candidates).timestamp())
     current_overage_tokens = int(usage_state.get('overage_tokens') or 0)
 
     credit_pack_intents = []
@@ -577,6 +581,7 @@ def list_invoices():
     user = User.query.get(get_jwt_identity())
     if not user or not user.stripe_customer_id:
         return jsonify({'invoices': []}), 200
+    _sync_credit_pack_payment_intents_for_user(user)
     try:
         invoice_resp = stripe.Invoice.list(customer=user.stripe_customer_id, limit=24)
         payment_resp = stripe.PaymentIntent.list(customer=user.stripe_customer_id, limit=24)
