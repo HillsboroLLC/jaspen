@@ -528,6 +528,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "When the user proposes a genuinely NEW idea or a variation they want to keep alongside the original, call generate_scorecard (no rescore_scorecard_id). "
     "When the user asks to change the idea they're viewing, edit it in place: patch_scorecard for wording OR for renaming the title (pass the new title in `name`), or generate_scorecard with rescore_scorecard_id to re-score that same idea. "
     "ADD A SECTION: when the user wants to ADD a new section/note/block to the open scorecard that isn't one of the standard fields (e.g. 'add a section on regulatory risk', 'add a go-to-market note', 'add a block about competitors'), call patch_scorecard with `add_blocks` — a list of {heading, body}. This appends a free-form section to the card and NEVER moves the score. "
+    "FILL/UPDATE AN EXISTING SECTION: if the user asks you to populate or update a block they already created (e.g. a 'Mitigation' block), call patch_scorecard with `add_blocks` using the SAME heading — it updates that block in place rather than creating a duplicate. Do NOT fold that content into top_risks or other standard fields when the user clearly wants it in their named block. "
     "BRAND COLOR: when the user asks for their brand color or a custom accent (e.g. 'use our brand blue #0A66C2', 'make the scorecard match our colors', 'change the accent to green'), call patch_scorecard with `accent_color` as a #RRGGBB hex. If they name a color without a hex, pick a sensible hex for it. This recolors the live scorecard and its exports; it never moves the score. "
     "CRITICAL — never spawn a duplicate on an edit: editing the OPEN idea (wording, title rename, or re-score) must use patch_scorecard or generate_scorecard(rescore_scorecard_id=<open id>) — NEVER generate_scorecard without rescore_scorecard_id, which creates a second card. A title rename or any wording/prose edit is cosmetic: use patch_scorecard and the score MUST NOT move. "
     "When the user asks to compare or rank ideas, call generate_tradeoff_comparison. "
@@ -5153,10 +5154,11 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                         },
                         "add_blocks": {
                             "type": "array",
-                            "description": "Add one or more NEW free-form sections to the open scorecard (like adding a slide/section). Each is {heading, body}. Use when the user asks to add a section, note, or extra context that isn't an existing field — e.g. 'add a section on regulatory risk', 'add a go-to-market note'. Appended below the standard scorecard; never moves the score.",
+                            "description": "Add or update one or more free-form sections on the open scorecard (like adding a slide/section). Each is {heading, body}. To update a section the user already added, pass the same heading (case-insensitive) or its id; the block is updated in place instead of duplicated. Use when the user asks to add, fill, or update a section, note, or extra context that isn't an existing standard field. Never moves the score.",
                             "items": {
                                 "type": "object",
                                 "properties": {
+                                    "id": {"type": "string", "description": "Optional custom block id. If it matches an existing block, that block is updated in place."},
                                     "heading": {"type": "string", "description": "Short section title."},
                                     "body": {"type": "string", "description": "Section content."},
                                 },
@@ -6109,8 +6111,8 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 new_name = _candidate[:200]
                 break
 
-        # ADD BLOCK: let the agent append a new free-form section to the open scorecard
-        # (mirrors the user-facing "+ Add block" → display_overrides.custom_blocks).
+        # ADD/UPDATE BLOCK: let the agent append a free-form section or fill an
+        # existing user-created block on the open scorecard.
         raw_blocks = (
             tool_input.get("add_blocks") or tool_input.get("add_block")
             or tool_input.get("custom_blocks")
@@ -6129,7 +6131,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 if not heading and not body:
                     continue
                 new_blocks.append({
-                    "id": f"blk_{uuid.uuid4().hex[:10]}",
+                    "id": str(b.get("id") or "").strip() or f"blk_{uuid.uuid4().hex[:10]}",
                     "heading": heading or "New section",
                     "body": body,
                 })
@@ -6187,14 +6189,42 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 _ova = dict(_ova) if isinstance(_ova, dict) else {}
                 _ova["accent_color"] = new_accent
                 merged["display_overrides"] = _ova
-            # Append any new free-form sections to display_overrides.custom_blocks
+            # Upsert free-form sections into display_overrides.custom_blocks
             # (read AFTER the rename so we don't clobber a title override).
             if new_blocks:
                 _ovb = merged.get("display_overrides")
                 _ovb = dict(_ovb) if isinstance(_ovb, dict) else {}
                 existing_blocks = _ovb.get("custom_blocks")
                 existing_blocks = list(existing_blocks) if isinstance(existing_blocks, list) else []
-                existing_blocks.extend(new_blocks)
+
+                def _block_key(value):
+                    return str(value or "").strip().casefold()
+
+                for new_block in new_blocks:
+                    match_idx = None
+                    for idx, existing_block in enumerate(existing_blocks):
+                        if not isinstance(existing_block, dict):
+                            continue
+                        same_id = (
+                            new_block.get("id")
+                            and str(existing_block.get("id") or "") == str(new_block.get("id") or "")
+                        )
+                        same_heading = (
+                            new_block.get("heading")
+                            and _block_key(existing_block.get("heading")) == _block_key(new_block.get("heading"))
+                        )
+                        if same_id or same_heading:
+                            match_idx = idx
+                            break
+                    if match_idx is not None:
+                        updated_block = dict(existing_blocks[match_idx])
+                        updated_block["heading"] = new_block.get("heading") or updated_block.get("heading")
+                        if new_block.get("body"):
+                            updated_block["body"] = new_block["body"]
+                        existing_blocks[match_idx] = updated_block
+                    else:
+                        existing_blocks.append(new_block)
+
                 _ovb["custom_blocks"] = existing_blocks
                 merged["display_overrides"] = _ovb
             return merged
