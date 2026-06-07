@@ -86,6 +86,24 @@ function CheckoutForm({ mode, planLabel, priceLabel, onSuccess }) {
       return;
     }
     if (paymentIntent && (paymentIntent.status === 'succeeded' || paymentIntent.status === 'processing')) {
+      if (isCreditPack && paymentIntent.status === 'succeeded') {
+        try {
+          const fulfillResp = await authFetch(`${API_BASE}/api/v1/billing/confirm-credit-pack-payment`, {
+            method: 'POST',
+            headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
+            credentials: 'include',
+            body: JSON.stringify({ payment_intent_id: paymentIntent.id }),
+          });
+          const fulfillData = await fulfillResp.json().catch(() => ({}));
+          if (!fulfillResp.ok) {
+            throw new Error(fulfillData?.msg || 'Payment succeeded, but credits could not be applied yet.');
+          }
+        } catch (fulfillError) {
+          setError(fulfillError.message || 'Payment succeeded, but credits could not be applied yet.');
+          setSubmitting(false);
+          return;
+        }
+      }
       setSucceeded(true);
       setTimeout(() => onSuccess?.(), 600);
       return;
