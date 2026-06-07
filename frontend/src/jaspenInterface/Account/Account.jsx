@@ -1116,31 +1116,20 @@ export default function Account() {
     }
   };
 
-  const buyPack = async (packKey) => {
-    setPendingAction(packKey);
+  const buyPack = (packKey) => {
     setMessage('');
-
-    try {
-      const response = await authFetch(`${API_BASE}/api/v1/billing/create-credit-pack-checkout-session`, {
-        method: 'POST',
-        headers: authHeaders({ 'Content-Type': 'application/json' }, 'POST'),
-        credentials: 'include',
-        body: JSON.stringify({ pack_key: packKey }),
-      });
-      const data = await response.json();
-      if (!response.ok || !data?.url) {
-        if (response.status === 401) {
-          navigate('/?auth=1', { replace: true });
-          return;
-        }
-        throw new Error(data?.msg || 'Unable to start credit pack checkout.');
-      }
-      window.location.href = data.url;
-    } catch (error) {
-      setMessage(error.message || 'Unable to start credit pack checkout.');
-    } finally {
-      setPendingAction('');
+    const pack = packs[packKey];
+    if (!pack) {
+      setMessage('Credit pack is not available.');
+      return;
     }
+    const packPrice = Number(pack.price_usd);
+    setEmbeddedCheckout({
+      mode: 'credit_pack',
+      packKey,
+      packLabel: pack.label || `${Number(pack.credits || 0).toLocaleString()} credits`,
+      priceLabel: Number.isFinite(packPrice) ? `$${packPrice}` : '',
+    });
   };
 
   const updateConnector = async (connectorId, updates) => {
@@ -3182,7 +3171,7 @@ export default function Account() {
                     onClick={() => buyPack(key)}
                     disabled={isPending} aria-disabled={isPending}
                   >
-                    {isPending ? 'Redirecting...' : `Purchase for $${pack.price_usd}`}
+                    {isPending ? 'Opening...' : `Purchase for $${pack.price_usd}`}
                   </button>
                 </article>
               );
@@ -3688,6 +3677,8 @@ export default function Account() {
             mode={embeddedCheckout.mode || 'subscribe'}
             planKey={embeddedCheckout.planKey}
             planLabel={embeddedCheckout.planLabel}
+            packKey={embeddedCheckout.packKey}
+            packLabel={embeddedCheckout.packLabel}
             priceLabel={embeddedCheckout.priceLabel}
             plans={Object.entries(plans)
               .filter(([k, p]) => k !== 'free' && !p?.sales_only)
@@ -3695,8 +3686,15 @@ export default function Account() {
             onClose={() => setEmbeddedCheckout(null)}
             onSuccess={async () => {
               const wasUpdate = embeddedCheckout.mode === 'update_payment';
+              const wasCreditPack = embeddedCheckout.mode === 'credit_pack';
               setEmbeddedCheckout(null);
-              setMessage(wasUpdate ? 'Your payment method was updated.' : 'Subscription started — welcome aboard!');
+              setMessage(
+                wasUpdate
+                  ? 'Your payment method was updated.'
+                  : wasCreditPack
+                    ? 'Credit pack purchased. Your thinking power has been updated.'
+                    : 'Subscription started — welcome aboard!'
+              );
               await refreshStatus();
             }}
           />

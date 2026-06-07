@@ -332,6 +332,154 @@ def create_payment_intent():
     return jsonify({'client_secret': intent.client_secret}), 200
 
 
+def _credit_pack_payment_event_id(payment_intent_id):
+    return f"credit_pack_payment:{payment_intent_id}"
+
+
+def _credit_pack_tokens_from_metadata(metadata):
+    tokens = int(metadata.get('tokens') or 0)
+    if tokens > 0:
+        return tokens
+    credits = int(metadata.get('credits') or 0)
+    return credits * 1000 if credits > 0 else 0
+
+
+def _fulfill_credit_pack_payment_intent(intent, expected_user=None):
+    metadata = intent.get('metadata') or {}
+    checkout_type = str(metadata.get('checkout_type') or '').strip()
+    if checkout_type not in {'credit_pack', 'overage_pack'}:
+        return {'granted': False, 'reason': 'not_credit_pack'}
+    if intent.get('status') != 'succeeded':
+        return {'granted': False, 'reason': intent.get('status') or 'not_succeeded'}
+
+    payment_intent_id = intent.get('id')
+    event_id = _credit_pack_payment_event_id(payment_intent_id)
+    event_row = StripeWebhookEvent.query.filter_by(stripe_event_id=event_id).first()
+    if event_row and bool(event_row.processed):
+        return {'granted': False, 'reason': 'already_processed'}
+    if event_row is None:
+        event_row = StripeWebhookEvent(
+            stripe_event_id=event_id,
+            event_type='payment_intent.succeeded',
+            processed=False,
+        )
+        db.session.add(event_row)
+        try:
+            db.session.flush()
+        except IntegrityError:
+            db.session.rollback()
+            event_row = StripeWebhookEvent.query.filter_by(stripe_event_id=event_id).first()
+            if event_row and bool(event_row.processed):
+                return {'granted': False, 'reason': 'already_processed'}
+            if event_row is None:
+                event_row = StripeWebhookEvent(
+                    stripe_event_id=event_id,
+                    event_type='payment_intent.succeeded',
+                    processed=False,
+                )
+                db.session.add(event_row)
+                db.session.flush()
+
+    user_id = metadata.get('user_id')
+    user = User.query.get(user_id) if user_id else None
+    if not user:
+        user = _find_user_for_billing_event(customer_id=intent.get('customer'))
+    if not user:
+        return {'granted': False, 'reason': 'user_not_found'}
+    if expected_user and str(user.id) != str(expected_user.id):
+        return {'granted': False, 'reason': 'wrong_user'}
+
+    tokens = _credit_pack_tokens_from_metadata(metadata)
+    if tokens <= 0:
+        return {'granted': False, 'reason': 'missing_tokens'}
+
+    add_credits(user, tokens)
+    if intent.get('customer'):
+        user.stripe_customer_id = intent.get('customer')
+    event_row.processed = True
+    event_row.processed_at = datetime.utcnow()
+    current_app.logger.info(
+        "payment_intent.succeeded: added %s credit-pack tokens for user=%s",
+        tokens, user.id,
+    )
+    return {'granted': True, 'tokens': tokens, 'user_id': str(user.id)}
+
+
+@billing_bp.route('/create-credit-pack-payment-intent', methods=['POST'])
+@jwt_required()
+def create_credit_pack_payment_intent():
+    """Create an in-page PaymentIntent for a one-time credit pack."""
+    user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({'msg': 'User not found'}), 404
+
+    data = request.get_json() or {}
+    pack_key = normalize_credit_pack_key(data.get('pack_key'))
+    if not pack_key:
+        return jsonify({'msg': 'Missing pack_key'}), 400
+
+    packs = get_credit_packs(current_app.config)
+    pack = packs.get(pack_key)
+    if not pack:
+        return jsonify({'msg': f'Unknown pack_key {pack_key}'}), 400
+
+    amount = int(round(float(pack.get('price_usd') or 0) * 100))
+    tokens = int(pack.get('credits') or 0)
+    if amount <= 0 or tokens <= 0:
+        return jsonify({'msg': f'Credit pack {pack_key} is not configured correctly'}), 400
+
+    customer_id = _ensure_customer_for_user(user)
+    intent = stripe.PaymentIntent.create(
+        amount=amount,
+        currency='usd',
+        customer=customer_id,
+        payment_method_types=['card'],
+        setup_future_usage='off_session',
+        description=f"Jaspen {pack.get('label') or pack_key}",
+        metadata={
+            'user_id': str(user.id),
+            'pack_key': pack_key,
+            'credits': str(int(tokens_to_credits(tokens, precision=0) or 0)),
+            'tokens': str(tokens),
+            'checkout_type': 'credit_pack',
+        },
+    )
+    return jsonify({
+        'client_secret': intent.client_secret,
+        'publishable_key': current_app.config.get('STRIPE_PUBLISHABLE_KEY'),
+        'pack_key': pack_key,
+        'pack_label': pack.get('label') or pack_key,
+        'price_label': f"${pack.get('price_usd')}",
+    }), 200
+
+
+@billing_bp.route('/confirm-credit-pack-payment', methods=['POST'])
+@jwt_required()
+def confirm_credit_pack_payment():
+    """Finalize a completed in-page credit-pack payment immediately."""
+    user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({'msg': 'User not found'}), 404
+
+    data = request.get_json() or {}
+    payment_intent_id = str(data.get('payment_intent_id') or '').strip()
+    if not payment_intent_id:
+        return jsonify({'msg': 'Missing payment_intent_id'}), 400
+
+    try:
+        intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+    except stripe.error.StripeError as exc:
+        return jsonify({'msg': str(exc)}), 400
+
+    result = _fulfill_credit_pack_payment_intent(intent, expected_user=user)
+    if result.get('reason') == 'wrong_user':
+        return jsonify({'msg': 'Payment does not belong to this user'}), 403
+    if result.get('reason') not in {None, 'already_processed'} and not result.get('granted'):
+        return jsonify({'msg': 'Payment is not ready yet', **result}), 409
+    db.session.commit()
+    return jsonify({'success': True, **result}), 200
+
+
 @billing_bp.route('/create-checkout-session', methods=['POST'])
 @jwt_required()
 def create_checkout_session():
@@ -980,6 +1128,10 @@ def stripe_webhook():
                     "checkout.session.completed: applied plan=%s and reset credits for user=%s (credits_remaining=%s, credits_reset_at=%s)",
                     plan_key, user_id, user.credits_remaining, user.credits_reset_at,
                 )
+
+    elif event_type == 'payment_intent.succeeded':
+        intent = event['data']['object']
+        _fulfill_credit_pack_payment_intent(intent)
 
     elif event_type == 'invoice.payment_succeeded':
         inv = event['data']['object']
