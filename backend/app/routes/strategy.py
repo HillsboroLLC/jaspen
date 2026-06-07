@@ -718,6 +718,35 @@ def _clean_scorecard_text(value):
     return text or None
 
 
+SCORECARD_TITLE_MAX_WORDS = 7
+_TITLE_TRAILING_WORDS = {'and', 'or', 'for', 'with', 'to', 'of', 'in', 'on'}
+
+
+def _compact_scorecard_title(value, fallback='Untitled Idea', max_words=SCORECARD_TITLE_MAX_WORDS):
+    text = _clean_scorecard_text(value) or _clean_scorecard_text(fallback) or 'Untitled Idea'
+    text = re.sub(r'\s+', ' ', text).strip()
+    if len(text.split()) <= max_words:
+        return text
+
+    def _candidate_from(raw):
+        normalized = re.sub(r'\s*[+&/]\s*', ' and ', str(raw or '').strip())
+        words = [word for word in re.split(r'\s+', normalized) if word]
+        words = words[:max_words]
+        while words and words[-1].strip('.,;:!?()[]{}').lower() in _TITLE_TRAILING_WORDS:
+            words.pop()
+        return ' '.join(words).strip(' -+:;,')
+
+    if ':' in text:
+        prefix, suffix = [part.strip() for part in text.split(':', 1)]
+        for part in (suffix, prefix):
+            candidate = _candidate_from(part)
+            if 2 <= len(candidate.split()) <= max_words:
+                return candidate
+
+    candidate = _candidate_from(text)
+    return candidate or text
+
+
 def _safe_int(value):
     parsed = _safe_float(value)
     if parsed is None:
@@ -2332,7 +2361,7 @@ Rules:
 JSON format:
 
 {{
-    "name": "<a short, specific name for THIS idea — derived from the conversation, max 60 chars. Never use generic phrases like 'Baseline Analysis', 'Jaspen Project', 'Strategy Analysis', 'Initiative', or 'Untitled'. Use the actual product, market, or initiative the user is describing (e.g. 'AI HR analytics for mid-market', 'Usage-based AP invoice PLG', 'Restaurant inventory copilot').>",
+    "name": "<a short, specific name for THIS idea — derived from the conversation, 7 words or fewer. Never use generic phrases like 'Baseline Analysis', 'Jaspen Project', 'Strategy Analysis', 'Initiative', or 'Untitled'. Use the actual product, market, or initiative the user is describing (e.g. 'AI HR analytics for mid-market', 'Usage-based AP invoice PLG', 'Restaurant inventory copilot').>",
     "jaspen_score": <weighted average of {score_ref_count} dimension scores, 0-100>,
     "score_category": "<Excellent|Good|Fair|At Risk>",
     "dimensions": {{
@@ -2909,9 +2938,9 @@ def analyze_project():
             )
 
         if _is_meaningful_name(requested_name):
-            project_name = requested_name
+            project_name = _compact_scorecard_title(requested_name)
         elif _is_meaningful_name(ai_name):
-            project_name = ai_name
+            project_name = _compact_scorecard_title(ai_name)
         else:
             # Derive from the first non-trivial user message in the transcript.
             derived = None
@@ -2925,7 +2954,7 @@ def analyze_project():
                 if len(clean) >= 12:
                     derived = clean[:60].rstrip('.,;: ') + ('…' if len(clean) > 60 else '')
                     break
-            project_name = derived or 'Untitled idea'
+            project_name = _compact_scorecard_title(derived or 'Untitled idea')
 
         prior_meta = analysis_result.get('meta') if isinstance(analysis_result.get('meta'), dict) else {}
         analysis = {

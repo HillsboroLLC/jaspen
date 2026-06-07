@@ -5014,7 +5014,7 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                         },
                         "name": {
                             "type": "string",
-                            "description": "Display name for this scorecard. When re-scoring, omit to keep the existing name.",
+                            "description": "Display name for this scorecard, 7 words or fewer. When re-scoring, omit to keep the existing name.",
                         },
                         "rescore_scorecard_id": {
                             "type": "string",
@@ -5447,6 +5447,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
 
     from .strategy import (
         _compute_scenario_scorecard,
+        _compact_scorecard_title,
         _create_scenario_record,
         _extract_baseline_inputs,
         _generate_jaspen_scorecard,
@@ -5694,7 +5695,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 "Tell me which idea to score (include a short description).",
                 code="missing_idea_description",
             )
-        requested_name = requested_name or "Untitled Idea"
+        requested_name = _compact_scorecard_title(requested_name or "Untitled Idea")
 
         sessions = load_user_sessions(user_id) or {}
         session_key, session = _resolve_user_session(sessions, thread_id)
@@ -5757,7 +5758,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             def _do_rescore(existing):
                 keep_id = str(existing.get("id") or existing.get("analysis_id") or rescore_id)
                 keep_name = (
-                    requested_name if str(tool_input.get("name") or "").strip()
+                    _compact_scorecard_title(requested_name) if str(tool_input.get("name") or "").strip()
                     else (existing.get("name") or existing.get("project_name") or requested_name)
                 )
                 return {
