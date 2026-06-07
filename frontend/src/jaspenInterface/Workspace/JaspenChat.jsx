@@ -12221,7 +12221,6 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
     starterPrompts={scoreDrawerPrompts}
     inputExtras={renderObjectiveTags('jas-ai-objective-tags')}
     alternateContent={renderMiniScorecard(activeScorecard)}
-    modeLabel="Project Thread"
     footer={
       <SidebarIdentityFooter
         displayName={displayName}
