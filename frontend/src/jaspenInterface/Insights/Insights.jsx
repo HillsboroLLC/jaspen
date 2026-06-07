@@ -125,6 +125,8 @@ export default function Insights() {
       text: 'I can interpret these insights and suggest what to score next.',
     },
   ]);
+  const [assistantBusy, setAssistantBusy] = useState(false);
+  const [assistantSessionId, setAssistantSessionId] = useState(null);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -448,19 +450,70 @@ export default function Insights() {
     setJaspenOpen(true);
   }, []);
 
-  const sendAssistant = useCallback(() => {
+  const sendAssistant = useCallback(async () => {
     const text = String(assistantInput || '').trim();
-    if (!text) return;
+    if (!text || assistantBusy) return;
+    const assistantIndex = assistantMessages.length + 1;
     setAssistantMessages((prev) => [
       ...prev,
       { role: 'user', text },
-      {
-        role: 'assistant',
-        text: 'Use "Score this opportunity" when you are ready. I can help frame the strongest scoring prompt first.',
-      },
+      { role: 'assistant', text: '', streaming: true },
     ]);
     setAssistantInput('');
-  }, [assistantInput]);
+    setAssistantBusy(true);
+    let replyText = '';
+    const activeConnector = connectors.find((item) => item.id === activeConnectorId);
+    const view_context = {
+      current_view: 'insights',
+      page_facts: [
+        `Datasets visible: ${datasets.length}.`,
+        activeDataset ? `Active dataset: ${activeDataset.filename || activeDataset.name || activeDataset.id}.` : '',
+        activeConnector ? `Active insight connector: ${activeConnector.label || activeConnector.id}.` : '',
+        `Generated opportunity ideas visible: ${generatedIdeas.length}.`,
+        queryResult ? 'A connector query result is visible.' : '',
+      ].filter(Boolean).join(' '),
+    };
+
+    try {
+      const streamArgs = {
+        view_context,
+        onDelta: (delta) => {
+          replyText += delta || '';
+          setAssistantMessages((prev) => prev.map((msg, idx) => (
+            idx === assistantIndex ? { ...msg, text: replyText, streaming: true } : msg
+          )));
+        },
+        onDone: (payload) => {
+          const finalText = payload?.reply || payload?.message || replyText;
+          setAssistantMessages((prev) => prev.map((msg, idx) => (
+            idx === assistantIndex ? { ...msg, text: finalText, streaming: false } : msg
+          )));
+        },
+      };
+      if (assistantSessionId) {
+        await Jaspen.streamConversation({ ...streamArgs, session_id: assistantSessionId, user_message: text });
+      } else {
+        let nextSessionId = null;
+        await Jaspen.streamConversationStart({
+          ...streamArgs,
+          description: text,
+          onDone: (payload) => {
+            nextSessionId = payload?.thread_id || payload?.session_id || null;
+            streamArgs.onDone(payload);
+          },
+        });
+        if (nextSessionId) setAssistantSessionId(nextSessionId);
+      }
+    } catch (error) {
+      setAssistantMessages((prev) => prev.map((msg, idx) => (
+        idx === assistantIndex
+          ? { ...msg, text: error?.message || 'Something went wrong. Please try again.', streaming: false, error: true }
+          : msg
+      )));
+    } finally {
+      setAssistantBusy(false);
+    }
+  }, [activeConnectorId, activeDataset, assistantBusy, assistantInput, assistantMessages.length, assistantSessionId, connectors, datasets.length, generatedIdeas.length, queryResult]);
 
   return (
     <div className={`insights-page int-page${jaspenOpen ? ' drawer-open' : ''}`}>
@@ -954,7 +1007,7 @@ export default function Insights() {
         input={assistantInput}
         onInputChange={setAssistantInput}
         onSend={sendAssistant}
-        busy={false}
+        busy={assistantBusy}
         starterPrompts={[
           'What are the top risks in this dataset?',
           'What opportunity should I score next?',

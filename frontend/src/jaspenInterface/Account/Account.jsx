@@ -22,6 +22,7 @@ import { PLAN_ORDER, PLAN_RANK } from '../../shared/constants/appConstants';
 import './Account.css';
 import AppMenu from '../shared/AppMenu';
 import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
+import { Jaspen } from '../Workspace/JaspenClient';
 
 function authHeaders(extra = {}, method = 'GET') {
   return buildAuthHeaders(extra, method);
@@ -388,6 +389,8 @@ export default function Account() {
       text: 'I can help you interpret plan limits, thinking power, and connector access from this account view.',
     },
   ]);
+  const [assistantBusy, setAssistantBusy] = useState(false);
+  const [assistantSessionId, setAssistantSessionId] = useState(null);
   const [mfaState, setMfaState] = useState({
     loading: false,
     verifying: false,
@@ -1849,18 +1852,107 @@ export default function Account() {
     setJaspenOpen(true);
   };
 
-  const sendAssistant = () => {
+  const buildAccountAssistantContext = () => {
+    const invoiceRows = Array.isArray(invoices) ? invoices : [];
+    const paidCreditPacks = invoiceRows.filter((inv) => {
+      const statusText = String(inv?.status || '').toLowerCase();
+      const description = String(inv?.description || '').toLowerCase();
+      return statusText === 'paid' && description.includes('credit');
+    });
+    const planKey = status?.plan_key || 'free';
+    const planLabel = catalog?.plans?.[planKey]?.label || planKey;
+    const remaining = Number(status?.credits_remaining);
+    const monthly = Number(status?.monthly_credit_limit);
+    const percent = Number.isFinite(remaining) && Number.isFinite(monthly) && monthly > 0
+      ? Math.round((Math.max(0, remaining) / monthly) * 100)
+      : null;
+    const resetValue = status?.cycle_reset_at;
+    const facts = [
+      `Plan: ${planLabel}.`,
+      Number.isFinite(remaining) ? `Thinking power remaining: ${remaining.toLocaleString()} credits.` : '',
+      Number.isFinite(monthly) ? `Monthly limit: ${monthly.toLocaleString()} credits.` : '',
+      percent !== null ? `Remaining percent: ${percent}%.` : '',
+      resetValue ? `Reset date shown on page: ${resetValue}.` : '',
+      Array.isArray(invoices) ? `Payment history rows visible: ${invoiceRows.length}.` : 'Payment history rows are not loaded.',
+      Array.isArray(invoices) ? `Paid credit-pack rows visible: ${paidCreditPacks.length}.` : '',
+      paidCreditPacks.length
+        ? `Paid credit-pack descriptions visible: ${paidCreditPacks.map((inv) => inv.description || 'Credit pack').join('; ')}.`
+        : '',
+      activeTab ? `Active Account section: ${activeTab}.` : '',
+    ].filter(Boolean).join(' ');
+
+    return {
+      view_context: {
+        current_view: 'account',
+        active_tab: activeTab || undefined,
+        page_facts: facts,
+      },
+    };
+  };
+
+  const sendAssistant = async () => {
     const text = String(assistantInput || '').trim();
-    if (!text) return;
+    if (!text || assistantBusy) return;
+    const assistantIndex = assistantMessages.length + 1;
     setAssistantMessages((prev) => ([
       ...prev,
       { role: 'user', text },
-      {
-        role: 'assistant',
-        text: 'Update plan, thinking power, or connector settings here, then return to workspace to continue project execution.',
-      },
+      { role: 'assistant', text: '', streaming: true },
     ]));
     setAssistantInput('');
+    setAssistantBusy(true);
+    let replyText = '';
+
+    try {
+      const { view_context } = buildAccountAssistantContext();
+      if (assistantSessionId) {
+        await Jaspen.streamConversation({
+          session_id: assistantSessionId,
+          user_message: text,
+          view_context,
+          onDelta: (delta) => {
+            replyText += delta || '';
+            setAssistantMessages((prev) => prev.map((msg, idx) => (
+              idx === assistantIndex ? { ...msg, text: replyText, streaming: true } : msg
+            )));
+          },
+          onDone: (payload) => {
+            const finalText = payload?.reply || payload?.message || replyText;
+            setAssistantMessages((prev) => prev.map((msg, idx) => (
+              idx === assistantIndex ? { ...msg, text: finalText, streaming: false } : msg
+            )));
+          },
+        });
+      } else {
+        let nextSessionId = null;
+        await Jaspen.streamConversationStart({
+          description: text,
+          view_context,
+          onDelta: (delta) => {
+            replyText += delta || '';
+            setAssistantMessages((prev) => prev.map((msg, idx) => (
+              idx === assistantIndex ? { ...msg, text: replyText, streaming: true } : msg
+            )));
+          },
+          onDone: (payload) => {
+            nextSessionId = payload?.thread_id || payload?.session_id || null;
+            const finalText = payload?.reply || payload?.message || replyText;
+            setAssistantMessages((prev) => prev.map((msg, idx) => (
+              idx === assistantIndex ? { ...msg, text: finalText, streaming: false } : msg
+            )));
+          },
+        });
+        if (nextSessionId) setAssistantSessionId(nextSessionId);
+      }
+    } catch (error) {
+      setAssistantMessages((prev) => prev.map((msg, idx) => (
+        idx === assistantIndex
+          ? { ...msg, text: error?.message || 'Something went wrong. Please try again.', streaming: false, error: true }
+          : msg
+      )));
+    } finally {
+      setAssistantBusy(false);
+    }
   };
 
   if (loading) {
@@ -1877,7 +1969,7 @@ export default function Account() {
           input={assistantInput}
           onInputChange={setAssistantInput}
           onSend={sendAssistant}
-          busy={false}
+          busy={assistantBusy}
           starterPrompts={[
             'How close am I to my thinking power limit?',
             'Which plan best fits heavier usage?',
@@ -3713,7 +3805,7 @@ export default function Account() {
         input={assistantInput}
         onInputChange={setAssistantInput}
         onSend={sendAssistant}
-        busy={false}
+        busy={assistantBusy}
         starterPrompts={[
           'How close am I to my thinking power limit?',
           'Which plan best fits heavier usage?',

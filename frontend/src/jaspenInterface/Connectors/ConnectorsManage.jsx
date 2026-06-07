@@ -1037,7 +1037,15 @@ export default function ConnectorsManage() {
         method: 'POST',
         credentials: 'include',
         headers: buildAuthHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ message: text, thread_id: threadId, name: 'Connectors Advisor' }),
+        body: JSON.stringify({
+          message: text,
+          thread_id: threadId,
+          name: 'Connectors Advisor',
+          view_context: {
+            current_view: 'connectors',
+            page_facts: `Connectors visible: ${connectors.length}. Connected connectors: ${connectors.filter((item) => item.connected).length}.`,
+          },
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import './Knowledge.css';
 import AppMenu from '../shared/AppMenu';
 import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
+import { Jaspen } from '../Workspace/JaspenClient';
 
 const TOPICS = {
   gettingStarted: {
@@ -463,6 +464,8 @@ export default function Knowledge() {
       text: 'I can answer questions about Jaspen workflows, connectors, and execution patterns.',
     },
   ]);
+  const [assistantBusy, setAssistantBusy] = useState(false);
+  const [assistantSessionId, setAssistantSessionId] = useState(null);
 
   const normalizedQuery = query.trim().toLowerCase();
 
@@ -521,18 +524,65 @@ export default function Knowledge() {
     setJaspenOpen(true);
   };
 
-  const sendAssistant = () => {
+  const sendAssistant = async () => {
     const text = String(assistantInput || '').trim();
-    if (!text) return;
+    if (!text || assistantBusy) return;
+    const assistantIndex = assistantMessages.length + 1;
     setAssistantMessages((prev) => [
       ...prev,
       { role: 'user', text },
-      {
-        role: 'assistant',
-        text: 'Try searching the topic index, then I can clarify steps and suggest the exact next action.',
-      },
+      { role: 'assistant', text: '', streaming: true },
     ]);
     setAssistantInput('');
+    setAssistantBusy(true);
+    let replyText = '';
+    const view_context = {
+      current_view: 'knowledge',
+      active_tab: activeTopic?.title || undefined,
+      page_facts: activeTopic
+        ? `Active Knowledge topic: ${activeTopic.title}. Topic summary: ${activeTopic.summary || ''}. Visible topic count: ${visibleTopicIds.length}.`
+        : `Visible topic count: ${visibleTopicIds.length}.`,
+    };
+
+    try {
+      const streamArgs = {
+        view_context,
+        onDelta: (delta) => {
+          replyText += delta || '';
+          setAssistantMessages((prev) => prev.map((msg, idx) => (
+            idx === assistantIndex ? { ...msg, text: replyText, streaming: true } : msg
+          )));
+        },
+        onDone: (payload) => {
+          const finalText = payload?.reply || payload?.message || replyText;
+          setAssistantMessages((prev) => prev.map((msg, idx) => (
+            idx === assistantIndex ? { ...msg, text: finalText, streaming: false } : msg
+          )));
+        },
+      };
+      if (assistantSessionId) {
+        await Jaspen.streamConversation({ ...streamArgs, session_id: assistantSessionId, user_message: text });
+      } else {
+        let nextSessionId = null;
+        await Jaspen.streamConversationStart({
+          ...streamArgs,
+          description: text,
+          onDone: (payload) => {
+            nextSessionId = payload?.thread_id || payload?.session_id || null;
+            streamArgs.onDone(payload);
+          },
+        });
+        if (nextSessionId) setAssistantSessionId(nextSessionId);
+      }
+    } catch (error) {
+      setAssistantMessages((prev) => prev.map((msg, idx) => (
+        idx === assistantIndex
+          ? { ...msg, text: error?.message || 'Something went wrong. Please try again.', streaming: false, error: true }
+          : msg
+      )));
+    } finally {
+      setAssistantBusy(false);
+    }
   };
 
   return (
@@ -684,7 +734,7 @@ export default function Knowledge() {
         input={assistantInput}
         onInputChange={setAssistantInput}
         onSend={sendAssistant}
-        busy={false}
+        busy={assistantBusy}
         starterPrompts={[
           'How do I go from scorecard to execution?',
           'What is the connector setup order?',

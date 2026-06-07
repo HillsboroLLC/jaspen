@@ -10,6 +10,7 @@ import { ROLE_OPTIONS, INVITE_ROLE_OPTIONS } from '../../shared/constants/appCon
 import './Team.css';
 import AppMenu from '../shared/AppMenu';
 import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
+import { Jaspen } from '../Workspace/JaspenClient';
 
 const VISIBILITY_OPTIONS = ['private', 'team', 'specific'];
 const SEAT_EDITABLE_ROLES = ROLE_OPTIONS.filter((role) => role !== 'owner');
@@ -170,6 +171,8 @@ export default function Team({ mode = 'team' }) {
       text: 'I can help with seat policy, role assignments, and project-sharing decisions on this page.',
     },
   ]);
+  const [assistantBusy, setAssistantBusy] = useState(false);
+  const [assistantSessionId, setAssistantSessionId] = useState(null);
 
   const isEnterpriseMode = String(mode || '').toLowerCase() === 'enterprise';
   const routePlanForCopy = isEnterpriseMode ? 'enterprise' : 'team';
@@ -197,6 +200,10 @@ export default function Team({ mode = 'team' }) {
   const canAccessEnterpriseView = isGlobalAdmin || activeOrgPlanKey === 'enterprise';
   const seatPolicyDefaults = activeOrg?.seat_policy_defaults || {};
   const seatUsage = summary?.seat_usage || {};
+  const assistantAdminSeatsUsed = Number(seatUsage?.admin?.used ?? 0);
+  const assistantPaidSeatsUsed = Number(seatUsage?.total_paid_used ?? 0);
+  const assistantPaidSeatsLimit = seatUsage?.total_paid_limit ?? 'unlimited';
+  const assistantViewerSeatsUsed = Number(seatUsage?.viewer?.used ?? 0);
   const seatDraftDirty = useMemo(
     () => JSON.stringify(seatDraft || {}) !== JSON.stringify(savedSeatDraft || {}),
     [seatDraft, savedSeatDraft]
@@ -321,19 +328,71 @@ export default function Team({ mode = 'team' }) {
     setJaspenOpen(true);
   }, []);
 
-  const sendAssistant = useCallback(() => {
+  const sendAssistant = useCallback(async () => {
     const text = String(assistantInput || '').trim();
-    if (!text) return;
+    if (!text || assistantBusy) return;
+    const assistantIndex = assistantMessages.length + 1;
     setAssistantMessages((prev) => ([
       ...prev,
       { role: 'user', text },
-      {
-        role: 'assistant',
-        text: 'Use this page to set seats, member roles, and sharing policies. I can help you pick the safest defaults before saving.',
-      },
+      { role: 'assistant', text: '', streaming: true },
     ]));
     setAssistantInput('');
-  }, [assistantInput]);
+    setAssistantBusy(true);
+    let replyText = '';
+    const view_context = {
+      current_view: 'team',
+      page_facts: [
+        `Page mode: ${teamLabel}.`,
+        `Members visible: ${members.length}.`,
+        `Projects visible: ${projects.length}.`,
+        `Admin seats used: ${assistantAdminSeatsUsed}.`,
+        `Paid seats used: ${assistantPaidSeatsUsed} of ${assistantPaidSeatsLimit}.`,
+        `Viewer seats used: ${assistantViewerSeatsUsed}.`,
+        seatDraftDirty ? 'There are unsaved seat policy changes.' : 'Seat policy is saved.',
+      ].filter(Boolean).join(' '),
+    };
+
+    try {
+      const streamArgs = {
+        view_context,
+        onDelta: (delta) => {
+          replyText += delta || '';
+          setAssistantMessages((prev) => prev.map((msg, idx) => (
+            idx === assistantIndex ? { ...msg, text: replyText, streaming: true } : msg
+          )));
+        },
+        onDone: (payload) => {
+          const finalText = payload?.reply || payload?.message || replyText;
+          setAssistantMessages((prev) => prev.map((msg, idx) => (
+            idx === assistantIndex ? { ...msg, text: finalText, streaming: false } : msg
+          )));
+        },
+      };
+      if (assistantSessionId) {
+        await Jaspen.streamConversation({ ...streamArgs, session_id: assistantSessionId, user_message: text });
+      } else {
+        let nextSessionId = null;
+        await Jaspen.streamConversationStart({
+          ...streamArgs,
+          description: text,
+          onDone: (payload) => {
+            nextSessionId = payload?.thread_id || payload?.session_id || null;
+            streamArgs.onDone(payload);
+          },
+        });
+        if (nextSessionId) setAssistantSessionId(nextSessionId);
+      }
+    } catch (error) {
+      setAssistantMessages((prev) => prev.map((msg, idx) => (
+        idx === assistantIndex
+          ? { ...msg, text: error?.message || 'Something went wrong. Please try again.', streaming: false, error: true }
+          : msg
+      )));
+    } finally {
+      setAssistantBusy(false);
+    }
+  }, [assistantAdminSeatsUsed, assistantBusy, assistantInput, assistantMessages.length, assistantPaidSeatsLimit, assistantPaidSeatsUsed, assistantSessionId, assistantViewerSeatsUsed, members.length, projects.length, seatDraftDirty, teamLabel]);
 
   const onSwitchOrganization = async (orgId) => {
     if (!orgId) return;
@@ -1304,7 +1363,7 @@ export default function Team({ mode = 'team' }) {
         input={assistantInput}
         onInputChange={setAssistantInput}
         onSend={sendAssistant}
-        busy={false}
+        busy={assistantBusy}
         starterPrompts={[
           'Who should have admin access?',
           'How should I set seat limits?',

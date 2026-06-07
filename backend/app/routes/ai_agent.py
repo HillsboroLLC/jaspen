@@ -1076,6 +1076,10 @@ def _sanitize_view_context(raw_context):
     if wbs_summary:
         cleaned["wbs_summary"] = wbs_summary
 
+    page_facts = str(context.get("page_facts") or "").strip()
+    if page_facts:
+        cleaned["page_facts"] = page_facts[:1000]
+
     visible_ideas = _sanitize_visible_ideas(
         context.get("visible_ideas")
         or context.get("tradeoff_ideas")
@@ -1126,6 +1130,10 @@ def _view_context_prompt_suffix(view_context):
     active_tab = normalized.get("active_tab")
     if active_tab:
         lines.append(f"- Active tab: {active_tab}")
+
+    page_facts = str(normalized.get("page_facts") or "").strip()
+    if page_facts:
+        lines.append(f"- Page facts visible to the user: {page_facts}")
 
     active_scorecard_id = str(normalized.get("active_scorecard_id") or "").strip()
     active_scorecard_name = str(normalized.get("active_scorecard_name") or "").strip()
