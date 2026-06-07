@@ -3114,7 +3114,6 @@ export default function Account() {
                 <thead>
                   <tr style={{ background: '#f8fafc', textAlign: 'left' }}>
                     <th style={{ padding: '10px 16px', fontWeight: 600, color: '#64748b' }}>Date</th>
-                    <th style={{ padding: '10px 16px', fontWeight: 600, color: '#64748b' }}>Description</th>
                     <th style={{ padding: '10px 16px', fontWeight: 600, color: '#64748b' }}>Amount</th>
                     <th style={{ padding: '10px 16px', fontWeight: 600, color: '#64748b' }}>Status</th>
                     <th style={{ padding: '10px 16px', fontWeight: 600, color: '#64748b', textAlign: 'right' }}>Receipt</th>
@@ -3122,24 +3121,19 @@ export default function Account() {
                 </thead>
                 <tbody>
                   {invoices.map((inv) => {
-                    const status = String(inv.status || '').toLowerCase();
-                    const paid = status === 'paid' || status === 'succeeded';
-                    const statusLabel = status === 'succeeded' ? 'paid' : (inv.status || 'open');
+                    const paid = String(inv.status || '').toLowerCase() === 'paid';
                     const url = inv.invoice_pdf || inv.hosted_invoice_url;
                     return (
                       <tr key={inv.id} style={{ borderTop: '1px solid #eef1f6' }}>
                         <td style={{ padding: '11px 16px', color: '#0f172a' }}>
                           {inv.created ? new Date(inv.created * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
                         </td>
-                        <td style={{ padding: '11px 16px', color: '#0f172a' }}>
-                          {inv.description || inv.number || (inv.source === 'payment_intent' ? 'Credit pack' : 'Subscription invoice')}
-                        </td>
                         <td style={{ padding: '11px 16px', color: '#0f172a', fontWeight: 500 }}>
                           ${((inv.amount || 0) / 100).toFixed(2)} {inv.currency}
                         </td>
                         <td style={{ padding: '11px 16px' }}>
                           <span style={{ fontSize: 11.5, fontWeight: 600, padding: '2px 8px', borderRadius: 999, background: paid ? '#ecfdf3' : '#fff7ed', color: paid ? '#0d7a3e' : '#b45309', textTransform: 'capitalize' }}>
-                            {statusLabel}
+                            {inv.status || 'open'}
                           </span>
                         </td>
                         <td style={{ padding: '11px 16px', textAlign: 'right' }}>

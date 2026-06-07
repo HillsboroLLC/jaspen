@@ -168,152 +168,6 @@ def _find_user_for_billing_event(subscription_id=None, customer_id=None):
     return user
 
 
-def _credit_pack_fulfillment_key(payment_intent_id):
-    payment_intent_id = str(payment_intent_id or '').strip()
-    return f"credit_pack_payment:{payment_intent_id}" if payment_intent_id else ''
-
-
-def _credit_pack_tokens_from_metadata(metadata):
-    metadata = metadata if isinstance(metadata, dict) else {}
-    try:
-        tokens = int(metadata.get('tokens') or 0)
-    except (TypeError, ValueError):
-        tokens = 0
-    if tokens <= 0:
-        try:
-            credits = int(metadata.get('credits') or 0)
-        except (TypeError, ValueError):
-            credits = 0
-        tokens = credits * 1000
-    return max(0, tokens)
-
-
-def _fulfill_credit_pack_payment_intent(intent, *, expected_user=None):
-    """Grant credits for a succeeded embedded credit-pack PaymentIntent once.
-
-    Webhooks are still the primary async reconciliation path, but the frontend
-    also calls a confirmation endpoint after Stripe confirms payment in-page.
-    This synthetic StripeWebhookEvent row makes both paths idempotent.
-    """
-    if not intent or str(intent.get('status') or '').strip().lower() != 'succeeded':
-        return {'granted': False, 'reason': 'payment_not_succeeded'}
-    metadata = intent.get('metadata') if isinstance(intent.get('metadata'), dict) else {}
-    if str(metadata.get('checkout_type') or '').strip() not in {'credit_pack', 'overage_pack'}:
-        return {'granted': False, 'reason': 'not_credit_pack'}
-
-    fulfillment_key = _credit_pack_fulfillment_key(intent.get('id'))
-    if not fulfillment_key:
-        return {'granted': False, 'reason': 'missing_payment_intent_id'}
-    existing = StripeWebhookEvent.query.filter_by(stripe_event_id=fulfillment_key).first()
-    if existing and bool(existing.processed):
-        return {'granted': False, 'reason': 'already_granted'}
-
-    user_id = metadata.get('user_id')
-    user = User.query.get(user_id) if user_id else _find_user_for_billing_event(customer_id=intent.get('customer'))
-    if expected_user and user and str(user.id) != str(expected_user.id):
-        return {'granted': False, 'reason': 'wrong_user'}
-    if expected_user and not user:
-        user = expected_user
-    if not user:
-        return {'granted': False, 'reason': 'user_not_found'}
-
-    tokens = _credit_pack_tokens_from_metadata(metadata)
-    if tokens <= 0:
-        return {'granted': False, 'reason': 'missing_credits'}
-
-    event_row = existing
-    if event_row is None:
-        event_row = StripeWebhookEvent(
-            stripe_event_id=fulfillment_key,
-            event_type='credit_pack.payment_fulfilled',
-            processed=False,
-        )
-        db.session.add(event_row)
-        try:
-            db.session.flush()
-        except IntegrityError:
-            db.session.rollback()
-            existing = StripeWebhookEvent.query.filter_by(stripe_event_id=fulfillment_key).first()
-            if existing and bool(existing.processed):
-                return {'granted': False, 'reason': 'already_granted'}
-            event_row = existing
-            if event_row is None:
-                raise
-
-    add_credits(user, tokens)
-    if intent.get('customer'):
-        user.stripe_customer_id = intent.get('customer')
-    event_row.event_type = 'credit_pack.payment_fulfilled'
-    event_row.processed = True
-    event_row.processed_at = datetime.utcnow()
-    current_app.logger.info(
-        "fulfilled embedded credit pack payment_intent=%s tokens=%s user=%s",
-        intent.get('id'), tokens, user.id,
-    )
-    return {'granted': True, 'tokens': tokens, 'user_id': user.id}
-
-
-def _sync_credit_pack_payment_intents_for_user(user, *, limit=20):
-    if not user or not user.stripe_customer_id:
-        return 0
-    granted = 0
-    try:
-        resp = stripe.PaymentIntent.list(customer=user.stripe_customer_id, limit=limit)
-    except stripe.error.StripeError:
-        current_app.logger.exception("Could not list credit-pack payment intents for user=%s", getattr(user, 'id', None))
-        return 0
-
-    credit_pack_intents = []
-    paid_pack_tokens = 0
-    for intent in resp.get('data', []):
-        metadata = intent.get('metadata') if isinstance(intent.get('metadata'), dict) else {}
-        if str(metadata.get('checkout_type') or '').strip() not in {'credit_pack', 'overage_pack'}:
-            continue
-        if str(intent.get('status') or '').strip().lower() != 'succeeded':
-            continue
-        tokens = _credit_pack_tokens_from_metadata(metadata)
-        if tokens <= 0:
-            continue
-        credit_pack_intents.append(intent)
-        paid_pack_tokens += tokens
-
-    if not credit_pack_intents:
-        return 0
-
-    usage_state = get_usage_meter_state(user, current_app.config)
-    current_overage_tokens = int(usage_state.get('overage_tokens') or 0)
-
-    credit_pack_intents.sort(key=lambda item: int(item.get('created') or 0), reverse=True)
-
-    for intent in credit_pack_intents:
-        fulfillment_key = _credit_pack_fulfillment_key(intent.get('id'))
-        existing = StripeWebhookEvent.query.filter_by(stripe_event_id=fulfillment_key).first() if fulfillment_key else None
-        if existing and bool(existing.processed):
-            continue
-        if current_overage_tokens >= paid_pack_tokens:
-            current_app.logger.info(
-                "credit pack payment_intent=%s appears already reflected in overage tokens for user=%s",
-                intent.get('id'), getattr(user, 'id', None),
-            )
-            continue
-        intent_tokens = _credit_pack_tokens_from_metadata(
-            intent.get('metadata') if isinstance(intent.get('metadata'), dict) else {}
-        )
-        if current_overage_tokens + intent_tokens > paid_pack_tokens:
-            current_app.logger.info(
-                "skipping credit pack payment_intent=%s because current overage is already near paid total for user=%s",
-                intent.get('id'), getattr(user, 'id', None),
-            )
-            continue
-        result = _fulfill_credit_pack_payment_intent(intent, expected_user=user)
-        if result.get('granted'):
-            granted += 1
-            current_overage_tokens += int(result.get('tokens') or 0)
-    if granted:
-        db.session.commit()
-    return granted
-
-
 @billing_bp.route('/plans', methods=['GET'])
 def list_plans():
     """Legacy response: plan_key -> Stripe Price ID."""
@@ -358,8 +212,6 @@ def get_billing_status():
 
     if bootstrap_legacy_credits(user, current_app.config):
         db.session.commit()
-
-    _sync_credit_pack_payment_intents_for_user(user)
 
     admin_override = is_global_admin(user, app_config=current_app.config)
     if admin_override:
@@ -570,13 +422,12 @@ def list_invoices():
     if not user or not user.stripe_customer_id:
         return jsonify({'invoices': []}), 200
     try:
-        invoice_resp = stripe.Invoice.list(customer=user.stripe_customer_id, limit=24)
-        payment_resp = stripe.PaymentIntent.list(customer=user.stripe_customer_id, limit=24)
+        resp = stripe.Invoice.list(customer=user.stripe_customer_id, limit=24)
     except stripe.error.StripeError:
         current_app.logger.exception('list_invoices failed')
         return jsonify({'invoices': []}), 200
     out = []
-    for inv in invoice_resp.get('data', []):
+    for inv in resp.get('data', []):
         amount = inv.get('amount_paid') or inv.get('total') or 0
         out.append({
             'id': inv.get('id'),
@@ -585,28 +436,9 @@ def list_invoices():
             'amount': amount,  # cents
             'currency': (inv.get('currency') or 'usd').upper(),
             'status': inv.get('status'),
-            'description': inv.get('description') or inv.get('number') or 'Subscription invoice',
-            'source': 'invoice',
             'hosted_invoice_url': inv.get('hosted_invoice_url'),
             'invoice_pdf': inv.get('invoice_pdf'),
         })
-    for intent in payment_resp.get('data', []):
-        metadata = intent.get('metadata') if isinstance(intent.get('metadata'), dict) else {}
-        if str(metadata.get('checkout_type') or '').strip() not in {'credit_pack', 'overage_pack'}:
-            continue
-        out.append({
-            'id': intent.get('id'),
-            'number': metadata.get('pack_key') or intent.get('id'),
-            'created': intent.get('created'),
-            'amount': intent.get('amount_received') or intent.get('amount') or 0,
-            'currency': (intent.get('currency') or 'usd').upper(),
-            'status': intent.get('status'),
-            'description': intent.get('description') or f"Jaspen {metadata.get('credits') or ''} credits".strip(),
-            'source': 'payment_intent',
-            'hosted_invoice_url': None,
-            'invoice_pdf': None,
-        })
-    out.sort(key=lambda item: int(item.get('created') or 0), reverse=True)
     return jsonify({'invoices': out}), 200
 
 
@@ -1065,40 +897,6 @@ def create_credit_pack_payment_intent():
     }), 200
 
 
-@billing_bp.route('/confirm-credit-pack-payment', methods=['POST'])
-@jwt_required()
-def confirm_credit_pack_payment():
-    """Confirm and fulfill an embedded credit-pack PaymentIntent.
-
-    This complements the Stripe webhook so users get credits immediately after
-    in-page payment success, even if the webhook endpoint is not subscribed to
-    payment_intent.succeeded yet.
-    """
-    user = User.query.get(get_jwt_identity())
-    if not user:
-        return jsonify({'msg': 'User not found'}), 404
-    payment_intent_id = str((request.get_json() or {}).get('payment_intent_id') or '').strip()
-    if not payment_intent_id:
-        return jsonify({'msg': 'Missing payment_intent_id'}), 400
-    try:
-        intent = stripe.PaymentIntent.retrieve(payment_intent_id)
-    except stripe.error.StripeError as exc:
-        current_app.logger.exception('confirm-credit-pack-payment retrieve failed')
-        return jsonify({'msg': str(getattr(exc, 'user_message', None) or 'Could not verify payment.')}), 400
-    result = _fulfill_credit_pack_payment_intent(intent, expected_user=user)
-    db.session.commit()
-    if result.get('reason') == 'wrong_user':
-        return jsonify({'msg': 'Payment does not belong to this account.'}), 403
-    if result.get('reason') == 'payment_not_succeeded':
-        return jsonify({'msg': 'Payment has not completed yet.', 'status': intent.get('status')}), 409
-    return jsonify({
-        'success': True,
-        'granted': bool(result.get('granted')),
-        'reason': result.get('reason'),
-        'tokens': result.get('tokens'),
-    }), 200
-
-
 @billing_bp.route('/create-credit-pack-checkout-session', methods=['POST'])
 @jwt_required()
 def create_credit_pack_checkout_session():
@@ -1382,7 +1180,19 @@ def stripe_webhook():
 
     elif event_type == 'payment_intent.succeeded':
         intent = event['data']['object']
-        _fulfill_credit_pack_payment_intent(intent)
+        metadata = intent.get('metadata') if isinstance(intent.get('metadata'), dict) else {}
+        if str(metadata.get('checkout_type') or '').strip() in {'credit_pack', 'overage_pack'}:
+            user_id = metadata.get('user_id')
+            user = User.query.get(user_id) if user_id else _find_user_for_billing_event(customer_id=intent.get('customer'))
+            if user:
+                tokens = int(metadata.get('tokens') or metadata.get('credits') or 0)
+                add_credits(user, tokens)
+                if intent.get('customer'):
+                    user.stripe_customer_id = intent.get('customer')
+                current_app.logger.info(
+                    "payment_intent.succeeded: added %s credit-pack tokens for user=%s",
+                    tokens, user.id,
+                )
 
     event_row.event_type = event_type
     event_row.processed = True
