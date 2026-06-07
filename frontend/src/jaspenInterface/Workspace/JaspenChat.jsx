@@ -4745,55 +4745,15 @@ useEffect(() => {
   const startPlanChange = async (planKey) => {
     setBillingActionLoading(planKey);
     setBillingMessage('');
-    try {
-      const response = await authFetch(`${API_BASE}/api/v1/billing/create-checkout-session`, {
-        method: 'POST',
-        headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
-        credentials: 'include',
-        body: JSON.stringify({ plan_key: planKey }),
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        if (response.status === 401) {
-          await handleUnauthorized();
-        }
-        throw new Error(data?.msg || 'Unable to start plan change.');
-      }
-      if (data?.url) {
-        window.location.href = data.url;
-        return;
-      }
-      await loadBilling();
-    } catch (error) {
-      setBillingMessage(error.message || 'Unable to start plan change.');
-    } finally {
-      setBillingActionLoading('');
-    }
+    navigate('/account?tab=plans');
+    window.setTimeout(() => setBillingActionLoading(''), 0);
   };
 
   const openBillingPortal = async () => {
     setBillingActionLoading('portal');
     setBillingMessage('');
-    try {
-      const response = await authFetch(`${API_BASE}/api/v1/billing/create-portal-session`, {
-        method: 'POST',
-        headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
-        credentials: 'include',
-        body: JSON.stringify({ return_url: `${window.location.origin}/account` }),
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || !data?.url) {
-        if (response.status === 401) {
-          await handleUnauthorized();
-        }
-        throw new Error(data?.msg || 'Unable to open billing settings.');
-      }
-      window.location.href = data.url;
-    } catch (error) {
-      setBillingMessage(error.message || 'Unable to open billing settings.');
-    } finally {
-      setBillingActionLoading('');
-    }
+    navigate('/account');
+    window.setTimeout(() => setBillingActionLoading(''), 0);
   };
 
   const renderNameModal = () => {
@@ -4930,7 +4890,7 @@ useEffect(() => {
                       onClick={() => startPlanChange(key)}
                       disabled={billingActionLoading === key} aria-disabled={billingActionLoading === key}
                     >
-                      {billingActionLoading === key ? 'Redirecting...' : 'Select plan'}
+                      {billingActionLoading === key ? 'Opening...' : 'Select plan'}
                     </button>
                   )}
                 </article>

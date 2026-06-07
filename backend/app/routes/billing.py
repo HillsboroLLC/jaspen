@@ -837,6 +837,66 @@ def _create_credit_pack_checkout_session():
     return jsonify({'sessionId': session.id, 'url': session.url}), 200
 
 
+@billing_bp.route('/create-credit-pack-payment-intent', methods=['POST'])
+@jwt_required()
+def create_credit_pack_payment_intent():
+    """Create an embedded PaymentIntent for one-time credit packs.
+
+    This keeps the checkout experience inside Jaspen while Stripe Elements
+    securely collects/handles card data. Credits are granted by the Stripe
+    webhook after payment_intent.succeeded.
+    """
+    user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({'msg': 'User not found'}), 404
+
+    data = request.get_json() or {}
+    pack_key = normalize_credit_pack_key(data.get('pack_key'))
+    if not pack_key:
+        return jsonify({'msg': 'Missing pack_key'}), 400
+
+    packs = get_credit_packs(current_app.config)
+    pack = packs.get(pack_key)
+    if not pack:
+        return jsonify({'msg': f'Unknown pack_key {pack_key}'}), 400
+
+    amount = int(round(float(pack.get('price_usd') or 0) * 100))
+    tokens = int(pack.get('credits') or 0)
+    if amount <= 0 or tokens <= 0:
+        return jsonify({'msg': f'Credit pack {pack_key} is not configured for purchase.'}), 400
+
+    customer_id = _ensure_customer_for_user(user)
+    metadata = {
+        'user_id': str(user.id),
+        'pack_key': pack_key,
+        'credits': str(int(tokens_to_credits(tokens, precision=0) or 0)),
+        'tokens': str(tokens),
+        'checkout_type': 'credit_pack',
+    }
+
+    try:
+        intent = stripe.PaymentIntent.create(
+            amount=amount,
+            currency='usd',
+            customer=customer_id,
+            payment_method_types=['card'],
+            setup_future_usage='off_session',
+            metadata=metadata,
+            description=f"Jaspen {pack.get('label') or pack_key}",
+        )
+    except stripe.error.StripeError as exc:
+        current_app.logger.exception('create-credit-pack-payment-intent failed')
+        return jsonify({'msg': str(getattr(exc, 'user_message', None) or 'Could not start credit pack checkout.')}), 400
+
+    return jsonify({
+        'client_secret': intent.client_secret,
+        'publishable_key': current_app.config.get('STRIPE_PUBLISHABLE_KEY') or '',
+        'pack_key': pack_key,
+        'pack_label': pack.get('label') or pack_key,
+        'price_label': f"${int(amount / 100) if amount % 100 == 0 else amount / 100:.2f}".replace('.00', ''),
+    }), 200
+
+
 @billing_bp.route('/create-credit-pack-checkout-session', methods=['POST'])
 @jwt_required()
 def create_credit_pack_checkout_session():
@@ -1117,6 +1177,22 @@ def stripe_webhook():
                 user.credits_remaining = max(0, int(user.credits_remaining or 0) - refund_credits)
             elif refund_credits > 0 and user.credits_remaining is None:
                 consume_credits(user, refund_credits)
+
+    elif event_type == 'payment_intent.succeeded':
+        intent = event['data']['object']
+        metadata = intent.get('metadata') if isinstance(intent.get('metadata'), dict) else {}
+        if str(metadata.get('checkout_type') or '').strip() in {'credit_pack', 'overage_pack'}:
+            user_id = metadata.get('user_id')
+            user = User.query.get(user_id) if user_id else _find_user_for_billing_event(customer_id=intent.get('customer'))
+            if user:
+                tokens = int(metadata.get('tokens') or metadata.get('credits') or 0)
+                add_credits(user, tokens)
+                if intent.get('customer'):
+                    user.stripe_customer_id = intent.get('customer')
+                current_app.logger.info(
+                    "payment_intent.succeeded: added %s credit-pack tokens for user=%s",
+                    tokens, user.id,
+                )
 
     event_row.event_type = event_type
     event_row.processed = True

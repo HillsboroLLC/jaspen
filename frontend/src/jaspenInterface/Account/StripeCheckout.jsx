@@ -8,6 +8,7 @@ import { API_BASE } from '../../config/apiBase';
 // site. Two modes:
 //   mode="subscribe"       → create-subscription, confirmPayment (PaymentIntent)
 //   mode="update_payment"  → create-setup-intent, confirmSetup (SetupIntent) + set default
+//   mode="credit_pack"     → create-credit-pack-payment-intent, confirmPayment
 // Branded via Stripe's Appearance API to match Jaspen.
 const NAVY = '#161f3b';
 const MAGENTA = '#a0036c';
@@ -38,6 +39,7 @@ function CheckoutForm({ mode, planLabel, priceLabel, onSuccess }) {
   const [error, setError] = useState('');
   const [succeeded, setSucceeded] = useState(false);
   const isUpdate = mode === 'update_payment';
+  const isCreditPack = mode === 'credit_pack';
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -72,7 +74,7 @@ function CheckoutForm({ mode, planLabel, priceLabel, onSuccess }) {
       return;
     }
 
-    // subscribe mode — confirm the subscription's first payment in-page.
+    // subscribe / credit-pack mode — confirm payment in-page.
     const { error: confirmError, paymentIntent } = await stripe.confirmPayment({
       elements,
       redirect: 'if_required',
@@ -97,10 +99,14 @@ function CheckoutForm({ mode, planLabel, priceLabel, onSuccess }) {
       <div style={{ textAlign: 'center', padding: '24px 8px' }}>
         <div style={{ width: 48, height: 48, borderRadius: '50%', background: '#ecfdf3', color: '#0d7a3e', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px', fontSize: 24 }}>✓</div>
         <div style={{ fontSize: 16, fontWeight: 600, color: '#0f172a' }}>
-          {isUpdate ? 'Card saved' : `You're on ${planLabel}`}
+          {isUpdate ? 'Card saved' : isCreditPack ? 'Credit pack purchased' : `You're on ${planLabel}`}
         </div>
         <div style={{ fontSize: 13, color: '#64748b', marginTop: 4 }}>
-          {isUpdate ? 'Your default payment method is updated.' : 'Finalizing your account…'}
+          {isUpdate
+            ? 'Your default payment method is updated.'
+            : isCreditPack
+            ? 'Finalizing your credits...'
+            : 'Finalizing your account...'}
         </div>
       </div>
     );
@@ -114,7 +120,7 @@ function CheckoutForm({ mode, planLabel, priceLabel, onSuccess }) {
           {error}
         </div>
       )}
-      {!isUpdate && (
+      {!isUpdate && !isCreditPack && (
         <div style={{ marginTop: 14, fontSize: 11.5, color: '#64748b', lineHeight: 1.5 }}>
           By subscribing, you agree to be charged {priceLabel} now and on a recurring monthly
           basis until you cancel. You can cancel anytime in your account settings.
@@ -130,26 +136,27 @@ function CheckoutForm({ mode, planLabel, priceLabel, onSuccess }) {
           cursor: submitting || !stripe ? 'default' : 'pointer',
         }}
       >
-        {submitting ? 'Processing…' : isUpdate ? 'Save card' : `Subscribe — ${priceLabel}`}
+        {submitting ? 'Processing...' : isUpdate ? 'Save card' : isCreditPack ? `Purchase — ${priceLabel}` : `Subscribe — ${priceLabel}`}
       </button>
       <div style={{ marginTop: 10, fontSize: 11, color: '#94a3b8', textAlign: 'center' }}>
-        🔒 Securely processed by Stripe.{!isUpdate && ' Cancel anytime.'}
+        Securely processed by Stripe.{(!isUpdate && !isCreditPack) ? ' Cancel anytime.' : ''}
       </div>
     </form>
   );
 }
 
-export default function StripeCheckout({ mode = 'subscribe', planKey, planLabel, priceLabel, plans = [], onSuccess, onClose }) {
+export default function StripeCheckout({ mode = 'subscribe', planKey, planLabel, priceLabel, packKey, packLabel, plans = [], onSuccess, onClose }) {
   const isUpdate = mode === 'update_payment';
+  const isCreditPack = mode === 'credit_pack';
   const [selectedPlanKey, setSelectedPlanKey] = useState(planKey);
   const [clientSecret, setClientSecret] = useState('');
   const [stripePromise, setStripePromise] = useState(null);
   const [loadError, setLoadError] = useState('');
 
   const selectedPlan = plans.find((p) => p.key === selectedPlanKey);
-  const effLabel = selectedPlan?.label || planLabel;
+  const effLabel = isCreditPack ? (packLabel || 'Credit pack') : (selectedPlan?.label || planLabel);
   const effPrice = selectedPlan?.priceLabel || priceLabel;
-  const showSwitcher = !isUpdate && plans.length > 1;
+  const showSwitcher = !isUpdate && !isCreditPack && plans.length > 1;
 
   useEffect(() => {
     let alive = true;
@@ -157,8 +164,12 @@ export default function StripeCheckout({ mode = 'subscribe', planKey, planLabel,
     setLoadError('');
     (async () => {
       try {
-        const endpoint = isUpdate ? 'create-setup-intent' : 'create-subscription';
-        const body = isUpdate ? {} : { plan_key: selectedPlanKey };
+        const endpoint = isUpdate
+          ? 'create-setup-intent'
+          : isCreditPack
+          ? 'create-credit-pack-payment-intent'
+          : 'create-subscription';
+        const body = isUpdate ? {} : isCreditPack ? { pack_key: packKey } : { plan_key: selectedPlanKey };
         const resp = await authFetch(`${API_BASE}/api/v1/billing/${endpoint}`, {
           method: 'POST',
           headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
@@ -177,7 +188,7 @@ export default function StripeCheckout({ mode = 'subscribe', planKey, planLabel,
       }
     })();
     return () => { alive = false; };
-  }, [selectedPlanKey, isUpdate]);
+  }, [selectedPlanKey, isUpdate, isCreditPack, packKey]);
 
   return (
     <div
@@ -191,12 +202,16 @@ export default function StripeCheckout({ mode = 'subscribe', planKey, planLabel,
         <div style={{ background: NAVY, color: '#fff', padding: '18px 20px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexShrink: 0 }}>
           <div>
             <div style={{ fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#cbd5e1', fontWeight: 600 }}>
-              {isUpdate ? 'Payment method' : 'Subscribe'}
+              {isUpdate ? 'Payment method' : isCreditPack ? 'Credit pack' : 'Subscribe'}
             </div>
             <div style={{ fontSize: 18, fontWeight: 700, marginTop: 2 }}>
-              {isUpdate ? 'Update your card' : `${effLabel} plan`}
+              {isUpdate ? 'Update your card' : isCreditPack ? effLabel : `${effLabel} plan`}
             </div>
-            {!isUpdate && effPrice && <div style={{ fontSize: 13, color: '#cbd5e1', marginTop: 2 }}>{effPrice} · billed monthly · cancel anytime</div>}
+            {!isUpdate && effPrice && (
+              <div style={{ fontSize: 13, color: '#cbd5e1', marginTop: 2 }}>
+                {isCreditPack ? `${effPrice} · one-time purchase` : `${effPrice} · billed monthly · cancel anytime`}
+              </div>
+            )}
           </div>
           <button type="button" onClick={onClose} aria-label="Close" style={{ border: 'none', background: 'transparent', color: '#cbd5e1', fontSize: 20, cursor: 'pointer', lineHeight: 1, padding: 2 }}>×</button>
         </div>
