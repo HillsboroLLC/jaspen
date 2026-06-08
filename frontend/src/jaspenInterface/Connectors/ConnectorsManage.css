@@ -12,7 +12,7 @@
 
 /* Push content right when Jaspen drawer is open */
 .connectors-manage-page.drawer-open {
-  padding-left: calc(var(--int-page-pad, 28px) + 320px + 28px);
+  padding-left: calc(var(--int-page-pad, 28px) + 340px + 28px);
 }
 
 .connectors-manage-inner {

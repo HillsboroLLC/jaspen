@@ -12,11 +12,11 @@
 }
 
 .projects-page.drawer-open .projects-inner {
-  margin-left: 320px;
+  margin-left: 340px;
 }
 
 body.jaspen-sidebar-open .projects-page.drawer-open .projects-inner {
-  margin-left: 320px;
+  margin-left: 340px;
 }
 
 .projects-header {

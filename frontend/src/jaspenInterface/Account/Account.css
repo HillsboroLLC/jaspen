@@ -27,7 +27,7 @@ body.jaspen-sidebar-open .account-page {
 
 /* Jaspen AI drawer shifts the main content when open */
 .account-page.jaspen-ai-open .account-main-content {
-  margin-left: 320px;
+  margin-left: 340px;
 }
 
 @media (max-width: 1080px) {

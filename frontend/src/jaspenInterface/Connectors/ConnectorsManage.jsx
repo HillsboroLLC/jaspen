@@ -1634,7 +1634,7 @@ export default function ConnectorsManage() {
         messages={jaspenMessages}
         renderMessage={(msg) => <span>{msg?.text ?? msg?.content ?? ''}</span>}
         input={jaspenInput}
-        onInputChange={(e) => setJaspenInput(e.target.value)}
+        onInputChange={setJaspenInput}
         onSend={() => submitJaspenMessage()}
         busy={jaspenBusy}
         placeholder="Ask about your connectors…"

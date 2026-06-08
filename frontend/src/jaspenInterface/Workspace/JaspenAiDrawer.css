@@ -89,6 +89,11 @@ body.jaspen-sidebar-open .jas-tab-assistant {
   display: none;
 }
 
+body.jaspen-sidebar-open .workspace-assistant-shell,
+body.jaspen-sidebar-open .workspace-assistant-toggle {
+  --workspace-assistant-left: var(--sidebar-width, 320px);
+}
+
 .jas-ai-header {
   padding: 14px 16px;
   background: #ffffff;
