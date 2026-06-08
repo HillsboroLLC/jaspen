@@ -617,6 +617,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "When the user asks to build an execution plan, call generate_execution_plan. "
     "When the user asks to start the plan on a specific date or shift the whole schedule (e.g. 'start this plan July 1', 'push the kickoff back two weeks'), call set_execution_start_date with the new start_date (YYYY-MM-DD) — it slides every task by the same delta and preserves manual per-task adjustments. "
     "Use your judgment about when to score. A confirmation, an acknowledgment, or a pure question about an existing scorecard never warrants a tool call. "
+    "POST-TOOL CONFIRMATION: After any tool call succeeds, your confirmation message must describe ONLY the action you just completed in this turn — derive it strictly from the tool result returned to you, not from the conversation history. Do not reference, repeat, or re-describe actions from previous turns. "
     "Refer to ideas by their actual name (not placeholders like 'Scenario A' or 'Original'). Keep the conversation natural — one exchange at a time. "
     "RANKING: If the user asks to rank, compare, or summarize all the ideas modeled in this conversation, "
     "do so directly using the scorecard data available. Present a clear ranked list with the idea name, score, "
@@ -1266,7 +1267,8 @@ def _view_context_prompt_suffix(view_context):
         lines.append(f"- Current view: {current_view}")
         lines.append(
             "- This answer is displayed in a narrow page sidebar. Be warm and easy to scan: start with the answer, "
-            "use short paragraphs or brief bullets, and avoid markdown tables unless the user explicitly asks for one."
+            "use short paragraphs or brief bullets, and avoid markdown tables unless the user explicitly asks for one. "
+            "Do not use markdown emphasis markers such as double asterisks around words in page-sidebar replies."
         )
 
     active_tab = normalized.get("active_tab")

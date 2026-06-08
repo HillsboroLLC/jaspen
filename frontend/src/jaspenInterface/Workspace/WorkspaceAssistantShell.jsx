@@ -1,4 +1,6 @@
 import React, { useEffect, useRef } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faPaperPlane } from '@fortawesome/free-solid-svg-icons';
 
@@ -49,7 +51,37 @@ export default function WorkspaceAssistantShell({
 
   const defaultRenderMessage = (msg) => {
     const text = msg?.text ?? msg?.content ?? '';
-    return <span>{typeof text === 'string' ? text : JSON.stringify(text)}</span>;
+    if (msg?.role === 'user') {
+      return <span>{typeof text === 'string' ? text : JSON.stringify(text)}</span>;
+    }
+    return (
+      <div className="jas-ai-md">
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          components={{
+            p: ({ children }) => <p className="jas-ai-md-paragraph">{children}</p>,
+            ul: ({ children }) => <ul className="jas-ai-md-list">{children}</ul>,
+            ol: ({ children }) => <ol className="jas-ai-md-list jas-ai-md-list-ordered">{children}</ol>,
+            h1: ({ children }) => <h3 className="jas-ai-md-heading">{children}</h3>,
+            h2: ({ children }) => <h3 className="jas-ai-md-heading">{children}</h3>,
+            h3: ({ children }) => <h3 className="jas-ai-md-heading">{children}</h3>,
+            h4: ({ children }) => <h4 className="jas-ai-md-heading jas-ai-md-heading--small">{children}</h4>,
+            table: ({ children }) => <div className="jas-ai-md-table-wrap"><table className="jas-ai-md-table">{children}</table></div>,
+            code: ({ inline, className, children, ...props }) => (
+              inline ? (
+                <code className={`jas-ai-md-inline-code ${className || ''}`.trim()} {...props}>{children}</code>
+              ) : (
+                <code className={`jas-ai-md-code ${className || ''}`.trim()} {...props}>{children}</code>
+              )
+            ),
+            pre: ({ children }) => <pre className="jas-ai-md-pre">{children}</pre>,
+            a: ({ children, ...props }) => <a {...props} target="_blank" rel="noreferrer">{children}</a>,
+          }}
+        >
+          {typeof text === 'string' ? text : JSON.stringify(text)}
+        </ReactMarkdown>
+      </div>
+    );
   };
   const renderMsg = renderMessage || defaultRenderMessage;
 

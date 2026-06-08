@@ -208,6 +208,91 @@ body.jaspen-sidebar-open .workspace-assistant-toggle {
   text-align: left;
 }
 
+.jas-ai-md > *:first-child {
+  margin-top: 0;
+}
+
+.jas-ai-md > *:last-child {
+  margin-bottom: 0;
+}
+
+.jas-ai-md-paragraph {
+  margin: 0 0 0.75em;
+}
+
+.jas-ai-md-heading {
+  margin: 0 0 0.55em;
+  color: #0f172a;
+  font-size: 0.95rem;
+  line-height: 1.3;
+  font-weight: 700;
+}
+
+.jas-ai-md-heading--small {
+  font-size: 0.9rem;
+}
+
+.jas-ai-md-list {
+  margin: 0 0 0.75em;
+  padding-left: 1.25em;
+}
+
+.jas-ai-md-list li + li {
+  margin-top: 0.32em;
+}
+
+.jas-ai-md-list-ordered {
+  list-style: decimal;
+}
+
+.jas-ai-md-inline-code,
+.jas-ai-md-code {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+.jas-ai-md-inline-code {
+  background: rgba(15, 23, 42, 0.08);
+  border-radius: 5px;
+  padding: 0.1em 0.32em;
+  font-size: 0.9em;
+}
+
+.jas-ai-md-pre {
+  margin: 0 0 0.75em;
+  overflow-x: auto;
+  background: rgba(15, 23, 42, 0.92);
+  color: #f8fafc;
+  border-radius: 10px;
+  padding: 10px 12px;
+  white-space: pre;
+}
+
+.jas-ai-md-pre .jas-ai-md-code,
+.jas-ai-md-pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+}
+
+.jas-ai-md-table-wrap {
+  margin: 0 0 0.75em;
+  overflow-x: auto;
+}
+
+.jas-ai-md-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88em;
+}
+
+.jas-ai-md-table th,
+.jas-ai-md-table td {
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
 .jas-ai-input-area {
   padding: 10px 12px 14px;
   background: #ffffff;

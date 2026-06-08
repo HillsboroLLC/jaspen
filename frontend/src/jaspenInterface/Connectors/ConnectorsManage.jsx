@@ -1632,7 +1632,6 @@ export default function ConnectorsManage() {
         sideTabTop={228}
         id="connectors-jaspen-drawer"
         messages={jaspenMessages}
-        renderMessage={(msg) => <span>{msg?.text ?? msg?.content ?? ''}</span>}
         input={jaspenInput}
         onInputChange={setJaspenInput}
         onSend={() => submitJaspenMessage()}

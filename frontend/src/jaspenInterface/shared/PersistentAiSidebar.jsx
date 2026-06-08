@@ -1,6 +1,4 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faPaperPlane,
@@ -24,36 +22,7 @@ function MessageBubble({ msg }) {
     <div className={`jai-msg ${isUser ? 'jai-msg--user' : 'jai-msg--assistant'}${isError ? ' jai-msg--error' : ''}`}>
       <div className="jai-msg-bubble">
         {text ? (
-          isUser ? (
-            <span className="jai-msg-text">{text}</span>
-          ) : (
-            <div className="jai-msg-text">
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                components={{
-                  p: ({ children }) => <p className="jai-md-paragraph">{children}</p>,
-                  ul: ({ children }) => <ul className="jai-md-list">{children}</ul>,
-                  ol: ({ children }) => <ol className="jai-md-list jai-md-list-ordered">{children}</ol>,
-                  h1: ({ children }) => <h3 className="jai-md-heading">{children}</h3>,
-                  h2: ({ children }) => <h3 className="jai-md-heading">{children}</h3>,
-                  h3: ({ children }) => <h3 className="jai-md-heading">{children}</h3>,
-                  h4: ({ children }) => <h4 className="jai-md-heading jai-md-heading--small">{children}</h4>,
-                  table: ({ children }) => <div className="jai-md-table-wrap"><table className="jai-md-table">{children}</table></div>,
-                  code: ({ inline, className, children, ...props }) => (
-                    inline ? (
-                      <code className={`jai-md-inline-code ${className || ''}`.trim()} {...props}>{children}</code>
-                    ) : (
-                      <code className={`jai-md-code ${className || ''}`.trim()} {...props}>{children}</code>
-                    )
-                  ),
-                  pre: ({ children }) => <pre className="jai-md-pre">{children}</pre>,
-                  a: ({ children, ...props }) => <a {...props} target="_blank" rel="noreferrer">{children}</a>,
-                }}
-              >
-                {text}
-              </ReactMarkdown>
-            </div>
-          )
+          <span className="jai-msg-text">{text}</span>
         ) : isStreaming ? (
           <span className="jai-msg-typing">
             <span /><span /><span />
