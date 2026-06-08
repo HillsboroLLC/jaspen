@@ -535,17 +535,100 @@ def _mark_user_email_verified(user):
 def _send_email_verification_email(user, url_root=None):
     token = _build_email_verification_token(user)
     verification_link = _email_verification_link(token, url_root=url_root)
+    ttl_hours = _email_verification_ttl_seconds() // 3600
     msg = Message(
-        subject='Verify your email for Jaspen',
+        subject='Verify Your Email - Jaspen',
         recipients=[user.email],
     )
     msg.body = (
-        "You're almost in.\n\n"
-        "Verify your email to finish setting up your Jaspen account:\n"
+        "Welcome to Jaspen\n\n"
+        "Thanks for creating an account. Please verify your email address to "
+        "activate your workspace and start evaluating, prioritizing, and "
+        "executing with confidence.\n\n"
+        "Why are you seeing this?\n"
+        "We sent this email to confirm that this email address belongs to you. "
+        "If you didn't create a Jaspen account, you can safely ignore this message.\n\n"
+        "Verify Email:\n"
         f"{verification_link}\n\n"
-        f"This link expires in {_email_verification_ttl_seconds() // 3600} hours.\n"
-        "If you did not request this, you can ignore this email."
+        f"This link expires in {ttl_hours} hours. If it expires, you can request "
+        "a new verification email from the sign-up page.\n\n"
+        "Questions? We're here to help.\n"
+        "Contact Support: hello@jaspen.ai\n"
+        "Visit Jaspen: https://www.jaspen.ai\n\n"
+        "Jaspen\n"
+        "Privacy Policy: https://www.jaspen.ai/pages/privacy\n"
+        "Terms of Service: https://www.jaspen.ai/pages/terms"
     )
+    msg.html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Verify Your Email - Jaspen</title>
+  <style>
+    body {{ margin: 0; padding: 0; background-color: #f8fafc; font-family: Inter, Arial, sans-serif; -webkit-font-smoothing: antialiased; }}
+    .email-container {{ max-width: 600px; margin: 40px auto; background: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 25px -5px rgba(22, 31, 59, 0.1), 0 8px 10px -6px rgba(22, 31, 59, 0.1); border: 1px solid #e2e8f0; }}
+    .header {{ background: #ffffff; padding: 32px 40px; border-bottom: 1px solid #f1f5f9; }}
+    .logo {{ font-size: 24px; font-weight: 700; color: #161f3b; letter-spacing: -0.02em; }}
+    .content {{ padding: 40px; color: #161f3b; line-height: 1.6; }}
+    .headline {{ font-size: 28px; font-weight: 700; color: #161f3b; line-height: 1.2; margin: 0 0 16px; letter-spacing: -0.02em; }}
+    .subheadline {{ font-size: 16px; color: #475569; margin: 0 0 32px; }}
+    .body-text {{ font-size: 16px; color: #475569; margin: 0 0 24px; }}
+    .highlight-box {{ background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 24px; margin-bottom: 32px; }}
+    .highlight-box p {{ margin: 0; font-size: 15px; color: #475569; }}
+    .cta-section {{ text-align: center; margin-bottom: 32px; }}
+    .btn {{ display: inline-block; background: #161f3b; color: #ffffff !important; padding: 14px 32px; border-radius: 9999px; text-decoration: none; font-weight: 600; font-size: 15px; }}
+    .fallback-section {{ background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; margin-bottom: 32px; }}
+    .fallback-label {{ font-size: 12px; font-weight: 700; color: #64748b; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 12px; display: block; }}
+    .fallback-link {{ word-break: break-all; font-size: 13px; color: #a0036c; font-family: "Courier New", monospace; font-weight: 500; }}
+    .footer {{ padding: 32px 40px; background: #f8fafc; border-top: 1px solid #e2e8f0; font-size: 12px; color: #94a3b8; line-height: 1.8; }}
+    .footer a {{ color: #a0036c; text-decoration: none; font-weight: 500; }}
+    .footer-divider {{ margin: 16px 0; }}
+    .support-text {{ margin: 0; }}
+  </style>
+</head>
+<body>
+  <div class="email-container">
+    <div class="header">
+      <div class="logo">Jaspen</div>
+    </div>
+    <div class="content">
+      <h1 class="headline">Welcome to Jaspen</h1>
+      <p class="subheadline">Let's activate your workspace.</p>
+      <p class="body-text">
+        Thanks for creating an account. Please verify your email address to activate your workspace and start evaluating, prioritizing, and executing with confidence.
+      </p>
+      <div class="highlight-box">
+        <p>
+          <strong>Why are you seeing this?</strong><br>
+          We sent this email to confirm that this email address belongs to you. If you didn't create a Jaspen account, you can safely ignore this message.
+        </p>
+      </div>
+      <div class="cta-section">
+        <a href="{verification_link}" class="btn">Verify Email</a>
+      </div>
+      <div class="fallback-section">
+        <span class="fallback-label">Or copy and paste this link:</span>
+        <div class="fallback-link">{verification_link}</div>
+      </div>
+      <p class="body-text" style="font-size: 14px; color: #64748b;">
+        This link will expire in {ttl_hours} hours. If it expires, you can request a new verification email from the sign-up page.
+      </p>
+    </div>
+    <div class="footer">
+      <p class="support-text">
+        <strong>Questions?</strong> We're here to help.<br>
+        <a href="mailto:hello@jaspen.ai">Contact Support</a> &middot; <a href="https://www.jaspen.ai">Visit Jaspen</a>
+      </p>
+      <div class="footer-divider"></div>
+      <p class="support-text">
+        &copy; 2026 Jaspen. All rights reserved.<br>
+        <a href="https://www.jaspen.ai/pages/privacy">Privacy Policy</a> &middot; <a href="https://www.jaspen.ai/pages/terms">Terms of Service</a>
+      </p>
+    </div>
+  </div>
+</body>
+</html>"""
     mail.send(msg)
     user.email_verification_sent_at = datetime.utcnow()
 

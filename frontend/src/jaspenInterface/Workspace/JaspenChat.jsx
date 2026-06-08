@@ -3731,6 +3731,10 @@ useEffect(() => {
   const [billingMessage, setBillingMessage] = useState('');
   const [billingActionLoading, setBillingActionLoading] = useState('');
   const [billingModalOpen, setBillingModalOpen] = useState(false);
+  const [dailyUsageStatus, setDailyUsageStatus] = useState(null);
+  const [freeTierWelcomeHidden, setFreeTierWelcomeHidden] = useState(
+    Boolean(user?.ui_preferences?.free_tier_welcome_dismissed)
+  );
   const [mfaRolloutBannerDismissed, setMfaRolloutBannerDismissed] = useState(false);
   const [lowCreditsBannerDismissed, setLowCreditsBannerDismissed] = useState(false);
   const [batchIdeasOpen, setBatchIdeasOpen] = useState(false);
@@ -3790,6 +3794,9 @@ useEffect(() => {
   const plans = billingCatalog?.plans || {};
   const modelTypes = useMemo(() => billingCatalog?.model_types || {}, [billingCatalog]);
   const currentPlanKey = String(billingStatus?.plan_key || 'free').toLowerCase();
+  useEffect(() => {
+    setFreeTierWelcomeHidden(Boolean(user?.ui_preferences?.free_tier_welcome_dismissed));
+  }, [user?.ui_preferences?.free_tier_welcome_dismissed]);
   const effectivePlanKey = adminWorkspacePreviewPlan || highestPlanKey(
     currentPlanKey,
     user?.active_organization_plan_key,
@@ -4139,6 +4146,33 @@ useEffect(() => {
     }
     setLowCreditsBannerDismissed(true);
   }, [lowCreditsDismissStorageKey]);
+  const freeDailyUsageApplies = (
+    currentPlanKey === 'free'
+    && String(dailyUsageStatus?.plan_key || 'free').toLowerCase() === 'free'
+  );
+  const dailyUsageRemaining = Number(dailyUsageStatus?.daily_remaining);
+  const freeDailyExhausted = Boolean(
+    freeDailyUsageApplies
+    && Number.isFinite(dailyUsageRemaining)
+    && dailyUsageRemaining <= 0
+  );
+  const freeDailyWarning = Boolean(
+    freeDailyUsageApplies
+    && Number.isFinite(dailyUsageRemaining)
+    && dailyUsageRemaining > 0
+    && dailyUsageRemaining <= 3
+  );
+  const showFreeTierWelcome = Boolean(
+    currentPlanKey === 'free'
+    && !billingLoading
+    && user
+    && !freeTierWelcomeHidden
+  );
+  const dismissFreeTierWelcome = useCallback(async () => {
+    setFreeTierWelcomeHidden(true);
+    if (typeof updateUiPreferences !== 'function') return;
+    await updateUiPreferences({ free_tier_welcome_dismissed: true });
+  }, [updateUiPreferences]);
   useEffect(() => {
     if (planCategory === 'individual' || !user) {
       setSharedProjects([]);
@@ -4546,6 +4580,38 @@ useEffect(() => {
     loadBilling();
   }, [loadBilling, user?.id, user?.email]);
 
+  const loadDailyUsageStatus = useCallback(async () => {
+    if (adminWorkspacePreviewPlan || !user || billingLoading) {
+      setDailyUsageStatus(null);
+      return;
+    }
+    if (currentPlanKey !== 'free') {
+      setDailyUsageStatus(null);
+      return;
+    }
+    try {
+      const res = await authFetch(`${API_BASE}/api/v1/ai-agent/usage/daily`, {
+        headers: buildAuthHeaders({}, 'GET'),
+        credentials: 'include',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (res.status === 401) {
+          await handleUnauthorized();
+        }
+        throw new Error(data?.error || data?.message || 'Unable to load usage status.');
+      }
+      setDailyUsageStatus(data || null);
+    } catch (error) {
+      devWarn('[loadDailyUsageStatus] failed', error);
+      setDailyUsageStatus(null);
+    }
+  }, [adminWorkspacePreviewPlan, authFetch, billingLoading, currentPlanKey, handleUnauthorized, user]);
+
+  useEffect(() => {
+    void loadDailyUsageStatus();
+  }, [loadDailyUsageStatus, user?.id, user?.email]);
+
   const syncCreditsFromPayload = useCallback((payload, { refresh = false } = {}) => {
     if (adminWorkspacePreviewPlan) return;
     const remainingCandidates = [
@@ -4612,8 +4678,9 @@ useEffect(() => {
 
     if (refresh) {
       void loadBilling();
+      void loadDailyUsageStatus();
     }
-  }, [adminWorkspacePreviewPlan, loadBilling, showToast, warningHiddenWS, user?.ui_preferences?.hide_thinking_power_warning]);
+  }, [adminWorkspacePreviewPlan, loadBilling, loadDailyUsageStatus, showToast, warningHiddenWS, user?.ui_preferences?.hide_thinking_power_warning]);
 
   useEffect(() => {
     if (!canUseScenarios && activeTab === 'scenario') {
@@ -9039,6 +9106,10 @@ const handleSaveStarter = async () => {
       showToast('Viewers can review shared projects but cannot edit them.', 'info');
       return;
     }
+    if (freeDailyExhausted) {
+      showToast("You've reached your daily limit. Resets at midnight UTC.", 'warning');
+      return;
+    }
     const optionFiles = Array.isArray(options?.files) ? options.files : null;
     const selectedFiles = optionFiles ? [...optionFiles] : [...(pendingFiles || [])];
     if (!text && selectedFiles.length === 0) return;
@@ -12353,6 +12424,37 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                 </div>
               </div>
             )}
+            {showFreeTierWelcome && (
+              <div className="jas-low-credits-banner is-info jas-free-tier-welcome" role="status" aria-live="polite">
+                <div className="jas-low-credits-banner-copy">
+                  <p className="jas-low-credits-banner-title">Welcome to Jaspen — here's what you get on the free plan</p>
+                  <ul className="jas-free-tier-list">
+                    <li>10 AI-powered analyses per day (5 per hour)</li>
+                    <li>1,000,000 thinking credits per month</li>
+                    <li>Resets monthly on your signup anniversary</li>
+                  </ul>
+                  <p>
+                    Scenarios and execution plans (WBS) require an upgrade.{' '}
+                    <button
+                      type="button"
+                      className="jas-low-credits-banner-link"
+                      onClick={() => navigate('/account?tab=billing')}
+                    >
+                      View plans →
+                    </button>
+                  </p>
+                </div>
+                <div className="jas-low-credits-banner-actions">
+                  <button
+                    type="button"
+                    className="jas-low-credits-banner-link"
+                    onClick={dismissFreeTierWelcome}
+                  >
+                    Got it
+                  </button>
+                </div>
+              </div>
+            )}
             {effectiveIsViewer && sessionId && (
               <div className="jas-viewer-badge">
                 <FontAwesomeIcon icon={faLock} />
@@ -13808,6 +13910,19 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
             </div>
           ) : null}
 
+          {(freeDailyWarning || freeDailyExhausted) && (
+            <div className={`jas-free-daily-notice ${freeDailyExhausted ? 'is-exhausted' : 'is-warning'}`} role="status" aria-live="polite">
+              {freeDailyExhausted ? (
+                <>
+                  <span>You've reached your daily limit. Resets at midnight UTC.</span>
+                  <button type="button" onClick={() => navigate('/account?tab=billing')}>View plans</button>
+                </>
+              ) : (
+                <span>You're approaching your daily limit.</span>
+              )}
+            </div>
+          )}
+
           <div className="jas-chat-input-box">
             <textarea
               ref={intakeInputRef}
@@ -13862,8 +13977,8 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                   <button
                     className="jas-ci-btn send"
                     onClick={onSubmit}
-                    disabled={effectiveIsViewer || (!input.trim() && pendingFiles.length === 0)}
-                    aria-disabled={effectiveIsViewer || (!input.trim() && pendingFiles.length === 0)}
+                    disabled={effectiveIsViewer || freeDailyExhausted || (!input.trim() && pendingFiles.length === 0)}
+                    aria-disabled={effectiveIsViewer || freeDailyExhausted || (!input.trim() && pendingFiles.length === 0)}
                     title="Send"
                   >
                     <FontAwesomeIcon icon={faArrowUp} />

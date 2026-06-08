@@ -1,7 +1,8 @@
 from flask import Blueprint, request, jsonify, current_app, Response, stream_with_context, send_file
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from flask_mail import Message
-from datetime import datetime
+from datetime import datetime, timedelta
+from limits import RateLimitItemPerDay, RateLimitItemPerHour
 import base64
 import copy
 import io
@@ -75,6 +76,12 @@ _PLAN_DAILY_LIMITS = {
     'enterprise': '500 per day',
 }
 
+_AI_USAGE_LIMIT_ENDPOINTS = (
+    'conversation_start',
+    'conversation_continue',
+    'conversation_regenerate',
+)
+
 def _plan_hourly_limit():
     """Dynamic rate-limit string based on the current user's plan."""
     try:
@@ -95,6 +102,43 @@ def _plan_daily_limit():
     except Exception:
         return _PLAN_DAILY_LIMITS['free']
 
+
+def _limit_count(limit_string, default=0):
+    match = re.match(r'\s*(\d+)\s+per\s+', str(limit_string or ''), flags=re.I)
+    return int(match.group(1)) if match else default
+
+
+def _next_utc_midnight_epoch():
+    now = datetime.utcnow()
+    tomorrow = datetime(now.year, now.month, now.day) + timedelta(days=1)
+    return int(tomorrow.timestamp())
+
+
+def _rate_limit_usage_count(rate_key, limit_item, endpoint_names):
+    """Read Flask-Limiter's storage counters for the AI conversation routes."""
+    try:
+        storage = limiter.limiter.storage
+    except Exception:
+        return 0, None
+
+    total = 0
+    latest_expiry = None
+    for endpoint in endpoint_names:
+        endpoint_count = 0
+        for scope in (endpoint, f'ai_agent.{endpoint}'):
+            try:
+                key = limit_item.key_for(rate_key, scope)
+                count = int(storage.get(key) or 0)
+                endpoint_count = max(endpoint_count, count)
+                if count:
+                    expiry = storage.get_expiry(key)
+                    if expiry:
+                        latest_expiry = max(latest_expiry or 0, float(expiry))
+            except Exception:
+                continue
+        total += endpoint_count
+    return total, latest_expiry
+
 # ─────────────────────────────────────────────────────────────────────────────
 
 from .sessions import (
@@ -111,6 +155,44 @@ from app.idea_ledger import (
 
 ai_agent_bp = Blueprint('ai_agent', __name__)
 PENDING_MUTATION_UNDO_KEY = "pending_mutation_undo"
+
+
+@ai_agent_bp.route("/usage/daily", methods=["GET"])
+@jwt_required()
+def ai_usage_daily_status():
+    """Expose current AI request limiter usage for lightweight free-plan UI."""
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id) if user_id else None
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    plan_key = to_public_plan(effective_plan_key(user))
+    daily_limit = _limit_count(_plan_daily_limit(), default=_limit_count(_PLAN_DAILY_LIMITS['free']))
+    hourly_limit = _limit_count(_plan_hourly_limit(), default=_limit_count(_PLAN_HOURLY_LIMITS['free']))
+    rate_key = f"user:{user_id}"
+
+    daily_used, daily_expiry = _rate_limit_usage_count(
+        rate_key,
+        RateLimitItemPerDay(daily_limit),
+        _AI_USAGE_LIMIT_ENDPOINTS,
+    )
+    hourly_used, _hourly_expiry = _rate_limit_usage_count(
+        rate_key,
+        RateLimitItemPerHour(hourly_limit),
+        _AI_USAGE_LIMIT_ENDPOINTS,
+    )
+    reset_epoch = daily_expiry or _next_utc_midnight_epoch()
+
+    return jsonify({
+        "plan_key": plan_key,
+        "daily_limit": daily_limit,
+        "daily_used": min(daily_used, daily_limit),
+        "daily_remaining": max(0, daily_limit - daily_used),
+        "hourly_limit": hourly_limit,
+        "hourly_used": min(hourly_used, hourly_limit),
+        "hourly_remaining": max(0, hourly_limit - hourly_used),
+        "resets_at_utc": datetime.utcfromtimestamp(reset_epoch).isoformat(timespec='seconds') + 'Z',
+    })
 
 
 def _audit_ai_agent_event(action, *, user=None, target_user_id=None, target_email=None, details=None):
