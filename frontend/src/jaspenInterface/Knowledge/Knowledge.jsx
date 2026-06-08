@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import './Knowledge.css';
 import AppMenu from '../shared/AppMenu';
 import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
@@ -466,6 +466,7 @@ export default function Knowledge() {
   ]);
   const [assistantBusy, setAssistantBusy] = useState(false);
   const [assistantSessionId, setAssistantSessionId] = useState(null);
+  const assistantAbortRef = useRef(null);
 
   const normalizedQuery = query.trim().toLowerCase();
 
@@ -535,6 +536,8 @@ export default function Knowledge() {
     ]);
     setAssistantInput('');
     setAssistantBusy(true);
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    assistantAbortRef.current = controller;
     let replyText = '';
     const view_context = {
       current_view: 'knowledge',
@@ -547,6 +550,7 @@ export default function Knowledge() {
     try {
       const streamArgs = {
         view_context,
+        abortSignal: controller?.signal,
         onDelta: (delta) => {
           replyText += delta || '';
           setAssistantMessages((prev) => prev.map((msg, idx) => (
@@ -575,14 +579,40 @@ export default function Knowledge() {
         if (nextSessionId) setAssistantSessionId(nextSessionId);
       }
     } catch (error) {
+      if (error?.name === 'AbortError' || controller?.signal?.aborted) {
+        setAssistantMessages((prev) => prev.map((msg, idx) => (
+          idx === assistantIndex ? { ...msg, text: 'Stopped.', streaming: false } : msg
+        )));
+        return;
+      }
       setAssistantMessages((prev) => prev.map((msg, idx) => (
         idx === assistantIndex
           ? { ...msg, text: error?.message || 'Something went wrong. Please try again.', streaming: false, error: true }
           : msg
       )));
     } finally {
+      if (assistantAbortRef.current === controller) {
+        assistantAbortRef.current = null;
+      }
       setAssistantBusy(false);
     }
+  };
+
+  const stopAssistant = () => {
+    try {
+      assistantAbortRef.current?.abort();
+    } catch (_) { /* no-op */ }
+    assistantAbortRef.current = null;
+    setAssistantBusy(false);
+    setAssistantMessages((prev) => {
+      if (!Array.isArray(prev) || prev.length === 0) return prev;
+      const next = prev.slice();
+      const last = next[next.length - 1];
+      if (last?.streaming) {
+        next[next.length - 1] = { ...last, text: String(last.text || '').trim() || 'Stopped.', streaming: false };
+      }
+      return next;
+    });
   };
 
   return (
@@ -734,6 +764,7 @@ export default function Knowledge() {
         input={assistantInput}
         onInputChange={setAssistantInput}
         onSend={sendAssistant}
+        onStop={stopAssistant}
         busy={assistantBusy}
         starterPrompts={[
           'How do I go from scorecard to execution?',

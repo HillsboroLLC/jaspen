@@ -235,6 +235,7 @@ export default function JaspenWorkspace() {
   const chatScrollRef = useRef(null);
   // Auto-grow the workspace composer as the user types (and reset after send).
   const chatComposerRef = useRef(null);
+  const chatAbortRef = useRef(null);
   useEffect(() => {
     const el = chatComposerRef.current;
     if (el) { el.style.height = 'auto'; el.style.height = `${Math.min(el.scrollHeight, 140)}px`; }
@@ -318,7 +319,7 @@ export default function JaspenWorkspace() {
   // straight to the execution canvas). `nextHistory` is the conversation up to
   // and including the user's affirmative; we replace the trailing pending
   // placeholder with the result card.
-  async function buildExecutionPlanFromChat(nextHistory) {
+  async function buildExecutionPlanFromChat(nextHistory, abortSignal = null) {
     // Pick a seed: on a scorecard, this card's scorecard; on the trade-off
     // surface, the top-scoring idea (and name it so the user knows which).
     let seed = {};
@@ -347,15 +348,14 @@ export default function JaspenWorkspace() {
     });
 
     try {
-      const resp = await Jaspen.generateAiWbs(threadId, { ...seed, commit: true });
+      const resp = await Jaspen.generateAiWbs(threadId, { ...seed, commit: true }, { abortSignal });
       if (resp?.plan_exists) {
-        setChatHistory((prev) => {
-          const arr = prev.slice(0, -1);
-          return [...arr, {
-            role: 'ai',
-            text: `**${resp.scorecard_name || seedLabel}** already has an execution plan (${Number(resp.task_count || 0)} task${Number(resp.task_count || 0) === 1 ? '' : 's'}). Open the current plan, or generate a new one?`,
-          }];
-        });
+        const planExistsHistory = [...nextHistory, {
+          role: 'ai',
+          text: `**${resp.scorecard_name || seedLabel}** already has an execution plan (${Number(resp.task_count || 0)} task${Number(resp.task_count || 0) === 1 ? '' : 's'}). Open the current plan, or generate a new one?`,
+        }];
+        setChatHistory(planExistsHistory);
+        _writeWorkspaceChat(chatKey, planExistsHistory);
         setPlanExistsPrompt({
           scorecardId: resp.scorecard_id || seed.scorecard_id || null,
           scorecardName: resp.scorecard_name || seedLabel,
@@ -366,15 +366,23 @@ export default function JaspenWorkspace() {
               const forced = await Jaspen.generateAiWbs(threadId, { ...seed, commit: true, force: true });
               const fWbs = forced?.project_wbs || forced?.wbs || forced || {};
               const fTasks = Array.isArray(fWbs?.tasks) ? fWbs.tasks : [];
-              setChatHistory((prev) => [...prev, {
-                role: 'ai',
-                text: fTasks.length
-                  ? `Here's a fresh execution plan for **${seedLabel}** — ${fTasks.length} task${fTasks.length === 1 ? '' : 's'}.`
-                  : `I generated a new execution plan for **${seedLabel}**.`,
-                execPlan: { label: seedLabel, tasks: fTasks.slice(0, 6), total: fTasks.length, scorecardId: seed.scorecard_id || null },
-              }]);
+              setChatHistory((prev) => {
+                const updated = [...prev, {
+                  role: 'ai',
+                  text: fTasks.length
+                    ? `Here's a fresh execution plan for **${seedLabel}** — ${fTasks.length} task${fTasks.length === 1 ? '' : 's'}.`
+                    : `I generated a new execution plan for **${seedLabel}**.`,
+                  execPlan: { label: seedLabel, tasks: fTasks.slice(0, 6), total: fTasks.length, scorecardId: seed.scorecard_id || null },
+                }];
+                _writeWorkspaceChat(chatKey, updated);
+                return updated;
+              });
             } catch (e) {
-              setChatHistory((prev) => [...prev, { role: 'ai', text: `I couldn't regenerate the plan: ${String(e?.message || e || 'unknown error')}.` }]);
+              setChatHistory((prev) => {
+                const updated = [...prev, { role: 'ai', text: `I couldn't regenerate the plan: ${String(e?.message || e || 'unknown error')}.` }];
+                _writeWorkspaceChat(chatKey, updated);
+                return updated;
+              });
             } finally {
               setChatBusy(false);
             }
@@ -384,24 +392,24 @@ export default function JaspenWorkspace() {
       }
       const planWbs = resp?.project_wbs || resp?.wbs || resp || {};
       const tasks = Array.isArray(planWbs?.tasks) ? planWbs.tasks : [];
-      setChatHistory((prev) => {
-        const arr = prev.slice(0, -1);
-        return [...arr, {
-          role: 'ai',
-          text: tasks.length
-            ? `Here's a draft execution plan for **${seedLabel}** — ${tasks.length} task${tasks.length === 1 ? '' : 's'} across the key workstreams. Open it in the workspace to edit, reassign, and track.`
-            : `I generated an execution plan for **${seedLabel}**. Open it in the workspace to review.`,
-          execPlan: { label: seedLabel, tasks: tasks.slice(0, 6), total: tasks.length, scorecardId: seed.scorecard_id || null },
-        }];
-      });
+      const generatedHistory = [...nextHistory, {
+        role: 'ai',
+        text: tasks.length
+          ? `Here's a draft execution plan for **${seedLabel}** — ${tasks.length} task${tasks.length === 1 ? '' : 's'} across the key workstreams. Open it in the workspace to edit, reassign, and track.`
+          : `I generated an execution plan for **${seedLabel}**. Open it in the workspace to review.`,
+        execPlan: { label: seedLabel, tasks: tasks.slice(0, 6), total: tasks.length, scorecardId: seed.scorecard_id || null },
+      }];
+      setChatHistory(generatedHistory);
+      _writeWorkspaceChat(chatKey, generatedHistory);
     } catch (err) {
-      setChatHistory((prev) => {
-        const arr = prev.slice(0, -1);
-        return [...arr, {
-          role: 'ai',
-          text: `I couldn't build the execution plan: ${String(err?.message || err || 'unknown error')}. Want me to try again?`,
-        }];
-      });
+      const failedHistory = [...nextHistory, {
+        role: 'ai',
+        text: abortSignal?.aborted
+          ? 'Stopped.'
+          : `I couldn't build the execution plan: ${String(err?.message || err || 'unknown error')}. Want me to try again?`,
+      }];
+      setChatHistory(failedHistory);
+      _writeWorkspaceChat(chatKey, failedHistory);
     } finally {
       setChatBusy(false);
     }
@@ -594,6 +602,27 @@ export default function JaspenWorkspace() {
     });
     return () => cancelAnimationFrame(id);
   }, [chatHistory]);
+
+  const stopWorkspaceChat = useCallback(() => {
+    try {
+      chatAbortRef.current?.abort();
+    } catch (_) { /* no-op */ }
+    chatAbortRef.current = null;
+    setChatBusy(false);
+    setChatHistory((prev) => {
+      if (!Array.isArray(prev) || prev.length === 0) return prev;
+      const next = prev.slice();
+      const last = next[next.length - 1];
+      if (last?.pending) {
+        next[next.length - 1] = {
+          ...last,
+          text: String(last.text || '').trim() || 'Stopped.',
+          pending: false,
+        };
+      }
+      return next;
+    });
+  }, []);
 
   // Force-save: flush the pending override save immediately (the "Save" button).
   // Some users want the reassurance of an explicit save even though edits auto-save.
@@ -844,6 +873,8 @@ export default function JaspenWorkspace() {
     setChatHistory([...nextHistory, { role: 'ai', text: '…', pending: true }]);
     setChatInput('');
     setChatBusy(true);
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    chatAbortRef.current = controller;
 
     // Chat-driven execution-plan creation. On a scorecard or trade-off surface,
     // if the user asks for an execution plan (or says "yes" right after Jaspen
@@ -852,7 +883,10 @@ export default function JaspenWorkspace() {
     if (!isExecution) {
       const lastAi = [...chatHistory].reverse().find((m) => m.role === 'ai' && !m.pending);
       if (_detectExecPlanIntent(text, lastAi?.text)) {
-        await buildExecutionPlanFromChat(nextHistory);
+        await buildExecutionPlanFromChat(nextHistory, controller?.signal);
+        if (chatAbortRef.current === controller) {
+          chatAbortRef.current = null;
+        }
         return;
       }
     }
@@ -962,14 +996,13 @@ export default function JaspenWorkspace() {
         analysis_context: ctx,
         view_context: viewContext,
         analysis_id: threadId,
+        abortSignal: controller?.signal,
       });
       const replyText = String(resp?.text || resp?.response || resp?.reply || '').trim()
         || 'Got it — I noted that. (No reply payload was returned.)';
-      setChatHistory((prev) => {
-        // Replace the trailing pending placeholder
-        const arr = prev.slice(0, -1);
-        return [...arr, { role: 'ai', text: replyText }];
-      });
+      const finalHistory = [...nextHistory, { role: 'ai', text: replyText }];
+      setChatHistory(finalHistory);
+      _writeWorkspaceChat(chatKey, finalHistory);
 
       // If the agent mutated anything, reflect it on EVERY surface without a
       // manual reload. The open card snapshot updates inline below (fast path),
@@ -1052,15 +1085,23 @@ export default function JaspenWorkspace() {
         }
       }
     } catch (e) {
+      if (e?.name === 'AbortError' || controller?.signal?.aborted) {
+        const stoppedHistory = [...nextHistory, { role: 'ai', text: 'Stopped.' }];
+        setChatHistory(stoppedHistory);
+        _writeWorkspaceChat(chatKey, stoppedHistory);
+        return;
+      }
       console.error('[workspace chat] failed:', e);
-      setChatHistory((prev) => {
-        const arr = prev.slice(0, -1);
-        return [
-          ...arr,
-          { role: 'ai', text: `Jaspen couldn't reply: ${String(e?.message || e || 'unknown error')}. Try again in a moment.` },
-        ];
-      });
+      const errorHistory = [
+        ...nextHistory,
+        { role: 'ai', text: `Jaspen couldn't reply: ${String(e?.message || e || 'unknown error')}. Try again in a moment.` },
+      ];
+      setChatHistory(errorHistory);
+      _writeWorkspaceChat(chatKey, errorHistory);
     } finally {
+      if (chatAbortRef.current === controller) {
+        chatAbortRef.current = null;
+      }
       setChatBusy(false);
     }
   }
@@ -1310,19 +1351,35 @@ export default function JaspenWorkspace() {
               disabled={chatBusy}
               style={{ flex:1, border:'none', outline:'none', background:'transparent', fontSize:13, color:'#0f172a', resize:'none', maxHeight:140, overflowY:'auto', lineHeight:1.45, fontFamily:'inherit', padding:0 }}
             />
-            <button
-              onClick={sendChat}
-              disabled={!chatInput.trim() || chatBusy}
-              style={{
-                width:30, height:30, borderRadius:8, border:'none',
-                background: (chatInput.trim() && !chatBusy) ? '#0f172a' : '#cbd5e1',
-                color:'#fff', cursor: (chatInput.trim() && !chatBusy) ? 'pointer' : 'not-allowed',
-                display:'flex', alignItems:'center', justifyContent:'center',
-              }}
-              aria-label="Send"
-            >
-              <FontAwesomeIcon icon={faPaperPlane} style={{ fontSize:11 }} />
-            </button>
+            {chatBusy ? (
+              <button
+                type="button"
+                onClick={stopWorkspaceChat}
+                style={{
+                  width:30, height:30, borderRadius:8, border:'none',
+                  background:'#a0036c', color:'#fff', cursor:'pointer',
+                  display:'flex', alignItems:'center', justifyContent:'center',
+                }}
+                aria-label="Stop the in-flight reply"
+                title="Stop"
+              >
+                <span style={{ width:12, height:12, background:'#fff', borderRadius:2, display:'inline-block' }} />
+              </button>
+            ) : (
+              <button
+                onClick={sendChat}
+                disabled={!chatInput.trim()}
+                style={{
+                  width:30, height:30, borderRadius:8, border:'none',
+                  background: chatInput.trim() ? '#0f172a' : '#cbd5e1',
+                  color:'#fff', cursor: chatInput.trim() ? 'pointer' : 'not-allowed',
+                  display:'flex', alignItems:'center', justifyContent:'center',
+                }}
+                aria-label="Send"
+              >
+                <FontAwesomeIcon icon={faPaperPlane} style={{ fontSize:11 }} />
+              </button>
+            )}
           </div>
         </div>
       </aside>
@@ -1341,10 +1398,10 @@ export default function JaspenWorkspace() {
           width: 20,
           height: 48,
           borderRadius: sidebarOpen ? '0 6px 6px 0' : '0 6px 6px 0',
-          border: '1px solid #e6eaf2',
-          borderLeft: sidebarOpen ? 'none' : '1px solid #e6eaf2',
-          background: '#fff',
-          color: '#64748b',
+          border: `1px solid ${sidebarOpen ? '#e6eaf2' : '#0f172a'}`,
+          borderLeft: sidebarOpen ? 'none' : '1px solid #0f172a',
+          background: sidebarOpen ? '#fff' : '#0f172a',
+          color: sidebarOpen ? '#64748b' : '#fff',
           cursor: 'pointer',
           display: 'flex',
           alignItems: 'center',
@@ -1352,6 +1409,7 @@ export default function JaspenWorkspace() {
           fontSize: 10,
           transition: 'left 0.25s ease',
           padding: 0,
+          boxShadow: sidebarOpen ? 'none' : '0 8px 18px rgba(15, 23, 42, 0.2)',
         }}
         aria-label={sidebarOpen ? 'Collapse chat panel' : 'Expand chat panel'}
       >

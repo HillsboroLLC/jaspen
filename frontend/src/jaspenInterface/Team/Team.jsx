@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import BackToJaspen from '../../shared/components/BackToJaspen';
 import { API_BASE } from '../../config/apiBase';
@@ -173,6 +173,7 @@ export default function Team({ mode = 'team' }) {
   ]);
   const [assistantBusy, setAssistantBusy] = useState(false);
   const [assistantSessionId, setAssistantSessionId] = useState(null);
+  const assistantAbortRef = useRef(null);
 
   const isEnterpriseMode = String(mode || '').toLowerCase() === 'enterprise';
   const routePlanForCopy = isEnterpriseMode ? 'enterprise' : 'team';
@@ -339,6 +340,8 @@ export default function Team({ mode = 'team' }) {
     ]));
     setAssistantInput('');
     setAssistantBusy(true);
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    assistantAbortRef.current = controller;
     let replyText = '';
     const view_context = {
       current_view: 'team',
@@ -356,6 +359,7 @@ export default function Team({ mode = 'team' }) {
     try {
       const streamArgs = {
         view_context,
+        abortSignal: controller?.signal,
         onDelta: (delta) => {
           replyText += delta || '';
           setAssistantMessages((prev) => prev.map((msg, idx) => (
@@ -384,15 +388,41 @@ export default function Team({ mode = 'team' }) {
         if (nextSessionId) setAssistantSessionId(nextSessionId);
       }
     } catch (error) {
+      if (error?.name === 'AbortError' || controller?.signal?.aborted) {
+        setAssistantMessages((prev) => prev.map((msg, idx) => (
+          idx === assistantIndex ? { ...msg, text: 'Stopped.', streaming: false } : msg
+        )));
+        return;
+      }
       setAssistantMessages((prev) => prev.map((msg, idx) => (
         idx === assistantIndex
           ? { ...msg, text: error?.message || 'Something went wrong. Please try again.', streaming: false, error: true }
           : msg
       )));
     } finally {
+      if (assistantAbortRef.current === controller) {
+        assistantAbortRef.current = null;
+      }
       setAssistantBusy(false);
     }
   }, [assistantAdminSeatsUsed, assistantBusy, assistantInput, assistantMessages.length, assistantPaidSeatsLimit, assistantPaidSeatsUsed, assistantSessionId, assistantViewerSeatsUsed, members.length, projects.length, seatDraftDirty, teamLabel]);
+
+  const stopAssistant = useCallback(() => {
+    try {
+      assistantAbortRef.current?.abort();
+    } catch (_) { /* no-op */ }
+    assistantAbortRef.current = null;
+    setAssistantBusy(false);
+    setAssistantMessages((prev) => {
+      if (!Array.isArray(prev) || prev.length === 0) return prev;
+      const next = prev.slice();
+      const last = next[next.length - 1];
+      if (last?.streaming) {
+        next[next.length - 1] = { ...last, text: String(last.text || '').trim() || 'Stopped.', streaming: false };
+      }
+      return next;
+    });
+  }, []);
 
   const onSwitchOrganization = async (orgId) => {
     if (!orgId) return;
@@ -743,6 +773,7 @@ export default function Team({ mode = 'team' }) {
           input={assistantInput}
           onInputChange={setAssistantInput}
           onSend={sendAssistant}
+          onStop={stopAssistant}
           busy={assistantBusy}
           starterPrompts={[
             'Who should have admin access?',
@@ -1366,6 +1397,7 @@ export default function Team({ mode = 'team' }) {
         input={assistantInput}
         onInputChange={setAssistantInput}
         onSend={sendAssistant}
+        onStop={stopAssistant}
         busy={assistantBusy}
         starterPrompts={[
           'Who should have admin access?',

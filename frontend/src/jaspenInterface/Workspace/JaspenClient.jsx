@@ -254,8 +254,8 @@ async function _fetch(url, opts = {}) {
   throw lastError || new Error('Request failed');
 }
 
-async function postJSON(url, body, { withSid = false, sidOverride } = {}) {
-  return _fetch(url, { method: 'POST', body: JSON.stringify(body ?? {}), withSid, sidOverride });
+async function postJSON(url, body, { withSid = false, sidOverride, ...options } = {}) {
+  return _fetch(url, { method: 'POST', body: JSON.stringify(body ?? {}), withSid, sidOverride, ...options });
 }
 async function getJSON(url, { withSid = false, sidOverride } = {}) {
   return _fetch(url, { method: 'GET', withSid, sidOverride });
@@ -466,7 +466,7 @@ export const Jaspen = {
   },
 
   // ---------- Unified Chat ----------
-  async chat({ message, conversation_history, analysis_context, view_context, analysis_id }) {
+  async chat({ message, conversation_history, analysis_context, view_context, analysis_id, abortSignal = null }) {
     const data = await postJSON(
       endpoints.chat,
       {
@@ -488,7 +488,7 @@ export const Jaspen = {
       },
       // Use the thread's own ID as the session identifier so the backend finds
       // the right session rather than falling back to the localStorage SID.
-      analysis_id ? { sidOverride: analysis_id } : { withSid: true }
+      analysis_id ? { sidOverride: analysis_id, signal: abortSignal } : { withSid: true, signal: abortSignal }
     );
     return {
       text: data.response || data.reply || String(data),
@@ -602,6 +602,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
     onToolResult,
     onToolStatus,
     onDone,
+    abortSignal = null,
   }) {
     const url = `${endpoints.convoStart}?stream=true`;
     const pid = project_id || 'default-jas-project';
@@ -633,6 +634,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
       sid: getSid(),
       body,
       isForm: hasAttachments,
+      signal: abortSignal,
     });
 
     // A non-OK response here (e.g. 402 out of thinking power) is NOT an SSE stream —
@@ -1173,11 +1175,11 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
       { withSid: true }
     ),
 
-  generateAiWbs: async (threadId, scenarioIdOrPayload = null) => {
+  generateAiWbs: async (threadId, scenarioIdOrPayload = null, { abortSignal = null } = {}) => {
     const payload = (scenarioIdOrPayload && typeof scenarioIdOrPayload === 'object')
       ? scenarioIdOrPayload
       : { scenario_id: scenarioIdOrPayload || null };
-    return postJSON(endpoints.aiWbs(threadId), payload, { withSid: true });
+    return postJSON(endpoints.aiWbs(threadId), payload, { withSid: true, signal: abortSignal });
   },
 
   getThreadWbs: async (threadId, scorecardId = null) => {

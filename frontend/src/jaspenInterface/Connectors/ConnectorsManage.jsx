@@ -392,6 +392,7 @@ export default function ConnectorsManage() {
   const [jaspenError, setJaspenError] = useState('');
   const jaspenThreadRef = useRef(`connectors_${Math.random().toString(36).slice(2, 10)}`);
   const jaspenIsFirstRef = useRef(true);
+  const jaspenAbortRef = useRef(null);
 
   const adminPreviewPlan = useMemo(() => {
     if (!Boolean(user?.is_admin)) return '';
@@ -1027,6 +1028,8 @@ export default function ConnectorsManage() {
     setJaspenError('');
     openJaspen();
     setJaspenMessages((prev) => [...prev, { role: 'user', text }]);
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    jaspenAbortRef.current = controller;
     const threadId = jaspenThreadRef.current;
     const endpoint = jaspenIsFirstRef.current
       ? `${API_BASE}/api/v1/ai-agent/conversation/start`
@@ -1037,6 +1040,7 @@ export default function ConnectorsManage() {
         method: 'POST',
         credentials: 'include',
         headers: buildAuthHeaders({ 'Content-Type': 'application/json' }),
+        signal: controller?.signal,
         body: JSON.stringify({
           message: text,
           thread_id: threadId,
@@ -1052,12 +1056,27 @@ export default function ConnectorsManage() {
       const reply = String(data?.reply || data?.message || '').trim() || 'I could not generate a response right now.';
       setJaspenMessages((prev) => [...prev, { role: 'assistant', text: reply }]);
     } catch (err) {
+      if (err?.name === 'AbortError' || controller?.signal?.aborted) {
+        setJaspenMessages((prev) => [...prev, { role: 'assistant', text: 'Stopped.' }]);
+        return;
+      }
       const msg = err?.message || 'Something went wrong. Please try again.';
       setJaspenError(msg);
       setJaspenMessages((prev) => [...prev, { role: 'assistant', text: 'I hit an issue. Please try again.' }]);
     } finally {
+      if (jaspenAbortRef.current === controller) {
+        jaspenAbortRef.current = null;
+      }
       setJaspenBusy(false);
     }
+  }
+
+  function stopJaspenMessage() {
+    try {
+      jaspenAbortRef.current?.abort();
+    } catch (_) { /* no-op */ }
+    jaspenAbortRef.current = null;
+    setJaspenBusy(false);
   }
 
   function renderConnectorSpecificFields(connectorId, draft) {
@@ -1635,6 +1654,7 @@ export default function ConnectorsManage() {
         input={jaspenInput}
         onInputChange={setJaspenInput}
         onSend={() => submitJaspenMessage()}
+        onStop={stopJaspenMessage}
         busy={jaspenBusy}
         placeholder="Ask about your connectors…"
         starterPrompts={[

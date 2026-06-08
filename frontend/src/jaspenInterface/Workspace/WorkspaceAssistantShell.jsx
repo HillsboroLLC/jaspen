@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useLayoutEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
@@ -21,6 +21,7 @@ export default function WorkspaceAssistantShell({
   onInputChange,
   onInputKeyDown,
   onSend,
+  onStop,
   placeholder = 'Describe a change...',
   busy = false,
   starterPrompts = [],
@@ -41,13 +42,34 @@ export default function WorkspaceAssistantShell({
   const endRef = externalEndRef || internalEndRef;
   const showAssistantView = !tabs || !activeDrawerTab || activeDrawerTab === (tabs[0]?.key);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!isOpen) return;
-    const frame = window.requestAnimationFrame(() => {
+    const frames = [];
+    const scrollToBottom = () => {
+      const container = messagesContainerRef?.current;
+      if (container) {
+        container.scrollTop = container.scrollHeight;
+        return;
+      }
       endRef.current?.scrollIntoView({ block: 'end' });
+    };
+    frames.push(window.requestAnimationFrame(() => {
+      scrollToBottom();
+      frames.push(window.requestAnimationFrame(scrollToBottom));
+    }));
+    return () => {
+      frames.forEach((frame) => window.cancelAnimationFrame(frame));
+    };
+  }, [isOpen, messages.length, busy, endRef, messagesContainerRef]);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const timeout = window.setTimeout(() => {
+      const container = messagesContainerRef?.current;
+      if (container) container.scrollTop = container.scrollHeight;
     });
-    return () => window.cancelAnimationFrame(frame);
-  }, [isOpen, messages.length, busy, endRef]);
+    return () => window.clearTimeout(timeout);
+  }, [isOpen, messages.length, busy, messagesContainerRef]);
 
   const defaultRenderMessage = (msg) => {
     const text = msg?.text ?? msg?.content ?? '';
@@ -288,27 +310,50 @@ export default function WorkspaceAssistantShell({
                     padding: 0,
                   }}
                 />
-                <button
-                  type="button"
-                  onClick={onSend}
-                  disabled={busy || !String(input).trim()}
-                  aria-label="Send"
-                  aria-disabled={busy || !String(input).trim()}
-                  style={{
-                    width: 30,
-                    height: 30,
-                    borderRadius: 8,
-                    border: 'none',
-                    background: String(input).trim() && !busy ? '#0f172a' : '#cbd5e1',
-                    color: '#fff',
-                    cursor: String(input).trim() && !busy ? 'pointer' : 'not-allowed',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                >
-                  <FontAwesomeIcon icon={faPaperPlane} style={{ fontSize: 11 }} />
-                </button>
+                {busy && typeof onStop === 'function' ? (
+                  <button
+                    type="button"
+                    onClick={onStop}
+                    aria-label="Stop the in-flight reply"
+                    title="Stop"
+                    style={{
+                      width: 30,
+                      height: 30,
+                      borderRadius: 8,
+                      border: 'none',
+                      background: '#a0036c',
+                      color: '#fff',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <span style={{ width: 12, height: 12, background: '#fff', borderRadius: 2, display: 'inline-block' }} />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={onSend}
+                    disabled={busy || !String(input).trim()}
+                    aria-label="Send"
+                    aria-disabled={busy || !String(input).trim()}
+                    style={{
+                      width: 30,
+                      height: 30,
+                      borderRadius: 8,
+                      border: 'none',
+                      background: String(input).trim() && !busy ? '#0f172a' : '#cbd5e1',
+                      color: '#fff',
+                      cursor: String(input).trim() && !busy ? 'pointer' : 'not-allowed',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <FontAwesomeIcon icon={faPaperPlane} style={{ fontSize: 11 }} />
+                  </button>
+                )}
               </div>
             </div>
           </>
@@ -344,9 +389,9 @@ export default function WorkspaceAssistantShell({
             borderRadius: '0 6px 6px 0',
             borderWidth: '1px 1px 1px 0',
             borderStyle: 'solid',
-            borderColor: '#e6eaf2',
-            background: '#fff',
-            color: '#64748b',
+            borderColor: isOpen ? '#e6eaf2' : '#0f172a',
+            background: isOpen ? '#fff' : '#0f172a',
+            color: isOpen ? '#64748b' : '#fff',
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
@@ -354,6 +399,7 @@ export default function WorkspaceAssistantShell({
             fontSize: 10,
             transition: 'left 0.25s ease',
             padding: 0,
+            boxShadow: isOpen ? 'none' : '0 8px 18px rgba(15, 23, 42, 0.2)',
           }}
         >
           {isOpen ? '‹' : '›'}

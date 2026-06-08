@@ -127,6 +127,7 @@ export default function Insights() {
   ]);
   const [assistantBusy, setAssistantBusy] = useState(false);
   const [assistantSessionId, setAssistantSessionId] = useState(null);
+  const assistantAbortRef = useRef(null);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -461,6 +462,8 @@ export default function Insights() {
     ]);
     setAssistantInput('');
     setAssistantBusy(true);
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    assistantAbortRef.current = controller;
     let replyText = '';
     const activeConnector = connectors.find((item) => item.id === activeConnectorId);
     const view_context = {
@@ -477,6 +480,7 @@ export default function Insights() {
     try {
       const streamArgs = {
         view_context,
+        abortSignal: controller?.signal,
         onDelta: (delta) => {
           replyText += delta || '';
           setAssistantMessages((prev) => prev.map((msg, idx) => (
@@ -505,15 +509,41 @@ export default function Insights() {
         if (nextSessionId) setAssistantSessionId(nextSessionId);
       }
     } catch (error) {
+      if (error?.name === 'AbortError' || controller?.signal?.aborted) {
+        setAssistantMessages((prev) => prev.map((msg, idx) => (
+          idx === assistantIndex ? { ...msg, text: 'Stopped.', streaming: false } : msg
+        )));
+        return;
+      }
       setAssistantMessages((prev) => prev.map((msg, idx) => (
         idx === assistantIndex
           ? { ...msg, text: error?.message || 'Something went wrong. Please try again.', streaming: false, error: true }
           : msg
       )));
     } finally {
+      if (assistantAbortRef.current === controller) {
+        assistantAbortRef.current = null;
+      }
       setAssistantBusy(false);
     }
   }, [activeConnectorId, activeDataset, assistantBusy, assistantInput, assistantMessages.length, assistantSessionId, connectors, datasets.length, generatedIdeas.length, queryResult]);
+
+  const stopAssistant = useCallback(() => {
+    try {
+      assistantAbortRef.current?.abort();
+    } catch (_) { /* no-op */ }
+    assistantAbortRef.current = null;
+    setAssistantBusy(false);
+    setAssistantMessages((prev) => {
+      if (!Array.isArray(prev) || prev.length === 0) return prev;
+      const next = prev.slice();
+      const last = next[next.length - 1];
+      if (last?.streaming) {
+        next[next.length - 1] = { ...last, text: String(last.text || '').trim() || 'Stopped.', streaming: false };
+      }
+      return next;
+    });
+  }, []);
 
   return (
     <div className={`insights-page int-page${jaspenOpen ? ' drawer-open' : ''}`}>
@@ -1007,6 +1037,7 @@ export default function Insights() {
         input={assistantInput}
         onInputChange={setAssistantInput}
         onSend={sendAssistant}
+        onStop={stopAssistant}
         busy={assistantBusy}
         starterPrompts={[
           'What are the top risks in this dataset?',
