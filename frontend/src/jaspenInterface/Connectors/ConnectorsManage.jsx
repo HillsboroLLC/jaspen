@@ -1634,15 +1634,14 @@ export default function ConnectorsManage() {
         messages={jaspenMessages}
         renderMessage={(msg) => <span>{msg?.text ?? msg?.content ?? ''}</span>}
         input={jaspenInput}
-        onInputChange={(e) => setJaspenInput(e.target.value)}
+        onInputChange={setJaspenInput}
         onSend={() => submitJaspenMessage()}
         busy={jaspenBusy}
-        placeholder="Ask about your connectors…"
+        placeholder="Ask Jaspen..."
         starterPrompts={[
-          'Which of my connectors needs attention?',
-          'How do I set up Salesforce for the first time?',
-          'What does a degraded connection mean?',
-          'What\'s the difference between import and bidirectional sync?',
+          'Which connectors need attention?',
+          'Explain sync modes.',
+          'How do I connect Salesforce?',
         ]}
       />
     </div>

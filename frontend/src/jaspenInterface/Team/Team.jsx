@@ -745,10 +745,10 @@ export default function Team({ mode = 'team' }) {
           onSend={sendAssistant}
           busy={assistantBusy}
           starterPrompts={[
+            'Explain current seat usage.',
             'Who should have admin access?',
-            'How should I set seat limits?',
           ]}
-          placeholder="Ask Jaspen about team management..."
+          placeholder="Ask Jaspen..."
         />
       </div>
     );
@@ -1365,10 +1365,10 @@ export default function Team({ mode = 'team' }) {
         onSend={sendAssistant}
         busy={assistantBusy}
         starterPrompts={[
+          'Explain current seat usage.',
           'Who should have admin access?',
-          'How should I set seat limits?',
         ]}
-        placeholder="Ask Jaspen about team management..."
+        placeholder="Ask Jaspen..."
       />
     </div>
   );
