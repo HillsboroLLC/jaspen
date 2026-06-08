@@ -11,7 +11,7 @@
 //          stay read-only — a rescore is a separate conversation.
 // ============================================================================
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faArrowLeft, faDownload, faShare, faRotateLeft, faPaperPlane, faDiagramProject, faSpinner } from '@fortawesome/free-solid-svg-icons';
@@ -589,19 +589,26 @@ export default function JaspenWorkspace() {
     return () => { if (chatSaveTimerRef.current) clearTimeout(chatSaveTimerRef.current); };
   }, [chatHistory, chatKey, threadId, artifactId]);
 
-  // Pin the sidebar chat to the most recent message. On reload the thread would
-  // otherwise render scrolled to the top, forcing the user to scroll down to
-  // see where they left off. Runs on mount and whenever the history changes so
-  // new replies stay in view.
-  useEffect(() => {
+  // Pin the sidebar chat to the most recent message. Execution/trade-off pages
+  // lay out more async canvas content than scorecards, so scroll after layout
+  // and again shortly after paint to avoid landing on the oldest turn.
+  useLayoutEffect(() => {
     const el = chatScrollRef.current;
-    if (!el) return;
-    // rAF so the scroll happens after the new messages have laid out.
-    const id = requestAnimationFrame(() => {
+    if (!el) return undefined;
+    const frames = [];
+    const scrollToBottom = () => {
       el.scrollTop = el.scrollHeight;
-    });
-    return () => cancelAnimationFrame(id);
-  }, [chatHistory]);
+    };
+    frames.push(requestAnimationFrame(() => {
+      scrollToBottom();
+      frames.push(requestAnimationFrame(scrollToBottom));
+    }));
+    const timeout = window.setTimeout(scrollToBottom, 120);
+    return () => {
+      frames.forEach((frame) => cancelAnimationFrame(frame));
+      window.clearTimeout(timeout);
+    };
+  }, [chatHistory, sidebarOpen, isExecution, isTradeoff]);
 
   const stopWorkspaceChat = useCallback(() => {
     try {
@@ -1398,10 +1405,10 @@ export default function JaspenWorkspace() {
           width: 20,
           height: 48,
           borderRadius: sidebarOpen ? '0 6px 6px 0' : '0 6px 6px 0',
-          border: `1px solid ${sidebarOpen ? '#e6eaf2' : '#0f172a'}`,
-          borderLeft: sidebarOpen ? 'none' : '1px solid #0f172a',
-          background: sidebarOpen ? '#fff' : '#0f172a',
-          color: sidebarOpen ? '#64748b' : '#fff',
+          border: '1px solid #a0036c',
+          borderLeft: sidebarOpen ? 'none' : '1px solid #a0036c',
+          background: '#a0036c',
+          color: '#fff',
           cursor: 'pointer',
           display: 'flex',
           alignItems: 'center',
@@ -1409,7 +1416,7 @@ export default function JaspenWorkspace() {
           fontSize: 10,
           transition: 'left 0.25s ease',
           padding: 0,
-          boxShadow: sidebarOpen ? 'none' : '0 8px 18px rgba(15, 23, 42, 0.2)',
+          boxShadow: sidebarOpen ? 'none' : '0 8px 18px rgba(160, 3, 108, 0.22)',
         }}
         aria-label={sidebarOpen ? 'Collapse chat panel' : 'Expand chat panel'}
       >

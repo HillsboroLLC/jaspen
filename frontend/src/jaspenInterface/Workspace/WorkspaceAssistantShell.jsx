@@ -389,9 +389,9 @@ export default function WorkspaceAssistantShell({
             borderRadius: '0 6px 6px 0',
             borderWidth: '1px 1px 1px 0',
             borderStyle: 'solid',
-            borderColor: isOpen ? '#e6eaf2' : '#0f172a',
-            background: isOpen ? '#fff' : '#0f172a',
-            color: isOpen ? '#64748b' : '#fff',
+            borderColor: '#a0036c',
+            background: '#a0036c',
+            color: '#fff',
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
@@ -399,7 +399,7 @@ export default function WorkspaceAssistantShell({
             fontSize: 10,
             transition: 'left 0.25s ease',
             padding: 0,
-            boxShadow: isOpen ? 'none' : '0 8px 18px rgba(15, 23, 42, 0.2)',
+            boxShadow: isOpen ? 'none' : '0 8px 18px rgba(160, 3, 108, 0.22)',
           }}
         >
           {isOpen ? '‹' : '›'}
