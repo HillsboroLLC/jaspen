@@ -1264,6 +1264,10 @@ def _view_context_prompt_suffix(view_context):
     current_view = normalized.get("current_view")
     if current_view:
         lines.append(f"- Current view: {current_view}")
+        lines.append(
+            "- This answer is displayed in a narrow page sidebar. Be warm and easy to scan: start with the answer, "
+            "use short paragraphs or brief bullets, and avoid markdown tables unless the user explicitly asks for one."
+        )
 
     active_tab = normalized.get("active_tab")
     if active_tab:

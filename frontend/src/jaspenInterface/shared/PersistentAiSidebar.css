@@ -215,6 +215,10 @@
   white-space: pre-wrap;
 }
 
+.jai-msg--assistant .jai-msg-bubble {
+  white-space: normal;
+}
+
 .jai-msg--user .jai-msg-bubble {
   background: var(--navy, #161f3b);
   color: var(--white, #fff);
@@ -232,6 +236,91 @@
   background: #fff5f5;
   border-color: #fecaca;
   color: #b91c1c;
+}
+
+.jai-msg-text > *:first-child {
+  margin-top: 0;
+}
+
+.jai-msg-text > *:last-child {
+  margin-bottom: 0;
+}
+
+.jai-md-paragraph {
+  margin: 0 0 0.78em;
+}
+
+.jai-md-heading {
+  margin: 0 0 0.55em;
+  color: var(--navy, #161f3b);
+  font-size: 0.95rem;
+  line-height: 1.3;
+  font-weight: 700;
+}
+
+.jai-md-heading--small {
+  font-size: 0.9rem;
+}
+
+.jai-md-list {
+  margin: 0 0 0.78em;
+  padding-left: 1.25em;
+}
+
+.jai-md-list li + li {
+  margin-top: 0.32em;
+}
+
+.jai-md-list-ordered {
+  list-style: decimal;
+}
+
+.jai-md-inline-code,
+.jai-md-code {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+.jai-md-inline-code {
+  background: rgba(15, 23, 42, 0.08);
+  border-radius: 5px;
+  padding: 0.1em 0.32em;
+  font-size: 0.9em;
+}
+
+.jai-md-pre {
+  margin: 0 0 0.78em;
+  overflow-x: auto;
+  background: rgba(15, 23, 42, 0.92);
+  color: #f8fafc;
+  border-radius: 10px;
+  padding: 10px 12px;
+  white-space: pre;
+}
+
+.jai-md-pre .jai-md-code,
+.jai-md-pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+}
+
+.jai-md-table-wrap {
+  margin: 0 0 0.78em;
+  overflow-x: auto;
+}
+
+.jai-md-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88em;
+}
+
+.jai-md-table th,
+.jai-md-table td {
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
 }
 
 /* Typing indicator */
