@@ -596,6 +596,7 @@ export default function JaspenWorkspace() {
     const el = chatScrollRef.current;
     if (!el) return undefined;
     const frames = [];
+    const timeouts = [];
     const scrollToBottom = () => {
       el.scrollTop = el.scrollHeight;
     };
@@ -603,12 +604,14 @@ export default function JaspenWorkspace() {
       scrollToBottom();
       frames.push(requestAnimationFrame(scrollToBottom));
     }));
-    const timeout = window.setTimeout(scrollToBottom, 120);
+    [0, 80, 180, 400, 800].forEach((delay) => {
+      timeouts.push(window.setTimeout(scrollToBottom, delay));
+    });
     return () => {
       frames.forEach((frame) => cancelAnimationFrame(frame));
-      window.clearTimeout(timeout);
+      timeouts.forEach((timeout) => window.clearTimeout(timeout));
     };
-  }, [chatHistory, sidebarOpen, isExecution, isTradeoff]);
+  }, [chatHistory, sidebarOpen, isExecution, isTradeoff, loading]);
 
   const stopWorkspaceChat = useCallback(() => {
     try {
