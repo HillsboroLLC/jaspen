@@ -21,7 +21,7 @@
 .scores-agent-tab {
   position: fixed;
   left: 0;
-  top: 228px;
+  top: 188px;
   writing-mode: vertical-rl;
   text-orientation: mixed;
   background: var(--int-navy, #161f3b);
