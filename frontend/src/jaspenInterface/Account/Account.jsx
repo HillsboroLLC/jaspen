@@ -1972,9 +1972,9 @@ export default function Account() {
           busy={assistantBusy}
           starterPrompts={[
             'How close am I to my thinking power limit?',
-            'Explain my current plan.',
+            'Which plan best fits heavier usage?',
           ]}
-          placeholder="Ask Jaspen..."
+          placeholder="Ask Jaspen about billing and account settings..."
         />
       </div>
     );
@@ -3808,9 +3808,9 @@ export default function Account() {
         busy={assistantBusy}
         starterPrompts={[
           'How close am I to my thinking power limit?',
-          'Explain my current plan.',
+          'Which plan best fits heavier usage?',
         ]}
-        placeholder="Ask Jaspen..."
+        placeholder="Ask Jaspen about billing and account settings..."
       />
     </div>
   );

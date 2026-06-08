@@ -5079,21 +5079,20 @@
   display: inline-block;
   max-width: 85%;
   padding: 10px 14px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   font-size: 0.8125rem;
   line-height: 1.5;
   text-align: left;
-  color: #161f3b;
 }
 
 .jas-ai-message.user .jas-message-content {
-  background: #161f3b;
-  color: #ffffff;
+  background: var(--navy);
+  color: var(--white);
 }
 
 .jas-ai-message.assistant .jas-message-content {
-  background: #f8f9fa;
-  color: #161f3b;
+  background: var(--gray-50);
+  color: var(--navy);
 }
 
 .jas-ai-message.assistant .jas-message-actions {
@@ -5117,9 +5116,9 @@
 }
 
 .jas-ai-starter-chip {
-  border: 1px solid #dee2e6;
-  background: #f8f9fa;
-  color: #161f3b;
+  border: 1px solid var(--gray-300);
+  background: var(--gray-50);
+  color: var(--navy);
   border-radius: 999px;
   padding: 6px 12px;
   font: inherit;
@@ -5130,8 +5129,8 @@
 }
 
 .jas-ai-starter-chip:hover {
-  border-color: #161f3b;
-  background: #ffffff;
+  border-color: var(--navy);
+  background: var(--white);
 }
 
 .jas-ai-input-row {
@@ -5146,26 +5145,22 @@
 
 .jas-ai-input {
   flex: 1;
-  border: 1px solid #dee2e6;
-  border-radius: 8px;
+  border: 1px solid var(--gray-300);
+  border-radius: var(--radius-sm);
   padding: 10px 12px;
   font-size: 0.8125rem;
   font-family: var(--font);
-  color: #161f3b;
-  background: #f8f9fa;
+  color: var(--navy);
   resize: none;
   outline: none;
-  box-shadow: none;
 }
 
 .jas-ai-input:focus {
-  border-color: #161f3b;
-  outline: none;
-  box-shadow: none;
+  border-color: var(--navy);
 }
 
 .jas-ai-input::placeholder {
-  color: #ced4da;
+  color: var(--gray-400);
 }
 
 .jas-ai-send-btn {
@@ -5174,10 +5169,10 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #161f3b;
-  color: #ffffff;
+  background: var(--navy);
+  color: var(--white);
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   transition: all var(--transition);
   align-self: flex-end;

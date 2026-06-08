@@ -736,10 +736,10 @@ export default function Knowledge() {
         onSend={sendAssistant}
         busy={assistantBusy}
         starterPrompts={[
-          'Explain this topic.',
-          'How do I get started?',
+          'How do I go from scorecard to execution?',
+          'What is the connector setup order?',
         ]}
-        placeholder="Ask Jaspen..."
+        placeholder="Ask Jaspen about documentation..."
       />
     </div>
   );
