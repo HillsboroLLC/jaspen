@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faPaperPlane, faTimes } from '@fortawesome/free-solid-svg-icons';
 import './JaspenAiDrawer.css';
@@ -32,6 +32,9 @@ export default function JaspenAiDrawer({
   extraPanel = null,
   footer = null,
   inputExtras = null,
+  contextLabel = 'Page context',
+  contextTitle = 'Jaspen',
+  contextDescription = null,
 }) {
   const internalEndRef = useRef(null);
   const endRef = externalEndRef || internalEndRef;
@@ -43,6 +46,14 @@ export default function JaspenAiDrawer({
 
   const renderMsg = renderMessage || defaultRenderMessage;
   const showAssistantView = !tabs || !activeDrawerTab || activeDrawerTab === (tabs[0]?.key);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const frame = window.requestAnimationFrame(() => {
+      endRef.current?.scrollIntoView({ block: 'end' });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [isOpen, messages.length, busy, endRef]);
 
   const handleKeyDown = (event) => {
     if (typeof onInputKeyDown === 'function') {
@@ -81,7 +92,13 @@ export default function JaspenAiDrawer({
         aria-label="Jaspen assistant drawer"
       >
         <div className="jas-ai-header">
-          <div className="jas-ai-title"><span>Jaspen</span></div>
+          <div className="jas-ai-title">
+            <div className="jas-ai-context-label">{contextLabel}</div>
+            <div className="jas-ai-context-title">{contextTitle}</div>
+            {contextDescription && (
+              <div className="jas-ai-context-description">{contextDescription}</div>
+            )}
+          </div>
           <button className="jas-close-btn" onClick={onClose} aria-label="Close assistant drawer">
             <FontAwesomeIcon icon={faTimes} />
           </button>

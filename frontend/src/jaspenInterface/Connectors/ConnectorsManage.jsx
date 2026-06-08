@@ -1644,6 +1644,9 @@ export default function ConnectorsManage() {
           'What does a degraded connection mean?',
           'What\'s the difference between import and bidirectional sync?',
         ]}
+        contextLabel="Data Sources"
+        contextTitle="Connector Management"
+        contextDescription="Ask Jaspen about connector status, setup, sync behavior, or next steps."
       />
     </div>
   );

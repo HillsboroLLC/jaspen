@@ -749,6 +749,9 @@ export default function Team({ mode = 'team' }) {
             'How should I set seat limits?',
           ]}
           placeholder="Ask Jaspen about team management..."
+          contextLabel="Team"
+          contextTitle="Team Management"
+          contextDescription="Ask Jaspen about roles, seats, invitations, or project access."
         />
       </div>
     );
@@ -1369,6 +1372,9 @@ export default function Team({ mode = 'team' }) {
           'How should I set seat limits?',
         ]}
         placeholder="Ask Jaspen about team management..."
+        contextLabel="Team"
+        contextTitle="Team Management"
+        contextDescription="Ask Jaspen about roles, seats, invitations, or project access."
       />
     </div>
   );

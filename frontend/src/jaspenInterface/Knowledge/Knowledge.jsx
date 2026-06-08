@@ -740,6 +740,9 @@ export default function Knowledge() {
           'What is the connector setup order?',
         ]}
         placeholder="Ask Jaspen about documentation..."
+        contextLabel="Knowledge"
+        contextTitle={activeTopic?.title || 'Help Center'}
+        contextDescription="Ask Jaspen about the article, setup steps, or where to go next."
       />
     </div>
   );

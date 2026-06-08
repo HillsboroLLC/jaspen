@@ -1975,6 +1975,9 @@ export default function Account() {
             'Which plan best fits heavier usage?',
           ]}
           placeholder="Ask Jaspen about billing and account settings..."
+          contextLabel="Account"
+          contextTitle="Billing & Usage"
+          contextDescription="Ask Jaspen about your plan, invoices, thinking power, or account settings."
         />
       </div>
     );
@@ -3811,6 +3814,9 @@ export default function Account() {
           'Which plan best fits heavier usage?',
         ]}
         placeholder="Ask Jaspen about billing and account settings..."
+        contextLabel="Account"
+        contextTitle="Billing & Usage"
+        contextDescription="Ask Jaspen about your plan, invoices, thinking power, or account settings."
       />
     </div>
   );
