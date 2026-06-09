@@ -58,6 +58,153 @@ function receiptDisplayNumber(inv) {
   if (!inv) return '—';
   return inv.number || String(inv.id || '').replace(/^pi_/, 'Receipt ').slice(0, 18) || '—';
 }
+
+function escapeReceiptText(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function printReceipt(inv) {
+  if (!inv) return;
+  const printWindow = window.open('', '_blank');
+  if (!printWindow) return;
+  printWindow.opener = null;
+  const amount = formatInvoiceAmount(inv.amount, inv.currency);
+  const date = formatInvoiceDate(inv.created);
+  const description = inv.description || inv.number || 'Payment';
+  const receiptNumber = receiptDisplayNumber(inv);
+  const status = inv.status || 'paid';
+  printWindow.document.write(`
+    <!doctype html>
+    <html>
+      <head>
+        <title>Jaspen receipt</title>
+        <style>
+          body {
+            margin: 0;
+            background: #f7f8fa;
+            color: #161f3b;
+            font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          }
+          .receipt {
+            width: 680px;
+            max-width: calc(100% - 40px);
+            margin: 48px auto;
+            border: 1px solid #e2e8f0;
+            border-radius: 16px;
+            background: #ffffff;
+            overflow: hidden;
+          }
+          .header {
+            padding: 32px;
+            border-bottom: 1px solid #e6eaf2;
+            background: linear-gradient(135deg, rgba(160, 3, 108, 0.12), transparent 48%);
+          }
+          .eyebrow {
+            margin: 0 0 8px;
+            color: #64748b;
+            font-size: 12px;
+            font-weight: 800;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+          }
+          h1 {
+            margin: 0;
+            font-size: 30px;
+            line-height: 1.2;
+          }
+          .meta {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 14px;
+            padding: 26px 32px 10px;
+          }
+          .label {
+            display: block;
+            color: #64748b;
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+          }
+          .value {
+            display: block;
+            margin-top: 6px;
+            font-weight: 750;
+          }
+          .summary {
+            margin: 20px 32px 28px;
+            border: 1px solid #e4eaf3;
+            border-radius: 14px;
+            background: #f8fafc;
+            padding: 20px;
+          }
+          .row, .total {
+            display: flex;
+            justify-content: space-between;
+            gap: 20px;
+          }
+          .row {
+            padding-bottom: 18px;
+          }
+          .total {
+            border-top: 1px solid #e0e7f0;
+            padding-top: 18px;
+            font-weight: 800;
+          }
+          .footer {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 14px;
+            padding: 0 32px 32px;
+          }
+          @media print {
+            body { background: #ffffff; }
+            .receipt {
+              margin: 0;
+              max-width: none;
+              width: 100%;
+              border-radius: 0;
+              border: 0;
+            }
+          }
+        </style>
+      </head>
+      <body>
+        <main class="receipt">
+          <section class="header">
+            <p class="eyebrow">Jaspen receipt</p>
+            <h1>Payment received</h1>
+          </section>
+          <section class="meta">
+            <div><span class="label">Amount paid</span><span class="value">${escapeReceiptText(amount)}</span></div>
+            <div><span class="label">Date paid</span><span class="value">${escapeReceiptText(date)}</span></div>
+            <div><span class="label">Status</span><span class="value">${escapeReceiptText(status)}</span></div>
+          </section>
+          <section class="summary">
+            <div class="row"><span>${escapeReceiptText(description)}</span><strong>${escapeReceiptText(amount)}</strong></div>
+            <div class="total"><span>Amount paid</span><strong>${escapeReceiptText(amount)}</strong></div>
+          </section>
+          <section class="footer">
+            <div><span class="label">Receipt</span><span class="value">${escapeReceiptText(receiptNumber)}</span></div>
+            <div><span class="label">Support</span><span class="value">hello@jaspen.ai</span></div>
+          </section>
+        </main>
+        <script>
+          window.addEventListener('load', function () {
+            window.focus();
+            window.print();
+          });
+        </script>
+      </body>
+    </html>
+  `);
+  printWindow.document.close();
+}
 const PACK_ORDER = ['credits_3000', 'credits_8000', 'credits_18000'];
 const MODEL_ORDER = ['pluto', 'orbit', 'titan'];
 const FALLBACK_MODEL_TYPES = {
@@ -3887,6 +4034,15 @@ export default function Account() {
                   <span>Support</span>
                   <a href="mailto:hello@jaspen.ai">hello@jaspen.ai</a>
                 </div>
+              </div>
+              <div className="account-receipt-actions">
+                <button
+                  type="button"
+                  className="account-secondary-btn"
+                  onClick={() => printReceipt(selectedReceipt)}
+                >
+                  Print / Save PDF
+                </button>
               </div>
             </section>
           </div>

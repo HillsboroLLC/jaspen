@@ -701,6 +701,12 @@ body.jaspen-sidebar-open .account-page.billing-drawer-open {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 14px;
+  padding: 0 30px 18px;
+}
+
+.account-receipt-actions {
+  display: flex;
+  justify-content: flex-end;
   padding: 0 30px 28px;
 }
 
@@ -1602,7 +1608,8 @@ body.jaspen-sidebar-open .account-page.billing-drawer-open {
 
   .account-receipt-brand,
   .account-receipt-meta,
-  .account-receipt-footer {
+  .account-receipt-footer,
+  .account-receipt-actions {
     padding-left: 18px;
     padding-right: 18px;
   }
