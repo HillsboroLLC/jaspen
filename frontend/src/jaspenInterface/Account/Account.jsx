@@ -40,6 +40,24 @@ function priceDisplay(plan) {
   }
   return 'Contact sales';
 }
+
+function formatInvoiceDate(created) {
+  if (!created) return '—';
+  return new Date(created * 1000).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
+function formatInvoiceAmount(amount = 0, currency = 'USD') {
+  return `$${(Number(amount || 0) / 100).toFixed(2)} ${currency || 'USD'}`;
+}
+
+function receiptDisplayNumber(inv) {
+  if (!inv) return '—';
+  return inv.number || String(inv.id || '').replace(/^pi_/, 'Receipt ').slice(0, 18) || '—';
+}
 const PACK_ORDER = ['credits_3000', 'credits_8000', 'credits_18000'];
 const MODEL_ORDER = ['pluto', 'orbit', 'titan'];
 const FALLBACK_MODEL_TYPES = {
@@ -365,6 +383,7 @@ export default function Account() {
   const [embeddedCheckout, setEmbeddedCheckout] = useState(null);
   // Invoices tab: null = loading, [] = loaded/empty.
   const [invoices, setInvoices] = useState(null);
+  const [selectedReceipt, setSelectedReceipt] = useState(null);
 
   useEffect(() => {
     if (activeTab !== 'invoices') return undefined;
@@ -3254,17 +3273,16 @@ export default function Account() {
                 <tbody>
                   {invoices.map((inv) => {
                     const paid = String(inv.status || '').toLowerCase() === 'paid';
-                    const url = inv.invoice_pdf || inv.hosted_invoice_url;
                     return (
                       <tr key={inv.id} style={{ borderTop: '1px solid #eef1f6' }}>
                         <td style={{ padding: '11px 16px', color: '#0f172a' }}>
-                          {inv.created ? new Date(inv.created * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                          {formatInvoiceDate(inv.created)}
                         </td>
                         <td style={{ padding: '11px 16px', color: '#0f172a' }}>
                           {inv.description || inv.number || 'Payment'}
                         </td>
                         <td style={{ padding: '11px 16px', color: '#0f172a', fontWeight: 500 }}>
-                          ${((inv.amount || 0) / 100).toFixed(2)} {inv.currency}
+                          {formatInvoiceAmount(inv.amount, inv.currency)}
                         </td>
                         <td style={{ padding: '11px 16px' }}>
                           <span style={{ fontSize: 11.5, fontWeight: 600, padding: '2px 8px', borderRadius: 999, background: paid ? '#ecfdf3' : '#fff7ed', color: paid ? '#0d7a3e' : '#b45309', textTransform: 'capitalize' }}>
@@ -3272,7 +3290,13 @@ export default function Account() {
                           </span>
                         </td>
                         <td style={{ padding: '11px 16px', textAlign: 'right' }}>
-                          {url ? <a href={url} target="_blank" rel="noreferrer" style={{ color: '#a0036c', fontWeight: 500, textDecoration: 'none' }}>View</a> : <span style={{ color: '#cbd5e1' }}>—</span>}
+                          <button
+                            type="button"
+                            className="account-receipt-link"
+                            onClick={() => setSelectedReceipt(inv)}
+                          >
+                            View
+                          </button>
                         </td>
                       </tr>
                     );
@@ -3803,6 +3827,70 @@ export default function Account() {
           }}
           onCancel={() => setPlanConfirm(null)}
         />
+        {selectedReceipt && (
+          <div
+            className="account-receipt-backdrop"
+            role="presentation"
+            onClick={() => setSelectedReceipt(null)}
+          >
+            <section
+              className="account-receipt-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Payment receipt"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="account-receipt-brand">
+                <div>
+                  <p className="account-receipt-eyebrow">Jaspen receipt</p>
+                  <h3>Payment received</h3>
+                </div>
+                <button
+                  type="button"
+                  className="account-receipt-close"
+                  onClick={() => setSelectedReceipt(null)}
+                  aria-label="Close receipt"
+                >
+                  x
+                </button>
+              </div>
+              <div className="account-receipt-meta">
+                <div>
+                  <span>Amount paid</span>
+                  <strong>{formatInvoiceAmount(selectedReceipt.amount, selectedReceipt.currency)}</strong>
+                </div>
+                <div>
+                  <span>Date paid</span>
+                  <strong>{formatInvoiceDate(selectedReceipt.created)}</strong>
+                </div>
+                <div>
+                  <span>Status</span>
+                  <strong className="account-receipt-status">{selectedReceipt.status || 'paid'}</strong>
+                </div>
+              </div>
+              <div className="account-receipt-summary">
+                <div className="account-receipt-summary-row">
+                  <span>{selectedReceipt.description || selectedReceipt.number || 'Payment'}</span>
+                  <strong>{formatInvoiceAmount(selectedReceipt.amount, selectedReceipt.currency)}</strong>
+                </div>
+                <div className="account-receipt-total">
+                  <span>Amount paid</span>
+                  <strong>{formatInvoiceAmount(selectedReceipt.amount, selectedReceipt.currency)}</strong>
+                </div>
+              </div>
+              <div className="account-receipt-footer">
+                <div>
+                  <span>Receipt</span>
+                  <strong>{receiptDisplayNumber(selectedReceipt)}</strong>
+                </div>
+                <div>
+                  <span>Support</span>
+                  <a href="mailto:hello@jaspen.ai">hello@jaspen.ai</a>
+                </div>
+              </div>
+            </section>
+          </div>
+        )}
         {embeddedCheckout && (
           <StripeCheckout
             mode={embeddedCheckout.mode || 'subscribe'}

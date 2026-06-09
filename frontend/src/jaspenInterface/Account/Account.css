@@ -559,6 +559,151 @@ body.jaspen-sidebar-open .account-page.billing-drawer-open {
   justify-self: start;
 }
 
+.account-receipt-link {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: #a0036c;
+  font: inherit;
+  font-weight: 600;
+  padding: 0;
+  cursor: pointer;
+}
+
+.account-receipt-link:hover,
+.account-receipt-link:focus-visible {
+  text-decoration: underline;
+}
+
+.account-receipt-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.42);
+}
+
+.account-receipt-modal {
+  width: min(620px, 100%);
+  border: 1px solid rgba(22, 31, 59, 0.14);
+  border-radius: 16px;
+  background: var(--int-surface);
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.24);
+  overflow: hidden;
+}
+
+.account-receipt-brand {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  padding: 26px 30px;
+  border-bottom: 1px solid #e6eaf2;
+  background:
+    linear-gradient(135deg, rgba(160, 3, 108, 0.11), transparent 46%),
+    var(--int-surface);
+}
+
+.account-receipt-eyebrow {
+  margin: 0 0 8px;
+  color: rgba(22, 31, 59, 0.6);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.account-receipt-brand h3 {
+  margin: 0;
+  color: var(--account-ink);
+  font-size: 1.6rem;
+  line-height: 1.15;
+}
+
+.account-receipt-close {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid #d8e0ed;
+  border-radius: 10px;
+  background: var(--int-surface);
+  color: rgba(22, 31, 59, 0.65);
+  font-size: 1.35rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.account-receipt-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 22px 30px 10px;
+}
+
+.account-receipt-meta div,
+.account-receipt-footer div {
+  display: grid;
+  gap: 5px;
+}
+
+.account-receipt-meta span,
+.account-receipt-footer span {
+  color: rgba(22, 31, 59, 0.55);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.account-receipt-meta strong,
+.account-receipt-footer strong,
+.account-receipt-footer a {
+  color: var(--account-ink);
+  font-size: 0.95rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.account-receipt-status {
+  text-transform: capitalize;
+}
+
+.account-receipt-summary {
+  margin: 18px 30px 22px;
+  border: 1px solid #e4eaf3;
+  border-radius: 14px;
+  background: #f8fafc;
+  padding: 18px;
+}
+
+.account-receipt-summary-row,
+.account-receipt-total {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  color: var(--account-ink);
+}
+
+.account-receipt-summary-row {
+  padding-bottom: 16px;
+}
+
+.account-receipt-total {
+  border-top: 1px solid #e0e7f0;
+  padding-top: 16px;
+  font-weight: 800;
+}
+
+.account-receipt-footer {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  padding: 0 30px 28px;
+}
+
 .account-connectors-subtext,
 .account-connectors-loading {
   margin: 0 0 8px;
@@ -1449,5 +1594,26 @@ body.jaspen-sidebar-open .account-page.billing-drawer-open {
 
   .account-security-disable-fields {
     grid-template-columns: 1fr;
+  }
+
+  .account-receipt-backdrop {
+    padding: 14px;
+  }
+
+  .account-receipt-brand,
+  .account-receipt-meta,
+  .account-receipt-footer {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+
+  .account-receipt-meta,
+  .account-receipt-footer {
+    grid-template-columns: 1fr;
+  }
+
+  .account-receipt-summary {
+    margin-left: 18px;
+    margin-right: 18px;
   }
 }
