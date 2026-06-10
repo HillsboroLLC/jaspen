@@ -55,7 +55,7 @@ TOOL_REGISTRY = [
         "type": "internal",
         "access": "write",
         "purpose": "Create scenario deltas from baseline scorecard.",
-        "tiers": ["essential", "team", "enterprise"],
+        "tiers": ["free", "essential", "team", "enterprise"],
         "limits": {
             "essential": {"max_scenarios_per_thread": 10},
             "team": {"max_scenarios_per_thread": 50},
@@ -68,7 +68,7 @@ TOOL_REGISTRY = [
         "type": "internal",
         "access": "write",
         "purpose": "Compute deterministic scenario scorecard from baseline + deltas.",
-        "tiers": ["essential", "team", "enterprise"],
+        "tiers": ["free", "essential", "team", "enterprise"],
         "preconditions": ["scenario_exists", "baseline_exists"],
     },
     {
@@ -76,7 +76,7 @@ TOOL_REGISTRY = [
         "type": "internal",
         "access": "write",
         "purpose": "Set adopted scenario pointer as current continuation context.",
-        "tiers": ["essential", "team", "enterprise"],
+        "tiers": ["free", "essential", "team", "enterprise"],
         "behavior": "Non-destructive pointer switch. Baseline and scenarios are retained.",
         "preconditions": ["scenario_exists_in_thread"],
     },
@@ -85,7 +85,7 @@ TOOL_REGISTRY = [
         "type": "internal",
         "access": "write",
         "purpose": "Delete a scenario only when explicitly requested by user.",
-        "tiers": ["essential", "team", "enterprise"],
+        "tiers": ["free", "essential", "team", "enterprise"],
         "guardrails": [
             "Requires explicit user intent.",
             "Deleting adopted scenario resets adopted pointer to baseline.",
@@ -96,7 +96,7 @@ TOOL_REGISTRY = [
         "type": "internal",
         "access": "read",
         "purpose": "Read WBS tasks, owners, milestones, and dependencies for execution tracking.",
-        "tiers": ["essential", "team", "enterprise"],
+        "tiers": ["free", "essential", "team", "enterprise"],
         "preconditions": ["thread_exists"],
     },
     {
@@ -104,7 +104,7 @@ TOOL_REGISTRY = [
         "type": "internal",
         "access": "write",
         "purpose": "Create or update WBS tasks, owners, statuses, and dependencies.",
-        "tiers": ["essential", "team", "enterprise"],
+        "tiers": ["free", "essential", "team", "enterprise"],
         "limits": {
             "essential": {
                 "max_active_wbs_per_thread": 1,
