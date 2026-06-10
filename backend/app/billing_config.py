@@ -127,9 +127,12 @@ THINKING_POWER_LOW_WARNING_PCT = 10.0
 # multiplied by MARGIN_MULTIPLIER, then debited from the user's plan budget.
 ANTHROPIC_PRICES_USD_PER_M = {
     # Opus 4.x — premium reasoning
+    'claude-opus-4-8':             {'input': 5.00,  'output': 25.00},
+    'claude-opus-4-7':             {'input': 5.00,  'output': 25.00},
     'claude-opus-4-1-20250805':    {'input': 15.00, 'output': 75.00},
     'claude-opus-4-20250514':      {'input': 15.00, 'output': 75.00},
     # Sonnet 4.x — workhorse
+    'claude-sonnet-4-6':           {'input': 3.00,  'output': 15.00},
     'claude-sonnet-4-5-20250929':  {'input': 3.00,  'output': 15.00},
     'claude-sonnet-4-20250514':    {'input': 3.00,  'output': 15.00},
     # Haiku 4.5 — fast/cheap
@@ -238,14 +241,14 @@ DEFAULT_MODEL_CATALOG = {
         'version': '1.0',
         'description': 'Balanced depth and speed for broader cross-functional synthesis.',
         'min_plan': 'essential',
-        'default_llm_model': 'claude-sonnet-4-20250514',
+        'default_llm_model': 'claude-sonnet-4-6',
     },
     'titan': {
         'label': 'Titan',
         'version': '1.0',
         'description': 'Highest-depth reasoning for complex multi-team initiatives.',
         'min_plan': 'enterprise',
-        'default_llm_model': 'claude-opus-4-20250514',
+        'default_llm_model': 'claude-opus-4-8',
     },
 }
 

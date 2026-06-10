@@ -273,7 +273,7 @@ def _anthropic_digest_text(items, start_at, end_at):
             or current_app.config.get("AI_AGENT_ANTHROPIC_MODEL")
             or os.getenv("FEEDBACK_DIGEST_ANTHROPIC_MODEL")
             or os.getenv("AI_AGENT_ANTHROPIC_MODEL")
-            or "claude-sonnet-4-20250514"
+            or "claude-sonnet-4-6"
         )
         response = client.messages.create(
             model=model,

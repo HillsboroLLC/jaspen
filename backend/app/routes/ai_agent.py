@@ -3973,7 +3973,7 @@ def _resolve_generation_routes(model_selection, strategy_objective="balanced", i
     return [{
         "provider": "anthropic",
         "model_key": "claude_sonnet",
-        "model": _provider_model_id("claude_sonnet") or "claude-sonnet-4-20250514",
+        "model": _provider_model_id("claude_sonnet") or "claude-sonnet-4-6",
     }]
 
 

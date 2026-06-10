@@ -290,13 +290,13 @@ def create_app():
             os.getenv('MODEL_CLAUDE_SONNET')
             or os.getenv('ANTHROPIC_MODEL_ORBIT')
             or os.getenv('MODEL_ORBIT_ID')
-            or 'claude-sonnet-4-20250514'
+            or 'claude-sonnet-4-6'
         ),
         'claude_opus': (
             os.getenv('MODEL_CLAUDE_OPUS')
             or os.getenv('ANTHROPIC_MODEL_TITAN')
             or os.getenv('MODEL_TITAN_ID')
-            or 'claude-opus-4-20250514'
+            or 'claude-opus-4-8'
         ),
         'gemini_flash': os.getenv('GEMINI_MODEL_FLASH') or 'gemini-2.5-flash',
         'gemini_pro': os.getenv('GEMINI_MODEL_PRO') or 'gemini-2.5-pro',
