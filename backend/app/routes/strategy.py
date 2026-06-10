@@ -2217,7 +2217,7 @@ def _generate_jaspen_scorecard(
     _scoring_model = (
         os.getenv('ANTHROPIC_MODEL')
         or current_app.config.get('ANTHROPIC_MODEL')
-        or 'claude-sonnet-4-5-20250929'
+        or 'claude-sonnet-4-6'
     )
     llm_model = _scoring_model
     if isinstance(model_selection, dict):

@@ -1781,7 +1781,7 @@ Be specific to the actual data. Do not generate generic ideas. Every idea must b
     try:
         client = get_llm_client()
         response = client.messages.create(
-            model=current_app.config.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022"),
+            model=current_app.config.get("ANTHROPIC_MODEL") or os.getenv("ANTHROPIC_MODEL") or "claude-sonnet-4-6",
             max_tokens=2000,
             temperature=0.3,
             system=system_prompt,
