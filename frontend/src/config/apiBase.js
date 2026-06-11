@@ -1,5 +1,5 @@
 // frontend/src/config/apiBase.js
-export const API_BASE = 'https://api.jaspen.ai';
+export const API_BASE = process.env.REACT_APP_API_BASE || 'https://api.jaspen.ai';
 
 // Aliases (so ANY consumer name works, and Webpack stops erroring)
 export const PM_API_BASE = API_BASE;
