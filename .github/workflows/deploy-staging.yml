@@ -5,34 +5,7 @@ on:
     branches: [develop]
 
 jobs:
-  deploy-frontend:
-    if: ${{ secrets.VERCEL_TOKEN != '' && secrets.VERCEL_ORG_ID != '' && secrets.VERCEL_PROJECT_ID != '' }}
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: frontend/package-lock.json
-      - name: Install frontend dependencies
-        run: npm ci
-      - name: Build frontend
-        run: npm run build
-        env:
-          REACT_APP_API_BASE: https://api-dev.jaspen.ai
-      - name: Deploy to Vercel (preview)
-        run: npx vercel deploy --token "${VERCEL_TOKEN}" --yes
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-
   deploy-backend:
-    if: ${{ secrets.SERVER_HOST != '' && secrets.SERVER_USER != '' && secrets.SERVER_SSH_KEY != '' }}
     runs-on: ubuntu-latest
     steps:
       - name: Configure SSH key
@@ -46,7 +19,7 @@ jobs:
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
       - name: Deploy staging on DigitalOcean
         run: |
-          ssh "${SERVER_USER}@${SERVER_HOST}" "cd ~/jaspen-dev && git fetch origin && git pull --ff-only origin develop && sudo systemctl restart gunicorn-jaspen-dev.service"
+          ssh "${SERVER_USER}@${SERVER_HOST}" "cd ~/jaspen-platform && git fetch origin && git pull --ff-only origin develop && source backend/venv/bin/activate && pip install -q -r backend/requirements.txt && cd backend && FLASK_APP=wsgi.py flask db upgrade && sudo systemctl restart gunicorn-jaspen-dev.service"
         env:
           SERVER_USER: ${{ secrets.SERVER_USER }}
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
