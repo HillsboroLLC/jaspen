@@ -98,11 +98,13 @@ export default function GuidedDecisionWizard({ onUse, onClose }) {
       {/* Footer actions */}
       <div className="gd-wizard-footer">
         <div className="gd-footer-left">
-          {currentIndex > 0 && (
-            <button type="button" className="gd-btn gd-btn--ghost" onClick={goBack}>
-              Back
-            </button>
-          )}
+          <button
+            type="button"
+            className="gd-back-link"
+            onClick={currentIndex > 0 ? goBack : onClose}
+          >
+            Back
+          </button>
         </div>
         <div className="gd-footer-right">
           {isReview ? (
@@ -129,7 +131,7 @@ export default function GuidedDecisionWizard({ onUse, onClose }) {
               onClick={goNext}
               disabled={!canAdvance}
             >
-              {canAdvance ? 'Continue →' : 'Continue'}
+              Continue
             </button>
           )}
         </div>
