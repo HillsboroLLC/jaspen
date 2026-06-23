@@ -364,7 +364,7 @@
   line-height: 1.4;
 }
 
-/* ── Persistent nav icon ────────────────────────────────────────────────── */
+/* ── Persistent nav icon (circular hover to match the bell / power icons) ── */
 .gd-nav-icon {
   display: inline-flex;
   align-items: center;
@@ -372,7 +372,7 @@
   width: 36px;
   height: 36px;
   border: none;
-  border-radius: 10px;
+  border-radius: 50%;
   background: transparent;
   color: rgba(26, 29, 36, 0.5);
   cursor: pointer;
