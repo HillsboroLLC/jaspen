@@ -1,10 +1,206 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import StrategyAccessCard from './StrategyAccessCard';
-import JaspenDemoCycler from './JaspenDemoCycler';
 import JaspenNav from './JaspenNav';
 import ScrollGuide from './ScrollGuide';
+import WorkWithJaspenCanvas from './WorkWithJaspenCanvas';
 import './HomePage.css';
+
+/* ── Animated panel: Evaluate Ideas ── */
+function IdeasPanel() {
+  const [score, setScore] = useState(0);
+  const [visible, setVisible] = useState([]);
+  const raf = useRef(null);
+
+  useEffect(() => {
+    const target = 82;
+    const duration = 1100;
+    const start = performance.now();
+    const tick = (now) => {
+      const t = Math.min((now - start) / duration, 1);
+      setScore(Math.round((1 - Math.pow(1 - t, 3)) * target));
+      if (t < 1) raf.current = requestAnimationFrame(tick);
+      else [0, 1, 2, 3].forEach((i) => setTimeout(() => setVisible((p) => [...p, i]), i * 160));
+    };
+    raf.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf.current);
+  }, []);
+
+  const insights = [
+    { label: 'Market Demand',        badge: 'High',     type: 'high' },
+    { label: 'Competition',          badge: 'Moderate', type: 'med'  },
+    { label: 'Risk Level',           badge: 'Medium',   type: 'med'  },
+    { label: 'Execution Readiness',  badge: 'Strong',   type: 'high' },
+  ];
+
+  return (
+    <div className="intro-panel" key="ideas">
+      <div className="intro-panel-label">Idea Score</div>
+      <div className="intro-panel-score">{score}<span>/100</span></div>
+      <div className="intro-panel-idea-text">
+        AI-powered meal prep service that analyzes user biometrics and local grocery inventory to generate weekly recipes and automated delivery orders.
+      </div>
+      <div className="intro-panel-insights">
+        {insights.map((ins, i) => (
+          <div key={i} className={`intro-panel-insight intro-panel-insight--anim${visible.includes(i) ? ' visible' : ''}`}>
+            <span className="intro-insight-label">{ins.label}</span>
+            <span className={`intro-insight-badge intro-insight-badge--${ins.type}`}>{ins.badge}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ── Animated panel: Evaluate Tradeoffs ── */
+function TradeoffsPanel() {
+  const [scoreA, setScoreA] = useState(0);
+  const [scoreB, setScoreB] = useState(0);
+  const [leversA, setLeversA] = useState([]);
+  const [outcomesA, setOutcomesA] = useState([]);
+  const [showB, setShowB] = useState(false);
+  const [leversB, setLeversB] = useState([]);
+  const [outcomesB, setOutcomesB] = useState([]);
+  const [showWinner, setShowWinner] = useState(false);
+  const raf = useRef(null);
+  const timers = useRef([]);
+
+  const later = (fn, ms) => { const t = setTimeout(fn, ms); timers.current.push(t); };
+
+  const countUp = (target, setter, duration = 900) => new Promise((res) => {
+    const start = performance.now();
+    const tick = (now) => {
+      const t = Math.min((now - start) / duration, 1);
+      setter(Math.round((1 - Math.pow(1 - t, 3)) * target));
+      if (t < 1) raf.current = requestAnimationFrame(tick);
+      else res();
+    };
+    raf.current = requestAnimationFrame(tick);
+  });
+
+  useEffect(() => {
+    later(() => {
+      setLeversA([0]);
+      later(() => setLeversA([0, 1]), 300);
+      later(async () => {
+        await countUp(76, setScoreA);
+        [0, 1, 2].forEach((i) => later(() => setOutcomesA((p) => [...p, i]), i * 140));
+        later(() => {
+          setShowB(true);
+          later(() => setLeversB([0]), 200);
+          later(() => setLeversB([0, 1]), 500);
+          later(async () => {
+            await countUp(71, setScoreB);
+            [0, 1, 2].forEach((i) => later(() => setOutcomesB((p) => [...p, i]), i * 140));
+            later(() => setShowWinner(true), 700);
+          }, 600);
+        }, 900);
+      }, 700);
+    }, 300);
+    return () => { timers.current.forEach(clearTimeout); cancelAnimationFrame(raf.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div className="intro-panel" key="tradeoffs">
+      <div className="intro-panel-label">Trade-Off Engine</div>
+      <div className="intro-panel-project">
+        <span className="intro-panel-project-name">AI Meal Prep Platform</span>
+        <span className="intro-panel-baseline">Baseline 68/100</span>
+      </div>
+      <div className="intro-panel-scenarios">
+        <div className={`intro-scenario${showWinner ? ' intro-scenario--winner' : ''}`}>
+          <div className="intro-scenario-head">
+            <span className="intro-scenario-label">Option A</span>
+            {scoreA > 0 && <><span className="intro-scenario-score">{scoreA}<span>/100</span></span><span className="intro-scenario-delta">+{scoreA - 68} pts</span></>}
+          </div>
+          <div className="intro-scenario-levers">
+            {[{ l: 'Budget', c: '$800K → $1.2M', d: '+$400K', pos: true }, { l: 'Team', c: '6 → 10 people', d: '+4', pos: true }]
+              .map((lv, i) => leversA.includes(i) && (
+                <div key={i} className="intro-scenario-lever intro-scenario-lever--anim visible">
+                  <span>{lv.l}</span><span>{lv.c}</span><span className={lv.pos ? 'pos' : 'neg'}>{lv.d}</span>
+                </div>
+              ))}
+          </div>
+          {outcomesA.length > 0 && (
+            <div className="intro-scenario-outcomes">
+              {[{ l: 'ROI', v: '64%', d: '+19pp' }, { l: '3-Yr NPV', v: '$2.1M', d: '+$900K' }, { l: 'Payback', v: '13 mo', d: '−5 mo' }]
+                .map((o, i) => outcomesA.includes(i) && (
+                  <div key={i} className="intro-scenario-outcome intro-scenario-outcome--anim visible">
+                    <span>{o.l}</span><span>{o.v}</span><span className="pos">{o.d}</span>
+                  </div>
+                ))}
+            </div>
+          )}
+          {showWinner && <span className="intro-winner-badge">Best outcome</span>}
+        </div>
+        {showB && (
+          <div className="intro-scenario">
+            <div className="intro-scenario-head">
+              <span className="intro-scenario-label">Option B</span>
+              {scoreB > 0 && <><span className="intro-scenario-score">{scoreB}<span>/100</span></span><span className="intro-scenario-delta">+{scoreB - 68} pts</span></>}
+            </div>
+            <div className="intro-scenario-levers">
+              {[{ l: 'Timeline', c: '12 → 18 months', d: '+6 mo', pos: false }, { l: 'Market', c: 'City → Regional', d: 'Expanded', pos: true }]
+                .map((lv, i) => leversB.includes(i) && (
+                  <div key={i} className="intro-scenario-lever intro-scenario-lever--anim visible">
+                    <span>{lv.l}</span><span>{lv.c}</span><span className={lv.pos ? 'pos' : 'neg'}>{lv.d}</span>
+                  </div>
+                ))}
+            </div>
+            {outcomesB.length > 0 && (
+              <div className="intro-scenario-outcomes">
+                {[{ l: 'ROI', v: '53%', d: '+8pp' }, { l: '3-Yr NPV', v: '$1.6M', d: '+$400K' }, { l: 'Payback', v: '16 mo', d: '−2 mo' }]
+                  .map((o, i) => outcomesB.includes(i) && (
+                    <div key={i} className="intro-scenario-outcome intro-scenario-outcome--anim visible">
+                      <span>{o.l}</span><span>{o.v}</span><span className="pos">{o.d}</span>
+                    </div>
+                  ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── Animated panel: Build Execution Plans ── */
+function PlanPanel() {
+  const [visible, setVisible] = useState([]);
+  useEffect(() => {
+    const steps = [
+      { phase: '01', title: 'Data Integration & MVP', desc: "Connect core health APIs with a single grocery chain's inventory. Validate the recommendation loop." },
+      { phase: '02', title: 'Recipe Generation Engine', desc: 'Train on nutritional databases to generate viable recipes from constrained inventory and user macros.' },
+      { phase: '03', title: 'Logistics & Fulfillment', desc: 'Partner with last-mile delivery (Instacart, DoorDash) rather than building in-house delivery.' },
+      { phase: '04', title: 'Beta Launch & Iteration', desc: 'Launch closed beta in a single dense urban market. Refine recommendations and logistics flow.' },
+    ];
+    steps.forEach((_, i) => setTimeout(() => setVisible((p) => [...p, i]), 200 + i * 250));
+  }, []);
+
+  return (
+    <div className="intro-panel" key="plan">
+      <div className="intro-panel-label">Execution Plan</div>
+      <div className="intro-panel-project-name">AI Meal Prep Platform — 4 Phases</div>
+      <div className="intro-plan-steps">
+        {[
+          { phase: '01', title: 'Data Integration & MVP', desc: "Connect core health APIs with a single grocery chain's inventory. Validate the recommendation loop." },
+          { phase: '02', title: 'Recipe Generation Engine', desc: 'Train on nutritional databases to generate viable recipes from constrained inventory and user macros.' },
+          { phase: '03', title: 'Logistics & Fulfillment', desc: 'Partner with last-mile delivery (Instacart, DoorDash) rather than building in-house delivery.' },
+          { phase: '04', title: 'Beta Launch & Iteration', desc: 'Launch closed beta in a single dense urban market. Refine recommendations and logistics flow.' },
+        ].map((step, i) => (
+          <div key={step.phase} className={`intro-plan-step intro-plan-step--anim${visible.includes(i) ? ' visible' : ''}`}>
+            <span className="intro-plan-num">{step.phase}</span>
+            <div>
+              <strong>{step.title}</strong>
+              <p>{step.desc}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 const STEPS = [
   {
@@ -39,6 +235,7 @@ const STEPS = [
 
 export default function HomePage() {
   const [activeStep, setActiveStep] = useState(0);
+  const [activeFeatureTab, setActiveFeatureTab] = useState(0);
   const stepRefs = useRef([]);
   const [searchParams] = useSearchParams();
 
@@ -157,49 +354,11 @@ export default function HomePage() {
                 Jaspen is an advanced AI partner built to evaluate ideas, prioritize opportunities, and structure cross-functional work into coordinated, executable plans.
               </p>
             </div>
-
-            <div className="jaspen-intro-feature scroll-reveal" id="intro-feature">
-              <div className="intro-feature-text">
-                <h3>Work with Jaspen</h3>
-                <p>
-                  Evaluate ideas, prioritize opportunities, and structure cross-functional work into executable plans.
-                </p>
-                <div className="intro-feature-list">
-                  <div className="intro-feature-item">
-                    <span className="intro-feature-icon" aria-hidden="true">
-                      <i className="fa-solid fa-lightbulb"></i>
-                    </span>
-                    <div>
-                      <strong>Evaluate Ideas</strong>
-                      <p>Score any opportunity in seconds. Jaspen surfaces market demand, competitive risk, and a structured read on viability.</p>
-                    </div>
-                  </div>
-                  <div className="intro-feature-item">
-                    <span className="intro-feature-icon" aria-hidden="true">
-                      <i className="fa-solid fa-sliders"></i>
-                    </span>
-                    <div>
-                      <strong>Evaluate Tradeoffs</strong>
-                      <p>Adjust key assumptions — budget, timeline, team — and instantly compare projected outcomes before committing.</p>
-                    </div>
-                  </div>
-                  <div className="intro-feature-item">
-                    <span className="intro-feature-icon" aria-hidden="true">
-                      <i className="fa-solid fa-diagram-project"></i>
-                    </span>
-                    <div>
-                      <strong>Build Execution Plans</strong>
-                      <p>Turn decisions into coordinated, phased plans your whole team can act on — without the handoff friction.</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div className="intro-demo-frame">
-                <JaspenDemoCycler />
-              </div>
-            </div>
           </div>
         </section>
+
+        {/* ========== WORK WITH JASPEN CANVAS ========== */}
+        <WorkWithJaspenCanvas />
 
         {/* ========== HOMEPAGE PRICING ========== */}
         <section id="pricing-plans" className="jaspen-home-pricing-section">
