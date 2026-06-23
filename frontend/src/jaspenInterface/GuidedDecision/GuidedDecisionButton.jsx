@@ -11,17 +11,20 @@ function SparklesIcon() {
   );
 }
 
-// Persistent top-nav entry point. Subtle by default, accent on hover/focus.
+// Persistent top-nav entry point. A subtle pill (icon + label) — this is a
+// differentiator, so it's labeled rather than hidden behind an icon. Collapses
+// to icon-only on narrow viewports.
 export default function GuidedDecisionButton({ onClick }) {
   return (
     <button
       type="button"
-      className="gd-nav-btn"
+      className="gd-nav-pill"
       onClick={onClick}
       title="Guided Decision"
       aria-label="Open Guided Decision"
     >
       <SparklesIcon />
+      <span className="gd-nav-pill-label">Guided Decision</span>
     </button>
   );
 }

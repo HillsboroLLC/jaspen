@@ -44,7 +44,7 @@ export default function ChooseFocusStep({ draft, update }) {
       </div>
 
       <div className="gd-or-divider">
-        <span>Or briefly describe your own situation.</span>
+        <span>Or describe your situation</span>
       </div>
 
       <textarea
@@ -53,6 +53,7 @@ export default function ChooseFocusStep({ draft, update }) {
         placeholder="Describe your situation..."
         value={draft.focusCustom}
         onChange={onCustomChange}
+        disabled={Boolean(draft.focus)}
       />
     </div>
   );

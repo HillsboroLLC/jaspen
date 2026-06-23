@@ -260,23 +260,125 @@
 .gd-modal-card .gd-btn--ghost { background: transparent; border-color: var(--gd-line); color: var(--gd-ink-soft); }
 .gd-modal-card .gd-btn--ghost:hover { border-color: rgba(26, 29, 36, 0.28); color: var(--gd-ink); }
 
-/* ── Persistent nav button ──────────────────────────────────────────────── */
-.gd-nav-btn {
-  display: inline-flex;
+/* ── Disabled textarea (mutual exclusion on Choose Focus) ───────────────── */
+.gd-modal-card .gd-textarea:disabled {
+  background: var(--gd-neutral);
+  color: rgba(26, 29, 36, 0.35);
+  cursor: not-allowed;
+  border-style: dashed;
+}
+
+/* ── Refine accordion ───────────────────────────────────────────────────── */
+.gd-modal-card .gd-accordion {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.gd-modal-card .gd-acc-item {
+  border: 1px solid var(--gd-line);
+  border-radius: 12px;
+  overflow: hidden;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.gd-modal-card .gd-acc-item--open {
+  border-color: rgba(160, 3, 108, 0.35);
+  box-shadow: 0 4px 16px rgba(20, 24, 33, 0.06);
+}
+.gd-modal-card .gd-acc-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 16px;
+  background: #fff;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+}
+.gd-modal-card .gd-acc-num {
+  display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
-  border: none;
-  border-radius: 10px;
-  background: transparent;
-  color: rgba(26, 29, 36, 0.5);
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  background: var(--gd-neutral);
+  color: var(--gd-accent);
+  font-size: 0.72rem;
+  font-weight: 700;
 }
-.gd-nav-btn:hover { background: rgba(160, 3, 108, 0.1); color: #a0036c; }
+.gd-modal-card .gd-acc-num--done {
+  background: var(--gd-accent);
+  color: #fff;
+}
+.gd-modal-card .gd-acc-label {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.92rem;
+  font-weight: 500;
+  color: var(--gd-ink);
+}
+.gd-modal-card .gd-acc-preview {
+  font-size: 0.8rem;
+  font-weight: 400;
+  color: var(--gd-ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gd-modal-card .gd-acc-toggle {
+  font-size: 1.1rem;
+  color: var(--gd-ink-soft);
+  flex-shrink: 0;
+  line-height: 1;
+}
+.gd-modal-card .gd-acc-body {
+  padding: 4px 16px 16px;
+  background: #fff;
+}
+.gd-modal-card .gd-acc-question {
+  font-size: 0.85rem;
+  color: var(--gd-ink-soft);
+  margin: 0 0 10px;
+  line-height: 1.4;
+}
+
+/* ── Persistent nav pill ────────────────────────────────────────────────── */
+.gd-nav-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 14px 0 12px;
+  border: 1px solid rgba(160, 3, 108, 0.22);
+  border-radius: 999px;
+  background: rgba(160, 3, 108, 0.06);
+  color: #a0036c;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+.gd-nav-pill:hover {
+  background: rgba(160, 3, 108, 0.12);
+  border-color: rgba(160, 3, 108, 0.4);
+  box-shadow: 0 2px 8px rgba(160, 3, 108, 0.12);
+}
+.gd-nav-pill-label { line-height: 1; }
 
 /* ── Responsive ─────────────────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  /* Collapse the nav pill to icon-only when space is tight */
+  .gd-nav-pill { padding: 0; width: 34px; justify-content: center; }
+  .gd-nav-pill-label { display: none; }
+}
 @media (max-width: 640px) {
   .gd-modal-card .gd-progress { padding: 22px 24px 14px; }
   .gd-modal-card .gd-progress-label { display: none; }

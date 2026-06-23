@@ -46,7 +46,7 @@ export const welcomeCard = {
 
 export const wizardCard = {
   ...cardBase,
-  maxWidth: '720px',
+  maxWidth: '820px',
   maxHeight: 'calc(100vh - 48px)',
   overflow: 'hidden',
 };

@@ -11,7 +11,7 @@ import {
   buildStructuredPrompt,
 } from './guidedDecisionState';
 
-const STEP_LABELS = ['Choose Focus', 'Capture Context', 'Refine Inputs', 'Review'];
+const STEP_LABELS = ['Focus', 'Context', 'Refine', 'Review'];
 
 // Logical step keys. The Refine step is conditionally present, so we resolve
 // the visible sequence from the current draft rather than a fixed index.
@@ -98,13 +98,9 @@ export default function GuidedDecisionWizard({ onUse, onClose }) {
       {/* Footer actions */}
       <div className="gd-wizard-footer">
         <div className="gd-footer-left">
-          {currentIndex > 0 ? (
+          {currentIndex > 0 && (
             <button type="button" className="gd-btn gd-btn--ghost" onClick={goBack}>
               Back
-            </button>
-          ) : (
-            <button type="button" className="gd-btn gd-btn--ghost" onClick={onClose}>
-              Cancel
             </button>
           )}
         </div>
@@ -133,7 +129,7 @@ export default function GuidedDecisionWizard({ onUse, onClose }) {
               onClick={goNext}
               disabled={!canAdvance}
             >
-              Continue
+              {canAdvance ? 'Continue →' : 'Continue'}
             </button>
           )}
         </div>

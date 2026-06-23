@@ -74,22 +74,27 @@ export const METHOD_OPTIONS = [
 export const GUIDED_QUESTIONS = [
   {
     id: 'decision',
+    short: 'Decision, problem, or opportunity',
     label: 'What decision, problem, or opportunity are you working through?',
   },
   {
     id: 'options',
+    short: 'Options being considered',
     label: 'What options, initiatives, or paths are being considered?',
   },
   {
     id: 'stakeholders',
+    short: 'People involved',
     label: 'Who is involved or impacted?',
   },
   {
     id: 'constraints',
+    short: 'Constraints',
     label: 'What constraints matter most?',
   },
   {
     id: 'outcome',
+    short: 'Desired outcome',
     label: 'What outcome are you hoping to achieve?',
   },
 ];
@@ -126,18 +131,15 @@ export function buildStructuredPrompt(draft) {
   } else {
     // speak / type — a single narrative blob plus the chosen focus framing
     sections.push(['Decision Context', draft.contextText || focus]);
-    sections.push(['Potential Options', '']);
-    sections.push(['Stakeholders', '']);
-    sections.push(['Constraints', '']);
-    sections.push(['Desired Outcome', '']);
   }
 
   const lines = [];
   if (focus) lines.push(`Focus: ${focus}`, '');
   sections.forEach(([heading, value]) => {
     const v = (value || '').trim();
+    if (!v) return; // omit empty sections to keep the summary clean
     lines.push(heading);
-    lines.push(v || '(not specified)');
+    lines.push(v);
     lines.push('');
   });
 

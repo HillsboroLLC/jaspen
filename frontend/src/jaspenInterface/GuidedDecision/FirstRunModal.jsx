@@ -43,8 +43,8 @@ export default function FirstRunModal({ open, onStart, onSkip }) {
         </div>
         <h2 style={S.welcomeTitle}>Let&apos;s solve a problem together.</h2>
         <p style={S.welcomeBody}>
-          You don&apos;t need to learn Jaspen before using it. Share your situation however you&apos;d
-          like, and Jaspen will help transform a complex situation into a clear path forward.
+          You don&apos;t need to learn Jaspen before using it. Jaspen will help transform a complex
+          situation into a clear path forward.
         </p>
         <div style={S.welcomeActions}>
           <button
