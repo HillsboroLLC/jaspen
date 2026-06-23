@@ -17,6 +17,13 @@ import { useToast, ToastContainer } from '../../shared/components/Toast';
 import { useAuth } from 'shared/auth/AuthContext';
 import { AUTH_EVENTS, authFetch as cookieAuthFetch, buildAuthHeaders } from '../../shared/auth/http';
 import { getPlanConnectorSentence } from '../../shared/billing/planConnectors';
+import {
+  GuidedDecisionButton,
+  GuidedDecisionModal,
+  FirstRunModal,
+  getFirstRunDismissed,
+  setFirstRunDismissed,
+} from '../GuidedDecision';
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
@@ -3744,12 +3751,44 @@ useEffect(() => {
   const [pendingOnboardingContext, setPendingOnboardingContext] = useState(null);
   const [onboardingLaunchLabel, setOnboardingLaunchLabel] = useState('');
   const [guidedFlowDismissed, setGuidedFlowDismissed] = useState(false);
+  const [guidedDecisionOpen, setGuidedDecisionOpen] = useState(false);
+  const [firstRunOpen, setFirstRunOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notificationsMode, setNotificationsMode] = useState('bell');
   const [notificationFeed, setNotificationFeed] = useState(() => buildDefaultNotifications());
   const [bellNotificationIds, setBellNotificationIds] = useState(() =>
     buildDefaultNotifications().map((item) => item.id)
   );
+
+  // Guided Decision: first-login welcome shows once per user, then is persisted.
+  useEffect(() => {
+    if (!user?.id && !user?.email) return;
+    if (!getFirstRunDismissed(user)) setFirstRunOpen(true);
+  }, [user?.id, user?.email]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleFirstRunSkip = useCallback(() => {
+    setFirstRunDismissed(user);
+    setFirstRunOpen(false);
+  }, [user]);
+
+  const handleFirstRunStart = useCallback(() => {
+    setFirstRunDismissed(user);
+    setFirstRunOpen(false);
+    setGuidedDecisionOpen(true);
+  }, [user]);
+
+  const handleGuidedUse = useCallback((text) => {
+    setInput(text);
+    setGuidedDecisionOpen(false);
+    // Focus the composer so the user can review and press Send themselves.
+    requestAnimationFrame(() => {
+      try {
+        intakeInputRef.current?.focus();
+        const el = intakeInputRef.current;
+        if (el) el.selectionStart = el.selectionEnd = el.value.length;
+      } catch { /* noop */ }
+    });
+  }, []);
   const [threadUsage, setThreadUsage] = useState(null);
   const [threadUsageLoading, setThreadUsageLoading] = useState(false);
   const [threadUsageError, setThreadUsageError] = useState('');
@@ -5348,6 +5387,13 @@ useEffect(() => {
               </button>
             </div>
           </div>
+          <button
+            className="jas-ud-item"
+            onClick={() => { onClose?.(); openSetupPromptFlow(); }}
+          >
+            <FontAwesomeIcon icon={faPen} />
+            <span className="jas-ud-item-label">Tailor Jaspen</span>
+          </button>
           <button
             className="jas-ud-item"
             onClick={() => {
@@ -12802,19 +12848,6 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
   const showTopbarCredits = Boolean(user) && !hideThinkingPowerMeter;
   const showSharedProjectsLanding = !sessionId && messages.length === 0 && planCategory !== 'individual' && (effectiveIsCollaborator || effectiveIsViewer);
   const onboardingState = readOnboardingState(user);
-  const shouldShowSetupPrompt = Boolean(
-    user &&
-    !showSharedProjectsLanding &&
-    !nameModalOpen &&
-    !onboardingOpen &&
-    messages.length === 0 &&
-    !sessionId &&
-    !currentSessionId &&
-    (
-      (!displayName && !readNamePromptDeferred(user)) ||
-      (!onboardingState?.completed && !onboardingState?.deferred)
-    )
-  );
   const shouldShowGuidedFlow = Boolean(
     user &&
     onboardingState?.completed &&
@@ -12998,6 +13031,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
         {!sessionId && <div className="jas-titlebar-left" />}
 
         <div className="jas-titlebar-right">
+          <GuidedDecisionButton onClick={() => setGuidedDecisionOpen(true)} />
           {showIntakeTopbarUtilities && (
             <button
               type="button"
@@ -13532,6 +13566,16 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       {renderNotificationsModal()}
       {renderNameModal()}
       {renderBillingModal()}
+      <FirstRunModal
+        open={firstRunOpen}
+        onStart={handleFirstRunStart}
+        onSkip={handleFirstRunSkip}
+      />
+      <GuidedDecisionModal
+        open={guidedDecisionOpen}
+        onClose={() => setGuidedDecisionOpen(false)}
+        onUse={handleGuidedUse}
+      />
       {renderPostAdoptWbsPrompt()}
       {renderPlanExistsPrompt()}
       <Onboarding
@@ -13747,35 +13791,9 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               />
               <span>{welcomeHeading}</span>
             </h2>
-            {shouldShowSetupPrompt ? (
-              <div className="jas-setup-prompt" role="note" aria-label="Optional setup prompt">
-                <div className="jas-setup-prompt-copy">
-                  <span className="jas-setup-prompt-eyebrow">Optional setup</span>
-                  <div className="jas-setup-prompt-copy-main">
-                    <div>
-                      <h3>Tailor Jaspen to how you work</h3>
-                      <p>Choose a display name, role, and starting preference now, or come back anytime from Account settings.</p>
-                    </div>
-                    <div className="jas-setup-prompt-actions">
-                      <button
-                        type="button"
-                        className="jas-setup-prompt-secondary"
-                        onClick={deferSetupPrompt}
-                      >
-                        Maybe later
-                      </button>
-                      <button
-                        type="button"
-                        className="jas-setup-prompt-primary"
-                        onClick={openSetupPromptFlow}
-                      >
-                        Set up now
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ) : null}
+            {/* Tailor Jaspen card removed from the workspace homepage —
+                relocated into the user menu (User Tools › Tailor Jaspen).
+                Users should experience value before configuring Jaspen. */}
             {shouldShowGuidedFlow ? (
               <div className="jas-guided-flow" role="note" aria-label="Guided walkthrough">
                 <div className="jas-guided-flow-head">

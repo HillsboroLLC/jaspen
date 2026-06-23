@@ -1,0 +1,467 @@
+/* Guided Decision — modern, minimal, professional.
+   Palette:
+     --gd-bg        #eff9fc  primary background
+     --gd-neutral   #f8f5f0  warm neutral
+     --gd-accent    #a0036c  primary accent (eggplant)
+     --gd-blue      #c7daf8  supporting blue
+     --gd-action    #fd6b02  action accent (used sparingly)
+*/
+.gd-overlay {
+  --gd-bg: #eff9fc;
+  --gd-neutral: #f8f5f0;
+  --gd-accent: #a0036c;
+  --gd-blue: #c7daf8;
+  --gd-action: #fd6b02;
+  --gd-ink: #1a1d24;
+  --gd-ink-soft: rgba(26, 29, 36, 0.58);
+  --gd-line: rgba(26, 29, 36, 0.1);
+
+  position: fixed;
+  inset: 0;
+  z-index: 4000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.gd-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(20, 24, 33, 0.42);
+  backdrop-filter: blur(2px);
+}
+
+/* ── Wizard modal ───────────────────────────────────────────────────────── */
+.gd-modal,
+.gd-welcome {
+  position: relative;
+  background: var(--gd-bg);
+  border-radius: 20px;
+  box-shadow: 0 24px 70px rgba(20, 24, 33, 0.28);
+  width: 100%;
+  max-width: 720px;
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-family: inherit;
+  color: var(--gd-ink);
+}
+
+.gd-modal-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 2;
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--gd-ink-soft);
+  cursor: pointer;
+  font-size: 16px;
+  transition: background 0.15s, color 0.15s;
+}
+.gd-modal-close:hover {
+  background: rgba(26, 29, 36, 0.06);
+  color: var(--gd-ink);
+}
+
+.gd-wizard {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+/* ── Progress indicator ─────────────────────────────────────────────────── */
+.gd-progress {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  list-style: none;
+  margin: 0;
+  padding: 26px 56px 18px;
+}
+.gd-progress-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--gd-ink-soft);
+  position: relative;
+}
+.gd-progress-item:not(:last-child)::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  margin: 0 12px;
+  background: var(--gd-line);
+}
+.gd-progress-dot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #fff;
+  border: 1px solid var(--gd-line);
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+.gd-progress-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gd-progress-item--active {
+  color: var(--gd-accent);
+}
+.gd-progress-item--active .gd-progress-dot {
+  background: var(--gd-accent);
+  border-color: var(--gd-accent);
+  color: #fff;
+}
+.gd-progress-item--done .gd-progress-dot {
+  background: rgba(160, 3, 108, 0.12);
+  border-color: rgba(160, 3, 108, 0.4);
+  color: var(--gd-accent);
+}
+.gd-progress-item--skipped {
+  opacity: 0.4;
+}
+
+/* ── Body ───────────────────────────────────────────────────────────────── */
+.gd-wizard-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 56px 28px;
+}
+.gd-step-title {
+  font-size: 1.4rem;
+  font-weight: 600;
+  margin: 8px 0 6px;
+  letter-spacing: -0.01em;
+}
+.gd-step-sub {
+  font-size: 0.9rem;
+  color: var(--gd-ink-soft);
+  margin: 0 0 22px;
+}
+.gd-step-title + .gd-card-grid,
+.gd-step-title + .gd-questions {
+  margin-top: 22px;
+}
+
+/* ── Selectable cards ───────────────────────────────────────────────────── */
+.gd-card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+}
+.gd-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  text-align: left;
+  padding: 18px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--gd-line);
+  background: #fff;
+  cursor: pointer;
+  transition: border-color 0.16s, box-shadow 0.16s, transform 0.16s;
+}
+.gd-card:hover {
+  border-color: rgba(160, 3, 108, 0.35);
+  box-shadow: 0 6px 18px rgba(20, 24, 33, 0.08);
+}
+.gd-card--active {
+  border-color: var(--gd-accent);
+  box-shadow: 0 0 0 1px var(--gd-accent), 0 8px 22px rgba(160, 3, 108, 0.14);
+}
+.gd-card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: var(--gd-neutral);
+  color: var(--gd-accent);
+  font-size: 16px;
+}
+.gd-card--active .gd-card-icon {
+  background: rgba(160, 3, 108, 0.1);
+}
+.gd-card-title {
+  font-size: 0.98rem;
+  font-weight: 600;
+}
+.gd-card-desc {
+  font-size: 0.83rem;
+  color: var(--gd-ink-soft);
+  line-height: 1.45;
+}
+.gd-card-examples {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.gd-card-examples li {
+  font-size: 0.8rem;
+  color: var(--gd-ink-soft);
+  padding-left: 12px;
+  position: relative;
+}
+.gd-card-examples li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--gd-blue);
+}
+
+/* ── Free text / divider ────────────────────────────────────────────────── */
+.gd-or-divider {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 22px 0 12px;
+  color: var(--gd-ink-soft);
+  font-size: 0.85rem;
+}
+.gd-or-divider::before,
+.gd-or-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--gd-line);
+}
+.gd-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: 12px;
+  border: 1px solid var(--gd-line);
+  background: #fff;
+  padding: 12px 14px;
+  font-family: inherit;
+  font-size: 0.92rem;
+  color: var(--gd-ink);
+  resize: vertical;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.gd-textarea:focus {
+  outline: none;
+  border-color: var(--gd-accent);
+  box-shadow: 0 0 0 3px rgba(160, 3, 108, 0.12);
+}
+.gd-textarea--tall {
+  min-height: 130px;
+}
+
+/* ── Capture panel ──────────────────────────────────────────────────────── */
+.gd-capture-panel {
+  margin-top: 20px;
+}
+.gd-capture-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.gd-capture-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--gd-ink-soft);
+}
+.gd-capture-hint {
+  font-size: 0.8rem;
+  color: var(--gd-ink-soft);
+  margin: 8px 0 0;
+}
+.gd-mic-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--gd-line);
+  background: #fff;
+  color: var(--gd-accent);
+  border-radius: 999px;
+  padding: 6px 13px;
+  font-size: 0.82rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.gd-mic-btn:hover {
+  border-color: rgba(160, 3, 108, 0.4);
+}
+.gd-mic-btn--live {
+  background: var(--gd-action);
+  border-color: var(--gd-action);
+  color: #fff;
+}
+
+/* ── Guided questions ───────────────────────────────────────────────────── */
+.gd-questions {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.gd-question-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  margin-bottom: 8px;
+  line-height: 1.4;
+}
+.gd-question-num {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: var(--gd-neutral);
+  color: var(--gd-accent);
+  font-size: 0.72rem;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+/* ── Review ─────────────────────────────────────────────────────────────── */
+.gd-review-preview {
+  margin: 0;
+  padding: 18px 20px;
+  background: var(--gd-neutral);
+  border: 1px solid var(--gd-line);
+  border-radius: 14px;
+  font-family: inherit;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  color: var(--gd-ink);
+}
+.gd-review-edit {
+  min-height: 320px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+  line-height: 1.55;
+}
+
+/* ── Footer ─────────────────────────────────────────────────────────────── */
+.gd-wizard-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 56px 22px;
+  border-top: 1px solid var(--gd-line);
+  background: rgba(255, 255, 255, 0.5);
+}
+.gd-footer-right {
+  display: flex;
+  gap: 10px;
+}
+.gd-btn {
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 10px 20px;
+  border-radius: 11px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.gd-btn--primary {
+  background: var(--gd-accent);
+  color: #fff;
+}
+.gd-btn--primary:hover {
+  background: #850359;
+}
+.gd-btn--primary:disabled {
+  background: rgba(160, 3, 108, 0.3);
+  cursor: not-allowed;
+}
+.gd-btn--ghost {
+  background: transparent;
+  border-color: var(--gd-line);
+  color: var(--gd-ink-soft);
+}
+.gd-btn--ghost:hover {
+  border-color: rgba(26, 29, 36, 0.28);
+  color: var(--gd-ink);
+}
+
+/* ── First-run welcome ──────────────────────────────────────────────────── */
+.gd-welcome {
+  max-width: 480px;
+  padding: 40px 40px 32px;
+  text-align: left;
+}
+.gd-welcome-title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin: 0 0 14px;
+  letter-spacing: -0.01em;
+}
+.gd-welcome-body {
+  font-size: 0.98rem;
+  line-height: 1.6;
+  color: var(--gd-ink-soft);
+  margin: 0 0 28px;
+}
+.gd-welcome-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* ── Persistent nav button ──────────────────────────────────────────────── */
+.gd-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: rgba(26, 29, 36, 0.55);
+  cursor: pointer;
+  font-size: 16px;
+  transition: background 0.15s, color 0.15s;
+}
+.gd-nav-btn:hover {
+  background: rgba(160, 3, 108, 0.08);
+  color: #a0036c;
+}
+
+/* ── Responsive ─────────────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .gd-progress { padding: 20px 24px 14px; }
+  .gd-progress-label { display: none; }
+  .gd-wizard-body { padding: 8px 24px 24px; }
+  .gd-wizard-footer { padding: 14px 24px 20px; }
+  .gd-card-grid { grid-template-columns: 1fr; }
+  .gd-welcome { padding: 32px 26px 26px; }
+}
