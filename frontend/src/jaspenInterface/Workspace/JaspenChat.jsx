@@ -21,8 +21,6 @@ import {
   GuidedDecisionButton,
   GuidedDecisionModal,
   Walkthrough,
-  getWalkthroughDone,
-  setWalkthroughDone,
 } from '../GuidedDecision';
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
@@ -3752,30 +3750,12 @@ useEffect(() => {
   const [onboardingLaunchLabel, setOnboardingLaunchLabel] = useState('');
   const [guidedFlowDismissed, setGuidedFlowDismissed] = useState(false);
   const [guidedDecisionOpen, setGuidedDecisionOpen] = useState(false);
-  const [walkthroughOpen, setWalkthroughOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notificationsMode, setNotificationsMode] = useState('bell');
   const [notificationFeed, setNotificationFeed] = useState(() => buildDefaultNotifications());
   const [bellNotificationIds, setBellNotificationIds] = useState(() =>
     buildDefaultNotifications().map((item) => item.id)
   );
-
-  // First-login walkthrough: a lightweight spotlight tour, shown once per user.
-  // The workspace is never blocked — the tour is fully skippable and persisted.
-  useEffect(() => {
-    if (!user?.id && !user?.email) return;
-    if (!getWalkthroughDone(user)) {
-      // Defer so the workspace has painted and target elements exist to highlight.
-      const t = setTimeout(() => setWalkthroughOpen(true), 600);
-      return () => clearTimeout(t);
-    }
-    return undefined;
-  }, [user?.id, user?.email]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleWalkthroughClose = useCallback(() => {
-    setWalkthroughDone(user);
-    setWalkthroughOpen(false);
-  }, [user]);
 
   const handleGuidedUse = useCallback((text) => {
     setInput(text);
@@ -13566,7 +13546,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       {renderNotificationsModal()}
       {renderNameModal()}
       {renderBillingModal()}
-      <Walkthrough open={walkthroughOpen} onClose={handleWalkthroughClose} />
+      <Walkthrough user={user} />
       <GuidedDecisionModal
         open={guidedDecisionOpen}
         onClose={() => setGuidedDecisionOpen(false)}

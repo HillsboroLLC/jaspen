@@ -7,21 +7,39 @@ const userKey = (user) => {
   return 'anon';
 };
 
-// First-login walkthrough completion (the in-product spotlight tour).
-export const walkthroughStorageKey = (user) =>
-  `jaspen_walkthrough_done_${userKey(user)}`;
+// Adaptive coach state. We track, per user, whether the coach has ever run and
+// which features the user has already interacted with — so we teach the unseen
+// ones and never re-teach what they already use.
+const coachStartedKey = (user) => `jaspen_coach_started_${userKey(user)}`;
+const featureSeenKey = (user, feat) => `jaspen_coach_seen_${userKey(user)}_${feat}`;
 
-export function getWalkthroughDone(user) {
+export function getCoachStarted(user) {
   try {
-    return localStorage.getItem(walkthroughStorageKey(user)) === '1';
+    return localStorage.getItem(coachStartedKey(user)) === '1';
   } catch {
     return false;
   }
 }
 
-export function setWalkthroughDone(user) {
+export function setCoachStarted(user) {
   try {
-    localStorage.setItem(walkthroughStorageKey(user), '1');
+    localStorage.setItem(coachStartedKey(user), '1');
+  } catch {
+    /* storage unavailable — non-fatal */
+  }
+}
+
+export function isFeatureSeen(user, feat) {
+  try {
+    return localStorage.getItem(featureSeenKey(user, feat)) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function markFeatureSeen(user, feat) {
+  try {
+    localStorage.setItem(featureSeenKey(user, feat), '1');
   } catch {
     /* storage unavailable — non-fatal */
   }

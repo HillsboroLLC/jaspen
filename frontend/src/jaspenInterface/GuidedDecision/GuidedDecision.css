@@ -380,6 +380,19 @@
 }
 .gd-nav-icon:hover { background: rgba(160, 3, 108, 0.1); color: #a0036c; }
 
+/* ── Adaptive coach highlight ring (no dimming — non-blocking) ──────────── */
+.gd-coach-ring {
+  border: 2px solid #a0036c;
+  border-radius: 12px;
+  pointer-events: none;
+  transition: top 0.25s ease, left 0.25s ease, width 0.25s ease, height 0.25s ease;
+  animation: gd-coach-pulse 1.8s ease-in-out infinite;
+}
+@keyframes gd-coach-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(160, 3, 108, 0.4), 0 0 0 8px rgba(160, 3, 108, 0.1); }
+  50%      { box-shadow: 0 0 0 4px rgba(160, 3, 108, 0.6), 0 0 0 13px rgba(160, 3, 108, 0.16); }
+}
+
 /* ── Responsive ─────────────────────────────────────────────────────────── */
 @media (max-width: 640px) {
   .gd-modal-card .gd-progress { padding: 22px 24px 14px; }
