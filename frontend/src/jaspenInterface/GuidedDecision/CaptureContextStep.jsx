@@ -56,8 +56,12 @@ function useDictation(onText) {
 }
 
 export default function CaptureContextStep({ draft, update }) {
+  // Functional update so each dictated phrase appends to the latest text,
+  // not a stale snapshot captured when recognition started.
   const appendText = (chunk) =>
-    update({ contextText: `${draft.contextText ? `${draft.contextText} ` : ''}${chunk}` });
+    update((prev) => ({
+      contextText: prev.contextText ? `${prev.contextText} ${chunk}` : chunk,
+    }));
   const { supported, listening, start, stop } = useDictation(appendText);
 
   const showCapture = draft.method === 'speak' || draft.method === 'type';

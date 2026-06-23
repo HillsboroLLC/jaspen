@@ -23,7 +23,11 @@ export default function GuidedDecisionWizard({ onUse, onClose }) {
   const [reviewText, setReviewText] = useState('');
   const [editing, setEditing] = useState(false);
 
-  const update = (patch) => setDraft((prev) => ({ ...prev, ...patch }));
+  // Accepts a plain patch object or a function of the previous draft (the
+  // latter is needed for appends like live dictation, which must build on the
+  // latest value rather than a stale snapshot).
+  const update = (patch) =>
+    setDraft((prev) => ({ ...prev, ...(typeof patch === 'function' ? patch(prev) : patch) }));
 
   // Visible step sequence adapts to the chosen method.
   const sequence = useMemo(
