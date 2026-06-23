@@ -7,20 +7,21 @@ const userKey = (user) => {
   return 'anon';
 };
 
-export const firstRunStorageKey = (user) =>
-  `jaspen_guided_firstrun_dismissed_${userKey(user)}`;
+// First-login walkthrough completion (the in-product spotlight tour).
+export const walkthroughStorageKey = (user) =>
+  `jaspen_walkthrough_done_${userKey(user)}`;
 
-export function getFirstRunDismissed(user) {
+export function getWalkthroughDone(user) {
   try {
-    return localStorage.getItem(firstRunStorageKey(user)) === '1';
+    return localStorage.getItem(walkthroughStorageKey(user)) === '1';
   } catch {
     return false;
   }
 }
 
-export function setFirstRunDismissed(user) {
+export function setWalkthroughDone(user) {
   try {
-    localStorage.setItem(firstRunStorageKey(user), '1');
+    localStorage.setItem(walkthroughStorageKey(user), '1');
   } catch {
     /* storage unavailable — non-fatal */
   }
@@ -48,29 +49,7 @@ export const FOCUS_OPTIONS = [
   },
 ];
 
-// Context capture methods (Step 2)
-export const METHOD_OPTIONS = [
-  {
-    id: 'speak',
-    title: 'Speak naturally',
-    description: 'Explain your situation in your own words.',
-    icon: 'microphone',
-  },
-  {
-    id: 'type',
-    title: 'Type your thoughts',
-    description: 'Share whatever information you have.',
-    icon: 'keyboard',
-  },
-  {
-    id: 'guided',
-    title: 'Answer a few guided questions',
-    description: 'Jaspen will help organize the important details.',
-    icon: 'wand-magic-sparkles',
-  },
-];
-
-// Guided questions (Step 3)
+// Guided questions (Step 2)
 export const GUIDED_QUESTIONS = [
   {
     id: 'decision',
@@ -102,13 +81,8 @@ export const GUIDED_QUESTIONS = [
 export const emptyDraft = () => ({
   focus: null, // one of FOCUS_OPTIONS ids
   focusCustom: '', // free-text situation
-  method: null, // one of METHOD_OPTIONS ids
-  contextText: '', // for speak / type
   answers: { decision: '', options: '', stakeholders: '', constraints: '', outcome: '' },
 });
-
-// Whether the guided (5-question) refine step is part of this flow.
-export const flowHasRefineStep = (draft) => draft.method === 'guided';
 
 const focusLabel = (draft) => {
   if (draft.focusCustom.trim()) return draft.focusCustom.trim();
@@ -118,20 +92,15 @@ const focusLabel = (draft) => {
 
 // Build the structured prompt shown in Review and handed to the composer.
 export function buildStructuredPrompt(draft) {
-  const sections = [];
   const focus = focusLabel(draft);
-
-  if (draft.method === 'guided') {
-    const a = draft.answers;
-    sections.push(['Decision Context', a.decision || focus]);
-    sections.push(['Potential Options', a.options]);
-    sections.push(['Stakeholders', a.stakeholders]);
-    sections.push(['Constraints', a.constraints]);
-    sections.push(['Desired Outcome', a.outcome]);
-  } else {
-    // speak / type — a single narrative blob plus the chosen focus framing
-    sections.push(['Decision Context', draft.contextText || focus]);
-  }
+  const a = draft.answers;
+  const sections = [
+    ['Decision Context', a.decision || focus],
+    ['Potential Options', a.options],
+    ['Stakeholders', a.stakeholders],
+    ['Constraints', a.constraints],
+    ['Desired Outcome', a.outcome],
+  ];
 
   const lines = [];
   if (focus) lines.push(`Focus: ${focus}`, '');

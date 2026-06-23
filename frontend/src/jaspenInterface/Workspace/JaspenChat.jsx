@@ -20,9 +20,9 @@ import { getPlanConnectorSentence } from '../../shared/billing/planConnectors';
 import {
   GuidedDecisionButton,
   GuidedDecisionModal,
-  FirstRunModal,
-  getFirstRunDismissed,
-  setFirstRunDismissed,
+  Walkthrough,
+  getWalkthroughDone,
+  setWalkthroughDone,
 } from '../GuidedDecision';
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
@@ -3752,7 +3752,7 @@ useEffect(() => {
   const [onboardingLaunchLabel, setOnboardingLaunchLabel] = useState('');
   const [guidedFlowDismissed, setGuidedFlowDismissed] = useState(false);
   const [guidedDecisionOpen, setGuidedDecisionOpen] = useState(false);
-  const [firstRunOpen, setFirstRunOpen] = useState(false);
+  const [walkthroughOpen, setWalkthroughOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notificationsMode, setNotificationsMode] = useState('bell');
   const [notificationFeed, setNotificationFeed] = useState(() => buildDefaultNotifications());
@@ -3760,21 +3760,21 @@ useEffect(() => {
     buildDefaultNotifications().map((item) => item.id)
   );
 
-  // Guided Decision: first-login welcome shows once per user, then is persisted.
+  // First-login walkthrough: a lightweight spotlight tour, shown once per user.
+  // The workspace is never blocked — the tour is fully skippable and persisted.
   useEffect(() => {
     if (!user?.id && !user?.email) return;
-    if (!getFirstRunDismissed(user)) setFirstRunOpen(true);
+    if (!getWalkthroughDone(user)) {
+      // Defer so the workspace has painted and target elements exist to highlight.
+      const t = setTimeout(() => setWalkthroughOpen(true), 600);
+      return () => clearTimeout(t);
+    }
+    return undefined;
   }, [user?.id, user?.email]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleFirstRunSkip = useCallback(() => {
-    setFirstRunDismissed(user);
-    setFirstRunOpen(false);
-  }, [user]);
-
-  const handleFirstRunStart = useCallback(() => {
-    setFirstRunDismissed(user);
-    setFirstRunOpen(false);
-    setGuidedDecisionOpen(true);
+  const handleWalkthroughClose = useCallback(() => {
+    setWalkthroughDone(user);
+    setWalkthroughOpen(false);
   }, [user]);
 
   const handleGuidedUse = useCallback((text) => {
@@ -13566,11 +13566,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       {renderNotificationsModal()}
       {renderNameModal()}
       {renderBillingModal()}
-      <FirstRunModal
-        open={firstRunOpen}
-        onStart={handleFirstRunStart}
-        onSkip={handleFirstRunSkip}
-      />
+      <Walkthrough open={walkthroughOpen} onClose={handleWalkthroughClose} />
       <GuidedDecisionModal
         open={guidedDecisionOpen}
         onClose={() => setGuidedDecisionOpen(false)}

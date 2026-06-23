@@ -15,7 +15,7 @@ export default function ChooseFocusStep({ draft, update }) {
 
   return (
     <div className="gd-step">
-      <h2 className="gd-step-title">What would you like to work through?</h2>
+      <h2 className="gd-step-title">What are you trying to accomplish?</h2>
 
       <div className="gd-card-grid" role="radiogroup" aria-label="Choose a focus">
         {FOCUS_OPTIONS.map((opt) => {
