@@ -1,11 +1,14 @@
-import React, { useEffect } from 'react';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faXmark } from '@fortawesome/free-solid-svg-icons';
+import React, { useEffect, useState } from 'react';
 import GuidedDecisionWizard from './GuidedDecisionWizard';
+import * as S from './guidedDecisionStyles';
 import './GuidedDecision.css';
 
 // Overlay shell for the wizard. Handles backdrop, Escape, and scroll lock.
+// Critical container styles are inlined so the app's global CSS can't break
+// the modal layout.
 export default function GuidedDecisionModal({ open, onClose, onUse }) {
+  const [hoverClose, setHoverClose] = useState(false);
+
   useEffect(() => {
     if (!open) return undefined;
     const onKey = (e) => {
@@ -23,16 +26,20 @@ export default function GuidedDecisionModal({ open, onClose, onUse }) {
   if (!open) return null;
 
   return (
-    <div className="gd-overlay" role="dialog" aria-modal="true" aria-label="Guided Decision">
-      <div className="gd-backdrop" onClick={onClose} />
-      <div className="gd-modal">
+    <div style={S.overlay} role="dialog" aria-modal="true" aria-label="Guided Decision">
+      <div style={S.backdrop} onClick={onClose} />
+      <div style={S.wizardCard} className="gd-modal-card">
         <button
           type="button"
-          className="gd-modal-close"
+          style={{ ...S.closeBtn, background: hoverClose ? 'rgba(26,29,36,0.07)' : 'transparent' }}
+          onMouseEnter={() => setHoverClose(true)}
+          onMouseLeave={() => setHoverClose(false)}
           onClick={onClose}
           aria-label="Close Guided Decision"
         >
-          <FontAwesomeIcon icon={faXmark} />
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
+            <path d="M6 6l12 12M18 6L6 18" />
+          </svg>
         </button>
         <GuidedDecisionWizard onUse={onUse} onClose={onClose} />
       </div>
