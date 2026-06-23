@@ -348,37 +348,23 @@
   line-height: 1.4;
 }
 
-/* ── Persistent nav pill ────────────────────────────────────────────────── */
-.gd-nav-pill {
+/* ── Persistent nav icon ────────────────────────────────────────────────── */
+.gd-nav-icon {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  height: 34px;
-  padding: 0 14px 0 12px;
-  border: 1px solid rgba(160, 3, 108, 0.22);
-  border-radius: 999px;
-  background: rgba(160, 3, 108, 0.06);
-  color: #a0036c;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: rgba(26, 29, 36, 0.5);
   cursor: pointer;
-  font-family: inherit;
-  font-size: 0.85rem;
-  font-weight: 600;
-  white-space: nowrap;
-  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+  transition: background 0.15s, color 0.15s;
 }
-.gd-nav-pill:hover {
-  background: rgba(160, 3, 108, 0.12);
-  border-color: rgba(160, 3, 108, 0.4);
-  box-shadow: 0 2px 8px rgba(160, 3, 108, 0.12);
-}
-.gd-nav-pill-label { line-height: 1; }
+.gd-nav-icon:hover { background: rgba(160, 3, 108, 0.1); color: #a0036c; }
 
 /* ── Responsive ─────────────────────────────────────────────────────────── */
-@media (max-width: 900px) {
-  /* Collapse the nav pill to icon-only when space is tight */
-  .gd-nav-pill { padding: 0; width: 34px; justify-content: center; }
-  .gd-nav-pill-label { display: none; }
-}
 @media (max-width: 640px) {
   .gd-modal-card .gd-progress { padding: 22px 24px 14px; }
   .gd-modal-card .gd-progress-label { display: none; }
