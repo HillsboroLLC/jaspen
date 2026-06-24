@@ -5,13 +5,13 @@
 
 .jad-root {
   width: 100%;
-  background: #eff9fc;
+  background: #ffffff;
   border-radius: 16px;
   padding: 28px;
   display: flex;
   flex-direction: column;
   gap: 20px;
-  box-shadow: 0 2px 16px rgba(22, 31, 59, 0.08), 0 0 0 1px rgba(22, 31, 59, 0.06);
+  box-shadow: none;
   min-height: 240px;
   box-sizing: border-box;
 }

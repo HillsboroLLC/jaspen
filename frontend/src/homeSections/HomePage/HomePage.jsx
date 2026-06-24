@@ -4,6 +4,8 @@ import StrategyAccessCard from './StrategyAccessCard';
 import JaspenNav from './JaspenNav';
 import ScrollGuide from './ScrollGuide';
 import WorkWithJaspenCanvas from './WorkWithJaspenCanvas';
+import HeroProblem from './HeroProblem';
+import PainBand from './PainBand';
 import './HomePage.css';
 
 /* ── Animated panel: Evaluate Ideas ── */
@@ -204,32 +206,32 @@ function PlanPanel() {
 
 const STEPS = [
   {
-    id: 'clarify',
-    num: '01',
-    title: 'Clarify',
-    description: 'Capture the problem, constraints, and definition of success.',
-    icon: 'fa-solid fa-lightbulb',
+    id: 'frame',
+    num: 'F',
+    title: 'Frame',
+    description: 'Where are we going, and what does success look like?',
+    icon: 'fa-solid fa-compass',
   },
   {
-    id: 'decide',
-    num: '02',
-    title: 'Decide',
-    description: 'Generate options, tradeoffs, risks, and a decision-grade recommendation.',
+    id: 'limits',
+    num: 'L',
+    title: 'Limits',
+    description: "What's getting in the way today?",
+    icon: 'fa-solid fa-triangle-exclamation',
+  },
+  {
+    id: 'opportunities',
+    num: 'O',
+    title: 'Opportunities',
+    description: "What's already working — where's the momentum?",
+    icon: 'fa-solid fa-arrow-trend-up',
+  },
+  {
+    id: 'weigh',
+    num: 'W',
+    title: 'Weigh',
+    description: 'What are the paths forward, and what are the tradeoffs?',
     icon: 'fa-solid fa-scale-balanced',
-  },
-  {
-    id: 'plan',
-    num: '03',
-    title: 'Plan',
-    description: 'Convert the decision into milestones, owners, artifacts, and timeline.',
-    icon: 'fa-solid fa-diagram-project',
-  },
-  {
-    id: 'execute',
-    num: '04',
-    title: 'Execute',
-    description: 'Track progress, decisions, risks, and updates in one place.',
-    icon: 'fa-solid fa-rocket',
   },
 ];
 
@@ -318,19 +320,11 @@ export default function HomePage() {
         <section className="jaspen-hero">
           <div className="jaspen-hero-container">
             <div className="jaspen-hero-content scroll-reveal" id="hero-content">
-              <div className="jaspen-hero-tag">COHESIVE CONTEXT ENGINE</div>
-              <h1>Execution Intelligence</h1>
+              <h1>Bring your problem.<br />Leave with clarity.</h1>
               <p className="jaspen-hero-sub">
-                The AI for strategic decisions and coordinated execution.
+                Your thought partner for the decisions that don&apos;t have an obvious answer.
               </p>
-              <div className="jaspen-hero-cta">
-                <a href="#request-access" className="jaspen-btn jaspen-btn-primary jaspen-btn-lg">
-                  Request Access
-                </a>
-                <a href="#intro-header" onClick={(e) => scrollToSection(e, 'intro-header')} className="jaspen-btn jaspen-btn-outline jaspen-btn-lg">
-                  See How It Works
-                </a>
-              </div>
+              <HeroProblem />
             </div>
             
             <div className="jaspen-hero-visual scroll-reveal" id="hero-visual">
@@ -346,6 +340,8 @@ export default function HomePage() {
         </section>
 
         {/* ========== INTRO ========== */}
+        <PainBand />
+
         <section className="jaspen-intro-section">
           <div className="jaspen-container">
             <div className="jaspen-intro-header scroll-reveal" id="intro-header">
@@ -449,10 +445,11 @@ export default function HomePage() {
           <div className="jaspen-container">
             <div className="jaspen-split-header scroll-reveal" id="product-header">
               <div className="header-left">
+                <span style={{ display: 'block', fontSize: '12px', fontWeight: 600, letterSpacing: '0.16em', textTransform: 'uppercase', color: '#a0036c', marginBottom: '12px' }}>The FLOW Method&trade;</span>
                 <h2>One flow.<br />Full context.<br />Zero handoffs.</h2>
               </div>
               <div className="header-right">
-                <p>Every step builds on the last — nothing gets lost between tools or teams. Jaspen ensures the "why" travels with the "what."</p>
+                <p>The four questions Jaspen works through with you — Frame, Limits, Opportunities, Weigh. Every step builds on the last, so the &ldquo;why&rdquo; always travels with the &ldquo;what.&rdquo;</p>
               </div>
             </div>
 
@@ -482,18 +479,6 @@ export default function HomePage() {
                 ))}
               </div>
             </div>
-
-            <div className="jaspen-overlap-callout scroll-reveal" id="context-callout">
-              <div className="callout-inner">
-                <div className="callout-icon">
-                  <i className="fa-solid fa-link"></i>
-                </div>
-                <div className="callout-text">
-                  <strong>Contextual awareness throughout</strong>
-                  <p>The agent remembers every decision, constraint, and tradeoff — so you never have to repeat yourself.</p>
-                </div>
-              </div>
-            </div>
           </div>
         </section>
 
@@ -502,22 +487,23 @@ export default function HomePage() {
           <div className="jaspen-container">
             <div className="who-layout">
               <div className="who-content scroll-reveal" id="who-content">
-                <h2>Built for people who ship, not just strategize</h2>
+                <h2>Wherever you're starting from</h2>
+                <p>From a single big idea to an enterprise-wide decision — Jaspen scales with you.</p>
                 <div className="who-visual-mobile"></div>
               </div>
               <div className="who-list-container">
                 <ul className="jaspen-who-list">
                   <li className="scroll-reveal" data-id="who-1">
                     <div className="list-icon"><i className="fa-solid fa-check"></i></div>
-                    <span><strong>Operators</strong> who need to justify initiatives and keep projects on track without a PMO army.</span>
+                    <span><strong>Just you and an idea.</strong> A head full of possibilities and no clear first move — Jaspen helps you find where to start.</span>
                   </li>
                   <li className="scroll-reveal" data-id="who-2">
                     <div className="list-icon"><i className="fa-solid fa-check"></i></div>
-                    <span><strong>Founders</strong> who move fast but still need structured thinking before big bets.</span>
+                    <span><strong>You and a team.</strong> Decisions that need everyone rowing in the same direction.</span>
                   </li>
                   <li className="scroll-reveal" data-id="who-3">
                     <div className="list-icon"><i className="fa-solid fa-check"></i></div>
-                    <span><strong>Transformation leaders</strong> driving CI, digital, or org-wide change with limited bandwidth.</span>
+                    <span><strong>You and the whole org.</strong> Cross-functional bets with real money and momentum on the line.</span>
                   </li>
                 </ul>
               </div>
@@ -526,45 +512,20 @@ export default function HomePage() {
         </section>
 
         {/* ========== INDUSTRIES ========== */}
-        <section id="industries" className="jaspen-industries-section">
-          <div className="jaspen-container">
-            <div className="jaspen-industries-wrap scroll-reveal">
-              <div className="industries-header">
-                <h2>Industry-ready operating patterns</h2>
-                <p>Built for real implementation constraints across regulated, service, and transformation-heavy environments.</p>
-              </div>
-              <div className="industry-chip-grid">
-                {[
-                  'Financial Services',
-                  'Nonprofits',
-                  'Quick Service Restaurants',
-                  'Government',
-                  'Healthcare',
-                  'Wellness',
-                  'Energy',
-                  'Aviation',
-                ].map((industry) => (
-                  <div key={industry} className="industry-chip">{industry}</div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </section>
-
         {/* ========== FINAL CTA ========== */}
         <section id="request-access" className="jaspen-cta-section">
           <div className="jaspen-container">
             <div className="cta-box scroll-reveal" id="cta-box">
               <div className="cta-content">
-                <p className="cta-eyebrow">Enterprise</p>
-                <h2>Need more than the standard plans?</h2>
-                <p>Custom data integrations, dedicated support, SSO, and volume licensing — reach out and we'll scope what you need.</p>
+                <p className="cta-eyebrow">Scale when you're ready</p>
+                <h2>Ready to bring your whole org along?</h2>
+                <p>Custom integrations, dedicated support, SSO, and volume licensing — when Jaspen becomes how your team decides, we'll scope exactly what you need.</p>
                 <div className="cta-actions">
                   <a href="mailto:hello@jaspen.ai" className="jaspen-btn jaspen-btn-primary jaspen-btn-lg">
                     Talk to us
                   </a>
-                  <a href="#hero-content" onClick={(e) => scrollToSection(e, 'hero-content')} className="jaspen-btn cta-btn-secondary jaspen-btn-lg">
-                    Start for free
+                  <a href="#pricing-plans" onClick={(e) => scrollToSection(e, 'pricing-plans')} className="jaspen-btn cta-btn-secondary jaspen-btn-lg">
+                    Start with a standard plan
                   </a>
                 </div>
               </div>

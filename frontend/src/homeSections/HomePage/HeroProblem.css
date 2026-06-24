@@ -1,0 +1,75 @@
+/* Hero left-column pain + persona cards (eggplant, flip + float + jiggle). */
+.hp-block {
+  --hp-egg: #a0036c;
+  margin-top: 26px;
+}
+
+.hp-pain {
+  font-size: 1rem;
+  font-style: italic;
+  color: #14161c;
+  min-height: 26px;
+  margin: 0 0 26px;
+  transition: opacity 0.4s ease;
+}
+
+.hp-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(27, 34, 54, 0.45);
+  margin-bottom: 14px;
+}
+
+.hp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  max-width: 560px;
+}
+
+.hp-card {
+  border-radius: 14px;
+}
+
+.hp-card-inner {
+  display: block;
+  height: 100%;
+  box-sizing: border-box;
+  background: var(--hp-egg);
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: 0 12px 30px rgba(160, 3, 108, 0.22);
+  animation: hp-float 6s ease-in-out infinite;
+}
+.hp-card:nth-child(2) .hp-card-inner { animation-duration: 6.6s; animation-delay: 0.4s; }
+.hp-card:nth-child(3) .hp-card-inner { animation-duration: 5.6s; animation-delay: 0.2s; }
+
+@keyframes hp-float {
+  0%, 100% { transform: translateY(0) rotate(-0.4deg); }
+  50% { transform: translateY(-7px) rotate(0.4deg); }
+}
+.hp-card:hover { animation: hp-jiggle 0.42s ease; }
+@keyframes hp-jiggle {
+  0%, 100% { transform: rotate(0); }
+  20% { transform: rotate(-2.6deg); }
+  45% { transform: rotate(2deg); }
+  70% { transform: rotate(-1.2deg); }
+}
+
+.hp-icon { font-size: 19px; color: #fff; opacity: 0.95; }
+.hp-ct { font-size: 13.5px; font-weight: 600; color: #fff; margin: 11px 0 5px; line-height: 1.35; }
+.hp-cd { font-size: 11.5px; color: rgba(255, 255, 255, 0.82); line-height: 1.45; margin: 0 0 12px; }
+.hp-tag {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.18);
+  padding: 3px 10px;
+  border-radius: 999px;
+}
+
+@media (max-width: 640px) {
+  .hp-grid { grid-template-columns: 1fr; }
+}

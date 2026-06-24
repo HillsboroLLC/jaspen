@@ -1578,16 +1578,11 @@
 }
 
 .jaspen-dynamic-timeline {
-  display: grid;
-  grid-template-columns: 120px 1fr;
-  gap: 40px;
   position: relative;
 }
 
 .timeline-sticky-content {
-  position: sticky;
-  top: 120px;
-  height: fit-content;
+  display: none;
 }
 
 .step-indicator {
@@ -1612,50 +1607,79 @@
 
 .timeline-steps-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 40px;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0;
 }
 
 .timeline-step-card {
   background: var(--gray-50);
-  padding: 48px;
+  padding: 28px 24px;
   border-radius: var(--card-radius);
   border: 1px solid transparent;
   transition: all 0.4s ease;
   position: relative;
-  overflow: hidden;
+  overflow: visible;
+  margin-right: 30px;
+}
+.timeline-step-card:last-child {
+  margin-right: 0;
+}
+
+/* Flow connector arrow between cards */
+.timeline-step-card::after {
+  content: '';
+  position: absolute;
+  right: -19px;
+  top: 50%;
+  width: 11px;
+  height: 11px;
+  border-top: 2px solid var(--accent);
+  border-right: 2px solid var(--accent);
+  transform: translateY(-50%) rotate(45deg);
+  opacity: 0.5;
+}
+.timeline-step-card:last-child::after {
+  display: none;
 }
 
 .timeline-step-card:hover {
   background: var(--white);
   border-color: var(--gray-200);
   box-shadow: var(--shadow-premium);
-  transform: translateY(-8px);
+  transform: translateY(-6px);
 }
 
 .timeline-step-card.odd {
-  margin-top: 80px;
+  margin-top: 0;
 }
 
 .step-num {
-  font-size: 0.875rem;
+  font-size: 2rem;
   font-weight: 800;
   color: var(--accent);
-  margin-bottom: 24px;
+  margin-bottom: 14px;
   font-family: monospace;
+  line-height: 1;
 }
 
 .timeline-step-card h3 {
-  font-size: 1.75rem;
+  font-size: 1.2rem;
   font-weight: 700;
   color: var(--navy-deep);
-  margin-bottom: 16px;
-  letter-spacing: -0.02em;
+  margin-bottom: 10px;
+  letter-spacing: -0.01em;
 }
 
 .timeline-step-card p {
-  font-size: 1.125rem;
+  font-size: 0.92rem;
   color: var(--gray-600);
+  line-height: 1.5;
+}
+
+@media (max-width: 1024px) {
+  .timeline-steps-grid { grid-template-columns: 1fr 1fr; gap: 20px; }
+  .timeline-step-card { margin-right: 0; }
+  .timeline-step-card::after { display: none; }
 }
 
 .jaspen-overlap-callout {
@@ -2031,8 +2055,11 @@
 
 .cta-box {
   background: #a0036c;
-  padding: 100px;
-  border-radius: 48px;
+  /* full-bleed: break out of the container to the viewport edges */
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
+  padding: 100px max(40px, calc(50vw - 600px));
+  border-radius: 0;
   color: var(--white);
   position: relative;
   overflow: hidden;
