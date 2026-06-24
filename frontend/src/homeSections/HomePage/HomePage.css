@@ -2162,10 +2162,69 @@
   border-top: 1px solid var(--gray-100);
 }
 
+.jaspen-footer-grid {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr 1fr 1fr 1fr;
+  gap: 40px;
+  padding-bottom: 56px;
+  margin-bottom: 40px;
+  border-bottom: 1px solid var(--gray-100);
+}
+
+.jaspen-footer-brand {
+  max-width: 280px;
+}
+.jaspen-footer-logo {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--navy-deep);
+  letter-spacing: -0.01em;
+}
+.jaspen-footer-brand p {
+  margin-top: 12px;
+  font-size: 0.9rem;
+  color: var(--gray-500);
+  line-height: 1.6;
+}
+
+.jaspen-footer-col {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.jaspen-footer-col h4 {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--navy-deep);
+  margin-bottom: 4px;
+}
+.jaspen-footer-col a {
+  text-decoration: none;
+  font-size: 0.92rem;
+  color: var(--gray-500);
+  transition: color 0.2s;
+}
+.jaspen-footer-col a:hover {
+  color: var(--accent);
+}
+
 .jaspen-footer-inner {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+@media (max-width: 900px) {
+  .jaspen-footer-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 32px;
+  }
+  .jaspen-footer-brand {
+    grid-column: 1 / -1;
+    max-width: none;
+  }
 }
 
 .jaspen-footer-copy {

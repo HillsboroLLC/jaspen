@@ -541,12 +541,44 @@ export default function HomePage() {
       {/* ========== FOOTER ========== */}
       <footer className="jaspen-footer">
         <div className="jaspen-container">
+          <div className="jaspen-footer-grid">
+            <div className="jaspen-footer-brand">
+              <span className="jaspen-footer-logo">Jaspen</span>
+              <p>Your thought partner for the decisions that don&apos;t have an obvious answer.</p>
+            </div>
+            <div className="jaspen-footer-col">
+              <h4>Product</h4>
+              <Link to="/pages/solutions">Solutions</Link>
+              <Link to="/pages/pricing">Pricing</Link>
+              <Link to="/pages/jaspen-score">Jaspen Score</Link>
+              <Link to="/pages/project-management">Project Management</Link>
+              <Link to="/pages/api">API</Link>
+            </div>
+            <div className="jaspen-footer-col">
+              <h4>Integrations</h4>
+              <Link to="/pages/jaspen-in-jira">Jaspen in Jira</Link>
+              <Link to="/pages/jaspen-in-smartsheets">Jaspen in Smartsheets</Link>
+              <Link to="/pages/resources/connectors">Connectors</Link>
+              <Link to="/pages/resources/integrations">Integrations</Link>
+              <Link to="/pages/resources/plugins">Plugins</Link>
+            </div>
+            <div className="jaspen-footer-col">
+              <h4>Resources</h4>
+              <Link to="/pages/resources/demos">Demos</Link>
+              <Link to="/pages/resources/tutorials">Tutorials</Link>
+            </div>
+            <div className="jaspen-footer-col">
+              <h4>Company</h4>
+              <Link to="/pages/jaspen">I&apos;m Jaspen</Link>
+              <a href="mailto:hello@jaspen.ai">Get in touch</a>
+              <Link to="/pages/support">Support</Link>
+            </div>
+          </div>
           <div className="jaspen-footer-inner">
             <p className="jaspen-footer-copy">&copy; {new Date().getFullYear()} Jaspen. All rights reserved.</p>
             <div className="jaspen-footer-right">
               <Link to="/pages/privacy">Privacy</Link>
               <Link to="/pages/terms">Terms</Link>
-              <Link to="/pages/support">Support</Link>
             </div>
           </div>
         </div>
