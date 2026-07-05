@@ -1,7 +1,12 @@
 node_modules/
 *.log
 .env
+.env.local
+.env.*.local
 docker-compose.override.yml
+
+# Local dev databases (never commit data)
+backend/instance/
 # Local/backup artifacts
 .DS_Store
 *.zip
