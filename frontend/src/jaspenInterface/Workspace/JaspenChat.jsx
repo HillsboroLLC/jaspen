@@ -16,6 +16,11 @@ import ConfirmDialog from '../../shared/components/ConfirmDialog';
 import { useToast, ToastContainer } from '../../shared/components/Toast';
 import { useAuth } from 'shared/auth/AuthContext';
 import { AUTH_EVENTS, authFetch as cookieAuthFetch, buildAuthHeaders } from '../../shared/auth/http';
+import {
+  readPendingIntakeContext,
+  clearPendingIntakeContext,
+  clearPendingIntakeThreadId,
+} from '../../shared/auth/pendingIntakeContext';
 import { getPlanConnectorSentence } from '../../shared/billing/planConnectors';
 import {
   GuidedDecisionButton,
@@ -3668,7 +3673,28 @@ useEffect(() => {
     if (prefill && typeof prefill === 'string' && prefill.trim()) {
       setInput(prefill.trim());
       navigate(location.pathname + location.search, { replace: true, state: {} });
+      return;
     }
+    // Recovery fallback for homepage intake context: if the post-auth handoff
+    // (conversation/start) failed, the pending key is intentionally left in
+    // sessionStorage. When the user lands here without a thread (?sid=), put
+    // their pasted context straight into the composer so nothing they shared
+    // is lost — they just press send. Cleared only once it's visibly here.
+    try {
+      const params = new URLSearchParams(location.search);
+      const hasThread = Boolean((params.get('sid') || params.get('session_id') || '').trim());
+      if (!hasThread) {
+        const pendingIntake = readPendingIntakeContext();
+        if (pendingIntake) {
+          setInput(pendingIntake);
+          clearPendingIntakeContext();
+          // The reused-thread_id retry mechanism is moot once the user is
+          // manually composing a fresh send from here — don't let a stale id
+          // silently attach to whatever they type next.
+          clearPendingIntakeThreadId();
+        }
+      }
+    } catch { /* never block workspace load on recovery */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const handleUnauthorized = useCallback(async () => {

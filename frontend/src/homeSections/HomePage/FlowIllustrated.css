@@ -1,0 +1,111 @@
+.flow-illustrated {
+  background: #f5f1ea;
+  padding: 100px 40px 120px;
+  overflow: hidden;
+  position: relative;
+}
+
+.flow-illustrated-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.flow-illustrated-header {
+  text-align: center;
+  margin-bottom: 12px;
+}
+
+.flow-illustrated-eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #a0036c;
+  margin-bottom: 14px;
+}
+
+.flow-illustrated-heading {
+  font-size: clamp(2rem, 4vw, 3rem);
+  font-weight: 760;
+  color: #161f3b;
+  line-height: 1.1;
+  margin-bottom: 14px;
+}
+
+.flow-illustrated-sub {
+  font-size: 1rem;
+  color: rgba(22, 31, 59, 0.62);
+  max-width: 520px;
+  margin: 0 auto;
+  line-height: 1.6;
+}
+
+.flow-scene {
+  position: relative;
+  width: 100%;
+  margin-top: 40px;
+}
+
+.flow-scene svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.flow-step-labels {
+  display: flex;
+  justify-content: space-around;
+  padding: 0 4%;
+  margin-top: -8px;
+}
+
+.flow-step-label {
+  text-align: center;
+  flex: 1;
+}
+
+.flow-step-letter {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #a0036c;
+  margin-bottom: 3px;
+}
+
+.flow-step-name {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #161f3b;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
+
+@keyframes flow-float-a {
+  0%, 100% { transform: translateY(0px); }
+  50%       { transform: translateY(-10px); }
+}
+@keyframes flow-float-b {
+  0%, 100% { transform: translateY(-6px); }
+  50%       { transform: translateY(6px); }
+}
+@keyframes flow-float-c {
+  0%, 100% { transform: translateY(0px) rotate(0deg); }
+  50%       { transform: translateY(-8px) rotate(4deg); }
+}
+
+.flow-scene .float-a { animation: flow-float-a 4s ease-in-out infinite; }
+.flow-scene .float-b { animation: flow-float-b 5.5s ease-in-out infinite; }
+.flow-scene .float-c { animation: flow-float-c 6s ease-in-out infinite; }
+.flow-scene .float-d { animation: flow-float-a 3.8s ease-in-out infinite 0.6s; }
+.flow-scene .float-e { animation: flow-float-b 4.5s ease-in-out infinite 1.2s; }
+.flow-scene .float-f { animation: flow-float-c 5s ease-in-out infinite 0.3s; }
+
+.flow-step-desc {
+  font-size: 0.82rem;
+  color: rgba(22, 31, 59, 0.6);
+  line-height: 1.45;
+  max-width: 220px;
+  margin: 0 auto;
+}

@@ -1,0 +1,132 @@
+.before-after {
+  background: #f8f5f0;
+  padding: 100px 40px 120px;
+}
+
+.ba-inner {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.ba-header {
+  margin-bottom: 56px;
+}
+
+.ba-eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #a0036c;
+  margin: 0 0 14px;
+}
+
+.ba-heading {
+  font-size: clamp(2rem, 4vw, 3rem);
+  font-weight: 760;
+  color: #161f3b;
+  line-height: 1.1;
+  margin: 0;
+}
+
+.ba-table {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1.5px solid rgba(22, 31, 59, 0.1);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.ba-col-headers {
+  display: grid;
+  grid-template-columns: 180px 1fr 1fr;
+  background: #161f3b;
+  padding: 16px 24px;
+}
+
+.ba-col-label {
+  display: flex;
+  align-items: center;
+}
+
+.ba-label-pill {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 5px 14px;
+  border-radius: 20px;
+}
+
+.ba-label-pill--before {
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.ba-label-pill--after {
+  background: #a0036c;
+  color: #ffffff;
+}
+
+.ba-row {
+  display: grid;
+  grid-template-columns: 180px 1fr 1fr;
+  border-top: 1px solid rgba(22, 31, 59, 0.1);
+  background: #ffffff;
+}
+
+.ba-row:nth-child(even) {
+  background: #fdfcfb;
+}
+
+.ba-cell {
+  padding: 22px 24px;
+  font-size: 0.92rem;
+  line-height: 1.55;
+  color: #161f3b;
+}
+
+.ba-cell--topic {
+  font-weight: 720;
+  color: #161f3b;
+  border-right: 1px solid rgba(22, 31, 59, 0.08);
+}
+
+.ba-cell--before {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: rgba(22, 31, 59, 0.6);
+  border-right: 1px solid rgba(22, 31, 59, 0.08);
+}
+
+.ba-cell--after {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.ba-icon {
+  margin-top: 3px;
+  flex-shrink: 0;
+  font-size: 0.8rem;
+}
+
+.ba-icon--before {
+  color: rgba(22, 31, 59, 0.3);
+}
+
+.ba-icon--after {
+  color: #a0036c;
+}
+
+@media (max-width: 768px) {
+  .before-after { padding: 72px 20px 88px; }
+  .ba-col-headers { grid-template-columns: 1fr 1fr; padding: 14px 16px; }
+  .ba-col-label--topic { display: none; }
+  .ba-row { grid-template-columns: 1fr 1fr; }
+  .ba-cell--topic { display: none; }
+  .ba-cell { padding: 16px; font-size: 0.85rem; }
+}
