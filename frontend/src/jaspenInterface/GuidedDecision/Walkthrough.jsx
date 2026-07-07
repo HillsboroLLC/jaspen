@@ -179,18 +179,29 @@ export default function Walkthrough({ user }) {
 
   return (
     <>
-      {/* Highlight ring — visual only, no dimming, no click capture */}
-      <div
-        className="gd-coach-ring"
-        style={{
-          position: 'fixed',
-          top: rect.top - PAD,
-          left: rect.left - PAD,
-          width: rect.width + PAD * 2,
-          height: rect.height + PAD * 2,
-          zIndex: 6000,
-        }}
-      />
+      {/* Highlight ring — visual only, no dimming, no click capture.
+          Clamped to the viewport: targets like the composer sit flush against
+          the window edge, and an unclamped ring (target + PAD) would draw its
+          border offscreen, making the target itself look cut off. */}
+      {(() => {
+        const ringTop = clamp(rect.top - PAD, 4, window.innerHeight - 8);
+        const ringLeft = clamp(rect.left - PAD, 4, window.innerWidth - 8);
+        const ringBottom = clamp(rect.bottom + PAD, ringTop + 8, window.innerHeight - 4);
+        const ringRight = clamp(rect.right + PAD, ringLeft + 8, window.innerWidth - 4);
+        return (
+          <div
+            className="gd-coach-ring"
+            style={{
+              position: 'fixed',
+              top: ringTop,
+              left: ringLeft,
+              width: ringRight - ringLeft,
+              height: ringBottom - ringTop,
+              zIndex: 6000,
+            }}
+          />
+        );
+      })()}
       {/* Coachmark */}
       <div style={{ ...tooltip, ...tipPos }}>
         <h3 style={tipTitle}>{current.title}</h3>
