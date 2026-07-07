@@ -35,6 +35,11 @@ from app.connector_store import (
     update_connector_settings,
 )
 from app.models import User, UserSession
+from app.public_intake_controls import (
+    get_kill_switch_state,
+    reset_kill_switch_cache,
+    set_kill_switch_state,
+)
 from app.tool_registry import get_context_budget, get_tool_entitlements
 
 
@@ -478,6 +483,41 @@ def patch_access_controls():
         "controls": normalized,
         "review": access_review_summary(limit=25),
     }), 200
+
+
+@admin_bp.route("/public-intake-ai", methods=["GET"])
+@jwt_required()
+def get_public_intake_ai_view():
+    """Runtime kill switch for the pre-signup AI-facilitated conversation
+    (app/routes/_public_intake_chat.py). Reads/writes a single admin-set
+    boolean — no visitor data is ever touched by this endpoint."""
+    _, err = _require_admin()
+    if err:
+        return err
+    return jsonify({"kill_switch": get_kill_switch_state()}), 200
+
+
+@admin_bp.route("/public-intake-ai", methods=["PATCH"])
+@jwt_required()
+@limiter.limit("20 per minute")
+def patch_public_intake_ai():
+    admin_user, err = _require_admin()
+    if err:
+        return err
+
+    data = request.get_json(silent=True) or {}
+    disabled = bool(data.get("disabled"))
+    before = get_kill_switch_state()
+    set_kill_switch_state(disabled)
+    db.session.commit()
+    reset_kill_switch_cache()
+
+    _audit(
+        admin_user,
+        "public_intake_ai.kill_switch",
+        details={"before": before, "after": {"disabled": disabled}},
+    )
+    return jsonify({"success": True, "kill_switch": get_kill_switch_state()}), 200
 
 
 @admin_bp.route("/preview/workspace", methods=["GET"])

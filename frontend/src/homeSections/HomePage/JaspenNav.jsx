@@ -92,7 +92,7 @@ const NAV_MENUS = [
   },
 ];
 
-export default function JaspenNav() {
+export default function JaspenNav({ onOpenModal } = {}) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [activeDesktopMenu, setActiveDesktopMenu] = useState(null);
   const closeMenuTimer = useRef(null);
@@ -209,10 +209,8 @@ export default function JaspenNav() {
         </nav>
 
         <div className="jaspen-header-actions">
-          <Link to="/login" className="jaspen-login-link">Get in touch</Link>
-          <a href="/#request-access" className="jaspen-btn jaspen-btn-primary" onClick={handleRequestAccess}>
-            Request access
-          </a>
+          <button type="button" className="jaspen-login-link" onClick={() => onOpenModal?.('signin')}>Log in</button>
+          <button type="button" className="jaspen-btn jaspen-btn-primary" onClick={() => onOpenModal?.('signup')}>Create account</button>
         </div>
 
         <button
@@ -255,10 +253,8 @@ export default function JaspenNav() {
               </div>
             ))}
             <div className="mobile-menu-actions">
-              <Link to="/login" className="jaspen-login-link" onClick={() => setMobileNavOpen(false)}>Get in touch</Link>
-              <a href="/#request-access" className="jaspen-btn jaspen-btn-primary" onClick={handleRequestAccess}>
-                Request access
-              </a>
+              <button type="button" className="jaspen-login-link" onClick={() => { setMobileNavOpen(false); onOpenModal?.('signin'); }}>Log in</button>
+              <button type="button" className="jaspen-btn jaspen-btn-primary" onClick={() => { setMobileNavOpen(false); onOpenModal?.('signup'); }}>Create account</button>
             </div>
           </div>
         </div>

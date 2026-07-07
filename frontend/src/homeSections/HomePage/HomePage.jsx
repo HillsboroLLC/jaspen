@@ -1,11 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, useSearchParams } from 'react-router-dom';
-import StrategyAccessCard from './StrategyAccessCard';
 import JaspenNav from './JaspenNav';
-import ScrollGuide from './ScrollGuide';
 import WorkWithJaspenCanvas from './WorkWithJaspenCanvas';
-import HeroProblem from './HeroProblem';
-import PainBand from './PainBand';
+import InteractiveDecisionHero from './InteractiveDecisionHero';
+import StrategyAccessCard from './StrategyAccessCard';
+import PricingVariantB from './PricingVariantB';
+import FlowIllustrated from './FlowIllustrated';
+import BeforeAfter from './BeforeAfter';
+import { SCENARIOS } from './scenarioData';
 import './HomePage.css';
 
 /* ── Animated panel: Evaluate Ideas ── */
@@ -240,15 +243,70 @@ export default function HomePage() {
   const [activeFeatureTab, setActiveFeatureTab] = useState(0);
   const stepRefs = useRef([]);
   const [searchParams] = useSearchParams();
+  const solveDemo = SCENARIOS[0].demo;
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authModalFlow, setAuthModalFlow] = useState('signin');
+  const [authModalPlan, setAuthModalPlan] = useState('free');
+  const [heroContext, setHeroContext] = useState('');
+  const heroRef = useRef(null);
+  const spacerRef = useRef(null);
+  const heroHeight = useRef(0);
 
-  // Scroll to auth card when redirected with ?auth=1, then clean the URL so
-  // refreshing the page doesn't re-display the session-expired error state.
+  const openAuthModal = (flow = 'signin', plan = 'free') => {
+    setAuthModalFlow(flow);
+    setAuthModalPlan(plan);
+    setAuthModalOpen(true);
+  };
+
+  useEffect(() => {
+    const hero = heroRef.current;
+    const spacer = spacerRef.current;
+    if (!hero || !spacer) return;
+
+    const update = () => {
+      const heroH = hero.offsetHeight;
+      heroHeight.current = heroH;
+      const vh = window.innerHeight;
+      const pinAt = heroH - vh;      // scroll distance before hero pins
+      const hideAt = heroH;          // scroll distance when tan has fully covered hero
+
+      const scrollY = window.scrollY;
+
+      if (pinAt > 0 && scrollY >= pinAt && scrollY < hideAt) {
+        // Pinned: hero locked in place while tan slides over it
+        hero.style.position = 'fixed';
+        hero.style.top = `-${pinAt}px`;
+        hero.style.visibility = 'visible';
+        spacer.style.height = `${heroH}px`;
+      } else if (pinAt > 0 && scrollY >= hideAt) {
+        // Covered: tan has passed completely over the hero — hide it
+        hero.style.position = 'fixed';
+        hero.style.top = `-${pinAt}px`;
+        hero.style.visibility = 'hidden';
+        spacer.style.height = `${heroH}px`;
+      } else {
+        // Normal scroll: hero reveals its content naturally
+        hero.style.position = 'relative';
+        hero.style.top = 'auto';
+        hero.style.visibility = 'visible';
+        spacer.style.height = '0px';
+      }
+    };
+
+    const ro = new ResizeObserver(update);
+    ro.observe(hero);
+    window.addEventListener('scroll', update, { passive: true });
+    update();
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('scroll', update);
+    };
+  }, []);
+
+  // Auto-open modal when redirected with ?auth=1
   useEffect(() => {
     if (searchParams.get('auth') === '1') {
-      const card = document.querySelector('.strategy-card-float');
-      if (card) {
-        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
+      openAuthModal('signin');
       window.history.replaceState({}, '', window.location.pathname);
     }
   }, [searchParams]);
@@ -312,206 +370,30 @@ export default function HomePage() {
 
   return (
     <div className="homepage">
-      <JaspenNav />
-      <ScrollGuide />
+      <JaspenNav onOpenModal={openAuthModal} />
 
       <main>
         {/* ========== HERO ========== */}
-        <section className="jaspen-hero">
-          <div className="jaspen-hero-container">
-            <div className="jaspen-hero-content scroll-reveal" id="hero-content">
-              <h1>Bring your problem.<br />Leave with clarity.</h1>
-              <p className="jaspen-hero-sub">
-                Your thought partner for the decisions that don&apos;t have an obvious answer.
-              </p>
-              <HeroProblem />
-            </div>
-            
-            <div className="jaspen-hero-visual scroll-reveal" id="hero-visual">
-              <div className="jaspen-visual-blob"></div>
-              <div className="jaspen-visual-orb orb-1"></div>
-              <div className="jaspen-visual-orb orb-2"></div>
-              <div className="jaspen-visual-orb orb-3"></div>
-              <div className="strategy-card-float">
-                <StrategyAccessCard />
-              </div>
-            </div>
-          </div>
-        </section>
+        <div className="hero-curtain-anchor" ref={heroRef}>
+          <InteractiveDecisionHero onOpenModal={openAuthModal} onContextChange={setHeroContext} />
+        </div>
+        <div className="hero-curtain-spacer" ref={spacerRef} aria-hidden="true" />
 
-        {/* ========== INTRO ========== */}
-        <PainBand />
+        {/* ========== WORK WITH JASPEN CANVAS (with "This is Jaspen" beside it) ========== */}
+        <div id="jaspen-live">
+          <svg className="jaspen-live-wave" viewBox="0 0 1440 90" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+            <path d="M0,18 C180,-8 420,12 680,42 C940,68 1200,72 1440,62 L1440,90 L0,90 Z" fill="#f5f1ea" />
+          </svg>
+          <WorkWithJaspenCanvas demo={solveDemo} />
+        </div>
 
-        <section className="jaspen-intro-section">
-          <div className="jaspen-container">
-            <div className="jaspen-intro-header scroll-reveal" id="intro-header">
-              <h2>This is Jaspen.</h2>
-              <p>
-                Jaspen is an advanced AI partner built to evaluate ideas, prioritize opportunities, and structure cross-functional work into coordinated, executable plans.
-              </p>
-            </div>
-          </div>
-        </section>
+        <BeforeAfter />
 
-        {/* ========== WORK WITH JASPEN CANVAS ========== */}
-        <WorkWithJaspenCanvas />
+        <FlowIllustrated onOpenModal={openAuthModal} />
 
-        {/* ========== HOMEPAGE PRICING ========== */}
-        <section id="pricing-plans" className="jaspen-home-pricing-section">
-          <div className="jaspen-container">
-            <div className="home-pricing-header scroll-reveal">
-              <h2>Simple path from exploration to scale</h2>
-            </div>
-            <div className="home-plan-grid">
-              {[
-                {
-                  name: 'Free',
-                  headline: 'Unlock exploration',
-                  microcopy: 'Start without commitment',
-                  price: '$0',
-                  usage: '1,000 credits/month',
-                  description: 'Explore ideas, validate direction, and see how Jaspen thinks.',
-                  ctaLabel: 'Start exploring',
-                  ctaHref: '/?auth=1',
-                },
-                {
-                  name: 'Essential',
-                  headline: 'Onboard your strategy partner',
-                  microcopy: 'For individual operators and builders',
-                  price: '$39/month',
-                  usage: '7,000 credits/month',
-                  description: 'Turn ideas into clear decisions and walk away with execution plans.',
-                  ctaLabel: 'Upgrade to Essential',
-                  ctaHref: '/pages/pricing?plan=essential#plans',
-                },
-                {
-                  name: 'Team',
-                  headline: 'Move faster together',
-                  microcopy: 'For small teams and cross-functional work',
-                  price: '$129/month',
-                  usage: '29,000 shared credits/month',
-                  description: 'Align your team, pressure-test decisions, and execute with clarity.',
-                  ctaLabel: 'Start Team workspace',
-                  ctaHref: '/pages/pricing?plan=team#plans',
-                },
-                {
-                  name: 'Enterprise',
-                  headline: 'Scale decision-making across your organization',
-                  microcopy: 'For organizations and large-scale execution',
-                  price: '$299/month+',
-                  usage: '80,000 shared credits/month',
-                  description: 'Bring structure, speed, and consistency to how your business operates.',
-                  ctaLabel: 'Start Enterprise',
-                  ctaHref: '/pages/pricing?plan=enterprise#plans',
-                  subCta: 'Need more capacity or custom pricing? Contact sales.',
-                },
-              ].map((plan, idx) => (
-                <article key={plan.name} className={`home-plan-card scroll-reveal ${idx === 1 ? 'is-emphasized' : ''}`}>
-                  <div className="home-plan-intro">
-                    <p className="home-plan-name">{plan.name}</p>
-                    <h3>{plan.headline}</h3>
-                    <p className="home-plan-microcopy">{plan.microcopy}</p>
-                  </div>
-                  <p className="home-plan-price">{plan.price}</p>
-                  <div className="home-plan-usage-row">
-                    <span className="home-thinking-power">
-                      Thinking power
-                      <span
-                        className="home-thinking-power-info"
-                        role="img"
-                        aria-label="Thinking power is your monthly capacity—like horsepower for how much Jaspen can think, analyze, and plan with you."
-                        title="Thinking power is your monthly capacity—like horsepower for how much Jaspen can think, analyze, and plan with you."
-                      >
-                        i
-                      </span>
-                    </span>
-                    <span className="home-plan-usage">{plan.usage}</span>
-                  </div>
-                  <div className="home-plan-description-wrap">
-                    <p className="home-plan-description">{plan.description}</p>
-                  </div>
-                  <div className="home-plan-cta-wrap">
-                    {plan.subCta ? <p className="home-plan-subcta">{plan.subCta}</p> : <p className="home-plan-subcta home-plan-subcta-empty" aria-hidden="true">&nbsp;</p>}
-                    <a href={plan.ctaHref} className="home-plan-link">{plan.ctaLabel}</a>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </div>
-        </section>
+        {/* ========== PRICING — Comparison Table ========== */}
+        <PricingVariantB onOpenModal={openAuthModal} />
 
-        {/* ========== PRODUCT / TIMELINE ========== */}
-        <section id="product" className="jaspen-product-section">
-          <div className="jaspen-container">
-            <div className="jaspen-split-header scroll-reveal" id="product-header">
-              <div className="header-left">
-                <span style={{ display: 'block', fontSize: '12px', fontWeight: 600, letterSpacing: '0.16em', textTransform: 'uppercase', color: '#a0036c', marginBottom: '12px' }}>The FLOW Method&trade;</span>
-                <h2>One flow.<br />Full context.<br />Zero handoffs.</h2>
-              </div>
-              <div className="header-right">
-                <p>The four questions Jaspen works through with you — Frame, Limits, Opportunities, Weigh. Every step builds on the last, so the &ldquo;why&rdquo; always travels with the &ldquo;what.&rdquo;</p>
-              </div>
-            </div>
-
-            <div className="jaspen-dynamic-timeline">
-              <div className="timeline-sticky-content">
-                <div className="step-indicator">
-                  {STEPS.map((_, i) => (
-                    <div key={i} className={`indicator-dot ${i === activeStep ? 'active' : ''}`}></div>
-                  ))}
-                </div>
-              </div>
-              
-              <div className="timeline-steps-grid">
-                {STEPS.map((step, index) => (
-                  <div
-                    key={step.id}
-                    className={`timeline-step-card scroll-reveal ${index % 2 === 0 ? 'even' : 'odd'}`}
-                    id={`step-${step.id}`}
-                    data-id={`step-${step.id}`}
-                    data-step-index={index}
-                    ref={(el) => (stepRefs.current[index] = el)}
-                  >
-                    <div className="step-num">{step.num}</div>
-                    <h3>{step.title}</h3>
-                    <p>{step.description}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* ========== WHO IT'S FOR ========== */}
-        <section id="about" className="jaspen-who-section">
-          <div className="jaspen-container">
-            <div className="who-layout">
-              <div className="who-content scroll-reveal" id="who-content">
-                <h2>Wherever you're starting from</h2>
-                <p>From a single big idea to an enterprise-wide decision — Jaspen scales with you.</p>
-                <div className="who-visual-mobile"></div>
-              </div>
-              <div className="who-list-container">
-                <ul className="jaspen-who-list">
-                  <li className="scroll-reveal" data-id="who-1">
-                    <div className="list-icon"><i className="fa-solid fa-check"></i></div>
-                    <span><strong>Just you and an idea.</strong> A head full of possibilities and no clear first move — Jaspen helps you find where to start.</span>
-                  </li>
-                  <li className="scroll-reveal" data-id="who-2">
-                    <div className="list-icon"><i className="fa-solid fa-check"></i></div>
-                    <span><strong>You and a team.</strong> Decisions that need everyone rowing in the same direction.</span>
-                  </li>
-                  <li className="scroll-reveal" data-id="who-3">
-                    <div className="list-icon"><i className="fa-solid fa-check"></i></div>
-                    <span><strong>You and the whole org.</strong> Cross-functional bets with real money and momentum on the line.</span>
-                  </li>
-                </ul>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* ========== INDUSTRIES ========== */}
         {/* ========== FINAL CTA ========== */}
         <section id="request-access" className="jaspen-cta-section">
           <div className="jaspen-container">
@@ -583,6 +465,26 @@ export default function HomePage() {
           </div>
         </div>
       </footer>
+
+      {authModalOpen && createPortal(
+        <div
+          className="sac-modal-backdrop"
+          onMouseDown={(e) => { if (e.target === e.currentTarget) setAuthModalOpen(false); }}
+        >
+          <div className="sac-modal-shell">
+            <button
+              type="button"
+              className="sac-modal-close"
+              onClick={() => setAuthModalOpen(false)}
+              aria-label="Close"
+            >
+              <i className="fa-solid fa-xmark" aria-hidden="true"></i>
+            </button>
+            <StrategyAccessCard key={authModalFlow + authModalPlan} initialFlowMode={authModalFlow} initialPlan={authModalPlan} heroContext={heroContext} />
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 }

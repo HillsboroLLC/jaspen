@@ -9,24 +9,57 @@
   --wj-egg-soft: #fbeaf0;
   --wj-egg-deep: #72243e;
   width: 100%;
-  padding: 24px 20px 80px;
+  padding: 80px 20px 80px;
+  background: #f5f1ea;
   font-family: inherit;
 }
 
-.wj-head { max-width: 760px; margin: 0 auto 34px; text-align: center; }
 .wj-eyebrow {
   display: inline-block; font-size: 12px; font-weight: 600;
-  letter-spacing: 0.14em; text-transform: uppercase; color: var(--wj-egg); margin-bottom: 12px;
+  letter-spacing: 0.14em; text-transform: uppercase; color: var(--wj-egg); margin-bottom: 14px;
 }
-.wj-head h3 { font-size: 2rem; font-weight: 700; color: var(--wj-ink); margin: 0 0 10px; line-height: 1.15; letter-spacing: -0.02em; }
-.wj-head p { font-size: 1rem; color: var(--wj-muted); margin: 0; }
+
+/* ── Two-column: "This is Jaspen" beside the live window ──────────────────── */
+.wj-layout {
+  max-width: 1260px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(250px, 0.78fr) minmax(0, 2.5fr);
+  gap: 48px;
+  align-items: center;
+}
+.wj-intro { text-align: left; }
+.wj-intro h3 {
+  font-size: 1.5rem; font-weight: 700; color: var(--wj-ink);
+  margin: 0 0 14px; line-height: 1.18; letter-spacing: -0.02em;
+}
+.wj-intro p { font-size: 0.98rem; color: var(--wj-muted); margin: 0; line-height: 1.6; }
+.wj-tagline {
+  margin-top: 16px !important;
+  font-size: 0.95rem !important; font-weight: 600;
+  color: var(--wj-egg) !important;
+}
 
 /* ── App window ─────────────────────────────────────────────────────────── */
 .wj-window {
-  max-width: 1040px; margin: 0 auto; height: 560px;
+  /* self-sufficient tokens so the workspace looks identical whether it renders
+     in the full-width section or embedded inside the laptop */
+  --wj-ink: #1b2236;
+  --wj-muted: #6b7280;
+  --wj-faint: #9aa0ac;
+  --wj-line: rgba(27, 34, 54, 0.1);
+  --wj-egg: #a0036c;
+  --wj-egg-soft: #fbeaf0;
+  --wj-egg-deep: #72243e;
+  width: 100%; height: 560px;
   display: flex; background: #fff;
   border: 1px solid var(--wj-line); border-radius: 16px;
   box-shadow: 0 24px 70px rgba(27, 34, 54, 0.14); overflow: hidden;
+}
+
+@media (max-width: 1000px) {
+  .wj-layout { grid-template-columns: 1fr; gap: 28px; max-width: 1040px; }
+  .wj-intro { max-width: 640px; }
 }
 
 .wj-rail {

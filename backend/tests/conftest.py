@@ -34,6 +34,7 @@ def app(tmp_path_factory):
         "FRONTEND_BASE_URL",
         "ADMIN_EMAILS",
         "ENABLE_FLASK_CORS",
+        "REQUIRE_EMAIL_VERIFICATION",
     )}
 
     os.environ["DATABASE_URL"] = f"sqlite:///{db_file}"
@@ -43,6 +44,7 @@ def app(tmp_path_factory):
     os.environ["FRONTEND_BASE_URL"] = "http://localhost:3000"
     os.environ["ADMIN_EMAILS"] = "support@jaspen.ai"
     os.environ["ENABLE_FLASK_CORS"] = "false"
+    os.environ["REQUIRE_EMAIL_VERIFICATION"] = "false"
 
     app = create_app()
     app.config.update(

@@ -1,0 +1,791 @@
+@import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@500;700&display=swap');
+
+/* ── Handwriting background layer ── */
+.idh-handwriting {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.idh-hw-word {
+  position: absolute;
+  font-family: 'Dancing Script', cursive;
+  color: #a0036c;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.interactive-decision-hero {
+  --idh-navy: #161f3b;
+  --idh-magenta: #a0036c;
+  --idh-blue: #eff9fc;
+  --idh-cream: #f8f5f0;
+  --idh-warm: #e9b57b;
+  --idh-ink-soft: rgba(22, 31, 59, 0.68);
+  --idh-border: rgba(22, 31, 59, 0.12);
+  --idh-shadow: 0 28px 70px rgba(22, 31, 59, 0.12);
+
+  position: relative;
+  overflow: hidden;
+  padding: 152px 40px 220px;
+  color: var(--idh-navy);
+  background: var(--idh-blue);
+}
+
+/* ── Hanging clock ── */
+.idh-hanging-clock {
+  position: absolute;
+  top: 560px;       /* starts below the textarea bottom edge */
+  right: 7%;
+  z-index: 0;       /* behind .idh-shell (z-index: 1) */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+}
+
+.idh-clock-string {
+  width: 1.5px;
+  height: 220px;
+  background: rgba(22,31,59,0.2);
+}
+
+.idh-clock-face {
+  width: 160px;
+  height: 160px;
+  filter: drop-shadow(0 12px 28px rgba(22,31,59,0.14));
+}
+
+.idh-shell {
+  position: relative;
+  z-index: 1;
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
+.idh-copy {
+  max-width: 1100px;
+  margin: 0 auto 34px;
+  text-align: center;
+}
+
+.idh-eyebrow {
+  margin: 0 0 14px;
+  color: var(--idh-magenta);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.idh-copy h1 {
+  margin: 0;
+  color: var(--idh-navy);
+  font-size: clamp(2.2rem, 4vw, 4rem);
+  font-weight: 780;
+  line-height: 0.97;
+  letter-spacing: 0;
+}
+
+.idh-subcopy {
+  max-width: 740px;
+  margin: 24px auto 0;
+  color: var(--idh-ink-soft);
+  font-size: 1.16rem;
+  line-height: 1.62;
+}
+
+.idh-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 0;
+  gap: 0;
+  align-items: start;
+  transition: grid-template-columns 0.58s cubic-bezier(0.22, 1, 0.36, 1), gap 0.58s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.interactive-decision-hero.is-thinking .idh-workspace {
+  grid-template-columns: minmax(0, 1fr) minmax(310px, 0.48fr);
+  gap: 24px;
+}
+
+.idh-input-panel,
+.idh-chat-panel,
+.idh-insights-panel {
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--idh-border);
+  border-radius: 24px;
+  box-shadow: var(--idh-shadow);
+  backdrop-filter: blur(18px);
+}
+
+.idh-input-panel,
+.idh-chat-panel {
+  padding: 22px 22px 16px;
+}
+
+.idh-input-label {
+  display: block;
+  margin-bottom: 14px;
+  color: var(--idh-navy);
+  font-size: 1.02rem;
+  font-weight: 760;
+}
+
+.idh-input-panel textarea,
+.idh-chat-panel textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid rgba(22, 31, 59, 0.14);
+  border-radius: 18px;
+  padding: 22px 22px 56px;
+  color: var(--idh-navy);
+  background: #ffffff;
+  font: inherit;
+  font-size: 1rem;
+  line-height: 1.58;
+  outline: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  transition: border-color 0.24s ease, box-shadow 0.24s ease;
+}
+
+.idh-input-panel textarea:focus,
+.idh-chat-panel textarea:focus {
+  border-color: rgba(160, 3, 108, 0.58);
+  box-shadow: 0 0 0 4px rgba(160, 3, 108, 0.1);
+}
+
+.idh-input-panel textarea::placeholder,
+.idh-chat-panel textarea::placeholder {
+  color: rgba(22, 31, 59, 0.42);
+}
+
+/* Real conversation transcript — its own dedicated scrollable space, not
+   squeezed into the insights sidebar. Simple bubbles, no markdown, no
+   borrowed workspace chat components. */
+.idh-chat-transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 320px;
+  min-height: 120px;
+  overflow-y: auto;
+  margin-bottom: 14px;
+  padding-right: 4px;
+}
+
+.idh-chat-row {
+  display: flex;
+}
+
+.idh-chat-row-user {
+  justify-content: flex-end;
+}
+
+.idh-chat-row-assistant {
+  justify-content: flex-start;
+}
+
+.idh-chat-bubble {
+  max-width: 84%;
+  padding: 10px 14px;
+  border-radius: 16px;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.idh-chat-row-user .idh-chat-bubble {
+  background: var(--idh-magenta);
+  color: #ffffff;
+  border-bottom-right-radius: 4px;
+}
+
+.idh-chat-row-assistant .idh-chat-bubble {
+  background: rgba(22, 31, 59, 0.06);
+  color: var(--idh-navy);
+  border-bottom-left-radius: 4px;
+}
+
+.idh-textarea-wrap {
+  position: relative;
+}
+
+.idh-textarea-actions {
+  position: absolute;
+  bottom: 14px;
+  right: 14px;
+}
+
+.idh-file-input {
+  display: none;
+}
+
+.idh-attach-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(22, 31, 59, 0.14);
+  border-radius: 8px;
+  color: rgba(22, 31, 59, 0.46);
+  background: rgba(255, 255, 255, 0.9);
+  font-size: 0.92rem;
+  cursor: pointer;
+  transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease;
+}
+
+.idh-attach-btn:hover {
+  border-color: rgba(160, 3, 108, 0.3);
+  color: var(--idh-magenta);
+  background: #ffffff;
+}
+
+.idh-analyze-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.idh-analyze-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  border: none;
+  border-radius: 50%;
+  padding: 0;
+  color: #ffffff;
+  background: var(--idh-magenta);
+  font-size: 1rem;
+  cursor: pointer;
+  box-shadow: 0 14px 28px rgba(160, 3, 108, 0.2);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+}
+
+.idh-analyze-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 18px 32px rgba(160, 3, 108, 0.28);
+}
+
+.idh-analyze-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.idh-analyze-error {
+  margin: 0;
+  color: #b3261e;
+  font-size: 0.84rem;
+  text-align: right;
+}
+
+.idh-low-budget-notice {
+  margin: 0;
+  color: rgba(22, 31, 59, 0.5);
+  font-size: 0.8rem;
+  text-align: right;
+}
+
+/* Quiet, plain-text transcript of prior answers — deliberately NOT styled as
+   chat bubbles/messages. This is a form wizard, not a chat client. */
+.idh-turn-transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid rgba(22, 31, 59, 0.09);
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.idh-turn-row {
+  margin: 0;
+  color: rgba(22, 31, 59, 0.55);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.idh-question-callout {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(22, 31, 59, 0.09);
+}
+
+.idh-question-eyebrow {
+  margin: 0 0 6px;
+  color: var(--idh-magenta);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.idh-question-text {
+  margin: 0;
+  color: var(--idh-navy);
+  font-size: 0.98rem;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.idh-panel-cta-secondary {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  border: none;
+  background: none;
+  color: rgba(22, 31, 59, 0.6);
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 600;
+  text-align: center;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.idh-panel-cta-secondary:hover {
+  color: var(--idh-magenta);
+}
+
+.idh-ready-subtext {
+  margin: 8px 0 0;
+  color: rgba(22, 31, 59, 0.48);
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.idh-workspace-explainer {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(22, 31, 59, 0.09);
+  text-align: center;
+}
+
+.idh-workspace-explainer-heading {
+  margin: 0 0 6px;
+  color: var(--idh-navy);
+  font-size: 0.94rem;
+  font-weight: 780;
+  line-height: 1.4;
+}
+
+.idh-workspace-explainer-body {
+  margin: 0;
+  color: rgba(22, 31, 59, 0.6);
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
+
+.idh-insights-panel {
+  min-width: 0;
+  padding: 0;
+  max-height: 0;
+  opacity: 0;
+  transform: translateX(24px) scale(0.98);
+  pointer-events: none;
+  overflow: hidden;
+  transition: opacity 0.46s ease, transform 0.58s cubic-bezier(0.22, 1, 0.36, 1), max-height 0.58s cubic-bezier(0.22, 1, 0.36, 1), padding 0.58s ease;
+}
+
+.interactive-decision-hero.is-thinking .idh-insights-panel {
+  padding: 24px;
+  /* Generously large, not a real content-height measurement — just enough
+     that the real 7-item checklist + CTA block is never clipped. Opacity/
+     transform (not this value) drive the visible reveal transition. */
+  max-height: 1200px;
+  opacity: 1;
+  transform: translateX(0) scale(1);
+  pointer-events: auto;
+}
+
+.idh-insights-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.idh-insights-header {
+  margin-bottom: 20px;
+  color: rgba(22, 31, 59, 0.62);
+  font-size: 0.86rem;
+  font-weight: 760;
+}
+
+.idh-insights-header strong {
+  color: var(--idh-magenta);
+  font-size: 1rem;
+}
+
+.idh-insight-list {
+  display: grid;
+  gap: 4px;
+}
+
+.idh-insight-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 26px;
+  color: rgba(22, 31, 59, 0.5);
+  font-size: 0.94rem;
+  font-weight: 700;
+  transition: color 0.28s ease, transform 0.28s ease;
+}
+
+.idh-insight-row.is-active,
+.idh-insight-row.is-complete {
+  color: var(--idh-navy);
+}
+
+.idh-insight-row.is-active {
+  transform: translateX(2px);
+}
+
+.idh-step-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  border-radius: 50%;
+  border: 1px solid rgba(22, 31, 59, 0.16);
+  color: #ffffff;
+  background: #ffffff;
+}
+
+.idh-step-icon span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(22, 31, 59, 0.2);
+}
+
+.idh-insight-row.is-active .idh-step-icon {
+  border-color: rgba(160, 3, 108, 0.34);
+  background: rgba(160, 3, 108, 0.08);
+}
+
+.idh-insight-row.is-active .idh-step-icon span {
+  width: 10px;
+  height: 10px;
+  background: var(--idh-magenta);
+  animation: idhPulse 1.1s ease-in-out infinite;
+}
+
+.idh-insight-row.is-complete .idh-step-icon {
+  border-color: var(--idh-magenta);
+  background: var(--idh-magenta);
+}
+
+.idh-step-icon i {
+  font-size: 0.72rem;
+}
+
+.idh-panel-cta-wrap {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(22, 31, 59, 0.09);
+}
+
+.idh-panel-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid var(--idh-magenta);
+  border-radius: 999px;
+  padding: 12px 16px 12px 18px;
+  color: #ffffff;
+  background: var(--idh-magenta);
+  font: inherit;
+  font-size: 0.96rem;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 16px 32px rgba(160, 3, 108, 0.2);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.idh-panel-cta:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 20px 36px rgba(160, 3, 108, 0.28);
+}
+
+.idh-panel-cta i {
+  font-size: 0.88rem;
+}
+
+.idh-understanding {
+  max-height: 0;
+  margin-bottom: 0;
+  opacity: 0;
+  overflow: hidden;
+  transform: translateY(8px);
+  transition: opacity 0.35s ease, transform 0.35s ease, max-height 0.35s ease, margin-bottom 0.35s ease;
+}
+
+.idh-understanding.is-visible {
+  max-height: 150px;
+  margin-bottom: 16px;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.idh-progress-label {
+  margin: 8px 0 0;
+  color: rgba(22, 31, 59, 0.56);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-align: right;
+}
+
+.idh-progress-track {
+  height: 8px;
+  margin-top: 10px;
+  border-radius: 999px;
+  background: rgba(22, 31, 59, 0.08);
+  overflow: hidden;
+}
+
+.idh-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--idh-magenta);
+  transition: width 0.52s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+
+/* ── Big statement below the clock ── */
+.idh-below-clock-text {
+  margin: 40px 0 0;
+  text-align: center;
+  color: var(--idh-navy);
+  font-size: clamp(1.8rem, 3.5vw, 3.2rem);
+  font-weight: 780;
+  line-height: 0.97;
+  letter-spacing: 0;
+}
+
+.idh-cycling-word {
+  display: inline-block;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.35s ease, transform 0.35s ease;
+}
+.idh-cycling-word.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ── Why Jaspen band ── */
+.idh-why {
+  margin-top: 32px;
+  text-align: center;
+}
+
+.idh-why-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.idh-why-card {
+  background: #a0036c;
+  border-radius: 18px;
+  padding: 36px 28px 36px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  min-height: 280px;
+  box-shadow: 0 12px 40px rgba(160, 3, 108, 0.28);
+  animation: idhCardFloat 5s ease-in-out infinite alternate;
+}
+
+.idh-why-card:nth-child(2) { animation-duration: 5.8s; }
+.idh-why-card:nth-child(3) { animation-duration: 6.4s; }
+
+@keyframes idhCardFloat {
+  from { transform: translateY(0px); }
+  to   { transform: translateY(-8px); }
+}
+
+.idh-why-card-top {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.idh-why-icon {
+  font-size: 2.4rem;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.idh-why-tag {
+  display: inline-block;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 20px;
+  padding: 4px 14px;
+}
+
+.idh-why-card-title {
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: #fff;
+  margin: 0;
+  line-height: 1.2;
+}
+
+.idh-why-card-body {
+  font-size: 1.05rem;
+  color: rgba(255, 255, 255, 0.75);
+  margin: 0;
+  line-height: 1.55;
+  flex: 1;
+}
+
+@media (max-width: 640px) {
+  .idh-why-cards { grid-template-columns: 1fr; }
+}
+
+.idh-why-eyebrow {
+  margin: 0 0 10px;
+  color: var(--idh-magenta);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.idh-why-heading {
+  margin: 0 0 24px;
+  color: var(--idh-navy);
+  font-size: clamp(1.3rem, 2.5vw, 1.75rem);
+  font-weight: 780;
+  line-height: 1.2;
+}
+
+.idh-why-items {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.idh-why-items p {
+  margin: 0;
+  font-size: 0.97rem;
+  line-height: 1.55;
+  color: rgba(22, 31, 59, 0.72);
+}
+
+.idh-why-items strong {
+  color: var(--idh-navy);
+  font-weight: 760;
+}
+
+.idh-why-items span {
+  font-weight: 400;
+}
+
+.idh-why-close {
+  margin: 16px 0 0;
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: rgba(22, 31, 59, 0.5);
+  font-style: italic;
+}
+
+@keyframes idhPulse {
+  0%, 100% { transform: scale(0.82); opacity: 0.58; }
+  50% { transform: scale(1); opacity: 1; }
+}
+
+@media (max-width: 980px) {
+  .interactive-decision-hero {
+    padding: 132px 24px 72px;
+  }
+
+  .idh-workspace,
+  .interactive-decision-hero.is-thinking .idh-workspace {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .idh-insights-panel {
+    transform: translateY(18px);
+  }
+
+  .interactive-decision-hero.is-thinking .idh-insights-panel {
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 640px) {
+  .interactive-decision-hero {
+    padding: 112px 18px 58px;
+  }
+
+  .idh-copy {
+    text-align: left;
+  }
+
+  .idh-subcopy {
+    font-size: 1rem;
+  }
+
+  .idh-input-panel,
+  .idh-insights-panel {
+    border-radius: 18px;
+  }
+
+  .idh-input-panel {
+    padding: 18px;
+  }
+
+  .idh-starter-row {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .idh-starter-row button {
+    justify-content: flex-start;
+    width: 100%;
+  }
+
+  .idh-stage-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .interactive-decision-hero *,
+  .interactive-decision-hero *::before,
+  .interactive-decision-hero *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

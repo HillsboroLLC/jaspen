@@ -6,9 +6,9 @@
 .homepage {
   --navy: #0f172a;
   --navy-deep: #020617;
-  --accent: #2563eb;
-  --accent-soft: #dbeafe;
-  --accent-hover: #1d4ed8;
+  --accent: #a0036c;
+  --accent-soft: #f5e6f0;
+  --accent-hover: #7a0252;
   --white: #ffffff;
   --gray-50: #f8fafc;
   --gray-100: #f1f5f9;
@@ -39,7 +39,7 @@
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   width: 100%;
-  overflow-x: hidden;
+  overflow-x: clip;
 }
 
 .homepage p {
@@ -278,10 +278,33 @@
 }
 
 .jaspen-login-link {
-  font-size: 0.9375rem;
-  font-weight: 500;
-  color: var(--gray-600);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--navy);
   text-decoration: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  box-shadow: none;
+  padding: 0;
+  transition: color 0.18s ease;
+}
+
+.jaspen-login-link::after {
+  content: "→";
+  font-size: 1rem;
+  transition: transform 0.18s ease;
+}
+
+.jaspen-login-link:hover {
+  color: var(--primary, #a0036c);
+}
+
+.jaspen-login-link:hover::after {
+  transform: translateX(3px);
 }
 
 .jaspen-hamburger {
@@ -335,9 +358,9 @@
 }
 
 .jaspen-btn-primary:hover {
-  background: var(--accent-hover);
+  background: #7a0252;
   transform: translateY(-1px);
-  box-shadow: 0 12px 28px -12px rgba(37, 99, 235, 0.45);
+  box-shadow: 0 12px 28px -12px rgba(160, 3, 108, 0.4);
 }
 
 .jaspen-btn-outline {
@@ -583,6 +606,52 @@
   flex-direction: column;
   gap: 16px;
 }
+
+.strategy-plan-selector {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.strategy-plan-option {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 6px;
+  border: 1.5px solid var(--gray-200);
+  border-radius: 10px;
+  background: #fff;
+  cursor: pointer;
+  transition: border-color 0.18s, background 0.18s;
+  font-family: var(--font);
+}
+
+.strategy-plan-option:hover {
+  border-color: #a0036c;
+}
+
+.strategy-plan-option.is-active {
+  border-color: #a0036c;
+  background: rgba(160, 3, 108, 0.05);
+}
+
+.strategy-plan-option-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #161f3b;
+}
+
+.strategy-plan-option-price {
+  font-size: 0.7rem;
+  color: rgba(22, 31, 59, 0.5);
+}
+
+.strategy-plan-option.is-active .strategy-plan-option-label {
+  color: #a0036c;
+}
+
 
 .strategy-auth-tabs {
   display: flex;
@@ -2050,7 +2119,7 @@
    ============================================================================ */
 
 .jaspen-cta-section {
-  padding-bottom: 120px;
+  padding-bottom: 0;
 }
 
 .cta-box {
@@ -2157,33 +2226,33 @@
    ============================================================================ */
 
 .jaspen-footer {
-  padding: 80px 0;
-  background: var(--white);
-  border-top: 1px solid var(--gray-100);
+  padding: 64px 0 28px;
+  background: #161f3b;
 }
 
 .jaspen-footer-grid {
   display: grid;
   grid-template-columns: 1.6fr 1fr 1fr 1fr 1fr;
   gap: 40px;
-  padding-bottom: 56px;
-  margin-bottom: 40px;
-  border-bottom: 1px solid var(--gray-100);
+  padding-bottom: 28px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid rgba(255,255,255,0.15);
 }
 
 .jaspen-footer-brand {
   max-width: 280px;
 }
 .jaspen-footer-logo {
-  font-size: 1.25rem;
-  font-weight: 700;
-  color: var(--navy-deep);
-  letter-spacing: -0.01em;
+  /* match the nav logo exactly — inherits the body font, light weight */
+  font-size: 1.75rem;
+  font-weight: 300;
+  color: #ffffff;
+  letter-spacing: -0.035em;
 }
 .jaspen-footer-brand p {
   margin-top: 12px;
   font-size: 0.9rem;
-  color: var(--gray-500);
+  color: rgba(255,255,255,0.6);
   line-height: 1.6;
 }
 
@@ -2197,17 +2266,17 @@
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--navy-deep);
+  color: #ffffff;
   margin-bottom: 4px;
 }
 .jaspen-footer-col a {
   text-decoration: none;
   font-size: 0.92rem;
-  color: var(--gray-500);
+  color: rgba(255,255,255,0.6);
   transition: color 0.2s;
 }
 .jaspen-footer-col a:hover {
-  color: var(--accent);
+  color: #ffffff;
 }
 
 .jaspen-footer-inner {
@@ -2228,7 +2297,7 @@
 }
 
 .jaspen-footer-copy {
-  color: var(--gray-400);
+  color: rgba(255,255,255,0.5);
   font-size: 0.875rem;
 }
 
@@ -2239,13 +2308,39 @@
 
 .jaspen-footer-right a {
   text-decoration: none;
-  color: var(--gray-500);
+  color: rgba(255,255,255,0.6);
   font-weight: 500;
   transition: color 0.3s;
 }
 
 .jaspen-footer-right a:hover {
-  color: var(--accent);
+  color: #ffffff;
+}
+
+.homepage { --primary: #a0036c; --on-primary: #ffffff; }
+
+/* Eggplant theme — nav CTA, auth modal tab + submit button */
+.homepage .jaspen-header .jaspen-btn-primary {
+  background: #a0036c;
+  color: #ffffff;
+}
+.homepage .jaspen-header .jaspen-btn-primary:hover {
+  background: #a0036c;
+  filter: brightness(1.08);
+  box-shadow: 0 12px 28px -12px rgba(160, 3, 108, 0.4);
+}
+.strategy-auth-tabs .strategy-auth-tab.is-active {
+  background: #a0036c;
+  color: #ffffff;
+}
+.jaspen-btn.jaspen-btn-primary.strategy-email-btn {
+  background: #a0036c;
+  color: #ffffff;
+}
+.jaspen-btn.jaspen-btn-primary.strategy-email-btn:hover {
+  background: #a0036c;
+  filter: brightness(1.06);
+  box-shadow: 0 12px 28px -12px rgba(160, 3, 108, 0.35);
 }
 
 /* ============================================================================
@@ -2461,4 +2556,114 @@
     flex-direction: column;
     align-items: stretch;
   }
+}
+
+/* ── Auth modal overlay ──────────────────────────────────────────────────── */
+.sac-modal-backdrop {
+  /* Re-expose homepage CSS variables so the portal (outside .homepage) resolves them */
+  --navy: #0f172a;
+  --navy-deep: #020617;
+  --accent: #2563eb;
+  --accent-soft: #dbeafe;
+  --white: #ffffff;
+  --gray-50: #f8fafc;
+  --gray-100: #f1f5f9;
+  --gray-200: #e2e8f0;
+  --gray-300: #cbd5e1;
+  --gray-400: #94a3b8;
+  --gray-500: #64748b;
+  --gray-600: #475569;
+  --gray-700: #334155;
+  --gray-800: #1e293b;
+  --green: #10b981;
+  --font: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --shadow-deep: 0 30px 60px -12px rgba(15, 23, 42, 0.12), 0 18px 36px -18px rgba(15, 23, 42, 0.12);
+  --primary: #a0036c;
+  --on-primary: #ffffff;
+
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 15, 35, 0.72);
+  backdrop-filter: blur(6px);
+  padding: 24px;
+  font-family: var(--font);
+}
+
+.sac-modal-shell {
+  position: relative;
+  overflow: visible;
+  box-shadow: 0 40px 100px rgba(0, 0, 0, 0.35);
+  border-radius: 24px;
+  animation: float-soft 7.5s infinite alternate ease-in-out;
+}
+
+.sac-modal-shell::before {
+  content: "";
+  position: absolute;
+  inset: -18px 20px 20px -18px;
+  background: rgba(255, 255, 255, 0.75);
+  border-radius: 28px;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  box-shadow: 0 10px 30px -10px rgba(15, 23, 42, 0.08);
+  transform: rotate(-2deg);
+  z-index: -1;
+}
+
+.sac-modal-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(22, 31, 59, 0.08);
+  color: rgba(22, 31, 59, 0.6);
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease;
+}
+
+.sac-modal-close:hover {
+  background: rgba(22, 31, 59, 0.14);
+  color: #161f3b;
+}
+
+
+/* ── Tan section organic wave top edge ── */
+.hero-curtain-anchor {
+  position: relative;
+  z-index: 0;
+  left: 0;
+  right: 0;
+  width: 100%;
+}
+
+.hero-curtain-spacer {
+  display: block;
+  height: 0;
+}
+
+#jaspen-live {
+  position: relative;
+  z-index: 2;
+  background: #eff9fc;
+}
+
+.jaspen-live-wave {
+  position: absolute;
+  top: -88px;
+  left: 0;
+  width: 100%;
+  height: 90px;
+  display: block;
+  pointer-events: none;
 }
