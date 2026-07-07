@@ -31,3 +31,7 @@ backend/instance/
 # Python virtualenvs
 backend/venv/
 backend/venv.broken-*/
+
+# Python bytecode cache
+__pycache__/
+*.pyc
