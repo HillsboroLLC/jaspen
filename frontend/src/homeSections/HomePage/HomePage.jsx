@@ -8,6 +8,11 @@ import StrategyAccessCard from './StrategyAccessCard';
 import PricingVariantB from './PricingVariantB';
 import FlowIllustrated from './FlowIllustrated';
 import BeforeAfter from './BeforeAfter';
+import WhyNotChatGPT from './WhyNotChatGPT';
+import HowScoreWorks from './HowScoreWorks';
+import RubricIsYours from './RubricIsYours';
+import LeadCapture from './LeadCapture';
+import FAQSection from '../FAQSection/FAQSection';
 import { SCENARIOS } from './scenarioData';
 import './HomePage.css';
 
@@ -391,8 +396,23 @@ export default function HomePage() {
 
         <FlowIllustrated onOpenModal={openAuthModal} />
 
+        {/* ========== WHY NOT JUST CHATGPT? ========== */}
+        <WhyNotChatGPT />
+
+        {/* ========== HOW THE SCORE WORKS (trust) ========== */}
+        <HowScoreWorks />
+
+        {/* ========== THE RUBRIC IS YOURS ========== */}
+        <RubricIsYours />
+
         {/* ========== PRICING — Comparison Table ========== */}
         <PricingVariantB onOpenModal={openAuthModal} />
+
+        {/* ========== FAQ ========== */}
+        <FAQSection />
+
+        {/* ========== LEAD MAGNET: DECISION SCORECARD ========== */}
+        <LeadCapture />
 
         {/* ========== FINAL CTA ========== */}
         <section id="request-access" className="jaspen-cta-section">
@@ -406,7 +426,7 @@ export default function HomePage() {
                   <a href="mailto:hello@jaspen.ai" className="jaspen-btn jaspen-btn-primary jaspen-btn-lg">
                     Talk to us
                   </a>
-                  <a href="#pricing-plans" onClick={(e) => scrollToSection(e, 'pricing-plans')} className="jaspen-btn cta-btn-secondary jaspen-btn-lg">
+                  <a href="#pricing-variant-b" onClick={(e) => scrollToSection(e, 'pricing-variant-b')} className="jaspen-btn cta-btn-secondary jaspen-btn-lg">
                     Start with a standard plan
                   </a>
                 </div>

@@ -1,0 +1,304 @@
+/* "How the score works" trust section.
+   Site palette only: navy #161f3b, magenta #a0036c, cream #f8f5f0, ink greys.
+   No gradients, no emojis. New visual devices vs the rest of the page: a solid
+   navy summary panel, a ledger-style breakdown, and monospace numerals to
+   signal computed (not generated) values. */
+
+.hsw {
+  background: #ffffff;
+  padding: 100px 40px 120px;
+}
+
+.hsw-inner {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.hsw-header {
+  max-width: 720px;
+  margin-bottom: 52px;
+}
+
+.hsw-eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #a0036c;
+  margin: 0 0 14px;
+}
+
+.hsw-heading {
+  font-size: clamp(2rem, 4vw, 3rem);
+  font-weight: 760;
+  color: #161f3b;
+  line-height: 1.1;
+  margin: 0 0 18px;
+}
+
+.hsw-sub {
+  font-size: 1.08rem;
+  line-height: 1.6;
+  color: rgba(22, 31, 59, 0.68);
+  margin: 0;
+}
+
+/* ---- Anatomy layout ---- */
+.hsw-anatomy {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 28px;
+  align-items: stretch;
+}
+
+/* Left: solid navy result panel (a device not used elsewhere on the page) */
+.hsw-summary {
+  background: #161f3b;
+  border-radius: 18px;
+  padding: 34px 30px;
+  color: #ffffff;
+  display: flex;
+  flex-direction: column;
+}
+
+.hsw-summary-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+  margin: 0 0 12px;
+}
+
+.hsw-summary-score {
+  margin: 0 0 16px;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.hsw-summary-num {
+  font-family: "SFMono-Regular", "JetBrains Mono", "Menlo", "Consolas", monospace;
+  font-size: 4.2rem;
+  font-weight: 700;
+  line-height: 1;
+  color: #ffffff;
+}
+
+.hsw-summary-denom {
+  font-family: "SFMono-Regular", "JetBrains Mono", "Menlo", "Consolas", monospace;
+  font-size: 1.2rem;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.hsw-summary-pill {
+  align-self: flex-start;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #ffffff;
+  background: #a0036c;
+  padding: 5px 14px;
+  border-radius: 20px;
+}
+
+.hsw-summary-foot {
+  margin: auto 0 0;
+  padding-top: 24px;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.55);
+  display: flex;
+  gap: 9px;
+}
+
+.hsw-summary-foot i {
+  margin-top: 2px;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+/* Right: ledger-style breakdown */
+.hsw-breakdown {
+  background: #f8f5f0;
+  border: 1px solid rgba(22, 31, 59, 0.08);
+  border-radius: 18px;
+  padding: 26px 30px 30px;
+}
+
+.hsw-breakdown-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 22px;
+}
+
+.hsw-col-dim {
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #161f3b;
+}
+
+.hsw-tag-example {
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(22, 31, 59, 0.45);
+  border: 1px solid rgba(22, 31, 59, 0.2);
+  border-radius: 5px;
+  padding: 3px 8px;
+}
+
+.hsw-row {
+  padding: 16px 0;
+  border-top: 1px solid rgba(22, 31, 59, 0.09);
+}
+
+.hsw-row:first-of-type {
+  border-top: none;
+}
+
+.hsw-row.is-flagged {
+  background: rgba(160, 3, 108, 0.04);
+  margin: 0 -14px;
+  padding: 16px 14px;
+  border-radius: 10px;
+  border-top: none;
+}
+
+.hsw-row-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.hsw-dim-name {
+  font-size: 0.95rem;
+  font-weight: 640;
+  color: #161f3b;
+  flex: 1;
+}
+
+.hsw-conf {
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border-radius: 5px;
+}
+
+.hsw-conf--high {
+  background: #161f3b;
+  color: #ffffff;
+}
+
+.hsw-conf--medium {
+  background: rgba(22, 31, 59, 0.1);
+  color: rgba(22, 31, 59, 0.7);
+}
+
+.hsw-conf--low {
+  background: rgba(22, 31, 59, 0.06);
+  color: rgba(22, 31, 59, 0.55);
+}
+
+.hsw-conf--assumed {
+  background: #a0036c;
+  color: #ffffff;
+}
+
+.hsw-weight {
+  font-family: "SFMono-Regular", "JetBrains Mono", "Menlo", "Consolas", monospace;
+  font-size: 0.72rem;
+  color: rgba(22, 31, 59, 0.5);
+}
+
+.hsw-bar-track {
+  position: relative;
+  height: 8px;
+  background: rgba(22, 31, 59, 0.08);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.hsw-bar-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  background: #161f3b;
+  border-radius: 4px;
+}
+
+.is-flagged .hsw-bar-fill {
+  background: #a0036c;
+}
+
+/* the portion the cap removed: shown, but visibly "not counted" */
+.hsw-bar-lost {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  background: rgba(160, 3, 108, 0.12);
+  border-left: 1px dashed rgba(160, 3, 108, 0.55);
+}
+
+.hsw-row-values {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.hsw-value-num {
+  font-family: "SFMono-Regular", "JetBrains Mono", "Menlo", "Consolas", monospace;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: #161f3b;
+}
+
+.hsw-value-note {
+  font-size: 0.8rem;
+  color: #a0036c;
+  font-weight: 560;
+}
+
+.hsw-cap-callout {
+  margin: 22px 0 0;
+  padding: 16px 18px;
+  background: #ffffff;
+  border: 1px solid rgba(160, 3, 108, 0.25);
+  border-radius: 12px;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  color: rgba(22, 31, 59, 0.75);
+  display: flex;
+  gap: 12px;
+}
+
+.hsw-cap-callout strong {
+  color: #a0036c;
+  font-weight: 720;
+}
+
+.hsw-cap-icon {
+  margin-top: 3px;
+  color: #a0036c;
+  flex-shrink: 0;
+}
+
+@media (max-width: 860px) {
+  .hsw-anatomy { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 768px) {
+  .hsw { padding: 72px 20px 88px; }
+  .hsw-summary { padding: 28px 24px; }
+  .hsw-breakdown { padding: 22px 20px 24px; }
+  .hsw-row-top { flex-wrap: wrap; }
+}

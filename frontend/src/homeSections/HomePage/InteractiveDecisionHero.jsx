@@ -121,6 +121,61 @@ export default function InteractiveDecisionHero({ onOpenModal, onContextChange }
   // starts a fresh component instance with this back at 0.
   const aiCooldownUntilRef = useRef(0);
 
+  // Speech-to-text (Web Speech API). Feature-detected so the mic only appears
+  // where it works (Chrome, Edge, Safari). The AI/analyze flow is untouched:
+  // dictation just writes into the same draft textarea the user types into.
+  const [isListening, setIsListening] = useState(false);
+  const [speechSupported, setSpeechSupported] = useState(false);
+  const recognitionRef = useRef(null);
+  const speechBaseRef = useRef(''); // draft text captured when dictation starts
+
+  useEffect(() => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return undefined;
+
+    const recognition = new SR();
+    recognition.lang = 'en-US';
+    recognition.continuous = true;
+    recognition.interimResults = true;
+
+    recognition.onresult = (event) => {
+      let transcript = '';
+      for (let i = 0; i < event.results.length; i += 1) {
+        transcript += event.results[i][0].transcript;
+      }
+      const base = speechBaseRef.current;
+      const sep = base && !/\s$/.test(base) ? ' ' : '';
+      setDraftText(base + sep + transcript);
+    };
+    recognition.onerror = () => setIsListening(false);
+    recognition.onend = () => setIsListening(false);
+
+    recognitionRef.current = recognition;
+    setSpeechSupported(true);
+
+    return () => {
+      try { recognition.abort(); } catch { /* already stopped */ }
+    };
+  }, []);
+
+  const toggleDictation = () => {
+    const recognition = recognitionRef.current;
+    if (!recognition) return;
+    if (isListening) {
+      recognition.stop();
+      setIsListening(false);
+      return;
+    }
+    speechBaseRef.current = draftText;
+    try {
+      recognition.start();
+      setIsListening(true);
+      if (inputRef.current) inputRef.current.focus();
+    } catch {
+      // start() throws if called while already active; ignore.
+    }
+  };
+
   useEffect(() => {
     const cycle = setInterval(() => {
       setBottomVisible(false);
@@ -320,9 +375,10 @@ export default function InteractiveDecisionHero({ onOpenModal, onContextChange }
       <div className="idh-shell">
         <div className="idh-copy">
           <p className="idh-eyebrow">Decision intelligence starts here</p>
-          <h1>Bring clarity to complex decisions.</h1>
+          <h1>Make the call you can defend.</h1>
           <p className="idh-subcopy">
-            Paste your notes, emails, or data — Jaspen will help determine the path forward.
+            Paste your notes, emails, or data. Jaspen scores your options and shows
+            exactly how it got the number.
           </p>
         </div>
 
@@ -374,6 +430,20 @@ export default function InteractiveDecisionHero({ onOpenModal, onContextChange }
                   authenticated-workspace capability. The homepage must never
                   show a control that silently does less than the real one —
                   the old paperclip only pasted the filename as text. */}
+              {speechSupported && (
+                <div className="idh-textarea-actions">
+                  <button
+                    type="button"
+                    className={`idh-mic-btn${isListening ? ' is-listening' : ''}`}
+                    onClick={toggleDictation}
+                    aria-pressed={isListening}
+                    aria-label={isListening ? 'Stop dictation' : 'Dictate with your voice'}
+                    title={isListening ? 'Stop dictation' : 'Dictate with your voice'}
+                  >
+                    <i className="fa-solid fa-microphone" aria-hidden="true"></i>
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="idh-analyze-row">
@@ -465,7 +535,7 @@ export default function InteractiveDecisionHero({ onOpenModal, onContextChange }
         {!hasStarted && (
           <div className="idh-why">
             <p className="idh-why-eyebrow">Why Jaspen</p>
-            <p className="idh-why-heading">A thought partner who works alongside you.</p>
+            <p className="idh-why-heading">A thought partner that won't just tell you what you want to hear.</p>
           </div>
         )}
 
