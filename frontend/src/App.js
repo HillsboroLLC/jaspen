@@ -78,10 +78,10 @@ function AnimatedAppRoutes({ withShell }) {
             {/* Public */}
             <Route path="/"               element={withShell(<HomePage />, { title: 'Jaspen', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/login"          element={withShell(<GetInTouch />, { title: 'Login', showHeader: false, fullBleed: true, noPadding: true })} />
-            <Route path="/pricing"        element={withShell(<PricingResult />, { title: 'Pricing' })} />
-            <Route path="/pages/privacy"  element={withShell(<Privacy />, { title: 'Privacy policy' })} />
-            <Route path="/pages/terms"    element={withShell(<Terms />, { title: 'Terms of service' })} />
-            <Route path="/pages/support"  element={withShell(<Support />, { title: 'Support' })} />
+            <Route path="/pricing"        element={withShell(<PricingResult />, { title: 'Pricing', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/pages/privacy"  element={withShell(<Privacy />, { title: 'Privacy policy', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/pages/terms"    element={withShell(<Terms />, { title: 'Terms of service', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/pages/support"  element={withShell(<Support />, { title: 'Support', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/pages/jaspen-score" element={withShell(<JaspenScorePage />, { title: 'Jaspen Score', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/pages/jaspen" element={withShell(<JaspenPage />, { title: 'Jaspen — Execution Intelligence', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/pages/project-management" element={withShell(<ProjectManagementPage />, { title: 'Project Management | Jaspen', showHeader: false, fullBleed: true, noPadding: true })} />
