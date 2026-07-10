@@ -127,9 +127,88 @@ a board's capital allocation without structural change.
 *Forbids:* hard-coding a domain lens into the core engine; features that only
 work at one altitude.
 
+## V. Jaspen as a Learning System
+
+**Article 20 — Every completed decision becomes knowledge.**
+A completed decision is not disposable chat. It becomes a Decision Record:
+the decision statement, objectives, criteria, weights, alternatives, evidence,
+confidence, recommendation, execution plan, eventual outcome, and lessons
+learned. The record is permanent organizational knowledge, not a private model
+intuition.
+*Forbids:* losing the reasoning after a decision is made; treating outcomes as
+separate from the decision that produced them.
+
+**Article 21 — The library teaches; it does not decide.**
+Decision Records may become a curated Decision Library: human-readable examples,
+starter templates, decision kits, reusable frameworks, onboarding material,
+customer education, search-visible knowledge, and calibration references. The
+Library accumulates wisdom; it never becomes an authority over the current user.
+*Forbids:* hidden precedent that overrides the active rubric; opaque reuse of
+past decisions without showing the user.
+
+**Article 22 — Patterns inform judgment; they never replace it.**
+Across many Decision Records, Jaspen may discover patterns: common success
+factors, failure modes, hidden trade-offs, sensitivity relationships, recurring
+blind spots, evidence that changes outcomes, and long-term outcome trends. Those
+patterns are advisory evidence. They are not automatic rules.
+*Forbids:* pattern-based scoring changes the user did not approve; features
+that imply "similar users did X, therefore you should."
+
+**Article 23 — Learning improves guidance, never ownership.**
+Decision Intelligence is the application of accumulated learning to future
+decisions. Jaspen may say, "In similar decisions, users who weighted manager
+quality more heavily experienced better long-term outcomes." It must also show
+why the comparison is relevant, what evidence supports it, and what the user
+may accept, reject, or edit.
+*Forbids:* secret score adjustments; automatic criteria or weight changes;
+recommendations that hide their precedent.
+
+**Article 24 — The implementation may change; the accountability boundary may not.**
+Jaspen is a Learning System, not a claim about any one technology. The mechanism
+may evolve over a decade — records, libraries, pattern discovery, retrieval,
+evaluation, or methods not yet named — but the constitutional boundary remains:
+the user owns criteria, weights, and the decision. Jaspen proposes, never
+imposes.
+*Forbids:* tying the Constitution to a specific technical substrate; using
+"learning" as permission to automate judgment.
+
+**Article 25 — Decision Records have custody.**
+There is one canonical Decision Record schema, but not one custody rule. Every
+record must live in a declared custody ring: private customer memory, public
+Decision Library, or internal evaluation and calibration corpus. Custody is part
+of the record's trust architecture, not an afterthought.
+*Forbids:* ambiguous record ownership; mixing private, public, and internal
+uses without an explicit custody boundary.
+
+**Article 26 — Private is the default.**
+Every completed decision belongs to the customer by default. Private Decision
+Records become part of that customer's organizational memory. They are never
+published without explicit consent. Enterprise records remain enterprise assets.
+*Forbids:* opt-out publication; treating customer decisions as Jaspen-owned
+content; publishing enterprise records by implication.
+
+**Article 27 — Publication requires permission and anonymization.**
+Public Decision Records exist only through explicit customer permission and
+appropriate anonymization. Once permitted, they may become Decision Library
+entries, Starter Templates, Decision Kits, marketing examples, search-visible
+education, or AI-search content. Publication is always optional.
+*Forbids:* using identifiable customer decisions as public examples without
+permission; implying that use of Jaspen grants publication rights.
+
+**Article 28 — Internal learning must be governed and non-identifying.**
+Jaspen may use appropriately governed Decision Records for internal evaluation,
+calibration, testing, constitutional compliance, and future Decision
+Intelligence. This corpus is never customer-facing and must not expose
+identifiable customer information.
+*Forbids:* customer-facing reuse of internal evaluation material; exposing
+identifiable records in tests, demos, marketing, or public examples.
+
 ---
 
 *What Jaspen is: a deterministic decision engine wrapped in an honest
-interviewer. What Jaspen is not: an oracle, a cheerleader, a black box, or a
-gatekeeper. When a proposed feature conflicts with an article, the feature
-changes — not the article.*
+interviewer, becoming a Learning System through transparent Decision Records,
+a human-readable Library, pattern discovery, accountable Decision Intelligence,
+and explicit custody over customer decisions. What Jaspen is not: an oracle, a
+cheerleader, a black box, a gatekeeper, or an automatic decision-maker. When a
+proposed feature conflicts with an article, the feature changes — not the
+article.*

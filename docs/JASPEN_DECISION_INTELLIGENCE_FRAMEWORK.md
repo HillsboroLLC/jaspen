@@ -20,6 +20,7 @@ The architecture encodes four commitments a chat assistant does not make:
 2. **Same inputs, same outputs.** Scoring and planning calls run at temperature 0 with determinism stated as a contract in the prompt itself: *"Temperature is 0 — be deterministic and evidence-based"* (scorecard prompt); *"DETERMINISM: Given the same scorecard, scenario, and instruction, produce the SAME plan every time"* (WBS prompt).
 3. **Uncertainty is first-class and load-bearing.** Every judged dimension carries a confidence grade that mechanically caps its contribution to the score (§3.3). A general assistant expresses uncertainty in prose; Jaspen expresses it in arithmetic.
 4. **The criteria belong to the human.** The agent's system prompt is explicit: *"You MAY propose a sensible starter rubric for them to approve or edit, but it is THEIRS — never impose criteria"* (ai_agent.py:558). Jaspen is a thought partner operationalizing the user's judgment — not an oracle replacing it.
+5. **Learning is accumulated transparently.** A decision is not only an answer in the moment; once completed, it can become a Decision Record, then part of a Decision Library, then evidence for pattern discovery. Jaspen learns as an institution learns: by preserving reasons, outcomes, and lessons in human-readable form — never by secretly changing the user's criteria, weights, or decision.
 
 ### 1.3 The FLOW Method™
 The public articulation of the methodology (homepage, `FlowIllustrated.jsx`): **Frame → Limits → Opportunities → Weigh** — "One flow. Full context. Zero handoffs." Four questions worked through conversationally, each building on the last: where are we going (Frame), what constrains us (Limits), what could we do (Opportunities), and how do the options compare (Weigh). The backend realizes FLOW as: intake interview → constraint and stakeholder capture → option enumeration → weighted, confidence-capped scoring → trade-off analysis → execution plan.
@@ -173,16 +174,229 @@ The same primitive — *options, judged on weighted criteria, with confidence-ca
 
 ---
 
-## 7. Future Vision — the Decision Operating System
+## 7. Jaspen as a Learning System
+
+The next stage of the framework is not a claim about any one technical
+category. It is **organizational learning made explicit**. Jaspen becomes a
+Learning System by preserving completed decisions, curating them into reusable
+knowledge, discovering patterns across them, and applying those patterns
+transparently to future decisions. The implementation can change over time; the
+philosophy should not.
+
+The constitutional boundary remains unchanged: **the user owns criteria,
+weights, and the final decision.** Learning improves guidance. It never
+automates judgment.
+
+### 7.1 Level 1 — Decision Records
+
+Every completed decision should be capable of becoming a structured Decision
+Record. The record captures what was decided, why it was reasonable at the
+time, what evidence supported it, how confident Jaspen was, what work followed,
+what happened afterward, and what was learned.
+
+A mature Decision Record includes:
+
+- decision statement
+- objectives
+- criteria
+- weights
+- alternatives
+- evidence
+- confidence
+- recommendation
+- execution plan
+- eventual outcome
+- lessons learned
+
+This is the smallest durable unit of Decision Intelligence. It preserves the
+reasoning, not just the result. A decision record lets a team ask, months later:
+what did we believe, what did we know, what did we assume, what did we choose,
+and what did reality teach us?
+
+The record must remain human-readable. It is organizational memory, not hidden
+model state.
+
+### 7.2 Decision Record Custody
+
+The Learning System depends on a permanent trust architecture around customer
+decisions. Jaspen can have one canonical Decision Record schema while honoring
+multiple custody levels. The same structured record may serve different
+purposes only when its custody ring permits that use.
+
+Custody is not a storage detail. It answers three constitutional questions:
+
+- who owns the record;
+- who may see it;
+- what it may be used for.
+
+#### Ring 1 — Private Decision Records
+
+Every completed decision belongs to the customer. By default, every Decision
+Record is private.
+
+Private Decision Records become part of the customer's organizational memory:
+the durable record of what was decided, why, with what evidence, at what
+confidence, and with what later outcome. For individuals, this is personal
+decision memory. For companies, it is enterprise knowledge.
+
+Private records are never published without explicit consent. Enterprise
+records remain enterprise assets. Jaspen may help structure, retrieve, and
+learn within the customer's own environment, but custody remains with the
+customer.
+
+#### Ring 2 — Public Decision Library
+
+Public Decision Records exist only through explicit customer permission. Public
+records must be anonymized and prepared for human reading before they become
+Library material.
+
+With permission, public records may become:
+
+- Decision Library entries
+- Starter Templates
+- Decision Kits
+- marketing examples
+- SEO
+- AI search
+- educational content
+
+Publication is always optional. A customer can receive the benefit of Jaspen as
+a Learning System without turning their decisions into public examples.
+
+#### Ring 3 — Internal Evaluation & Calibration Corpus
+
+Jaspen may use appropriately governed Decision Records for internal evaluation,
+calibration, testing, and future learning. The purpose is to improve:
+
+- confidence calibration
+- evaluation datasets
+- prompt evaluation
+- constitutional compliance
+- Decision Intelligence
+
+This corpus is never customer-facing. It does not become marketing material,
+public Library content, or a visible starter example. It must not expose
+identifiable customer information.
+
+The internal corpus exists to make Jaspen more reliable and more faithful to
+its Constitution. It does not change the ownership of the original decision.
+
+### 7.3 Level 2 — Decision Library
+
+Decision Records can become a curated Decision Library: a body of reusable
+decision knowledge for the organization and, where appropriate, for the market.
+The Library serves:
+
+- onboarding
+- starter templates
+- decision kits
+- SEO
+- AI search optimization
+- marketing
+- customer education
+- reusable frameworks
+- calibration
+- future evaluation
+
+The Library is not a pile of transcripts. It is a selective, readable collection
+of decisions whose structure makes them teachable. A strong Library helps a new
+employee understand how the organization reasons. It helps a customer understand
+what good decision-making looks like. It helps Jaspen propose better starter
+rubrics while still asking the user to approve or edit them.
+
+The Library is accumulated decision knowledge. It is not a precedent engine
+that binds the next decision.
+
+### 7.4 Level 3 — Pattern Discovery
+
+Across many Decision Records, Jaspen can discover patterns:
+
+- common success factors
+- common failure modes
+- hidden trade-offs
+- sensitivity relationships
+- recurring blind spots
+- evidence that changes outcomes
+- long-term outcome trends
+
+Patterns are advisory evidence. They may help Jaspen ask a better question,
+flag a fragile assumption, propose a more relevant criterion, or explain why a
+past decision is comparable. They must never replace the user's judgment.
+
+This is where the Constitution's **Propose, Never Impose** doctrine matters
+most. A pattern may inform a recommendation; it may not silently reweight the
+rubric, change the score, or declare the decision for the user.
+
+Pattern discovery must respect custody. Private records may inform only the
+customer's own organizational learning unless governed permission allows a
+broader use. Public Library records may inform public examples. Internal
+evaluation records may improve calibration and compliance without exposing
+customer identity or customer-facing content.
+
+### 7.5 Level 4 — Decision Intelligence
+
+Decision Intelligence is the application of accumulated learning to future
+decisions. Future users benefit from prior decisions because Jaspen can surface
+relevant patterns with context and limits:
+
+> In similar decisions, users who weighted manager quality more heavily
+> experienced better long-term outcomes.
+
+That sentence is only constitutional if the recommendation is transparent:
+what decisions were similar, what outcome improved, how strong the evidence is,
+and what remains under the user's control. The user always controls:
+
+- criteria
+- weights
+- decision
+
+Nothing becomes automatic. Nothing secretly adjusts scoring. Nothing hides the
+reason a comparison is being made. Learning improves the quality of guidance,
+questions, examples, and calibration; it never overrides human ownership.
+
+### 7.6 Relationship to Confidence and Calibration
+
+Learning strengthens the confidence system without dissolving it. Outcomes can
+help Jaspen understand when "medium" evidence was reliable, when assumptions
+were too optimistic, and which evidence sources actually changed outcomes. This
+can improve future calibration, but only through visible methodology: named
+evidence, stated confidence, inspectable reasoning, and user-approved weights.
+
+The long-term advantage is not that Jaspen becomes more automatic. It is that
+Jaspen becomes more honest about what prior decisions teach.
+
+Custody strengthens calibration by separating customer memory, public education,
+and internal evaluation. A record can help improve confidence methodology
+without becoming public content, and a public example can teach without
+revealing a customer's identity.
+
+### 7.7 Future evolution
+
+Because the framework is constitutional rather than implementation-specific,
+Jaspen can evolve across many technical eras. Records may be stored differently,
+libraries may be curated differently, pattern discovery may improve, and
+evaluation may mature. The enduring promise is stable:
+
+- completed decisions become durable knowledge;
+- durable knowledge has explicit custody;
+- durable knowledge becomes a readable Library;
+- the Library enables pattern discovery;
+- discovered patterns inform future guidance;
+- the human still owns the rubric and the decision.
+
+## 8. Future Vision — the Decision Operating System
 
 Everything below is a natural extrapolation of machinery that already exists; none of it requires abandoning the present architecture.
 
-1. **The decision ledger becomes institutional memory.** Memory-extraction prompts and the org idea ledger already mine completed projects. Extended: every scored decision, its assumptions, its confidence profile, and its eventual outcome form a queryable corpus — "what did we believe when we chose X, and which assumptions failed?" Decision quality becomes measurable and coachable.
-2. **Calibration closes the loop.** With outcomes recorded against confidence grades, the caps (100/75/60/45) evolve from sensible constants into *empirically calibrated* instruments — per organization, per domain. "Jaspen's 'medium' means 71% hit rate in your org" is a sentence no competitor can say without this architecture.
-3. **Living plans.** Jira/Smartsheet sync already carries status back. The extrapolation: plan-drift detection, automatic re-scoring when execution evidence contradicts scoring-time assumptions, and re-sequencing recommendations — Weigh flowing continuously back into Frame.
-4. **The evidence mesh.** Connector context blocks generalize: any governed source can ground any criterion, with provenance. Evidence-quality scoring (already a dimension) becomes the gatekeeper for what counts as "high" confidence — an auditable chain from board-level score to source row.
-5. **Portfolio as the default view.** The dossier's roles, tiers, sequence, and locks mature into standing portfolio governance: rolling re-scores as evidence changes, scenario-tested robustness bands, and organizational weight profiles as explicit strategy documents — the operating model rendered as numbers.
-6. **The methodology as protocol.** Because scores are deterministic and decomposable, they can cross org boundaries: a supplier's scorecard, a due-diligence target's portfolio, a subsidiary's rubric — exchanged, verified, and re-computed. FLOW becomes to decisions what double-entry became to accounting: the shared grammar that makes institutions legible.
+1. **The decision ledger becomes institutional memory.** Decision Records and the org idea ledger turn completed projects into a queryable corpus — "what did we believe when we chose X, and which assumptions failed?" Decision quality becomes measurable and coachable.
+2. **Custody becomes part of the product's trust architecture.** Private records remain customer memory, public records require permission and anonymization, and internal evaluation records improve calibration without becoming customer-facing. This is how Jaspen learns without treating customer decisions as public property.
+3. **The Decision Library becomes a growth asset.** Curated records become onboarding material, starter templates, decision kits, customer education, search-visible methodology, and future evaluation sets. The Library is both product surface and intellectual property.
+4. **Calibration closes the loop.** With outcomes recorded against confidence grades, the caps (100/75/60/45) evolve from sensible constants into *empirically calibrated* instruments — per organization, per domain. "Jaspen's 'medium' means 71% hit rate in your org" is a sentence no competitor can say without this architecture.
+5. **Pattern discovery makes prior judgment useful.** Common success factors, failure modes, hidden trade-offs, sensitivity relationships, recurring blind spots, and outcome trends become visible to future users without becoming automatic rules.
+6. **Living plans.** Jira/Smartsheet sync already carries status back. The extrapolation: plan-drift detection, automatic re-scoring when execution evidence contradicts scoring-time assumptions, and re-sequencing recommendations — Weigh flowing continuously back into Frame.
+7. **The evidence mesh.** Connector context blocks generalize: any governed source can ground any criterion, with provenance. Evidence-quality scoring (already a dimension) becomes the gatekeeper for what counts as "high" confidence — an auditable chain from board-level score to source row.
+8. **Portfolio as the default view.** The dossier's roles, tiers, sequence, and locks mature into standing portfolio governance: rolling re-scores as evidence changes, scenario-tested robustness bands, and organizational weight profiles as explicit strategy documents — the operating model rendered as numbers.
+9. **The methodology as protocol.** Because scores are deterministic and decomposable, they can cross org boundaries: a supplier's scorecard, a due-diligence target's portfolio, a subsidiary's rubric — exchanged, verified, and re-computed. FLOW becomes to decisions what double-entry became to accounting: the shared grammar that makes institutions legible.
 
 ---
 
