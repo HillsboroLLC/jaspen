@@ -25,7 +25,7 @@ const FRIENDLY_CATEGORY_LABELS = {
   goal_definition: 'A clear goal with a target',
   evidence_baseline: 'Real evidence backs it up',
   sme_drivers: "Who's involved is named",
-  system_mapping: 'How it works end-to-end is mapped',
+  system_mapping: 'How it works end-to-end is explained',
   constraint_unlock: 'The main constraint is named',
   execution_sequence: 'A rough sequence of work',
   replication_plan: 'How this could repeat elsewhere',
