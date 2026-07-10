@@ -1,10 +1,13 @@
 import React from 'react';
 import Seo from '../../shared/components/Seo';
+import JaspenNav from '../../homeSections/HomePage/JaspenNav';
 import './terms.css';
 
 const Terms = () => {
   return (
-    <div className="terms-container">
+    <>
+      <JaspenNav />
+      <div className="terms-container">
       <Seo
         title="Terms of Service"
         description="Review the Jaspen Terms of Service for platform access, billing, and acceptable use."
@@ -101,7 +104,8 @@ const Terms = () => {
           <p><em>These Terms of Service were last updated on March 9, 2026.</em></p>
         </div>
       </div>
-    </div>
+      </div>
+    </>
   );
 };
 

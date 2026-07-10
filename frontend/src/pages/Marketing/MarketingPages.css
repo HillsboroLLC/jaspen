@@ -2612,3 +2612,36 @@
     flex-direction: column;
   }
 }
+
+/* Jaspen Score methodology page: intro lead + FAQ list */
+.section-lead {
+  margin: 0 0 20px;
+  max-width: 720px;
+  color: var(--marketing-gray-500);
+  line-height: 1.6;
+}
+
+.score-faq {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.score-faq-item {
+  border: 1px solid var(--marketing-gray-200);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.9);
+  padding: 20px 22px;
+}
+
+.score-faq-item h3 {
+  margin: 0 0 8px;
+  font-size: 1.06rem;
+  color: var(--marketing-navy-deep);
+}
+
+.score-faq-item p {
+  margin: 0;
+  color: var(--marketing-gray-500);
+  line-height: 1.6;
+}
