@@ -66,35 +66,40 @@ implement and verify against the existing injection-pattern test cases.
 
 ---
 
-## 3. Second batch card invisible on reload
+## 3. Scores page omits non-baseline batch cards (CORRECTED 2026-07-10)
 
-**Summary:** When `/score-batch` scores two or more ideas, the first becomes the
-thread's baseline (`session['result']`, one entry in `session['analysis_history']`);
-subsequent ideas are persisted via `_create_scenario_record` into a separate
-scenarios store. Neither `/api/v1/strategy/scores` nor `/api/v1/ai-agent/threads/<id>`
-surfaces the non-baseline card — confirmed twice, in the original baseline test and
-again during this branch's verification pass. A user who scores two options and
-reloads the workspace may see only one.
+**CORRECTION — the original finding here was wrong.** A dedicated fresh
+investigation (2026-07-10, clean account + existing account, multi-card batches,
+refresh simulation, sign-out/sign-in) proved that **no scorecard data is lost and
+the workspace reload is fully intact**. The original claim ("a user who scores two
+options and reloads the workspace may see only one") was based on probing the wrong
+endpoints (`/strategy/scores` and `/ai-agent/threads/<id>`). The endpoint the
+workspace actually calls on reload — `GET /strategy/threads/<id>/bundle` — merges
+the scenarios store into `scorecard_snapshots` (see the "Merge scenarios saved via
+create_as_version" block in `get_thread_bundle`) and returns every card, verified on
+2-card and 3-card batches, across refresh and re-login, on both accounts.
 
-**Why deferred:** Tracing the fix requires understanding three separate persistence
-paths at once (in-session baseline snapshots read via `_scorecard_snapshot_state`,
-`session['analysis_history']`, and the standalone `_load_scenarios`/
-`_save_scenarios` store) and how the workspace's read paths reconcile them. This is
-real investigation work, not a wording or small-logic fix, and attempting it blind
-under this branch's scope risked a regression in a system with three overlapping
-storage mechanisms for the same data. NEXT_STEPS item C.8 ("storage swap to
-standalone artifacts") is the structural fix that would remove this class of bug
-entirely — this item may turn out to be a symptom of that larger gap rather than a
-standalone bug.
+**The real, smaller defect:** the **Scores page listing** (`GET
+/api/v1/strategy/scores` → `_collect_completed_scores`) shows only one row per
+thread (the baseline). Its snapshot assembly calls
+`_scorecard_snapshot_state(result, thread_id)`, which reads only
+`result['scorecard_snapshots']` (empty for batch-scored threads) and never merges
+the scenarios store the way the bundle endpoint does — so batch variants are
+missing from that browse page even though the code's row-per-variant loop clearly
+intends to include them.
 
-**Risk if ignored:** Medium. Directly affects the core "score two options and compare
-them" loop — the demo path's second step. Worth a dedicated session before it's relied
-upon in live sales demos with multi-option decisions.
+**Severity:** Low-Medium (down from Medium). No data loss; opening any thread shows
+all cards. Impact is limited to the Scores browse page under-listing a thread's
+options.
 
-**Suggested future owner/tool:** Needs a scoped investigation session (Sonnet or
-Fable) with the explicit mandate to trace `_create_scenario_record` and confirm
-whether this is a listing-level fix or requires the C.8 storage-model swap before any
-code changes are attempted.
+**Recommended fix:** in `_collect_completed_scores`, merge scenario-store results
+into the snapshot list before emitting rows — reusing the exact merge logic
+`get_thread_bundle` already has (extract it into a shared helper). Listing-level
+fix; the C.8 storage swap is NOT required for this.
+
+**Suggested future owner/tool:** Codex — it is now a well-specified small fix with a
+mechanical acceptance test (batch-score 3 ideas; `/scores` returns 3 rows for the
+thread; single-card threads unchanged).
 
 ---
 
