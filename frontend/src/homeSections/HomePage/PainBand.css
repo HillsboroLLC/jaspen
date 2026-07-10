@@ -1,0 +1,61 @@
+/* "Sound familiar?" pain band — bold, editorial, low motion. */
+.pain-band {
+  width: 100%;
+  background: #f8f5f0; /* warm neutral */
+  padding: 96px 24px;
+}
+
+.pain-inner {
+  max-width: 920px;
+  margin: 0 auto;
+}
+
+.pain-eyebrow {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #a0036c;
+  margin-bottom: 36px;
+}
+
+.pain-list {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.pain-line {
+  font-size: clamp(1.6rem, 3.4vw, 2.5rem);
+  font-weight: 700;
+  line-height: 1.18;
+  letter-spacing: -0.02em;
+  color: #14161c;
+  margin: 0;
+  max-width: 18ch;
+  /* hidden until the band scrolls into view */
+  opacity: 0;
+  transform: translateY(16px);
+  transition: opacity 0.6s ease, transform 0.6s ease;
+}
+.pain-line:nth-child(1) { transition-delay: 0.05s; }
+.pain-line:nth-child(2) { transition-delay: 0.2s; }
+.pain-line:nth-child(3) { transition-delay: 0.35s; }
+
+.pain-band.in .pain-line {
+  opacity: 1;
+  transform: none;
+}
+
+.pain-line:nth-child(even) {
+  align-self: flex-end;
+  text-align: right;
+}
+
+@media (max-width: 640px) {
+  .pain-band { padding: 64px 20px; }
+  .pain-list { gap: 22px; }
+  .pain-line { max-width: none; }
+  .pain-line:nth-child(even) { align-self: flex-start; text-align: left; }
+}

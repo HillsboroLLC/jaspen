@@ -2089,6 +2089,61 @@ _COMPONENT_DIMENSION_MIRROR = (
 )
 
 
+# Text markers that indicate a dimension/idea is actually grounded in connector
+# or uploaded-document data (the same convention ai_agent.py's connector-context
+# blocks use), rather than self-reported conversation. Used to decide whether a
+# model-claimed "high" confidence is allowed to stand.
+_GROUNDED_EVIDENCE_MARKERS = (
+    "[snowflake context]",
+    "[salesforce context]",
+    "[jira context]",
+    "[smartsheet context]",
+    "[servicenow context]",
+    "[netsuite context]",
+    "[oracle fusion context]",
+    "[data context attached:",
+)
+
+
+def _text_has_grounded_evidence_marker(text):
+    lowered = str(text or "").lower()
+    return any(marker in lowered for marker in _GROUNDED_EVIDENCE_MARKERS)
+
+
+def _clamp_unverified_high_confidence_dimensions(payload):
+    """Constitution Art. 7: caps are enforced in code, not requested in prompts.
+
+    The scoring prompt (strategy.py evidence-grade instructions) asks the model
+    to reserve "high" confidence for evidence it can itself see or check
+    (connector data, uploads, cross-checkable material) — never for fluently
+    self-reported conversation. Models do not reliably self-police this, so we
+    enforce it deterministically here: any dimension marked "high" whose
+    "source" is not "connector" (the only source value that represents
+    externally-verifiable data in the current schema) is demoted to "medium"
+    before the cap arithmetic in _recompute_jaspen_score runs.
+
+    Only ever demotes high -> medium. Never raises a confidence grade, never
+    touches medium/low/assumed, never touches _CONFIDENCE_CAPS,
+    _DIMENSION_CONFIDENCE_PCT, or the weighted-average math itself — this is
+    upstream label calibration, not a change to scoring arithmetic.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    dims = payload.get("dimensions")
+    if not isinstance(dims, dict):
+        return payload
+    for dim in dims.values():
+        if not isinstance(dim, dict):
+            continue
+        if str(dim.get("confidence") or "").strip().lower() != "high":
+            continue
+        source = str(dim.get("source") or "").strip().lower()
+        if source == "connector":
+            continue
+        dim["confidence"] = "medium"
+    return payload
+
+
 def _recompute_jaspen_score(payload, weights):
     """Make scoring deterministic: same dimensions + objective → same score.
 
@@ -2347,7 +2402,7 @@ Return a single valid JSON object only. No markdown fences, no commentary outsid
 Rules:
 - Use null only when information is genuinely absent — never invent data.
 - Every numeric field must be an actual number, not prose ("18" not "significant").
-- For each dimension, assign a confidence level: "high" (evidence from conversation), "medium" (reasonable inference), "low" (limited signal), or "assumed" (no direct evidence — extrapolated from patterns).
+- For each dimension, assign a confidence level based on the QUALITY OF THE EVIDENCE, not how clearly it was stated: "high" = evidence Jaspen can itself see or check in this conversation (uploaded documents, connected data sources, or figures cross-checkable against material provided); "medium" = specific, concrete facts the user self-reported (exact salary, current rent, a signed offer's terms); "low" = the user's own estimates, predictions, or qualitative impressions ('promotion is possible', 'clients seem happy', 'we think it will appreciate'); "assumed" = anything you filled in yourself with no user input. A decision built entirely on uncorroborated self-report should rarely show "high" on any dimension — confident-sounding conversation is not corroboration. Self-reported specifics are respectable evidence (medium); they are not verified evidence (high).
 - For each dimension, identify the source: "conversation" (explicitly stated), "connector" (from connected data source), "inferred" (logical derivation), or "assumed" (industry/pattern-based).
 - For any dimension with confidence "low" or "assumed", populate what_would_improve with a specific, actionable suggestion.
 - MISSING-VARIABLE PENALTY (critical): the score must reward how well-evidenced an idea is, not how good it sounds. Score only what THIS idea actually gives you — never borrow context from other ideas. When the inputs needed to judge a dimension are absent or only "assumed", that dimension's score MUST be depressed, not given the benefit of the doubt:
@@ -2503,6 +2558,11 @@ The executive_summary must read like a concise leadership briefing. It should ne
                 if isinstance(dim, dict):
                     dim["label"] = c.get("label") or c["key"]
                     dim["is_risk"] = bool(c.get("is_risk"))
+
+    # Enforce evidence-grade calibration in code before the cap arithmetic runs
+    # (Art. 7: caps are enforced in code, not requested in prompts). Only ever
+    # demotes an unverified "high" to "medium" — never raises anything.
+    parsed = _clamp_unverified_high_confidence_dimensions(parsed)
 
     # Deterministic final step: recompute the score from the (capped) dimensions
     # in Python instead of trusting the model's arithmetic. `weights` is the
@@ -2668,7 +2728,16 @@ def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective
         "and independently on each criterion using a 0-100 scale where 100 is best on that criterion (for cost-type "
         "criteria, 100 = most favorable). Give each criterion a short, specific rationale stating the key 'put' "
         "(strength) or 'take' (weakness). Do not inflate scores — a weak option must score meaningfully lower. You also "
-        "assign each option a role and tier and write a short portfolio recommendation across all of them."
+        "assign each option a role and tier and write a short portfolio recommendation across all of them. "
+        "For each criterion's confidence, assign a level based on the QUALITY OF THE EVIDENCE, not how clearly it was "
+        "stated: \"high\" = evidence Jaspen can itself see or check in this conversation (uploaded documents, connected "
+        "data sources, or figures cross-checkable against material provided); \"medium\" = specific, concrete facts the "
+        "user self-reported (exact salary, current rent, a signed offer's terms); \"low\" = the user's own estimates, "
+        "predictions, or qualitative impressions ('promotion is possible', 'clients seem happy', 'we think it will "
+        "appreciate'); \"assumed\" = anything you filled in yourself with no user input. A decision built entirely on "
+        "uncorroborated self-report should rarely show \"high\" on any criterion — confident-sounding conversation is "
+        "not corroboration. Self-reported specifics are respectable evidence (medium); they are not verified evidence "
+        "(high)."
     )
     user_prompt = (
         f"Build a decision dossier scoring these {len(ideas)} options against the criteria below. {criteria_note}"
@@ -2680,7 +2749,7 @@ def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective
         "{\n"
         '  "portfolio_summary": {\n'
         '    "structure": "<one line: how many fall in each tier>",\n'
-        '    "recommended_sequence": "<2-4 sentences: which to commit to, which to develop next, which to monitor, and in what order>"\n'
+        '    "recommended_sequence": "<2-4 sentences: which to commit to, which to develop next, which to monitor, and in what order. MUST be justified against the weighted CRITERIA above (name the actual criterion labels, not generic terms), MUST explicitly address the highest-weighted criterion, and MUST NOT reference any strategic objective other than the one stated in OBJECTIVE LENS above — never invent or imply a different objective label (e.g. do not call it a \'speed\' or \'growth\' play unless that is the stated objective)>"\n'
         "  },\n"
         '  "options": [\n'
         "    {\n"
@@ -2730,6 +2799,16 @@ def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective
 
     _valid_tiers = {"leading candidate", "secondary candidate", "strategic necessity", "monitor / niche", "monitor/niche"}
 
+    # Batch path has no per-dimension evidence source from the model (unlike the
+    # single-card path), so grounding is detected once at the request level: does
+    # ANY idea's text carry a connector/upload context marker? If not, no
+    # dimension in this batch may be published as "high" confidence — Art. 7,
+    # enforced in code. Only ever demotes high -> medium; never raises anything.
+    _batch_has_grounded_evidence = any(
+        _text_has_grounded_evidence_marker(idea.get('description')) or _text_has_grounded_evidence_marker(idea.get('name'))
+        for idea in ideas
+    )
+
     results = []
     for idea in ideas:
         nm = str(idea.get('name')).strip()
@@ -2746,6 +2825,8 @@ def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective
             score = max(0.0, min(100.0, score))
             conf = str(d.get("confidence") or "medium").strip().lower()
             if conf not in ("high", "medium", "low", "assumed"):
+                conf = "medium"
+            if conf == "high" and not _batch_has_grounded_evidence:
                 conf = "medium"
             dims[key] = {
                 "score": score,

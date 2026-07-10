@@ -17,6 +17,10 @@
 # --- Environment files (never commit) ---
 .env
 .env.*
+# Exceptions: these two are secret-free and committed on purpose —
+# .env.development pins `npm start` to the local backend.
+!.env.development
+!.env.example
 .env.local
 .env.development.local
 .env.test.local

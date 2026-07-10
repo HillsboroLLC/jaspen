@@ -126,8 +126,8 @@ function toDraft(user) {
 
 function badgeClassForStatus(status) {
   const normalized = String(status || '').toLowerCase();
-  if (normalized === 'approved' || normalized === 'connected' || normalized === 'active') return 'int-badge-success';
-  if (normalized === 'rejected' || normalized === 'disconnected' || normalized === 'deactivated') return 'int-badge-danger';
+  if (normalized === 'approved' || normalized === 'connected' || normalized === 'active' || normalized === 'enabled') return 'int-badge-success';
+  if (normalized === 'rejected' || normalized === 'disconnected' || normalized === 'deactivated' || normalized === 'disabled') return 'int-badge-danger';
   if (normalized === 'pending') return 'int-badge-warn';
   return 'int-badge-neutral';
 }
@@ -174,6 +174,15 @@ export default function JaspenAdmin() {
   const [accessReview, setAccessReview] = useState(null);
   const [accessLoading, setAccessLoading] = useState(false);
   const [accessPending, setAccessPending] = useState(false);
+  // Runtime kill switch for the pre-signup AI-facilitated homepage
+  // conversation (PUBLIC_INTAKE_AI_ENABLED). This is a REVERSE flag on the
+  // wire (`disabled: true` means AI is off) to match the backend's kill-
+  // switch semantics in app/public_intake_controls.py — kept as-is here
+  // rather than inverted, so this state always mirrors exactly what GET
+  // returns with no local re-derivation to get out of sync.
+  const [publicIntakeAi, setPublicIntakeAi] = useState(null);
+  const [publicIntakeAiLoading, setPublicIntakeAiLoading] = useState(false);
+  const [publicIntakeAiPending, setPublicIntakeAiPending] = useState(false);
   const [modelAccess, setModelAccess] = useState({ plans: [], model_types: {}, plan_order: PLAN_ACCESS_ORDER });
   const [modelAccessLoading, setModelAccessLoading] = useState(false);
   const [jaspenOpen, setJaspenOpen] = useState(false);
@@ -330,6 +339,23 @@ export default function JaspenAdmin() {
     }
   };
 
+  const loadPublicIntakeAi = async () => {
+    setPublicIntakeAiLoading(true);
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/admin/public-intake-ai`, {
+        headers: authHeaders(),
+        credentials: 'include',
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || 'Unable to load Public AI status.');
+      setPublicIntakeAi(data?.kill_switch || null);
+    } catch (error) {
+      setMessage(error.message || 'Unable to load Public AI status.');
+    } finally {
+      setPublicIntakeAiLoading(false);
+    }
+  };
+
   const loadModelAccess = async () => {
     setModelAccessLoading(true);
     try {
@@ -375,6 +401,7 @@ export default function JaspenAdmin() {
           await loadUsers('');
           await loadFeedback({ userId: '', q: '', value: '' });
           await loadAccessControls();
+          await loadPublicIntakeAi();
           await loadModelAccess();
         }
       } catch (error) {
@@ -690,6 +717,29 @@ export default function JaspenAdmin() {
     }
   };
 
+  const togglePublicIntakeAi = async () => {
+    if (!publicIntakeAi) return;
+    const nextDisabled = !publicIntakeAi.disabled;
+    setPublicIntakeAiPending(true);
+    setMessage('');
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/admin/public-intake-ai`, {
+        method: 'PATCH',
+        headers: authHeaders({ 'Content-Type': 'application/json' }, 'PATCH'),
+        credentials: 'include',
+        body: JSON.stringify({ disabled: nextDisabled }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || 'Unable to update Public AI status.');
+      setPublicIntakeAi(data?.kill_switch || { disabled: nextDisabled });
+      setMessage(nextDisabled ? 'Public AI disabled.' : 'Public AI enabled.');
+    } catch (error) {
+      setMessage(error.message || 'Unable to update Public AI status.');
+    } finally {
+      setPublicIntakeAiPending(false);
+    }
+  };
+
   const reviewUserAccess = async (userId, status) => {
     if (!userId || !status) return;
     setAccessPending(true);
@@ -945,6 +995,60 @@ export default function JaspenAdmin() {
                 </div>
               </div>
             ))}
+          </div>
+        </section>
+
+        <section className="jas-admin-subsection">
+          <div className="jas-admin-section-head">
+            <div>
+              <h3>Public AI (Homepage)</h3>
+              <p className="jas-admin-empty">
+                Runtime kill switch for the pre-signup AI-facilitated conversation on the homepage
+                (PUBLIC_INTAKE_AI_ENABLED). Deterministic readiness and the homepage's progress,
+                insights, and CTA are never affected by this — disabling it only stops AI-generated
+                replies; visitors get Jaspen's deterministic conversation instead.
+              </p>
+            </div>
+            <div className="jas-admin-actions">
+              <button
+                type="button"
+                className="jas-admin-secondary int-btn int-btn-ghost"
+                onClick={loadPublicIntakeAi}
+                disabled={publicIntakeAiLoading || publicIntakeAiPending}
+                aria-disabled={publicIntakeAiLoading || publicIntakeAiPending}
+              >
+                {publicIntakeAiLoading ? 'Refreshing...' : 'Refresh'}
+              </button>
+            </div>
+          </div>
+
+          <div className="jas-admin-review-row">
+            <div className="jas-admin-review-meta">
+              <strong>Public AI conversation</strong>
+              <span>
+                {publicIntakeAi?.updated_at
+                  ? `Last changed ${new Date(publicIntakeAi.updated_at).toLocaleString()}`
+                  : 'No changes yet — following PUBLIC_INTAKE_AI_ENABLED as deployed.'}
+              </span>
+            </div>
+            <span
+              className={`jas-admin-status-badge int-badge ${badgeClassForStatus(publicIntakeAi?.disabled ? 'disabled' : 'enabled')} is-${publicIntakeAi?.disabled ? 'disabled' : 'enabled'}`}
+            >
+              {publicIntakeAi?.disabled ? 'Disabled' : 'Enabled'}
+            </span>
+            <div className="jas-admin-actions">
+              <button
+                type="button"
+                className={publicIntakeAi?.disabled ? 'jas-admin-primary int-btn int-btn-primary' : 'jas-admin-secondary jas-admin-danger int-btn int-btn-ghost int-btn-danger'}
+                onClick={togglePublicIntakeAi}
+                disabled={!publicIntakeAi || publicIntakeAiLoading || publicIntakeAiPending}
+                aria-disabled={!publicIntakeAi || publicIntakeAiLoading || publicIntakeAiPending}
+              >
+                {publicIntakeAiPending
+                  ? 'Saving...'
+                  : (publicIntakeAi?.disabled ? 'Enable' : 'Disable')}
+              </button>
+            </div>
           </div>
         </section>
 

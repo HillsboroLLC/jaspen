@@ -1626,8 +1626,8 @@
   color: var(--gray-400);
 }
 .jas-topbar-credits.jas-credits-full:hover {
-  color: var(--gray-600);
-  background: var(--gray-100);
+  color: #a0036c;
+  background: rgba(160, 3, 108, 0.1);
 }
 
 /* Moderate (20–50% remaining) — show the % and color the bolt navy so it
@@ -1690,8 +1690,9 @@
 }
 
 .jas-topbar-bell:hover {
-  border-color: var(--gray-500);
-  background: var(--gray-50);
+  border-color: transparent;
+  background: rgba(160, 3, 108, 0.1);
+  color: #a0036c;
 }
 
 .jas-topbar-bell-count {

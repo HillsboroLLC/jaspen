@@ -1,13 +1,80 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../../shared/auth/AuthContext';
+import { authFetch } from '../../shared/auth/http';
 import { API_BASE } from '../../config/apiBase';
 import { readAuthQueryNotice } from './authStatus';
 import AuthModal from './AuthModal';
+import StripeCheckout from '../../jaspenInterface/Account/StripeCheckout';
+import {
+  readPendingIntakeContext,
+  writePendingIntakeContext,
+  clearPendingIntakeContext,
+  getOrCreatePendingThreadId,
+  clearPendingIntakeThreadId,
+  runExclusiveHandoff,
+} from '../../shared/auth/pendingIntakeContext';
+
+// Carries pasted homepage context into the authenticated workspace by
+// continuing the SAME intake conversation the workspace itself uses
+// (conversation/start) — never a mismatched endpoint, never a bearer token
+// (auth here is cookie-based; authFetch sends credentials + CSRF).
+// Returns true if it navigated the browser away (caller should stop), false
+// if there was no context to carry (caller proceeds with its normal redirect).
+//
+// Wrapped in runExclusiveHandoff + a reused thread_id so a double-click, a
+// retried login, or a race between this and the Google OAuth callback path
+// converges on ONE thread instead of creating duplicates.
+function continueWithPendingContext(heroContext) {
+  return runExclusiveHandoff(async () => {
+    const pending = readPendingIntakeContext();
+    const context = (pending || heroContext || '').trim();
+    if (!context) return false;
+
+    const threadId = getOrCreatePendingThreadId();
+    try {
+      const res = await authFetch('/api/v1/ai-agent/conversation/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // strategy_objective is sent explicitly — and must stay 'balanced' —
+        // because the homepage computed its readiness promise under
+        // 'balanced' (public_intake.py). Omitting it lets conversation/start
+        // re-INFER an objective from the text (e.g. cost-heavy briefs flip
+        // to Cost Optimization), so the workspace would open under a
+        // different profile than the one the visitor was just shown. Same
+        // contract as the workspace composer, which always sends its pill.
+        body: JSON.stringify({ message: context, thread_id: threadId, strategy_objective: 'balanced' }),
+      });
+      const data = await res.json().catch(() => ({}));
+      const sid = data?.thread_id || data?.session_id;
+      if (res.ok && sid) {
+        // Clear only on confirmed success — "nothing you've shared will be lost"
+        // is a promise the UI makes in writing. On any failure both keys stay
+        // in sessionStorage: /new recovers the context as a composer prefill,
+        // and the same thread_id is reused if the user retries.
+        clearPendingIntakeContext();
+        clearPendingIntakeThreadId();
+        window.location.href = `/new?sid=${encodeURIComponent(sid)}`;
+        return true;
+      }
+    } catch { /* fall through to normal redirect; pending keys intentionally kept */ }
+    // Keep the key for the /new fallback, and make sure it's populated even when
+    // the context only existed in React state (in-page modal flow).
+    if (!pending) writePendingIntakeContext(context);
+    return false;
+  });
+}
 
 const TARGET_SCORE = 87;
 const ANIMATION_DURATION_MS = 1200;
 
-export default function StrategyAccessCard() {
+const SELECTABLE_PLANS = [
+  { key: 'free',       label: 'Free',       priceLabel: 'Free',     paid: false, salesOnly: false },
+  { key: 'essential',  label: 'Essential',  priceLabel: '$39/mo',   paid: true,  salesOnly: false },
+  { key: 'team',       label: 'Team',       priceLabel: '$129/mo',  paid: true,  salesOnly: false },
+  { key: 'enterprise', label: 'Enterprise', priceLabel: '$299/mo',  paid: true,  salesOnly: true  },
+];
+
+export default function StrategyAccessCard({ initialFlowMode = 'signin', initialPlan = 'free', heroContext = '' }) {
   const { login, signup, mfaEnforcement, setMfaEnforcement } = useAuth();
   const [score, setScore] = useState(0);
   const [status, setStatus] = useState('Pending');
@@ -16,12 +83,16 @@ export default function StrategyAccessCard() {
   const [name, setName] = useState('');
   const [authStatus, setAuthStatus] = useState('idle');
   const [authMode, setAuthMode] = useState('email');
-  const [flowMode, setFlowMode] = useState('signin');
+  const [flowMode, setFlowMode] = useState(initialFlowMode);
   const [authError, setAuthError] = useState('');
   const [authErrorDetail, setAuthErrorDetail] = useState('');
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authModalMode, setAuthModalMode] = useState('email');
   const [mfaData, setMfaData] = useState(null);
+  const [selectedPlan, setSelectedPlan] = useState(initialPlan);
+  const [showStripe, setShowStripe] = useState(false);
+  const [stripeToken, setStripeToken] = useState(null);
+  const selectedPlanMeta = SELECTABLE_PLANS.find(p => p.key === selectedPlan) || SELECTABLE_PLANS[0];
 
   // Capture the URL auth notice ONCE at component creation time (lazy initializer).
   // This runs before any effects fire, so it always sees the original URL params
@@ -213,7 +284,16 @@ export default function StrategyAccessCard() {
       if (flowMode === 'signup') {
         const signupAttempt = await signup(normalizedEmail, password, String(name).trim());
         if (signupAttempt?.success) {
+          if (selectedPlanMeta.paid) {
+            setStripeToken(signupAttempt.token || null);
+            setShowStripe(true);
+            setAuthStatus('idle');
+            return;
+          }
+          // If the visitor analyzed context on the homepage, continue that same
+          // conversation in the workspace instead of losing it at the auth wall.
           setAuthStatus('sent');
+          if (await continueWithPendingContext(heroContext)) return;
           window.location.href = getPostAuthRedirect();
           return;
         }
@@ -235,6 +315,8 @@ export default function StrategyAccessCard() {
 
       if (loginAttempt?.success) {
         setAuthStatus('sent');
+        // Existing users deserve the same context handoff as new signups.
+        if (await continueWithPendingContext(heroContext)) return;
         window.location.href = getPostAuthRedirect();
         return;
       }
@@ -292,6 +374,22 @@ export default function StrategyAccessCard() {
             <div className="strategy-card-divider"><span>OR</span></div>
           </>
         )}
+        {flowMode === 'signup' && authMode !== 'forgot' && (
+          <div className="strategy-plan-selector">
+            {SELECTABLE_PLANS.map(p => (
+              <button
+                key={p.key}
+                type="button"
+                className={`strategy-plan-option${p.key === 'enterprise' ? ' is-enterprise' : ''}${selectedPlan === p.key ? ' is-active' : ''}`}
+                onClick={() => setSelectedPlan(p.key)}
+              >
+                <span className="strategy-plan-option-label">{p.label}</span>
+                <span className="strategy-plan-option-price">{p.priceLabel}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
         <form className="strategy-card-form" onSubmit={authMode === 'forgot' ? handleForgotPassword : handleEmailSubmit}>
           {flowMode === 'signup' && authMode !== 'forgot' && (
             <input
@@ -335,7 +433,9 @@ export default function StrategyAccessCard() {
               : authMode === 'forgot'
                 ? 'Send reset link'
                 : flowMode === 'signup'
-                  ? 'Create account'
+                  ? selectedPlanMeta.paid
+                    ? `Continue to payment · ${selectedPlanMeta.priceLabel}`
+                    : 'Create free account'
                   : 'Sign in'}
           </button>
         </form>
@@ -372,6 +472,17 @@ export default function StrategyAccessCard() {
         onModeChange={setAuthModalMode}
         initialMfaData={mfaData}
       />
+
+      {showStripe && (
+        <StripeCheckout
+          mode="subscribe"
+          planKey={selectedPlan}
+          planLabel={selectedPlanMeta.label}
+          priceLabel={selectedPlanMeta.priceLabel}
+          onSuccess={() => { setShowStripe(false); window.location.href = '/new'; }}
+          onClose={() => setShowStripe(false)}
+        />
+      )}
     </div>
   );
 }

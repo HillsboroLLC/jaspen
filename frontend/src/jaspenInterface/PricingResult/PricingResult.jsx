@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useLocation, Link } from 'react-router-dom';
 import { API_BASE } from '../../config/apiBase';
+import JaspenNav from '../../homeSections/HomePage/JaspenNav';
 import './PricingResult.css';
 
 export default function PricingResult() {
@@ -20,7 +21,9 @@ export default function PricingResult() {
   }, [status, sessionId]);
 
   return (
-    <div className="pricing-result">
+    <>
+      <JaspenNav />
+      <div className="pricing-result">
       {status === 'success' ? (
         <div className="status success">
           <h1>🎉 Subscription Confirmed!</h1>
@@ -56,6 +59,7 @@ export default function PricingResult() {
           </p>
         </div>
       )}
-    </div>
+      </div>
+    </>
   );
 }

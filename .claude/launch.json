@@ -1,0 +1,20 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["start"],
+      "port": 3001,
+      "cwd": "frontend",
+      "env": { "PORT": "3001", "BROWSER": "none" }
+    },
+    {
+      "name": "backend",
+      "runtimeExecutable": "./venv/bin/flask",
+      "runtimeArgs": ["--app", "wsgi:app", "run", "--port", "8000"],
+      "port": 8000,
+      "cwd": "backend"
+    }
+  ]
+}

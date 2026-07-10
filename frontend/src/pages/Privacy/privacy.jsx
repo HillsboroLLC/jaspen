@@ -1,10 +1,13 @@
 import React from 'react';
 import Seo from '../../shared/components/Seo';
+import JaspenNav from '../../homeSections/HomePage/JaspenNav';
 import './privacy.css';
 
 const Privacy = () => {
   return (
-    <div className="privacy-container">
+    <>
+      <JaspenNav />
+      <div className="privacy-container">
       <Seo
         title="Privacy Policy"
         description="Read how Jaspen collects, uses, and protects account and workspace data."
@@ -102,7 +105,8 @@ const Privacy = () => {
           <p><em>This Privacy Policy was last updated on March 9, 2026.</em></p>
         </div>
       </div>
-    </div>
+      </div>
+    </>
   );
 };
 

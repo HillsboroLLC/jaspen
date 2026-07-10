@@ -1,0 +1,75 @@
+/* "Why not just ChatGPT?" — minimal and scannable. One headline, one short
+   paragraph, three short proofs. No table, no cards-with-pills. */
+
+.wnc {
+  background: #f5f2fb;
+  padding: 96px 40px 104px;
+}
+
+.wnc-inner {
+  max-width: 860px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.wnc-eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #a0036c;
+  margin: 0 0 16px;
+}
+
+.wnc-heading {
+  font-size: clamp(2rem, 4vw, 3rem);
+  font-weight: 760;
+  color: #161f3b;
+  line-height: 1.1;
+  margin: 0 0 20px;
+}
+
+.wnc-sub {
+  font-size: 1.12rem;
+  line-height: 1.6;
+  color: rgba(22, 31, 59, 0.7);
+  margin: 0 auto;
+  max-width: 640px;
+}
+
+.wnc-sub strong {
+  color: #161f3b;
+  font-weight: 720;
+}
+
+.wnc-proofs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+  margin-top: 52px;
+  text-align: left;
+}
+
+.wnc-proof {
+  padding-top: 20px;
+  border-top: 2px solid #a0036c;
+}
+
+.wnc-proof-label {
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: #161f3b;
+  margin: 0 0 8px;
+}
+
+.wnc-proof-text {
+  font-size: 0.98rem;
+  line-height: 1.5;
+  color: rgba(22, 31, 59, 0.68);
+  margin: 0;
+}
+
+@media (max-width: 768px) {
+  .wnc { padding: 72px 22px 84px; }
+  .wnc-proofs { grid-template-columns: 1fr; gap: 22px; margin-top: 40px; }
+}
