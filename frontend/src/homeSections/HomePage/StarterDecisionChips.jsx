@@ -42,7 +42,7 @@ Decision options:
 - Accept the new offer
 - Remain in the current role
 
-Help me prepare this decision. Use the information provided, label assumptions, and tell me whether this is enough context to continue in a secure workspace where Jaspen can build the analysis.`,
+Help me prepare this decision. Use the information provided, label assumptions, and ask the single highest-value missing question if more context is needed.`,
   },
   {
     id: 'start-business',
@@ -76,7 +76,7 @@ People and evidence:
 - The workflow today runs from referral lead to sales call to project delivery to admin follow-up, with every handoff currently owned by me.
 - A reasonable timeline would be to choose one move this month, run it for one quarter, and review profit, capacity, and client experience before expanding the approach.
 
-Help me prepare this decision. Use the information provided, label assumptions, and tell me whether this is enough context to continue in a secure workspace where Jaspen can build the analysis.`,
+Help me prepare this decision. Use the information provided, label assumptions, and ask the single highest-value missing question if more context is needed.`,
   },
   {
     id: 'quarterly-investments',
@@ -122,7 +122,7 @@ People and evidence:
 - The workflow runs from leadership prioritization to budget approval, initiative owners, implementation teams, and quarterly operating review.
 - Key dependencies include manufacturing downtime windows, security risk timing, sales readiness for new-market expansion, and change-management capacity.
 
-Help me prepare this decision. Use the information provided, label assumptions, and tell me whether this is enough context to continue in a secure workspace where Jaspen can build the analysis.`,
+Help me prepare this decision. Use the information provided, label assumptions, and ask the single highest-value missing question if more context is needed.`,
   },
 ];
 
