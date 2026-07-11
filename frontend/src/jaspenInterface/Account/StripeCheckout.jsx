@@ -165,6 +165,8 @@ export default function StripeCheckout({ mode = 'subscribe', planKey, planLabel,
   const isUpdate = mode === 'update_payment';
   const isCreditPack = mode === 'credit_pack';
   const [selectedPlanKey, setSelectedPlanKey] = useState(planKey);
+  const [couponInput, setCouponInput] = useState('');
+  const [appliedCoupon, setAppliedCoupon] = useState('');
   const [clientSecret, setClientSecret] = useState('');
   const [stripePromise, setStripePromise] = useState(null);
   const [loadError, setLoadError] = useState('');
@@ -185,7 +187,11 @@ export default function StripeCheckout({ mode = 'subscribe', planKey, planLabel,
           : isCreditPack
             ? 'create-credit-pack-payment-intent'
             : 'create-subscription';
-        const body = isUpdate ? {} : isCreditPack ? { pack_key: packKey } : { plan_key: selectedPlanKey };
+        const body = isUpdate
+          ? {}
+          : isCreditPack
+            ? { pack_key: packKey }
+            : { plan_key: selectedPlanKey, coupon_code: appliedCoupon || undefined };
         const resp = await authFetch(`${API_BASE}/api/v1/billing/${endpoint}`, {
           method: 'POST',
           headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
@@ -204,7 +210,16 @@ export default function StripeCheckout({ mode = 'subscribe', planKey, planLabel,
       }
     })();
     return () => { alive = false; };
-  }, [selectedPlanKey, isUpdate, isCreditPack, packKey]);
+  }, [selectedPlanKey, isUpdate, isCreditPack, packKey, appliedCoupon]);
+
+  const applyCoupon = () => {
+    setAppliedCoupon(String(couponInput || '').trim());
+  };
+
+  const clearCoupon = () => {
+    setCouponInput('');
+    setAppliedCoupon('');
+  };
 
   return (
     <div
@@ -244,7 +259,12 @@ export default function StripeCheckout({ mode = 'subscribe', planKey, planLabel,
                     <button
                       key={p.key}
                       type="button"
-                      onClick={() => { if (p.key !== selectedPlanKey) setSelectedPlanKey(p.key); }}
+                      onClick={() => {
+                        if (p.key !== selectedPlanKey) {
+                          setSelectedPlanKey(p.key);
+                          clearCoupon();
+                        }
+                      }}
                       style={{
                         flex: 1, textAlign: 'left', borderRadius: 10, padding: '10px 12px', cursor: 'pointer',
                         border: `1px solid ${active ? MAGENTA : '#e6eaf2'}`,
@@ -258,6 +278,37 @@ export default function StripeCheckout({ mode = 'subscribe', planKey, planLabel,
                   );
                 })}
               </div>
+            </div>
+          )}
+
+          {!isUpdate && !isCreditPack && (
+            <div style={{ marginBottom: 16 }}>
+              <label htmlFor="stripe-checkout-coupon" style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#475569', marginBottom: 6 }}>
+                Coupon code
+              </label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  id="stripe-checkout-coupon"
+                  type="text"
+                  value={couponInput}
+                  onChange={(e) => setCouponInput(e.target.value)}
+                  placeholder="Optional"
+                  autoComplete="off"
+                  style={{ flex: 1, border: '1px solid #e6eaf2', borderRadius: 8, padding: '10px 12px', fontSize: 14, color: '#0f172a' }}
+                />
+                <button
+                  type="button"
+                  onClick={applyCoupon}
+                  style={{ border: '1px solid #dbe3ef', borderRadius: 8, background: '#fff', color: NAVY, padding: '10px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                >
+                  Apply
+                </button>
+              </div>
+              {appliedCoupon && !loadError && (
+                <div style={{ marginTop: 6, fontSize: 12, color: '#0d7a3e' }}>
+                  Coupon applied: {appliedCoupon}
+                </div>
+              )}
             </div>
           )}
 

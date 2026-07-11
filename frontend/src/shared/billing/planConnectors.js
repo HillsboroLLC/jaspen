@@ -1,5 +1,6 @@
 export const PLAN_CONNECTORS = {
   free: ['Salesforce', 'Snowflake', 'Jira', 'Smartsheet', 'Oracle Fusion', 'ServiceNow', 'NetSuite'],
+  starter: ['Salesforce', 'Snowflake', 'Jira', 'Smartsheet', 'Oracle Fusion', 'ServiceNow', 'NetSuite'],
   essential: ['Salesforce', 'Snowflake', 'Jira', 'Smartsheet', 'Oracle Fusion', 'ServiceNow', 'NetSuite'],
   team: ['Salesforce', 'Snowflake', 'Jira', 'Smartsheet', 'Oracle Fusion', 'ServiceNow', 'NetSuite'],
   enterprise: ['Salesforce', 'Snowflake', 'Jira', 'Smartsheet', 'Oracle Fusion', 'ServiceNow', 'NetSuite'],
@@ -16,6 +17,6 @@ export function getPlanConnectors(planKey) {
 
 export function getPlanConnectorSentence(planKey) {
   const connectors = getPlanConnectors(planKey);
-  if (!connectors.length) return 'No connectors included';
+  if (!connectors.length) return getPlanConnectors('free').join(', ');
   return connectors.join(', ');
 }

@@ -203,19 +203,29 @@ def create_app():
         raise RuntimeError("Refusing to start in production with a Stripe test secret key (sk_test_...).")
     stripe.api_key = stripe_key
 
+    def _stripe_price_id_from_env(*names):
+        for name in names:
+            value = str(os.getenv(name) or '').strip().strip('"').strip("'")
+            if not value:
+                continue
+            while value.startswith('price_price_'):
+                value = value[len('price_'):]
+            return value
+        return None
+
     # —— Map plan_keys to Stripe Price IDs —— #
     app.config['STRIPE_PRICE_IDS'] = {
         'free':            None,
-        'starter':         os.getenv('PRICE_ID_STARTER'),
-        'essential':       os.getenv('PRICE_ID_ESSENTIAL'),
+        'starter':         _stripe_price_id_from_env('PRICE_ID_STARTER'),
+        'essential':       _stripe_price_id_from_env('PRICE_ID_ESSENTIAL'),
         # Legacy fallback: allow existing env values to keep working.
-        'team':            os.getenv('PRICE_ID_TEAM') or os.getenv('PRICE_ID_GROWTH'),
-        'enterprise':      os.getenv('PRICE_ID_ENTERPRISE') or os.getenv('PRICE_ID_TRANSFORM_BASIC'),
+        'team':            _stripe_price_id_from_env('PRICE_ID_TEAM', 'PRICE_ID_GROWTH'),
+        'enterprise':      _stripe_price_id_from_env('PRICE_ID_ENTERPRISE', 'PRICE_ID_TRANSFORM_BASIC'),
     }
     app.config['STRIPE_CREDIT_PACK_PRICE_IDS'] = {
-        'credits_3000':    os.getenv('PRICE_ID_CREDITS_3000') or os.getenv('PRICE_ID_OVERAGE_1000'),
-        'credits_8000':    os.getenv('PRICE_ID_CREDITS_8000') or os.getenv('PRICE_ID_OVERAGE_5000'),
-        'credits_18000':   os.getenv('PRICE_ID_CREDITS_18000') or os.getenv('PRICE_ID_OVERAGE_20000'),
+        'credits_3000':    _stripe_price_id_from_env('PRICE_ID_CREDITS_3000', 'PRICE_ID_OVERAGE_1000'),
+        'credits_8000':    _stripe_price_id_from_env('PRICE_ID_CREDITS_8000', 'PRICE_ID_OVERAGE_5000'),
+        'credits_18000':   _stripe_price_id_from_env('PRICE_ID_CREDITS_18000', 'PRICE_ID_OVERAGE_20000'),
     }
     # Backward-compatible alias used by legacy code paths.
     app.config['STRIPE_OVERAGE_PACK_PRICE_IDS'] = app.config['STRIPE_CREDIT_PACK_PRICE_IDS']

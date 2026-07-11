@@ -903,13 +903,16 @@ export default function AppMenu() {
         planKey={embeddedCheckout.planKey}
         planLabel={embeddedCheckout.planLabel}
         priceLabel={embeddedCheckout.priceLabel}
-        plans={Object.entries(plans)
-          .filter(([key, plan]) => key !== 'free' && !plan?.sales_only)
-          .map(([key, plan]) => ({
+        plans={PLAN_ORDER
+          .filter((key) => key !== 'free' && plans[key] && !plans[key]?.sales_only)
+          .map((key) => {
+            const plan = plans[key];
+            return {
             key,
             label: plan?.label || key,
             priceLabel: priceDisplay(plan),
-          }))}
+          };
+          })}
         onClose={() => setEmbeddedCheckout(null)}
         onSuccess={async () => {
           const wasUpdate = embeddedCheckout.mode === 'update_payment';

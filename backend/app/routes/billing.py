@@ -706,41 +706,58 @@ def create_subscription_embedded():
     if not price_id:
         return jsonify({'msg': f"No Stripe price configured for '{plan_key}'."}), 400
 
+    coupon_code = str(data.get('coupon_code') or '').strip()
+    discounts = []
+    if coupon_code:
+        try:
+            matches = stripe.PromotionCode.list(code=coupon_code, active=True, limit=1)
+            promotion = (matches.get('data') or [None])[0]
+            if not promotion:
+                return jsonify({'msg': 'That coupon code was not found or is no longer active.'}), 400
+            discounts = [{'promotion_code': promotion.id}]
+        except stripe.error.StripeError as exc:
+            current_app.logger.warning('create-subscription: coupon lookup failed: %s', exc)
+            return jsonify({'msg': 'Could not validate that coupon code. Please try again.'}), 400
+
     customer_id = _ensure_customer_for_user(user)
 
     # Reuse an existing INCOMPLETE subscription for this price instead of creating a
     # new one every time the user re-opens the modal (which piled up draft invoices).
     try:
-        existing = stripe.Subscription.list(customer=customer_id, status='incomplete', limit=20)
-        for sub in existing.get('data', []):
-            items = (sub.get('items') or {}).get('data') or []
-            if any(((it.get('price') or {}).get('id')) == price_id for it in items):
-                reuse_secret = _subscription_payment_client_secret(sub)
-                if reuse_secret:
-                    return jsonify({
-                        'subscription_id': sub.id,
-                        'client_secret': reuse_secret,
-                        'plan_key': plan_key,
-                        'publishable_key': current_app.config.get('STRIPE_PUBLISHABLE_KEY') or '',
-                    }), 200
+        if not discounts:
+            existing = stripe.Subscription.list(customer=customer_id, status='incomplete', limit=20)
+            for sub in existing.get('data', []):
+                items = (sub.get('items') or {}).get('data') or []
+                if any(((it.get('price') or {}).get('id')) == price_id for it in items):
+                    reuse_secret = _subscription_payment_client_secret(sub)
+                    if reuse_secret:
+                        return jsonify({
+                            'subscription_id': sub.id,
+                            'client_secret': reuse_secret,
+                            'plan_key': plan_key,
+                            'publishable_key': current_app.config.get('STRIPE_PUBLISHABLE_KEY') or '',
+                        }), 200
     except stripe.error.StripeError:
         pass
 
     try:
-        subscription = stripe.Subscription.create(
-            customer=customer_id,
-            items=[{'price': price_id}],
-            payment_behavior='default_incomplete',
+        subscription_args = {
+            'customer': customer_id,
+            'items': [{'price': price_id}],
+            'payment_behavior': 'default_incomplete',
             # card-only so the embedded form shows the full card fields (and so it's
             # testable without Stripe Link's SMS step). To allow Link/wallets later,
             # drop payment_method_types and/or enable them in the Stripe dashboard.
-            payment_settings={'save_default_payment_method': 'on_subscription', 'payment_method_types': ['card']},
-            metadata={
+            'payment_settings': {'save_default_payment_method': 'on_subscription', 'payment_method_types': ['card']},
+            'metadata': {
                 'user_id': str(user.id),
                 'plan_key': plan_key,
                 'checkout_type': 'subscription_embedded',
             },
-        )
+        }
+        if discounts:
+            subscription_args['discounts'] = discounts
+        subscription = stripe.Subscription.create(**subscription_args)
     except stripe.error.StripeError as exc:
         current_app.logger.exception('create-subscription (embedded) failed')
         return jsonify({'msg': str(getattr(exc, 'user_message', None) or 'Could not start the subscription.')}), 400
