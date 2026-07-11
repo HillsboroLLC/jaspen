@@ -62,6 +62,7 @@ const NAV_MENUS = [
         title: 'Plans',
         items: [
           { label: 'Free', path: '/pages/pricing#free' },
+          { label: 'Starter ($7)', path: '/pages/pricing#starter' },
           { label: 'Essential ($39)', path: '/pages/pricing#essential' },
           { label: 'Team', path: '/pages/pricing#team' },
           { label: 'Enterprise', path: '/pages/pricing#enterprise' },

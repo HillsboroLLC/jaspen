@@ -206,6 +206,7 @@ def create_app():
     # —— Map plan_keys to Stripe Price IDs —— #
     app.config['STRIPE_PRICE_IDS'] = {
         'free':            None,
+        'starter':         os.getenv('PRICE_ID_STARTER'),
         'essential':       os.getenv('PRICE_ID_ESSENTIAL'),
         # Legacy fallback: allow existing env values to keep working.
         'team':            os.getenv('PRICE_ID_TEAM') or os.getenv('PRICE_ID_GROWTH'),
@@ -226,6 +227,7 @@ def create_app():
         'STRIPE_WEBHOOK_SECRET': app.config.get('STRIPE_WEBHOOK_SECRET'),
     }
     optional_stripe_values = {
+        'PRICE_ID_STARTER': app.config['STRIPE_PRICE_IDS'].get('starter'),
         'PRICE_ID_TEAM': app.config['STRIPE_PRICE_IDS'].get('team'),
         'PRICE_ID_ENTERPRISE': app.config['STRIPE_PRICE_IDS'].get('enterprise'),
     }
@@ -258,6 +260,7 @@ def create_app():
     if is_production_env and str(stripe_key).startswith('sk_live_'):
         _stripe_logger = logging.getLogger(__name__)
         _price_ids_to_verify = {
+            'PRICE_ID_STARTER': app.config['STRIPE_PRICE_IDS'].get('starter'),
             'PRICE_ID_ESSENTIAL': app.config['STRIPE_PRICE_IDS'].get('essential'),
             'PRICE_ID_CREDITS_3000': app.config['STRIPE_CREDIT_PACK_PRICE_IDS'].get('credits_3000'),
         }
@@ -601,7 +604,7 @@ def create_app():
     @credits_cli.command("reset-monthly")
     @click.option("--dry-run", is_flag=True, help="Calculate resets without committing.")
     def reset_monthly_credits_cli(dry_run):
-        """Reset monthly credits for due free/essential/team users."""
+        """Reset monthly credits for due free/starter/essential/team users."""
         from scripts.reset_monthly_credits import reset_monthly_credits
 
         updated, skipped = reset_monthly_credits(dry_run=dry_run)

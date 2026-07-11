@@ -483,7 +483,7 @@ def confirm_credit_pack_payment():
 @billing_bp.route('/create-checkout-session', methods=['POST'])
 @jwt_required()
 def create_checkout_session():
-    """Create a self-serve subscription Checkout session (Free/Essential)."""
+    """Create a self-serve subscription Checkout session for paid self-serve plans."""
     user = User.query.get(get_jwt_identity())
     if not user:
         return jsonify({'msg': 'User not found'}), 404
@@ -816,7 +816,7 @@ def set_default_payment_method():
 
 
 # Plan tier used to detect upgrade vs downgrade direction.
-_PLAN_TIER = {'free': 0, 'essential': 1, 'team': 2, 'enterprise': 3}
+_PLAN_TIER = {'free': 0, 'starter': 1, 'essential': 2, 'team': 3, 'enterprise': 4}
 
 
 @billing_bp.route('/modify-subscription', methods=['POST'])

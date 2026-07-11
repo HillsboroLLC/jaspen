@@ -59,7 +59,7 @@ def _normalize_org_mfa_settings(org, incoming_settings):
     if not policy:
         return None, "mfa_policy must be one of: optional, encouraged, required"
     plan = to_public_plan(org.plan_key)
-    if plan in {"free", "essential"} and policy == MFA_POLICY_REQUIRED:
+    if plan in {"free", "starter", "essential"} and policy == MFA_POLICY_REQUIRED:
         return None, "MFA enforcement is only available on Team or Enterprise plans"
     if plan == "enterprise":
         policy = MFA_POLICY_REQUIRED

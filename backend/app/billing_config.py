@@ -22,19 +22,28 @@ PLAN_ALIASES = {
 
 PLAN_RANK = {
     'free': 0,
-    'essential': 1,
-    'team': 2,
-    'enterprise': 3,
+    'starter': 1,
+    'essential': 2,
+    'team': 3,
+    'enterprise': 4,
 }
 
 DEFAULT_PLAN_CATALOG = {
     'free': {
         'label': 'Free',
         'monthly_price_usd': 0,
+        'monthly_credits': 300_000,
+        'self_serve': True,
+        'sales_only': False,
+        'description': 'Enough thinking power to test Jaspen on a real decision.',
+    },
+    'starter': {
+        'label': 'Starter',
+        'monthly_price_usd': 7,
         'monthly_credits': 1_000_000,
         'self_serve': True,
         'sales_only': False,
-        'description': 'Individual access for exploring core workflows.',
+        'description': 'Light personal use when you need more room than Free.',
     },
     'essential': {
         'label': 'Essential',
@@ -150,7 +159,8 @@ MARGIN_MULTIPLIER = float(os.getenv('JASPEN_MARGIN_MULTIPLIER', '3.0'))
 
 # Plan-level Anthropic cost ceiling (USD per month, BEFORE margin). At 3.0×
 # margin these map to comfortable margins per Stripe pricing:
-#   Free        $0  → $0.50 budget (~5–10 Sonnet turns; demo)
+#   Free        $0  → $0.25 budget (small sample path)
+#   Starter     $7  → $2.00 budget × 3 = $6 retail → modest margin
 #   Essential  $39  → $13 budget × 3 = $39 retail → break-even on heavy users,
 #                     comfortable margin on light users
 #   Team      $129  → $43 budget × 3 = $129
@@ -159,7 +169,8 @@ MARGIN_MULTIPLIER = float(os.getenv('JASPEN_MARGIN_MULTIPLIER', '3.0'))
 # These are intentionally calibrated so the heaviest users hit zero margin
 # (not negative) — most users use far less. Tunable via env.
 PLAN_THINKING_BUDGET_USD = {
-    'free':       float(os.getenv('JASPEN_BUDGET_FREE',       '0.50')),
+    'free':       float(os.getenv('JASPEN_BUDGET_FREE',       '0.25')),
+    'starter':    float(os.getenv('JASPEN_BUDGET_STARTER',    '2.00')),
     'essential':  float(os.getenv('JASPEN_BUDGET_ESSENTIAL', '13.00')),
     'team':       float(os.getenv('JASPEN_BUDGET_TEAM',      '43.00')),
     'enterprise': float(os.getenv('JASPEN_BUDGET_ENTERPRISE','100.00')),

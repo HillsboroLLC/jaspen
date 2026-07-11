@@ -102,10 +102,11 @@ from app.intake_readiness import (
 # ── Per-plan rate limits for AI session routes ────────────────────────────────
 # Each function returns a flask-limiter limit string based on the calling
 # user's subscription plan. These stack with the per-route burst limits (C).
-# Tiers: free ≤ essential ≤ team ≤ enterprise.
+# Tiers: free ≤ starter ≤ essential ≤ team ≤ enterprise.
 
 _PLAN_HOURLY_LIMITS = {
     'free':       '5 per hour',
+    'starter':    '10 per hour',
     'essential':  '20 per hour',
     'team':       '60 per hour',
     'enterprise': '150 per hour',
@@ -113,6 +114,7 @@ _PLAN_HOURLY_LIMITS = {
 
 _PLAN_DAILY_LIMITS = {
     'free':       '10 per day',
+    'starter':    '25 per day',
     'essential':  '50 per day',
     'team':       '150 per day',
     'enterprise': '500 per day',
@@ -3905,7 +3907,7 @@ def _max_output_tokens_for_plan(plan_key):
                 except Exception:
                     continue
 
-    for plan in ("free", "essential", "team", "enterprise"):
+    for plan in ("free", "starter", "essential", "team", "enterprise"):
         env_key = f"AI_AGENT_MAX_OUTPUT_TOKENS_{plan.upper()}"
         raw = current_app.config.get(env_key) or os.getenv(env_key)
         if raw is None:

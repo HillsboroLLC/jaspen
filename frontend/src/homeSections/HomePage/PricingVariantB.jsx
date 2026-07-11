@@ -8,8 +8,19 @@ const PLANS = [
     monthly: 0,
     annual: 0,
     seats: '1 seat',
-    tagline: 'Explore ideas without commitment.',
+    tagline: 'Test Jaspen on a real decision.',
     cta: 'Sign up',
+    href: '/?auth=1',
+    featured: false,
+  },
+  {
+    key: 'starter',
+    name: 'Starter',
+    monthly: 7,
+    annual: 6,
+    seats: '1 seat',
+    tagline: 'Keep going with light personal use.',
+    cta: 'Start free',
     href: '/?auth=1',
     featured: false,
   },
@@ -52,34 +63,34 @@ const FEATURES = [
   {
     category: 'Credits & capacity',
     rows: [
-      { label: 'Monthly credits',            sub: 'Resets each billing cycle',         free: '1,000',   essential: '7,000',  team: '29,000',      enterprise: '80,000'    },
-      { label: 'Credits shared across team', sub: 'Pool drawn from one balance',        free: false,     essential: false,    team: true,          enterprise: true        },
-      { label: 'Buy additional credits',     sub: 'Top up any time mid-cycle',          free: true,      essential: true,     team: true,          enterprise: true        },
+      { label: 'Monthly credits',            sub: 'Resets each billing cycle',         free: '300',     starter: '1,000',   essential: '7,000',  team: '29,000',      enterprise: '80,000'    },
+      { label: 'Credits shared across team', sub: 'Pool drawn from one balance',        free: false,     starter: false,     essential: false,    team: true,          enterprise: true        },
+      { label: 'Buy additional credits',     sub: 'Top up any time mid-cycle',          free: true,      starter: true,      essential: true,     team: true,          enterprise: true        },
     ],
   },
   {
     category: 'Workspace & seats',
     rows: [
-      { label: 'Seats included',             sub: '',                                   free: '1',       essential: '1',      team: '3',           enterprise: '5'         },
-      { label: 'Additional seats',           sub: 'Pay as you grow',                    free: false,     essential: false,    team: '+$25/seat',   enterprise: '+$30/seat' },
-      { label: 'Shared team workspace',      sub: '',                                   free: false,     essential: false,    team: true,          enterprise: true        },
-      { label: 'Scorecard export',           sub: 'PDF download',                       free: true,      essential: true,     team: true,          enterprise: true        },
+      { label: 'Seats included',             sub: '',                                   free: '1',       starter: '1',       essential: '1',      team: '3',           enterprise: '5'         },
+      { label: 'Additional seats',           sub: 'Pay as you grow',                    free: false,     starter: false,     essential: false,    team: '+$25/seat',   enterprise: '+$30/seat' },
+      { label: 'Shared team workspace',      sub: '',                                   free: false,     starter: false,     essential: false,    team: true,          enterprise: true        },
+      { label: 'Scorecard export',           sub: 'PDF download',                       free: true,      starter: true,      essential: true,     team: true,          enterprise: true        },
     ],
   },
   {
     category: 'AI models',
     rows: [
-      { label: 'Pluto',                      sub: 'Fast — lowest credit burn',          free: true,      essential: true,     team: true,          enterprise: true        },
-      { label: 'Orbit',                      sub: 'Deeper reasoning — moderate burn',   free: true,      essential: true,     team: true,          enterprise: true        },
-      { label: 'Titan',                      sub: 'Highest depth — highest burn',       free: true,      essential: true,     team: true,          enterprise: true        },
+      { label: 'Pluto',                      sub: 'Fastest, lowest credit burn',        free: true,      starter: true,      essential: true,     team: true,          enterprise: true        },
+      { label: 'Orbit',                      sub: 'Deeper reasoning, moderate burn',    free: true,      starter: true,      essential: true,     team: true,          enterprise: true        },
+      { label: 'Titan',                      sub: 'Highest depth, highest burn',        free: true,      starter: true,      essential: true,     team: true,          enterprise: true        },
     ],
   },
   {
     category: 'Support',
     rows: [
-      { label: 'Community support',          sub: '',                                   free: true,      essential: true,     team: true,          enterprise: true        },
-      { label: 'Priority support',           sub: '',                                   free: false,     essential: false,    team: true,          enterprise: true        },
-      { label: 'Dedicated success manager',  sub: '',                                   free: false,     essential: false,    team: false,         enterprise: true        },
+      { label: 'Community support',          sub: '',                                   free: true,      starter: true,      essential: true,     team: true,          enterprise: true        },
+      { label: 'Priority support',           sub: '',                                   free: false,     starter: false,     essential: false,    team: true,          enterprise: true        },
+      { label: 'Dedicated success manager',  sub: '',                                   free: false,     starter: false,     essential: false,    team: false,         enterprise: true        },
     ],
   },
 ];
@@ -185,7 +196,7 @@ export default function PricingVariantB({ onOpenModal }) {
                 {FEATURES.map(section => (
                   <React.Fragment key={section.category}>
                     <tr className="pvb-category-row">
-                      <td colSpan={5}>{section.category}</td>
+                      <td colSpan={PLANS.length + 1}>{section.category}</td>
                     </tr>
                     {section.rows.map(row => (
                       <tr key={row.label} className="pvb-feature-row">

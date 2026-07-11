@@ -1,10 +1,11 @@
-export const PLAN_ORDER = ['free', 'essential', 'team', 'enterprise'];
+export const PLAN_ORDER = ['free', 'starter', 'essential', 'team', 'enterprise'];
 
 export const PLAN_RANK = {
   free: 0,
-  essential: 1,
-  team: 2,
-  enterprise: 3,
+  starter: 1,
+  essential: 2,
+  team: 3,
+  enterprise: 4,
 };
 
 export const ROLE_OPTIONS = ['owner', 'admin', 'creator', 'collaborator', 'viewer'];

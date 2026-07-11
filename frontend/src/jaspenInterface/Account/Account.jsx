@@ -1077,7 +1077,7 @@ export default function Account() {
   };
 
   // Tier map mirrors the backend _PLAN_TIER dict — used to detect upgrade vs downgrade.
-  const PLAN_TIER_MAP = { free: 0, essential: 1, team: 2, enterprise: 3 };
+  const PLAN_TIER_MAP = { free: 0, starter: 1, essential: 2, team: 3, enterprise: 4 };
 
   // Build a clear "here's what will happen" confirmation before any plan change
   // touches Stripe — especially the in-place upgrade, which charges the card on
@@ -2567,21 +2567,19 @@ export default function Account() {
               const isPending = pendingAction === key;
               const PLAN_HEADLINES = {
                 free: 'Unlock exploration',
+                starter: 'Keep exploring',
                 essential: 'Onboard your strategy partner',
                 team: 'Move faster together',
                 enterprise: 'Scale decision-making across your organization',
               };
               const PLAN_AUDIENCE = {
                 free: 'Start without commitment',
+                starter: 'For light personal use',
                 essential: 'For individual operators and builders',
                 team: 'For small teams and cross-functional work',
                 enterprise: 'For organizations and large-scale execution',
               };
-              const isUpgrade = key !== 'free' && (
-                (key === 'essential' && currentPlan === 'free') ||
-                (key === 'team' && ['free', 'essential'].includes(currentPlan)) ||
-                (key === 'enterprise' && ['free', 'essential', 'team'].includes(currentPlan))
-              );
+              const isUpgrade = PLAN_TIER_MAP[key] > PLAN_TIER_MAP[currentPlan];
               return (
                 <article className={`account-plan-card ${isCurrent ? 'is-current' : ''}`} key={key}>
                   <div className="account-plan-head">

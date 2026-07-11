@@ -479,7 +479,7 @@ const PM_VARIANT  = "monitor-check";
 const LSS_VARIANT = "chart-scatter";
 const MODEL_DISPLAY_ORDER = ['pluto', 'orbit', 'titan'];
 const MODEL_VERSION_BY_TYPE = { pluto: '1.0', orbit: '1.0', titan: '1.0' };
-const ADMIN_PREVIEW_PLAN_KEYS = new Set(['free', 'essential', 'team', 'enterprise']);
+const ADMIN_PREVIEW_PLAN_KEYS = new Set(['free', 'starter', 'essential', 'team', 'enterprise']);
 const OBJECTIVE_OPTIONS = [
   { key: 'balanced', label: 'Balanced' },
   { key: 'cost', label: 'Cost Optimization' },
@@ -1465,12 +1465,13 @@ function normalizePlanKey(plan) {
 }
 
 function isSelfServePlan(plan) {
-  return ['free', 'essential'].includes(normalizePlanKey(plan));
+  return ['free', 'starter', 'essential'].includes(normalizePlanKey(plan));
 }
 
 const SUPPORT_ROLE_SWITCH_OPTIONS = [
   { value: 'actual', label: 'Actual account', path: '/new' },
   { value: 'workspace:free', label: 'Personal · Free', path: '/new?admin_preview=workspace&plan_key=free' },
+  { value: 'workspace:starter', label: 'Personal · Starter', path: '/new?admin_preview=workspace&plan_key=starter' },
   { value: 'workspace:essential', label: 'Personal · Essential', path: '/new?admin_preview=workspace&plan_key=essential' },
   { value: 'workspace:team:viewer', label: 'Team · Viewer', path: '/new?admin_preview=workspace&plan_key=team&role=viewer' },
   { value: 'workspace:team:collaborator', label: 'Team · Collaborator', path: '/new?admin_preview=workspace&plan_key=team&role=collaborator' },
@@ -5408,7 +5409,7 @@ useEffect(() => {
             <button
               className="jas-ud-item is-locked"
               onClick={() => setBillingModalOpen(true)}
-              title="Upgrade to Essential to unlock starter data sources"
+              title="Connect data sources from Account settings"
             >
               <FontAwesomeIcon icon={faLayerGroup} />
               <span className="jas-ud-item-label">Data Sources</span>
@@ -12540,7 +12541,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                   <p className="jas-low-credits-banner-title">Welcome to Jaspen — here's what you get on the free plan</p>
                   <ul className="jas-free-tier-list">
                     <li>10 AI-powered analyses per day (5 per hour)</li>
-                    <li>1,000,000 thinking credits per month</li>
+                    <li>300 thinking credits per month</li>
                     <li>Resets monthly on your signup anniversary</li>
                   </ul>
                   <p>

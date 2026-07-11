@@ -11,8 +11,8 @@ import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
 import { sendPageAssistantMessage } from '../shared/pageAssistant';
 
 
-const PLAN_OPTIONS = ['free', 'essential', 'team', 'enterprise'];
-const PLAN_ACCESS_ORDER = ['free', 'essential', 'team', 'enterprise'];
+const PLAN_OPTIONS = ['free', 'starter', 'essential', 'team', 'enterprise'];
+const PLAN_ACCESS_ORDER = ['free', 'starter', 'essential', 'team', 'enterprise'];
 const MODEL_DISPLAY_ORDER = ['pluto', 'orbit', 'titan'];
 const CREDIT_MODE_OPTIONS = [
   { value: 'adjust', label: 'Adjust (+/-)' },
@@ -22,12 +22,17 @@ const CREDIT_MODE_OPTIONS = [
 const ROLE_EXPERIENCE_OPTIONS = [
   {
     label: 'Individual · Free',
-    description: 'Personal workspace, 500 credits, Pluto only. No org features or shared dashboards.',
+    description: 'Personal workspace, 300 credits. No org features or shared dashboards.',
     path: '/new?admin_preview=workspace&plan_key=free',
   },
   {
+    label: 'Individual · Starter',
+    description: 'Personal workspace with 1,000 credits for light ongoing use.',
+    path: '/new?admin_preview=workspace&plan_key=starter',
+  },
+  {
     label: 'Individual · Essential',
-    description: 'Personal workspace with higher limits and starter data-source access.',
+    description: 'Personal workspace with higher limits for everyday decision work.',
     path: '/new?admin_preview=workspace&plan_key=essential',
   },
   {

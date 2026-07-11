@@ -2,14 +2,14 @@ import React from 'react';
 import MarketingPageLayout from '../Marketing/MarketingPageLayout';
 
 const EXECUTION_CONNECTORS = [
-  { name: 'Jira', state: 'Essential' },
-  { name: 'Smartsheet', state: 'Essential' },
+  { name: 'Jira', state: 'All plans' },
+  { name: 'Smartsheet', state: 'All plans' },
 ];
 
 const DATA_CONNECTORS = [
-  { name: 'Snowflake', state: 'Essential' },
-  { name: 'Salesforce', state: 'Essential' },
-  { name: 'Oracle Fusion', state: 'Essential' },
+  { name: 'Snowflake', state: 'All plans' },
+  { name: 'Salesforce', state: 'All plans' },
+  { name: 'Oracle Fusion', state: 'All plans' },
 ];
 
 const NEXT_WAVE_CONNECTORS = [
@@ -23,7 +23,7 @@ export default function ConnectorsPage() {
       <section className="page-hero page-hero-resources">
         <div className="hero-copy">
           <p className="hero-kicker">Resources</p>
-          <h1>Essential connectors for execution and data intelligence</h1>
+          <h1>Connectors for execution and data intelligence</h1>
           <p>
             Start with a focused connector set so Jaspen can sync plans with project tools and surface pattern-based
             recommendations from your business data.
@@ -54,7 +54,7 @@ export default function ConnectorsPage() {
             <ul className="lydia-bullets">
               <li>Execution connectors support plan updates and status sync</li>
               <li>Data connectors support trend detection and recommendation generation</li>
-              <li>Essential connector set enables fast initial rollout</li>
+              <li>Connector access is available on every plan; paid tiers add more thinking power and capacity</li>
             </ul>
           </article>
         </div>

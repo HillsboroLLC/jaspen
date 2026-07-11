@@ -3,13 +3,17 @@ from copy import deepcopy
 from app.billing_config import normalize_plan_key
 
 
-PLAN_ORDER = ["free", "essential", "team", "enterprise"]
+PLAN_ORDER = ["free", "starter", "essential", "team", "enterprise"]
 PLAN_RANK = {key: idx for idx, key in enumerate(PLAN_ORDER)}
 
 
 CONTEXT_BUDGET_BY_TIER = {
     "free": {
         "recent_turns": 16,
+        "include_rolling_summary": True,
+    },
+    "starter": {
+        "recent_turns": 20,
         "include_rolling_summary": True,
     },
     "essential": {
@@ -37,7 +41,7 @@ TOOL_REGISTRY = [
         "type": "internal",
         "access": "read",
         "purpose": "Return readiness percent, missing checklist items, and next best question.",
-        "tiers": ["free", "essential", "team", "enterprise"],
+        "tiers": ["free", "starter", "essential", "team", "enterprise"],
         "limits": "Standard request rate limits.",
         "preconditions": ["active_thread"],
     },
@@ -46,7 +50,7 @@ TOOL_REGISTRY = [
         "type": "internal",
         "access": "read",
         "purpose": "Return required KPI/financial baseline fields for structured intake.",
-        "tiers": ["free", "essential", "team", "enterprise"],
+        "tiers": ["free", "starter", "essential", "team", "enterprise"],
         "limits": "Standard request rate limits.",
         "preconditions": ["active_thread"],
     },
@@ -55,7 +59,7 @@ TOOL_REGISTRY = [
         "type": "internal",
         "access": "write",
         "purpose": "Create scenario deltas from baseline scorecard.",
-        "tiers": ["free", "essential", "team", "enterprise"],
+        "tiers": ["free", "starter", "essential", "team", "enterprise"],
         "limits": {
             "essential": {"max_scenarios_per_thread": 10},
             "team": {"max_scenarios_per_thread": 50},
@@ -68,7 +72,7 @@ TOOL_REGISTRY = [
         "type": "internal",
         "access": "write",
         "purpose": "Compute deterministic scenario scorecard from baseline + deltas.",
-        "tiers": ["free", "essential", "team", "enterprise"],
+        "tiers": ["free", "starter", "essential", "team", "enterprise"],
         "preconditions": ["scenario_exists", "baseline_exists"],
     },
     {
@@ -76,7 +80,7 @@ TOOL_REGISTRY = [
         "type": "internal",
         "access": "write",
         "purpose": "Set adopted scenario pointer as current continuation context.",
-        "tiers": ["free", "essential", "team", "enterprise"],
+        "tiers": ["free", "starter", "essential", "team", "enterprise"],
         "behavior": "Non-destructive pointer switch. Baseline and scenarios are retained.",
         "preconditions": ["scenario_exists_in_thread"],
     },
@@ -85,7 +89,7 @@ TOOL_REGISTRY = [
         "type": "internal",
         "access": "write",
         "purpose": "Delete a scenario only when explicitly requested by user.",
-        "tiers": ["free", "essential", "team", "enterprise"],
+        "tiers": ["free", "starter", "essential", "team", "enterprise"],
         "guardrails": [
             "Requires explicit user intent.",
             "Deleting adopted scenario resets adopted pointer to baseline.",
@@ -96,7 +100,7 @@ TOOL_REGISTRY = [
         "type": "internal",
         "access": "read",
         "purpose": "Read WBS tasks, owners, milestones, and dependencies for execution tracking.",
-        "tiers": ["free", "essential", "team", "enterprise"],
+        "tiers": ["free", "starter", "essential", "team", "enterprise"],
         "preconditions": ["thread_exists"],
     },
     {
@@ -104,7 +108,7 @@ TOOL_REGISTRY = [
         "type": "internal",
         "access": "write",
         "purpose": "Create or update WBS tasks, owners, statuses, and dependencies.",
-        "tiers": ["free", "essential", "team", "enterprise"],
+        "tiers": ["free", "starter", "essential", "team", "enterprise"],
         "limits": {
             "essential": {
                 "max_active_wbs_per_thread": 1,
@@ -129,7 +133,7 @@ TOOL_REGISTRY = [
         "type": "connector",
         "access": "read_write",
         "purpose": "Sync epics/stories/status/owners/sprints with Jira.",
-        "tiers": ["free", "essential", "team", "enterprise"],
+        "tiers": ["free", "starter", "essential", "team", "enterprise"],
         "preconditions": ["connector_configured", "workspace_mapping_configured"],
     },
     {
@@ -137,7 +141,7 @@ TOOL_REGISTRY = [
         "type": "connector",
         "access": "read_write",
         "purpose": "Sync sheet rows, task statuses, and timeline updates with Smartsheet.",
-        "tiers": ["free", "essential", "team", "enterprise"],
+        "tiers": ["free", "starter", "essential", "team", "enterprise"],
         "preconditions": ["connector_configured", "sheet_mapping_configured"],
     },
     {
@@ -145,7 +149,7 @@ TOOL_REGISTRY = [
         "type": "connector",
         "access": "read_write",
         "purpose": "Analyze customer and pipeline trends from Salesforce for strategic insights.",
-        "tiers": ["free", "essential", "team", "enterprise"],
+        "tiers": ["free", "starter", "essential", "team", "enterprise"],
         "preconditions": ["connector_configured", "object_mapping_configured"],
     },
     {
@@ -153,7 +157,7 @@ TOOL_REGISTRY = [
         "type": "connector",
         "access": "read",
         "purpose": "Query governed KPI and financial trend views from Snowflake.",
-        "tiers": ["free", "essential", "team", "enterprise"],
+        "tiers": ["free", "starter", "essential", "team", "enterprise"],
         "preconditions": ["connector_configured", "query_allowlist_configured"],
     },
     {
@@ -161,7 +165,7 @@ TOOL_REGISTRY = [
         "type": "connector",
         "access": "read_write",
         "purpose": "Use Oracle Fusion operational and financial signals for execution insights.",
-        "tiers": ["free", "essential", "team", "enterprise"],
+        "tiers": ["free", "starter", "essential", "team", "enterprise"],
         "preconditions": ["connector_configured"],
     },
     {
@@ -169,7 +173,7 @@ TOOL_REGISTRY = [
         "type": "connector",
         "access": "read_write",
         "purpose": "Track service and change trends impacting delivery confidence.",
-        "tiers": ["free", "essential", "team", "enterprise"],
+        "tiers": ["free", "starter", "essential", "team", "enterprise"],
         "preconditions": ["connector_configured"],
     },
     {
@@ -177,7 +181,7 @@ TOOL_REGISTRY = [
         "type": "connector",
         "access": "read_write",
         "purpose": "Monitor NetSuite finance and operations trends for decision support.",
-        "tiers": ["free", "essential", "team", "enterprise"],
+        "tiers": ["free", "starter", "essential", "team", "enterprise"],
         "preconditions": ["connector_configured"],
     },
 ]

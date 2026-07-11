@@ -425,7 +425,7 @@ def get_model_access_matrix():
     if err:
         return err
 
-    plan_order = ["free", "essential", "team", "enterprise"]
+    plan_order = ["free", "starter", "essential", "team", "enterprise"]
     model_catalog = get_model_catalog(current_app.config, include_backing_ids=True)
     plans = []
     for plan_key in plan_order:

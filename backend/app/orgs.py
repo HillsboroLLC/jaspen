@@ -50,6 +50,13 @@ DEFAULT_SEAT_POLICIES = {
         ORG_ROLE_COLLABORATOR: 3,
         ORG_ROLE_VIEWER: None,
     },
+    "starter": {
+        ORG_ROLE_OWNER: 1,
+        ORG_ROLE_ADMIN: 1,
+        ORG_ROLE_CREATOR: 1,
+        ORG_ROLE_COLLABORATOR: 2,
+        ORG_ROLE_VIEWER: None,
+    },
     "free": {
         ORG_ROLE_OWNER: 1,
         ORG_ROLE_ADMIN: 1,

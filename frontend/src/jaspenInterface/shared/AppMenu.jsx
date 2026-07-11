@@ -591,7 +591,7 @@ export default function AppMenu() {
             <button
               className="jas-ud-item is-locked"
               onClick={() => setBillingModalOpen(true)}
-              title="Upgrade to Essential to unlock starter data sources"
+              title="Connect data sources from Account settings"
             >
               <FontAwesomeIcon icon={faLayerGroup} />
               <span className="jas-ud-item-label">Data Sources</span>

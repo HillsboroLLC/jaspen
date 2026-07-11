@@ -11,7 +11,14 @@ const FALLBACK_PLANS = [
     plan_key: 'free',
     label: 'Free',
     price: '$0',
-    detail: 'Unlock exploration · 1,000 credits/month · ~10–20 decisions.',
+    detail: 'Test Jaspen on a real decision · 300 credits/month.',
+    sales_only: false,
+  },
+  {
+    plan_key: 'starter',
+    label: 'Starter',
+    price: '$7 / month',
+    detail: 'Light personal use when you need more room than Free · 1,000 credits/month.',
     sales_only: false,
   },
   {
@@ -56,14 +63,14 @@ const FALLBACK_MODEL_TYPES = {
     label: 'Orbit',
     version: '1.0',
     description: 'Balanced depth and speed for broader cross-functional synthesis.',
-    min_plan: 'essential',
+    min_plan: 'free',
   },
   titan: {
     model_type: 'titan',
     label: 'Titan',
     version: '1.0',
     description: 'Highest-depth reasoning for complex multi-team initiatives.',
-    min_plan: 'enterprise',
+    min_plan: 'free',
   },
 };
 
@@ -268,12 +275,13 @@ export default function PricingPage() {
           <p className="hero-kicker">Pricing</p>
           <h1>Clear pricing from individual use to enterprise rollout</h1>
           <p>
-            Start free, upgrade to Essential at $39/month, and scale with Team or Enterprise.
+            Start free, move to Starter at $7/month, upgrade to Essential at $39/month, and scale with Team or Enterprise.
             Need more usage? Add thinking power credit packs as needed.
           </p>
         </div>
         <div className="hero-abstract pricing-abstract">
-          <div className="floating-price">Free 1,000 credits</div>
+          <div className="floating-price">Free 300 credits</div>
+          <div className="floating-price">Starter 1,000 credits</div>
           <div className="floating-price">Essential 7,000 credits</div>
           <div className="floating-price">Team 29,000 shared</div>
           <div className="floating-price">Enterprise 80,000 shared</div>
@@ -286,17 +294,18 @@ export default function PricingPage() {
           <article className="marketing-card pricing-highlight">
             <h3>Structured for modern AI-agent adoption</h3>
             <p>
-              Free gets users started. Essential supports everyday use at $39/month. Team and Enterprise add
+              Free lets users test a real decision. Starter supports light personal use at $7/month. Essential supports everyday use at $39/month. Team and Enterprise add
               pooled thinking power, governance, and rollout control.
             </p>
           </article>
           <article className="marketing-card pricing-summary">
             <h3>Usage policy</h3>
             <ul className="pricing-checks">
-              <li>Free: 1,000 credits/month</li>
+              <li>Free: 300 credits/month</li>
+              <li>Starter: 1,000 credits/month</li>
               <li>Essential: 7,000 credits/month</li>
               <li>Team: 29,000 shared credits/month + seat pricing</li>
-              <li>Enterprise: 80,000 shared credits/month + Titan access</li>
+              <li>Enterprise: 80,000 shared credits/month + seat pricing</li>
             </ul>
           </article>
         </div>
@@ -327,13 +336,9 @@ export default function PricingPage() {
                 ) : !isLoggedIn ? (
                   <a
                     className="pricing-cta-button"
-                    href={
-                      isFree
-                        ? '/?auth=1'
-                        : `/?auth=1&plan=${plan.plan_key}`
-                    }
+                    href="/?auth=1"
                   >
-                    {isFree ? 'Start for free' : `Get ${plan.label}`}
+                    {isFree ? 'Sign up' : 'Start free'}
                   </a>
                 ) : (
                   <button
@@ -446,6 +451,8 @@ export default function PricingPage() {
           <div className="lydia-visual pricing-architecture">
             <div className="pricing-node">{planByKey.free?.label || 'Free'}</div>
             <div className="pricing-link"></div>
+            <div className="pricing-node">{planByKey.starter?.label || 'Starter'}</div>
+            <div className="pricing-link"></div>
             <div className="pricing-node emphasized">{planByKey.essential?.label || 'Essential'}</div>
             <div className="pricing-link"></div>
             <div className="pricing-node">{planByKey.team?.label || 'Team'}</div>
@@ -455,7 +462,7 @@ export default function PricingPage() {
           <article className="lydia-content">
             <h3>Upgrade path</h3>
             <p>
-              Start free, upgrade to Essential ($39/month) as volume grows, then move to Team or Enterprise when
+              Start free, move to Starter ($7/month) for light use, upgrade to Essential ($39/month) as volume grows, then move to Team or Enterprise when
               governance, shared thinking power, and cross-functional deployment become the priority.
             </p>
           </article>

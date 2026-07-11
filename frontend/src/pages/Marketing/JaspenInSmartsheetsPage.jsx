@@ -124,7 +124,7 @@ export default function JaspenInSmartsheetsPage() {
           <div className="demos-cta-copy">
             <h3>Connect your Smartsheet workspace to Jaspen</h3>
             <p>
-              Available on Essential plans and above. Setup requires your Smartsheet workspace credentials
+              Available on every plan. Setup requires your Smartsheet workspace credentials
               and takes under 10 minutes.
             </p>
           </div>

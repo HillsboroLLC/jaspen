@@ -140,7 +140,7 @@ const normalizeUser = (raw) => {
 };
 
 const normalizePlanKey = (plan) => String(plan || '').trim().toLowerCase();
-const isSelfServePlan = (plan) => ['free', 'essential'].includes(normalizePlanKey(plan));
+const isSelfServePlan = (plan) => ['free', 'starter', 'essential'].includes(normalizePlanKey(plan));
 const resolvePlanCategory = (user) => {
   const rankedPlans = [
     normalizePlanKey(user?.active_organization_plan_key),

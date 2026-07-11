@@ -126,7 +126,7 @@ export default function JaspenInJiraPage() {
           <div className="demos-cta-copy">
             <h3>Connect your Jira project to Jaspen</h3>
             <p>
-              Available on Essential plans and above. Setup takes under 10 minutes with an active Jira
+              Available on every plan. Setup takes under 10 minutes with an active Jira
               project and API credentials.
             </p>
           </div>

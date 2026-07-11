@@ -25,7 +25,7 @@ export default function FAQSection() {
     {
       q: 'What is a credit, and how many will I need?',
       a: <>
-        <p>Credits are how you pay for AI work as you go. Every plan includes a monthly allotment that resets each cycle: Free 1,000, Essential 7,000, Team 29,000 shared, and Enterprise 80,000 shared.</p>
+        <p>Credits are how you pay for AI work as you go. Every plan includes a monthly allotment that resets each cycle: Free 300, Starter 1,000, Essential 7,000, Team 29,000 shared, and Enterprise 80,000 shared.</p>
         <p>How fast they burn depends on which model you pick. You can top up any time: 3,000 credits for $10, 8,000 for $25, or 18,000 for $50.</p>
       </>
     },
@@ -39,7 +39,7 @@ export default function FAQSection() {
     {
       q: 'Is the Free plan just a trial?',
       a: <>
-        <p>No. Free is a real plan with 1,000 credits every month, not a countdown. It is meant for working a real decision end to end before you decide to pay.</p>
+        <p>No. Free is a real plan with 300 credits every month, not a countdown. It is meant to let you test Jaspen on a real decision before you decide to pay.</p>
       </>
     },
     {

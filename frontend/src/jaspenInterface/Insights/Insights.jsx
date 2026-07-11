@@ -215,7 +215,7 @@ export default function Insights() {
         ));
         setConnectors(ideaConnectors);
         // All plans (free and above) can use connector-powered features
-        const isEnt = ['free', 'essential', 'team', 'enterprise'].includes(data?.plan_key);
+        const isEnt = ['free', 'starter', 'essential', 'team', 'enterprise'].includes(data?.plan_key);
         setIsEnterprise(Boolean(isEnt));
         if (ideaConnectors.length > 0) {
           setActiveConnectorIdForIdeas(String(ideaConnectors[0].id));
