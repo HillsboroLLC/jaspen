@@ -1413,17 +1413,23 @@ def verify_email():
     if request.method == 'GET':
         pending_plan = normalize_plan_key(decoded.get('pending_plan'))
         if pending_plan and pending_plan != 'free':
+            access_token = _create_user_access_token(user)
+            session_changed = _register_auth_session(user, access_token)
             try:
-                session = _create_subscription_checkout_session_for_user(user, pending_plan)
-                checkout_url = getattr(session, 'url', None) or (session.get('url') if hasattr(session, 'get') else None)
-                if checkout_url:
-                    return redirect(checkout_url, code=302)
+                token_jti = str(decode_token(access_token).get('jti') or '').strip()
             except Exception:
-                current_app.logger.exception(
-                    'Unable to create Stripe checkout after email verification for user %s',
-                    user.id,
-                )
-                return redirect(_verification_result_url('checkout_unavailable'), code=302)
+                token_jti = ''
+            if _enforce_login_session_limit(user, current_jti=token_jti):
+                session_changed = True
+            if session_changed:
+                db.session.commit()
+            params = urlencode({
+                'auth': '1',
+                'verified': '1',
+                'checkout_plan': pending_plan,
+            })
+            resp = redirect(f"{_frontend_base_url()}/?{params}", code=302)
+            return _attach_auth_cookie(resp, access_token)
         return redirect(_verification_result_url('verified'), code=302)
     return jsonify(
         message='Email verified successfully.',

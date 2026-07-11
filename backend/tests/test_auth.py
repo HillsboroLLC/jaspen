@@ -1,6 +1,4 @@
 from datetime import datetime
-from types import SimpleNamespace
-
 from itsdangerous import URLSafeTimedSerializer
 from werkzeug.security import generate_password_hash
 
@@ -327,20 +325,7 @@ def test_verify_email_marks_user_verified(client, app, test_user, db):
     assert test_user.email_verified_at is not None
 
 
-def test_verify_email_redirects_paid_pending_plan_to_stripe(client, app, test_user, db, monkeypatch):
-    created_sessions = []
-
-    def fake_customer_create(**kwargs):
-        return SimpleNamespace(id="cus_test_paid")
-
-    def fake_session_create(**kwargs):
-        created_sessions.append(kwargs)
-        return SimpleNamespace(id="cs_test_paid", url="https://checkout.stripe.test/session")
-
-    app.config["STRIPE_PRICE_IDS"] = {"essential": "price_essential"}
-    monkeypatch.setattr("app.routes.auth.stripe.Customer.create", fake_customer_create)
-    monkeypatch.setattr("app.routes.auth.stripe.checkout.Session.create", fake_session_create)
-
+def test_verify_email_redirects_paid_pending_plan_to_embedded_checkout(client, app, test_user, db):
     with app.app_context():
         serializer = URLSafeTimedSerializer(
             secret_key=app.config["SECRET_KEY"] or app.config["JWT_SECRET_KEY"],
@@ -355,12 +340,10 @@ def test_verify_email_redirects_paid_pending_plan_to_stripe(client, app, test_us
     resp = client.get(f"/api/v1/auth/verify-email?token={token}")
 
     assert resp.status_code == 302
-    assert resp.headers["Location"] == "https://checkout.stripe.test/session"
+    assert resp.headers["Location"] == "http://localhost:3000/?auth=1&verified=1&checkout_plan=essential"
+    assert "Set-Cookie" in resp.headers
     db.session.refresh(test_user)
     assert test_user.email_verified is True
-    assert test_user.stripe_customer_id == "cus_test_paid"
-    assert created_sessions[0]["line_items"] == [{"price": "price_essential", "quantity": 1}]
-    assert created_sessions[0]["metadata"]["plan_key"] == "essential"
 
 
 def test_forgot_password_sends_reset_email_for_existing_user(client, app, test_user, db, monkeypatch):
