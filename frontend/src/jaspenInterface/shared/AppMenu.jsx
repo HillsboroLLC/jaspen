@@ -21,6 +21,7 @@ import { getPlanConnectorSentence } from '../../shared/billing/planConnectors';
 import { PLAN_ORDER, PLAN_RANK } from '../../shared/constants/appConstants';
 import { formatNextResetDate } from '../../shared/utils/dateUtils';
 import SidebarIdentityFooter from '../Workspace/components/SidebarIdentityFooter';
+import StripeCheckout from '../Account/StripeCheckout';
 import './AppMenu.css';
 
 // ---------------------------------------------------------------------------
@@ -47,6 +48,19 @@ async function copyText(text) {
   el.select();
   document.execCommand('copy');
   document.body.removeChild(el);
+}
+
+function priceDisplay(plan) {
+  if (plan?.price_model === 'per_seat' && Number.isFinite(plan?.monthly_price_usd)) {
+    return `$${plan.monthly_price_usd}/seat/mo`;
+  }
+  if (plan?.price_model === 'custom') {
+    return 'Contact sales';
+  }
+  if (Number.isFinite(plan?.monthly_price_usd)) {
+    return plan.monthly_price_usd === 0 ? '$0' : `$${plan.monthly_price_usd}/mo`;
+  }
+  return 'Contact sales';
 }
 
 // ---------------------------------------------------------------------------
@@ -82,6 +96,7 @@ export default function AppMenu() {
   const [billingMessage, setBillingMessage] = useState('');
   const [billingModalOpen, setBillingModalOpen] = useState(false);
   const [billingActionLoading, setBillingActionLoading] = useState(null);
+  const [embeddedCheckout, setEmbeddedCheckout] = useState(null);
 
   // Notifications (simple badge only – no live feed on non-workspace pages)
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -169,7 +184,7 @@ export default function AppMenu() {
   // ---------------------------------------------------------------------------
   // Plan flags (mirrors JaspenWorkspace)
   // ---------------------------------------------------------------------------
-  const plans = billingCatalog?.plans || {};
+  const plans = useMemo(() => billingCatalog?.plans || {}, [billingCatalog?.plans]);
   const currentPlanKey = String(billingStatus?.plan_key || 'free').toLowerCase();
   const effectivePlanKey = highestPlanKey(
     currentPlanKey,
@@ -382,56 +397,67 @@ export default function AppMenu() {
   const startBillingPlanChange = useCallback(
     async (planKey) => {
       setBillingActionLoading(planKey);
+      setBillingMessage('');
+      const plan = plans?.[planKey] || {};
+      const currentPlan = plans?.[currentPlanKey] || {};
+      const hasSubscription = Boolean(billingStatus?.stripe_subscription_id);
       try {
-        const res = await fetch(
-          `${API_BASE}/api/v1/billing/create-checkout-session`,
-          {
-            method: 'POST',
-            headers: {
-              ...buildAuthHeaders({}, 'POST'),
-              'Content-Type': 'application/json',
-            },
-            credentials: 'include',
-            body: JSON.stringify({ plan_key: planKey }),
-          },
-        );
-        const data = await res.json().catch(() => ({}));
-        if (data?.checkout_url) {
-          window.location.href = data.checkout_url;
-        } else {
-          setBillingMessage(data?.msg || 'Unable to start checkout.');
+        if (planKey !== 'free' && (!hasSubscription || currentPlanKey === 'free')) {
+          setBillingModalOpen(false);
+          setEmbeddedCheckout({
+            planKey,
+            planLabel: plan?.label || planKey,
+            priceLabel: priceDisplay(plan),
+          });
+          return;
         }
+
+        if (planKey === 'free') {
+          const res = await fetch(`${API_BASE}/api/v1/billing/cancel-subscription`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: buildAuthHeaders({}, 'POST'),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            throw new Error(data?.msg || 'Unable to cancel subscription.');
+          }
+          const endDate = data?.current_period_end_iso
+            ? new Date(data.current_period_end_iso).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+            : 'your next billing date';
+          setBillingMessage(`You'll keep ${currentPlan?.label || 'your current plan'} through ${endDate}, then move to Free.`);
+          await loadBilling();
+          return;
+        }
+
+        const res = await fetch(`${API_BASE}/api/v1/billing/modify-subscription`, {
+          method: 'POST',
+          headers: {
+            ...buildAuthHeaders({}, 'POST'),
+            'Content-Type': 'application/json',
+          },
+          credentials: 'include',
+          body: JSON.stringify({ plan_key: planKey }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data?.msg || 'Unable to update subscription.');
+        }
+        setBillingMessage(data?.message || `Your plan change to ${data?.plan_label || plan?.label || planKey} has been saved.`);
+        await loadBilling();
       } catch (err) {
-        setBillingMessage(err.message || 'Unable to start checkout.');
+        setBillingMessage(err.message || 'Unable to update billing.');
       } finally {
         setBillingActionLoading(null);
       }
     },
-    [],
+    [billingStatus?.stripe_subscription_id, currentPlanKey, loadBilling, plans],
   );
 
-  const openBillingPortal = useCallback(async () => {
-    setBillingActionLoading('portal');
-    try {
-      const res = await fetch(
-        `${API_BASE}/api/v1/billing/create-portal-session`,
-        {
-          method: 'POST',
-          headers: buildAuthHeaders({}, 'POST'),
-          credentials: 'include',
-        },
-      );
-      const data = await res.json().catch(() => ({}));
-      if (data?.portal_url) {
-        window.location.href = data.portal_url;
-      } else {
-        setBillingMessage(data?.msg || 'Unable to open billing portal.');
-      }
-    } catch (err) {
-      setBillingMessage(err.message || 'Unable to open billing portal.');
-    } finally {
-      setBillingActionLoading(null);
-    }
+  const openBillingPortal = useCallback(() => {
+    setBillingMessage('');
+    setBillingModalOpen(false);
+    setEmbeddedCheckout({ mode: 'update_payment' });
   }, []);
 
   const openDisplayNameEditor = useCallback(() => {
@@ -853,9 +879,8 @@ export default function AppMenu() {
               type="button"
               className="jas-account-portal-btn"
               onClick={openBillingPortal}
-              disabled={billingActionLoading === 'portal'}
             >
-              {billingActionLoading === 'portal' ? 'Opening...' : 'Manage billing'}
+              Manage billing
             </button>
             <button
               type="button"
@@ -867,6 +892,36 @@ export default function AppMenu() {
           </div>
         </div>
       </div>
+    );
+  };
+
+  const renderEmbeddedCheckout = () => {
+    if (!embeddedCheckout) return null;
+    return (
+      <StripeCheckout
+        mode={embeddedCheckout.mode || 'subscribe'}
+        planKey={embeddedCheckout.planKey}
+        planLabel={embeddedCheckout.planLabel}
+        priceLabel={embeddedCheckout.priceLabel}
+        plans={Object.entries(plans)
+          .filter(([key, plan]) => key !== 'free' && !plan?.sales_only)
+          .map(([key, plan]) => ({
+            key,
+            label: plan?.label || key,
+            priceLabel: priceDisplay(plan),
+          }))}
+        onClose={() => setEmbeddedCheckout(null)}
+        onSuccess={async () => {
+          const wasUpdate = embeddedCheckout.mode === 'update_payment';
+          setEmbeddedCheckout(null);
+          setBillingMessage(
+            wasUpdate
+              ? 'Your payment method was updated.'
+              : 'Subscription started. Your plan will update as soon as payment is confirmed.'
+          );
+          await loadBilling();
+        }}
+      />
     );
   };
 
@@ -1024,6 +1079,7 @@ export default function AppMenu() {
 
       {/* Modals */}
       {renderBillingModal()}
+      {renderEmbeddedCheckout()}
       {renderNotificationsModal()}
       {renderNameModal()}
     </div>
