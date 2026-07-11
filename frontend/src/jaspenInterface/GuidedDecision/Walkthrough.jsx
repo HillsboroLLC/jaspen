@@ -5,6 +5,12 @@ import './GuidedDecision.css';
 const ACCENT = '#a0036c';
 const PAD = 6;
 const TT_WIDTH = 320;
+const MODAL_SELECTORS = [
+  '[role="dialog"][aria-modal="true"]',
+  '.jas-modal-overlay',
+  '.jas-account-modal-overlay',
+  '.scores-compare-modal-overlay',
+];
 
 // Teachable areas of the workspace. Order = priority. `event` is the
 // interaction that counts as "the user has discovered this".
@@ -47,6 +53,7 @@ const findVisible = (selector) => {
   const els = Array.from(document.querySelectorAll(selector));
   return els.find((el) => el.offsetParent !== null && el.getBoundingClientRect().width > 0) || null;
 };
+const hasVisibleModal = () => MODAL_SELECTORS.some((selector) => Boolean(findVisible(selector)));
 const clamp = (v, min, max) => Math.max(min, Math.min(v, max));
 
 // Self-managing coach: no props beyond `user`. Decides on its own whether to
@@ -56,10 +63,23 @@ export default function Walkthrough({ user }) {
   const [queue, setQueue] = useState([]);
   const [idx, setIdx] = useState(0);
   const [rect, setRect] = useState(null);
+  const [modalOpen, setModalOpen] = useState(false);
   const dismissed = useRef(false);
 
   const hasUser = Boolean(user?.id || user?.email);
   const current = queue[idx] || null;
+
+  useEffect(() => {
+    const checkModalState = () => setModalOpen(hasVisibleModal());
+    checkModalState();
+    const observer = new MutationObserver(checkModalState);
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+    window.addEventListener('resize', checkModalState);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', checkModalState);
+    };
+  }, []);
 
   // Always-on, lightweight discovery tracking: using a feature marks it seen,
   // so it won't be taught later — even if the coach never highlighted it.
@@ -121,7 +141,7 @@ export default function Walkthrough({ user }) {
 
   // While a coachmark is up, interacting with its target advances the coach.
   useEffect(() => {
-    if (!current) return undefined;
+    if (!current || modalOpen) return undefined;
     const el = findVisible(current.selector);
     if (!el) {
       advance();
@@ -133,11 +153,11 @@ export default function Walkthrough({ user }) {
     };
     el.addEventListener(current.event, onInteract, true);
     return () => el.removeEventListener(current.event, onInteract, true);
-  }, [current, advance, user]);
+  }, [current, advance, user, modalOpen]);
 
   // Track the target's position (reposition on scroll/resize).
   useEffect(() => {
-    if (!current) {
+    if (!current || modalOpen) {
       setRect(null);
       return undefined;
     }
@@ -152,9 +172,9 @@ export default function Walkthrough({ user }) {
       window.removeEventListener('resize', measure);
       window.removeEventListener('scroll', measure, true);
     };
-  }, [current]);
+  }, [current, modalOpen]);
 
-  if (!current || !rect) return null;
+  if (modalOpen || !current || !rect) return null;
 
   const next = () => {
     markFeatureSeen(user, current.key);
