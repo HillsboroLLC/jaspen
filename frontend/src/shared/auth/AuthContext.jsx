@@ -683,6 +683,9 @@ export function AuthProvider({ children }) {
           email,
           password,
           name,
+          ...(options?.planKey || options?.plan ? {
+            plan_key: options?.planKey || options?.plan,
+          } : {}),
           ...(referralCode ? { referral_code: referralCode } : {}),
         })
       });
@@ -694,6 +697,8 @@ export function AuthProvider({ children }) {
             success: false,
             pending: Boolean(data?.approval_required),
             verificationRequired: Boolean(data?.verification_required),
+            paymentPending: Boolean(data?.payment_pending),
+            planKey: data?.plan_key || '',
             error: data?.message || 'Your signup is in progress.',
             detail: data?.detail || '',
           };

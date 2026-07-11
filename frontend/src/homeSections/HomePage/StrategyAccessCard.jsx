@@ -80,6 +80,7 @@ export default function StrategyAccessCard({ initialFlowMode = 'signin', initial
   const [status, setStatus] = useState('Pending');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [name, setName] = useState('');
   const [authStatus, setAuthStatus] = useState('idle');
   const [authMode, setAuthMode] = useState('email');
@@ -175,9 +176,14 @@ export default function StrategyAccessCard({ initialFlowMode = 'signin', initial
     if (authError) return authError;
     if (authStatus === 'reset_sent') return "If that account exists, we'll send a password reset link shortly.";
     if (authStatus === 'sent') return 'Authenticated. Redirecting...';
+    if (authStatus === 'verification_sent') {
+      return selectedPlanMeta.paid
+        ? 'Check your inbox to verify your email, then continue to secure payment.'
+        : 'Check your inbox to verify your email before getting started.';
+    }
     if (initialAuthNotice?.message) return initialAuthNotice.message;
     return 'By continuing, you agree to receive product updates.';
-  }, [authError, authStatus, initialAuthNotice]);
+  }, [authError, authStatus, initialAuthNotice, selectedPlanMeta.paid]);
 
   const helperDetail = useMemo(() => {
     if (authErrorDetail) return authErrorDetail;
@@ -190,7 +196,7 @@ export default function StrategyAccessCard({ initialFlowMode = 'signin', initial
     ? 'strategy-card-disclaimer is-error'
     : authStatus === 'reset_sent'
       ? 'strategy-card-disclaimer is-success'
-    : authStatus === 'sent'
+    : authStatus === 'sent' || authStatus === 'verification_sent'
       ? 'strategy-card-disclaimer is-success'
       : queryNoticeTone === 'error'
         ? 'strategy-card-disclaimer is-error'
@@ -277,12 +283,17 @@ export default function StrategyAccessCard({ initialFlowMode = 'signin', initial
       setAuthErrorDetail('');
       return;
     }
+    if (flowMode === 'signup' && password !== confirmPassword) {
+      setAuthError('Passwords do not match.');
+      setAuthErrorDetail('');
+      return;
+    }
 
     setAuthStatus('sending');
     setAuthError('');
     try {
       if (flowMode === 'signup') {
-        const signupAttempt = await signup(normalizedEmail, password, String(name).trim());
+        const signupAttempt = await signup(normalizedEmail, password, String(name).trim(), { planKey: selectedPlan });
         if (signupAttempt?.success) {
           if (selectedPlanMeta.paid) {
             setStripeToken(signupAttempt.token || null);
@@ -295,6 +306,12 @@ export default function StrategyAccessCard({ initialFlowMode = 'signin', initial
           setAuthStatus('sent');
           if (await continueWithPendingContext(heroContext)) return;
           window.location.href = getPostAuthRedirect();
+          return;
+        }
+        if (signupAttempt?.verificationRequired) {
+          setAuthStatus('verification_sent');
+          setAuthError('');
+          setAuthErrorDetail(signupAttempt?.detail || '');
           return;
         }
         setAuthError(signupAttempt?.error || 'Unable to create account right now.');
@@ -399,7 +416,7 @@ export default function StrategyAccessCard({ initialFlowMode = 'signin', initial
               aria-label="Full name"
               value={name}
               onChange={(event) => setName(event.target.value)}
-              disabled={authStatus === 'sending' || authStatus === 'sent'}
+              disabled={authStatus === 'sending' || authStatus === 'sent' || authStatus === 'verification_sent'}
             />
           )}
           <input
@@ -409,7 +426,7 @@ export default function StrategyAccessCard({ initialFlowMode = 'signin', initial
             aria-label="Email address"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
-            disabled={authStatus === 'sending' || authStatus === 'sent'}
+            disabled={authStatus === 'sending' || authStatus === 'sent' || authStatus === 'verification_sent'}
           />
           {authMode !== 'forgot' && (
             <input
@@ -419,17 +436,30 @@ export default function StrategyAccessCard({ initialFlowMode = 'signin', initial
               aria-label="Password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              disabled={authStatus === 'sending' || authStatus === 'sent'}
+              disabled={authStatus === 'sending' || authStatus === 'sent' || authStatus === 'verification_sent'}
+            />
+          )}
+          {flowMode === 'signup' && authMode !== 'forgot' && (
+            <input
+              type="password"
+              className="strategy-email-input"
+              placeholder="Confirm password"
+              aria-label="Confirm password"
+              value={confirmPassword}
+              onChange={(event) => setConfirmPassword(event.target.value)}
+              disabled={authStatus === 'sending' || authStatus === 'sent' || authStatus === 'verification_sent'}
             />
           )}
           <button
             type="submit"
             className="jaspen-btn jaspen-btn-primary strategy-email-btn"
-            disabled={authStatus === 'sending' || authStatus === 'sent'}
-            aria-disabled={authStatus === 'sending' || authStatus === 'sent'}
+            disabled={authStatus === 'sending' || authStatus === 'sent' || authStatus === 'verification_sent'}
+            aria-disabled={authStatus === 'sending' || authStatus === 'sent' || authStatus === 'verification_sent'}
           >
             {authStatus === 'sending'
               ? (authMode === 'forgot' ? 'Sending reset link…' : 'One moment…')
+              : authStatus === 'verification_sent'
+                ? 'Check your email'
               : authMode === 'forgot'
                 ? 'Send reset link'
                 : flowMode === 'signup'
