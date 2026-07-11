@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { loadStripe } from '@stripe/stripe-js';
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
@@ -32,14 +32,53 @@ const APPEARANCE = {
   },
 };
 
-function CheckoutForm({ mode, planLabel, packLabel, priceLabel, onSuccess }) {
+function CheckoutForm({ mode, planKey, planLabel, packLabel, priceLabel, onSuccess }) {
   const stripe = useStripe();
   const elements = useElements();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [succeeded, setSucceeded] = useState(false);
+  const successHandledRef = useRef(false);
   const isUpdate = mode === 'update_payment';
   const isCreditPack = mode === 'credit_pack';
+  const isSubscribe = mode === 'subscribe';
+
+  const markSucceeded = (delay = 600) => {
+    if (successHandledRef.current) return;
+    successHandledRef.current = true;
+    setSucceeded(true);
+    setTimeout(() => onSuccess?.(), delay);
+  };
+
+  const pollSubscriptionActivation = async () => {
+    if (!isSubscribe || !planKey) return false;
+    const expectedPlan = String(planKey).trim().toLowerCase();
+    const activeStatuses = new Set(['active', 'trialing']);
+
+    for (let attempt = 0; attempt < 14; attempt += 1) {
+      if (attempt > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+      try {
+        const resp = await authFetch(`${API_BASE}/api/v1/billing/status`, {
+          credentials: 'include',
+        });
+        const data = await resp.json().catch(() => ({}));
+        const activePlan = String(data?.plan_key || data?.subscription_plan || '').trim().toLowerCase();
+        const subscriptionStatus = String(data?.subscription_status || '').trim().toLowerCase();
+        if (
+          resp.ok
+          && activePlan === expectedPlan
+          && (activeStatuses.has(subscriptionStatus) || data?.stripe_subscription_id)
+        ) {
+          return true;
+        }
+      } catch (_) {
+        // Keep waiting; webhooks and billing reconciliation can arrive a moment later.
+      }
+    }
+    return false;
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -69,18 +108,32 @@ function CheckoutForm({ mode, planLabel, packLabel, priceLabel, onSuccess }) {
           });
         } catch (_) { /* best-effort; webhook can reconcile */ }
       }
-      setSucceeded(true);
-      setTimeout(() => onSuccess?.(), 500);
+      markSucceeded(500);
       return;
     }
 
     // Subscribe and credit-pack modes both confirm a PaymentIntent in-page.
-    const { error: confirmError, paymentIntent } = await stripe.confirmPayment({
+    const confirmPromise = stripe.confirmPayment({
       elements,
       redirect: 'if_required',
       confirmParams: { return_url: window.location.href },
     });
+    const statusPromise = isSubscribe
+      ? pollSubscriptionActivation().then((activated) => (activated ? { activatedByStatus: true } : null))
+      : Promise.resolve(null);
+    const result = await Promise.race([confirmPromise, statusPromise]);
+
+    if (result?.activatedByStatus) {
+      markSucceeded(600);
+      return;
+    }
+
+    const { error: confirmError, paymentIntent } = result || {};
     if (confirmError) {
+      if (isSubscribe && await pollSubscriptionActivation()) {
+        markSucceeded(600);
+        return;
+      }
       setError(confirmError.message || 'Your payment could not be completed.');
       setSubmitting(false);
       return;
@@ -102,8 +155,11 @@ function CheckoutForm({ mode, planLabel, packLabel, priceLabel, onSuccess }) {
           return;
         }
       }
-      setSucceeded(true);
-      setTimeout(() => onSuccess?.(), 600);
+      markSucceeded(600);
+      return;
+    }
+    if (isSubscribe && await pollSubscriptionActivation()) {
+      markSucceeded(600);
       return;
     }
     setError('Payment did not complete. Please try again.');
@@ -122,7 +178,7 @@ function CheckoutForm({ mode, planLabel, packLabel, priceLabel, onSuccess }) {
             ? 'Your default payment method is updated.'
             : isCreditPack
               ? `${packLabel || 'Your credits'} are ready.`
-              : 'Finalizing your account...'}
+              : 'Your plan is active. Taking you back to Jaspen...'}
         </div>
       </div>
     );
@@ -152,7 +208,7 @@ function CheckoutForm({ mode, planLabel, packLabel, priceLabel, onSuccess }) {
           cursor: submitting || !stripe ? 'default' : 'pointer',
         }}
       >
-        {submitting ? 'Processing...' : isUpdate ? 'Save card' : isCreditPack ? `Purchase - ${priceLabel}` : `Subscribe - ${priceLabel}`}
+        {submitting ? 'Confirming payment...' : isUpdate ? 'Save card' : isCreditPack ? `Purchase - ${priceLabel}` : `Subscribe - ${priceLabel}`}
       </button>
       <div style={{ marginTop: 10, fontSize: 11, color: '#94a3b8', textAlign: 'center' }}>
         Secure payment processing.{!isUpdate && !isCreditPack && ' Cancel anytime.'}
@@ -319,7 +375,7 @@ export default function StripeCheckout({ mode = 'subscribe', planKey, planLabel,
           ) : (clientSecret && stripePromise) ? (
             // key forces a clean Elements remount when the plan (clientSecret) changes.
             <Elements key={clientSecret} stripe={stripePromise} options={{ clientSecret, appearance: APPEARANCE }}>
-              <CheckoutForm mode={mode} planLabel={effLabel} packLabel={packLabel} priceLabel={effPrice} onSuccess={onSuccess} />
+              <CheckoutForm mode={mode} planKey={selectedPlanKey} planLabel={effLabel} packLabel={packLabel} priceLabel={effPrice} onSuccess={onSuccess} />
             </Elements>
           ) : (
             <div style={{ padding: '32px 0', textAlign: 'center', color: '#64748b', fontSize: 13 }}>Loading secure checkout…</div>
