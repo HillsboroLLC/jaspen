@@ -83,7 +83,7 @@ export default function PricingPage() {
   const [modelTypes, setModelTypes] = useState(FALLBACK_MODEL_TYPES);
   const [pendingKey, setPendingKey] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
-  const autoCheckoutFiredRef = useRef(false);
+  const planIntentCleanedRef = useRef(false);
 
   useEffect(() => {
     fetch(`${API_BASE}/api/v1/billing/catalog`)
@@ -130,14 +130,13 @@ export default function PricingPage() {
       });
   }, []);
 
-  // Auto-start checkout if user arrived with ?plan=essential (frictionless flow)
+  // Public pricing always starts with a free account; paid upgrades happen inside Account.
   useEffect(() => {
-    if (loading || !user || autoCheckoutFiredRef.current) return;
+    if (planIntentCleanedRef.current) return;
     const params = new URLSearchParams(window.location.search || '');
     const planParam = (params.get('plan') || params.get('plan_key') || '').trim().toLowerCase();
     if (!planParam || planParam === 'free') return;
-    autoCheckoutFiredRef.current = true;
-    // Remove the param from the URL so a refresh doesn't re-trigger
+    planIntentCleanedRef.current = true;
     params.delete('plan');
     params.delete('plan_key');
     const newSearch = params.toString();
@@ -146,10 +145,8 @@ export default function PricingPage() {
       document.title,
       `${window.location.pathname}${newSearch ? `?${newSearch}` : ''}#plans`,
     );
-    // Small delay so the page renders before redirecting to Stripe
-    setTimeout(() => beginCheckout(planParam), 400);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, user]);
+    setStatusMessage('Start with a free account. You can upgrade from Account after sign-in.');
+  }, []);
 
   const planByKey = useMemo(
     () => plans.reduce((acc, plan) => ({ ...acc, [plan.plan_key]: plan }), {}),
@@ -176,37 +173,12 @@ export default function PricingPage() {
     return planRank >= requiredRank;
   };
 
-  const beginCheckout = async (planKey) => {
+  const openAccountPlans = () => {
     if (!user) {
       window.location.href = '/?auth=1';
       return;
     }
-
-    setPendingKey(planKey);
-    setStatusMessage('');
-    try {
-      const response = await authFetch(`${API_BASE}/api/v1/billing/create-checkout-session`, {
-        method: 'POST',
-        headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
-        body: JSON.stringify({ plan_key: planKey }),
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data?.msg || 'Unable to start checkout right now.');
-      }
-
-      if (data?.url) {
-        window.location.href = data.url;
-        return;
-      }
-
-      setStatusMessage('Plan updated successfully.');
-    } catch (err) {
-      setStatusMessage(err.message || 'Unable to start checkout right now.');
-    } finally {
-      setPendingKey('');
-    }
+    window.location.href = '/account?tab=plans';
   };
 
   const buyCreditPack = async (packKey) => {
@@ -323,7 +295,6 @@ export default function PricingPage() {
           {plans.map((plan) => {
             const isEssential = plan.plan_key === 'essential';
             const isFree = plan.plan_key === 'free';
-            const loading = pendingKey === plan.plan_key;
             return (
               <article key={plan.plan_key} id={plan.plan_key} className={`marketing-card pricing-plan-card ${isEssential ? 'is-featured' : ''}`}>
                 <div className="pricing-plan-head">
@@ -344,14 +315,9 @@ export default function PricingPage() {
                   <button
                     type="button"
                     className="pricing-cta-button"
-                    onClick={() => beginCheckout(plan.plan_key)}
-                    disabled={loading} aria-disabled={loading}
+                    onClick={openAccountPlans}
                   >
-                    {loading
-                      ? 'Redirecting...'
-                      : isFree
-                      ? 'Stay on Free'
-                      : `Get ${plan.label}`}
+                    {isFree ? 'Open workspace' : 'Upgrade inside'}
                   </button>
                 )}
               </article>

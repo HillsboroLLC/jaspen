@@ -192,15 +192,8 @@ export default function StrategyAccessCard({ initialFlowMode = 'signin', heroCon
           ? 'strategy-card-disclaimer is-success'
       : 'strategy-card-disclaimer';
 
-  /** Determine where to redirect after successful auth. */
+  /** Public auth always starts in the free workspace; paid upgrades happen inside Account. */
   const getPostAuthRedirect = () => {
-    try {
-      const current = new URLSearchParams(window.location.search || '');
-      const planKey = (current.get('plan') || current.get('plan_key') || '').trim().toLowerCase();
-      if (planKey && planKey !== 'free') {
-        return `/pages/pricing?plan=${encodeURIComponent(planKey)}#plans`;
-      }
-    } catch (e) { /* ignore */ }
     return '/new';
   };
 

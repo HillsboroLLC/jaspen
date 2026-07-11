@@ -95,15 +95,8 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
     if (event.target === event.currentTarget) onClose?.();
   };
 
-  /** Return the correct post-auth destination, preserving any plan intent. */
+  /** Public auth always starts in the free workspace; paid upgrades happen inside Account. */
   const getPostAuthRedirect = () => {
-    try {
-      const current = new URLSearchParams(window.location.search || '');
-      const planKey = (current.get('plan') || current.get('plan_key') || '').trim().toLowerCase();
-      if (planKey && planKey !== 'free') {
-        return `/pages/pricing?plan=${encodeURIComponent(planKey)}#plans`;
-      }
-    } catch (e) { /* ignore */ }
     return '/new';
   };
 
