@@ -386,11 +386,14 @@ def _password_reset_ttl_seconds():
     return int(current_app.config.get('PASSWORD_RESET_TOKEN_TTL_SECONDS') or 3600)
 
 
-def _build_email_verification_token(user):
-    return _email_verification_serializer().dumps({
+def _build_email_verification_token(user, *, pending_plan=None):
+    payload = {
         'user_id': str(user.id),
         'email': str(user.email or '').strip().lower(),
-    })
+    }
+    if pending_plan:
+        payload['pending_plan'] = normalize_plan_key(pending_plan)
+    return _email_verification_serializer().dumps(payload)
 
 
 def _email_verification_link(token, url_root=None):
@@ -400,6 +403,41 @@ def _email_verification_link(token, url_root=None):
     if url_root is None:
         url_root = request.url_root
     return f"{url_root.rstrip('/')}/api/v1/auth/verify-email?{query}"
+
+
+def _create_subscription_checkout_session_for_user(user, plan_key):
+    requested_plan = normalize_plan_key(plan_key)
+    if not requested_plan or requested_plan == 'free':
+        return None
+    if is_sales_only_plan(requested_plan, current_app.config):
+        raise ValueError('Selected plan requires sales contact.')
+
+    price_id = (current_app.config.get('STRIPE_PRICE_IDS') or {}).get(requested_plan)
+    if not price_id:
+        raise ValueError(f"No Stripe price configured for plan '{requested_plan}'")
+
+    frontend = (current_app.config.get('FRONTEND_BASE_URL') or 'http://localhost:3000').rstrip('/')
+    customer_id = user.stripe_customer_id
+    if not customer_id:
+        customer = stripe.Customer.create(
+            email=user.email,
+            name=user.name,
+            metadata={'user_id': str(user.id)},
+        )
+        customer_id = customer.id
+        user.stripe_customer_id = customer_id
+        db.session.commit()
+
+    return stripe.checkout.Session.create(
+        payment_method_types=['card'],
+        mode='subscription',
+        customer=customer_id,
+        line_items=[{'price': price_id, 'quantity': 1}],
+        metadata={'user_id': str(user.id), 'plan_key': requested_plan, 'checkout_type': 'subscription'},
+        success_url=f"{frontend}/pricing?session_id={{CHECKOUT_SESSION_ID}}&status=success",
+        cancel_url=f"{frontend}/pricing?status=cancel",
+        allow_promotion_codes=True,
+    )
 
 
 def _build_password_reset_token(user):
@@ -532,8 +570,8 @@ def _mark_user_email_verified(user):
     return changed
 
 
-def _send_email_verification_email(user, url_root=None):
-    token = _build_email_verification_token(user)
+def _send_email_verification_email(user, url_root=None, *, pending_plan=None):
+    token = _build_email_verification_token(user, pending_plan=pending_plan)
     verification_link = _email_verification_link(token, url_root=url_root)
     ttl_hours = _email_verification_ttl_seconds() // 3600
     msg = Message(
@@ -651,11 +689,14 @@ def _send_password_reset_email(user):
     user.password_reset_requested_at = datetime.utcnow()
 
 
-def _load_user_from_verification_token(token):
-    decoded = _email_verification_serializer().loads(
+def _decode_email_verification_token(token):
+    return _email_verification_serializer().loads(
         token,
         max_age=_email_verification_ttl_seconds(),
     )
+
+
+def _load_user_from_verification_payload(decoded):
     user_id = str(decoded.get('user_id') or '').strip()
     email = str(decoded.get('email') or '').strip().lower()
     if not user_id or not email:
@@ -664,6 +705,10 @@ def _load_user_from_verification_token(token):
     if not user or str(user.email or '').strip().lower() != email:
         raise BadSignature('Invalid verification target')
     return user
+
+
+def _load_user_from_verification_token(token):
+    return _load_user_from_verification_payload(_decode_email_verification_token(token))
 
 
 def _load_user_from_password_reset_token(token):
@@ -801,6 +846,7 @@ def signup():
         return jsonify(_approval_pending_payload()), 202
 
     if _verification_required_enabled():
+        pending_plan = requested_plan if requested_plan != 'free' else None
         # Send the verification email in a background thread so that SMTP
         # latency or a transient failure never blocks the signup response.
         # Capture request-context values NOW before the thread starts.
@@ -808,13 +854,18 @@ def signup():
         user_id = user.id
         user_email = user.email
         captured_url_root = request.url_root  # captured while still in request context
+        captured_pending_plan = pending_plan
 
         def _send_verification_bg():
             with app.app_context():
                 try:
                     target_user = User.query.get(user_id)
                     if target_user:
-                        _send_email_verification_email(target_user, url_root=captured_url_root)
+                        _send_email_verification_email(
+                            target_user,
+                            url_root=captured_url_root,
+                            pending_plan=captured_pending_plan,
+                        )
                         db.session.commit()
                 except Exception:
                     app.logger.exception(
@@ -826,6 +877,12 @@ def signup():
             message='Check your inbox to verify your email before getting started.',
             verification_required=True,
             email_verified=False,
+            payment_pending=bool(pending_plan),
+            plan_key=pending_plan,
+            detail=(
+                'After verification, Stripe will open so you can finish payment.'
+                if pending_plan else ''
+            ),
         ), 202
 
     access_token = _create_user_access_token(user)
@@ -849,30 +906,11 @@ def signup():
         resp.status_code = 201
         return _attach_auth_cookie(resp, access_token)
 
-    # Essential goes through Stripe checkout.
-    price_id = (current_app.config.get('STRIPE_PRICE_IDS') or {}).get(requested_plan)
-    if not price_id:
-        return jsonify(message=f"No Stripe price configured for plan '{requested_plan}'"), 500
-
-    frontend = (current_app.config.get('FRONTEND_BASE_URL') or 'http://localhost:3000').rstrip('/')
-
-    customer = stripe.Customer.create(
-        email=user.email,
-        name=user.name,
-        metadata={'user_id': str(user.id)},
-    )
-    user.stripe_customer_id = customer.id
-    db.session.commit()
-
-    session = stripe.checkout.Session.create(
-        payment_method_types=['card'],
-        mode='subscription',
-        customer=customer.id,
-        line_items=[{'price': price_id, 'quantity': 1}],
-        metadata={'user_id': str(user.id), 'plan_key': requested_plan, 'checkout_type': 'subscription'},
-        success_url=f"{frontend}/pricing?session_id={{CHECKOUT_SESSION_ID}}&status=success",
-        cancel_url=f"{frontend}/pricing?status=cancel",
-    )
+    # Paid self-serve plans go through Stripe checkout.
+    try:
+        session = _create_subscription_checkout_session_for_user(user, requested_plan)
+    except ValueError as exc:
+        return jsonify(message=str(exc)), 500
 
     resp = jsonify(
         message='User created; complete payment',
@@ -1358,7 +1396,8 @@ def verify_email():
         return jsonify(message='Verification token is required.'), 400
 
     try:
-        user = _load_user_from_verification_token(token)
+        decoded = _decode_email_verification_token(token)
+        user = _load_user_from_verification_payload(decoded)
     except SignatureExpired:
         if request.method == 'GET':
             return redirect(_verification_result_url('email_verification_expired'), code=302)
@@ -1372,6 +1411,19 @@ def verify_email():
     db.session.commit()
 
     if request.method == 'GET':
+        pending_plan = normalize_plan_key(decoded.get('pending_plan'))
+        if pending_plan and pending_plan != 'free':
+            try:
+                session = _create_subscription_checkout_session_for_user(user, pending_plan)
+                checkout_url = getattr(session, 'url', None) or (session.get('url') if hasattr(session, 'get') else None)
+                if checkout_url:
+                    return redirect(checkout_url, code=302)
+            except Exception:
+                current_app.logger.exception(
+                    'Unable to create Stripe checkout after email verification for user %s',
+                    user.id,
+                )
+                return redirect(_verification_result_url('checkout_unavailable'), code=302)
         return redirect(_verification_result_url('verified'), code=302)
     return jsonify(
         message='Email verified successfully.',
