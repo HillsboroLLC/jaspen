@@ -68,6 +68,7 @@ import Onboarding from './components/Onboarding';
 import SidebarIdentityFooter from './components/SidebarIdentityFooter';
 import JaspenAiDrawer from './JaspenAiDrawer';
 import ThreadEditModal from '../components/ThreadEditModal';
+import StripeCheckout from '../Account/StripeCheckout';
 import { buildInviteDisplay, buildInviteLink } from '../../shared/inviteLink';
 import { PLAN_ORDER, PLAN_RANK } from '../../shared/constants/appConstants';
 import { formatSmartDate as fmtSmartDate, formatNextResetDate as fmtNextResetDate, formatTime as fmtTime } from '../../shared/utils/dateUtils';
@@ -79,6 +80,20 @@ const IS_DEV = process.env.NODE_ENV !== 'production';
 const devWarn = (...args) => {
   if (IS_DEV) console.warn(...args);
 };
+
+function priceDisplay(plan) {
+  if (plan?.price_model === 'per_seat' && Number.isFinite(plan?.monthly_price_usd)) {
+    return `$${plan.monthly_price_usd}/seat/mo`;
+  }
+  if (plan?.price_model === 'custom') {
+    return 'Contact sales';
+  }
+  if (Number.isFinite(plan?.monthly_price_usd)) {
+    return plan.monthly_price_usd === 0 ? '$0' : `$${plan.monthly_price_usd}/mo`;
+  }
+  return 'Contact sales';
+}
+
 const BASELINE_INTERNAL_LABEL = 'Baseline';
 const BASELINE_DISPLAY_LABEL = 'Original';
 
@@ -3762,6 +3777,7 @@ useEffect(() => {
   const [billingMessage, setBillingMessage] = useState('');
   const [billingActionLoading, setBillingActionLoading] = useState('');
   const [billingModalOpen, setBillingModalOpen] = useState(false);
+  const [embeddedCheckout, setEmbeddedCheckout] = useState(null);
   const [dailyUsageStatus, setDailyUsageStatus] = useState(null);
   const [freeTierWelcomeHidden, setFreeTierWelcomeHidden] = useState(
     Boolean(user?.ui_preferences?.free_tier_welcome_dismissed)
@@ -4857,8 +4873,41 @@ useEffect(() => {
   const startPlanChange = async (planKey) => {
     setBillingActionLoading(planKey);
     setBillingMessage('');
+    const plan = plans?.[planKey] || {};
+    const currentPlan = plans?.[currentPlanKey] || {};
+    const hasSubscription = Boolean(billingStatus?.stripe_subscription_id);
     try {
-      const response = await authFetch(`${API_BASE}/api/v1/billing/create-checkout-session`, {
+      if (planKey !== 'free' && (!hasSubscription || currentPlanKey === 'free')) {
+        setEmbeddedCheckout({
+          planKey,
+          planLabel: plan?.label || planKey,
+          priceLabel: priceDisplay(plan),
+        });
+        return;
+      }
+
+      if (planKey === 'free') {
+        const response = await authFetch(`${API_BASE}/api/v1/billing/cancel-subscription`, {
+          method: 'POST',
+          headers: buildAuthHeaders({}, 'POST'),
+          credentials: 'include',
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          if (response.status === 401) {
+            await handleUnauthorized();
+          }
+          throw new Error(data?.msg || 'Unable to cancel subscription.');
+        }
+        const endDate = data?.current_period_end_iso
+          ? new Date(data.current_period_end_iso).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+          : 'your next billing date';
+        setBillingMessage(`You'll keep ${currentPlan?.label || 'your current plan'} through ${endDate}, then move to Free.`);
+        await loadBilling();
+        return;
+      }
+
+      const response = await authFetch(`${API_BASE}/api/v1/billing/modify-subscription`, {
         method: 'POST',
         headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
         credentials: 'include',
@@ -4871,10 +4920,7 @@ useEffect(() => {
         }
         throw new Error(data?.msg || 'Unable to start plan change.');
       }
-      if (data?.url) {
-        window.location.href = data.url;
-        return;
-      }
+      setBillingMessage(data?.message || `Your plan change to ${data?.plan_label || plan?.label || planKey} has been saved.`);
       await loadBilling();
     } catch (error) {
       setBillingMessage(error.message || 'Unable to start plan change.');
@@ -4883,29 +4929,9 @@ useEffect(() => {
     }
   };
 
-  const openBillingPortal = async () => {
-    setBillingActionLoading('portal');
+  const openBillingPortal = () => {
     setBillingMessage('');
-    try {
-      const response = await authFetch(`${API_BASE}/api/v1/billing/create-portal-session`, {
-        method: 'POST',
-        headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
-        credentials: 'include',
-        body: JSON.stringify({ return_url: `${window.location.origin}/account` }),
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || !data?.url) {
-        if (response.status === 401) {
-          await handleUnauthorized();
-        }
-        throw new Error(data?.msg || 'Unable to open billing settings.');
-      }
-      window.location.href = data.url;
-    } catch (error) {
-      setBillingMessage(error.message || 'Unable to open billing settings.');
-    } finally {
-      setBillingActionLoading('');
-    }
+    setEmbeddedCheckout({ mode: 'update_payment' });
   };
 
   const renderNameModal = () => {
@@ -5057,9 +5083,8 @@ useEffect(() => {
               type="button"
               className="jas-account-portal-btn"
               onClick={openBillingPortal}
-              disabled={billingActionLoading === 'portal'} aria-disabled={billingActionLoading === 'portal'}
             >
-              {billingActionLoading === 'portal' ? 'Opening...' : 'Manage billing'}
+              Manage billing
             </button>
             <button
               type="button"
@@ -5071,6 +5096,36 @@ useEffect(() => {
           </div>
         </div>
       </div>
+    );
+  };
+
+  const renderEmbeddedCheckout = () => {
+    if (!embeddedCheckout) return null;
+    return (
+      <StripeCheckout
+        mode={embeddedCheckout.mode || 'subscribe'}
+        planKey={embeddedCheckout.planKey}
+        planLabel={embeddedCheckout.planLabel}
+        priceLabel={embeddedCheckout.priceLabel}
+        plans={Object.entries(plans)
+          .filter(([key, plan]) => key !== 'free' && !plan?.sales_only)
+          .map(([key, plan]) => ({
+            key,
+            label: plan?.label || key,
+            priceLabel: priceDisplay(plan),
+          }))}
+        onClose={() => setEmbeddedCheckout(null)}
+        onSuccess={async () => {
+          const wasUpdate = embeddedCheckout.mode === 'update_payment';
+          setEmbeddedCheckout(null);
+          setBillingMessage(
+            wasUpdate
+              ? 'Your payment method was updated.'
+              : 'Subscription started. Your plan will update as soon as payment is confirmed.'
+          );
+          await loadBilling();
+        }}
+      />
     );
   };
 
@@ -12002,6 +12057,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
 
       {renderNameModal()}
       {renderBillingModal()}
+      {renderEmbeddedCheckout()}
       {renderPostAdoptWbsPrompt()}
       {renderPlanExistsPrompt()}
 
@@ -13572,6 +13628,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       {renderNotificationsModal()}
       {renderNameModal()}
       {renderBillingModal()}
+      {renderEmbeddedCheckout()}
       <Walkthrough user={user} />
       <GuidedDecisionModal
         open={guidedDecisionOpen}
