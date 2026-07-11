@@ -781,6 +781,85 @@ def create_subscription_embedded():
     }), 200
 
 
+@billing_bp.route('/sync-embedded-subscription', methods=['POST'])
+@jwt_required()
+def sync_embedded_subscription():
+    """Confirm an embedded subscription after Stripe accepts payment.
+
+    Stripe's embedded confirmation can occasionally take longer than the UI
+    should wait, especially around saved cards, coupons, and invoice finalizing.
+    This endpoint lets the frontend ask our backend to verify the subscription
+    directly with Stripe, then apply the plan only after Stripe reports it in
+    good standing.
+    """
+    user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({'msg': 'User not found'}), 404
+
+    data = request.get_json() or {}
+    subscription_id = str(data.get('subscription_id') or '').strip()
+    expected_plan = normalize_plan_key(data.get('plan_key')) if data.get('plan_key') else None
+    if not subscription_id:
+        return jsonify({'msg': 'Missing subscription_id'}), 400
+
+    try:
+        subscription = stripe.Subscription.retrieve(subscription_id, expand=['latest_invoice'])
+    except stripe.error.StripeError as exc:
+        current_app.logger.warning('sync-embedded-subscription: retrieve failed for %s: %s', subscription_id, exc)
+        return jsonify({'active': False, 'msg': 'Subscription is not ready yet.'}), 200
+
+    customer_id = subscription.get('customer')
+    if user.stripe_customer_id and customer_id and str(customer_id) != str(user.stripe_customer_id):
+        return jsonify({'msg': 'Subscription does not belong to this account.'}), 403
+    if not user.stripe_customer_id and customer_id:
+        user.stripe_customer_id = customer_id
+
+    meta = subscription.get('metadata') or {}
+    plan_key = normalize_plan_key(meta.get('plan_key')) if meta.get('plan_key') else None
+    if not plan_key or plan_key == 'free':
+        items = (subscription.get('items') or {}).get('data') or []
+        price_id = (items[0].get('price') or {}).get('id') if items else None
+        plan_key = _plan_key_for_price_id(price_id, current_app.config)
+
+    if expected_plan and plan_key and plan_key != expected_plan:
+        return jsonify({
+            'active': False,
+            'msg': 'Subscription plan does not match the selected plan.',
+            'plan_key': plan_key,
+        }), 409
+
+    status = str(subscription.get('status') or '').strip().lower()
+    latest_invoice = subscription.get('latest_invoice')
+    invoice_paid = True
+    if isinstance(latest_invoice, dict):
+        invoice_status = str(latest_invoice.get('status') or '').strip().lower()
+        invoice_paid = invoice_status in ('', 'paid')
+
+    if status in ('active', 'trialing') and invoice_paid and plan_key and plan_key != 'free':
+        already_applied = (
+            user.stripe_subscription_id == subscription_id
+            and to_public_plan(user.subscription_plan) == plan_key
+            and user.subscription_status in ('active', 'trialing')
+        )
+        if not already_applied:
+            apply_plan_to_user(user, plan_key, current_app.config, reset_credits=True)
+        user.stripe_subscription_id = subscription_id
+        user.subscription_status = status
+        db.session.commit()
+        return jsonify({
+            'active': True,
+            'plan_key': plan_key,
+            'subscription_status': status,
+        }), 200
+
+    db.session.commit()
+    return jsonify({
+        'active': False,
+        'plan_key': plan_key,
+        'subscription_status': status,
+    }), 200
+
+
 @billing_bp.route('/create-setup-intent', methods=['POST'])
 @jwt_required()
 def create_setup_intent_embedded():

@@ -32,7 +32,7 @@ const APPEARANCE = {
   },
 };
 
-function CheckoutForm({ mode, planKey, planLabel, packLabel, priceLabel, onSuccess }) {
+function CheckoutForm({ mode, planKey, subscriptionId, planLabel, packLabel, priceLabel, onSuccess }) {
   const stripe = useStripe();
   const elements = useElements();
   const [submitting, setSubmitting] = useState(false);
@@ -60,6 +60,20 @@ function CheckoutForm({ mode, planKey, planLabel, packLabel, priceLabel, onSucce
         await new Promise((resolve) => setTimeout(resolve, 1500));
       }
       try {
+        if (subscriptionId) {
+          const syncResp = await authFetch(`${API_BASE}/api/v1/billing/sync-embedded-subscription`, {
+            method: 'POST',
+            headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
+            credentials: 'include',
+            body: JSON.stringify({ subscription_id: subscriptionId, plan_key: planKey }),
+          });
+          const syncData = await syncResp.json().catch(() => ({}));
+          const syncedPlan = String(syncData?.plan_key || '').trim().toLowerCase();
+          if (syncResp.ok && syncData?.active && syncedPlan === expectedPlan) {
+            return true;
+          }
+        }
+
         const resp = await authFetch(`${API_BASE}/api/v1/billing/status`, {
           credentials: 'include',
         });
@@ -224,6 +238,7 @@ export default function StripeCheckout({ mode = 'subscribe', planKey, planLabel,
   const [couponInput, setCouponInput] = useState('');
   const [appliedCoupon, setAppliedCoupon] = useState('');
   const [clientSecret, setClientSecret] = useState('');
+  const [subscriptionId, setSubscriptionId] = useState('');
   const [stripePromise, setStripePromise] = useState(null);
   const [loadError, setLoadError] = useState('');
 
@@ -235,6 +250,7 @@ export default function StripeCheckout({ mode = 'subscribe', planKey, planLabel,
   useEffect(() => {
     let alive = true;
     setClientSecret(''); // show loading while (re)initializing for the chosen plan
+    setSubscriptionId('');
     setLoadError('');
     (async () => {
       try {
@@ -259,6 +275,7 @@ export default function StripeCheckout({ mode = 'subscribe', planKey, planLabel,
         if (!alive) return;
         if (!data.client_secret) throw new Error('Payment could not be initialized.');
         if (!data.publishable_key) throw new Error('Payments are not configured yet.');
+        setSubscriptionId(data.subscription_id || '');
         setClientSecret(data.client_secret);
         setStripePromise((prev) => prev || loadStripe(data.publishable_key));
       } catch (e) {
@@ -280,7 +297,7 @@ export default function StripeCheckout({ mode = 'subscribe', planKey, planLabel,
   return (
     <div
       onClick={onClose}
-      style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(15,23,42,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+      style={{ position: 'fixed', inset: 0, zIndex: 12000, background: 'rgba(15,23,42,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
     >
       <div
         onClick={(e) => e.stopPropagation()}
@@ -375,7 +392,7 @@ export default function StripeCheckout({ mode = 'subscribe', planKey, planLabel,
           ) : (clientSecret && stripePromise) ? (
             // key forces a clean Elements remount when the plan (clientSecret) changes.
             <Elements key={clientSecret} stripe={stripePromise} options={{ clientSecret, appearance: APPEARANCE }}>
-              <CheckoutForm mode={mode} planKey={selectedPlanKey} planLabel={effLabel} packLabel={packLabel} priceLabel={effPrice} onSuccess={onSuccess} />
+              <CheckoutForm mode={mode} planKey={selectedPlanKey} subscriptionId={subscriptionId} planLabel={effLabel} packLabel={packLabel} priceLabel={effPrice} onSuccess={onSuccess} />
             </Elements>
           ) : (
             <div style={{ padding: '32px 0', textAlign: 'center', color: '#64748b', fontSize: 13 }}>Loading secure checkout…</div>
