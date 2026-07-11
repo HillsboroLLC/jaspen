@@ -4878,6 +4878,7 @@ useEffect(() => {
     const hasSubscription = Boolean(billingStatus?.stripe_subscription_id);
     try {
       if (planKey !== 'free' && (!hasSubscription || currentPlanKey === 'free')) {
+        setBillingModalOpen(false);
         setEmbeddedCheckout({
           planKey,
           planLabel: plan?.label || planKey,
@@ -4931,6 +4932,7 @@ useEffect(() => {
 
   const openBillingPortal = () => {
     setBillingMessage('');
+    setBillingModalOpen(false);
     setEmbeddedCheckout({ mode: 'update_payment' });
   };
 
