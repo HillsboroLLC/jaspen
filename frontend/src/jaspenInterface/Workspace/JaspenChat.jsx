@@ -83,7 +83,7 @@ const devWarn = (...args) => {
 
 function priceDisplay(plan) {
   if (plan?.price_model === 'per_seat' && Number.isFinite(plan?.monthly_price_usd)) {
-    return `$${plan.monthly_price_usd}/seat/mo`;
+    return `$${plan.monthly_price_usd}/mo`;
   }
   if (plan?.price_model === 'custom') {
     return 'Contact sales';

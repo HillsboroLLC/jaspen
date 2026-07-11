@@ -30,7 +30,7 @@ function authHeaders(extra = {}, method = 'GET') {
 
 function priceDisplay(plan) {
   if (plan?.price_model === 'per_seat' && Number.isFinite(plan?.monthly_price_usd)) {
-    return `$${plan.monthly_price_usd}/seat/mo`;
+    return `$${plan.monthly_price_usd}/mo`;
   }
   if (plan?.price_model === 'custom') {
     return 'Contact sales';
@@ -3525,8 +3525,8 @@ export default function Account() {
                 <div>
                   <h3>Multi-factor authentication</h3>
                   <p>
-                    Protect your account with a one-time code from an authenticator app. This is optional on Free and
-                    Essential plans. Team and Enterprise orgs can enforce it.
+                    Protect your account with a one-time code from an authenticator app. This is optional on Free,
+                    Starter, and Essential plans. Team and Enterprise orgs can enforce it.
                   </p>
                 </div>
                 <span className={`account-pill ${mfaEnabled ? 'is-enabled' : ''}`}>

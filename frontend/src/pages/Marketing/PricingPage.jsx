@@ -267,7 +267,7 @@ export default function PricingPage() {
     <MarketingPageLayout pageClass="page-pricing">
       <Seo
         title="Pricing"
-        description="Explore Jaspen pricing from Free and Essential to Team and Enterprise plans."
+        description="Explore Jaspen pricing from Free and Starter to Essential, Team, and Enterprise plans."
         canonicalPath="/pages/pricing"
       />
       <section className="page-hero page-hero-pricing">
