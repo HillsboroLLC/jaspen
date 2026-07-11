@@ -183,7 +183,7 @@ def test_signup_returns_pending_when_admin_approval_required(client, app, db):
     assert created.access_approval_status == "pending"
 
 
-def test_paid_signup_requires_verification_before_payment(client, app, monkeypatch):
+def test_paid_plan_request_signs_up_free_before_upgrade(client, app, monkeypatch):
     def fake_send_verification(user, url_root=None, *, pending_plan=None):
         return None
 
@@ -207,8 +207,10 @@ def test_paid_signup_requires_verification_before_payment(client, app, monkeypat
     assert resp.status_code == 202
     data = resp.get_json()
     assert data["verification_required"] is True
-    assert data["payment_pending"] is True
-    assert data["plan_key"] == "essential"
+    assert data["payment_pending"] is False
+    assert data["plan_key"] == "free"
+    created = User.query.filter_by(email="paid@example.com").first()
+    assert created.subscription_plan == "free"
 
 
 def test_login_blocks_pending_user_when_admin_approval_required(client, app, db):
@@ -325,7 +327,7 @@ def test_verify_email_marks_user_verified(client, app, test_user, db):
     assert test_user.email_verified_at is not None
 
 
-def test_verify_email_redirects_paid_pending_plan_to_embedded_checkout(client, app, test_user, db):
+def test_verify_email_ignores_legacy_paid_pending_plan(client, app, test_user, db):
     with app.app_context():
         serializer = URLSafeTimedSerializer(
             secret_key=app.config["SECRET_KEY"] or app.config["JWT_SECRET_KEY"],
@@ -340,8 +342,7 @@ def test_verify_email_redirects_paid_pending_plan_to_embedded_checkout(client, a
     resp = client.get(f"/api/v1/auth/verify-email?token={token}")
 
     assert resp.status_code == 302
-    assert resp.headers["Location"] == "http://localhost:3000/?auth=1&verified=1&checkout_plan=essential"
-    assert "Set-Cookie" in resp.headers
+    assert resp.headers["Location"] == "http://localhost:3000/?auth=1&verified=1"
     db.session.refresh(test_user)
     assert test_user.email_verified is True
 

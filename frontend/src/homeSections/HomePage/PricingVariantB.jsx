@@ -9,7 +9,7 @@ const PLANS = [
     annual: 0,
     seats: '1 seat',
     tagline: 'Explore ideas without commitment.',
-    cta: 'Start free',
+    cta: 'Sign up',
     href: '/?auth=1',
     featured: false,
   },
@@ -20,8 +20,8 @@ const PLANS = [
     annual: 32,
     seats: '1 seat',
     tagline: 'Turn ideas into clear decisions.',
-    cta: 'Start Essential',
-    href: '/pages/pricing?plan=essential#plans',
+    cta: 'Start free',
+    href: '/?auth=1',
     featured: true,
   },
   {
@@ -31,8 +31,8 @@ const PLANS = [
     annual: 107,
     seats: '3 seats included',
     tagline: 'Align your team, execute with clarity.',
-    cta: 'Start Team',
-    href: '/pages/pricing?plan=team#plans',
+    cta: 'Start free',
+    href: '/?auth=1',
     featured: false,
   },
   {
@@ -42,8 +42,8 @@ const PLANS = [
     annual: 249,
     seats: '5 seats included',
     tagline: 'Decision-making at org scale.',
-    cta: 'Start Enterprise',
-    href: '/pages/pricing?plan=enterprise#plans',
+    cta: 'Start free',
+    href: '/?auth=1',
     featured: false,
   },
 ];
@@ -147,7 +147,7 @@ export default function PricingVariantB({ onOpenModal }) {
               <button
                 type="button"
                 className={`pvb-card-cta jaspen-btn ${plan.featured ? 'jaspen-btn-primary' : 'jaspen-btn-outline'}`}
-                onClick={() => onOpenModal?.('signup', plan.key)}
+                onClick={() => onOpenModal?.('signup', 'free')}
               >
                 {plan.cta}
               </button>
@@ -176,7 +176,7 @@ export default function PricingVariantB({ onOpenModal }) {
                   <th className="pvb-th-label">Key features</th>
                   {PLANS.map(p => (
                     <th key={p.key} className={`pvb-th-plan ${p.featured ? 'is-featured' : ''}`}>
-                      <button type="button" className={`pvb-compare-pill ${p.featured ? 'is-featured' : ''}`} onClick={() => onOpenModal?.('signup', p.key)}>{p.cta}</button>
+                      <button type="button" className={`pvb-compare-pill ${p.featured ? 'is-featured' : ''}`} onClick={() => onOpenModal?.('signup', 'free')}>{p.cta}</button>
                     </th>
                   ))}
                 </tr>

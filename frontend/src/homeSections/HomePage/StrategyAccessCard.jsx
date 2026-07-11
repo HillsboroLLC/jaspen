@@ -4,7 +4,6 @@ import { authFetch } from '../../shared/auth/http';
 import { API_BASE } from '../../config/apiBase';
 import { readAuthQueryNotice } from './authStatus';
 import AuthModal from './AuthModal';
-import StripeCheckout from '../../jaspenInterface/Account/StripeCheckout';
 import {
   readPendingIntakeContext,
   writePendingIntakeContext,
@@ -67,14 +66,7 @@ function continueWithPendingContext(heroContext) {
 const TARGET_SCORE = 87;
 const ANIMATION_DURATION_MS = 1200;
 
-const SELECTABLE_PLANS = [
-  { key: 'free',       label: 'Free',       priceLabel: 'Free',     paid: false, salesOnly: false },
-  { key: 'essential',  label: 'Essential',  priceLabel: '$39/mo',   paid: true,  salesOnly: false },
-  { key: 'team',       label: 'Team',       priceLabel: '$129/mo',  paid: true,  salesOnly: false },
-  { key: 'enterprise', label: 'Enterprise', priceLabel: '$299/mo',  paid: true,  salesOnly: true  },
-];
-
-export default function StrategyAccessCard({ initialFlowMode = 'signin', initialPlan = 'free', heroContext = '' }) {
+export default function StrategyAccessCard({ initialFlowMode = 'signin', heroContext = '' }) {
   const { login, signup, mfaEnforcement, setMfaEnforcement } = useAuth();
   const [score, setScore] = useState(0);
   const [status, setStatus] = useState('Pending');
@@ -90,9 +82,6 @@ export default function StrategyAccessCard({ initialFlowMode = 'signin', initial
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authModalMode, setAuthModalMode] = useState('email');
   const [mfaData, setMfaData] = useState(null);
-  const [selectedPlan, setSelectedPlan] = useState(initialPlan);
-  const [showStripe, setShowStripe] = useState(false);
-  const selectedPlanMeta = SELECTABLE_PLANS.find(p => p.key === selectedPlan) || SELECTABLE_PLANS[0];
 
   // Capture the URL auth notice ONCE at component creation time (lazy initializer).
   // This runs before any effects fire, so it always sees the original URL params
@@ -118,27 +107,6 @@ export default function StrategyAccessCard({ initialFlowMode = 'signin', initial
       url.searchParams.delete('auth');
       url.searchParams.delete('error');
       url.searchParams.delete('signed_out');
-      const cleaned = `${url.pathname}${url.search}${url.hash}`;
-      window.history.replaceState({}, '', cleaned);
-    } catch (_err) {
-      // Ignore URL parsing failures and leave current URL unchanged.
-    }
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      const url = new URL(window.location.href);
-      const checkoutPlan = String(url.searchParams.get('checkout_plan') || '').trim().toLowerCase();
-      if (!checkoutPlan) return;
-      const plan = SELECTABLE_PLANS.find((item) => item.key === checkoutPlan && item.paid && !item.salesOnly);
-      if (!plan) return;
-      setSelectedPlan(plan.key);
-      setFlowMode('signup');
-      setShowStripe(true);
-      url.searchParams.delete('auth');
-      url.searchParams.delete('verified');
-      url.searchParams.delete('checkout_plan');
       const cleaned = `${url.pathname}${url.search}${url.hash}`;
       window.history.replaceState({}, '', cleaned);
     } catch (_err) {
@@ -197,13 +165,13 @@ export default function StrategyAccessCard({ initialFlowMode = 'signin', initial
     if (authStatus === 'reset_sent') return "If that account exists, we'll send a password reset link shortly.";
     if (authStatus === 'sent') return 'Authenticated. Redirecting...';
     if (authStatus === 'verification_sent') {
-      return selectedPlanMeta.paid
-        ? 'Check your inbox to verify your email, then continue to secure payment.'
-        : 'Check your inbox to verify your email before getting started.';
+      return 'Check your inbox to verify your email before getting started.';
     }
     if (initialAuthNotice?.message) return initialAuthNotice.message;
-    return 'By continuing, you agree to receive product updates.';
-  }, [authError, authStatus, initialAuthNotice, selectedPlanMeta.paid]);
+    return flowMode === 'signup'
+      ? 'Start free. You can upgrade from your workspace anytime.'
+      : 'By continuing, you agree to receive product updates.';
+  }, [authError, authStatus, initialAuthNotice, flowMode]);
 
   const helperDetail = useMemo(() => {
     if (authErrorDetail) return authErrorDetail;
@@ -313,13 +281,8 @@ export default function StrategyAccessCard({ initialFlowMode = 'signin', initial
     setAuthError('');
     try {
       if (flowMode === 'signup') {
-        const signupAttempt = await signup(normalizedEmail, password, String(name).trim(), { planKey: selectedPlan });
+        const signupAttempt = await signup(normalizedEmail, password, String(name).trim(), { planKey: 'free' });
         if (signupAttempt?.success) {
-          if (selectedPlanMeta.paid) {
-            setShowStripe(true);
-            setAuthStatus('idle');
-            return;
-          }
           // If the visitor analyzed context on the homepage, continue that same
           // conversation in the workspace instead of losing it at the auth wall.
           setAuthStatus('sent');
@@ -410,22 +373,6 @@ export default function StrategyAccessCard({ initialFlowMode = 'signin', initial
             <div className="strategy-card-divider"><span>OR</span></div>
           </>
         )}
-        {flowMode === 'signup' && authMode !== 'forgot' && (
-          <div className="strategy-plan-selector">
-            {SELECTABLE_PLANS.map(p => (
-              <button
-                key={p.key}
-                type="button"
-                className={`strategy-plan-option${p.key === 'enterprise' ? ' is-enterprise' : ''}${selectedPlan === p.key ? ' is-active' : ''}`}
-                onClick={() => setSelectedPlan(p.key)}
-              >
-                <span className="strategy-plan-option-label">{p.label}</span>
-                <span className="strategy-plan-option-price">{p.priceLabel}</span>
-              </button>
-            ))}
-          </div>
-        )}
-
         <form className="strategy-card-form" onSubmit={authMode === 'forgot' ? handleForgotPassword : handleEmailSubmit}>
           {flowMode === 'signup' && authMode !== 'forgot' && (
             <input
@@ -482,9 +429,7 @@ export default function StrategyAccessCard({ initialFlowMode = 'signin', initial
               : authMode === 'forgot'
                 ? 'Send reset link'
                 : flowMode === 'signup'
-                  ? selectedPlanMeta.paid
-                    ? `Continue to payment · ${selectedPlanMeta.priceLabel}`
-                    : 'Create free account'
+                  ? 'Create free account'
                   : 'Sign in'}
           </button>
         </form>
@@ -521,17 +466,6 @@ export default function StrategyAccessCard({ initialFlowMode = 'signin', initial
         onModeChange={setAuthModalMode}
         initialMfaData={mfaData}
       />
-
-      {showStripe && (
-        <StripeCheckout
-          mode="subscribe"
-          planKey={selectedPlan}
-          planLabel={selectedPlanMeta.label}
-          priceLabel={selectedPlanMeta.priceLabel}
-          onSuccess={() => { setShowStripe(false); window.location.href = '/new'; }}
-          onClose={() => setShowStripe(false)}
-        />
-      )}
     </div>
   );
 }

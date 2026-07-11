@@ -786,7 +786,7 @@ def signup():
     name = data.get('name', '').strip()
     email = data.get('email', '').strip().lower()
     password = data.get('password', '')
-    requested_plan = normalize_plan_key(data.get('plan_key', 'free'))
+    requested_plan = 'free'
     referral_code = _normalize_referral_code(
         data.get('referral_code') or data.get('invite_code')
     )
@@ -804,13 +804,6 @@ def signup():
 
     if User.query.filter_by(email=email).first():
         return jsonify(message='Email already registered'), 409
-
-    if is_sales_only_plan(requested_plan, current_app.config):
-        return jsonify(
-            message='Team and Enterprise are sales-led right now. Please contact sales to get started.',
-            contact_sales=True,
-            plan_key=requested_plan,
-        ), 400
 
     controls, referring_user, gate_payload, gate_status = _effective_signup_gate(referral_code)
     if gate_payload:
@@ -846,7 +839,6 @@ def signup():
         return jsonify(_approval_pending_payload()), 202
 
     if _verification_required_enabled():
-        pending_plan = requested_plan if requested_plan != 'free' else None
         # Send the verification email in a background thread so that SMTP
         # latency or a transient failure never blocks the signup response.
         # Capture request-context values NOW before the thread starts.
@@ -854,7 +846,6 @@ def signup():
         user_id = user.id
         user_email = user.email
         captured_url_root = request.url_root  # captured while still in request context
-        captured_pending_plan = pending_plan
 
         def _send_verification_bg():
             with app.app_context():
@@ -864,7 +855,6 @@ def signup():
                         _send_email_verification_email(
                             target_user,
                             url_root=captured_url_root,
-                            pending_plan=captured_pending_plan,
                         )
                         db.session.commit()
                 except Exception:
@@ -877,12 +867,9 @@ def signup():
             message='Check your inbox to verify your email before getting started.',
             verification_required=True,
             email_verified=False,
-            payment_pending=bool(pending_plan),
-            plan_key=pending_plan,
-            detail=(
-                'After verification, Stripe will open so you can finish payment.'
-                if pending_plan else ''
-            ),
+            payment_pending=False,
+            plan_key='free',
+            detail='You can upgrade from your workspace after your account is verified.',
         ), 202
 
     access_token = _create_user_access_token(user)
@@ -896,27 +883,9 @@ def signup():
     if session_changed:
         db.session.commit()
 
-    # Free plan can complete sign-up with no payment flow.
-    if requested_plan == 'free':
-        resp = jsonify(
-            message='User created',
-            token=access_token,
-            user=_user_payload(user),
-        )
-        resp.status_code = 201
-        return _attach_auth_cookie(resp, access_token)
-
-    # Paid self-serve plans go through Stripe checkout.
-    try:
-        session = _create_subscription_checkout_session_for_user(user, requested_plan)
-    except ValueError as exc:
-        return jsonify(message=str(exc)), 500
-
     resp = jsonify(
-        message='User created; complete payment',
+        message='User created',
         token=access_token,
-        checkout_session_id=session.id,
-        checkout_url=session.url,
         user=_user_payload(user),
     )
     resp.status_code = 201
@@ -1411,25 +1380,6 @@ def verify_email():
     db.session.commit()
 
     if request.method == 'GET':
-        pending_plan = normalize_plan_key(decoded.get('pending_plan'))
-        if pending_plan and pending_plan != 'free':
-            access_token = _create_user_access_token(user)
-            session_changed = _register_auth_session(user, access_token)
-            try:
-                token_jti = str(decode_token(access_token).get('jti') or '').strip()
-            except Exception:
-                token_jti = ''
-            if _enforce_login_session_limit(user, current_jti=token_jti):
-                session_changed = True
-            if session_changed:
-                db.session.commit()
-            params = urlencode({
-                'auth': '1',
-                'verified': '1',
-                'checkout_plan': pending_plan,
-            })
-            resp = redirect(f"{_frontend_base_url()}/?{params}", code=302)
-            return _attach_auth_cookie(resp, access_token)
         return redirect(_verification_result_url('verified'), code=302)
     return jsonify(
         message='Email verified successfully.',
