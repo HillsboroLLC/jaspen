@@ -92,7 +92,6 @@ export default function StrategyAccessCard({ initialFlowMode = 'signin', initial
   const [mfaData, setMfaData] = useState(null);
   const [selectedPlan, setSelectedPlan] = useState(initialPlan);
   const [showStripe, setShowStripe] = useState(false);
-  const [stripeToken, setStripeToken] = useState(null);
   const selectedPlanMeta = SELECTABLE_PLANS.find(p => p.key === selectedPlan) || SELECTABLE_PLANS[0];
 
   // Capture the URL auth notice ONCE at component creation time (lazy initializer).
@@ -119,6 +118,27 @@ export default function StrategyAccessCard({ initialFlowMode = 'signin', initial
       url.searchParams.delete('auth');
       url.searchParams.delete('error');
       url.searchParams.delete('signed_out');
+      const cleaned = `${url.pathname}${url.search}${url.hash}`;
+      window.history.replaceState({}, '', cleaned);
+    } catch (_err) {
+      // Ignore URL parsing failures and leave current URL unchanged.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const url = new URL(window.location.href);
+      const checkoutPlan = String(url.searchParams.get('checkout_plan') || '').trim().toLowerCase();
+      if (!checkoutPlan) return;
+      const plan = SELECTABLE_PLANS.find((item) => item.key === checkoutPlan && item.paid && !item.salesOnly);
+      if (!plan) return;
+      setSelectedPlan(plan.key);
+      setFlowMode('signup');
+      setShowStripe(true);
+      url.searchParams.delete('auth');
+      url.searchParams.delete('verified');
+      url.searchParams.delete('checkout_plan');
       const cleaned = `${url.pathname}${url.search}${url.hash}`;
       window.history.replaceState({}, '', cleaned);
     } catch (_err) {
@@ -296,7 +316,6 @@ export default function StrategyAccessCard({ initialFlowMode = 'signin', initial
         const signupAttempt = await signup(normalizedEmail, password, String(name).trim(), { planKey: selectedPlan });
         if (signupAttempt?.success) {
           if (selectedPlanMeta.paid) {
-            setStripeToken(signupAttempt.token || null);
             setShowStripe(true);
             setAuthStatus('idle');
             return;
