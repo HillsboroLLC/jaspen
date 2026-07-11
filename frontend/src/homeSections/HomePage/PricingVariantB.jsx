@@ -187,6 +187,7 @@ export default function PricingVariantB({ onOpenModal }) {
                   <th className="pvb-th-label">Key features</th>
                   {PLANS.map(p => (
                     <th key={p.key} className={`pvb-th-plan ${p.featured ? 'is-featured' : ''}`}>
+                      <span className="pvb-compare-plan-name">{p.name}</span>
                       <button type="button" className={`pvb-compare-pill ${p.featured ? 'is-featured' : ''}`} onClick={() => onOpenModal?.('signup', 'free')}>{p.cta}</button>
                     </th>
                   ))}
