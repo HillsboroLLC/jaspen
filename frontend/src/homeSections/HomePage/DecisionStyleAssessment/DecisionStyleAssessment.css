@@ -6,8 +6,8 @@
 .dsa {
   position: relative;
   overflow: hidden;
-  padding: 88px 40px 96px;
-  background: #f4f1ea; /* flat warm cream — no gradients */
+  padding: 84px 40px 88px;
+  background: #161f3b; /* dark navy block — sets this section apart from the cream sections around it */
 }
 
 .dsa-inner {
@@ -17,116 +17,122 @@
   margin: 0 auto;
 }
 .dsa-inner--wide {
-  max-width: 1080px;
+  max-width: 1120px;
 }
 
-/* ══ Intro hero: value on the left, animated stage on the right ══ */
+/* ══ Intro hero: value (left) + light-blue stage panel (right), CTA centered below ══ */
 .dsa-hero {
+  display: flex;
+  flex-direction: column;
+}
+
+.dsa-hero-top {
   display: grid;
-  grid-template-columns: 1.02fr 0.98fr;
-  gap: 56px;
-  align-items: center;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  align-items: stretch;
+  border-radius: 24px;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+}
+
+/* Left half: the pitch, on navy */
+.dsa-hero-copy {
+  background: #161f3b;
+  padding: 52px 48px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
 .dsa-hero-eyebrow {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: #a0036c;
-  background: rgba(160, 3, 108, 0.08);
-  padding: 6px 12px;
-  border-radius: 999px;
-  margin: 0 0 20px;
+  color: #e774b4; /* lightened brand magenta for contrast on navy */
+  margin: 0 0 18px;
 }
 .dsa-hero-eyebrow i {
-  font-size: 0.9em;
+  font-size: 0.95em;
 }
 
 .dsa-hero-title {
-  font-size: clamp(2.1rem, 4vw, 3.1rem);
+  font-size: clamp(2rem, 3.6vw, 2.9rem);
   font-weight: 780;
   letter-spacing: -0.01em;
-  color: #161f3b;
+  color: #ffffff;
   line-height: 1.08;
   margin: 0 0 18px;
 }
 .dsa-hero-title .dsa-hero-title-accent {
-  color: #a0036c;
+  color: #e774b4;
 }
 
 .dsa-hero-sub {
-  font-size: 1.1rem;
+  font-size: 1.06rem;
   line-height: 1.6;
-  color: rgba(22, 31, 59, 0.7);
-  margin: 0 0 26px;
-  max-width: 30em;
+  color: rgba(255, 255, 255, 0.72);
+  margin: 0 0 24px;
+  max-width: 32em;
 }
 
+/* Minimal, plain-text facts (no pills on the left — pills live on the right) */
 .dsa-hero-facts {
-  list-style: none;
   display: flex;
   flex-wrap: wrap;
-  gap: 10px 10px;
-  margin: 0 0 30px;
+  align-items: center;
+  gap: 10px 14px;
+  margin: 0;
   padding: 0;
+  list-style: none;
+  font-size: 0.9rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: rgba(255, 255, 255, 0.62);
 }
 .dsa-hero-facts li {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: #161f3b;
-  background: #ffffff;
-  border: 1px solid rgba(22, 31, 59, 0.1);
-  border-radius: 999px;
-  padding: 8px 14px;
 }
-.dsa-hero-facts i {
-  color: #a0036c;
-  font-size: 0.85em;
+.dsa-hero-facts li:not(:last-child)::after {
+  content: '';
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: rgba(231, 116, 180, 0.85);
+  margin-left: 14px;
 }
 
-.dsa-hero-cta {
-  font-size: 1.05rem;
-  padding: 16px 26px;
-  box-shadow: 0 12px 30px rgba(160, 3, 108, 0.28);
-}
-.dsa-hero-microcopy {
-  margin: 14px 0 0;
-  font-size: 0.85rem;
-  color: rgba(22, 31, 59, 0.55);
-}
-
-/* ── The animated stage (right) ── */
+/* Right half: light-blue color block holding the animated stage */
 .dsa-hero-stage {
+  background: #dfe7f5; /* light blue — same blue family as the navy, just tinted up */
+  padding: 40px 36px;
   display: flex;
-  flex-direction: column;
   align-items: center;
+  justify-content: center;
 }
 
 .dsa-stage {
   position: relative;
   aspect-ratio: 1 / 1;
   width: 100%;
-  max-width: 440px;
-  margin: 0 auto 26px;
+  max-width: 400px;
 }
 
-/* Rotating dashed orbit ring */
+/* Rotating dashed orbit rings */
 .dsa-stage-ring {
   position: absolute;
-  inset: 12%;
-  border: 2px dashed rgba(22, 31, 59, 0.16);
+  inset: 10%;
+  border: 2px dashed rgba(22, 31, 59, 0.2);
   border-radius: 50%;
 }
 .dsa-stage-ring--inner {
-  inset: 26%;
-  border-color: rgba(160, 3, 108, 0.22);
+  inset: 25%;
+  border-color: rgba(160, 3, 108, 0.32);
 }
 
 /* Center "decision fingerprint" badge */
@@ -135,26 +141,26 @@
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 34%;
+  width: 33%;
   aspect-ratio: 1 / 1;
   border-radius: 50%;
   background: #161f3b;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 18px 44px rgba(22, 31, 59, 0.28);
+  box-shadow: 0 18px 40px rgba(22, 31, 59, 0.32);
   z-index: 3;
 }
 .dsa-stage-core i {
   color: #ffffff;
-  font-size: clamp(1.8rem, 4vw, 2.6rem);
+  font-size: clamp(1.7rem, 3.6vw, 2.4rem);
 }
 .dsa-stage-core::after {
   content: '';
   position: absolute;
-  inset: -10px;
+  inset: -9px;
   border-radius: 50%;
-  border: 1.5px solid rgba(160, 3, 108, 0.45);
+  border: 1.5px solid rgba(160, 3, 108, 0.5);
 }
 
 /* Floating style chips */
@@ -165,13 +171,13 @@
   gap: 7px;
   padding: 9px 14px;
   background: #ffffff;
-  border: 1px solid rgba(22, 31, 59, 0.1);
+  border: 1px solid rgba(22, 31, 59, 0.08);
   border-radius: 999px;
-  font-size: 0.85rem;
+  font-size: 0.84rem;
   font-weight: 640;
   color: #161f3b;
   white-space: nowrap;
-  box-shadow: 0 8px 22px rgba(22, 31, 59, 0.1);
+  box-shadow: 0 10px 22px rgba(22, 31, 59, 0.16);
   z-index: 2;
   will-change: transform;
 }
@@ -187,12 +193,31 @@
   background: #161f3b;
 }
 /* Scatter the six chips around the ring */
-.dsa-chip--1 { top: 2%;  left: 20%; }
-.dsa-chip--2 { top: 12%; right: -2%; }
-.dsa-chip--3 { top: 46%; right: -6%; }
-.dsa-chip--4 { bottom: 8%; right: 6%; }
-.dsa-chip--5 { bottom: 0%; left: 12%; }
-.dsa-chip--6 { top: 40%; left: -8%; }
+.dsa-chip--1 { top: 0%;  left: 16%; }
+.dsa-chip--2 { top: 12%; right: -6%; }
+.dsa-chip--3 { top: 48%; right: -10%; }
+.dsa-chip--4 { bottom: 6%; right: 2%; }
+.dsa-chip--5 { bottom: -2%; left: 8%; }
+.dsa-chip--6 { top: 42%; left: -12%; }
+
+/* Centered call to action, below both halves, on the navy */
+.dsa-hero-cta-row {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  margin-top: 36px;
+}
+.dsa-hero-cta {
+  font-size: 1.08rem;
+  padding: 17px 34px;
+  box-shadow: 0 14px 34px rgba(160, 3, 108, 0.4);
+}
+.dsa-hero-microcopy {
+  margin: 14px 0 0;
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.55);
+}
 
 @media (prefers-reduced-motion: no-preference) {
   .dsa-stage-ring {
@@ -684,12 +709,15 @@
   }
 }
 
-/* Hero stacks: copy on top, animated stage + CTA beneath */
+/* Hero stacks: navy copy block on top, light-blue stage block beneath, CTA below */
 @media (max-width: 880px) {
-  .dsa-hero {
+  .dsa-hero-top {
     grid-template-columns: 1fr;
-    gap: 8px;
+  }
+  .dsa-hero-copy {
+    padding: 40px 28px;
     text-align: center;
+    align-items: center;
   }
   .dsa-hero-sub {
     margin-left: auto;
@@ -698,9 +726,11 @@
   .dsa-hero-facts {
     justify-content: center;
   }
+  .dsa-hero-stage {
+    padding: 44px 28px 52px;
+  }
   .dsa-stage {
-    max-width: 340px;
-    margin-top: 8px;
+    max-width: 320px;
   }
 }
 

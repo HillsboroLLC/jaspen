@@ -170,49 +170,48 @@ export default function DecisionStyleAssessment() {
         {/* ── Intro ───────────────────────────────────────────── */}
         {step === 'intro' && (
           <div className="dsa-hero dsa-fade">
-            {/* Left: the value proposition */}
-            <div className="dsa-hero-copy">
-              <p className="dsa-hero-eyebrow">
-                <i className="fa-solid fa-wand-magic-sparkles" aria-hidden="true" />
-                Free decision-style assessment
-              </p>
-              <h2 className="dsa-hero-title" id="dsa-title">
-                What kind of decision‑maker are{' '}
-                <span className="dsa-hero-title-accent">you</span>?
-              </h2>
-              <p className="dsa-hero-sub">
-                Everyone has a natural way of making the big calls. Answer seven quick questions
-                and uncover yours — the strengths it gives you, the blind spots to watch, and how
-                to make decisions you can defend. No score. No grade. Just a sharper picture of you.
-              </p>
-              <ul className="dsa-hero-facts">
-                <li>
-                  <i className="fa-solid fa-list-check" aria-hidden="true" />7 quick questions
-                </li>
-                <li>
-                  <i className="fa-solid fa-clock" aria-hidden="true" />About 2 minutes
-                </li>
-                <li>
-                  <i className="fa-solid fa-lock-open" aria-hidden="true" />No sign‑up to start
-                </li>
-              </ul>
-            </div>
-
-            {/* Right: animated stage + the call to action */}
-            <div className="dsa-hero-stage">
-              <div className="dsa-stage" aria-hidden="true">
-                <span className="dsa-stage-ring" />
-                <span className="dsa-stage-ring dsa-stage-ring--inner" />
-                <div className="dsa-stage-core">
-                  <i className="fa-solid fa-fingerprint" />
-                </div>
-                {STYLE_ORDER.map((key, i) => (
-                  <span className={`dsa-chip dsa-chip--${i + 1}`} key={key}>
-                    {STYLES[key].name}
-                  </span>
-                ))}
+            <div className="dsa-hero-top">
+              {/* Left half (navy): the value proposition */}
+              <div className="dsa-hero-copy">
+                <p className="dsa-hero-eyebrow">
+                  <i className="fa-solid fa-wand-magic-sparkles" aria-hidden="true" />
+                  Free decision-style assessment
+                </p>
+                <h2 className="dsa-hero-title" id="dsa-title">
+                  What kind of decision‑maker are{' '}
+                  <span className="dsa-hero-title-accent">you</span>?
+                </h2>
+                <p className="dsa-hero-sub">
+                  Everyone has a natural way of making the big calls. Answer seven quick questions
+                  and uncover yours — the strengths it gives you, the blind spots to watch, and how
+                  to make decisions you can defend. No score. No grade. Just a sharper picture of you.
+                </p>
+                <ul className="dsa-hero-facts">
+                  <li>7 quick questions</li>
+                  <li>About 2 minutes</li>
+                  <li>No sign‑up to start</li>
+                </ul>
               </div>
 
+              {/* Right half (light blue): the animated stage */}
+              <div className="dsa-hero-stage">
+                <div className="dsa-stage" aria-hidden="true">
+                  <span className="dsa-stage-ring" />
+                  <span className="dsa-stage-ring dsa-stage-ring--inner" />
+                  <div className="dsa-stage-core">
+                    <i className="fa-solid fa-fingerprint" />
+                  </div>
+                  {STYLE_ORDER.map((key, i) => (
+                    <span className={`dsa-chip dsa-chip--${i + 1}`} key={key}>
+                      {STYLES[key].name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Centered call to action, below both halves */}
+            <div className="dsa-hero-cta-row">
               <button
                 type="button"
                 className="dsa-btn dsa-btn-primary dsa-hero-cta"
