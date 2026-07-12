@@ -4,7 +4,7 @@ from unittest.mock import Mock
 
 from app.decision_profile import STYLES, derive_decision_style
 from app.email_templates.decision_profile_results import PREVIEW_TEXT, SUBJECT, render_decision_profile_email
-from app.models import Lead, LeadAttributionEvent, LeadDecisionProfile, LeadEmailDelivery
+from app.models import EmailSuppression, Lead, LeadAttributionEvent, LeadDecisionProfile, LeadEmailDelivery
 
 
 LEADS_URL = "/api/v1/public/leads"
@@ -196,12 +196,34 @@ def test_toolkit_lead_sends_email_before_success(client, db, monkeypatch):
     assert response.get_json() == {"ok": True, "delivery": "email"}
     assert len(sent) == 1
     assert sent[0].recipients == ["person@example.com"]
+    assert sent[0].sender == "Jaspen <hello@jaspen.ai>"
+    assert sent[0].reply_to == "hello@jaspen.ai"
     assert "List-Unsubscribe" in sent[0].extra_headers
     assert Lead.query.count() == 1
     assert LeadAttributionEvent.query.one().email_delivery_requested is True
     delivery = LeadEmailDelivery.query.one()
     assert delivery.status == "sent"
     assert delivery.sent_at is not None
+
+
+def test_toolkit_opt_in_resubscribes_prior_suppressions(client, db, monkeypatch):
+    db.session.add(EmailSuppression(email="person@example.com", normalized_email="person@example.com", scope="marketing", reason="unsubscribe"))
+    db.session.add(EmailSuppression(email="person@example.com", normalized_email="person@example.com", scope="updates", reason="unsubscribe"))
+    db.session.add(EmailSuppression(email="person@example.com", normalized_email="person@example.com", scope="decision_notes", reason="unsubscribe"))
+    db.session.commit()
+
+    monkeypatch.setattr("app.routes.leads.mail.send", lambda _msg: None)
+    response = client.post(
+        LEADS_URL,
+        json={
+            "email": "person@example.com",
+            "source": "decision-planning-toolkit",
+            "marketing_opt_in": True,
+        },
+    )
+
+    assert response.status_code == 201
+    assert EmailSuppression.query.filter_by(normalized_email="person@example.com").count() == 0
 
 
 def test_toolkit_email_failure_returns_failure_without_success(client, db, monkeypatch):
@@ -233,6 +255,62 @@ def test_invalid_email_does_not_send_toolkit_email(client, db, monkeypatch):
     assert response.status_code == 400
     assert send.call_count == 0
     assert Lead.query.count() == 0
+
+
+def test_unsubscribe_get_shows_preferences_without_auto_suppressing(client, db, app):
+    from app.routes.leads import _unsubscribe_token
+
+    with app.test_request_context():
+        token = _unsubscribe_token("person@example.com", scope="marketing")
+
+    response = client.get(f"/api/v1/public/leads/unsubscribe?token={token}")
+
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "Email preferences" in html
+    assert "Marketing" in html
+    assert "Updates" in html
+    assert "Decision Notes" in html
+    assert "All / deselect all" in html
+    assert EmailSuppression.query.count() == 0
+
+
+def test_unsubscribe_one_click_post_suppresses_token_scope(client, db, app):
+    from app.routes.leads import _unsubscribe_token
+
+    with app.test_request_context():
+        token = _unsubscribe_token("person@example.com", scope="updates")
+
+    response = client.post(f"/api/v1/public/leads/unsubscribe?token={token}")
+
+    assert response.status_code == 200
+    assert response.get_json() == {"ok": True}
+    row = EmailSuppression.query.one()
+    assert row.normalized_email == "person@example.com"
+    assert row.scope == "updates"
+
+
+def test_subscription_preferences_form_updates_scopes(client, db, app):
+    from app.routes.leads import _unsubscribe_token
+
+    db.session.add(EmailSuppression(email="person@example.com", normalized_email="person@example.com", scope="marketing", reason="unsubscribe"))
+    db.session.add(EmailSuppression(email="person@example.com", normalized_email="person@example.com", scope="updates", reason="unsubscribe"))
+    db.session.commit()
+    with app.test_request_context():
+        token = _unsubscribe_token("person@example.com", scope="marketing")
+
+    response = client.post(
+        f"/api/v1/public/leads/unsubscribe?token={token}",
+        data={
+            "preferences_form": "1",
+            "subscribed_scopes": ["updates", "decision_notes"],
+        },
+    )
+
+    assert response.status_code == 200
+    assert "Your email preferences have been saved." in response.get_data(as_text=True)
+    scopes = sorted(row.scope for row in EmailSuppression.query.filter_by(normalized_email="person@example.com").all())
+    assert scopes == ["marketing"]
 
 
 def test_decision_profile_style_mapping_covers_all_styles():

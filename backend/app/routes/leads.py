@@ -6,6 +6,7 @@ from urllib.parse import urlencode
 
 from flask import Blueprint, current_app, jsonify, request, send_file
 from flask_mail import Message
+from markupsafe import escape
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from werkzeug.exceptions import BadRequest, UnsupportedMediaType
@@ -26,6 +27,14 @@ DECISION_PROFILE_SOURCE = "decision-style-assessment"
 DECISION_PROFILE_EMAIL_TYPE = "decision_profile_results"
 DECISION_PROFILE_SENDER = "Jaspen <hello@jaspen.ai>"
 DECISION_PROFILE_REPLY_TO = "hello@jaspen.ai"
+LEAD_EMAIL_SENDER = "Jaspen <hello@jaspen.ai>"
+LEAD_EMAIL_REPLY_TO = "hello@jaspen.ai"
+SUBSCRIPTION_SCOPES = {
+    "marketing": "Marketing",
+    "updates": "Updates",
+    "decision_notes": "Decision Notes",
+}
+TOOLKIT_OPT_IN_SCOPES = ("marketing", "updates", "decision_notes")
 TOOLKIT_FILENAME = "Jaspen-Decision-Planning-Toolkit.xlsx"
 HONEYPOT_FIELDS = ("website", "url", "hp_name")
 FIELD_LIMITS = {
@@ -242,20 +251,125 @@ def _unsubscribe_link(email, scope="marketing"):
     return f"{request.url_root.rstrip('/')}/api/v1/public/leads/unsubscribe?{query}"
 
 
+def _subscription_preferences(email):
+    suppressions = {
+        row.scope
+        for row in EmailSuppression.query.filter_by(normalized_email=email).all()
+    }
+    return {
+        scope: scope not in suppressions
+        for scope in SUBSCRIPTION_SCOPES
+    }
+
+
+def _set_subscription_preferences(email, subscribed_scopes):
+    subscribed = {
+        scope
+        for scope in subscribed_scopes
+        if scope in SUBSCRIPTION_SCOPES
+    }
+    changed = False
+    for scope in SUBSCRIPTION_SCOPES:
+        existing = _suppression_for(email, scope)
+        if scope in subscribed:
+            if existing is not None:
+                db.session.delete(existing)
+                changed = True
+            continue
+        if existing is None:
+            db.session.add(EmailSuppression(email=email, normalized_email=email, scope=scope, reason="preference_update"))
+            changed = True
+    return changed
+
+
+def _render_preferences_form(email, token, *, saved=False):
+    preferences = _subscription_preferences(email)
+    safe_email = escape(email)
+    safe_token = escape(token)
+    checked = {
+        scope: " checked" if subscribed else ""
+        for scope, subscribed in preferences.items()
+    }
+    status = (
+        '<p class="status">Your email preferences have been saved.</p>'
+        if saved else ""
+    )
+    rows = "\n".join(
+        f"""
+        <label class="option">
+          <input type="checkbox" name="subscribed_scopes" value="{scope}"{checked[scope]}>
+          <span>{escape(label)}</span>
+        </label>
+        """
+        for scope, label in SUBSCRIPTION_SCOPES.items()
+    )
+    return f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Jaspen email preferences</title>
+    <style>
+      body {{ margin: 0; font-family: Arial, sans-serif; background: #f6f7fb; color: #172033; }}
+      main {{ max-width: 560px; margin: 48px auto; padding: 28px; background: #fff; border: 1px solid #e7eaf3; border-radius: 16px; }}
+      h1 {{ margin: 0 0 10px; font-size: 28px; }}
+      p {{ color: #526070; line-height: 1.5; }}
+      .status {{ color: #047857; font-weight: 700; }}
+      .option, .all-option {{ display: flex; gap: 10px; align-items: center; padding: 12px 0; border-top: 1px solid #eef1f7; font-weight: 700; }}
+      .all-option {{ margin-top: 10px; border-top: 0; color: #a0036c; }}
+      button {{ margin-top: 18px; padding: 12px 16px; border: 0; border-radius: 8px; background: #a0036c; color: #fff; font-weight: 700; cursor: pointer; }}
+      .fine {{ font-size: 13px; color: #667085; }}
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Email preferences</h1>
+      <p>Choose what {safe_email} should receive from Jaspen.</p>
+      {status}
+      <form method="post" action="/api/v1/public/leads/unsubscribe?token={safe_token}">
+        <input type="hidden" name="preferences_form" value="1">
+        <label class="all-option">
+          <input type="checkbox" id="all-preferences">
+          <span>All / deselect all</span>
+        </label>
+        {rows}
+        <button type="submit">Save preferences</button>
+      </form>
+      <p class="fine">Unchecking a category unsubscribes you from that type of email. You can change this any time from an unsubscribe link.</p>
+    </main>
+    <script>
+      const allBox = document.getElementById('all-preferences');
+      const boxes = Array.from(document.querySelectorAll('input[name="subscribed_scopes"]'));
+      function syncAll() {{
+        allBox.checked = boxes.every((box) => box.checked);
+        allBox.indeterminate = boxes.some((box) => box.checked) && !allBox.checked;
+      }}
+      allBox.addEventListener('change', () => boxes.forEach((box) => {{ box.checked = allBox.checked; }}));
+      boxes.forEach((box) => box.addEventListener('change', syncAll));
+      syncAll();
+    </script>
+  </body>
+</html>"""
+
+
 def _toolkit_file_path():
     return Path(current_app.root_path).parent / "assets" / TOOLKIT_FILENAME
 
 
-def _is_marketing_suppressed(email):
-    return EmailSuppression.query.filter_by(normalized_email=email, scope="marketing").first() is not None
+def _suppression_for(email, scope):
+    return EmailSuppression.query.filter_by(normalized_email=email, scope=scope).one_or_none()
 
 
 def _record_marketing_opt_in(email, opted_in):
-    if not opted_in or _is_marketing_suppressed(email):
+    if not opted_in:
         return False
-    # Future marketing list integration can pick up this explicit opt-in from
-    # attribution events. We intentionally do not auto-subscribe elsewhere.
-    return True
+    removed = False
+    for scope in TOOLKIT_OPT_IN_SCOPES:
+        existing = _suppression_for(email, scope)
+        if existing is not None:
+            db.session.delete(existing)
+            removed = True
+    return removed
 
 
 def _send_toolkit_email(email):
@@ -264,6 +378,8 @@ def _send_toolkit_email(email):
     msg = Message(
         subject="Your Jaspen Decision Planning Toolkit",
         recipients=[email],
+        sender=LEAD_EMAIL_SENDER,
+        reply_to=LEAD_EMAIL_REPLY_TO,
     )
     msg.body = (
         "Here is your Jaspen Decision Planning Toolkit:\n\n"
@@ -534,13 +650,17 @@ def unsubscribe():
     if not EMAIL_RE.match(email):
         return jsonify({"error": "Invalid unsubscribe link."}), 400
 
-    existing = EmailSuppression.query.filter_by(normalized_email=email, scope=scope).one_or_none()
-    if existing is None:
-        db.session.add(EmailSuppression(email=email, normalized_email=email, scope=scope, reason="unsubscribe"))
+    if request.method == "POST" and request.form.get("preferences_form") == "1":
+        subscribed_scopes = request.form.getlist("subscribed_scopes")
+        _set_subscription_preferences(email, subscribed_scopes)
         db.session.commit()
+        return _render_preferences_form(email, token, saved=True), 200, {"Content-Type": "text/html; charset=utf-8"}
+
     if request.method == "POST":
+        existing = _suppression_for(email, scope)
+        if existing is None:
+            db.session.add(EmailSuppression(email=email, normalized_email=email, scope=scope, reason="unsubscribe"))
+            db.session.commit()
         return jsonify({"ok": True}), 200
-    return (
-        "<!doctype html><html><body><h1>You are unsubscribed</h1>"
-        "<p>You will not receive Jaspen marketing updates at this address.</p></body></html>"
-    ), 200, {"Content-Type": "text/html; charset=utf-8"}
+
+    return _render_preferences_form(email, token), 200, {"Content-Type": "text/html; charset=utf-8"}
