@@ -1,0 +1,481 @@
+/* Decision Style Assessment — homepage section.
+   Site palette only (navy #161f3b, magenta #a0036c, cream #f8f5f0), no
+   gradients, no emojis. Sits in the slot the Excel lead magnet used, and keeps
+   the same cream band + bordered white card language so it reads as native. */
+
+.dsa {
+  background: #f8f5f0;
+  padding: 92px 40px 100px;
+}
+
+.dsa-inner {
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+/* ── Shared bits ─────────────────────────────────────────── */
+.dsa-eyebrow,
+.dsa-result-kicker {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #a0036c;
+  margin: 0 0 12px;
+}
+
+.dsa-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 13px 22px;
+  font-size: 1rem;
+  font-weight: 700;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.dsa-btn-primary {
+  color: #ffffff;
+  background: #a0036c;
+}
+.dsa-btn-primary:hover {
+  background: #86025b;
+}
+.dsa-btn-primary:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
+.dsa-btn-ghost {
+  color: #161f3b;
+  background: transparent;
+  border-color: rgba(22, 31, 59, 0.2);
+}
+.dsa-btn-ghost:hover {
+  border-color: #a0036c;
+  color: #a0036c;
+}
+
+.dsa-btn-icon {
+  font-size: 0.82rem;
+}
+.dsa-btn-icon-left {
+  font-size: 0.82rem;
+  margin-right: 2px;
+}
+
+/* Text link / tertiary action */
+.dsa-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  padding: 6px 4px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #a0036c;
+  cursor: pointer;
+  border-radius: 6px;
+}
+.dsa-link:hover {
+  color: #86025b;
+  text-decoration: underline;
+}
+
+/* Visible focus for keyboard users on every interactive element */
+.dsa-btn:focus-visible,
+.dsa-link:focus-visible,
+.dsa-option-input:focus-visible + .dsa-option-mark,
+.dsa-email-input:focus-visible {
+  outline: 3px solid rgba(160, 3, 108, 0.35);
+  outline-offset: 2px;
+}
+.dsa-email-input:focus-visible {
+  outline-offset: 0;
+  border-color: #a0036c;
+}
+
+/* ── Intro ───────────────────────────────────────────────── */
+.dsa-intro {
+  text-align: center;
+}
+
+.dsa-title {
+  font-size: clamp(1.9rem, 3.6vw, 2.7rem);
+  font-weight: 760;
+  color: #161f3b;
+  line-height: 1.12;
+  margin: 0 0 16px;
+}
+
+.dsa-sub {
+  font-size: 1.06rem;
+  line-height: 1.6;
+  color: rgba(22, 31, 59, 0.68);
+  margin: 0 auto 28px;
+  max-width: 560px;
+}
+
+.dsa-reassure {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 20px 0 0;
+  font-size: 0.86rem;
+  color: rgba(22, 31, 59, 0.55);
+}
+.dsa-reassure-icon {
+  color: #a0036c;
+}
+
+/* ── Questions ───────────────────────────────────────────── */
+.dsa-progress {
+  margin-bottom: 18px;
+}
+.dsa-progress-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.dsa-progress-count {
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(22, 31, 59, 0.55);
+}
+.dsa-restart {
+  font-size: 0.82rem;
+}
+.dsa-progress-track {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(22, 31, 59, 0.1);
+  overflow: hidden;
+}
+.dsa-progress-fill {
+  display: block;
+  height: 100%;
+  background: #a0036c;
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+
+.dsa-card {
+  background: #ffffff;
+  border: 1px solid rgba(22, 31, 59, 0.1);
+  border-radius: 18px;
+  padding: 30px 28px;
+  box-shadow: 0 10px 34px rgba(22, 31, 59, 0.07);
+}
+
+.dsa-fieldset {
+  border: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.dsa-legend {
+  display: block;
+  font-size: clamp(1.15rem, 2.2vw, 1.4rem);
+  font-weight: 720;
+  color: #161f3b;
+  line-height: 1.3;
+  margin-bottom: 6px;
+  padding: 0;
+}
+.dsa-help {
+  font-size: 0.88rem;
+  color: rgba(22, 31, 59, 0.55);
+  margin: 0 0 18px;
+}
+
+.dsa-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.dsa-option {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  min-height: 52px;
+  padding: 12px 16px;
+  border: 1px solid rgba(22, 31, 59, 0.16);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.dsa-option:hover {
+  border-color: rgba(160, 3, 108, 0.5);
+  background: rgba(160, 3, 108, 0.03);
+}
+.dsa-option.is-selected {
+  border-color: #a0036c;
+  background: rgba(160, 3, 108, 0.06);
+}
+
+/* Visually-hidden native radio (kept accessible + keyboard operable) */
+.dsa-option-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.dsa-option-mark {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid rgba(22, 31, 59, 0.3);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  position: relative;
+}
+.dsa-option.is-selected .dsa-option-mark {
+  border-color: #a0036c;
+  box-shadow: inset 0 0 0 4px #a0036c;
+}
+
+.dsa-option-label {
+  font-size: 0.98rem;
+  line-height: 1.4;
+  color: #161f3b;
+}
+
+.dsa-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 18px;
+}
+.dsa-nav-hint {
+  font-size: 0.82rem;
+  color: rgba(22, 31, 59, 0.45);
+}
+
+/* ── Swipe / fade transitions (CSS only) ─────────────────── */
+@keyframes dsa-in-from-right {
+  from { opacity: 0; transform: translateX(28px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes dsa-in-from-left {
+  from { opacity: 0; transform: translateX(-28px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes dsa-fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.dsa-swipe--forward { animation: dsa-in-from-right 0.28s ease both; }
+.dsa-swipe--back { animation: dsa-in-from-left 0.28s ease both; }
+.dsa-fade { animation: dsa-fade-in 0.3s ease both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .dsa-swipe--forward,
+  .dsa-swipe--back,
+  .dsa-fade,
+  .dsa-progress-fill {
+    animation: none;
+    transition: none;
+  }
+}
+
+/* ── Partial result ──────────────────────────────────────── */
+.dsa-result-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.dsa-result-kicker-icon {
+  font-size: 0.9rem;
+}
+.dsa-result-head {
+  text-align: center;
+  margin-bottom: 28px;
+}
+.dsa-result-lead {
+  font-size: 1rem;
+  color: rgba(22, 31, 59, 0.6);
+  margin: 0 0 6px;
+}
+.dsa-result-style {
+  font-size: clamp(1.8rem, 3.4vw, 2.5rem);
+  font-weight: 760;
+  color: #161f3b;
+  margin: 0 0 12px;
+}
+.dsa-result-blurb {
+  font-size: 1.05rem;
+  line-height: 1.6;
+  color: rgba(22, 31, 59, 0.75);
+  margin: 0 auto;
+  max-width: 540px;
+}
+.dsa-result-note {
+  font-size: 0.9rem;
+  color: rgba(22, 31, 59, 0.55);
+  margin: 14px auto 0;
+  max-width: 500px;
+}
+
+.dsa-result-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 22px;
+  align-items: start;
+}
+
+.dsa-includes {
+  background: #ffffff;
+  border: 1px solid rgba(22, 31, 59, 0.1);
+  border-radius: 18px;
+  padding: 26px 24px;
+}
+.dsa-includes-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(22, 31, 59, 0.55);
+  margin: 0 0 16px;
+}
+.dsa-includes-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.dsa-includes-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  font-size: 0.95rem;
+  line-height: 1.45;
+  color: #161f3b;
+}
+.dsa-includes-check {
+  margin-top: 3px;
+  color: #a0036c;
+  font-size: 0.82rem;
+  flex-shrink: 0;
+}
+
+.dsa-email-card {
+  background: #161f3b;
+  border-radius: 18px;
+  padding: 26px 24px;
+  box-shadow: 0 10px 34px rgba(22, 31, 59, 0.12);
+}
+.dsa-email-form {
+  display: flex;
+  flex-direction: column;
+}
+.dsa-email-label {
+  font-size: 0.95rem;
+  font-weight: 640;
+  color: #ffffff;
+  margin-bottom: 12px;
+  line-height: 1.4;
+}
+.dsa-email-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 13px 15px;
+  font-size: 1rem;
+  color: #161f3b;
+  background: #ffffff;
+  border: 1px solid rgba(22, 31, 59, 0.2);
+  border-radius: 10px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+.dsa-email-submit {
+  margin-top: 12px;
+  width: 100%;
+}
+.dsa-email-error {
+  margin: 10px 0 0;
+  font-size: 0.85rem;
+  color: #ffd0e6;
+}
+.dsa-email-fine {
+  margin: 14px 0 0;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.dsa-result-foot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  margin-top: 26px;
+}
+
+/* ── Confirmation ────────────────────────────────────────── */
+.dsa-confirm {
+  text-align: center;
+  max-width: 520px;
+  margin: 0 auto;
+  padding: 20px 0;
+}
+.dsa-confirm-icon {
+  font-size: 2.4rem;
+  color: #a0036c;
+  margin-bottom: 16px;
+}
+.dsa-confirm-title {
+  font-size: clamp(1.5rem, 3vw, 2rem);
+  font-weight: 760;
+  color: #161f3b;
+  margin: 0 0 12px;
+}
+.dsa-confirm-body {
+  font-size: 1.02rem;
+  line-height: 1.6;
+  color: rgba(22, 31, 59, 0.7);
+  margin: 0 0 20px;
+}
+
+/* ── Responsive ──────────────────────────────────────────── */
+@media (max-width: 720px) {
+  .dsa-result-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .dsa {
+    padding: 68px 20px 76px;
+  }
+  .dsa-card {
+    padding: 24px 20px;
+  }
+  .dsa-nav-hint {
+    display: none;
+  }
+  .dsa-result-foot {
+    flex-direction: column;
+    gap: 10px;
+  }
+}

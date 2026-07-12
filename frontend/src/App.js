@@ -32,7 +32,6 @@ import PricingPage from './pages/Marketing/PricingPage';
 import ApiPage from './pages/Marketing/ApiPage';
 import DemosPage from './pages/Resources/DemosPage';
 import TutorialsPage from './pages/Resources/TutorialsPage';
-import IntegrationsPage from './pages/Resources/IntegrationsPage';
 import ConnectorsPage from './pages/Resources/ConnectorsPage';
 import PluginsPage from './pages/Resources/PluginsPage';
 import NotFoundPage from './pages/NotFound/NotFound';
@@ -50,6 +49,8 @@ const Activity = lazy(() => import('./jaspenInterface/Activity/Activity'));
 const ConnectorsManage = lazy(() => import('./jaspenInterface/Connectors/ConnectorsManage'));
 const Account = lazy(() => import('./jaspenInterface/Account/Account'));
 const JaspenAdmin = lazy(() => import('./jaspenInterface/Admin/JaspenAdmin'));
+const MasterAnalytics = lazy(() => import('./jaspenInterface/Admin/MasterAnalytics'));
+const MasterErrors = lazy(() => import('./jaspenInterface/Admin/MasterErrors'));
 const Knowledge = lazy(() => import('./jaspenInterface/Knowledge/Knowledge'));
 const Team = lazy(() => import('./jaspenInterface/Team/Team'));
 const EnterpriseAdmin = lazy(() => import('./jaspenInterface/EnterpriseAdmin/EnterpriseAdmin'));
@@ -90,7 +91,6 @@ function AnimatedAppRoutes({ withShell }) {
             <Route path="/pages/api" element={withShell(<ApiPage />, { title: 'API', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/pages/resources/demos" element={withShell(<DemosPage />, { title: 'Demos', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/pages/resources/tutorials" element={withShell(<TutorialsPage />, { title: 'Tutorials', showHeader: false, fullBleed: true, noPadding: true })} />
-            <Route path="/pages/resources/integrations" element={withShell(<IntegrationsPage />, { title: 'Integrations', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/pages/resources/connectors" element={withShell(<ConnectorsPage />, { title: 'Connectors', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/pages/resources/plugins" element={withShell(<PluginsPage />, { title: 'Plugins', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/auth/callback"  element={withShell(<AuthCallback />, { title: 'Authentication', showHeader: false, fullBleed: true, noPadding: true })} />
@@ -227,6 +227,32 @@ function AnimatedAppRoutes({ withShell }) {
                 <ProtectedRoute>
                   {withShell(<JaspenAdmin />, {
                     title: 'Jaspen Admin',
+                    showHeader: false,
+                    fullBleed: true,
+                    noPadding: true, backToJaspen: true,
+                  })}
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/analytics"
+              element={
+                <ProtectedRoute>
+                  {withShell(<MasterAnalytics />, {
+                    title: 'Analytics',
+                    showHeader: false,
+                    fullBleed: true,
+                    noPadding: true, backToJaspen: true,
+                  })}
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/errors"
+              element={
+                <ProtectedRoute>
+                  {withShell(<MasterErrors />, {
+                    title: 'Error Dashboard',
                     showHeader: false,
                     fullBleed: true,
                     noPadding: true, backToJaspen: true,

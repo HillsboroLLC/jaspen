@@ -192,6 +192,7 @@ def create_app():
         MAIL_USERNAME                  = os.getenv('MAIL_USERNAME'),
         MAIL_PASSWORD                  = os.getenv('MAIL_PASSWORD'),
         MAIL_DEFAULT_SENDER            = os.getenv('MAIL_DEFAULT_SENDER'),
+        LEAD_TOOLKIT_LINK_TTL_SECONDS  = int(os.getenv('LEAD_TOOLKIT_LINK_TTL_SECONDS', str(60 * 60 * 24 * 30))),
     )
 
     # —— Stripe setup —— #

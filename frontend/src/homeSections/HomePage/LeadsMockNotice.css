@@ -1,0 +1,37 @@
+/* Dev-only mock indicator. Deliberately amber/warning, not brand colors. */
+.leads-mock-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 0 0 14px;
+  padding: 9px 12px;
+  border: 1px dashed #b8860b;
+  border-radius: 8px;
+  background: #fff8e6;
+  color: #6b5200;
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.lmn-dot {
+  flex-shrink: 0;
+  width: 9px;
+  height: 9px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: #d9a400;
+  box-shadow: 0 0 0 3px rgba(217, 164, 0, 0.25);
+}
+
+.leads-mock-notice code {
+  font-size: 0.72rem;
+  background: rgba(184, 134, 11, 0.14);
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+
+.lmn-hint {
+  display: block;
+  margin-top: 2px;
+  opacity: 0.85;
+}
