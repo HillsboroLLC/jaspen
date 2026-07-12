@@ -558,3 +558,20 @@
     gap: 10px;
   }
 }
+
+@media (max-width: 520px) {
+  .dsa-orb--magenta,
+  .dsa-orb--violet {
+    width: 220px;
+    height: 220px;
+    filter: blur(46px);
+  }
+
+  .dsa-orb--magenta {
+    left: -130px;
+  }
+
+  .dsa-orb--violet {
+    right: -150px;
+  }
+}

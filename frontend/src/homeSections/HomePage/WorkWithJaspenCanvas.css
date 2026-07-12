@@ -242,3 +242,49 @@
   .wj-head h3 { font-size: 1.6rem; }
   .wj-crit-label { width: 96px; }
 }
+
+@media (max-width: 520px) {
+  .wj-section {
+    padding: 64px 14px;
+  }
+
+  .wj-window {
+    height: 620px;
+    border-radius: 14px;
+  }
+
+  .wj-topbar {
+    gap: 8px;
+    padding: 12px 14px;
+  }
+
+  .wj-stages {
+    min-width: 0;
+    flex: 1;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .wj-stage {
+    font-size: 9.5px;
+  }
+
+  .wj-sep {
+    display: none;
+  }
+
+  .wj-topicons {
+    display: none;
+  }
+
+  .wj-sc-top,
+  .wj-task,
+  .wj-to-card {
+    align-items: flex-start;
+  }
+
+  .wj-task,
+  .wj-to-card {
+    flex-wrap: wrap;
+  }
+}
