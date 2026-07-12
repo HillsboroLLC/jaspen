@@ -105,6 +105,39 @@ class LeadEmailDelivery(db.Model):
     sent_at = db.Column(db.DateTime, nullable=True)
 
 
+class LeadDecisionProfile(db.Model):
+    __tablename__ = 'lead_decision_profiles'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    lead_id = db.Column(
+        db.String(36),
+        db.ForeignKey('leads.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    attribution_event_id = db.Column(
+        db.Integer,
+        db.ForeignKey('lead_attribution_events.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    email = db.Column(db.String(255), nullable=False, index=True)
+    normalized_email = db.Column(db.String(255), nullable=False, index=True)
+    source = db.Column(db.String(80), nullable=False, default='decision-style-assessment', index=True)
+    answers = db.Column(db.JSON, nullable=False)
+    client_style_key = db.Column(db.String(80), nullable=True)
+    verified_style_key = db.Column(db.String(80), nullable=False, index=True)
+    style_name = db.Column(db.String(120), nullable=False)
+    is_fallback = db.Column(db.Boolean, nullable=False, default=False)
+    affinity = db.Column(db.JSON, nullable=False, default=dict)
+    created_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        index=True,
+    )
+
+
 class EmailSuppression(db.Model):
     __tablename__ = 'email_suppressions'
 

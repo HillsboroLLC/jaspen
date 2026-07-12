@@ -51,7 +51,6 @@ export default function DecisionStyleAssessment() {
   const [email, setEmail] = useState('');
   const [emailError, setEmailError] = useState('');
   const [submitStatus, setSubmitStatus] = useState('idle'); // idle | sending | done
-  const [saveOk, setSaveOk] = useState(true);
 
   const liveRef = useRef(null);
 
@@ -116,7 +115,6 @@ export default function DecisionStyleAssessment() {
     setEmail('');
     setEmailError('');
     setSubmitStatus('idle');
-    setSaveOk(true);
     setDirection('back');
     setStep('intro');
   };
@@ -136,19 +134,24 @@ export default function DecisionStyleAssessment() {
     setEmailError('');
     setSubmitStatus('sending');
 
-    // Best-effort capture. A backend hiccup must never trap the user on this
-    // screen, so we always advance to a graceful confirmation; the copy adapts
-    // to whether the save was actually confirmed. No email is sent yet (no
-    // automation exists), so we never claim delivery.
-    let ok = false;
     try {
-      const res = await submitLead({ email: value, source: LEAD_SOURCE });
-      ok = !!res && res.ok;
+      const res = await submitLead({
+        email: value.toLowerCase(),
+        source: LEAD_SOURCE,
+        assessmentAnswers: answers,
+        decisionStyle: result?.style?.key,
+      });
+      if (!res || !res.ok) {
+        throw new Error('Decision Profile request was not accepted.');
+      }
     } catch {
-      ok = false;
+      setSubmitStatus('idle');
+      setEmailError(
+        'We could not email your Decision Profile right now. Your result is still here, so you can try again in a moment.'
+      );
+      return;
     }
 
-    setSaveOk(ok);
     setSubmitStatus('done');
     clearSaved();
     setStep('confirmed');
@@ -322,8 +325,8 @@ export default function DecisionStyleAssessment() {
                     {submitStatus === 'sending' ? 'Saving…' : 'Email my full Decision Profile'}
                   </button>
                   <p className="dsa-email-fine" id="dsa-email-fine">
-                    One email with your profile. We may share the occasional Jaspen update.
-                    Unsubscribe anytime.
+                    One email with your profile. You will not be added to a marketing list from
+                    this request.
                   </p>
                 </form>
               </div>
@@ -345,24 +348,10 @@ export default function DecisionStyleAssessment() {
         {step === 'confirmed' && result && (
           <div className="dsa-confirm dsa-fade" ref={liveRef} tabIndex={-1} role="status">
             <i className="fa-solid fa-envelope-circle-check dsa-confirm-icon" aria-hidden="true" />
-            {saveOk ? (
-              <>
-                <h2 className="dsa-confirm-title">You&apos;re on the list.</h2>
-                <p className="dsa-confirm-body">
-                  Your email is saved. As an <strong>{result.style.name}</strong>, your full
-                  Decision Profile will be on its way the moment the results experience is live.
-                </p>
-              </>
-            ) : (
-              <>
-                <h2 className="dsa-confirm-title">You&apos;re all set.</h2>
-                <p className="dsa-confirm-body">
-                  We couldn&apos;t confirm the save just now, but your reflection is safe here. As
-                  an <strong>{result.style.name}</strong>, your full Decision Profile will follow
-                  once the results experience is live.
-                </p>
-              </>
-            )}
+            <h2 className="dsa-confirm-title">Your Decision Profile is on its way.</h2>
+            <p className="dsa-confirm-body">
+              Check your inbox in the next few minutes for a closer look at your decision style.
+            </p>
             <button type="button" className="dsa-link" onClick={restart}>
               Take the reflection again
             </button>

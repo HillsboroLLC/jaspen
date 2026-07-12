@@ -61,6 +61,29 @@ describe('submitLead', () => {
     expect(res.ok).toBe(true);
   });
 
+  it('includes assessment answers and the client-side style when provided', async () => {
+    delete process.env.REACT_APP_LEADS_MOCK;
+    const fetchSpy = jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValue({ ok: true, status: 201, json: async () => ({ ok: true }) });
+
+    await submitLead({
+      email: 'A@B.COM',
+      source: 'decision-style-assessment',
+      assessmentAnswers: { q1_instinct_vs_research: 'q1_e' },
+      decisionStyle: 'evidence_builder',
+    });
+
+    const [, options] = fetchSpy.mock.calls[0];
+    expect(JSON.parse(options.body)).toEqual({
+      email: 'A@B.COM',
+      source: 'decision-style-assessment',
+      marketing_opt_in: false,
+      assessment_answers: { q1_instinct_vs_research: 'q1_e' },
+      decision_style: 'evidence_builder',
+    });
+  });
+
   it('returns a mocked ok response without calling fetch in success mode', async () => {
     process.env.REACT_APP_LEADS_MOCK = 'success';
     const fetchSpy = jest.spyOn(global, 'fetch');
