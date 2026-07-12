@@ -1,7 +1,7 @@
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import DecisionWorkbookLeadCapture from './DecisionWorkbookLeadCapture';
+import DecisionPlanningToolkitLeadCapture from './DecisionPlanningToolkitLeadCapture';
 
 // In the test env REACT_APP_LEADS_MOCK is unset, so submitLead() hits fetch,
 // which we spy on. We also stub anchor.click so the jsdom "navigation not
@@ -14,55 +14,55 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
-describe('DecisionWorkbookLeadCapture', () => {
-  it('renders the distinct workbook framing and CTA', () => {
-    render(<DecisionWorkbookLeadCapture />);
+describe('DecisionPlanningToolkitLeadCapture', () => {
+  it('renders the distinct toolkit framing and CTA', () => {
+    render(<DecisionPlanningToolkitLeadCapture />);
     expect(
-      screen.getByRole('heading', { name: /have an important decision to make/i })
+      screen.getByRole('heading', { name: /have an important decision to work through/i })
     ).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: /email me the decision workbook/i })
+      screen.getByRole('button', { name: /email me the toolkit/i })
     ).toBeInTheDocument();
   });
 
-  it('submits with the decision-workbook source and starts the download', async () => {
+  it('submits with the decision-planning-toolkit source and starts the download', async () => {
     const user = userEvent.setup();
     const fetchSpy = jest
       .spyOn(global, 'fetch')
       .mockResolvedValue({ ok: true, status: 201, json: async () => ({ ok: true }) });
 
-    render(<DecisionWorkbookLeadCapture />);
-    await user.type(screen.getByLabelText(/your email/i), 'lydia@jaspen.ai');
-    await user.click(screen.getByRole('button', { name: /email me the decision workbook/i }));
+    render(<DecisionPlanningToolkitLeadCapture />);
+    await user.type(screen.getByLabelText(/where should we send it/i), 'lydia@jaspen.ai');
+    await user.click(screen.getByRole('button', { name: /email me the toolkit/i }));
 
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
     const body = JSON.parse(fetchSpy.mock.calls[0][1].body);
-    expect(body).toEqual({ email: 'lydia@jaspen.ai', source: 'decision-workbook' });
+    expect(body).toEqual({ email: 'lydia@jaspen.ai', source: 'decision-planning-toolkit' });
 
     // Download happened and the success state shows.
     expect(clickSpy).toHaveBeenCalled();
-    expect(await screen.findByText(/your workbook is downloading/i)).toBeInTheDocument();
+    expect(await screen.findByText(/your toolkit is downloading/i)).toBeInTheDocument();
   });
 
-  it('still downloads the workbook even if lead capture fails', async () => {
+  it('still downloads the toolkit even if lead capture fails', async () => {
     const user = userEvent.setup();
     jest.spyOn(global, 'fetch').mockRejectedValue(new Error('network down'));
 
-    render(<DecisionWorkbookLeadCapture />);
-    await user.type(screen.getByLabelText(/your email/i), 'lydia@jaspen.ai');
-    await user.click(screen.getByRole('button', { name: /email me the decision workbook/i }));
+    render(<DecisionPlanningToolkitLeadCapture />);
+    await user.type(screen.getByLabelText(/where should we send it/i), 'lydia@jaspen.ai');
+    await user.click(screen.getByRole('button', { name: /email me the toolkit/i }));
 
     await waitFor(() => expect(clickSpy).toHaveBeenCalled());
-    expect(await screen.findByText(/your workbook is downloading/i)).toBeInTheDocument();
+    expect(await screen.findByText(/your toolkit is downloading/i)).toBeInTheDocument();
   });
 
   it('rejects an invalid email without submitting or downloading', async () => {
     const user = userEvent.setup();
     const fetchSpy = jest.spyOn(global, 'fetch');
 
-    render(<DecisionWorkbookLeadCapture />);
-    await user.type(screen.getByLabelText(/your email/i), 'nope');
-    await user.click(screen.getByRole('button', { name: /email me the decision workbook/i }));
+    render(<DecisionPlanningToolkitLeadCapture />);
+    await user.type(screen.getByLabelText(/where should we send it/i), 'nope');
+    await user.click(screen.getByRole('button', { name: /email me the toolkit/i }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/valid email/i);
     expect(fetchSpy).not.toHaveBeenCalled();

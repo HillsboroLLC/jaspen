@@ -1,14 +1,14 @@
-/* Decision Workbook lead magnet. Two columns: offer copy left, form card right.
-   Site palette only. Sits on white to stay visually distinct from the cream
-   Decision Style Assessment section directly above it. */
+/* Decision Planning Toolkit lead magnet. Two columns: offer copy left, form
+   card right. Site palette only. Sits on white to stay visually distinct from
+   the cream Decision Style Assessment section directly above it. */
 
-.dwlc {
+.dptl {
   background: #ffffff;
   padding: 88px 40px 96px;
   border-top: 1px solid rgba(22, 31, 59, 0.08);
 }
 
-.dwlc-inner {
+.dptl-inner {
   max-width: 1000px;
   margin: 0 auto;
   display: grid;
@@ -17,7 +17,7 @@
   align-items: center;
 }
 
-.dwlc-eyebrow {
+.dptl-eyebrow {
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.18em;
@@ -26,7 +26,7 @@
   margin: 0 0 12px;
 }
 
-.dwlc-heading {
+.dptl-heading {
   font-size: clamp(1.8rem, 3.4vw, 2.6rem);
   font-weight: 760;
   color: #161f3b;
@@ -34,14 +34,14 @@
   margin: 0 0 14px;
 }
 
-.dwlc-sub {
+.dptl-sub {
   font-size: 1.04rem;
   line-height: 1.6;
   color: rgba(22, 31, 59, 0.68);
   margin: 0 0 20px;
 }
 
-.dwlc-list {
+.dptl-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -50,7 +50,7 @@
   gap: 11px;
 }
 
-.dwlc-list li {
+.dptl-list li {
   display: flex;
   align-items: flex-start;
   gap: 11px;
@@ -59,15 +59,25 @@
   color: #161f3b;
 }
 
-.dwlc-check {
+.dptl-check {
   margin-top: 3px;
   color: #a0036c;
   font-size: 0.82rem;
   flex-shrink: 0;
 }
 
+/* One-line bridge to Jaspen — the "organize vs. challenge" positioning. */
+.dptl-bridge {
+  margin: 20px 0 0;
+  padding-left: 14px;
+  border-left: 3px solid rgba(160, 3, 108, 0.5);
+  font-size: 0.98rem;
+  line-height: 1.5;
+  color: #161f3b;
+}
+
 /* Form card — bordered to lift off the white background */
-.dwlc-form-card {
+.dptl-form-card {
   background: #f8f5f0;
   border: 1px solid rgba(22, 31, 59, 0.1);
   border-radius: 18px;
@@ -75,19 +85,19 @@
   box-shadow: 0 10px 34px rgba(22, 31, 59, 0.06);
 }
 
-.dwlc-form {
+.dptl-form {
   display: flex;
   flex-direction: column;
 }
 
-.dwlc-label {
+.dptl-label {
   font-size: 0.88rem;
   font-weight: 640;
   color: #161f3b;
   margin-bottom: 10px;
 }
 
-.dwlc-input {
+.dptl-input {
   width: 100%;
   box-sizing: border-box;
   padding: 13px 15px;
@@ -100,13 +110,13 @@
   transition: border-color 0.15s ease;
 }
 
-.dwlc-input:focus-visible {
+.dptl-input:focus-visible {
   border-color: #a0036c;
   outline: 3px solid rgba(160, 3, 108, 0.28);
   outline-offset: 0;
 }
 
-.dwlc-button {
+.dptl-button {
   margin-top: 12px;
   min-height: 48px;
   padding: 13px 18px;
@@ -120,27 +130,27 @@
   transition: background 0.15s ease;
 }
 
-.dwlc-button:hover {
+.dptl-button:hover {
   background: #86025b;
 }
 
-.dwlc-button:focus-visible {
+.dptl-button:focus-visible {
   outline: 3px solid rgba(160, 3, 108, 0.35);
   outline-offset: 2px;
 }
 
-.dwlc-button:disabled {
+.dptl-button:disabled {
   opacity: 0.7;
   cursor: default;
 }
 
-.dwlc-error {
+.dptl-error {
   margin: 10px 0 0;
   font-size: 0.85rem;
   color: #a0036c;
 }
 
-.dwlc-fine {
+.dptl-fine {
   margin: 14px 0 0;
   font-size: 0.78rem;
   line-height: 1.5;
@@ -148,48 +158,48 @@
 }
 
 /* Success state */
-.dwlc-done {
+.dptl-done {
   text-align: center;
   padding: 8px 4px;
 }
 
-.dwlc-done-icon {
+.dptl-done-icon {
   font-size: 2rem;
   color: #a0036c;
   margin-bottom: 12px;
 }
 
-.dwlc-done-title {
+.dptl-done-title {
   font-size: 1.15rem;
   font-weight: 720;
   color: #161f3b;
   margin: 0 0 8px;
 }
 
-.dwlc-done-note {
+.dptl-done-note {
   font-size: 0.9rem;
   line-height: 1.5;
   color: rgba(22, 31, 59, 0.6);
   margin: 0;
 }
 
-.dwlc-done-note a {
+.dptl-done-note a {
   color: #a0036c;
   font-weight: 600;
 }
 
 @media (max-width: 820px) {
-  .dwlc-inner {
+  .dptl-inner {
     grid-template-columns: 1fr;
     gap: 32px;
   }
 }
 
 @media (max-width: 768px) {
-  .dwlc {
+  .dptl {
     padding: 64px 20px 72px;
   }
-  .dwlc-form-card {
+  .dptl-form-card {
     padding: 24px 20px;
   }
 }

@@ -48,12 +48,12 @@ describe('submitLead', () => {
       .spyOn(global, 'fetch')
       .mockResolvedValue({ ok: true, status: 201, json: async () => ({ ok: true }) });
 
-    const res = await submitLead({ email: 'a@b.com', source: 'decision-workbook' });
+    const res = await submitLead({ email: 'a@b.com', source: 'decision-planning-toolkit' });
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const [url, options] = fetchSpy.mock.calls[0];
     expect(url).toBe(LEADS_ENDPOINT);
-    expect(JSON.parse(options.body)).toEqual({ email: 'a@b.com', source: 'decision-workbook' });
+    expect(JSON.parse(options.body)).toEqual({ email: 'a@b.com', source: 'decision-planning-toolkit' });
     expect(res.ok).toBe(true);
   });
 
