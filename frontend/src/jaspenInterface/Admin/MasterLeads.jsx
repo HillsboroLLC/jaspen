@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faAddressBook, faEnvelope, faFilter, faRotateRight } from '@fortawesome/free-solid-svg-icons';
+import { faAddressBook, faCheck, faEnvelope, faFilter, faMinus, faRotateRight } from '@fortawesome/free-solid-svg-icons';
 import { API_BASE } from '../../config/apiBase';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import AppMenu from '../shared/AppMenu';
@@ -24,6 +24,16 @@ function formatDate(value) {
 
 function compactSource(lead) {
   return lead?.utm_source || lead?.source || 'unknown';
+}
+
+function LeadToolCell({ tool }) {
+  const used = Boolean(tool?.used);
+  return (
+    <span className={`master-tool-check${used ? ' is-used' : ''}`} title={used ? `${tool.count || 1} capture${Number(tool.count || 1) === 1 ? '' : 's'}` : 'No capture yet'}>
+      <FontAwesomeIcon icon={used ? faCheck : faMinus} />
+      {used && tool?.latest_at && <span>{formatDate(tool.latest_at)}</span>}
+    </span>
+  );
 }
 
 export default function MasterLeads() {
@@ -82,7 +92,7 @@ export default function MasterLeads() {
             <div>
               <p className="int-eyebrow">Master Admin</p>
               <h1>Leads</h1>
-              <p>Read-only lead capture list with attribution, email status, Decision Profile style, and unsubscribe state.</p>
+              <p>Read-only lead capture list with tool usage, attribution, email status, Decision Profile style, and unsubscribe state.</p>
             </div>
             <button type="button" className="master-admin-refresh" onClick={loadLeads} disabled={loading}>
               <FontAwesomeIcon icon={faRotateRight} />
@@ -137,6 +147,8 @@ export default function MasterLeads() {
                       <tr>
                         <th>Email</th>
                         <th>Source</th>
+                        <th>Toolkit</th>
+                        <th>Decision Profile</th>
                         <th>Profile</th>
                         <th>Email</th>
                         <th>Unsubscribed</th>
@@ -155,6 +167,12 @@ export default function MasterLeads() {
                           <td>
                             {compactSource(lead)}
                             {lead.utm_campaign && <span>{lead.utm_campaign}</span>}
+                          </td>
+                          <td>
+                            <LeadToolCell tool={lead.lead_tools?.decision_planning_toolkit} />
+                          </td>
+                          <td>
+                            <LeadToolCell tool={lead.lead_tools?.decision_profile} />
                           </td>
                           <td>
                             {lead.decision_profile?.style_name || 'None yet'}

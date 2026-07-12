@@ -207,6 +207,26 @@ body.jaspen-sidebar-open .master-admin-inner {
   font-size: 0.8rem;
 }
 
+.master-leads-table .master-tool-check {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+  margin-top: 0;
+  color: #94a3b8;
+  font-weight: 700;
+}
+
+.master-leads-table .master-tool-check.is-used {
+  color: #047857;
+}
+
+.master-leads-table .master-tool-check span {
+  margin-top: 0;
+  color: var(--int-text-sub);
+  font-weight: 400;
+}
+
 .master-filter-bar {
   display: grid;
   grid-template-columns: minmax(240px, 1fr) minmax(200px, 280px) auto;

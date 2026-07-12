@@ -97,6 +97,13 @@ def test_master_leads_support_only_and_includes_safe_lead_summary(client, admin_
         marketing_opt_in=True,
         email_delivery_requested=True,
     ))
+    db.session.add(LeadAttributionEvent(
+        lead_id=lead.id,
+        source="decision-planning-toolkit",
+        utm_source="linkedin",
+        marketing_opt_in=False,
+        email_delivery_requested=True,
+    ))
     db.session.add(LeadDecisionProfile(
         lead_id=lead.id,
         email="lead@example.com",
@@ -129,6 +136,10 @@ def test_master_leads_support_only_and_includes_safe_lead_summary(client, admin_
     assert data["leads"][0]["name"] == "Lead Person"
     assert data["leads"][0]["decision_profile"]["style_name"] == "Fast Mover"
     assert data["leads"][0]["latest_email"]["status"] == "sent"
+    assert data["leads"][0]["lead_tools"]["decision_profile"]["used"] is True
+    assert data["leads"][0]["lead_tools"]["decision_profile"]["count"] == 1
+    assert data["leads"][0]["lead_tools"]["decision_planning_toolkit"]["used"] is True
+    assert data["leads"][0]["lead_tools"]["decision_planning_toolkit"]["count"] == 1
     assert data["leads"][0]["suppression"]["reason"] == "unsubscribe"
     assert "answers" not in data["leads"][0]["decision_profile"]
 

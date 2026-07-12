@@ -56,6 +56,10 @@ from app.tool_registry import get_context_budget, get_tool_entitlements
 admin_bp = Blueprint("admin", __name__)
 ADMIN_ALLOWED_CONNECTOR_FIELDS = {"connection_status", "auto_sync"}
 MASTER_ADMIN_EMAIL = "support@jaspen.ai"
+LEAD_TOOL_SOURCES = {
+    "decision_planning_toolkit": "decision-planning-toolkit",
+    "decision_profile": "decision-style-assessment",
+}
 
 
 def _to_bool(value, default=False):
@@ -398,7 +402,14 @@ def _contains_scorecard(value):
     return False
 
 
-def _serialize_lead_for_master_admin(lead, latest_event=None, latest_profile=None, latest_delivery=None, suppression=None):
+def _serialize_lead_for_master_admin(
+    lead,
+    latest_event=None,
+    latest_profile=None,
+    latest_delivery=None,
+    suppression=None,
+    lead_tools=None,
+):
     return {
         "id": lead.id,
         "email": lead.email,
@@ -434,6 +445,10 @@ def _serialize_lead_for_master_admin(lead, latest_event=None, latest_profile=Non
             "reason": suppression.reason,
             "created_at": _iso(suppression.created_at),
         } if suppression else None,
+        "lead_tools": lead_tools or {
+            key: {"used": False, "count": 0, "latest_at": None}
+            for key in LEAD_TOOL_SOURCES
+        },
     }
 
 
@@ -662,6 +677,13 @@ def master_leads():
     normalized_emails = [lead.normalized_email for lead in leads if lead.normalized_email]
 
     latest_events = {}
+    lead_tools = {
+        lead_id: {
+            key: {"used": False, "count": 0, "latest_at": None}
+            for key in LEAD_TOOL_SOURCES
+        }
+        for lead_id in lead_ids
+    }
     if lead_ids:
         for event in (
             LeadAttributionEvent.query
@@ -670,6 +692,18 @@ def master_leads():
             .all()
         ):
             latest_events.setdefault(event.lead_id, event)
+            source_key = str(event.source or "").strip().lower()
+            for tool_key, expected_source in LEAD_TOOL_SOURCES.items():
+                if source_key != expected_source:
+                    continue
+                tool = lead_tools.setdefault(event.lead_id, {}).setdefault(
+                    tool_key,
+                    {"used": False, "count": 0, "latest_at": None},
+                )
+                tool["used"] = True
+                tool["count"] += 1
+                if tool["latest_at"] is None:
+                    tool["latest_at"] = _iso(event.created_at)
 
     latest_profiles = {}
     if lead_ids:
@@ -729,6 +763,7 @@ def master_leads():
                 latest_profile=latest_profiles.get(lead.id),
                 latest_delivery=latest_deliveries.get(lead.id),
                 suppression=suppressions.get((lead.normalized_email, "marketing")),
+                lead_tools=lead_tools.get(lead.id),
             )
             for lead in leads
         ],
