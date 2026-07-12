@@ -32,7 +32,6 @@ import PricingPage from './pages/Marketing/PricingPage';
 import ApiPage from './pages/Marketing/ApiPage';
 import DemosPage from './pages/Resources/DemosPage';
 import TutorialsPage from './pages/Resources/TutorialsPage';
-import IntegrationsPage from './pages/Resources/IntegrationsPage';
 import ConnectorsPage from './pages/Resources/ConnectorsPage';
 import PluginsPage from './pages/Resources/PluginsPage';
 import NotFoundPage from './pages/NotFound/NotFound';
@@ -90,7 +89,6 @@ function AnimatedAppRoutes({ withShell }) {
             <Route path="/pages/api" element={withShell(<ApiPage />, { title: 'API', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/pages/resources/demos" element={withShell(<DemosPage />, { title: 'Demos', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/pages/resources/tutorials" element={withShell(<TutorialsPage />, { title: 'Tutorials', showHeader: false, fullBleed: true, noPadding: true })} />
-            <Route path="/pages/resources/integrations" element={withShell(<IntegrationsPage />, { title: 'Integrations', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/pages/resources/connectors" element={withShell(<ConnectorsPage />, { title: 'Connectors', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/pages/resources/plugins" element={withShell(<PluginsPage />, { title: 'Plugins', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/auth/callback"  element={withShell(<AuthCallback />, { title: 'Authentication', showHeader: false, fullBleed: true, noPadding: true })} />

@@ -442,7 +442,6 @@ export default function HomePage() {
               <Link to="/pages/jaspen-in-jira">Jaspen in Jira</Link>
               <Link to="/pages/jaspen-in-smartsheets">Jaspen in Smartsheets</Link>
               <Link to="/pages/resources/connectors">Connectors</Link>
-              <Link to="/pages/resources/integrations">Integrations</Link>
               <Link to="/pages/resources/plugins">Plugins</Link>
             </div>
             <div className="jaspen-footer-col">
