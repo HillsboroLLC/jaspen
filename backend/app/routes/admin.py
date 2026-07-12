@@ -34,7 +34,7 @@ from app.connector_store import (
     save_connector_state,
     update_connector_settings,
 )
-from app.models import AdminAuditEvent, Lead, User, UserAuthSession, UserSession
+from app.models import AdminAuditEvent, Lead, LeadAttributionEvent, User, UserAuthSession, UserSession
 from app.public_intake_controls import (
     get_kill_switch_state,
     reset_kill_switch_cache,
@@ -480,8 +480,8 @@ def master_analytics():
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     week_start = now - timedelta(days=7)
 
-    leads_today = Lead.query.filter(Lead.created_at >= today_start).all()
-    all_leads = Lead.query.order_by(Lead.created_at.desc()).limit(500).all()
+    leads_today = LeadAttributionEvent.query.filter(LeadAttributionEvent.created_at >= today_start).all()
+    all_lead_events = LeadAttributionEvent.query.order_by(LeadAttributionEvent.created_at.desc()).limit(500).all()
     users_today = User.query.filter(User.created_at >= today_start).count()
     recent_users = (
         User.query
@@ -496,8 +496,8 @@ def master_analytics():
         todays_visitors = users_today
 
     source_counts = {}
-    for lead in all_leads:
-        label = _source_label(lead)
+    for event in all_lead_events:
+        label = _source_label(event)
         source_counts[label] = source_counts.get(label, 0) + 1
     traffic_sources = [
         {"source": source, "count": count}
@@ -541,8 +541,8 @@ def master_analytics():
         "generated_at": _iso(now),
         "metrics": {
             "todays_visitors": todays_visitors,
-            "linkedin_visitors": sum(1 for lead in all_leads if _has_source_token(lead, "linkedin")),
-            "youtube_visitors": sum(1 for lead in all_leads if _has_source_token(lead, "youtube") or _has_source_token(lead, "youtu.be")),
+            "linkedin_visitors": sum(1 for event in all_lead_events if _has_source_token(event, "linkedin")),
+            "youtube_visitors": sum(1 for event in all_lead_events if _has_source_token(event, "youtube") or _has_source_token(event, "youtu.be")),
             "conversions": conversions,
             "emails_captured": Lead.query.count(),
             "scorecards_generated": len(scorecard_sessions),
@@ -592,7 +592,7 @@ def master_errors():
     sections = [
         {"key": "admin", "label": "Admin", "status": "online", "count": AdminAuditEvent.query.filter(AdminAuditEvent.timestamp >= today_start).count()},
         {"key": "dashboard", "label": "Dashboard", "status": "watching", "count": UserSession.query.filter(UserSession.updated_at >= today_start).count()},
-        {"key": "analytics", "label": "Analytics", "status": "online", "count": Lead.query.filter(Lead.created_at >= today_start).count()},
+        {"key": "analytics", "label": "Analytics", "status": "online", "count": LeadAttributionEvent.query.filter(LeadAttributionEvent.created_at >= today_start).count()},
         {"key": "users", "label": "Users", "status": "online", "count": User.query.count()},
         {"key": "subscriptions", "label": "Subscriptions", "status": "attention" if User.query.filter(func.lower(User.subscription_status).in_(failed_payment_statuses)).count() else "online", "count": User.query.filter(func.lower(User.subscription_status).in_(failed_payment_statuses)).count()},
         {"key": "errors", "label": "Errors", "status": "watching", "count": AdminAuditEvent.query.filter(AdminAuditEvent.timestamp >= week_start, AdminAuditEvent.action.ilike("%error%")).count()},

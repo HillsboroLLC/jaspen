@@ -3,13 +3,6 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import DecisionPlanningToolkitLeadCapture from './DecisionPlanningToolkitLeadCapture';
 
-// In the test env REACT_APP_LEADS_MOCK is unset, so submitLead() hits fetch,
-// which we spy on. We also stub anchor.click so the jsdom "navigation not
-// implemented" download attempt is captured instead of firing.
-let clickSpy;
-beforeEach(() => {
-  clickSpy = jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
-});
 afterEach(() => {
   jest.restoreAllMocks();
 });
@@ -25,7 +18,7 @@ describe('DecisionPlanningToolkitLeadCapture', () => {
     ).toBeInTheDocument();
   });
 
-  it('submits with the decision-planning-toolkit source and starts the download', async () => {
+  it('submits with the decision-planning-toolkit source and shows email delivery success', async () => {
     const user = userEvent.setup();
     const fetchSpy = jest
       .spyOn(global, 'fetch')
@@ -33,27 +26,31 @@ describe('DecisionPlanningToolkitLeadCapture', () => {
 
     render(<DecisionPlanningToolkitLeadCapture />);
     await user.type(screen.getByLabelText(/where should we send it/i), 'lydia@jaspen.ai');
+    await user.click(screen.getByLabelText(/founder decision notes/i));
     await user.click(screen.getByRole('button', { name: /email me the toolkit/i }));
 
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
     const body = JSON.parse(fetchSpy.mock.calls[0][1].body);
-    expect(body).toEqual({ email: 'lydia@jaspen.ai', source: 'decision-planning-toolkit' });
+    expect(body).toEqual({
+      email: 'lydia@jaspen.ai',
+      source: 'decision-planning-toolkit',
+      marketing_opt_in: true,
+    });
 
-    // Download happened and the success state shows.
-    expect(clickSpy).toHaveBeenCalled();
-    expect(await screen.findByText(/your toolkit is downloading/i)).toBeInTheDocument();
+    expect(await screen.findByText(/your toolkit is on its way/i)).toBeInTheDocument();
   });
 
-  it('still downloads the toolkit even if lead capture fails', async () => {
+  it('shows a retryable failure and preserves the email if delivery fails', async () => {
     const user = userEvent.setup();
     jest.spyOn(global, 'fetch').mockRejectedValue(new Error('network down'));
 
     render(<DecisionPlanningToolkitLeadCapture />);
-    await user.type(screen.getByLabelText(/where should we send it/i), 'lydia@jaspen.ai');
+    const emailInput = screen.getByLabelText(/where should we send it/i);
+    await user.type(emailInput, 'lydia@jaspen.ai');
     await user.click(screen.getByRole('button', { name: /email me the toolkit/i }));
 
-    await waitFor(() => expect(clickSpy).toHaveBeenCalled());
-    expect(await screen.findByText(/your toolkit is downloading/i)).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent(/could not email the toolkit/i);
+    expect(emailInput).toHaveValue('lydia@jaspen.ai');
   });
 
   it('rejects an invalid email without submitting or downloading', async () => {
@@ -66,6 +63,5 @@ describe('DecisionPlanningToolkitLeadCapture', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/valid email/i);
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(clickSpy).not.toHaveBeenCalled();
   });
 });

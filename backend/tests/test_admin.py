@@ -1,5 +1,5 @@
 from app.connector_store import update_connector_settings
-from app.models import Lead, User
+from app.models import Lead, LeadAttributionEvent, User
 
 
 def test_admin_user_no_stripe_ids(client, admin_auth_headers, admin_user, test_user, db):
@@ -39,7 +39,10 @@ def test_admin_connectors_no_credentials(client, admin_auth_headers, test_user):
 
 
 def test_master_analytics_support_only(client, admin_auth_headers, auth_headers, db):
-    db.session.add(Lead(email="lead@example.com", source="decision-scorecard", utm_source="linkedin"))
+    lead = Lead(email="lead@example.com", normalized_email="lead@example.com", source="decision-scorecard", utm_source="linkedin")
+    db.session.add(lead)
+    db.session.flush()
+    db.session.add(LeadAttributionEvent(lead_id=lead.id, source="decision-scorecard", utm_source="linkedin"))
     db.session.commit()
 
     allowed = client.get("/api/v1/admin/master/analytics", headers=admin_auth_headers)

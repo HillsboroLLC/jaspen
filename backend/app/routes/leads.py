@@ -1,18 +1,26 @@
 import hashlib
+from datetime import datetime
+from pathlib import Path
 import re
+from urllib.parse import urlencode
 
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, current_app, jsonify, request, send_file
+from flask_mail import Message
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from werkzeug.exceptions import BadRequest, UnsupportedMediaType
 
-from app import db, limiter
-from app.models import Lead
+from app import db, limiter, mail
+from app.models import EmailSuppression, Lead, LeadAttributionEvent, LeadEmailDelivery
 
 
 leads_bp = Blueprint("leads", __name__)
 
 MAX_LEAD_PAYLOAD_BYTES = 8 * 1024
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+TOOLKIT_SOURCE = "decision-planning-toolkit"
+TOOLKIT_EMAIL_TYPE = "decision_planning_toolkit"
+TOOLKIT_FILENAME = "Jaspen-Decision-Planning-Toolkit.xlsx"
 HONEYPOT_FIELDS = ("website", "url", "hp_name")
 FIELD_LIMITS = {
     "email": 255,
@@ -26,6 +34,7 @@ FIELD_LIMITS = {
     "utm_campaign": 160,
     "referrer": 512,
 }
+BOOL_FIELDS = ("marketing_opt_in",)
 OPTIONAL_TEXT_FIELDS = (
     "first_name",
     "last_name",
@@ -35,6 +44,10 @@ OPTIONAL_TEXT_FIELDS = (
     "utm_medium",
     "utm_campaign",
 )
+
+
+def _now():
+    return datetime.utcnow()
 
 
 def _lead_fingerprint(email):
@@ -65,6 +78,17 @@ def _normalized_text(data, field, *, required=False):
     return value
 
 
+def _normalized_bool(data, field):
+    value = data.get(field)
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return bool(value)
+
+
 def _parse_payload():
     if request.content_length is not None and request.content_length > MAX_LEAD_PAYLOAD_BYTES:
         return None, _bad_request("payload_too_large", "Payload is too large.")
@@ -89,6 +113,7 @@ def _parse_payload():
         email = _normalized_text(data, "email", required=True).lower()
         source = _normalized_text(data, "source") or "unknown"
         optional = {field: _normalized_text(data, field) for field in OPTIONAL_TEXT_FIELDS}
+        bools = {field: _normalized_bool(data, field) for field in BOOL_FIELDS}
     except ValueError as exc:
         return None, _bad_request(str(exc), "Email is required.")
     except TypeError as exc:
@@ -112,6 +137,7 @@ def _parse_payload():
         "source": source,
         "referrer": referrer,
         **optional,
+        **bools,
     }
     return payload, None
 
@@ -126,17 +152,176 @@ def _apply_non_empty_metadata(lead, payload):
     return changed
 
 
-def _commit_existing_lead(payload):
-    lead = Lead.query.filter_by(email=payload["email"], source=payload["source"]).one_or_none()
-    if lead is None:
-        return None
-    _apply_non_empty_metadata(lead, payload)
+def _apply_payload_to_lead(lead, payload):
+    changed = False
+    if lead.email != payload["email"]:
+        lead.email = payload["email"]
+        changed = True
+    if lead.normalized_email != payload["email"]:
+        lead.normalized_email = payload["email"]
+        changed = True
+    if lead.source != payload["source"]:
+        lead.source = payload["source"]
+        changed = True
+    return _apply_non_empty_metadata(lead, payload) or changed
+
+
+def _create_attribution_event(lead, payload, *, email_delivery_requested=False):
+    event = LeadAttributionEvent(
+        lead_id=lead.id,
+        source=payload["source"],
+        first_name=payload.get("first_name"),
+        last_name=payload.get("last_name"),
+        company=payload.get("company"),
+        title=payload.get("title"),
+        utm_source=payload.get("utm_source"),
+        utm_medium=payload.get("utm_medium"),
+        utm_campaign=payload.get("utm_campaign"),
+        referrer=payload.get("referrer"),
+        marketing_opt_in=bool(payload.get("marketing_opt_in")),
+        email_delivery_requested=email_delivery_requested,
+    )
+    db.session.add(event)
+    return event
+
+
+def _get_or_create_lead(payload):
+    lead = Lead.query.filter_by(normalized_email=payload["email"]).one_or_none()
+    created = lead is None
+    if created:
+        lead = Lead(
+            email=payload["email"],
+            normalized_email=payload["email"],
+            source=payload["source"],
+        )
+        db.session.add(lead)
+    _apply_payload_to_lead(lead, payload)
+    return lead, created
+
+
+def _serializer(salt):
+    secret = current_app.config.get("SECRET_KEY") or current_app.config.get("JWT_SECRET_KEY")
+    if not secret:
+        raise RuntimeError("Missing SECRET_KEY/JWT_SECRET_KEY for lead email links")
+    return URLSafeTimedSerializer(secret_key=secret, salt=salt)
+
+
+def _toolkit_token(email):
+    return _serializer("lead-toolkit-download").dumps({"email": email, "type": TOOLKIT_EMAIL_TYPE})
+
+
+def _unsubscribe_token(email, scope="marketing"):
+    return _serializer("email-unsubscribe").dumps({"email": email, "scope": scope})
+
+
+def _frontend_base_url():
+    return (current_app.config.get("FRONTEND_BASE_URL") or "http://localhost:3000").rstrip("/")
+
+
+def _toolkit_download_link(email):
+    query = urlencode({"token": _toolkit_token(email)})
+    return f"{request.url_root.rstrip('/')}/api/v1/public/leads/toolkit?{query}"
+
+
+def _unsubscribe_link(email, scope="marketing"):
+    query = urlencode({"token": _unsubscribe_token(email, scope=scope)})
+    return f"{request.url_root.rstrip('/')}/api/v1/public/leads/unsubscribe?{query}"
+
+
+def _toolkit_file_path():
+    return Path(current_app.root_path).parent / "assets" / TOOLKIT_FILENAME
+
+
+def _is_marketing_suppressed(email):
+    return EmailSuppression.query.filter_by(normalized_email=email, scope="marketing").first() is not None
+
+
+def _record_marketing_opt_in(email, opted_in):
+    if not opted_in or _is_marketing_suppressed(email):
+        return False
+    # Future marketing list integration can pick up this explicit opt-in from
+    # attribution events. We intentionally do not auto-subscribe elsewhere.
+    return True
+
+
+def _send_toolkit_email(email):
+    download_link = _toolkit_download_link(email)
+    unsubscribe = _unsubscribe_link(email, scope="marketing")
+    msg = Message(
+        subject="Your Jaspen Decision Planning Toolkit",
+        recipients=[email],
+    )
+    msg.body = (
+        "Here is your Jaspen Decision Planning Toolkit:\n\n"
+        f"{download_link}\n\n"
+        "Open the Welcome tab first. It walks you through the four steps for framing, "
+        "weighing, pressure-testing, and deciding.\n\n"
+        "You can unsubscribe from Jaspen updates here:\n"
+        f"{unsubscribe}\n\n"
+        "Jaspen\n"
+        f"{_frontend_base_url()}"
+    )
+    msg.html = f"""<!doctype html>
+<html lang="en">
+  <body style="font-family: Arial, sans-serif; color: #172033; line-height: 1.5;">
+    <h1 style="font-size: 22px;">Your Decision Planning Toolkit is ready</h1>
+    <p>Open the Welcome tab first. It walks you through the four steps for framing, weighing, pressure-testing, and deciding.</p>
+    <p><a href="{download_link}" style="display: inline-block; padding: 12px 18px; background: #a40067; color: #fff; text-decoration: none; border-radius: 8px;">Download the toolkit</a></p>
+    <p style="font-size: 13px; color: #667085;">You can unsubscribe from Jaspen updates <a href="{unsubscribe}">here</a>.</p>
+  </body>
+</html>"""
+    msg.extra_headers = {
+        "List-Unsubscribe": f"<{unsubscribe}>, <mailto:support@jaspen.ai?subject=unsubscribe>",
+        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+    }
+    mail.send(msg)
+
+
+def _record_email_delivery(lead, event, email, status, provider_message=None):
+    delivery = LeadEmailDelivery(
+        lead_id=lead.id,
+        attribution_event_id=getattr(event, "id", None),
+        email=email,
+        email_type=TOOLKIT_EMAIL_TYPE,
+        status=status,
+        provider_message=(provider_message or "")[:255] or None,
+        sent_at=_now() if status == "sent" else None,
+    )
+    db.session.add(delivery)
+    return delivery
+
+
+def _commit_capture(payload):
+    needs_toolkit_email = payload["source"] == TOOLKIT_SOURCE
+    lead, created = _get_or_create_lead(payload)
+    db.session.flush()
+    event = _create_attribution_event(lead, payload, email_delivery_requested=needs_toolkit_email)
+    db.session.flush()
+
+    if payload.get("marketing_opt_in"):
+        _record_marketing_opt_in(payload["email"], True)
+
+    if needs_toolkit_email:
+        try:
+            _send_toolkit_email(payload["email"])
+        except Exception as exc:
+            current_app.logger.exception("Lead toolkit email send failed")
+            _record_email_delivery(lead, event, payload["email"], "failed", str(exc))
+            db.session.commit()
+            return None, (jsonify({"error": "We could not email the toolkit right now. Please try again."}), 502)
+        _record_email_delivery(lead, event, payload["email"], "sent")
+
     db.session.commit()
     current_app.logger.info(
-        "Lead capture duplicate handled",
+        "Lead captured",
         extra={"lead_source": lead.source, "lead_fingerprint": _lead_fingerprint(lead.email)},
     )
-    return lead
+    return (lead, created), None
+
+
+def _decode_download_token(token):
+    ttl = int(current_app.config.get("LEAD_TOOLKIT_LINK_TTL_SECONDS") or 60 * 60 * 24 * 30)
+    return _serializer("lead-toolkit-download").loads(token, max_age=ttl)
 
 
 @leads_bp.route("/leads", methods=["POST"])
@@ -148,28 +333,23 @@ def capture_lead():
         return error_response
 
     try:
-        existing = _commit_existing_lead(payload)
-        if existing is not None:
-            return jsonify({"ok": True}), 200
-
-        lead = Lead(**payload)
-        db.session.add(lead)
-        db.session.commit()
-        current_app.logger.info(
-            "Lead captured",
-            extra={"lead_source": lead.source, "lead_fingerprint": _lead_fingerprint(lead.email)},
-        )
-        return jsonify({"ok": True}), 201
+        result, send_error = _commit_capture(payload)
+        if send_error is not None:
+            return send_error
+        _, created = result
+        return jsonify({"ok": True, "delivery": "email" if payload["source"] == TOOLKIT_SOURCE else None}), 201 if created else 200
     except IntegrityError:
         db.session.rollback()
         try:
-            existing = _commit_existing_lead(payload)
+            result, send_error = _commit_capture(payload)
         except SQLAlchemyError:
             db.session.rollback()
             current_app.logger.exception("Lead capture duplicate recovery failed")
             return jsonify({"error": "Internal server error"}), 500
-        if existing is not None:
-            return jsonify({"ok": True}), 200
+        if send_error is not None:
+            return send_error
+        if result is not None:
+            return jsonify({"ok": True, "delivery": "email" if payload["source"] == TOOLKIT_SOURCE else None}), 200
         current_app.logger.exception("Lead capture uniqueness conflict could not be recovered")
         return jsonify({"error": "Internal server error"}), 500
     except SQLAlchemyError:
@@ -180,3 +360,54 @@ def capture_lead():
         db.session.rollback()
         current_app.logger.exception("Lead capture unexpected error")
         return jsonify({"error": "Internal server error"}), 500
+
+
+@leads_bp.route("/leads/toolkit", methods=["GET"])
+@limiter.limit("60 per hour")
+def download_toolkit():
+    token = str(request.args.get("token") or "").strip()
+    if not token:
+        return jsonify({"error": "Missing download token."}), 400
+    try:
+        decoded = _decode_download_token(token)
+    except SignatureExpired:
+        return jsonify({"error": "This download link has expired."}), 410
+    except BadSignature:
+        return jsonify({"error": "Invalid download link."}), 400
+
+    if decoded.get("type") != TOOLKIT_EMAIL_TYPE or not EMAIL_RE.match(str(decoded.get("email") or "")):
+        return jsonify({"error": "Invalid download link."}), 400
+
+    path = _toolkit_file_path()
+    if not path.exists():
+        current_app.logger.error("Toolkit asset missing: %s", path)
+        return jsonify({"error": "Toolkit is temporarily unavailable."}), 503
+    return send_file(path, as_attachment=True, download_name=TOOLKIT_FILENAME)
+
+
+@leads_bp.route("/leads/unsubscribe", methods=["GET", "POST"])
+@limiter.limit("30 per hour")
+def unsubscribe():
+    token = str(request.args.get("token") or "").strip()
+    if not token:
+        return jsonify({"error": "Missing unsubscribe token."}), 400
+    try:
+        decoded = _serializer("email-unsubscribe").loads(token, max_age=60 * 60 * 24 * 365)
+    except (SignatureExpired, BadSignature):
+        return jsonify({"error": "Invalid unsubscribe link."}), 400
+
+    email = str(decoded.get("email") or "").strip().lower()
+    scope = str(decoded.get("scope") or "marketing").strip().lower() or "marketing"
+    if not EMAIL_RE.match(email):
+        return jsonify({"error": "Invalid unsubscribe link."}), 400
+
+    existing = EmailSuppression.query.filter_by(normalized_email=email, scope=scope).one_or_none()
+    if existing is None:
+        db.session.add(EmailSuppression(email=email, normalized_email=email, scope=scope, reason="unsubscribe"))
+        db.session.commit()
+    if request.method == "POST":
+        return jsonify({"ok": True}), 200
+    return (
+        "<!doctype html><html><body><h1>You are unsubscribed</h1>"
+        "<p>You will not receive Jaspen marketing updates at this address.</p></body></html>"
+    ), 200, {"Content-Type": "text/html; charset=utf-8"}

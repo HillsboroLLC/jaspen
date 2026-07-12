@@ -53,7 +53,11 @@ describe('submitLead', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const [url, options] = fetchSpy.mock.calls[0];
     expect(url).toBe(LEADS_ENDPOINT);
-    expect(JSON.parse(options.body)).toEqual({ email: 'a@b.com', source: 'decision-planning-toolkit' });
+    expect(JSON.parse(options.body)).toEqual({
+      email: 'a@b.com',
+      source: 'decision-planning-toolkit',
+      marketing_opt_in: false,
+    });
     expect(res.ok).toBe(true);
   });
 

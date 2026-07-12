@@ -116,6 +116,24 @@
   outline-offset: 0;
 }
 
+.dptl-checkbox {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 10px;
+  align-items: start;
+  margin-top: 12px;
+  font-size: 0.84rem;
+  line-height: 1.45;
+  color: rgba(22, 31, 59, 0.72);
+}
+
+.dptl-checkbox input {
+  width: 18px;
+  height: 18px;
+  margin: 1px 0 0;
+  accent-color: #a0036c;
+}
+
 .dptl-button {
   margin-top: 12px;
   min-height: 48px;

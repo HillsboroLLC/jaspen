@@ -13,27 +13,18 @@ import './DecisionPlanningToolkitLeadCapture.css';
 //   Assessment -> "How do I naturally make decisions?"
 //   Toolkit    -> "How do I work through an important decision I'm facing now?"
 //
-// Distinct lead source ("decision-planning-toolkit") so it stays its own funnel
-// under the backend's normalized email+source uniqueness. A capture failure must
-// never block the download — the toolkit is the value the visitor was promised.
+// Distinct lead source ("decision-planning-toolkit") so the backend can record
+// the source event while keeping one canonical contact per normalized email.
+// The backend emails the toolkit; this component never exposes a direct public
+// file link or downloads on a failed capture.
 // (Note: any "upload into Jaspen" idea lives INSIDE the workbook, never here.)
 
-const TOOLKIT_PATH = '/Jaspen-Decision-Planning-Toolkit.xlsx';
-const TOOLKIT_FILENAME = 'Jaspen-Decision-Planning-Toolkit.xlsx';
 const LEAD_SOURCE = 'decision-planning-toolkit';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-function startDownload() {
-  const a = document.createElement('a');
-  a.href = TOOLKIT_PATH;
-  a.download = TOOLKIT_FILENAME;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-}
-
 export default function DecisionPlanningToolkitLeadCapture() {
   const [email, setEmail] = useState('');
+  const [marketingOptIn, setMarketingOptIn] = useState(false);
   const [status, setStatus] = useState('idle'); // idle | sending | done
   const [error, setError] = useState('');
 
@@ -47,15 +38,16 @@ export default function DecisionPlanningToolkitLeadCapture() {
     setError('');
     setStatus('sending');
 
-    // Best-effort capture — never blocks the download.
     try {
-      await submitLead({ email: value, source: LEAD_SOURCE });
+      const res = await submitLead({ email: value, source: LEAD_SOURCE, marketingOptIn });
+      if (!res?.ok) {
+        throw new Error('delivery_failed');
+      }
+      setStatus('done');
     } catch {
-      /* Intentionally ignored: the download is the promised value. */
+      setStatus('idle');
+      setError('We could not email the toolkit right now. Please try again in a moment.');
     }
-
-    startDownload();
-    setStatus('done');
   };
 
   return (
@@ -98,13 +90,10 @@ export default function DecisionPlanningToolkitLeadCapture() {
           {status === 'done' ? (
             <div className="dptl-done" role="status">
               <i className="fa-solid fa-circle-check dptl-done-icon" aria-hidden="true" />
-              <p className="dptl-done-title">Your toolkit is downloading.</p>
+              <p className="dptl-done-title">Your toolkit is on its way.</p>
               <p className="dptl-done-note">
-                If it doesn&apos;t start automatically,{' '}
-                <a href={TOOLKIT_PATH} download={TOOLKIT_FILENAME}>
-                  download it here
-                </a>
-                . Open the Welcome tab first — it walks you through the four steps.
+                Check your inbox for the secure download link. Open the Welcome tab first — it
+                walks you through the four steps.
               </p>
             </div>
           ) : (
@@ -124,17 +113,25 @@ export default function DecisionPlanningToolkitLeadCapture() {
                 aria-invalid={!!error}
                 aria-describedby={error ? 'dptl-error' : 'dptl-fine'}
               />
+              <label className="dptl-checkbox">
+                <input
+                  type="checkbox"
+                  checked={marketingOptIn}
+                  onChange={(e) => setMarketingOptIn(e.target.checked)}
+                />
+                <span>Send me Founder Decision Notes and occasional Jaspen updates.</span>
+              </label>
               {error && (
                 <p className="dptl-error" id="dptl-error" role="alert">
                   {error}
                 </p>
               )}
               <button type="submit" className="dptl-button" disabled={status === 'sending'}>
-                {status === 'sending' ? 'Getting it ready…' : 'Email me the toolkit'}
+                {status === 'sending' ? 'Sending…' : 'Email me the toolkit'}
               </button>
               <p className="dptl-fine" id="dptl-fine">
-                We&apos;ll email you the toolkit and the occasional Jaspen update. Unsubscribe
-                anytime.
+                We&apos;ll email the toolkit to this address. Updates are optional and you can
+                unsubscribe anytime.
               </p>
             </form>
           )}

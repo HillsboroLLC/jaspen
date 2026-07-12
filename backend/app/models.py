@@ -15,6 +15,7 @@ class Lead(db.Model):
         default=lambda: str(uuid.uuid4()),
     )
     email = db.Column(db.String(255), nullable=False, index=True)
+    normalized_email = db.Column(db.String(255), nullable=False, unique=True, index=True)
     source = db.Column(db.String(80), nullable=False, default='unknown')
     first_name = db.Column(db.String(120), nullable=True)
     last_name = db.Column(db.String(120), nullable=True)
@@ -38,8 +39,89 @@ class Lead(db.Model):
     )
 
     __table_args__ = (
-        db.UniqueConstraint('email', 'source', name='uq_leads_email_source'),
         db.Index('ix_leads_source_created_at', 'source', 'created_at'),
+    )
+
+
+class LeadAttributionEvent(db.Model):
+    __tablename__ = 'lead_attribution_events'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    lead_id = db.Column(
+        db.String(36),
+        db.ForeignKey('leads.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    source = db.Column(db.String(80), nullable=False, default='unknown', index=True)
+    first_name = db.Column(db.String(120), nullable=True)
+    last_name = db.Column(db.String(120), nullable=True)
+    company = db.Column(db.String(160), nullable=True)
+    title = db.Column(db.String(160), nullable=True)
+    utm_source = db.Column(db.String(120), nullable=True)
+    utm_medium = db.Column(db.String(120), nullable=True)
+    utm_campaign = db.Column(db.String(160), nullable=True)
+    referrer = db.Column(db.String(512), nullable=True)
+    marketing_opt_in = db.Column(db.Boolean, nullable=False, default=False)
+    email_delivery_requested = db.Column(db.Boolean, nullable=False, default=False)
+    created_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        index=True,
+    )
+
+    __table_args__ = (
+        db.Index('ix_lead_attribution_source_created', 'source', 'created_at'),
+    )
+
+
+class LeadEmailDelivery(db.Model):
+    __tablename__ = 'lead_email_deliveries'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    lead_id = db.Column(
+        db.String(36),
+        db.ForeignKey('leads.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    attribution_event_id = db.Column(
+        db.Integer,
+        db.ForeignKey('lead_attribution_events.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    email = db.Column(db.String(255), nullable=False, index=True)
+    email_type = db.Column(db.String(80), nullable=False, index=True)
+    status = db.Column(db.String(32), nullable=False, default='sent', index=True)
+    provider_message = db.Column(db.String(255), nullable=True)
+    created_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        index=True,
+    )
+    sent_at = db.Column(db.DateTime, nullable=True)
+
+
+class EmailSuppression(db.Model):
+    __tablename__ = 'email_suppressions'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    email = db.Column(db.String(255), nullable=False, index=True)
+    normalized_email = db.Column(db.String(255), nullable=False, index=True)
+    scope = db.Column(db.String(32), nullable=False, default='marketing', index=True)
+    reason = db.Column(db.String(120), nullable=True)
+    created_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        index=True,
+    )
+
+    __table_args__ = (
+        db.UniqueConstraint('normalized_email', 'scope', name='uq_email_suppressions_email_scope'),
     )
 
 
