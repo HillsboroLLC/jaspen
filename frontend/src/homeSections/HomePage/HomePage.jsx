@@ -377,6 +377,10 @@ export default function HomePage() {
 
         <BeforeAfter />
 
+        {/* ========== ENTRY POINT 1: DECISION STYLE ASSESSMENT ========== */}
+        {/* Answers "How do I naturally make decisions?" — low-friction, curious. */}
+        <DecisionStyleAssessment />
+
         <FlowIllustrated onOpenModal={openAuthModal} />
 
         {/* ========== WHY NOT JUST CHATGPT? ========== */}
@@ -393,10 +397,6 @@ export default function HomePage() {
 
         {/* ========== FAQ ========== */}
         <FAQSection />
-
-        {/* ========== ENTRY POINT 1: DECISION STYLE ASSESSMENT ========== */}
-        {/* Answers "How do I naturally make decisions?" — low-friction, curious. */}
-        <DecisionStyleAssessment />
 
         {/* ========== ENTRY POINT 2: DECISION PLANNING TOOLKIT ========== */}
         {/* Answers "How do I work through a decision I'm facing now?" — practical. */}
