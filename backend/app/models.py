@@ -5,6 +5,44 @@ import uuid
 from datetime import datetime, timezone
 from . import db
 
+
+class Lead(db.Model):
+    __tablename__ = 'leads'
+
+    id = db.Column(
+        db.String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+    )
+    email = db.Column(db.String(255), nullable=False, index=True)
+    source = db.Column(db.String(80), nullable=False, default='unknown')
+    first_name = db.Column(db.String(120), nullable=True)
+    last_name = db.Column(db.String(120), nullable=True)
+    company = db.Column(db.String(160), nullable=True)
+    title = db.Column(db.String(160), nullable=True)
+    utm_source = db.Column(db.String(120), nullable=True)
+    utm_medium = db.Column(db.String(120), nullable=True)
+    utm_campaign = db.Column(db.String(160), nullable=True)
+    referrer = db.Column(db.String(512), nullable=True)
+    created_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        index=True,
+    )
+    updated_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+    __table_args__ = (
+        db.UniqueConstraint('email', 'source', name='uq_leads_email_source'),
+        db.Index('ix_leads_source_created_at', 'source', 'created_at'),
+    )
+
+
 class User(db.Model):
     __tablename__ = 'users'
 
