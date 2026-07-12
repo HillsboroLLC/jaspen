@@ -75,9 +75,15 @@ export function isLeadsMockEnabled() {
  * mock-fail mode (to exercise network-failure handling) and on real network
  * errors, exactly like fetch.
  *
- * @param {{ email: string, source: string, marketingOptIn?: boolean }} lead
+ * @param {{ email: string, source: string, marketingOptIn?: boolean, assessmentAnswers?: object, decisionStyle?: string }} lead
  */
-export async function submitLead({ email, source, marketingOptIn = false }) {
+export async function submitLead({
+  email,
+  source,
+  marketingOptIn = false,
+  assessmentAnswers,
+  decisionStyle,
+}) {
   const mode = leadsMockMode();
   if (mode) {
     // Simulate a little latency so the sending/disabled states are visible.
@@ -90,9 +96,17 @@ export async function submitLead({ email, source, marketingOptIn = false }) {
     return { ok: true, status: 201, mocked: true };
   }
 
+  const payload = { email, source, marketing_opt_in: Boolean(marketingOptIn) };
+  if (assessmentAnswers && typeof assessmentAnswers === 'object') {
+    payload.assessment_answers = assessmentAnswers;
+  }
+  if (decisionStyle) {
+    payload.decision_style = decisionStyle;
+  }
+
   return fetch(LEADS_ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, source, marketing_opt_in: Boolean(marketingOptIn) }),
+    body: JSON.stringify(payload),
   });
 }

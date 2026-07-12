@@ -47,6 +47,48 @@ describe('provisional result mapping', () => {
     expect(style).toBe(STYLES.thoughtful_explorer);
   });
 
+  it('maps balanced-consideration answers to Consensus Seeker', () => {
+    const answers = {
+      q1_instinct_vs_research: 'q1_c',
+    };
+    const { style } = deriveProvisionalStyle(answers);
+    expect(style).toBe(STYLES.consensus_seeker);
+  });
+
+  it('can return every named style from the current option mapping', () => {
+    const scenarios = {
+      evidence_builder: {
+        q1_instinct_vs_research: 'q1_e',
+        q3_documenting: 'q3_e',
+        q5_explain_later: 'q5_e',
+      },
+      fast_mover: {
+        q1_instinct_vs_research: 'q1_a',
+        q2_confidence: 'q2_e',
+        q3_documenting: 'q3_a',
+      },
+      thoughtful_explorer: {
+        q4_alternatives: 'q4_5_plus',
+        q6_what_would_change: 'q6_c',
+      },
+      consensus_seeker: {
+        q1_instinct_vs_research: 'q1_c',
+      },
+      practical_optimizer: {
+        q1_instinct_vs_research: 'q1_b',
+        q4_alternatives: 'q4_1_2',
+      },
+      reflective_analyzer: {
+        q2_confidence: 'q2_a',
+        q7_reflection: 'q7_e',
+      },
+    };
+
+    for (const [key, answers] of Object.entries(scenarios)) {
+      expect(deriveProvisionalStyle(answers).style).toBe(STYLES[key]);
+    }
+  });
+
   it('never returns a numeric score, only a style object shape', () => {
     const { style } = deriveProvisionalStyle({ q1_instinct_vs_research: 'q1_a' });
     expect(Object.keys(style).sort()).toEqual(['blurb', 'key', 'name']);

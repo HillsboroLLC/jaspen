@@ -11,7 +11,9 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from werkzeug.exceptions import BadRequest, UnsupportedMediaType
 
 from app import db, limiter, mail
-from app.models import EmailSuppression, Lead, LeadAttributionEvent, LeadEmailDelivery
+from app.decision_profile import derive_decision_style, validate_answers
+from app.email_templates.decision_profile_results import render_decision_profile_email
+from app.models import EmailSuppression, Lead, LeadAttributionEvent, LeadDecisionProfile, LeadEmailDelivery
 
 
 leads_bp = Blueprint("leads", __name__)
@@ -20,6 +22,8 @@ MAX_LEAD_PAYLOAD_BYTES = 8 * 1024
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 TOOLKIT_SOURCE = "decision-planning-toolkit"
 TOOLKIT_EMAIL_TYPE = "decision_planning_toolkit"
+DECISION_PROFILE_SOURCE = "decision-style-assessment"
+DECISION_PROFILE_EMAIL_TYPE = "decision_profile_results"
 TOOLKIT_FILENAME = "Jaspen-Decision-Planning-Toolkit.xlsx"
 HONEYPOT_FIELDS = ("website", "url", "hp_name")
 FIELD_LIMITS = {
@@ -33,6 +37,7 @@ FIELD_LIMITS = {
     "utm_medium": 120,
     "utm_campaign": 160,
     "referrer": 512,
+    "decision_style": 80,
 }
 BOOL_FIELDS = ("marketing_opt_in",)
 OPTIONAL_TEXT_FIELDS = (
@@ -136,6 +141,8 @@ def _parse_payload():
         "email": email,
         "source": source,
         "referrer": referrer,
+        "assessment_answers": data.get("assessment_answers"),
+        "client_decision_style": data.get("decision_style"),
         **optional,
         **bools,
     }
@@ -223,6 +230,10 @@ def _toolkit_download_link(email):
     return f"{request.url_root.rstrip('/')}/api/v1/public/leads/toolkit?{query}"
 
 
+def _workspace_link():
+    return f"{_frontend_base_url()}/account"
+
+
 def _unsubscribe_link(email, scope="marketing"):
     query = urlencode({"token": _unsubscribe_token(email, scope=scope)})
     return f"{request.url_root.rstrip('/')}/api/v1/public/leads/unsubscribe?{query}"
@@ -277,12 +288,32 @@ def _send_toolkit_email(email):
     mail.send(msg)
 
 
-def _record_email_delivery(lead, event, email, status, provider_message=None):
+def _send_decision_profile_email(email, style):
+    unsubscribe = _unsubscribe_link(email, scope="marketing")
+    rendered = render_decision_profile_email(
+        style,
+        workspace_url=_workspace_link(),
+        unsubscribe_url=unsubscribe,
+    )
+    msg = Message(
+        subject=rendered["subject"],
+        recipients=[email],
+    )
+    msg.body = rendered["body"]
+    msg.html = rendered["html"]
+    msg.extra_headers = {
+        "List-Unsubscribe": f"<{unsubscribe}>, <mailto:support@jaspen.ai?subject=unsubscribe>",
+        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+    }
+    mail.send(msg)
+
+
+def _record_email_delivery(lead, event, email, status, provider_message=None, *, email_type=TOOLKIT_EMAIL_TYPE):
     delivery = LeadEmailDelivery(
         lead_id=lead.id,
         attribution_event_id=getattr(event, "id", None),
         email=email,
-        email_type=TOOLKIT_EMAIL_TYPE,
+        email_type=email_type,
         status=status,
         provider_message=(provider_message or "")[:255] or None,
         sent_at=_now() if status == "sent" else None,
@@ -291,15 +322,68 @@ def _record_email_delivery(lead, event, email, status, provider_message=None):
     return delivery
 
 
+def _profile_from_payload(payload):
+    if payload["source"] != DECISION_PROFILE_SOURCE:
+        return None
+    try:
+        answers = validate_answers(payload.get("assessment_answers"))
+    except ValueError as exc:
+        raise ValueError(str(exc)) from exc
+
+    client_style_key = payload.get("client_decision_style")
+    if client_style_key is not None:
+        if not isinstance(client_style_key, str):
+            raise ValueError("decision_style_invalid")
+        client_style_key = client_style_key.strip()[:FIELD_LIMITS["decision_style"]] or None
+
+    derived = derive_decision_style(answers)
+    return {
+        "answers": answers,
+        "client_style_key": client_style_key,
+        "verified_style_key": derived["style"]["key"],
+        "style_name": derived["style"]["name"],
+        "style": derived["style"],
+        "is_fallback": derived["is_fallback"],
+        "affinity": derived["affinity"],
+    }
+
+
+def _create_decision_profile(lead, event, payload, profile):
+    row = LeadDecisionProfile(
+        lead_id=lead.id,
+        attribution_event_id=event.id,
+        email=payload["email"],
+        normalized_email=payload["email"],
+        source=payload["source"],
+        answers=profile["answers"],
+        client_style_key=profile["client_style_key"],
+        verified_style_key=profile["verified_style_key"],
+        style_name=profile["style_name"],
+        is_fallback=profile["is_fallback"],
+        affinity=profile["affinity"],
+    )
+    db.session.add(row)
+    return row
+
+
 def _commit_capture(payload):
     needs_toolkit_email = payload["source"] == TOOLKIT_SOURCE
+    needs_decision_profile_email = payload["source"] == DECISION_PROFILE_SOURCE
+    profile = _profile_from_payload(payload)
     lead, created = _get_or_create_lead(payload)
     db.session.flush()
-    event = _create_attribution_event(lead, payload, email_delivery_requested=needs_toolkit_email)
+    event = _create_attribution_event(
+        lead,
+        payload,
+        email_delivery_requested=needs_toolkit_email or needs_decision_profile_email,
+    )
     db.session.flush()
 
     if payload.get("marketing_opt_in"):
         _record_marketing_opt_in(payload["email"], True)
+
+    if profile is not None:
+        _create_decision_profile(lead, event, payload, profile)
 
     if needs_toolkit_email:
         try:
@@ -311,12 +395,35 @@ def _commit_capture(payload):
             return None, (jsonify({"error": "We could not email the toolkit right now. Please try again."}), 502)
         _record_email_delivery(lead, event, payload["email"], "sent")
 
+    if needs_decision_profile_email:
+        try:
+            _send_decision_profile_email(payload["email"], profile["style"])
+        except Exception as exc:
+            current_app.logger.exception("Lead decision profile email send failed")
+            _record_email_delivery(
+                lead,
+                event,
+                payload["email"],
+                "failed",
+                str(exc),
+                email_type=DECISION_PROFILE_EMAIL_TYPE,
+            )
+            db.session.commit()
+            return None, (jsonify({"error": "We could not email your Decision Profile right now. Please try again."}), 502)
+        _record_email_delivery(
+            lead,
+            event,
+            payload["email"],
+            "sent",
+            email_type=DECISION_PROFILE_EMAIL_TYPE,
+        )
+
     db.session.commit()
     current_app.logger.info(
         "Lead captured",
         extra={"lead_source": lead.source, "lead_fingerprint": _lead_fingerprint(lead.email)},
     )
-    return (lead, created), None
+    return (lead, created, profile), None
 
 
 def _decode_download_token(token):
@@ -336,12 +443,25 @@ def capture_lead():
         result, send_error = _commit_capture(payload)
         if send_error is not None:
             return send_error
-        _, created = result
-        return jsonify({"ok": True, "delivery": "email" if payload["source"] == TOOLKIT_SOURCE else None}), 201 if created else 200
+        _, created, profile = result
+        delivery = "email" if payload["source"] in (TOOLKIT_SOURCE, DECISION_PROFILE_SOURCE) else None
+        body = {"ok": True, "delivery": delivery}
+        if profile is not None:
+            body["decision_style"] = {
+                "key": profile["verified_style_key"],
+                "name": profile["style_name"],
+            }
+        return jsonify(body), 201 if created else 200
+    except ValueError as exc:
+        db.session.rollback()
+        return _bad_request(str(exc), "Assessment answers are required.")
     except IntegrityError:
         db.session.rollback()
         try:
             result, send_error = _commit_capture(payload)
+        except ValueError as exc:
+            db.session.rollback()
+            return _bad_request(str(exc), "Assessment answers are required.")
         except SQLAlchemyError:
             db.session.rollback()
             current_app.logger.exception("Lead capture duplicate recovery failed")
@@ -349,7 +469,15 @@ def capture_lead():
         if send_error is not None:
             return send_error
         if result is not None:
-            return jsonify({"ok": True, "delivery": "email" if payload["source"] == TOOLKIT_SOURCE else None}), 200
+            _, _, profile = result
+            delivery = "email" if payload["source"] in (TOOLKIT_SOURCE, DECISION_PROFILE_SOURCE) else None
+            body = {"ok": True, "delivery": delivery}
+            if profile is not None:
+                body["decision_style"] = {
+                    "key": profile["verified_style_key"],
+                    "name": profile["style_name"],
+                }
+            return jsonify(body), 200
         current_app.logger.exception("Lead capture uniqueness conflict could not be recovered")
         return jsonify({"error": "Internal server error"}), 500
     except SQLAlchemyError:

@@ -22,8 +22,8 @@ logger = logging.getLogger('alembic.env')
 def get_engine():
     try:
         return current_app.extensions['migrate'].db.get_engine()
-    except (TypeError, AttributeError):
-        return current_app.extensions['migrate'].db.engine
+    except (KeyError, TypeError, AttributeError):
+        return db.engine
 
 
 def get_engine_url():
@@ -32,13 +32,12 @@ def get_engine_url():
     except AttributeError:
         return str(get_engine().url).replace('%', '%%')
 
-# override in-memory config so engine_from_config sees it
-config.set_main_option('sqlalchemy.url', get_engine_url())
-
 # load your MetaData from Flask app
 from app import create_app, db
 app = create_app()
 with app.app_context():
+    # override in-memory config so engine_from_config sees it
+    config.set_main_option('sqlalchemy.url', get_engine_url())
     target_metadata = db.metadata
 
 

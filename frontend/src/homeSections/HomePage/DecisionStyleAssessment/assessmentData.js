@@ -94,7 +94,7 @@ export const QUESTIONS = [
     options: [
       { id: 'q1_a', label: 'With my gut read of the situation', signals: { fast_mover: 2 } },
       { id: 'q1_b', label: 'Instinct first, then I check a few facts', signals: { practical_optimizer: 2, fast_mover: 1 } },
-      { id: 'q1_c', label: 'An even mix of instinct and information', signals: { practical_optimizer: 2, consensus_seeker: 1 } },
+      { id: 'q1_c', label: 'An even mix of instinct and information', signals: { consensus_seeker: 3, practical_optimizer: 1 } },
       { id: 'q1_d', label: 'Research first, guided by instinct', signals: { evidence_builder: 2, thoughtful_explorer: 1 } },
       { id: 'q1_e', label: 'By gathering information before I lean either way', signals: { evidence_builder: 2, reflective_analyzer: 1 } },
     ],

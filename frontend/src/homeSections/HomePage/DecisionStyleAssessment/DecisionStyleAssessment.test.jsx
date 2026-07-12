@@ -94,7 +94,7 @@ describe('DecisionStyleAssessment', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('submits a valid email to the leads endpoint with the assessment source and confirms', async () => {
+  it('submits a valid email with assessment answers and confirms only after acceptance', async () => {
     const user = userEvent.setup();
     const fetchSpy = jest
       .spyOn(global, 'fetch')
@@ -111,14 +111,19 @@ describe('DecisionStyleAssessment', () => {
     const [url, options] = fetchSpy.mock.calls[0];
     expect(url).toMatch(/\/api\/v1\/public\/leads$/);
     const body = JSON.parse(options.body);
-    expect(body).toMatchObject({ email: 'lydia@jaspen.ai', source: LEAD_SOURCE });
+    expect(body).toMatchObject({
+      email: 'lydia@jaspen.ai',
+      source: LEAD_SOURCE,
+      decision_style: expect.any(String),
+    });
+    expect(body.assessment_answers).toBeDefined();
+    expect(Object.keys(body.assessment_answers)).toHaveLength(QUESTIONS.length);
 
-    // Accurate copy: saved, not "sent" (no email automation exists yet).
-    expect(await screen.findByText(/you're on the list/i)).toBeInTheDocument();
-    expect(screen.getByText(/your email is saved/i)).toBeInTheDocument();
+    expect(await screen.findByText(/your decision profile is on its way/i)).toBeInTheDocument();
+    expect(screen.getByText(/check your inbox in the next few minutes/i)).toBeInTheDocument();
   });
 
-  it('does not trap the user if the lead request fails', async () => {
+  it('preserves the result and email when the lead request fails', async () => {
     const user = userEvent.setup();
     jest.spyOn(global, 'fetch').mockRejectedValue(new Error('network down'));
 
@@ -129,9 +134,25 @@ describe('DecisionStyleAssessment', () => {
     await user.type(input, 'lydia@jaspen.ai');
     await user.click(screen.getByRole('button', { name: /email my full decision profile/i }));
 
-    // Still advances to a graceful confirmation, without over-claiming a save.
-    expect(await screen.findByText(/you're all set/i)).toBeInTheDocument();
-    expect(screen.queryByText(/your email is saved/i)).not.toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent(/could not email your decision profile/i);
+    expect(screen.getByLabelText(/where should we send/i)).toHaveValue('lydia@jaspen.ai');
+    expect(screen.getByText(/your decision style appears to be/i)).toBeInTheDocument();
+    expect(screen.queryByText(/your decision profile is on its way/i)).not.toBeInTheDocument();
+  });
+
+  it('does not show success when the backend rejects the request', async () => {
+    const user = userEvent.setup();
+    jest.spyOn(global, 'fetch').mockResolvedValue({ ok: false, status: 502 });
+
+    render(<DecisionStyleAssessment />);
+    await walkThroughAllQuestions(user);
+
+    const input = await screen.findByLabelText(/where should we send/i);
+    await user.type(input, 'lydia@jaspen.ai');
+    await user.click(screen.getByRole('button', { name: /email my full decision profile/i }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/could not email your decision profile/i);
+    expect(screen.queryByText(/your decision profile is on its way/i)).not.toBeInTheDocument();
   });
 
   it('can restart back to the intro', async () => {
