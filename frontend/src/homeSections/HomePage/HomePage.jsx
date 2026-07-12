@@ -432,7 +432,6 @@ export default function HomePage() {
             </div>
             <div className="jaspen-footer-col">
               <h4>Product</h4>
-              <Link to="/pages/solutions">Solutions</Link>
               <Link to="/pages/pricing">Pricing</Link>
               <Link to="/pages/jaspen-score">Jaspen Score</Link>
               <Link to="/pages/project-management">Project Management</Link>

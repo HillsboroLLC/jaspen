@@ -24,31 +24,6 @@ const NAV_MENUS = [
     ],
   },
   {
-    label: 'Solutions',
-    columns: [
-      {
-        title: 'Use Cases',
-        items: [
-          { label: 'Jaspen Security', path: '/pages/solutions#jaspen-security' },
-          { label: 'Execution', path: '/pages/solutions#execution' },
-        ],
-      },
-      {
-        title: 'Industries',
-        items: [
-          { label: 'Financial Services', path: '/pages/solutions#financial-services' },
-          { label: 'Nonprofits', path: '/pages/solutions#nonprofits' },
-          { label: 'Quick Service Restaurants', path: '/pages/solutions#quick-service-restaurants' },
-          { label: 'Government', path: '/pages/solutions#government' },
-          { label: 'Healthcare', path: '/pages/solutions#healthcare' },
-          { label: 'Wellness', path: '/pages/solutions#wellness' },
-          { label: 'Energy', path: '/pages/solutions#energy' },
-          { label: 'Aviation', path: '/pages/solutions#aviation' },
-        ],
-      },
-    ],
-  },
-  {
     label: 'Pricing',
     columns: [
       {
@@ -165,7 +140,7 @@ export default function JaspenNav({ onOpenModal } = {}) {
               </button>
 
               <div
-                className={`jaspen-mega-menu ${menu.label === "I'm Jaspen" ? 'is-im-jaspen' : ''} ${menu.label === 'Solutions' ? 'is-solutions' : ''}`}
+                className={`jaspen-mega-menu ${menu.label === "I'm Jaspen" ? 'is-im-jaspen' : ''}`}
                 style={{ '--menu-columns': menu.columns.length }}
               >
                 <div className="jaspen-mega-menu-grid">
