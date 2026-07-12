@@ -1,10 +1,12 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
+import PublicJaspenHeader from '../../homeSections/HomePage/PublicJaspenHeader';
 import './ServerError.css';
 
 export default function ServerErrorPage() {
   return (
     <div className="server-error-page">
+      <PublicJaspenHeader />
       <div className="server-error-card">
         <p className="server-error-eyebrow">Server Error</p>
         <h1>Something went wrong on our side.</h1>

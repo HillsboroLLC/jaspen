@@ -1,12 +1,12 @@
 import React from 'react';
 import Seo from '../../shared/components/Seo';
-import JaspenNav from '../../homeSections/HomePage/JaspenNav';
+import PublicJaspenHeader from '../../homeSections/HomePage/PublicJaspenHeader';
 import './privacy.css';
 
 const Privacy = () => {
   return (
     <>
-      <JaspenNav />
+      <PublicJaspenHeader />
       <div className="privacy-container">
       <Seo
         title="Privacy Policy"

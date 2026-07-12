@@ -1,12 +1,12 @@
 import React from 'react';
 import Seo from '../../shared/components/Seo';
-import JaspenNav from '../../homeSections/HomePage/JaspenNav';
+import PublicJaspenHeader from '../../homeSections/HomePage/PublicJaspenHeader';
 import './terms.css';
 
 const Terms = () => {
   return (
     <>
-      <JaspenNav />
+      <PublicJaspenHeader />
       <div className="terms-container">
       <Seo
         title="Terms of Service"

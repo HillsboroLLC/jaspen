@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import JaspenNav from '../../homeSections/HomePage/JaspenNav';
+import PublicJaspenHeader from '../../homeSections/HomePage/PublicJaspenHeader';
 import './MarketingPages.css';
 
 export default function MarketingPageLayout({ pageClass = '', children }) {
@@ -19,7 +19,7 @@ export default function MarketingPageLayout({ pageClass = '', children }) {
 
   return (
     <div className="marketing-page">
-      <JaspenNav />
+      <PublicJaspenHeader />
 
       <main className={`marketing-main ${pageClass}`.trim()}>
         <div className="marketing-container marketing-content">

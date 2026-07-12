@@ -2,13 +2,13 @@
 // File: src/pages/Support/Support.jsx
 // =====================================================
 import React from 'react';
-import JaspenNav from '../../homeSections/HomePage/JaspenNav';
+import PublicJaspenHeader from '../../homeSections/HomePage/PublicJaspenHeader';
 import './support.css'; // reuses Terms styles for identical layout
 
 const Support = () => {
   return (
     <>
-      <JaspenNav />
+      <PublicJaspenHeader />
       <div className="support-container">
       <div className="support-content">
         <h1>Support for Jaspen</h1>

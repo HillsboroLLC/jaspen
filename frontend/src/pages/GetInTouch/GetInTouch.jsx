@@ -1,11 +1,13 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import Seo from '../../shared/components/Seo';
+import PublicJaspenHeader from '../../homeSections/HomePage/PublicJaspenHeader';
 import './GetInTouch.css';
 
 export default function GetInTouch() {
   return (
     <div className="login-page get-in-touch-page">
+      <PublicJaspenHeader />
       <Seo
         title="Login"
         description="Contact Jaspen for account access, partnerships, and support."

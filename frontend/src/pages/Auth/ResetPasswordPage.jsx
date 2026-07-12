@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { API_BASE } from '../../config/apiBase';
 import FieldError from '../../shared/components/FieldError';
+import PublicJaspenHeader from '../../homeSections/HomePage/PublicJaspenHeader';
 import './ResetPasswordPage.css';
 
 export default function ResetPasswordPage() {
@@ -76,6 +77,7 @@ export default function ResetPasswordPage() {
 
   return (
     <div className="reset-password-page">
+      <PublicJaspenHeader />
       <div className="reset-password-card">
         <div className="reset-password-eyebrow">ACCOUNT RECOVERY</div>
         <h1>Choose a new password</h1>

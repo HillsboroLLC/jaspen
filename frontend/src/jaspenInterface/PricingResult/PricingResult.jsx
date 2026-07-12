@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useLocation, Link } from 'react-router-dom';
 import { API_BASE } from '../../config/apiBase';
-import JaspenNav from '../../homeSections/HomePage/JaspenNav';
+import PublicJaspenHeader from '../../homeSections/HomePage/PublicJaspenHeader';
 import './PricingResult.css';
 
 export default function PricingResult() {
@@ -22,7 +22,7 @@ export default function PricingResult() {
 
   return (
     <>
-      <JaspenNav />
+      <PublicJaspenHeader />
       <div className="pricing-result">
       {status === 'success' ? (
         <div className="status success">

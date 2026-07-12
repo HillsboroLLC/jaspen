@@ -1,10 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { createPortal } from 'react-dom';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import JaspenNav from './JaspenNav';
 import WorkWithJaspenCanvas from './WorkWithJaspenCanvas';
 import InteractiveDecisionHero from './InteractiveDecisionHero';
-import StrategyAccessCard from './StrategyAccessCard';
 import PricingVariantB from './PricingVariantB';
 import FlowIllustrated from './FlowIllustrated';
 import BeforeAfter from './BeforeAfter';
@@ -13,6 +11,7 @@ import HowScoreWorks from './HowScoreWorks';
 import RubricIsYours from './RubricIsYours';
 import LeadCapture from './LeadCapture';
 import FAQSection from '../FAQSection/FAQSection';
+import usePublicAuthModal from './usePublicAuthModal';
 import { SCENARIOS } from './scenarioData';
 import './HomePage.css';
 
@@ -247,21 +246,12 @@ export default function HomePage() {
   const [activeStep, setActiveStep] = useState(0);
   const [activeFeatureTab, setActiveFeatureTab] = useState(0);
   const stepRefs = useRef([]);
-  const [searchParams] = useSearchParams();
   const solveDemo = SCENARIOS[0].demo;
-  const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [authModalFlow, setAuthModalFlow] = useState('signin');
-  const [authModalPlan, setAuthModalPlan] = useState('free');
   const [heroContext, setHeroContext] = useState('');
+  const { openAuthModal, AuthModalPortal } = usePublicAuthModal(heroContext);
   const heroRef = useRef(null);
   const spacerRef = useRef(null);
   const heroHeight = useRef(0);
-
-  const openAuthModal = (flow = 'signin', plan = 'free') => {
-    setAuthModalFlow(flow);
-    setAuthModalPlan(plan);
-    setAuthModalOpen(true);
-  };
 
   useEffect(() => {
     const hero = heroRef.current;
@@ -307,14 +297,6 @@ export default function HomePage() {
       window.removeEventListener('scroll', update);
     };
   }, []);
-
-  // Auto-open modal when redirected with ?auth=1
-  useEffect(() => {
-    if (searchParams.get('auth') === '1') {
-      openAuthModal('signin');
-      window.history.replaceState({}, '', window.location.pathname);
-    }
-  }, [searchParams]);
 
   useEffect(() => {
     // Immediately reveal elements that are already in the viewport on mount
@@ -486,25 +468,7 @@ export default function HomePage() {
         </div>
       </footer>
 
-      {authModalOpen && createPortal(
-        <div
-          className="sac-modal-backdrop"
-          onMouseDown={(e) => { if (e.target === e.currentTarget) setAuthModalOpen(false); }}
-        >
-          <div className="sac-modal-shell">
-            <button
-              type="button"
-              className="sac-modal-close"
-              onClick={() => setAuthModalOpen(false)}
-              aria-label="Close"
-            >
-              <i className="fa-solid fa-xmark" aria-hidden="true"></i>
-            </button>
-            <StrategyAccessCard key={authModalFlow + authModalPlan} initialFlowMode={authModalFlow} initialPlan={authModalPlan} heroContext={heroContext} />
-          </div>
-        </div>,
-        document.body
-      )}
+      {AuthModalPortal}
     </div>
   );
 }
