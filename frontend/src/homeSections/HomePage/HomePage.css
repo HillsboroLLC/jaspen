@@ -2274,11 +2274,13 @@
 .homepage { --primary: #a0036c; --on-primary: #ffffff; }
 
 /* Eggplant theme — nav CTA, auth modal tab + submit button */
-.homepage .jaspen-header .jaspen-btn-primary {
+.homepage .jaspen-header .jaspen-btn-primary,
+.public-jaspen-header .jaspen-header .jaspen-btn-primary {
   background: #a0036c;
   color: #ffffff;
 }
-.homepage .jaspen-header .jaspen-btn-primary:hover {
+.homepage .jaspen-header .jaspen-btn-primary:hover,
+.public-jaspen-header .jaspen-header .jaspen-btn-primary:hover {
   background: #a0036c;
   filter: brightness(1.08);
   box-shadow: 0 12px 28px -12px rgba(160, 3, 108, 0.4);
