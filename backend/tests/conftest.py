@@ -16,7 +16,9 @@ from app.models import (
     OrganizationInvitation,
     OrganizationMember,
     SavedStarter,
+    UsageEvent,
     User,
+    UserAuthSession,
     UserDataset,
     UserSession,
 )
@@ -94,6 +96,8 @@ def db(app):
             OrganizationMember,
             Organization,
             SavedStarter,
+            UsageEvent,
+            UserAuthSession,
             UserDataset,
             UserSession,
             User,

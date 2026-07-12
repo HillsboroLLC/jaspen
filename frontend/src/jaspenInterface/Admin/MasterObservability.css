@@ -1,0 +1,245 @@
+.master-admin-page {
+  min-height: 100vh;
+  padding: 28px;
+  background: var(--int-bg);
+  color: var(--int-text);
+}
+
+.master-admin-inner {
+  max-width: 1280px;
+  margin: 0 auto;
+  transition: margin-left 0.28s ease;
+}
+
+body.jaspen-sidebar-open .master-admin-inner {
+  margin-left: 340px;
+}
+
+.master-admin-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.master-admin-head h1 {
+  margin: 0;
+  font-size: 36px;
+}
+
+.master-admin-head p {
+  margin: 8px 0 0;
+  color: var(--int-text-sub);
+}
+
+.master-admin-refresh {
+  height: 40px;
+  border: 1px solid var(--int-border-md);
+  border-radius: var(--int-radius-sm);
+  background: var(--int-surface);
+  color: var(--int-text);
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.master-admin-state {
+  border: 1px solid var(--int-border);
+  border-radius: var(--int-radius-md);
+  background: var(--int-surface);
+  padding: 14px;
+  color: var(--int-text-sub);
+}
+
+.master-admin-state.is-error {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.master-metric-grid,
+.master-status-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.master-metric-card,
+.master-status-card,
+.master-admin-panel {
+  border: 1px solid var(--int-border);
+  border-radius: var(--int-radius-md);
+  background: var(--int-surface);
+  box-shadow: var(--int-shadow-sm);
+}
+
+.master-metric-card,
+.master-status-card {
+  padding: 16px;
+  min-height: 116px;
+}
+
+.master-metric-card span,
+.master-status-card span {
+  display: block;
+  color: var(--int-text-sub);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.master-metric-card strong,
+.master-status-card strong {
+  display: block;
+  margin-top: 10px;
+  font-size: 1.8rem;
+  color: var(--int-text);
+}
+
+.master-metric-card p,
+.master-status-card p {
+  margin: 8px 0 0;
+  color: var(--int-text-sub);
+  font-size: 0.82rem;
+}
+
+.master-metric-card.is-alert strong,
+.master-status-card.is-attention strong {
+  color: #991b1b;
+}
+
+.master-status-card.is-not_instrumented strong {
+  color: #64748b;
+}
+
+.master-admin-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.master-admin-panel {
+  margin-top: 14px;
+  padding: 16px;
+}
+
+.master-admin-columns .master-admin-panel {
+  margin-top: 0;
+}
+
+.master-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.master-panel-title h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.master-empty {
+  margin: 0;
+  color: var(--int-text-sub);
+}
+
+.master-source-list {
+  display: grid;
+  gap: 8px;
+}
+
+.master-source-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--int-border);
+  padding: 10px 0;
+}
+
+.master-source-row:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.master-table-wrap {
+  overflow: auto;
+}
+
+.master-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.master-table th,
+.master-table td {
+  border-bottom: 1px solid var(--int-border);
+  padding: 10px 8px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.master-table th {
+  color: var(--int-text-sub);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.master-health-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.master-health-grid div {
+  border: 1px solid var(--int-border);
+  border-radius: var(--int-radius-sm);
+  padding: 12px;
+}
+
+.master-health-grid span {
+  display: block;
+  color: var(--int-text-sub);
+  font-size: 0.82rem;
+}
+
+.master-health-grid strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 1.35rem;
+}
+
+@media (max-width: 980px) {
+  .master-metric-grid,
+  .master-status-grid,
+  .master-admin-columns {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .master-admin-page {
+    padding: 18px;
+  }
+
+  body.jaspen-sidebar-open .master-admin-inner {
+    margin-left: 0;
+  }
+
+  .master-admin-head {
+    flex-direction: column;
+  }
+
+  .master-metric-grid,
+  .master-status-grid,
+  .master-admin-columns,
+  .master-health-grid {
+    grid-template-columns: 1fr;
+  }
+}

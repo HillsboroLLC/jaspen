@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 
 from flask import Blueprint, current_app, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 
 from app.access_controls import (
     APPROVAL_APPROVED,
@@ -34,7 +34,7 @@ from app.connector_store import (
     save_connector_state,
     update_connector_settings,
 )
-from app.models import User, UserSession
+from app.models import AdminAuditEvent, Lead, User, UserAuthSession, UserSession
 from app.public_intake_controls import (
     get_kill_switch_state,
     reset_kill_switch_cache,
@@ -45,6 +45,7 @@ from app.tool_registry import get_context_budget, get_tool_entitlements
 
 admin_bp = Blueprint("admin", __name__)
 ADMIN_ALLOWED_CONNECTOR_FIELDS = {"connection_status", "auto_sync"}
+MASTER_ADMIN_EMAIL = "support@jaspen.ai"
 
 
 def _to_bool(value, default=False):
@@ -361,6 +362,56 @@ def _require_admin():
     return user, None
 
 
+def _require_master_admin():
+    user, err = _require_admin()
+    if err:
+        return None, err
+    if str(user.email or "").strip().lower() != MASTER_ADMIN_EMAIL:
+        return None, (jsonify({"error": "Master admin access required"}), 403)
+    return user, None
+
+
+def _iso(dt):
+    return dt.isoformat() if dt else None
+
+
+def _contains_scorecard(value):
+    if isinstance(value, dict):
+        for key, child in value.items():
+            normalized = str(key or "").strip().lower()
+            if normalized in {"scorecard", "scorecards", "jaspen_score", "score_snapshot"}:
+                return True
+            if _contains_scorecard(child):
+                return True
+    if isinstance(value, list):
+        return any(_contains_scorecard(item) for item in value)
+    return False
+
+
+def _source_label(lead):
+    parts = [
+        getattr(lead, "utm_source", None),
+        getattr(lead, "source", None),
+        getattr(lead, "referrer", None),
+    ]
+    for part in parts:
+        token = str(part or "").strip()
+        if token:
+            return token[:120]
+    return "unknown"
+
+
+def _has_source_token(lead, token):
+    haystack = " ".join([
+        str(getattr(lead, "utm_source", "") or ""),
+        str(getattr(lead, "utm_medium", "") or ""),
+        str(getattr(lead, "utm_campaign", "") or ""),
+        str(getattr(lead, "source", "") or ""),
+        str(getattr(lead, "referrer", "") or ""),
+    ]).lower()
+    return token in haystack
+
+
 def _audit(admin_user, action, target_user=None, details=None):
     meta = _request_meta()
     append_admin_audit_event(
@@ -415,6 +466,155 @@ def capabilities():
         "email": user.email,
         "admin_scope": "global",
         "org_admin_enabled": False,
+    }), 200
+
+
+@admin_bp.route("/master/analytics", methods=["GET"])
+@jwt_required()
+def master_analytics():
+    _, err = _require_master_admin()
+    if err:
+        return err
+
+    now = datetime.utcnow()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    week_start = now - timedelta(days=7)
+
+    leads_today = Lead.query.filter(Lead.created_at >= today_start).all()
+    all_leads = Lead.query.order_by(Lead.created_at.desc()).limit(500).all()
+    users_today = User.query.filter(User.created_at >= today_start).count()
+    recent_users = (
+        User.query
+        .order_by(User.created_at.desc())
+        .limit(12)
+        .all()
+    )
+
+    visitor_query = UserAuthSession.query.filter(UserAuthSession.issued_at >= today_start)
+    todays_visitors = visitor_query.with_entities(UserAuthSession.user_id).distinct().count()
+    if todays_visitors == 0:
+        todays_visitors = users_today
+
+    source_counts = {}
+    for lead in all_leads:
+        label = _source_label(lead)
+        source_counts[label] = source_counts.get(label, 0) + 1
+    traffic_sources = [
+        {"source": source, "count": count}
+        for source, count in sorted(source_counts.items(), key=lambda item: item[1], reverse=True)[:8]
+    ]
+
+    sessions = UserSession.query.filter(UserSession.created_at >= week_start).all()
+    scorecard_sessions = [row for row in sessions if _contains_scorecard(row.payload)]
+    first_scorecard_minutes = []
+    for row in scorecard_sessions:
+        if row.created_at and row.updated_at and row.updated_at >= row.created_at:
+            first_scorecard_minutes.append((row.updated_at - row.created_at).total_seconds() / 60)
+    avg_first_scorecard = (
+        round(sum(first_scorecard_minutes) / len(first_scorecard_minutes), 1)
+        if first_scorecard_minutes else None
+    )
+
+    active_paid_statuses = {"active", "trialing"}
+    paid_plans = {"starter", "essential", "team", "enterprise"}
+    plan_mrr = {
+        "starter": 7,
+        "essential": 39,
+        "team": 0,
+        "enterprise": 0,
+    }
+    paid_users = User.query.filter(func.lower(User.subscription_plan).in_(paid_plans)).all()
+    completed_purchases = sum(
+        1 for user in paid_users
+        if str(user.subscription_status or "").lower() in active_paid_statuses
+        or str(user.subscription_plan or "").lower() in {"starter", "essential"}
+    )
+    failed_payment_statuses = {"past_due", "unpaid", "incomplete", "incomplete_expired"}
+    failed_payments = User.query.filter(func.lower(User.subscription_status).in_(failed_payment_statuses)).count()
+    mrr = sum(plan_mrr.get(str(user.subscription_plan or "").lower(), 0) for user in paid_users)
+
+    conversions = len(leads_today)
+    activation_percent = round((len(scorecard_sessions) / max(User.query.filter(User.created_at >= week_start).count(), 1)) * 100, 1)
+    conversion_percent = round((conversions / max(todays_visitors, 1)) * 100, 1)
+
+    return jsonify({
+        "generated_at": _iso(now),
+        "metrics": {
+            "todays_visitors": todays_visitors,
+            "linkedin_visitors": sum(1 for lead in all_leads if _has_source_token(lead, "linkedin")),
+            "youtube_visitors": sum(1 for lead in all_leads if _has_source_token(lead, "youtube") or _has_source_token(lead, "youtu.be")),
+            "conversions": conversions,
+            "emails_captured": Lead.query.count(),
+            "scorecards_generated": len(scorecard_sessions),
+            "upgrades_started": 0,
+            "completed_purchases": completed_purchases,
+            "failed_payments": failed_payments,
+            "errors": AdminAuditEvent.query.filter(AdminAuditEvent.timestamp >= today_start, AdminAuditEvent.action.ilike("%error%")).count(),
+            "average_time_to_first_scorecard": avg_first_scorecard,
+            "activation_percent": activation_percent,
+            "conversion_percent": conversion_percent,
+            "mrr": mrr,
+        },
+        "traffic_sources": traffic_sources,
+        "recent_signups": [
+            {
+                "id": user.id,
+                "email": user.email,
+                "name": user.name,
+                "plan": to_public_plan(user.subscription_plan),
+                "created_at": _iso(user.created_at),
+            }
+            for user in recent_users
+        ],
+        "notes": {
+            "todays_visitors": "Uses authenticated visitor sessions when present, otherwise today's signups.",
+            "upgrades_started": "Reserved for checkout-intent instrumentation.",
+            "mrr": "Self-serve MRR estimate; team and enterprise contract revenue are not inferred.",
+        },
+    }), 200
+
+
+@admin_bp.route("/master/errors", methods=["GET"])
+@jwt_required()
+def master_errors():
+    _, err = _require_master_admin()
+    if err:
+        return err
+
+    now = datetime.utcnow()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    week_start = now - timedelta(days=7)
+    failed_payment_statuses = {"past_due", "unpaid", "incomplete", "incomplete_expired"}
+    recent_audit = list_admin_audit_events(limit=25)
+    provider_health = _collect_provider_health(limit=10)
+    public_intake_state = get_kill_switch_state()
+
+    sections = [
+        {"key": "admin", "label": "Admin", "status": "online", "count": AdminAuditEvent.query.filter(AdminAuditEvent.timestamp >= today_start).count()},
+        {"key": "dashboard", "label": "Dashboard", "status": "watching", "count": UserSession.query.filter(UserSession.updated_at >= today_start).count()},
+        {"key": "analytics", "label": "Analytics", "status": "online", "count": Lead.query.filter(Lead.created_at >= today_start).count()},
+        {"key": "users", "label": "Users", "status": "online", "count": User.query.count()},
+        {"key": "subscriptions", "label": "Subscriptions", "status": "attention" if User.query.filter(func.lower(User.subscription_status).in_(failed_payment_statuses)).count() else "online", "count": User.query.filter(func.lower(User.subscription_status).in_(failed_payment_statuses)).count()},
+        {"key": "errors", "label": "Errors", "status": "watching", "count": AdminAuditEvent.query.filter(AdminAuditEvent.timestamp >= week_start, AdminAuditEvent.action.ilike("%error%")).count()},
+        {"key": "decision_records", "label": "Decision Records", "status": "online", "count": UserSession.query.count()},
+        {"key": "feature_flags", "label": "Feature Flags", "status": "online", "count": 1},
+        {"key": "email_queue", "label": "Email Queue", "status": "not_instrumented", "count": 0},
+        {"key": "system_health", "label": "System Health", "status": "attention" if provider_health.get("summary", {}).get("failover_events") else "online", "count": provider_health.get("summary", {}).get("failover_events") or 0},
+        {"key": "logs", "label": "Logs", "status": "online", "count": len(recent_audit)},
+    ]
+
+    return jsonify({
+        "generated_at": _iso(now),
+        "sections": sections,
+        "feature_flags": [
+            {
+                "key": "PUBLIC_INTAKE_AI_ENABLED",
+                "enabled": not bool(public_intake_state.get("disabled")),
+                "source": "admin_kill_switch",
+            },
+        ],
+        "recent_logs": recent_audit,
+        "provider_health": provider_health,
     }), 200
 
 

@@ -20,6 +20,7 @@ import { buildInviteLink, buildInviteDisplay } from '../../shared/inviteLink';
 import { getPlanConnectorSentence } from '../../shared/billing/planConnectors';
 import { PLAN_ORDER, PLAN_RANK } from '../../shared/constants/appConstants';
 import { formatNextResetDate } from '../../shared/utils/dateUtils';
+import { isMasterAdminUser } from '../../shared/auth/masterAdmin';
 import SidebarIdentityFooter from '../Workspace/components/SidebarIdentityFooter';
 import StripeCheckout from '../Account/StripeCheckout';
 import './AppMenu.css';
@@ -213,6 +214,7 @@ export default function AppMenu() {
 
   const effectiveIsCreator = isOrgCreator;
   const effectiveCanManageOrg = canManageOrg;
+  const isMasterAdmin = isMasterAdminUser(user);
 
   const canStartOrgProjects =
     previewPlanCategory === 'individual' ||
@@ -614,6 +616,18 @@ export default function AppMenu() {
               <FontAwesomeIcon icon={faUser} />
               <span className="jas-ud-item-label">Jaspen Admin</span>
             </button>
+          )}
+          {isMasterAdmin && (
+            <>
+              <button className={menuItemClass('/admin/analytics')} onClick={() => { close(); navigate('/admin/analytics'); }}>
+                <FontAwesomeIcon icon={faChartLine} />
+                <span className="jas-ud-item-label">Analytics</span>
+              </button>
+              <button className={menuItemClass('/admin/errors')} onClick={() => { close(); navigate('/admin/errors'); }}>
+                <FontAwesomeIcon icon={faGaugeHigh} />
+                <span className="jas-ud-item-label">Errors</span>
+              </button>
+            </>
           )}
         </div>
 
