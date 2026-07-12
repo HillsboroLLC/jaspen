@@ -9,7 +9,7 @@ import BeforeAfter from './BeforeAfter';
 import WhyNotChatGPT from './WhyNotChatGPT';
 import HowScoreWorks from './HowScoreWorks';
 import RubricIsYours from './RubricIsYours';
-import LeadCapture from './LeadCapture';
+import DecisionStyleAssessment from './DecisionStyleAssessment/DecisionStyleAssessment';
 import FAQSection from '../FAQSection/FAQSection';
 import usePublicAuthModal from './usePublicAuthModal';
 import { SCENARIOS } from './scenarioData';
@@ -393,8 +393,8 @@ export default function HomePage() {
         {/* ========== FAQ ========== */}
         <FAQSection />
 
-        {/* ========== LEAD MAGNET: DECISION SCORECARD ========== */}
-        <LeadCapture />
+        {/* ========== DECISION STYLE ASSESSMENT (lead capture) ========== */}
+        <DecisionStyleAssessment />
 
         {/* ========== FINAL CTA ========== */}
         <section id="request-access" className="jaspen-cta-section">
