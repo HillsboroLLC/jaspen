@@ -166,6 +166,40 @@ export default function DecisionStyleAssessment() {
 
   return (
     <section className="dsa" id="decision-style-assessment" aria-labelledby="dsa-title">
+      {/* Abstract, edge-to-edge decorative backdrop (purely visual). Soft
+          gradient orbs up top and layered flowing waves along the bottom, in
+          the Jaspen palette — full-bleed, never boxed. */}
+      <div className="dsa-bg" aria-hidden="true">
+        <span className="dsa-orb dsa-orb--magenta" />
+        <span className="dsa-orb dsa-orb--violet" />
+        <svg className="dsa-waves" viewBox="0 0 1440 300" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id="dsaWaveFront" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stopColor="#1d1a4a" />
+              <stop offset="52%" stopColor="#5c1170" />
+              <stop offset="100%" stopColor="#a0036c" />
+            </linearGradient>
+            <linearGradient id="dsaWaveMid" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="#5b49b0" />
+              <stop offset="100%" stopColor="#9152b0" />
+            </linearGradient>
+          </defs>
+          <path
+            className="dsa-wave dsa-wave--back"
+            d="M0,132 C300,74 520,158 760,126 C1000,94 1200,58 1440,104 L1440,300 L0,300 Z"
+          />
+          <path
+            className="dsa-wave dsa-wave--mid"
+            fill="url(#dsaWaveMid)"
+            d="M0,182 C280,138 560,222 824,186 C1080,150 1240,120 1440,168 L1440,300 L0,300 Z"
+          />
+          <path
+            className="dsa-wave dsa-wave--front"
+            fill="url(#dsaWaveFront)"
+            d="M0,230 C300,198 540,268 800,232 C1060,196 1240,188 1440,220 L1440,300 L0,300 Z"
+          />
+        </svg>
+      </div>
       <div className="dsa-inner">
         {/* ── Intro ───────────────────────────────────────────── */}
         {step === 'intro' && (

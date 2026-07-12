@@ -4,11 +4,82 @@
    the same cream band + bordered white card language so it reads as native. */
 
 .dsa {
-  background: #f8f5f0;
-  padding: 92px 40px 100px;
+  position: relative;
+  overflow: hidden;
+  padding: 104px 40px 230px;
+  background:
+    radial-gradient(38% 46% at 9% 6%, rgba(160, 3, 108, 0.13), transparent 62%),
+    radial-gradient(34% 44% at 92% 2%, rgba(63, 58, 140, 0.16), transparent 60%),
+    linear-gradient(180deg, #faf7f3 0%, #f5f0f8 55%, #efe8f6 100%);
+}
+
+/* ── Abstract edge-to-edge backdrop ──────────────────────── */
+.dsa-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.dsa-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(60px);
+  opacity: 0.55;
+}
+.dsa-orb--magenta {
+  top: -120px;
+  left: -100px;
+  width: 460px;
+  height: 460px;
+  background: radial-gradient(circle at 40% 40%, rgba(160, 3, 108, 0.55), transparent 68%);
+}
+.dsa-orb--violet {
+  top: -160px;
+  right: -120px;
+  width: 520px;
+  height: 520px;
+  background: radial-gradient(circle at 60% 40%, rgba(74, 63, 158, 0.5), transparent 68%);
+}
+
+.dsa-waves {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  width: 100%;
+  height: 300px;
+  display: block;
+}
+.dsa-wave--back {
+  fill: #e7dcf4;
+  opacity: 0.85;
+}
+.dsa-wave--mid {
+  opacity: 0.55;
+}
+.dsa-wave--front {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .dsa-orb {
+    animation: dsa-orb-drift 18s ease-in-out infinite alternate;
+  }
+  .dsa-orb--violet {
+    animation-duration: 22s;
+    animation-direction: alternate-reverse;
+  }
+}
+@keyframes dsa-orb-drift {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(26px, 22px, 0); }
 }
 
 .dsa-inner {
+  position: relative;
+  z-index: 1;
   max-width: 760px;
   margin: 0 auto;
 }
@@ -466,7 +537,15 @@
 
 @media (max-width: 768px) {
   .dsa {
-    padding: 68px 20px 76px;
+    padding: 72px 20px 180px;
+  }
+  .dsa-waves {
+    height: 210px;
+  }
+  .dsa-orb--magenta,
+  .dsa-orb--violet {
+    width: 320px;
+    height: 320px;
   }
   .dsa-card {
     padding: 24px 20px;
