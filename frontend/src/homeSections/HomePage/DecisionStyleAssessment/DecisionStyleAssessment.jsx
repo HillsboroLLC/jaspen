@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { API_BASE } from '../../../config/apiBase';
+import { submitLead } from '../../../shared/lead/leadClient';
+import LeadsMockNotice from '../LeadsMockNotice';
 import { QUESTIONS, QUESTION_COUNT, LEAD_SOURCE, FULL_PROFILE_INCLUDES } from './assessmentData';
 import { deriveProvisionalStyle } from './provisionalResult';
 import './DecisionStyleAssessment.css';
@@ -19,7 +20,6 @@ import './DecisionStyleAssessment.css';
 // is CSS-only (the homepage does not use framer-motion), keeping the section
 // light and preserving page performance.
 
-const LEADS_ENDPOINT = `${API_BASE}/api/v1/public/leads`;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const STORAGE_KEY = 'jaspen_dsa_v1'; // lightweight refresh-recovery only
 
@@ -142,11 +142,7 @@ export default function DecisionStyleAssessment() {
     // automation exists), so we never claim delivery.
     let ok = false;
     try {
-      const res = await fetch(LEADS_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: value, source: LEAD_SOURCE }),
-      });
+      const res = await submitLead({ email: value, source: LEAD_SOURCE });
       ok = !!res && res.ok;
     } catch {
       ok = false;
@@ -298,6 +294,7 @@ export default function DecisionStyleAssessment() {
 
               <div className="dsa-email-card">
                 <form className="dsa-email-form" onSubmit={handleSubmit} noValidate>
+                  <LeadsMockNotice />
                   <label className="dsa-email-label" htmlFor="dsa-email">
                     Where should we send your full profile?
                   </label>

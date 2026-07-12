@@ -10,6 +10,7 @@ import WhyNotChatGPT from './WhyNotChatGPT';
 import HowScoreWorks from './HowScoreWorks';
 import RubricIsYours from './RubricIsYours';
 import DecisionStyleAssessment from './DecisionStyleAssessment/DecisionStyleAssessment';
+import DecisionWorkbookLeadCapture from './DecisionWorkbookLeadCapture';
 import FAQSection from '../FAQSection/FAQSection';
 import usePublicAuthModal from './usePublicAuthModal';
 import { SCENARIOS } from './scenarioData';
@@ -393,8 +394,13 @@ export default function HomePage() {
         {/* ========== FAQ ========== */}
         <FAQSection />
 
-        {/* ========== DECISION STYLE ASSESSMENT (lead capture) ========== */}
+        {/* ========== LEAD MAGNET 1: DECISION STYLE ASSESSMENT ========== */}
+        {/* For visitors curious how they naturally approach decisions. */}
         <DecisionStyleAssessment />
+
+        {/* ========== LEAD MAGNET 2: DECISION WORKBOOK ========== */}
+        {/* For visitors with a specific decision to organize right now. */}
+        <DecisionWorkbookLeadCapture />
 
         {/* ========== FINAL CTA ========== */}
         <section id="request-access" className="jaspen-cta-section">
