@@ -9,7 +9,8 @@ import BeforeAfter from './BeforeAfter';
 import WhyNotChatGPT from './WhyNotChatGPT';
 import HowScoreWorks from './HowScoreWorks';
 import RubricIsYours from './RubricIsYours';
-import LeadCapture from './LeadCapture';
+import DecisionStyleAssessment from './DecisionStyleAssessment/DecisionStyleAssessment';
+import DecisionPlanningToolkitLeadCapture from './DecisionPlanningToolkitLeadCapture';
 import FAQSection from '../FAQSection/FAQSection';
 import usePublicAuthModal from './usePublicAuthModal';
 import { SCENARIOS } from './scenarioData';
@@ -393,8 +394,13 @@ export default function HomePage() {
         {/* ========== FAQ ========== */}
         <FAQSection />
 
-        {/* ========== LEAD MAGNET: DECISION SCORECARD ========== */}
-        <LeadCapture />
+        {/* ========== ENTRY POINT 1: DECISION STYLE ASSESSMENT ========== */}
+        {/* Answers "How do I naturally make decisions?" — low-friction, curious. */}
+        <DecisionStyleAssessment />
+
+        {/* ========== ENTRY POINT 2: DECISION PLANNING TOOLKIT ========== */}
+        {/* Answers "How do I work through a decision I'm facing now?" — practical. */}
+        <DecisionPlanningToolkitLeadCapture />
 
         {/* ========== FINAL CTA ========== */}
         <section id="request-access" className="jaspen-cta-section">
@@ -442,7 +448,6 @@ export default function HomePage() {
               <Link to="/pages/jaspen-in-jira">Jaspen in Jira</Link>
               <Link to="/pages/jaspen-in-smartsheets">Jaspen in Smartsheets</Link>
               <Link to="/pages/resources/connectors">Connectors</Link>
-              <Link to="/pages/resources/integrations">Integrations</Link>
               <Link to="/pages/resources/plugins">Plugins</Link>
             </div>
             <div className="jaspen-footer-col">

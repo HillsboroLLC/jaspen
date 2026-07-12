@@ -93,7 +93,7 @@ export default function PluginsPage() {
           </div>
           <div className="demos-cta-actions">
             <Link to="/login" className="demos-cta-btn demos-cta-btn-primary">Get in touch</Link>
-            <Link to="/pages/resources/integrations" className="demos-cta-btn demos-cta-btn-secondary">View integrations</Link>
+            <Link to="/pages/resources/connectors" className="demos-cta-btn demos-cta-btn-secondary">View connectors</Link>
           </div>
         </div>
       </section>

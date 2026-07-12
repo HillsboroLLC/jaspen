@@ -59,7 +59,6 @@ const NAV_MENUS = [
       {
         title: 'Tools',
         items: [
-          { label: 'Integrations', path: '/pages/resources/integrations' },
           { label: 'Connectors', path: '/pages/resources/connectors' },
           { label: 'Plugins', path: '/pages/resources/plugins' },
         ],
