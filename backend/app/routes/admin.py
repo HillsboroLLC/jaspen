@@ -34,7 +34,17 @@ from app.connector_store import (
     save_connector_state,
     update_connector_settings,
 )
-from app.models import AdminAuditEvent, Lead, LeadAttributionEvent, User, UserAuthSession, UserSession
+from app.models import (
+    AdminAuditEvent,
+    EmailSuppression,
+    Lead,
+    LeadAttributionEvent,
+    LeadDecisionProfile,
+    LeadEmailDelivery,
+    User,
+    UserAuthSession,
+    UserSession,
+)
 from app.public_intake_controls import (
     get_kill_switch_state,
     reset_kill_switch_cache,
@@ -388,6 +398,45 @@ def _contains_scorecard(value):
     return False
 
 
+def _serialize_lead_for_master_admin(lead, latest_event=None, latest_profile=None, latest_delivery=None, suppression=None):
+    return {
+        "id": lead.id,
+        "email": lead.email,
+        "source": lead.source,
+        "name": " ".join(filter(None, [lead.first_name, lead.last_name])) or None,
+        "company": lead.company,
+        "title": lead.title,
+        "utm_source": lead.utm_source,
+        "utm_medium": lead.utm_medium,
+        "utm_campaign": lead.utm_campaign,
+        "referrer": lead.referrer,
+        "created_at": _iso(lead.created_at),
+        "updated_at": _iso(lead.updated_at),
+        "latest_event": {
+            "source": latest_event.source,
+            "marketing_opt_in": bool(latest_event.marketing_opt_in),
+            "email_delivery_requested": bool(latest_event.email_delivery_requested),
+            "created_at": _iso(latest_event.created_at),
+        } if latest_event else None,
+        "decision_profile": {
+            "style_name": latest_profile.style_name,
+            "style_key": latest_profile.verified_style_key,
+            "created_at": _iso(latest_profile.created_at),
+        } if latest_profile else None,
+        "latest_email": {
+            "type": latest_delivery.email_type,
+            "status": latest_delivery.status,
+            "sent_at": _iso(latest_delivery.sent_at),
+            "created_at": _iso(latest_delivery.created_at),
+        } if latest_delivery else None,
+        "suppression": {
+            "scope": suppression.scope,
+            "reason": suppression.reason,
+            "created_at": _iso(suppression.created_at),
+        } if suppression else None,
+    }
+
+
 def _source_label(lead):
     parts = [
         getattr(lead, "utm_source", None),
@@ -571,6 +620,118 @@ def master_analytics():
             "upgrades_started": "Reserved for checkout-intent instrumentation.",
             "mrr": "Self-serve MRR estimate; team and enterprise contract revenue are not inferred.",
         },
+    }), 200
+
+
+@admin_bp.route("/master/leads", methods=["GET"])
+@jwt_required()
+def master_leads():
+    _, err = _require_master_admin()
+    if err:
+        return err
+
+    query_text = str(request.args.get("q") or "").strip()
+    source = str(request.args.get("source") or "").strip()
+    page = max(_to_int(request.args.get("page"), 1) or 1, 1)
+    per_page = min(max(_to_int(request.args.get("per_page"), 25) or 25, 1), 100)
+
+    query = Lead.query
+    if query_text:
+        like = f"%{query_text.lower()}%"
+        query = query.filter(or_(
+            func.lower(Lead.email).like(like),
+            func.lower(Lead.first_name).like(like),
+            func.lower(Lead.last_name).like(like),
+            func.lower(Lead.company).like(like),
+            func.lower(Lead.source).like(like),
+            func.lower(Lead.utm_source).like(like),
+            func.lower(Lead.utm_campaign).like(like),
+        ))
+    if source:
+        query = query.filter(func.lower(Lead.source) == source.lower())
+
+    total = query.count()
+    leads = (
+        query
+        .order_by(Lead.created_at.desc(), Lead.id.desc())
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+        .all()
+    )
+    lead_ids = [lead.id for lead in leads]
+    normalized_emails = [lead.normalized_email for lead in leads if lead.normalized_email]
+
+    latest_events = {}
+    if lead_ids:
+        for event in (
+            LeadAttributionEvent.query
+            .filter(LeadAttributionEvent.lead_id.in_(lead_ids))
+            .order_by(LeadAttributionEvent.created_at.desc(), LeadAttributionEvent.id.desc())
+            .all()
+        ):
+            latest_events.setdefault(event.lead_id, event)
+
+    latest_profiles = {}
+    if lead_ids:
+        for profile in (
+            LeadDecisionProfile.query
+            .filter(LeadDecisionProfile.lead_id.in_(lead_ids))
+            .order_by(LeadDecisionProfile.created_at.desc(), LeadDecisionProfile.id.desc())
+            .all()
+        ):
+            latest_profiles.setdefault(profile.lead_id, profile)
+
+    latest_deliveries = {}
+    if lead_ids:
+        for delivery in (
+            LeadEmailDelivery.query
+            .filter(LeadEmailDelivery.lead_id.in_(lead_ids))
+            .order_by(LeadEmailDelivery.created_at.desc(), LeadEmailDelivery.id.desc())
+            .all()
+        ):
+            latest_deliveries.setdefault(delivery.lead_id, delivery)
+
+    suppressions = {}
+    if normalized_emails:
+        for suppression in (
+            EmailSuppression.query
+            .filter(EmailSuppression.normalized_email.in_(normalized_emails))
+            .order_by(EmailSuppression.created_at.desc(), EmailSuppression.id.desc())
+            .all()
+        ):
+            suppressions.setdefault((suppression.normalized_email, suppression.scope), suppression)
+
+    source_rows = (
+        db.session.query(Lead.source, func.count(Lead.id))
+        .group_by(Lead.source)
+        .order_by(func.count(Lead.id).desc(), Lead.source.asc())
+        .limit(50)
+        .all()
+    )
+
+    return jsonify({
+        "generated_at": _iso(datetime.utcnow()),
+        "pagination": {
+            "page": page,
+            "per_page": per_page,
+            "total": total,
+            "has_next": page * per_page < total,
+            "has_prev": page > 1,
+        },
+        "sources": [
+            {"source": row[0] or "unknown", "count": row[1]}
+            for row in source_rows
+        ],
+        "leads": [
+            _serialize_lead_for_master_admin(
+                lead,
+                latest_event=latest_events.get(lead.id),
+                latest_profile=latest_profiles.get(lead.id),
+                latest_delivery=latest_deliveries.get(lead.id),
+                suppression=suppressions.get((lead.normalized_email, "marketing")),
+            )
+            for lead in leads
+        ],
     }), 200
 
 

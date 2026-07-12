@@ -191,6 +191,62 @@ body.jaspen-sidebar-open .master-admin-inner {
   letter-spacing: 0.04em;
 }
 
+.master-leads-table td {
+  vertical-align: top;
+}
+
+.master-leads-table td strong {
+  display: block;
+  color: var(--int-text);
+}
+
+.master-leads-table td span {
+  display: block;
+  margin-top: 4px;
+  color: var(--int-text-sub);
+  font-size: 0.8rem;
+}
+
+.master-filter-bar {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(200px, 280px) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.master-filter-bar label {
+  display: grid;
+  gap: 6px;
+}
+
+.master-filter-bar label span {
+  color: var(--int-text-sub);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.master-filter-bar input,
+.master-filter-bar select {
+  height: 40px;
+  border: 1px solid var(--int-border-md);
+  border-radius: var(--int-radius-sm);
+  background: var(--int-surface);
+  color: var(--int-text);
+  padding: 0 12px;
+  font: inherit;
+}
+
+.master-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 14px;
+  color: var(--int-text-sub);
+}
+
 .master-health-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -239,7 +295,8 @@ body.jaspen-sidebar-open .master-admin-inner {
   .master-metric-grid,
   .master-status-grid,
   .master-admin-columns,
-  .master-health-grid {
+  .master-health-grid,
+  .master-filter-bar {
     grid-template-columns: 1fr;
   }
 }

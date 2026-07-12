@@ -10,7 +10,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faBars, faTimes, faListCheck, faPlus, faLayerGroup, faChartLine,
   faDownload, faClockRotateLeft, faUser, faGaugeHigh, faQuestionCircle,
-  faBolt, faBell, faLock, faArrowUpRightFromSquare,
+  faBolt, faBell, faLock, faArrowUpRightFromSquare, faAddressBook,
 } from '@fortawesome/free-solid-svg-icons';
 
 import { useAuth } from '../../shared/auth/AuthContext';
@@ -622,6 +622,10 @@ export default function AppMenu() {
               <button className={menuItemClass('/admin/analytics')} onClick={() => { close(); navigate('/admin/analytics'); }}>
                 <FontAwesomeIcon icon={faChartLine} />
                 <span className="jas-ud-item-label">Analytics</span>
+              </button>
+              <button className={menuItemClass('/admin/leads')} onClick={() => { close(); navigate('/admin/leads'); }}>
+                <FontAwesomeIcon icon={faAddressBook} />
+                <span className="jas-ud-item-label">Leads</span>
               </button>
               <button className={menuItemClass('/admin/errors')} onClick={() => { close(); navigate('/admin/errors'); }}>
                 <FontAwesomeIcon icon={faGaugeHigh} />
