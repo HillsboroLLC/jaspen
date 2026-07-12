@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { submitLead } from '../../../shared/lead/leadClient';
 import LeadsMockNotice from '../LeadsMockNotice';
-import { QUESTIONS, QUESTION_COUNT, LEAD_SOURCE, FULL_PROFILE_INCLUDES } from './assessmentData';
+import { QUESTIONS, QUESTION_COUNT, LEAD_SOURCE, FULL_PROFILE_INCLUDES, STYLES, STYLE_ORDER } from './assessmentData';
 import { deriveProvisionalStyle } from './provisionalResult';
 import './DecisionStyleAssessment.css';
 
@@ -166,66 +166,67 @@ export default function DecisionStyleAssessment() {
 
   return (
     <section className="dsa" id="decision-style-assessment" aria-labelledby="dsa-title">
-      {/* Abstract, edge-to-edge decorative backdrop (purely visual). Soft
-          gradient orbs up top and layered flowing waves along the bottom, in
-          the Jaspen palette — full-bleed, never boxed. */}
-      <div className="dsa-bg" aria-hidden="true">
-        <span className="dsa-orb dsa-orb--magenta" />
-        <span className="dsa-orb dsa-orb--violet" />
-        <svg className="dsa-waves" viewBox="0 0 1440 300" preserveAspectRatio="none">
-          <defs>
-            <linearGradient id="dsaWaveFront" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor="#1d1a4a" />
-              <stop offset="52%" stopColor="#5c1170" />
-              <stop offset="100%" stopColor="#a0036c" />
-            </linearGradient>
-            <linearGradient id="dsaWaveMid" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stopColor="#5b49b0" />
-              <stop offset="100%" stopColor="#9152b0" />
-            </linearGradient>
-          </defs>
-          <path
-            className="dsa-wave dsa-wave--back"
-            d="M0,132 C300,74 520,158 760,126 C1000,94 1200,58 1440,104 L1440,300 L0,300 Z"
-          />
-          <path
-            className="dsa-wave dsa-wave--mid"
-            fill="url(#dsaWaveMid)"
-            d="M0,182 C280,138 560,222 824,186 C1080,150 1240,120 1440,168 L1440,300 L0,300 Z"
-          />
-          <path
-            className="dsa-wave dsa-wave--front"
-            fill="url(#dsaWaveFront)"
-            d="M0,230 C300,198 540,268 800,232 C1060,196 1240,188 1440,220 L1440,300 L0,300 Z"
-          />
-        </svg>
-      </div>
-      <div className="dsa-inner">
+      <div className={`dsa-inner${step === 'intro' ? ' dsa-inner--wide' : ''}`}>
         {/* ── Intro ───────────────────────────────────────────── */}
         {step === 'intro' && (
-          <div className="dsa-intro dsa-fade">
-            <p className="dsa-eyebrow">A two-minute reflection</p>
-            <h2 className="dsa-title" id="dsa-title">
-              How do you make decisions?
-            </h2>
-            <p className="dsa-sub">
-              From a quick gut call to a careful weighing of the options, everyone approaches
-              important choices a little differently. Answer seven short questions and see the
-              patterns that shape how you decide.
-            </p>
-            <button type="button" className="dsa-btn dsa-btn-primary" onClick={start}>
-              Start the reflection
-              <i className="fa-solid fa-arrow-right dsa-btn-icon" aria-hidden="true" />
-            </button>
-            <p className="dsa-reassure">
-              <i className="fa-solid fa-circle-info dsa-reassure-icon" aria-hidden="true" />
-              No score, no grade. Just a clearer picture of your natural approach.
-            </p>
-            {answeredCount > 0 && (
-              <button type="button" className="dsa-link" onClick={start}>
-                Resume where you left off
+          <div className="dsa-hero dsa-fade">
+            {/* Left: the value proposition */}
+            <div className="dsa-hero-copy">
+              <p className="dsa-hero-eyebrow">
+                <i className="fa-solid fa-wand-magic-sparkles" aria-hidden="true" />
+                Free decision-style assessment
+              </p>
+              <h2 className="dsa-hero-title" id="dsa-title">
+                What kind of decision‑maker are{' '}
+                <span className="dsa-hero-title-accent">you</span>?
+              </h2>
+              <p className="dsa-hero-sub">
+                Everyone has a natural way of making the big calls. Answer seven quick questions
+                and uncover yours — the strengths it gives you, the blind spots to watch, and how
+                to make decisions you can defend. No score. No grade. Just a sharper picture of you.
+              </p>
+              <ul className="dsa-hero-facts">
+                <li>
+                  <i className="fa-solid fa-list-check" aria-hidden="true" />7 quick questions
+                </li>
+                <li>
+                  <i className="fa-solid fa-clock" aria-hidden="true" />About 2 minutes
+                </li>
+                <li>
+                  <i className="fa-solid fa-lock-open" aria-hidden="true" />No sign‑up to start
+                </li>
+              </ul>
+            </div>
+
+            {/* Right: animated stage + the call to action */}
+            <div className="dsa-hero-stage">
+              <div className="dsa-stage" aria-hidden="true">
+                <span className="dsa-stage-ring" />
+                <span className="dsa-stage-ring dsa-stage-ring--inner" />
+                <div className="dsa-stage-core">
+                  <i className="fa-solid fa-fingerprint" />
+                </div>
+                {STYLE_ORDER.map((key, i) => (
+                  <span className={`dsa-chip dsa-chip--${i + 1}`} key={key}>
+                    {STYLES[key].name}
+                  </span>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                className="dsa-btn dsa-btn-primary dsa-hero-cta"
+                onClick={start}
+              >
+                Reveal my decision style
+                <i className="fa-solid fa-arrow-right dsa-btn-icon" aria-hidden="true" />
               </button>
-            )}
+              <p className="dsa-hero-microcopy">
+                {answeredCount > 0
+                  ? 'Pick up right where you left off.'
+                  : 'Takes about two minutes — see your result instantly.'}
+              </p>
+            </div>
           </div>
         )}
 
