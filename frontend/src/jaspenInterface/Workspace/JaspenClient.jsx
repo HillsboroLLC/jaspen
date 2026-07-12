@@ -173,7 +173,7 @@ function buildHttpError(status, data) {
           status: 402,
           code,
           message: data?.error || "You've reached your monthly thinking power.",
-          upgradeUrl: data?.upgrade_url || '/account?tab=billing',
+          upgradeUrl: data?.upgrade_url || '/account?tab=packs',
         },
       }));
     }

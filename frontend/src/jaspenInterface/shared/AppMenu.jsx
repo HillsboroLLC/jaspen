@@ -729,7 +729,7 @@ export default function AppMenu() {
                 <p className="jas-ud-usage-note">Current plan: {currentPlanLabel}</p>
                 {creditsTone !== 'normal' && (
                   <div className="jas-ud-usage-actions">
-                    <button type="button" className="jas-account-action-link" onClick={() => navigate('/account?tab=billing')}>Add credits</button>
+                    <button type="button" className="jas-account-action-link" onClick={() => navigate('/account?tab=packs')}>Add credits</button>
                     <button type="button" className="jas-account-action-link" onClick={() => navigate('/account?tab=plans')}>Upgrade plan</button>
                   </div>
                 )}
@@ -861,7 +861,7 @@ export default function AppMenu() {
                       disabled={billingActionLoading === key}
                     >
                       {billingActionLoading === key
-                        ? 'Redirecting...'
+                        ? 'Opening...'
                         : 'Select plan'}
                     </button>
                   )}

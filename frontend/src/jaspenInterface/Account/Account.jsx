@@ -2624,7 +2624,7 @@ export default function Account() {
                         onClick={() => requestPlanChange(key, plan)}
                         disabled={isPending} aria-disabled={isPending}
                       >
-                        {isPending ? 'Redirecting...'
+                        {isPending ? 'Opening...'
                           : isUpgrade ? `Upgrade to ${plan.label}`
                           : key === 'free' ? 'Cancel subscription'
                           : `Downgrade to ${plan.label}`}

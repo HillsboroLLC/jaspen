@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import MarketingPageLayout from './MarketingPageLayout';
 import { API_BASE } from '../../config/apiBase';
 import { useAuth } from '../../shared/auth/AuthContext';
-import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import Seo from '../../shared/components/Seo';
 import { PLAN_ORDER, PLAN_RANK } from '../../shared/constants/appConstants';
 
@@ -81,7 +80,6 @@ export default function PricingPage() {
   const [plans, setPlans] = useState(FALLBACK_PLANS);
   const [packs, setPacks] = useState(FALLBACK_PACKS);
   const [modelTypes, setModelTypes] = useState(FALLBACK_MODEL_TYPES);
-  const [pendingKey, setPendingKey] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
   const planIntentCleanedRef = useRef(false);
 
@@ -181,58 +179,13 @@ export default function PricingPage() {
     window.location.href = '/account?tab=plans';
   };
 
-  const buyCreditPack = async (packKey) => {
+  const openAccountTab = (tab = 'plans') => {
     if (!user) {
       window.location.href = '/?auth=1';
       return;
     }
 
-    setPendingKey(packKey);
-    setStatusMessage('');
-    try {
-      const response = await authFetch(`${API_BASE}/api/v1/billing/create-credit-pack-checkout-session`, {
-        method: 'POST',
-        headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
-        body: JSON.stringify({ pack_key: packKey }),
-      });
-
-      const data = await response.json();
-      if (!response.ok || !data?.url) {
-        throw new Error(data?.msg || 'Unable to open credit pack checkout.');
-      }
-
-      window.location.href = data.url;
-    } catch (err) {
-      setStatusMessage(err.message || 'Unable to open credit pack checkout.');
-    } finally {
-      setPendingKey('');
-    }
-  };
-
-  const openPortal = async () => {
-    if (!user) {
-      window.location.href = '/?auth=1';
-      return;
-    }
-
-    setPendingKey('portal');
-    setStatusMessage('');
-    try {
-      const response = await authFetch(`${API_BASE}/api/v1/billing/create-portal-session`, {
-        method: 'POST',
-        headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
-        body: JSON.stringify({ return_url: `${window.location.origin}/pages/pricing#plans` }),
-      });
-      const data = await response.json();
-      if (!response.ok || !data?.url) {
-        throw new Error(data?.msg || 'Unable to open billing settings.');
-      }
-      window.location.href = data.url;
-    } catch (err) {
-      setStatusMessage(err.message || 'Unable to open billing settings.');
-    } finally {
-      setPendingKey('');
-    }
+    window.location.href = `/account?tab=${tab}`;
   };
 
   return (
@@ -370,7 +323,6 @@ export default function PricingPage() {
             <div className="plans-grid pricing-pack-grid">
               {packs.map((pack) => {
                 const price = Number(pack.price_usd);
-                const loading = pendingKey === pack.pack_key;
                 return (
                   <article key={pack.pack_key} className="marketing-card pricing-plan-card pricing-pack-card">
                     <div className="pricing-plan-head">
@@ -381,10 +333,9 @@ export default function PricingPage() {
                     <button
                       type="button"
                       className="pricing-cta-button"
-                      onClick={() => buyCreditPack(pack.pack_key)}
-                      disabled={loading} aria-disabled={loading}
+                      onClick={() => openAccountTab('packs')}
                     >
-                      {loading ? 'Redirecting...' : 'Buy credit pack'}
+                      Buy credit pack
                     </button>
                   </article>
                 );
@@ -403,8 +354,8 @@ export default function PricingPage() {
             Update payment methods, manage Essential, or cancel at period end from your billing settings.
           </p>
           {isLoggedIn ? (
-            <button type="button" className="pricing-portal-button" onClick={openPortal} disabled={pendingKey === 'portal'} aria-disabled={pendingKey === 'portal'}>
-              {pendingKey === 'portal' ? 'Opening...' : 'Manage billing'}
+            <button type="button" className="pricing-portal-button" onClick={() => openAccountTab('plans')}>
+              Manage billing
             </button>
           ) : (
             <a href="/?auth=1" className="pricing-cta-link">Sign in to manage billing</a>

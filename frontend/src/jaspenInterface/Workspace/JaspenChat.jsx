@@ -5071,7 +5071,7 @@ useEffect(() => {
                       onClick={() => startPlanChange(key)}
                       disabled={billingActionLoading === key} aria-disabled={billingActionLoading === key}
                     >
-                      {billingActionLoading === key ? 'Redirecting...' : 'Select plan'}
+                      {billingActionLoading === key ? 'Opening...' : 'Select plan'}
                     </button>
                   )}
                 </article>
@@ -5529,7 +5529,7 @@ useEffect(() => {
                 <p className="jas-ud-usage-note">Resets {formatNextResetDate(billingStatus?.cycle_reset_at)}</p>
                 {creditsTone !== 'normal' && (
                   <div className="jas-account-actions">
-                    <button type="button" className="jas-account-plan-cta" onClick={() => navigate('/account?tab=billing')}>
+                    <button type="button" className="jas-account-plan-cta" onClick={() => navigate('/account?tab=packs')}>
                       Add credits
                     </button>
                     <button type="button" className="jas-account-plan-cta jas-account-plan-cta-secondary" onClick={() => navigate('/account?tab=plans')}>
@@ -12516,7 +12516,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                   <button
                     type="button"
                     className="jas-low-credits-banner-link"
-                    onClick={() => navigate('/account?tab=billing')}
+                    onClick={() => navigate('/account?tab=packs')}
                   >
                     Add credits
                   </button>
@@ -12552,7 +12552,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                     <button
                       type="button"
                       className="jas-low-credits-banner-link"
-                      onClick={() => navigate('/account?tab=billing')}
+                      onClick={() => navigate('/account?tab=plans')}
                     >
                       View plans →
                     </button>
@@ -13998,7 +13998,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               {freeDailyExhausted ? (
                 <>
                   <span>You've reached your daily limit. Resets at midnight UTC.</span>
-                  <button type="button" onClick={() => navigate('/account?tab=billing')}>View plans</button>
+                  <button type="button" onClick={() => navigate('/account?tab=plans')}>View plans</button>
                 </>
               ) : (
                 <span>You're approaching your daily limit.</span>

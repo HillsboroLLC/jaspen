@@ -150,7 +150,7 @@ function handleResponseSideEffects(response, url, skipUnauthorizedNotice) {
             url,
             code,
             message: data?.error || "You've reached your monthly thinking power.",
-            upgradeUrl: data?.upgrade_url || '/account?tab=billing',
+            upgradeUrl: data?.upgrade_url || '/account?tab=packs',
           },
         }));
       }
