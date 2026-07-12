@@ -123,6 +123,28 @@ describe('DecisionStyleAssessment', () => {
     expect(screen.getByText(/check your inbox in the next few minutes/i)).toBeInTheDocument();
   });
 
+  it('uses the results-specific loading text while submitting', async () => {
+    const user = userEvent.setup();
+    let resolveFetch;
+    jest.spyOn(global, 'fetch').mockImplementation(
+      () => new Promise((resolve) => {
+        resolveFetch = resolve;
+      })
+    );
+
+    render(<DecisionStyleAssessment />);
+    await walkThroughAllQuestions(user);
+
+    const input = await screen.findByLabelText(/where should we send/i);
+    await user.type(input, 'lydia@jaspen.ai');
+    await user.click(screen.getByRole('button', { name: /email my full decision profile/i }));
+
+    expect(await screen.findByRole('button', { name: /sending your results/i })).toBeDisabled();
+
+    resolveFetch({ ok: true, status: 201, json: async () => ({ ok: true }) });
+    expect(await screen.findByText(/your decision profile is on its way/i)).toBeInTheDocument();
+  });
+
   it('preserves the result and email when the lead request fails', async () => {
     const user = userEvent.setup();
     jest.spyOn(global, 'fetch').mockRejectedValue(new Error('network down'));

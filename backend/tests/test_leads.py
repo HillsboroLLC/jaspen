@@ -256,6 +256,8 @@ def test_decision_profile_template_renders_every_style():
         assert "Create or open your Jaspen workspace" in rendered["body"]
         assert "Create or open your workspace" in rendered["html"]
         assert "unsubscribe" in rendered["body"].lower()
+        assert "Reflection question" not in rendered["html"]
+        assert "Reflection question" not in rendered["body"]
 
 
 def test_decision_profile_submission_saves_result_and_sends_email(client, db, monkeypatch):
@@ -276,8 +278,14 @@ def test_decision_profile_submission_saves_result_and_sends_email(client, db, mo
     assert len(sent) == 1
     assert sent[0].subject == "Your Jaspen Decision Profile"
     assert sent[0].recipients == ["person@example.com"]
+    assert sent[0].sender == "Jaspen <hello@jaspen.ai>"
+    assert sent[0].reply_to == "hello@jaspen.ai"
     assert "A closer look at how you naturally approach important decisions." in sent[0].html
     assert "Fast Mover" in sent[0].body
+    assert "http://localhost:3000/?auth=signup&amp;source=decision-profile-email" in sent[0].html
+    assert "http://localhost:3000/?auth=signup&source=decision-profile-email" in sent[0].body
+    assert "Reflection question" not in sent[0].html
+    assert "Reflection question" not in sent[0].body
     assert "List-Unsubscribe" in sent[0].extra_headers
 
     lead = Lead.query.one()

@@ -24,6 +24,8 @@ TOOLKIT_SOURCE = "decision-planning-toolkit"
 TOOLKIT_EMAIL_TYPE = "decision_planning_toolkit"
 DECISION_PROFILE_SOURCE = "decision-style-assessment"
 DECISION_PROFILE_EMAIL_TYPE = "decision_profile_results"
+DECISION_PROFILE_SENDER = "Jaspen <hello@jaspen.ai>"
+DECISION_PROFILE_REPLY_TO = "hello@jaspen.ai"
 TOOLKIT_FILENAME = "Jaspen-Decision-Planning-Toolkit.xlsx"
 HONEYPOT_FIELDS = ("website", "url", "hp_name")
 FIELD_LIMITS = {
@@ -231,7 +233,8 @@ def _toolkit_download_link(email):
 
 
 def _workspace_link():
-    return f"{_frontend_base_url()}/account"
+    query = urlencode({"auth": "signup", "source": "decision-profile-email"})
+    return f"{_frontend_base_url()}/?{query}"
 
 
 def _unsubscribe_link(email, scope="marketing"):
@@ -298,6 +301,8 @@ def _send_decision_profile_email(email, style):
     msg = Message(
         subject=rendered["subject"],
         recipients=[email],
+        sender=DECISION_PROFILE_SENDER,
+        reply_to=DECISION_PROFILE_REPLY_TO,
     )
     msg.body = rendered["body"]
     msg.html = rendered["html"]

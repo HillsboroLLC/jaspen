@@ -12,7 +12,6 @@ STYLE_PROFILES = {
         "strength": "Your natural strength is traceability. Other people can usually see how you got from the situation to the choice.",
         "watch": "A useful pattern to watch is waiting for one more piece of information when the decision already has enough shape to move.",
         "jaspen": "Jaspen can help you organize evidence, capture tradeoffs, and turn your reasoning into a decision record without slowing the work down.",
-        "reflection": "What evidence would make this decision clear enough to act on?",
     },
     "fast_mover": {
         "explanation": "You tend to read the situation quickly, form a direction, and keep momentum instead of circling the same choice for too long.",
@@ -20,7 +19,6 @@ STYLE_PROFILES = {
         "strength": "Your natural strength is movement. You help decisions leave the conversation stage and become real progress.",
         "watch": "A useful pattern to watch is moving before the key assumptions have been named clearly enough for others to follow.",
         "jaspen": "Jaspen can help you preserve speed while adding a quick check on assumptions, risks, and what would change your mind.",
-        "reflection": "What is the one assumption this decision depends on most?",
     },
     "thoughtful_explorer": {
         "explanation": "You tend to open up possibilities before settling, giving several options a genuine look.",
@@ -28,7 +26,6 @@ STYLE_PROFILES = {
         "strength": "Your natural strength is breadth. You notice options and angles that may otherwise be skipped.",
         "watch": "A useful pattern to watch is keeping too many options alive after the strongest few have emerged.",
         "jaspen": "Jaspen can help you compare alternatives cleanly, narrow the field, and keep the reasons visible as you choose.",
-        "reflection": "Which option deserves a serious look, and which one is only adding noise?",
     },
     "consensus_seeker": {
         "explanation": "You tend to decide with the people affected by the choice in mind, weighing how a decision will hold up across perspectives.",
@@ -36,7 +33,6 @@ STYLE_PROFILES = {
         "strength": "Your natural strength is durability. Your decisions are more likely to travel well because people understand the reasoning.",
         "watch": "A useful pattern to watch is waiting for complete agreement when clear ownership would be more helpful.",
         "jaspen": "Jaspen can help you capture stakeholder input, separate preferences from decision criteria, and clarify who needs to weigh in.",
-        "reflection": "Whose perspective could materially improve this decision, and whose input is mainly informational?",
     },
     "practical_optimizer": {
         "explanation": "You tend to balance instinct and information, looking for the path that works in the real constraints in front of you.",
@@ -44,7 +40,6 @@ STYLE_PROFILES = {
         "strength": "Your natural strength is fit. You are tuned to what can actually work, not just what looks best in theory.",
         "watch": "A useful pattern to watch is optimizing around immediate constraints before checking whether the goal has shifted.",
         "jaspen": "Jaspen can help you make the practical tradeoffs explicit, preserve the why, and revisit the decision when conditions change.",
-        "reflection": "What tradeoff are you accepting, and is it still the right one?",
     },
     "reflective_analyzer": {
         "explanation": "You tend to think decisions through carefully and learn from how they turn out over time.",
@@ -52,7 +47,6 @@ STYLE_PROFILES = {
         "strength": "Your natural strength is learning. Your decisions can improve because you pay attention after the choice is made.",
         "watch": "A useful pattern to watch is replaying a decision longer than the next action requires.",
         "jaspen": "Jaspen can help you capture the original context, track what changed, and turn reflection into useful decision memory.",
-        "reflection": "What would you want your future self to remember about this decision?",
     },
 }
 
@@ -88,9 +82,6 @@ A useful pattern to watch:
 
 How Jaspen can help:
 {profile["jaspen"]}
-
-Reflection question:
-{profile["reflection"]}
 
 Create or open your Jaspen workspace:
 {workspace_url}
@@ -154,14 +145,6 @@ Jaspen
                     </td>
                   </tr>
                 </table>
-              </td>
-            </tr>
-            <tr>
-              <td style="padding:20px 28px 4px;">
-                <div style="background:#faf7fb; border-left:4px solid #a0036c; border-radius:12px; padding:18px 18px 18px 20px;">
-                  <h2 style="margin:0 0 8px; font-size:16px; line-height:1.3; color:#07112f;">Reflection question</h2>
-                  <p style="margin:0; font-size:16px; line-height:1.6; color:#374151;">{_p(profile["reflection"])}</p>
-                </div>
               </td>
             </tr>
             <tr>
