@@ -78,7 +78,6 @@ export const FULL_PROFILE_INCLUDES = [
   'A natural strength it gives you',
   'Something worth keeping an eye on',
   'How Jaspen can support the way you already decide',
-  'A short reflection prompt to try on your next decision',
 ];
 
 // ── The seven questions ───────────────────────────────────────────────────

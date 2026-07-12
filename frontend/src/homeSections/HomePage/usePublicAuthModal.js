@@ -20,10 +20,16 @@ export default function usePublicAuthModal(heroContext = '') {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search || '');
-    if (params.get('auth') !== '1') return;
+    const authIntent = String(params.get('auth') || '').trim().toLowerCase();
+    if (!authIntent || (authIntent !== '1' && authIntent !== 'signup' && authIntent !== 'signin')) return;
 
-    openAuthModal('signin');
+    openAuthModal(authIntent === 'signup' ? 'signup' : 'signin');
     params.delete('auth');
+    if (params.get('source') === 'decision-profile-email') {
+      params.delete('error');
+      params.delete('signed_out');
+      params.delete('reason');
+    }
     const nextSearch = params.toString();
     const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash || ''}`;
     window.history.replaceState({}, '', nextUrl);

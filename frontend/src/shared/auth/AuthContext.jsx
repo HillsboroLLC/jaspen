@@ -28,6 +28,19 @@ function writeLastActivity(ts) {
   }
 }
 
+export function isDecisionProfileEmailEntry() {
+  if (typeof window === 'undefined') return false;
+  try {
+    const params = new URLSearchParams(window.location.search || '');
+    return (
+      String(params.get('auth') || '').trim().toLowerCase() === 'signup'
+      && String(params.get('source') || '').trim().toLowerCase() === 'decision-profile-email'
+    );
+  } catch {
+    return false;
+  }
+}
+
 // User roles for LSS system
 export const USER_ROLES = {
   ADMIN: 'admin',
@@ -291,6 +304,18 @@ export function AuthProvider({ children }) {
   // sends them to the login screen with an explanatory flag.
   const performIdleLogout = () => {
     if (idleLogoutInFlightRef.current) return;
+    if (isDecisionProfileEmailEntry()) {
+      try {
+        clearAuthTokens();
+        localStorage.removeItem('lss_user_roles');
+        localStorage.removeItem(LAST_ACTIVITY_STORAGE_KEY);
+      } catch {}
+      setUser(null);
+      setCurrentUserRole(null);
+      setPermissions([]);
+      setLssUsers([]);
+      return;
+    }
     idleLogoutInFlightRef.current = true;
     try {
       // Best-effort server logout; don't block the redirect on it.

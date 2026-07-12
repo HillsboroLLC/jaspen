@@ -322,7 +322,7 @@ export default function DecisionStyleAssessment() {
                     className="dsa-btn dsa-btn-primary dsa-email-submit"
                     disabled={submitStatus === 'sending'}
                   >
-                    {submitStatus === 'sending' ? 'Saving…' : 'Email my full Decision Profile'}
+                    {submitStatus === 'sending' ? 'Sending your results...' : 'Email my full Decision Profile'}
                   </button>
                   <p className="dsa-email-fine" id="dsa-email-fine">
                     One email with your profile. You will not be added to a marketing list from
