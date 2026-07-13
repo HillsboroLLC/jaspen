@@ -380,10 +380,10 @@ export default function HomePage() {
         {/* Answers "How do I naturally make decisions?" — low-friction, curious. */}
         <DecisionStyleAssessment />
 
-        <FlowIllustrated onOpenModal={openAuthModal} />
-
         {/* ========== WHY NOT CHATGPT + YOUR CRITERIA (color block) ========== */}
         <WhyJaspenBlock />
+
+        <FlowIllustrated onOpenModal={openAuthModal} />
 
         {/* ========== HOW THE SCORE WORKS (trust) ========== */}
         <HowScoreWorks />

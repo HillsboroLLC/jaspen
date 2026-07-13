@@ -1,6 +1,5 @@
-/* Combined "Why not ChatGPT" + "Your criteria" color block.
-   Edge-to-edge two-tone: navy left, cream right. Flat resting design; the six
-   item cards fall in as 3D cubes on scroll. Brand palette only (no lavender). */
+/* Combined "Why not ChatGPT" + "Your criteria" section.
+   Two compact editorial columns, no inner cards. */
 
 .wjb {
   position: relative;
@@ -15,23 +14,22 @@
 
 .wjb-panel {
   display: flex;
-  flex-direction: column;
   justify-content: center;
-  padding: 84px 48px;
-  perspective: 900px; /* gives the falling cubes real depth */
+  padding: 64px clamp(28px, 5vw, 72px);
 }
+
 .wjb-panel--dark {
   background: #161f3b;
-  align-items: flex-end;
 }
+
 .wjb-panel--light {
-  background: #f4f1ea;
-  align-items: flex-start;
+  background: #eff9fc;
 }
 
 .wjb-content {
   width: 100%;
-  max-width: 440px;
+  max-width: 520px;
+  text-align: left;
 }
 
 .wjb-eyebrow {
@@ -40,143 +38,115 @@
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: #a0036c;
-  margin: 0 0 14px;
+  margin: 0 0 12px;
 }
+
 .wjb-eyebrow--light {
-  color: #e774b4; /* lightened brand magenta for contrast on navy */
+  color: #e774b4;
 }
 
 .wjb-heading {
-  font-size: clamp(1.7rem, 2.8vw, 2.3rem);
+  font-size: clamp(1.9rem, 3.3vw, 2.65rem);
   font-weight: 760;
   color: #161f3b;
-  line-height: 1.12;
-  margin: 0 0 16px;
+  line-height: 1.1;
+  margin: 0 0 18px;
+  letter-spacing: -0.02em;
 }
+
 .wjb-heading--light {
   color: #ffffff;
 }
 
 .wjb-sub {
-  font-size: 1.02rem;
-  line-height: 1.6;
-  color: rgba(22, 31, 59, 0.7);
-  margin: 0 0 28px;
+  font-size: 1rem;
+  line-height: 1.55;
+  color: rgba(22, 31, 59, 0.68);
+  margin: 0 0 24px;
+  max-width: 510px;
 }
+
 .wjb-sub--light {
-  color: rgba(255, 255, 255, 0.72);
+  color: rgba(255, 255, 255, 0.74);
 }
+
 .wjb-sub strong {
   color: #161f3b;
   font-weight: 720;
 }
+
 .wjb-sub--light strong {
   color: #ffffff;
-  font-weight: 720;
 }
 
-/* ── The falling cubes ── */
-.wjb-cubes {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.wjb-cube {
-  border-radius: 12px;
-  padding: 16px 18px;
-  /* Pre-reveal state: dropped up and tumbled back in 3D */
-  opacity: 0;
-  transform: translateY(-46px) rotateX(-72deg);
-  transform-origin: top center;
-  transition: opacity 0.5s ease, transform 0.62s cubic-bezier(0.18, 0.72, 0.28, 1.1);
-  transition-delay: calc(var(--i, 0) * 95ms);
-  will-change: transform, opacity;
-}
-.wjb.is-in .wjb-cube {
-  opacity: 1;
-  transform: translateY(0) rotateX(0);
-}
-
-.wjb-cube--dark {
-  background: #1e2a4d;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-left: 3px solid #e774b4;
-}
-.wjb-cube--light {
-  background: #ffffff;
-  border: 1px solid rgba(22, 31, 59, 0.08);
-  box-shadow: 0 8px 22px rgba(22, 31, 59, 0.06);
-  display: flex;
-  align-items: flex-start;
+.wjb-points {
+  display: grid;
   gap: 14px;
 }
 
-.wjb-cube-label {
-  font-size: 0.95rem;
-  font-weight: 800;
-  color: #ffffff;
-  margin: 0 0 5px;
+.wjb-point {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  gap: 12px;
 }
-.wjb-cube-title {
-  font-size: 1rem;
-  font-weight: 720;
+
+.wjb-point--dark {
+  display: block;
+  padding-left: 14px;
+  border-left: 2px solid #e774b4;
+}
+
+.wjb-point-title {
+  font-size: 0.98rem;
+  font-weight: 760;
   color: #161f3b;
   margin: 0 0 4px;
 }
-.wjb-cube-text {
-  font-size: 0.92rem;
-  line-height: 1.45;
-  color: rgba(22, 31, 59, 0.66);
-  margin: 0;
-}
-.wjb-cube-text--light {
-  color: rgba(255, 255, 255, 0.66);
+
+.wjb-point--dark .wjb-point-title {
+  color: #ffffff;
 }
 
-.wjb-cube-icon {
-  flex-shrink: 0;
+.wjb-point-text {
+  font-size: 0.92rem;
+  line-height: 1.45;
+  color: rgba(22, 31, 59, 0.64);
+  margin: 0;
+}
+
+.wjb-point-text--light {
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.wjb-point-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
-  background: rgba(160, 3, 108, 0.08);
+  width: 30px;
+  height: 30px;
   color: #a0036c;
   font-size: 1rem;
 }
 
 .wjb-closing {
-  margin: 26px 0 0;
-  font-size: clamp(1.1rem, 1.8vw, 1.35rem);
+  margin: 24px 0 0;
+  font-size: clamp(1.05rem, 1.5vw, 1.24rem);
   font-weight: 740;
   color: #161f3b;
   letter-spacing: -0.01em;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .wjb-cube {
-    opacity: 1;
-    transform: none;
-    transition: none;
-  }
-}
-
-/* Stack: navy block on top, cream block beneath */
 @media (max-width: 860px) {
   .wjb-inner {
     grid-template-columns: 1fr;
   }
+
   .wjb-panel {
-    padding: 60px 26px;
-    align-items: center;
+    padding: 54px 24px;
   }
-  .wjb-panel--dark,
-  .wjb-panel--light {
-    align-items: center;
-  }
+
   .wjb-content {
-    max-width: 480px;
+    max-width: 620px;
   }
 }

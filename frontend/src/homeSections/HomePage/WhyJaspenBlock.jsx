@@ -1,12 +1,10 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React from 'react';
 import './WhyJaspenBlock.css';
 
 // Combined color-block section that merges two short beats into one:
-//   Left (navy):  "Why not just ChatGPT?" the moat, three proofs.
-//   Right (cream): "Your criteria" the rubric is yours, three steps.
-// Flat design, brand palette only (navy / cream / magenta, no lavender). The
-// six item cards drop into place as falling 3D cubes when the section scrolls
-// into view.
+//   Left (navy): "Why not just ChatGPT?" the moat, three proofs.
+//   Right (pale blue): "Your criteria" the rubric is yours, three steps.
+// Kept intentionally minimal: no cards, no panels inside panels.
 
 const PROOFS = [
   { label: 'Reproducible', text: 'Same inputs, same answer, every time.' },
@@ -21,44 +19,10 @@ const STEPS = [
 ];
 
 export default function WhyJaspenBlock() {
-  const ref = useRef(null);
-  const [inView, setInView] = useState(false);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return undefined;
-    // Reveal (drop the cubes in) when the section scrolls into the lower part of
-    // the viewport. A scroll/resize check keeps content from ever being stuck
-    // hidden if observers misbehave, and reveals immediately if it is already
-    // on screen at mount.
-    const check = () => {
-      const r = el.getBoundingClientRect();
-      if (r.top < window.innerHeight * 0.85 && r.bottom > 0) {
-        setInView(true);
-        return true;
-      }
-      return false;
-    };
-    if (check()) return undefined;
-    const onScroll = () => {
-      if (check()) {
-        window.removeEventListener('scroll', onScroll);
-        window.removeEventListener('resize', onScroll);
-      }
-    };
-    window.addEventListener('scroll', onScroll, { passive: true });
-    window.addEventListener('resize', onScroll);
-    return () => {
-      window.removeEventListener('scroll', onScroll);
-      window.removeEventListener('resize', onScroll);
-    };
-  }, []);
-
   return (
     <section
-      className={`wjb${inView ? ' is-in' : ''}`}
+      className="wjb"
       id="why-jaspen"
-      ref={ref}
       aria-label="Why not just ChatGPT, and your criteria"
     >
       <div className="wjb-inner">
@@ -72,11 +36,11 @@ export default function WhyJaspenBlock() {
               Jaspen lets AI judge the evidence, then <strong>code does the math</strong>. The
               answer holds up when someone asks how you got it.
             </p>
-            <div className="wjb-cubes">
-              {PROOFS.map((p, i) => (
-                <div className="wjb-cube wjb-cube--dark" style={{ '--i': i }} key={p.label}>
-                  <p className="wjb-cube-label">{p.label}</p>
-                  <p className="wjb-cube-text wjb-cube-text--light">{p.text}</p>
+            <div className="wjb-points">
+              {PROOFS.map((p) => (
+                <div className="wjb-point wjb-point--dark" key={p.label}>
+                  <p className="wjb-point-title">{p.label}</p>
+                  <p className="wjb-point-text wjb-point-text--light">{p.text}</p>
                 </div>
               ))}
             </div>
@@ -92,15 +56,15 @@ export default function WhyJaspenBlock() {
               Jaspen never decides what matters. It offers a starting point, then you shape it into
               the criteria and weights that fit this decision.
             </p>
-            <div className="wjb-cubes">
-              {STEPS.map((s, i) => (
-                <div className="wjb-cube wjb-cube--light" style={{ '--i': i + 3 }} key={s.title}>
-                  <span className="wjb-cube-icon">
+            <div className="wjb-points">
+              {STEPS.map((s) => (
+                <div className="wjb-point wjb-point--light" key={s.title}>
+                  <span className="wjb-point-icon">
                     <i className={`fa-solid ${s.icon}`} aria-hidden="true" />
                   </span>
                   <div>
-                    <p className="wjb-cube-title">{s.title}</p>
-                    <p className="wjb-cube-text">{s.note}</p>
+                    <p className="wjb-point-title">{s.title}</p>
+                    <p className="wjb-point-text">{s.note}</p>
                   </div>
                 </div>
               ))}
