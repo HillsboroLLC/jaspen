@@ -12,6 +12,7 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from werkzeug.exceptions import BadRequest, UnsupportedMediaType
 
 from app import db, limiter, mail
+from app.decision_profile_service import ensure_profile_responses
 from app.decision_profile import derive_decision_style, validate_answers
 from app.email_templates.decision_profile_results import (
     JASPEN_BRIDGE_COPY,
@@ -247,6 +248,8 @@ def _toolkit_download_link(email):
 
 def _workspace_link(source="decision-profile-email"):
     query = urlencode({"auth": "signup", "source": source})
+    if source == "decision-profile-email":
+        return f"{_frontend_base_url()}/decision-profile?{query}"
     return f"{_frontend_base_url()}/?{query}"
 
 
@@ -544,6 +547,8 @@ def _create_decision_profile(lead, event, payload, profile):
         affinity=profile["affinity"],
     )
     db.session.add(row)
+    db.session.flush()
+    ensure_profile_responses(row)
     return row
 
 

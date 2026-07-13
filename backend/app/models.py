@@ -121,6 +121,12 @@ class LeadDecisionProfile(db.Model):
         nullable=True,
         index=True,
     )
+    user_id = db.Column(
+        db.String(36),
+        db.ForeignKey('users.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
     email = db.Column(db.String(255), nullable=False, index=True)
     normalized_email = db.Column(db.String(255), nullable=False, index=True)
     source = db.Column(db.String(80), nullable=False, default='decision-style-assessment', index=True)
@@ -135,6 +141,53 @@ class LeadDecisionProfile(db.Model):
         nullable=False,
         default=datetime.utcnow,
         index=True,
+    )
+    completed_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        index=True,
+    )
+    updated_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+    version = db.Column(db.Integer, nullable=False, default=1)
+    is_current = db.Column(db.Boolean, nullable=False, default=True, index=True)
+
+    __table_args__ = (
+        db.Index('ix_lead_decision_profiles_user_current', 'user_id', 'is_current'),
+        db.Index('ix_lead_decision_profiles_email_current', 'normalized_email', 'is_current'),
+    )
+
+
+class LeadDecisionProfileResponse(db.Model):
+    __tablename__ = 'lead_decision_profile_responses'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    decision_profile_id = db.Column(
+        db.Integer,
+        db.ForeignKey('lead_decision_profiles.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    question_id = db.Column(db.String(80), nullable=False)
+    answer_id = db.Column(db.String(80), nullable=False)
+    question = db.Column(db.Text, nullable=False)
+    tendency = db.Column(db.String(120), nullable=False)
+    answer_label = db.Column(db.String(255), nullable=False)
+    meaning = db.Column(db.Text, nullable=False)
+    created_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        index=True,
+    )
+
+    __table_args__ = (
+        db.UniqueConstraint('decision_profile_id', 'question_id', name='uq_decision_profile_response_question'),
     )
 
 

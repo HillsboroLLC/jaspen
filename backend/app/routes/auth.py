@@ -35,6 +35,7 @@ from app.access_controls import (
 )
 from app.admin_audit import append_user_audit_event
 from app.admin_policy import is_global_admin
+from app.decision_profile_service import link_latest_public_decision_profile_for_user
 from app.models import Organization, User, UserAuthSession
 from app.billing_config import (
     apply_plan_to_user,
@@ -831,6 +832,8 @@ def signup():
         referring_user.referrals_earned = int(referring_user.referrals_earned or 0) + 1
     _enforce_admin_account_profile(user)
     db.session.add(user)
+    db.session.flush()
+    link_latest_public_decision_profile_for_user(user)
     db.session.commit()
     if _ensure_user_org(user):
         db.session.commit()

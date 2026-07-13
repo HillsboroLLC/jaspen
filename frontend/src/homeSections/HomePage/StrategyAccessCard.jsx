@@ -194,6 +194,12 @@ export default function StrategyAccessCard({ initialFlowMode = 'signin', heroCon
 
   /** Public auth always starts in the free workspace; paid upgrades happen inside Account. */
   const getPostAuthRedirect = () => {
+    try {
+      const current = new URLSearchParams(window.location.search || '');
+      const next = current.get('next');
+      if (next && next.startsWith('/')) return next;
+      if (current.get('source') === 'decision-profile-email') return '/decision-profile';
+    } catch {}
     return '/new';
   };
 
