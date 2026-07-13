@@ -116,12 +116,19 @@
 
 .wjb-proof-kicker {
   margin: 22px 0 14px;
-  padding-top: 18px;
-  border-top: 2px solid #a0036c;
   color: #5b123f;
   font-size: clamp(1.18rem, 1.7vw, 1.42rem);
   font-weight: 900;
   letter-spacing: 0.01em;
+}
+
+.wjb-proof-kicker::before {
+  content: '';
+  display: block;
+  width: 65%;
+  height: 2px;
+  margin: 0 auto 18px;
+  background: #a0036c;
 }
 
 .wjb-point {
