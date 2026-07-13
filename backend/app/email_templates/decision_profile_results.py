@@ -4,6 +4,10 @@ from html import escape
 
 SUBJECT = "Your Jaspen Decision Profile"
 PREVIEW_TEXT = "A closer look at how you naturally approach important decisions."
+SAVE_PROFILE_COPY = (
+    "Your Decision Profile can grow as you use Jaspen. Create a free account to "
+    "save it, revisit it, and see how your decision patterns evolve over time."
+)
 JASPEN_BRIDGE_HEADLINE = "You've started thinking it through. Now let Jaspen help you work through it."
 JASPEN_BRIDGE_COPY = (
     "You can start with Jaspen for free and use it on a real decision. "
@@ -94,7 +98,9 @@ How Jaspen can help:
 
 {JASPEN_BRIDGE_COPY}
 
-Start with Jaspen:
+{SAVE_PROFILE_COPY}
+
+Save my Decision Profile:
 {workspace_url}
 
 You received this because you requested your Jaspen Decision Profile. You can unsubscribe from Jaspen updates here:
@@ -165,6 +171,7 @@ Jaspen
                     <td style="padding:20px;">
                       <h2 style="margin:0 0 8px; font-size:18px; line-height:1.35; color:#07112f;">{_p(JASPEN_BRIDGE_HEADLINE)}</h2>
                       <p style="margin:0; font-size:15px; line-height:1.65; color:#4f5d75;">{_p(JASPEN_BRIDGE_COPY)}</p>
+                      <p style="margin:14px 0 0; font-size:15px; line-height:1.65; color:#4f5d75;">{_p(SAVE_PROFILE_COPY)}</p>
                     </td>
                   </tr>
                 </table>
@@ -172,7 +179,7 @@ Jaspen
             </tr>
             <tr>
               <td style="padding:18px 28px 34px;">
-                <a href="{cta_url}" style="display:inline-block; padding:13px 18px; background:#a0036c; color:#ffffff; text-decoration:none; border-radius:8px; font-size:15px; font-weight:700;">Start with Jaspen</a>
+                <a href="{cta_url}" style="display:inline-block; padding:13px 18px; background:#a0036c; color:#ffffff; text-decoration:none; border-radius:8px; font-size:15px; font-weight:700;">Save my Decision Profile</a>
               </td>
             </tr>
             <tr>

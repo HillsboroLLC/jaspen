@@ -488,6 +488,7 @@ def create_app():
     from .routes.public_intake import public_intake_bp
     from .routes.leads import leads_bp
     from .routes.decision_records import decision_records_bp
+    from .routes.decision_profile import decision_profile_bp
     from . import models_studio  # noqa: F401  register Studio tables with SQLAlchemy
     from . import models_decision_record  # noqa: F401  register DecisionRecord table with SQLAlchemy
 
@@ -511,6 +512,7 @@ def create_app():
     app.register_blueprint(public_intake_bp, url_prefix='/api/v1/public/intake')
     app.register_blueprint(leads_bp, url_prefix='/api/v1/public')
     app.register_blueprint(decision_records_bp, url_prefix='/api/v1/decision-records')
+    app.register_blueprint(decision_profile_bp, url_prefix='/api/v1/decision-profile')
     app.add_url_rule(
         '/api/v1/ai-agent/analyze',
         endpoint='ai_agent_analyze',

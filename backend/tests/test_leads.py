@@ -4,7 +4,14 @@ from unittest.mock import Mock
 
 from app.decision_profile import STYLES, derive_decision_style
 from app.email_templates.decision_profile_results import PREVIEW_TEXT, SUBJECT, render_decision_profile_email
-from app.models import EmailSuppression, Lead, LeadAttributionEvent, LeadDecisionProfile, LeadEmailDelivery
+from app.models import (
+    EmailSuppression,
+    Lead,
+    LeadAttributionEvent,
+    LeadDecisionProfile,
+    LeadDecisionProfileResponse,
+    LeadEmailDelivery,
+)
 
 
 LEADS_URL = "/api/v1/public/leads"
@@ -342,8 +349,9 @@ def test_decision_profile_template_renders_every_style():
         assert style["name"] in rendered["body"]
         assert "You've started thinking it through. Now let Jaspen help you work through it." in rendered["body"]
         assert "Essential gives you more room to explore the evidence" in rendered["body"]
-        assert "Start with Jaspen" in rendered["body"]
-        assert "Start with Jaspen" in rendered["html"]
+        assert "Save my Decision Profile" in rendered["body"]
+        assert "Save my Decision Profile" in rendered["html"]
+        assert "Your Decision Profile can grow as you use Jaspen." in rendered["body"]
         assert "unsubscribe" in rendered["body"].lower()
         assert "—" not in rendered["body"]
         assert "—" not in rendered["html"]
@@ -373,9 +381,10 @@ def test_decision_profile_submission_saves_result_and_sends_email(client, db, mo
     assert sent[0].reply_to == "hello@jaspen.ai"
     assert "A closer look at how you naturally approach important decisions." in sent[0].html
     assert "Fast Mover" in sent[0].body
-    assert "http://localhost:3000/?auth=signup&amp;source=decision-profile-email" in sent[0].html
-    assert "http://localhost:3000/?auth=signup&source=decision-profile-email" in sent[0].body
-    assert "Start with Jaspen" in sent[0].html
+    assert "http://localhost:3000/decision-profile?auth=signup&amp;source=decision-profile-email" in sent[0].html
+    assert "http://localhost:3000/decision-profile?auth=signup&source=decision-profile-email" in sent[0].body
+    assert "Save my Decision Profile" in sent[0].html
+    assert "Your Decision Profile can grow as you use Jaspen." in sent[0].body
     assert "You've started thinking it through. Now let Jaspen help you work through it." in sent[0].body
     assert "Reflection question" not in sent[0].html
     assert "Reflection question" not in sent[0].body
@@ -392,6 +401,7 @@ def test_decision_profile_submission_saves_result_and_sends_email(client, db, mo
     assert profile.client_style_key == "fast_mover"
     assert profile.verified_style_key == "fast_mover"
     assert profile.answers["q1_instinct_vs_research"] == "q1_a"
+    assert LeadDecisionProfileResponse.query.count() == len(profile.answers)
     delivery = LeadEmailDelivery.query.one()
     assert delivery.email_type == "decision_profile_results"
     assert delivery.status == "sent"

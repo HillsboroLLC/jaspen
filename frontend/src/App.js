@@ -52,6 +52,7 @@ const JaspenAdmin = lazy(() => import('./jaspenInterface/Admin/JaspenAdmin'));
 const MasterAnalytics = lazy(() => import('./jaspenInterface/Admin/MasterAnalytics'));
 const MasterLeads = lazy(() => import('./jaspenInterface/Admin/MasterLeads'));
 const MasterErrors = lazy(() => import('./jaspenInterface/Admin/MasterErrors'));
+const DecisionProfile = lazy(() => import('./jaspenInterface/DecisionProfile/DecisionProfile'));
 const Knowledge = lazy(() => import('./jaspenInterface/Knowledge/Knowledge'));
 const Team = lazy(() => import('./jaspenInterface/Team/Team'));
 const EnterpriseAdmin = lazy(() => import('./jaspenInterface/EnterpriseAdmin/EnterpriseAdmin'));
@@ -215,6 +216,19 @@ function AnimatedAppRoutes({ withShell }) {
                 <ProtectedRoute>
                   {withShell(<Knowledge />, {
                     title: 'Knowledge',
+                    showHeader: false,
+                    fullBleed: true,
+                    noPadding: true, backToJaspen: true,
+                  })}
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/decision-profile"
+              element={
+                <ProtectedRoute>
+                  {withShell(<DecisionProfile />, {
+                    title: 'Decision Profile',
                     showHeader: false,
                     fullBleed: true,
                     noPadding: true, backToJaspen: true,
