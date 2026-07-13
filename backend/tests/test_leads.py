@@ -217,6 +217,8 @@ def test_toolkit_lead_sends_email_before_success(client, db, monkeypatch):
     assert "A workbook can organize your thinking." in sent[0].body
     assert "It cannot ask the next question." in sent[0].body
     assert "Essential gives you more room to test assumptions" in sent[0].body
+    assert "P.S. You do not need a perfect decision process to start." in sent[0].body
+    assert "Kind regards" in sent[0].body
     assert 'name="viewport"' in sent[0].html
     assert "—" not in sent[0].body
     assert "—" not in sent[0].html
@@ -418,7 +420,9 @@ def test_decision_profile_submission_saves_result_and_sends_email(client, db, mo
     assert "http://localhost:3000/decision-profile?auth=signup&source=decision-profile-email" in sent[0].body
     assert "Save My Decision Profile" in sent[0].html
     assert "Your Decision Profile can grow as you use Jaspen." in sent[0].body
-    assert "Thank you for letting me be part of your decision-making journey." in sent[0].body
+    assert "Kind regards" in sent[0].body
+    assert "P.S. If this sounded like you, save your profile" in sent[0].body
+    assert "Thank you for letting me be part of your decision-making journey." not in sent[0].body
     assert "Reflection question" not in sent[0].html
     assert "Reflection question" not in sent[0].body
     assert "List-Unsubscribe" in sent[0].extra_headers
@@ -453,7 +457,8 @@ def test_decision_profile_email_cta_changes_for_existing_account(client, db, mon
     assert "View My Decision Profile" in sent[0].html
     assert "View My Decision Profile" in sent[0].body
     assert "Your Decision Profile is now part of your Jaspen workspace." in sent[0].body
-    assert "Thank you for trusting Jaspen with your thinking." in sent[0].body
+    assert "P.S. Your profile will be waiting in your workspace" in sent[0].body
+    assert "Thank you for trusting Jaspen with your thinking." not in sent[0].body
     assert "Save My Decision Profile" not in sent[0].html
 
 

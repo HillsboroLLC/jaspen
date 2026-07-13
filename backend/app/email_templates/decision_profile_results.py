@@ -91,13 +91,13 @@ def render_decision_profile_email(
     unsubscribe = _p(unsubscribe_url)
     has_account = cta_label == "View My Decision Profile"
     account_copy = EXISTING_ACCOUNT_COPY if has_account else SAVE_PROFILE_COPY
-    closing = (
-        "Thank you for trusting Jaspen with your thinking."
+    postscript = (
+        "P.S. Your profile will be waiting in your workspace whenever you want to revisit it or use it on a real decision."
         if has_account
-        else "Thank you for letting me be part of your decision-making journey."
+        else "P.S. If this sounded like you, save your profile and try Jaspen on one real decision when you are ready."
     )
     free_start_html = (
-        '<p style="margin:0 0 14px; font-size:15px; line-height:1.65; color:#5f574b;">'
+        '<p style="margin:0 0 14px; font-size:15px; line-height:1.65; color:#4f5d75;">'
         'You can start with Jaspen for free.</p>'
         if not has_account
         else ""
@@ -139,9 +139,10 @@ One thing worth being mindful of:
 """
     text += f"""{ESSENTIAL_COPY}
 
-{closing}
-
+Kind regards,
 Lydia
+
+{postscript}
 
 You received this because you requested your Jaspen Decision Profile. You can unsubscribe from Jaspen updates here:
 {unsubscribe_url}
@@ -156,12 +157,12 @@ Jaspen
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Decision Profile</title>
   </head>
-  <body style="margin:0; padding:0; background:#f3eadf; font-family:Arial, Helvetica, sans-serif; color:#172033;">
+  <body style="margin:0; padding:0; background:#eff9fc; font-family:Arial, Helvetica, sans-serif; color:#172033;">
     <div style="display:none; max-height:0; overflow:hidden; opacity:0; color:transparent;">{preview}</div>
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f3eadf; padding:28px 12px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#eff9fc; padding:28px 12px;">
       <tr>
         <td align="center">
-          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px; background:#fffaf2; border:1px solid #d8c9b7; border-radius:18px; overflow:hidden;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px; background:#ffffff; border:1px solid #cde7f0; border-radius:18px; overflow:hidden;">
             <tr>
               <td style="padding:24px 28px; background:#161f3b;">
                 <div style="font-size:24px; line-height:1; color:#ffffff; font-weight:700;">Jaspen</div>
@@ -179,18 +180,18 @@ Jaspen
             </tr>
             <tr>
               <td style="padding:24px 28px 6px;">
-                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f8efe4; border:1px solid #d8c9b7; border-radius:14px;">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#eff9fc; border:1px solid #cde7f0; border-radius:14px;">
                   <tr>
                     <td style="padding:20px;">
                       <h2 style="margin:0 0 8px; font-size:16px; line-height:1.3; color:#07112f;">Your Decision Style</h2>
                       <p style="margin:0 0 10px; font-size:22px; line-height:1.3; color:#07112f; font-weight:700;">{style_name}</p>
-                      <p style="margin:0; font-size:15px; line-height:1.65; color:#5f574b;">{_p(profile["explanation"])}</p>
+                      <p style="margin:0; font-size:15px; line-height:1.65; color:#4f5d75;">{_p(profile["explanation"])}</p>
                     </td>
                   </tr>
                   <tr>
                     <td style="padding:0 20px 20px;">
                       <h2 style="margin:0 0 8px; font-size:16px; line-height:1.3; color:#07112f;">One thing worth being mindful of</h2>
-                      <p style="margin:0; font-size:15px; line-height:1.65; color:#5f574b;">{_p(profile["watch"])}</p>
+                      <p style="margin:0; font-size:15px; line-height:1.65; color:#4f5d75;">{_p(profile["watch"])}</p>
                     </td>
                   </tr>
                 </table>
@@ -198,8 +199,8 @@ Jaspen
             </tr>
             <tr>
               <td style="padding:22px 28px 6px;">
-                <p style="margin:0 0 14px; font-size:16px; line-height:1.65; color:#5f574b;">{_p(STYLE_CONTEXT_COPY)}</p>
-                <p style="margin:0; font-size:16px; line-height:1.65; color:#5f574b;">{_p(account_copy)}</p>
+                <p style="margin:0 0 14px; font-size:16px; line-height:1.65; color:#4f5d75;">{_p(STYLE_CONTEXT_COPY)}</p>
+                <p style="margin:0; font-size:16px; line-height:1.65; color:#4f5d75;">{_p(account_copy)}</p>
               </td>
             </tr>
             <tr>
@@ -210,9 +211,10 @@ Jaspen
             <tr>
               <td style="padding:0 28px 34px;">
                 {free_start_html}
-                <p style="margin:0 0 18px; font-size:15px; line-height:1.65; color:#5f574b;">{_p(ESSENTIAL_COPY)}</p>
-                <p style="margin:0 0 4px; font-size:15px; line-height:1.65; color:#5f574b;">{_p(closing)}</p>
-                <p style="margin:0; font-size:15px; line-height:1.65; color:#5f574b;">Lydia</p>
+                <p style="margin:0 0 18px; font-size:15px; line-height:1.65; color:#4f5d75;">{_p(ESSENTIAL_COPY)}</p>
+                <p style="margin:0 0 4px; font-size:15px; line-height:1.65; color:#4f5d75;">Kind regards,</p>
+                <p style="margin:0 0 18px; font-size:15px; line-height:1.65; color:#4f5d75;">Lydia</p>
+                <p style="margin:0; font-size:15px; line-height:1.65; color:#4f5d75;">{_p(postscript)}</p>
               </td>
             </tr>
             <tr>

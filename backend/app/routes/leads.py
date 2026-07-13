@@ -81,7 +81,8 @@ TOOLKIT_NO_ACCOUNT_COPY = (
     "Create a free account when you are ready to work through a real decision interactively.\n\n"
     "When the decision has real consequences for your career, business, finances, family, or the people affected by it, "
     "Essential gives you more room to test assumptions, compare tradeoffs, and preserve the reasoning behind your decision.\n\n"
-    "Thank you for giving Jaspen a chance."
+    "P.S. You do not need a perfect decision process to start. Bring one real decision into Jaspen when you are ready, "
+    "and let it help you pressure-test the thinking."
 )
 TOOLKIT_EXISTING_ACCOUNT_COPY = (
     "Once you have organized your thinking, open Jaspen and continue the conversation there.\n\n"
@@ -89,7 +90,7 @@ TOOLKIT_EXISTING_ACCOUNT_COPY = (
     "your reasoning as a Decision Record.\n\n"
     "When the decision has real consequences for your career, business, finances, family, or the people affected by it, "
     "Essential gives you more room to explore evidence, pressure test assumptions, compare tradeoffs, and preserve why you made the decision.\n\n"
-    "Thank you for trusting Jaspen with your decisions."
+    "P.S. Your workspace is the place to turn this toolkit from a static exercise into a decision you can revisit, explain, and build on."
 )
 BOOL_FIELDS = ("marketing_opt_in",)
 OPTIONAL_TEXT_FIELDS = (
@@ -437,7 +438,7 @@ def _send_toolkit_email(email):
     workspace_cta = "Open My Workspace" if has_account else "Create a free account"
     account_copy = TOOLKIT_EXISTING_ACCOUNT_COPY if has_account else TOOLKIT_NO_ACCOUNT_COPY
     account_copy_html = "".join(
-        f'<p style="margin:0 0 14px; font-size:15px; line-height:1.65; color:#5f574b;">{escape(part)}</p>'
+        f'<p style="margin:0 0 14px; font-size:15px; line-height:1.65; color:#4f5d75;">{escape(part)}</p>'
         for part in account_copy.split("\n\n")
     )
     download_link_html = escape(download_link)
@@ -459,6 +460,7 @@ def _send_toolkit_email(email):
         f"{account_copy}\n\n"
         f"{workspace_cta}:\n"
         f"{workspace_link}\n\n"
+        "Kind regards,\n"
         "Lydia\n\n"
         "You can unsubscribe from Jaspen updates here:\n"
         f"{unsubscribe}\n\n"
@@ -472,12 +474,12 @@ def _send_toolkit_email(email):
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Decision Planning Toolkit</title>
   </head>
-  <body style="margin:0; padding:0; background:#f3eadf; font-family: Arial, sans-serif; color: #172033; line-height: 1.5;">
+  <body style="margin:0; padding:0; background:#eff9fc; font-family: Arial, sans-serif; color: #172033; line-height: 1.5;">
     <div style="display:none; max-height:0; overflow:hidden; opacity:0; color:transparent;">{escape(TOOLKIT_PREVIEW)}</div>
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f3eadf; padding:28px 12px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#eff9fc; padding:28px 12px;">
       <tr>
         <td align="center">
-          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px; background:#fffaf2; border:1px solid #d8c9b7; border-radius:18px; overflow:hidden;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px; background:#ffffff; border:1px solid #cde7f0; border-radius:18px; overflow:hidden;">
             <tr>
               <td style="padding:24px 28px; background:#161f3b;">
                 <div style="font-size:24px; line-height:1; color:#ffffff; font-weight:700;">Jaspen</div>
@@ -498,11 +500,12 @@ def _send_toolkit_email(email):
             </tr>
             <tr>
               <td style="padding:8px 28px 6px;">
-                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f8efe4; border:1px solid #d8c9b7; border-radius:14px;">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#eff9fc; border:1px solid #cde7f0; border-radius:14px;">
                   <tr>
                     <td style="padding:20px;">
                       {account_copy_html}
-                      <p style="margin:0; font-size:15px; line-height:1.65; color:#5f574b;">Lydia</p>
+                      <p style="margin:0 0 4px; font-size:15px; line-height:1.65; color:#4f5d75;">Kind regards,</p>
+                      <p style="margin:0; font-size:15px; line-height:1.65; color:#4f5d75;">Lydia</p>
                     </td>
                   </tr>
                 </table>
