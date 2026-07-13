@@ -20,7 +20,7 @@ async function answerCurrent(user, currentNum, optionIndex = 0) {
 }
 
 async function walkThroughAllQuestions(user) {
-  await user.click(screen.getByRole('button', { name: /start the reflection/i }));
+  await user.click(screen.getByRole('button', { name: /reveal my decision style/i }));
   for (let i = 0; i < QUESTIONS.length; i += 1) {
     await answerCurrent(user, i + 1);
   }
@@ -35,15 +35,15 @@ describe('DecisionStyleAssessment', () => {
   it('renders the intro with the non-judgmental framing and no score claim', () => {
     render(<DecisionStyleAssessment />);
     expect(
-      screen.getByRole('heading', { name: /how do you make decisions/i })
+      screen.getByRole('heading', { name: /what kind of decision/i })
     ).toBeInTheDocument();
-    expect(screen.getByText(/no score, no grade/i)).toBeInTheDocument();
+    expect(screen.getByText(/no score\. no grade/i)).toBeInTheDocument();
   });
 
   it('advances through the questions and shows progress', async () => {
     const user = userEvent.setup();
     render(<DecisionStyleAssessment />);
-    await user.click(screen.getByRole('button', { name: /start the reflection/i }));
+    await user.click(screen.getByRole('button', { name: /reveal my decision style/i }));
 
     expect(screen.getByText(/question 1 of 7/i)).toBeInTheDocument();
     await answerCurrent(user, 1);
@@ -53,7 +53,7 @@ describe('DecisionStyleAssessment', () => {
   it('lets the user go back and change an earlier answer', async () => {
     const user = userEvent.setup();
     render(<DecisionStyleAssessment />);
-    await user.click(screen.getByRole('button', { name: /start the reflection/i }));
+    await user.click(screen.getByRole('button', { name: /reveal my decision style/i }));
     await answerCurrent(user, 1); // now on Q2
     await screen.findByText(/question 2 of 7/i);
 
@@ -180,19 +180,19 @@ describe('DecisionStyleAssessment', () => {
   it('can restart back to the intro', async () => {
     const user = userEvent.setup();
     render(<DecisionStyleAssessment />);
-    await user.click(screen.getByRole('button', { name: /start the reflection/i }));
+    await user.click(screen.getByRole('button', { name: /reveal my decision style/i }));
     await answerCurrent(user, 1);
 
     await user.click(screen.getByRole('button', { name: /start over/i }));
     expect(
-      await screen.findByRole('button', { name: /start the reflection/i })
+      await screen.findByRole('button', { name: /reveal my decision style/i })
     ).toBeInTheDocument();
   });
 
   it('recovers in-progress answers from localStorage after a refresh', async () => {
     const user = userEvent.setup();
     const { unmount } = render(<DecisionStyleAssessment />);
-    await user.click(screen.getByRole('button', { name: /start the reflection/i }));
+    await user.click(screen.getByRole('button', { name: /reveal my decision style/i }));
     await answerCurrent(user, 1); // Q1 answered, now on Q2
     await screen.findByText(/question 2 of 7/i);
 

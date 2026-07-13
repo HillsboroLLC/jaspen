@@ -403,15 +403,15 @@ export default function HomePage() {
           <div className="jaspen-container">
             <div className="cta-box scroll-reveal" id="cta-box">
               <div className="cta-content">
-                <p className="cta-eyebrow">Scale when you're ready</p>
-                <h2>Ready to bring your whole org along?</h2>
-                <p>Custom integrations, dedicated support, SSO, and volume licensing. When Jaspen becomes how your team decides, we'll scope exactly what you need.</p>
+                <p className="cta-eyebrow">Choose your next step</p>
+                <h2>Ready to make better decisions with more room to think?</h2>
+                <p>Start with Essential for your own important decisions, or talk with us about bringing Jaspen to your team or organization.</p>
                 <div className="cta-actions">
-                  <a href="mailto:hello@jaspen.ai" className="jaspen-btn jaspen-btn-primary jaspen-btn-lg">
-                    Talk to us
-                  </a>
-                  <a href="#pricing-variant-b" onClick={(e) => scrollToSection(e, 'pricing-variant-b')} className="jaspen-btn cta-btn-secondary jaspen-btn-lg">
-                    Start with a standard plan
+                  <button type="button" onClick={() => openAuthModal('signup', 'essential')} className="jaspen-btn jaspen-btn-primary jaspen-btn-lg">
+                    Start with Essential
+                  </button>
+                  <a href="mailto:hello@jaspen.ai" className="jaspen-btn cta-btn-secondary jaspen-btn-lg">
+                    Talk to us about teams
                   </a>
                 </div>
               </div>

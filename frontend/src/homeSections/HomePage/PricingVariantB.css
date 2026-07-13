@@ -142,6 +142,12 @@
   font-size: 0.85rem;
   color: #6b7280;
   margin: 0;
+}
+.pvb-card-support {
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: #4f5d75;
+  margin: -4px 0 0;
   flex: 1;
 }
 .pvb-card-cta {

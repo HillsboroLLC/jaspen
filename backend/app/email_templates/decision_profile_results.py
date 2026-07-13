@@ -4,6 +4,13 @@ from html import escape
 
 SUBJECT = "Your Jaspen Decision Profile"
 PREVIEW_TEXT = "A closer look at how you naturally approach important decisions."
+JASPEN_BRIDGE_HEADLINE = "You've started thinking it through. Now let Jaspen help you work through it."
+JASPEN_BRIDGE_COPY = (
+    "You can start with Jaspen for free and use it on a real decision. "
+    "When the decision has real consequences for your life, your work, a business, "
+    "your finances, or the people affected by it, Essential gives you more room to "
+    "explore the evidence, test assumptions, compare tradeoffs, and preserve why you made the choice."
+)
 
 STYLE_PROFILES = {
     "evidence_builder": {
@@ -83,7 +90,11 @@ A useful pattern to watch:
 How Jaspen can help:
 {profile["jaspen"]}
 
-Create or open your Jaspen workspace:
+{JASPEN_BRIDGE_HEADLINE}
+
+{JASPEN_BRIDGE_COPY}
+
+Start with Jaspen:
 {workspace_url}
 
 You received this because you requested your Jaspen Decision Profile. You can unsubscribe from Jaspen updates here:
@@ -148,8 +159,20 @@ Jaspen
               </td>
             </tr>
             <tr>
-              <td style="padding:24px 28px 34px;">
-                <a href="{cta_url}" style="display:inline-block; padding:13px 18px; background:#a0036c; color:#ffffff; text-decoration:none; border-radius:8px; font-size:15px; font-weight:700;">Create or open your workspace</a>
+              <td style="padding:22px 28px 6px;">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#eff9fc; border:1px solid #d8edf4; border-radius:14px;">
+                  <tr>
+                    <td style="padding:20px;">
+                      <h2 style="margin:0 0 8px; font-size:18px; line-height:1.35; color:#07112f;">{_p(JASPEN_BRIDGE_HEADLINE)}</h2>
+                      <p style="margin:0; font-size:15px; line-height:1.65; color:#4f5d75;">{_p(JASPEN_BRIDGE_COPY)}</p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:18px 28px 34px;">
+                <a href="{cta_url}" style="display:inline-block; padding:13px 18px; background:#a0036c; color:#ffffff; text-decoration:none; border-radius:8px; font-size:15px; font-weight:700;">Start with Jaspen</a>
               </td>
             </tr>
             <tr>

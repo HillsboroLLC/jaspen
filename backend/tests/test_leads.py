@@ -198,6 +198,15 @@ def test_toolkit_lead_sends_email_before_success(client, db, monkeypatch):
     assert sent[0].recipients == ["person@example.com"]
     assert sent[0].sender == "Jaspen <hello@jaspen.ai>"
     assert sent[0].reply_to == "hello@jaspen.ai"
+    assert "Download the toolkit" in sent[0].html
+    assert "Start with Jaspen" in sent[0].html
+    assert "http://localhost:3000/?auth=signup&amp;source=decision-planning-toolkit-email" in sent[0].html
+    assert "http://localhost:3000/?auth=signup&source=decision-planning-toolkit-email" in sent[0].body
+    assert "You've started thinking it through. Now let Jaspen help you work through it." in sent[0].body
+    assert "Essential gives you more room to explore the evidence" in sent[0].body
+    assert 'name="viewport"' in sent[0].html
+    assert "—" not in sent[0].body
+    assert "—" not in sent[0].html
     assert "List-Unsubscribe" in sent[0].extra_headers
     assert Lead.query.count() == 1
     assert LeadAttributionEvent.query.one().email_delivery_requested is True
@@ -331,9 +340,13 @@ def test_decision_profile_template_renders_every_style():
         assert PREVIEW_TEXT in rendered["html"]
         assert style["name"] in rendered["html"]
         assert style["name"] in rendered["body"]
-        assert "Create or open your Jaspen workspace" in rendered["body"]
-        assert "Create or open your workspace" in rendered["html"]
+        assert "You've started thinking it through. Now let Jaspen help you work through it." in rendered["body"]
+        assert "Essential gives you more room to explore the evidence" in rendered["body"]
+        assert "Start with Jaspen" in rendered["body"]
+        assert "Start with Jaspen" in rendered["html"]
         assert "unsubscribe" in rendered["body"].lower()
+        assert "—" not in rendered["body"]
+        assert "—" not in rendered["html"]
         assert "Reflection question" not in rendered["html"]
         assert "Reflection question" not in rendered["body"]
 
@@ -362,6 +375,8 @@ def test_decision_profile_submission_saves_result_and_sends_email(client, db, mo
     assert "Fast Mover" in sent[0].body
     assert "http://localhost:3000/?auth=signup&amp;source=decision-profile-email" in sent[0].html
     assert "http://localhost:3000/?auth=signup&source=decision-profile-email" in sent[0].body
+    assert "Start with Jaspen" in sent[0].html
+    assert "You've started thinking it through. Now let Jaspen help you work through it." in sent[0].body
     assert "Reflection question" not in sent[0].html
     assert "Reflection question" not in sent[0].body
     assert "List-Unsubscribe" in sent[0].extra_headers

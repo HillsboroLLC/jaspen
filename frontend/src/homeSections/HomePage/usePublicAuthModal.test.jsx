@@ -61,4 +61,19 @@ describe('usePublicAuthModal', () => {
 
     expect(screen.getByTestId('strategy-access-card')).toHaveAttribute('data-flow', 'signup');
   });
+
+  it('opens a clean signup card for Decision Planning Toolkit email CTAs', () => {
+    window.history.pushState(
+      {},
+      '',
+      '/?auth=signup&source=decision-planning-toolkit-email&error=session_expired&signed_out=1&reason=idle'
+    );
+
+    render(<Harness />);
+
+    const card = screen.getByTestId('strategy-access-card');
+    expect(card).toHaveAttribute('data-flow', 'signup');
+    expect(card).toHaveAttribute('data-plan', 'free');
+    expect(window.location.search).toBe('?source=decision-planning-toolkit-email');
+  });
 });

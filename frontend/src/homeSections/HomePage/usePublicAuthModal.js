@@ -25,7 +25,8 @@ export default function usePublicAuthModal(heroContext = '') {
 
     openAuthModal(authIntent === 'signup' ? 'signup' : 'signin');
     params.delete('auth');
-    if (params.get('source') === 'decision-profile-email') {
+    const source = String(params.get('source') || '').trim().toLowerCase();
+    if (source === 'decision-profile-email' || source === 'decision-planning-toolkit-email') {
       params.delete('error');
       params.delete('signed_out');
       params.delete('reason');

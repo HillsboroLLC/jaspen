@@ -116,6 +116,7 @@
 
 .wjb-proof-kicker {
   margin: 22px 0 14px;
+  max-width: 510px;
   color: #5b123f;
   font-size: clamp(1.18rem, 1.7vw, 1.42rem);
   font-weight: 900;

@@ -13,7 +13,11 @@ from werkzeug.exceptions import BadRequest, UnsupportedMediaType
 
 from app import db, limiter, mail
 from app.decision_profile import derive_decision_style, validate_answers
-from app.email_templates.decision_profile_results import render_decision_profile_email
+from app.email_templates.decision_profile_results import (
+    JASPEN_BRIDGE_COPY,
+    JASPEN_BRIDGE_HEADLINE,
+    render_decision_profile_email,
+)
 from app.models import EmailSuppression, Lead, LeadAttributionEvent, LeadDecisionProfile, LeadEmailDelivery
 
 
@@ -241,8 +245,8 @@ def _toolkit_download_link(email):
     return f"{request.url_root.rstrip('/')}/api/v1/public/leads/toolkit?{query}"
 
 
-def _workspace_link():
-    query = urlencode({"auth": "signup", "source": "decision-profile-email"})
+def _workspace_link(source="decision-profile-email"):
+    query = urlencode({"auth": "signup", "source": source})
     return f"{_frontend_base_url()}/?{query}"
 
 
@@ -374,7 +378,11 @@ def _record_marketing_opt_in(email, opted_in):
 
 def _send_toolkit_email(email):
     download_link = _toolkit_download_link(email)
+    workspace_link = _workspace_link("decision-planning-toolkit-email")
     unsubscribe = _unsubscribe_link(email, scope="marketing")
+    download_link_html = escape(download_link)
+    workspace_link_html = escape(workspace_link)
+    unsubscribe_html = escape(unsubscribe)
     msg = Message(
         subject="Your Jaspen Decision Planning Toolkit",
         recipients=[email],
@@ -386,6 +394,10 @@ def _send_toolkit_email(email):
         f"{download_link}\n\n"
         "Open the Welcome tab first. It walks you through the four steps for framing, "
         "weighing, pressure-testing, and deciding.\n\n"
+        f"{JASPEN_BRIDGE_HEADLINE}\n\n"
+        f"{JASPEN_BRIDGE_COPY}\n\n"
+        "Start with Jaspen:\n"
+        f"{workspace_link}\n\n"
         "You can unsubscribe from Jaspen updates here:\n"
         f"{unsubscribe}\n\n"
         "Jaspen\n"
@@ -393,11 +405,59 @@ def _send_toolkit_email(email):
     )
     msg.html = f"""<!doctype html>
 <html lang="en">
-  <body style="font-family: Arial, sans-serif; color: #172033; line-height: 1.5;">
-    <h1 style="font-size: 22px;">Your Decision Planning Toolkit is ready</h1>
-    <p>Open the Welcome tab first. It walks you through the four steps for framing, weighing, pressure-testing, and deciding.</p>
-    <p><a href="{download_link}" style="display: inline-block; padding: 12px 18px; background: #a40067; color: #fff; text-decoration: none; border-radius: 8px;">Download the toolkit</a></p>
-    <p style="font-size: 13px; color: #667085;">You can unsubscribe from Jaspen updates <a href="{unsubscribe}">here</a>.</p>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Your Jaspen Decision Planning Toolkit</title>
+  </head>
+  <body style="margin:0; padding:0; background:#f6f7fb; font-family: Arial, sans-serif; color: #172033; line-height: 1.5;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f6f7fb; padding:28px 12px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px; background:#ffffff; border:1px solid #e7eaf3; border-radius:18px; overflow:hidden;">
+            <tr>
+              <td style="padding:24px 28px; border-bottom:1px solid #eef1f7;">
+                <div style="font-size:24px; line-height:1; color:#161f3b; font-weight:700;">Jaspen</div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:30px 28px 10px;">
+                <p style="margin:0 0 10px; font-size:13px; line-height:1.4; letter-spacing:.08em; text-transform:uppercase; color:#a0036c; font-weight:700;">Decision Planning Toolkit</p>
+                <h1 style="margin:0 0 12px; font-size:28px; line-height:1.18; color:#07112f;">Your Decision Planning Toolkit is ready</h1>
+                <p style="margin:0; font-size:16px; line-height:1.65; color:#4f5d75;">Open the Welcome tab first. It walks you through the four steps for framing, weighing, pressure-testing, and deciding.</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:18px 28px 16px;">
+                <a href="{download_link_html}" style="display:inline-block; padding:13px 18px; background:#a0036c; color:#ffffff; text-decoration:none; border-radius:8px; font-size:15px; font-weight:700;">Download the toolkit</a>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:8px 28px 6px;">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#eff9fc; border:1px solid #d8edf4; border-radius:14px;">
+                  <tr>
+                    <td style="padding:20px;">
+                      <h2 style="margin:0 0 8px; font-size:18px; line-height:1.35; color:#07112f;">{escape(JASPEN_BRIDGE_HEADLINE)}</h2>
+                      <p style="margin:0; font-size:15px; line-height:1.65; color:#4f5d75;">{escape(JASPEN_BRIDGE_COPY)}</p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:18px 28px 34px;">
+                <a href="{workspace_link_html}" style="display:inline-block; padding:13px 18px; background:#a0036c; color:#ffffff; text-decoration:none; border-radius:8px; font-size:15px; font-weight:700;">Start with Jaspen</a>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:20px 28px; background:#f8f9fc; border-top:1px solid #eef1f7;">
+                <p style="margin:0; font-size:13px; line-height:1.5; color:#667085;">You can unsubscribe from Jaspen updates <a href="{unsubscribe_html}" style="color:#a0036c;">here</a>.</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
   </body>
 </html>"""
     msg.extra_headers = {
