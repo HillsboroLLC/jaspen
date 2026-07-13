@@ -398,7 +398,7 @@ export default function InteractiveDecisionHero({ onOpenModal, onContextChange }
       <div className="idh-shell">
         <div className="idh-copy">
           <p className="idh-eyebrow">Decision intelligence starts here</p>
-          <h1>Some decisions need more than a gut feeling.</h1>
+          <h1>A thought partner that won't just tell you what you want to hear.</h1>
           <p className="idh-subcopy">
             Paste your notes, emails, or data. Jaspen scores your options and shows
             exactly how it got the number.
@@ -567,7 +567,7 @@ export default function InteractiveDecisionHero({ onOpenModal, onContextChange }
         {!hasStarted && (
           <div className="idh-why">
             <p className="idh-why-eyebrow">Why Jaspen</p>
-            <p className="idh-why-heading">A thought partner that won't just tell you what you want to hear.</p>
+            <p className="idh-why-heading">Some decisions need more than a gut feeling.</p>
           </div>
         )}
 
