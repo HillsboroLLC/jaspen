@@ -13,9 +13,9 @@
   max-width: 1120px;
   margin: 0 auto;
   display: grid;
-  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+  grid-template-columns: minmax(0, 0.95fr) minmax(320px, 0.82fr);
   gap: clamp(44px, 7vw, 92px);
-  align-items: start;
+  align-items: center;
 }
 
 .wjb-panel {
@@ -27,7 +27,19 @@
 }
 
 .wjb-panel--light {
-  padding-top: 34px;
+  width: min(100%, 520px);
+  aspect-ratio: 1 / 1;
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  background: #161f3b;
+  border-radius: 24px;
+  padding: clamp(32px, 4vw, 48px);
+  box-shadow: 0 22px 54px rgba(22, 31, 59, 0.16);
+}
+
+.wjb-panel--light .wjb-content {
+  max-width: none;
 }
 
 .wjb-content {
@@ -58,6 +70,16 @@
   letter-spacing: -0.02em;
 }
 
+.wjb-panel--light .wjb-eyebrow {
+  color: #e774b4;
+}
+
+.wjb-panel--light .wjb-heading,
+.wjb-panel--light .wjb-point-title,
+.wjb-panel--light .wjb-closing {
+  color: #ffffff;
+}
+
 .wjb-heading--light {
   color: #161f3b;
 }
@@ -72,6 +94,10 @@
 
 .wjb-sub--light {
   color: rgba(22, 31, 59, 0.68);
+}
+
+.wjb-panel--light .wjb-sub {
+  color: rgba(255, 255, 255, 0.74);
 }
 
 .wjb-sub strong {
@@ -101,6 +127,24 @@
   border-left: 2px solid rgba(160, 3, 108, 0.58);
 }
 
+.wjb-point--light {
+  position: relative;
+  display: block;
+  padding-left: 22px;
+}
+
+.wjb-point--light::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.34em;
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 8px solid #e774b4;
+}
+
 .wjb-point-title {
   font-size: 0.98rem;
   font-weight: 760;
@@ -123,14 +167,8 @@
   color: rgba(22, 31, 59, 0.62);
 }
 
-.wjb-point-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  color: #a0036c;
-  font-size: 1rem;
+.wjb-panel--light .wjb-point-text {
+  color: rgba(255, 255, 255, 0.68);
 }
 
 .wjb-closing {
@@ -151,9 +189,15 @@
     gap: 40px;
   }
 
-  .wjb-panel--dark,
   .wjb-panel--light {
-    padding-top: 0;
+    width: 100%;
+    aspect-ratio: auto;
+    justify-self: stretch;
+  }
+
+  .wjb-panel--light {
+    padding: 32px 26px;
+    border-radius: 20px;
   }
 
   .wjb-content {

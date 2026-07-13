@@ -13,9 +13,9 @@ const PROOFS = [
 ];
 
 const STEPS = [
-  { icon: 'fa-lightbulb', title: 'Jaspen proposes', note: 'A sensible starter rubric, tuned to your objective.' },
-  { icon: 'fa-sliders', title: 'You adjust', note: 'Reweight, rename, or replace the criteria. Up to twelve.' },
-  { icon: 'fa-user-check', title: 'It stays yours', note: 'Data informs the scores. It never picks what matters.' },
+  { title: 'Jaspen proposes', note: 'A sensible starter rubric, tuned to your objective.' },
+  { title: 'You adjust', note: 'Reweight, rename, or replace the criteria. Up to twelve.' },
+  { title: 'It stays yours', note: 'Data informs the scores. It never picks what matters.' },
 ];
 
 export default function WhyJaspenBlock() {
@@ -59,9 +59,6 @@ export default function WhyJaspenBlock() {
             <div className="wjb-points">
               {STEPS.map((s) => (
                 <div className="wjb-point wjb-point--light" key={s.title}>
-                  <span className="wjb-point-icon">
-                    <i className={`fa-solid ${s.icon}`} aria-hidden="true" />
-                  </span>
                   <div>
                     <p className="wjb-point-title">{s.title}</p>
                     <p className="wjb-point-text">{s.note}</p>
