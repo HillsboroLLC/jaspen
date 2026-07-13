@@ -206,12 +206,15 @@ def test_toolkit_lead_sends_email_before_success(client, db, monkeypatch):
     assert sent[0].recipients == ["person@example.com"]
     assert sent[0].sender == "Jaspen <hello@jaspen.ai>"
     assert sent[0].reply_to == "hello@jaspen.ai"
-    assert "Download the toolkit" in sent[0].html
-    assert "Start with Jaspen" in sent[0].html
+    assert sent[0].subject == "Your Decision Planning Toolkit is ready"
+    assert "Download the Decision Planning Toolkit" in sent[0].html
+    assert "Create a free account" in sent[0].html
     assert "http://localhost:3000/?auth=signup&amp;source=decision-planning-toolkit-email" in sent[0].html
     assert "http://localhost:3000/?auth=signup&source=decision-planning-toolkit-email" in sent[0].body
-    assert "You've started thinking it through. Now let Jaspen help you work through it." in sent[0].body
-    assert "Essential gives you more room to explore the evidence" in sent[0].body
+    assert "Organize your thinking first. Then let Jaspen challenge it." in sent[0].body
+    assert "A workbook can organize your thinking." in sent[0].body
+    assert "It cannot ask the next question." in sent[0].body
+    assert "Essential gives you more room to test assumptions" in sent[0].body
     assert 'name="viewport"' in sent[0].html
     assert "—" not in sent[0].body
     assert "—" not in sent[0].html
@@ -221,6 +224,30 @@ def test_toolkit_lead_sends_email_before_success(client, db, monkeypatch):
     delivery = LeadEmailDelivery.query.one()
     assert delivery.status == "sent"
     assert delivery.sent_at is not None
+
+
+def test_toolkit_email_copy_changes_for_existing_account(client, db, monkeypatch):
+    sent = []
+    db.session.add(User(email="person@example.com", name="Existing User", password_hash="hash"))
+    db.session.commit()
+
+    monkeypatch.setattr("app.routes.leads.mail.send", lambda msg: sent.append(msg))
+    response = client.post(
+        LEADS_URL,
+        json={
+            "email": "person@example.com",
+            "source": "decision-planning-toolkit",
+            "marketing_opt_in": False,
+        },
+    )
+
+    assert response.status_code == 201
+    assert len(sent) == 1
+    assert "Download the Decision Planning Toolkit" in sent[0].html
+    assert "Open My Workspace" in sent[0].html
+    assert "Unlike a spreadsheet, Jaspen can ask follow-up questions" in sent[0].body
+    assert "Create a free account" not in sent[0].html
+    assert "A workbook can organize your thinking." not in sent[0].body
 
 
 def test_toolkit_opt_in_resubscribes_prior_suppressions(client, db, monkeypatch):
@@ -348,7 +375,8 @@ def test_decision_profile_template_renders_every_style():
         assert PREVIEW_TEXT in rendered["html"]
         assert style["name"] in rendered["html"]
         assert style["name"] in rendered["body"]
-        assert "You've started thinking it through. Now let Jaspen help you work through it." in rendered["body"]
+        assert "Thank you for taking the Decision Profile assessment." in rendered["body"]
+        assert "One thing worth being mindful of" in rendered["body"]
         assert "Essential gives you more room to explore the evidence" in rendered["body"]
         assert "Save My Decision Profile" in rendered["body"]
         assert "Save My Decision Profile" in rendered["html"]
@@ -376,17 +404,17 @@ def test_decision_profile_submission_saves_result_and_sends_email(client, db, mo
         "decision_style": {"key": "fast_mover", "name": "Fast Mover"},
     }
     assert len(sent) == 1
-    assert sent[0].subject == "Your Jaspen Decision Profile"
+    assert sent[0].subject == "Your Jaspen Decision Profile is ready"
     assert sent[0].recipients == ["person@example.com"]
     assert sent[0].sender == "Jaspen <hello@jaspen.ai>"
     assert sent[0].reply_to == "hello@jaspen.ai"
-    assert "A closer look at how you naturally approach important decisions." in sent[0].html
+    assert "A better understanding of how you naturally approach important decisions." in sent[0].html
     assert "Fast Mover" in sent[0].body
     assert "http://localhost:3000/decision-profile?auth=signup&amp;source=decision-profile-email" in sent[0].html
     assert "http://localhost:3000/decision-profile?auth=signup&source=decision-profile-email" in sent[0].body
     assert "Save My Decision Profile" in sent[0].html
     assert "Your Decision Profile can grow as you use Jaspen." in sent[0].body
-    assert "You've started thinking it through. Now let Jaspen help you work through it." in sent[0].body
+    assert "Thank you for letting me be part of your decision-making journey." in sent[0].body
     assert "Reflection question" not in sent[0].html
     assert "Reflection question" not in sent[0].body
     assert "List-Unsubscribe" in sent[0].extra_headers
@@ -420,6 +448,8 @@ def test_decision_profile_email_cta_changes_for_existing_account(client, db, mon
     assert len(sent) == 1
     assert "View My Decision Profile" in sent[0].html
     assert "View My Decision Profile" in sent[0].body
+    assert "Your Decision Profile is now part of your Jaspen workspace." in sent[0].body
+    assert "Thank you for trusting Jaspen with your thinking." in sent[0].body
     assert "Save My Decision Profile" not in sent[0].html
 
 

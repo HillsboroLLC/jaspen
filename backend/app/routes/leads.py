@@ -15,8 +15,6 @@ from app import db, limiter, mail
 from app.decision_profile_service import ensure_profile_responses
 from app.decision_profile import derive_decision_style, validate_answers
 from app.email_templates.decision_profile_results import (
-    JASPEN_BRIDGE_COPY,
-    JASPEN_BRIDGE_HEADLINE,
     render_decision_profile_email,
 )
 from app.models import EmailSuppression, Lead, LeadAttributionEvent, LeadDecisionProfile, LeadEmailDelivery, User
@@ -55,6 +53,44 @@ FIELD_LIMITS = {
     "referrer": 512,
     "decision_style": 80,
 }
+
+TOOLKIT_SUBJECT = "Your Decision Planning Toolkit is ready"
+TOOLKIT_PREVIEW = "Organize your thinking first. Then let Jaspen challenge it."
+TOOLKIT_INTRO_TEXT = (
+    "Thank you for requesting the Decision Planning Toolkit.\n\n"
+    "I created this toolkit because many important decisions become difficult long before anyone realizes it.\n\n"
+    "Not because people do not care.\n\n"
+    "Because assumptions stay hidden, tradeoffs are never fully explored, and everyone leaves with a different "
+    "understanding of why the decision was made.\n\n"
+    "This toolkit gives you a practical place to organize your thinking before making an important decision.\n\n"
+    "Use it to define your decision, build a rubric that fits your situation, capture assumptions, compare options, "
+    "and collaborate with others."
+)
+TOOLKIT_INTRO_HTML = (
+    "<p style=\"margin:0 0 14px; font-size:16px; line-height:1.65; color:#4f5d75;\">Thank you for requesting the Decision Planning Toolkit.</p>"
+    "<p style=\"margin:0 0 14px; font-size:16px; line-height:1.65; color:#4f5d75;\">I created this toolkit because many important decisions become difficult long before anyone realizes it.</p>"
+    "<p style=\"margin:0 0 14px; font-size:16px; line-height:1.65; color:#4f5d75;\">Not because people do not care.</p>"
+    "<p style=\"margin:0 0 14px; font-size:16px; line-height:1.65; color:#4f5d75;\">Because assumptions stay hidden, tradeoffs are never fully explored, and everyone leaves with a different understanding of why the decision was made.</p>"
+    "<p style=\"margin:0 0 14px; font-size:16px; line-height:1.65; color:#4f5d75;\">This toolkit gives you a practical place to organize your thinking before making an important decision.</p>"
+    "<p style=\"margin:0; font-size:16px; line-height:1.65; color:#4f5d75;\">Use it to define your decision, build a rubric that fits your situation, capture assumptions, compare options, and collaborate with others.</p>"
+)
+TOOLKIT_NO_ACCOUNT_COPY = (
+    "A workbook can organize your thinking.\n\n"
+    "It cannot ask the next question.\n\n"
+    "That is where Jaspen comes in.\n\n"
+    "Create a free account when you are ready to work through a real decision interactively.\n\n"
+    "When the decision has real consequences for your career, business, finances, family, or the people affected by it, "
+    "Essential gives you more room to test assumptions, compare tradeoffs, and preserve the reasoning behind your decision.\n\n"
+    "Thank you for giving Jaspen a chance."
+)
+TOOLKIT_EXISTING_ACCOUNT_COPY = (
+    "Once you have organized your thinking, open Jaspen and continue the conversation there.\n\n"
+    "Unlike a spreadsheet, Jaspen can ask follow-up questions, challenge assumptions, highlight blind spots, and preserve "
+    "your reasoning as a Decision Record.\n\n"
+    "When the decision has real consequences for your career, business, finances, family, or the people affected by it, "
+    "Essential gives you more room to explore evidence, pressure test assumptions, compare tradeoffs, and preserve why you made the decision.\n\n"
+    "Thank you for trusting Jaspen with your decisions."
+)
 BOOL_FIELDS = ("marketing_opt_in",)
 OPTIONAL_TEXT_FIELDS = (
     "first_name",
@@ -253,15 +289,18 @@ def _workspace_link(source="decision-profile-email"):
     return f"{_frontend_base_url()}/?{query}"
 
 
-def _decision_profile_cta_label(email):
+def _has_user_account(email):
     normalized = str(email or "").strip().lower()
-    has_account = (
+    return (
         User.query
         .filter(db.func.lower(User.email) == normalized)
         .first()
         is not None
     )
-    return "View My Decision Profile" if has_account else "Save My Decision Profile"
+
+
+def _decision_profile_cta_label(email):
+    return "View My Decision Profile" if _has_user_account(email) else "Save My Decision Profile"
 
 
 def _unsubscribe_link(email, scope="marketing"):
@@ -394,24 +433,33 @@ def _send_toolkit_email(email):
     download_link = _toolkit_download_link(email)
     workspace_link = _workspace_link("decision-planning-toolkit-email")
     unsubscribe = _unsubscribe_link(email, scope="marketing")
+    has_account = _has_user_account(email)
+    workspace_cta = "Open My Workspace" if has_account else "Create a free account"
+    account_copy = TOOLKIT_EXISTING_ACCOUNT_COPY if has_account else TOOLKIT_NO_ACCOUNT_COPY
+    account_copy_html = "".join(
+        f'<p style="margin:0 0 14px; font-size:15px; line-height:1.65; color:#4f5d75;">{escape(part)}</p>'
+        for part in account_copy.split("\n\n")
+    )
     download_link_html = escape(download_link)
     workspace_link_html = escape(workspace_link)
     unsubscribe_html = escape(unsubscribe)
     msg = Message(
-        subject="Your Jaspen Decision Planning Toolkit",
+        subject=TOOLKIT_SUBJECT,
         recipients=[email],
         sender=LEAD_EMAIL_SENDER,
         reply_to=LEAD_EMAIL_REPLY_TO,
     )
     msg.body = (
-        "Here is your Jaspen Decision Planning Toolkit:\n\n"
+        f"{TOOLKIT_SUBJECT}\n\n"
+        f"{TOOLKIT_PREVIEW}\n\n"
+        "Hi there,\n\n"
+        f"{TOOLKIT_INTRO_TEXT}\n\n"
+        "Download the Decision Planning Toolkit:\n"
         f"{download_link}\n\n"
-        "Open the Welcome tab first. It walks you through the four steps for framing, "
-        "weighing, pressure-testing, and deciding.\n\n"
-        f"{JASPEN_BRIDGE_HEADLINE}\n\n"
-        f"{JASPEN_BRIDGE_COPY}\n\n"
-        "Start with Jaspen:\n"
+        f"{account_copy}\n\n"
+        f"{workspace_cta}:\n"
         f"{workspace_link}\n\n"
+        "Lydia\n\n"
         "You can unsubscribe from Jaspen updates here:\n"
         f"{unsubscribe}\n\n"
         "Jaspen\n"
@@ -422,9 +470,10 @@ def _send_toolkit_email(email):
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Your Jaspen Decision Planning Toolkit</title>
+    <title>{escape(TOOLKIT_SUBJECT)}</title>
   </head>
   <body style="margin:0; padding:0; background:#f6f7fb; font-family: Arial, sans-serif; color: #172033; line-height: 1.5;">
+    <div style="display:none; max-height:0; overflow:hidden; opacity:0; color:transparent;">{escape(TOOLKIT_PREVIEW)}</div>
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f6f7fb; padding:28px 12px;">
       <tr>
         <td align="center">
@@ -438,12 +487,13 @@ def _send_toolkit_email(email):
               <td style="padding:30px 28px 10px;">
                 <p style="margin:0 0 10px; font-size:13px; line-height:1.4; letter-spacing:.08em; text-transform:uppercase; color:#a0036c; font-weight:700;">Decision Planning Toolkit</p>
                 <h1 style="margin:0 0 12px; font-size:28px; line-height:1.18; color:#07112f;">Your Decision Planning Toolkit is ready</h1>
-                <p style="margin:0; font-size:16px; line-height:1.65; color:#4f5d75;">Open the Welcome tab first. It walks you through the four steps for framing, weighing, pressure-testing, and deciding.</p>
+                <p style="margin:0 0 14px; font-size:16px; line-height:1.65; color:#4f5d75;">Hi there,</p>
+                {TOOLKIT_INTRO_HTML}
               </td>
             </tr>
             <tr>
-              <td style="padding:18px 28px 16px;">
-                <a href="{download_link_html}" style="display:inline-block; padding:13px 18px; background:#a0036c; color:#ffffff; text-decoration:none; border-radius:8px; font-size:15px; font-weight:700;">Download the toolkit</a>
+              <td align="center" style="padding:18px 28px 16px;">
+                <a href="{download_link_html}" style="display:inline-block; padding:13px 18px; background:#a0036c; color:#ffffff; text-decoration:none; border-radius:8px; font-size:15px; font-weight:700;">Download the Decision Planning Toolkit</a>
               </td>
             </tr>
             <tr>
@@ -451,16 +501,16 @@ def _send_toolkit_email(email):
                 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#eff9fc; border:1px solid #d8edf4; border-radius:14px;">
                   <tr>
                     <td style="padding:20px;">
-                      <h2 style="margin:0 0 8px; font-size:18px; line-height:1.35; color:#07112f;">{escape(JASPEN_BRIDGE_HEADLINE)}</h2>
-                      <p style="margin:0; font-size:15px; line-height:1.65; color:#4f5d75;">{escape(JASPEN_BRIDGE_COPY)}</p>
+                      {account_copy_html}
+                      <p style="margin:0; font-size:15px; line-height:1.65; color:#4f5d75;">Lydia</p>
                     </td>
                   </tr>
                 </table>
               </td>
             </tr>
             <tr>
-              <td style="padding:18px 28px 34px;">
-                <a href="{workspace_link_html}" style="display:inline-block; padding:13px 18px; background:#a0036c; color:#ffffff; text-decoration:none; border-radius:8px; font-size:15px; font-weight:700;">Start with Jaspen</a>
+              <td align="center" style="padding:18px 28px 34px;">
+                <a href="{workspace_link_html}" style="display:inline-block; padding:13px 18px; background:#a0036c; color:#ffffff; text-decoration:none; border-radius:8px; font-size:15px; font-weight:700;">{escape(workspace_cta)}</a>
               </td>
             </tr>
             <tr>
