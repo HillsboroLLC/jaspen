@@ -1,5 +1,5 @@
 from app.connector_store import update_connector_settings
-from app.models import Lead, LeadAttributionEvent, User
+from app.models import EmailSuppression, Lead, LeadAttributionEvent, LeadDecisionProfile, LeadEmailDelivery, User
 
 
 def test_admin_user_no_stripe_ids(client, admin_auth_headers, admin_user, test_user, db):
@@ -75,4 +75,73 @@ def test_master_errors_support_only_for_global_admin(client, admin_auth_headers,
     assert "sections" in allowed.get_json()
 
     denied = client.get("/api/v1/admin/master/errors", headers=other_headers)
+    assert denied.status_code == 403
+
+
+def test_master_leads_support_only_and_includes_safe_lead_summary(client, admin_auth_headers, auth_headers, db):
+    lead = Lead(
+        email="Lead@Example.com",
+        normalized_email="lead@example.com",
+        source="decision-style-assessment",
+        first_name="Lead",
+        last_name="Person",
+        company="Example Co",
+        utm_source="linkedin",
+    )
+    db.session.add(lead)
+    db.session.flush()
+    db.session.add(LeadAttributionEvent(
+        lead_id=lead.id,
+        source="decision-style-assessment",
+        utm_source="linkedin",
+        marketing_opt_in=True,
+        email_delivery_requested=True,
+    ))
+    db.session.add(LeadAttributionEvent(
+        lead_id=lead.id,
+        source="decision-planning-toolkit",
+        utm_source="linkedin",
+        marketing_opt_in=False,
+        email_delivery_requested=True,
+    ))
+    db.session.add(LeadDecisionProfile(
+        lead_id=lead.id,
+        email="lead@example.com",
+        normalized_email="lead@example.com",
+        source="decision-style-assessment",
+        answers={"pace": "fast"},
+        verified_style_key="fast_mover",
+        style_name="Fast Mover",
+        affinity={"fast_mover": 2},
+    ))
+    db.session.add(LeadEmailDelivery(
+        lead_id=lead.id,
+        email="lead@example.com",
+        email_type="decision_profile",
+        status="sent",
+    ))
+    db.session.add(EmailSuppression(
+        email="lead@example.com",
+        normalized_email="lead@example.com",
+        scope="marketing",
+        reason="unsubscribe",
+    ))
+    db.session.commit()
+
+    allowed = client.get("/api/v1/admin/master/leads?q=lead@example.com", headers=admin_auth_headers)
+    assert allowed.status_code == 200
+    data = allowed.get_json()
+    assert data["pagination"]["total"] == 1
+    assert data["leads"][0]["email"] == "Lead@Example.com"
+    assert data["leads"][0]["name"] == "Lead Person"
+    assert data["leads"][0]["decision_profile"]["style_name"] == "Fast Mover"
+    assert data["leads"][0]["latest_email"]["status"] == "sent"
+    assert data["leads"][0]["lead_tools"]["decision_profile"]["used"] is True
+    assert data["leads"][0]["lead_tools"]["decision_profile"]["count"] == 1
+    assert data["leads"][0]["lead_tools"]["decision_planning_toolkit"]["used"] is True
+    assert data["leads"][0]["lead_tools"]["decision_planning_toolkit"]["count"] == 1
+    assert data["leads"][0]["suppression"]["reason"] == "unsubscribe"
+    assert "answers" not in data["leads"][0]["decision_profile"]
+
+    denied = client.get("/api/v1/admin/master/leads", headers=auth_headers)
     assert denied.status_code == 403

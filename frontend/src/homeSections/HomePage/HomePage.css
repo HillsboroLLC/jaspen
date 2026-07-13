@@ -2469,6 +2469,13 @@
   .cta-box {
     padding: 60px 32px;
   }
+
+  .cta-abstract-visual {
+    width: 320px;
+    height: 320px;
+    right: -170px;
+    top: -80px;
+  }
   
   .callout-inner {
     flex-direction: column;

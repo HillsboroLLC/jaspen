@@ -50,6 +50,7 @@ const ConnectorsManage = lazy(() => import('./jaspenInterface/Connectors/Connect
 const Account = lazy(() => import('./jaspenInterface/Account/Account'));
 const JaspenAdmin = lazy(() => import('./jaspenInterface/Admin/JaspenAdmin'));
 const MasterAnalytics = lazy(() => import('./jaspenInterface/Admin/MasterAnalytics'));
+const MasterLeads = lazy(() => import('./jaspenInterface/Admin/MasterLeads'));
 const MasterErrors = lazy(() => import('./jaspenInterface/Admin/MasterErrors'));
 const Knowledge = lazy(() => import('./jaspenInterface/Knowledge/Knowledge'));
 const Team = lazy(() => import('./jaspenInterface/Team/Team'));
@@ -240,6 +241,19 @@ function AnimatedAppRoutes({ withShell }) {
                 <ProtectedRoute>
                   {withShell(<MasterAnalytics />, {
                     title: 'Analytics',
+                    showHeader: false,
+                    fullBleed: true,
+                    noPadding: true, backToJaspen: true,
+                  })}
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/leads"
+              element={
+                <ProtectedRoute>
+                  {withShell(<MasterLeads />, {
+                    title: 'Leads',
                     showHeader: false,
                     fullBleed: true,
                     noPadding: true, backToJaspen: true,

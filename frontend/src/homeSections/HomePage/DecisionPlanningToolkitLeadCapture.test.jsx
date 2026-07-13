@@ -26,7 +26,7 @@ describe('DecisionPlanningToolkitLeadCapture', () => {
 
     render(<DecisionPlanningToolkitLeadCapture />);
     await user.type(screen.getByLabelText(/where should we send it/i), 'lydia@jaspen.ai');
-    await user.click(screen.getByLabelText(/founder decision notes/i));
+    await user.click(screen.getByLabelText(/decision notes and occasional jaspen updates/i));
     await user.click(screen.getByRole('button', { name: /email me the toolkit/i }));
 
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));

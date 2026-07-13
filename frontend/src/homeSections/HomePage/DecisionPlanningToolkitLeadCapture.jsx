@@ -8,7 +8,7 @@ import './DecisionPlanningToolkitLeadCapture.css';
 // Positioning: this is the MANUAL planning companion to Jaspen, not a competitor
 // or a lesser version. A workbook is great at helping someone organize their
 // thinking (and gather input from a team); Jaspen is what challenges that
-// thinking — it asks the questions a spreadsheet can't. The section answers a
+// thinking; it asks the questions a spreadsheet can't. The section answers a
 // different visitor question than the Decision Style Assessment above it:
 //   Assessment -> "How do I naturally make decisions?"
 //   Toolkit    -> "How do I work through an important decision I'm facing now?"
@@ -69,7 +69,7 @@ export default function DecisionPlanningToolkitLeadCapture() {
             </li>
             <li>
               <i className="fa-solid fa-check dptl-check" aria-hidden="true" />
-              Your own editable rubric. Set what matters and the weights; it does the math
+              Your own editable rubric that sets what matters and the weights, then does the math
             </li>
             <li>
               <i className="fa-solid fa-check dptl-check" aria-hidden="true" />
@@ -92,7 +92,7 @@ export default function DecisionPlanningToolkitLeadCapture() {
               <i className="fa-solid fa-circle-check dptl-done-icon" aria-hidden="true" />
               <p className="dptl-done-title">Your toolkit is on its way.</p>
               <p className="dptl-done-note">
-                Check your inbox for the secure download link. Open the Welcome tab first; it
+                Check your inbox for the secure download link. Open the Welcome tab first. It
                 walks you through the four steps.
               </p>
             </div>

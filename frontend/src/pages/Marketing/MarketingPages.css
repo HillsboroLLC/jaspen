@@ -1029,6 +1029,7 @@
   gap: 12px;
   flex-wrap: wrap;
   flex-shrink: 0;
+  min-width: 0;
 }
 
 .demos-cta-btn {
@@ -1039,6 +1040,7 @@
   font-weight: 600;
   text-decoration: none;
   white-space: nowrap;
+  text-align: center;
   transition: opacity 0.15s, background 0.15s;
 }
 
@@ -1571,6 +1573,8 @@
   border: 1px solid #d8e0ed;
   border-radius: 16px;
   overflow-x: auto;
+  max-width: 100%;
+  -webkit-overflow-scrolling: touch;
   background: rgba(255, 255, 255, 0.94);
 }
 
@@ -1922,6 +1926,8 @@
 
 .tutorial-docs-table-wrap {
   overflow-x: auto;
+  max-width: 100%;
+  -webkit-overflow-scrolling: touch;
   border: 1px solid var(--marketing-gray-200);
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.92);
@@ -2126,7 +2132,7 @@
     padding-top: 86px;
   }
 
-.marketing-container {
+  .marketing-container {
     padding: 0 16px;
   }
 
@@ -2235,6 +2241,22 @@
   .canvas-window:nth-child(3) {
     margin-left: 0;
     width: 100%;
+  }
+
+  .demos-cta-actions {
+    width: 100%;
+    flex-direction: column;
+  }
+
+  .demos-cta-btn,
+  .demos-cta-btn-secondary-light {
+    width: 100%;
+    white-space: normal;
+  }
+
+  .pricing-model-table,
+  .tutorial-docs-table {
+    min-width: 560px;
   }
 }
 
@@ -2610,6 +2632,11 @@
 
   .pm-flow-visual {
     flex-direction: column;
+  }
+
+  .pricing-model-table,
+  .tutorial-docs-table {
+    min-width: 520px;
   }
 }
 
