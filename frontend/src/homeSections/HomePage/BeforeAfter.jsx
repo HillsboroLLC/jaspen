@@ -5,7 +5,7 @@ const ROWS = [
   {
     topic: 'Starting point',
     before: 'A pile of notes, emails, and opinions with no clear structure',
-    after: 'A shared decision brief — context, constraints, and options in one place',
+    after: 'A shared decision brief with context, constraints, and options in one place',
   },
   {
     topic: "Who's involved",
@@ -15,7 +15,7 @@ const ROWS = [
   {
     topic: 'How options get evaluated',
     before: 'Gut feel, loudest voice, or whoever made the deck',
-    after: 'A scorecard built from your actual criteria — transparent and repeatable',
+    after: 'A scorecard built from your actual criteria, transparent and repeatable',
   },
   {
     topic: 'Time to a clear path',

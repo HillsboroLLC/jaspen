@@ -39,7 +39,7 @@ const FRIENDLY_CATEGORY_LABELS = {
 const BAND_LABELS = {
   starting: 'Jaspen is just getting started with this.',
   building: 'Jaspen is building a clearer picture.',
-  ready: 'Enough context to begin — your workspace picks up right here.',
+  ready: 'Enough context to begin. Your workspace picks up right here.',
 };
 
 // Once remaining budget gets this low, nudge toward continuing in the
@@ -241,7 +241,7 @@ export default function InteractiveDecisionHero({ onOpenModal, onContextChange }
       if (!res.ok) {
         if (data?.code === 'message_too_long') {
           setAnalyzeError(
-            "That's a lot of context — let's continue this in your workspace, where Jaspen can go deeper."
+            "That's a lot of context. Let's continue this in your workspace, where Jaspen can go deeper."
           );
         } else {
           setAnalyzeError(data?.error || "Jaspen couldn't respond just now. Try again.");
@@ -352,7 +352,7 @@ export default function InteractiveDecisionHero({ onOpenModal, onContextChange }
     const projected = userAuthoredText([...messages, { role: 'user', content: answer }]);
     if (projected.length > MAX_INTAKE_LENGTH_HINT) {
       setAnalyzeError(
-        "That's a lot of context — let's continue this in your workspace, where Jaspen can go deeper."
+        "That's a lot of context. Let's continue this in your workspace, where Jaspen can go deeper."
       );
       return;
     }
@@ -435,7 +435,7 @@ export default function InteractiveDecisionHero({ onOpenModal, onContextChange }
             <div className="idh-textarea-wrap">
               {starterPromptText && draftText.trim() === starterPromptText.trim() && (
                 <div className="idh-example-draft-label">
-                  Fictional example — edit anything
+                  Fictional example. Edit anything
                 </div>
               )}
               <textarea
@@ -444,7 +444,7 @@ export default function InteractiveDecisionHero({ onOpenModal, onContextChange }
                 value={draftText}
                 onChange={handleTextChange}
                 placeholder={!hasStarted
-                  ? "Paste notes, emails, meeting context — whatever you're working with..."
+                  ? "Paste notes, emails, meeting context, or whatever you're working with..."
                   : 'Type your reply...'}
                 rows={hasStarted ? 2 : 3}
                 onKeyDown={(e) => {
@@ -494,7 +494,7 @@ export default function InteractiveDecisionHero({ onOpenModal, onContextChange }
               {analyzeError && <p className="idh-analyze-error" role="alert">{analyzeError}</p>}
               {!analyzeError && showLowBudgetNotice && (
                 <p className="idh-low-budget-notice">
-                  Getting long — your workspace can hold much more once you continue there.
+                  Getting long. Your workspace can hold much more once you continue there.
                 </p>
               )}
             </div>

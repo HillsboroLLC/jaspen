@@ -8,7 +8,7 @@ import './HeroProblem.css';
 // sign-in card on the right is untouched.
 
 const PAINS = [
-  '“Every meeting is the same conversation — and nothing moves.”',
+  '“Every meeting is the same conversation, and nothing moves.”',
   '“We have a strategy, but it died in operations.”',
   '“Every option sounds reasonable, and no one can agree.”',
 ];

@@ -5,7 +5,7 @@ export const STARTER_DECISIONS = [
   {
     id: 'job-offer',
     label: 'Accept a Job Offer',
-    prompt: `Fictional example — edit anything.
+    prompt: `Fictional example. Edit anything.
 
 Decision: I need to decide whether to accept a new job offer or remain in my current role.
 
@@ -47,7 +47,7 @@ Help me prepare this decision. Use the information provided, label assumptions, 
   {
     id: 'start-business',
     label: 'Grow My Business',
-    prompt: `Fictional example — edit anything.
+    prompt: `Fictional example. Edit anything.
 
 Decision: I run an independent operations consulting business and need to decide which growth move to prioritize next.
 
@@ -81,7 +81,7 @@ Help me prepare this decision. Use the information provided, label assumptions, 
   {
     id: 'quarterly-investments',
     label: "Prioritize Next Quarter's Investments",
-    prompt: `Fictional example — edit anything.
+    prompt: `Fictional example. Edit anything.
 
 Decision: Our leadership team needs to prioritize next quarter's major investments.
 

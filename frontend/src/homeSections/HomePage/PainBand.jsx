@@ -6,7 +6,7 @@ import './PainBand.css';
 // the emotional setup right before the Work with Jaspen demo.
 
 const PAINS = [
-  'Every meeting is the same conversation — and nothing moves.',
+  'Every meeting is the same conversation, and nothing moves.',
   'You have a strategy, but it died in operations.',
   'Every option sounds reasonable, and no one can agree.',
 ];

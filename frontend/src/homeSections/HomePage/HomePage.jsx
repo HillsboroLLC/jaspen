@@ -190,7 +190,7 @@ function PlanPanel() {
   return (
     <div className="intro-panel" key="plan">
       <div className="intro-panel-label">Execution Plan</div>
-      <div className="intro-panel-project-name">AI Meal Prep Platform — 4 Phases</div>
+      <div className="intro-panel-project-name">AI Meal Prep Platform: 4 Phases</div>
       <div className="intro-plan-steps">
         {[
           { phase: '01', title: 'Data Integration & MVP', desc: "Connect core health APIs with a single grocery chain's inventory. Validate the recommendation loop." },
@@ -230,7 +230,7 @@ const STEPS = [
     id: 'opportunities',
     num: 'O',
     title: 'Opportunities',
-    description: "What's already working — where's the momentum?",
+    description: "What's already working, and where's the momentum?",
     icon: 'fa-solid fa-arrow-trend-up',
   },
   {
@@ -405,7 +405,7 @@ export default function HomePage() {
               <div className="cta-content">
                 <p className="cta-eyebrow">Scale when you're ready</p>
                 <h2>Ready to bring your whole org along?</h2>
-                <p>Custom integrations, dedicated support, SSO, and volume licensing — when Jaspen becomes how your team decides, we'll scope exactly what you need.</p>
+                <p>Custom integrations, dedicated support, SSO, and volume licensing. When Jaspen becomes how your team decides, we'll scope exactly what you need.</p>
                 <div className="cta-actions">
                   <a href="mailto:hello@jaspen.ai" className="jaspen-btn jaspen-btn-primary jaspen-btn-lg">
                     Talk to us

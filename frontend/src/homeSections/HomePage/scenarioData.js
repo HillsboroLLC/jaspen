@@ -27,12 +27,12 @@ export const SCENARIOS = [
     ],
     dmWith: 'Dana',
     dm: [
-      { from: 'Marcus', text: "otw to the room — running behind, been in back-to-backs all morning 😮‍💨", early: true },
+      { from: 'Marcus', text: "otw to the room. running behind, been in back-to-backs all morning 😮‍💨", early: true },
       { from: 'Dana', text: "ha, take your time", early: true },
       { from: 'Marcus', text: "ok be honest… we still don't know what we're going to do.", punch: true },
     ],
     demo: {
-      prompt: "We're $2.4M under plan for Q3 and the board call is Friday — what do we actually do?",
+      prompt: "We're $2.4M under plan for Q3 and the board call is Friday. What do we actually do?",
       agent: "I pulled your CRM and finance data. The gap is real but closeable. I scored four ways to close it on impact, margin, and timing:",
       objectiveChips: [{ label: 'Balanced' }, { label: 'Close the gap', active: true }, { label: 'Speed to Market' }, { label: 'Growth' }],
       dataChips: [{ label: 'NetSuite' }, { label: 'Snowflake' }, { label: 'Salesforce', active: true }],
@@ -68,7 +68,7 @@ export const SCENARIOS = [
         {
           phase: 'Close the gap',
           tasks: [
-            { name: 'Approve targeted discount on 2 deals', desc: 'Late-stage only — stays inside the margin guardrail.', owner: 'Marcus · Sales', init: 'M', color: '#2f6f8f', date: 'Thu', pri: 'Medium' },
+            { name: 'Approve targeted discount on 2 deals', desc: 'Late-stage only. Stays inside the margin guardrail.', owner: 'Marcus · Sales', init: 'M', color: '#2f6f8f', date: 'Thu', pri: 'Medium' },
           ],
         },
       ],
@@ -87,16 +87,16 @@ export const SCENARIOS = [
     favorites: ['Owen'],
     dmWith: 'Owen',
     thread: [
-      { from: 'Tess', text: "real q — is the biweekly workstream sync even worth keeping?" },
+      { from: 'Tess', text: "real q: is the biweekly workstream sync even worth keeping?" },
       { from: 'Owen', text: "honestly? not sure what it's even for anymore." },
-      { from: 'Tess', text: "it's supposed to be progress updates. but progress is slow — we're stretched too thin." },
+      { from: 'Tess', text: "it's supposed to be progress updates. but progress is slow because we're stretched too thin." },
       { from: 'Owen', text: "right. the people who'd move the workstream are the same ones running the business all day." },
       { from: 'Tess', text: "and every time we try to decide whether to kill it, we go off topic and never land it." },
       { from: 'Owen', text: "the meeting about the meeting just gets rescheduled 😅" },
       { from: 'Tess', text: "and the question we never answer: is slow progress even better than no progress? or is there a smarter way to use the same people?", punch: true },
     ],
     demo: {
-      prompt: "Should we keep our biweekly workstream sync? Progress is slow because the people delivering it also run the business — and we can't tell if slow progress beats no progress, or if there's a better way.",
+      prompt: "Should we keep our biweekly workstream sync? Progress is slow because the people delivering it also run the business, and we can't tell if slow progress beats no progress, or if there's a better way.",
       agent: "I looked at what the meeting actually produces, where this workstream's hours go, and who's on the hook. I scored four options on progress vs. the cost of everyone's time:",
       objectiveChips: [{ label: 'Balanced', active: true }, { label: 'Focus' }, { label: 'Speed to Market' }, { label: 'Growth' }],
       dataChips: [{ label: 'Calendar' }, { label: 'Slack' }, { label: 'Asana', active: true }],
@@ -132,7 +132,7 @@ export const SCENARIOS = [
         {
           phase: 'Protect the time',
           tasks: [
-            { name: 'Block one focused half-day for the workstream', desc: 'So progress is real — not "slow vs. none."', owner: 'Tess · Ops', init: 'T', color: '#a0036c', date: 'Weekly', pri: 'High' },
+            { name: 'Block one focused half-day for the workstream', desc: 'So progress is real, not "slow vs. none."', owner: 'Tess · Ops', init: 'T', color: '#a0036c', date: 'Weekly', pri: 'High' },
           ],
         },
       ],

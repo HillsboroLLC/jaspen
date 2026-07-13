@@ -36,6 +36,7 @@ export default function WhyJaspenBlock() {
               Jaspen lets AI judge the evidence, then <strong>code does the math</strong>. The
               answer holds up when someone asks how you got it.
             </p>
+            <p className="wjb-proof-kicker">Jaspen Is...</p>
             <div className="wjb-points">
               {PROOFS.map((p) => (
                 <div className="wjb-point wjb-point--dark" key={p.label}>

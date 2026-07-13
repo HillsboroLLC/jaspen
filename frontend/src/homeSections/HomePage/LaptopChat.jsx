@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import JaspenWorkspace from './JaspenWorkspace';
 import './TeamsConversation.css';
 
-const FILLER = { name: 'Alex Rivera', initials: 'A', color: '#7a7f8a', preview: 'thanks — sending it over now' };
+const FILLER = { name: 'Alex Rivera', initials: 'A', color: '#7a7f8a', preview: 'thanks, sending it over now' };
 
 /* One laptop, one scenario. Two formats:
    - 'meeting': a group thread that stalls, then a cursor hops into a 1:1 where
@@ -122,12 +122,12 @@ export default function LaptopChat({ scenario: sc, isActive, onResolve, onScreen
     if (screen === 'jaspen') {
       switch (jaspenStage) {
         case 'scoring': return { n: '04', t: 'Scoring the options', d: 'Jaspen scores every path against the criteria that actually matter.' };
-        case 'trade-off': return { n: '05', t: 'Weighing the trade-offs', d: 'It lays the options side by side — what you gain, what you give up.' };
-        case 'execution': return { n: '06', t: 'The execution plan', d: 'A coordinated plan lands — phases, owners, and dates.' };
+        case 'trade-off': return { n: '05', t: 'Weighing the trade-offs', d: 'It lays the options side by side: what you gain, what you give up.' };
+        case 'execution': return { n: '06', t: 'The execution plan', d: 'A coordinated plan lands with phases, owners, and dates.' };
         default: return { n: '03', t: 'Framing the decision', d: 'On jaspen.ai, it pulls the real context and frames the actual question.' };
       }
     }
-    if (!isPeer && view === dmWith) return { n: '02', t: 'The backchannel', d: 'The honest version never makes the meeting — it goes to a DM.' };
+    if (!isPeer && view === dmWith) return { n: '02', t: 'The backchannel', d: 'The honest version never makes the meeting. It goes to a DM.' };
     if (isPeer) return { n: '01', t: 'Two peers, stuck', d: 'The same conversation, on repeat, with no way to land it.' };
     return { n: '01', t: 'The meeting', d: 'Everyone understands the problem. Nobody can make the call.' };
   })();

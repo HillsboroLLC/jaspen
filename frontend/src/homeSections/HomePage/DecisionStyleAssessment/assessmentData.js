@@ -89,7 +89,7 @@ export const QUESTIONS = [
     id: 'q1_instinct_vs_research',
     type: 'scale',
     prompt: 'When an important decision comes up, where do you naturally start?',
-    help: 'There is no better end of this scale — both instinct and information are useful.',
+    help: 'There is no better end of this scale. Both instinct and information are useful.',
     options: [
       { id: 'q1_a', label: 'With my gut read of the situation', signals: { fast_mover: 2 } },
       { id: 'q1_b', label: 'Instinct first, then I check a few facts', signals: { practical_optimizer: 2, fast_mover: 1 } },
@@ -129,7 +129,7 @@ export const QUESTIONS = [
     type: 'range',
     prompt: 'On a typical important decision, how many real alternatives do you seriously weigh?',
     options: [
-      { id: 'q4_none', label: 'None — I usually already know the option I want', signals: { fast_mover: 2 } },
+      { id: 'q4_none', label: 'None. I usually already know the option I want', signals: { fast_mover: 2 } },
       { id: 'q4_1_2', label: '1–2', signals: { practical_optimizer: 2 } },
       { id: 'q4_3_5', label: '3–5', signals: { thoughtful_explorer: 2, evidence_builder: 1 } },
       { id: 'q4_5_plus', label: 'More than 5', signals: { thoughtful_explorer: 2, reflective_analyzer: 1 } },

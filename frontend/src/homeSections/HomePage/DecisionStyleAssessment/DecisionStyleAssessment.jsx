@@ -183,7 +183,7 @@ export default function DecisionStyleAssessment() {
                 </h2>
                 <p className="dsa-hero-sub">
                   Everyone has a natural way of making the big calls. Answer seven quick questions
-                  and uncover yours — the strengths it gives you, the blind spots to watch, and how
+                  and uncover yours: the strengths it gives you, the blind spots to watch, and how
                   to make decisions you can defend. No score. No grade. Just a sharper picture of you.
                 </p>
                 <ul className="dsa-hero-facts">
@@ -223,7 +223,7 @@ export default function DecisionStyleAssessment() {
               <p className="dsa-hero-microcopy">
                 {answeredCount > 0
                   ? 'Pick up right where you left off.'
-                  : 'Takes about two minutes — see your result instantly.'}
+                  : 'Takes about two minutes. See your result instantly.'}
               </p>
             </div>
           </div>
@@ -292,7 +292,7 @@ export default function DecisionStyleAssessment() {
                 <i className="fa-solid fa-arrow-left dsa-btn-icon-left" aria-hidden="true" />
                 Back
               </button>
-              <span className="dsa-nav-hint">Pick the closest fit — you can change it.</span>
+              <span className="dsa-nav-hint">Pick the closest fit. You can change it.</span>
             </div>
           </div>
         )}
@@ -310,7 +310,7 @@ export default function DecisionStyleAssessment() {
               <p className="dsa-result-blurb">{result.style.blurb}</p>
               {result.isFallback && (
                 <p className="dsa-result-note">
-                  Your answers didn&apos;t point strongly in one direction yet — the full profile
+                  Your answers didn&apos;t point strongly in one direction yet. The full profile
                   will explore your mix in more detail.
                 </p>
               )}

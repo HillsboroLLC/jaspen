@@ -156,7 +156,7 @@ export default function FlowIllustrated({ onOpenModal }) {
           <p className="flow-illustrated-eyebrow">The FLOW Method™</p>
           <h2 className="flow-illustrated-heading">One flow. Full context.<br />Zero handoffs.</h2>
           <p className="flow-illustrated-sub">
-            The four categories Jaspen works through with you — Frame, Limits, Opportunities, Weigh. Every step builds on the last.
+            The four categories Jaspen works through with you: Frame, Limits, Opportunities, Weigh. Every step builds on the last.
           </p>
         </div>
 
