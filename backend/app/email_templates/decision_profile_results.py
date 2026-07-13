@@ -154,7 +154,7 @@ Jaspen
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{_p(SUBJECT)}</title>
+    <title>Decision Profile</title>
   </head>
   <body style="margin:0; padding:0; background:#f6f7fb; font-family:Arial, Helvetica, sans-serif; color:#172033;">
     <div style="display:none; max-height:0; overflow:hidden; opacity:0; color:transparent;">{preview}</div>
@@ -170,7 +170,7 @@ Jaspen
             <tr>
               <td style="padding:30px 28px 10px;">
                 <p style="margin:0 0 10px; font-size:13px; line-height:1.4; letter-spacing:.08em; text-transform:uppercase; color:#a0036c; font-weight:700;">Decision Profile</p>
-                <h1 style="margin:0 0 12px; font-size:28px; line-height:1.18; color:#07112f;">Your Jaspen Decision Profile is ready</h1>
+                <h1 style="margin:0 0 12px; font-size:28px; line-height:1.18; color:#07112f;">A better understanding of how you naturally decide</h1>
                 <p style="margin:0 0 14px; font-size:16px; line-height:1.65; color:#4f5d75;">Hi there,</p>
                 <p style="margin:0 0 14px; font-size:16px; line-height:1.65; color:#4f5d75;">Thank you for taking the Decision Profile assessment.</p>
                 <p style="margin:0 0 14px; font-size:16px; line-height:1.65; color:#4f5d75;">Every important decision leaves clues about how we naturally think. This assessment is designed to uncover some of those patterns so you can better understand your own decision-making process.</p>

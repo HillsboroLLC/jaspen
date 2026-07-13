@@ -470,7 +470,7 @@ def _send_toolkit_email(email):
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{escape(TOOLKIT_SUBJECT)}</title>
+    <title>Decision Planning Toolkit</title>
   </head>
   <body style="margin:0; padding:0; background:#f6f7fb; font-family: Arial, sans-serif; color: #172033; line-height: 1.5;">
     <div style="display:none; max-height:0; overflow:hidden; opacity:0; color:transparent;">{escape(TOOLKIT_PREVIEW)}</div>
@@ -486,7 +486,7 @@ def _send_toolkit_email(email):
             <tr>
               <td style="padding:30px 28px 10px;">
                 <p style="margin:0 0 10px; font-size:13px; line-height:1.4; letter-spacing:.08em; text-transform:uppercase; color:#a0036c; font-weight:700;">Decision Planning Toolkit</p>
-                <h1 style="margin:0 0 12px; font-size:28px; line-height:1.18; color:#07112f;">Your Decision Planning Toolkit is ready</h1>
+                <h1 style="margin:0 0 12px; font-size:28px; line-height:1.18; color:#07112f;">A practical place to organize your thinking</h1>
                 <p style="margin:0 0 14px; font-size:16px; line-height:1.65; color:#4f5d75;">Hi there,</p>
                 {TOOLKIT_INTRO_HTML}
               </td>

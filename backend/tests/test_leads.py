@@ -207,6 +207,8 @@ def test_toolkit_lead_sends_email_before_success(client, db, monkeypatch):
     assert sent[0].sender == "Jaspen <hello@jaspen.ai>"
     assert sent[0].reply_to == "hello@jaspen.ai"
     assert sent[0].subject == "Your Decision Planning Toolkit is ready"
+    assert "Your Decision Planning Toolkit is ready" not in sent[0].html
+    assert "A practical place to organize your thinking" in sent[0].html
     assert "Download the Decision Planning Toolkit" in sent[0].html
     assert "Create a free account" in sent[0].html
     assert "http://localhost:3000/?auth=signup&amp;source=decision-planning-toolkit-email" in sent[0].html
@@ -405,6 +407,8 @@ def test_decision_profile_submission_saves_result_and_sends_email(client, db, mo
     }
     assert len(sent) == 1
     assert sent[0].subject == "Your Jaspen Decision Profile is ready"
+    assert "Your Jaspen Decision Profile is ready" not in sent[0].html
+    assert "A better understanding of how you naturally decide" in sent[0].html
     assert sent[0].recipients == ["person@example.com"]
     assert sent[0].sender == "Jaspen <hello@jaspen.ai>"
     assert sent[0].reply_to == "hello@jaspen.ai"
