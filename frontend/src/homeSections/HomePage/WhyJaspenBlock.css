@@ -1,0 +1,182 @@
+/* Combined "Why not ChatGPT" + "Your criteria" color block.
+   Edge-to-edge two-tone: navy left, cream right. Flat resting design; the six
+   item cards fall in as 3D cubes on scroll. Brand palette only (no lavender). */
+
+.wjb {
+  position: relative;
+  overflow: hidden;
+}
+
+.wjb-inner {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: stretch;
+}
+
+.wjb-panel {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 84px 48px;
+  perspective: 900px; /* gives the falling cubes real depth */
+}
+.wjb-panel--dark {
+  background: #161f3b;
+  align-items: flex-end;
+}
+.wjb-panel--light {
+  background: #f4f1ea;
+  align-items: flex-start;
+}
+
+.wjb-content {
+  width: 100%;
+  max-width: 440px;
+}
+
+.wjb-eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #a0036c;
+  margin: 0 0 14px;
+}
+.wjb-eyebrow--light {
+  color: #e774b4; /* lightened brand magenta for contrast on navy */
+}
+
+.wjb-heading {
+  font-size: clamp(1.7rem, 2.8vw, 2.3rem);
+  font-weight: 760;
+  color: #161f3b;
+  line-height: 1.12;
+  margin: 0 0 16px;
+}
+.wjb-heading--light {
+  color: #ffffff;
+}
+
+.wjb-sub {
+  font-size: 1.02rem;
+  line-height: 1.6;
+  color: rgba(22, 31, 59, 0.7);
+  margin: 0 0 28px;
+}
+.wjb-sub--light {
+  color: rgba(255, 255, 255, 0.72);
+}
+.wjb-sub strong {
+  color: #161f3b;
+  font-weight: 720;
+}
+.wjb-sub--light strong {
+  color: #ffffff;
+  font-weight: 720;
+}
+
+/* ── The falling cubes ── */
+.wjb-cubes {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.wjb-cube {
+  border-radius: 12px;
+  padding: 16px 18px;
+  /* Pre-reveal state: dropped up and tumbled back in 3D */
+  opacity: 0;
+  transform: translateY(-46px) rotateX(-72deg);
+  transform-origin: top center;
+  transition: opacity 0.5s ease, transform 0.62s cubic-bezier(0.18, 0.72, 0.28, 1.1);
+  transition-delay: calc(var(--i, 0) * 95ms);
+  will-change: transform, opacity;
+}
+.wjb.is-in .wjb-cube {
+  opacity: 1;
+  transform: translateY(0) rotateX(0);
+}
+
+.wjb-cube--dark {
+  background: #1e2a4d;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-left: 3px solid #e774b4;
+}
+.wjb-cube--light {
+  background: #ffffff;
+  border: 1px solid rgba(22, 31, 59, 0.08);
+  box-shadow: 0 8px 22px rgba(22, 31, 59, 0.06);
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.wjb-cube-label {
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: #ffffff;
+  margin: 0 0 5px;
+}
+.wjb-cube-title {
+  font-size: 1rem;
+  font-weight: 720;
+  color: #161f3b;
+  margin: 0 0 4px;
+}
+.wjb-cube-text {
+  font-size: 0.92rem;
+  line-height: 1.45;
+  color: rgba(22, 31, 59, 0.66);
+  margin: 0;
+}
+.wjb-cube-text--light {
+  color: rgba(255, 255, 255, 0.66);
+}
+
+.wjb-cube-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: rgba(160, 3, 108, 0.08);
+  color: #a0036c;
+  font-size: 1rem;
+}
+
+.wjb-closing {
+  margin: 26px 0 0;
+  font-size: clamp(1.1rem, 1.8vw, 1.35rem);
+  font-weight: 740;
+  color: #161f3b;
+  letter-spacing: -0.01em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wjb-cube {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
+
+/* Stack: navy block on top, cream block beneath */
+@media (max-width: 860px) {
+  .wjb-inner {
+    grid-template-columns: 1fr;
+  }
+  .wjb-panel {
+    padding: 60px 26px;
+    align-items: center;
+  }
+  .wjb-panel--dark,
+  .wjb-panel--light {
+    align-items: center;
+  }
+  .wjb-content {
+    max-width: 480px;
+  }
+}

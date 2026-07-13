@@ -6,9 +6,8 @@ import InteractiveDecisionHero from './InteractiveDecisionHero';
 import PricingVariantB from './PricingVariantB';
 import FlowIllustrated from './FlowIllustrated';
 import BeforeAfter from './BeforeAfter';
-import WhyNotChatGPT from './WhyNotChatGPT';
+import WhyJaspenBlock from './WhyJaspenBlock';
 import HowScoreWorks from './HowScoreWorks';
-import RubricIsYours from './RubricIsYours';
 import DecisionStyleAssessment from './DecisionStyleAssessment/DecisionStyleAssessment';
 import DecisionPlanningToolkitLeadCapture from './DecisionPlanningToolkitLeadCapture';
 import FAQSection from '../FAQSection/FAQSection';
@@ -383,14 +382,11 @@ export default function HomePage() {
 
         <FlowIllustrated onOpenModal={openAuthModal} />
 
-        {/* ========== WHY NOT JUST CHATGPT? ========== */}
-        <WhyNotChatGPT />
+        {/* ========== WHY NOT CHATGPT + YOUR CRITERIA (color block) ========== */}
+        <WhyJaspenBlock />
 
         {/* ========== HOW THE SCORE WORKS (trust) ========== */}
         <HowScoreWorks />
-
-        {/* ========== THE RUBRIC IS YOURS ========== */}
-        <RubricIsYours />
 
         {/* ========== PRICING — Comparison Table ========== */}
         <PricingVariantB onOpenModal={openAuthModal} />
