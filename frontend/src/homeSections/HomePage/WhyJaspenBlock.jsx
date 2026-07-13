@@ -2,8 +2,8 @@ import React from 'react';
 import './WhyJaspenBlock.css';
 
 // Combined color-block section that merges two short beats into one:
-//   Left (navy): "Why not just ChatGPT?" the moat, three proofs.
-//   Right (pale blue): "Your criteria" the rubric is yours, three steps.
+//   Left: "Why not just ChatGPT?" the moat, three proofs.
+//   Right: "Your criteria" the rubric is yours, three steps.
 // Kept intentionally minimal: no cards, no panels inside panels.
 
 const PROOFS = [
@@ -26,7 +26,7 @@ export default function WhyJaspenBlock() {
       aria-label="Why not just ChatGPT, and your criteria"
     >
       <div className="wjb-inner">
-        {/* Left half: Why not just ChatGPT */}
+        {/* Why not just ChatGPT */}
         <div className="wjb-panel wjb-panel--dark">
           <div className="wjb-content">
             <p className="wjb-eyebrow wjb-eyebrow--light">Why not just ChatGPT?</p>
@@ -47,7 +47,7 @@ export default function WhyJaspenBlock() {
           </div>
         </div>
 
-        {/* Right half: Your criteria */}
+        {/* Your criteria */}
         <div className="wjb-panel wjb-panel--light">
           <div className="wjb-content">
             <p className="wjb-eyebrow">Your criteria</p>

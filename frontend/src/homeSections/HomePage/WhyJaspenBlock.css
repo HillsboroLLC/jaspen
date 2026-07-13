@@ -1,34 +1,38 @@
 /* Combined "Why not ChatGPT" + "Your criteria" section.
-   Two compact editorial columns, no inner cards. */
+   A quiet bridge section between the assessment CTA and FLOW, not another
+   split hero block. */
 
 .wjb {
   position: relative;
   overflow: hidden;
+  background: #eff9fc;
+  padding: 74px 40px 82px;
 }
 
 .wjb-inner {
+  max-width: 1120px;
+  margin: 0 auto;
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  align-items: stretch;
+  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+  gap: clamp(44px, 7vw, 92px);
+  align-items: start;
 }
 
 .wjb-panel {
-  display: flex;
-  justify-content: center;
-  padding: 64px clamp(28px, 5vw, 72px);
+  min-width: 0;
 }
 
 .wjb-panel--dark {
-  background: #161f3b;
+  padding-top: 8px;
 }
 
 .wjb-panel--light {
-  background: #eff9fc;
+  padding-top: 34px;
 }
 
 .wjb-content {
   width: 100%;
-  max-width: 520px;
+  max-width: 540px;
   text-align: left;
 }
 
@@ -42,7 +46,7 @@
 }
 
 .wjb-eyebrow--light {
-  color: #e774b4;
+  color: #a0036c;
 }
 
 .wjb-heading {
@@ -55,7 +59,7 @@
 }
 
 .wjb-heading--light {
-  color: #ffffff;
+  color: #161f3b;
 }
 
 .wjb-sub {
@@ -67,7 +71,7 @@
 }
 
 .wjb-sub--light {
-  color: rgba(255, 255, 255, 0.74);
+  color: rgba(22, 31, 59, 0.68);
 }
 
 .wjb-sub strong {
@@ -76,7 +80,7 @@
 }
 
 .wjb-sub--light strong {
-  color: #ffffff;
+  color: #161f3b;
 }
 
 .wjb-points {
@@ -94,7 +98,7 @@
 .wjb-point--dark {
   display: block;
   padding-left: 14px;
-  border-left: 2px solid #e774b4;
+  border-left: 2px solid rgba(160, 3, 108, 0.58);
 }
 
 .wjb-point-title {
@@ -105,7 +109,7 @@
 }
 
 .wjb-point--dark .wjb-point-title {
-  color: #ffffff;
+  color: #161f3b;
 }
 
 .wjb-point-text {
@@ -116,7 +120,7 @@
 }
 
 .wjb-point-text--light {
-  color: rgba(255, 255, 255, 0.65);
+  color: rgba(22, 31, 59, 0.62);
 }
 
 .wjb-point-icon {
@@ -138,12 +142,18 @@
 }
 
 @media (max-width: 860px) {
-  .wjb-inner {
-    grid-template-columns: 1fr;
+  .wjb {
+    padding: 62px 22px 70px;
   }
 
-  .wjb-panel {
-    padding: 54px 24px;
+  .wjb-inner {
+    grid-template-columns: 1fr;
+    gap: 40px;
+  }
+
+  .wjb-panel--dark,
+  .wjb-panel--light {
+    padding-top: 0;
   }
 
   .wjb-content {
