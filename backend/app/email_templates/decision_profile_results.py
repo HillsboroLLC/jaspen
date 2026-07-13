@@ -5,8 +5,8 @@ from html import escape
 SUBJECT = "Your Jaspen Decision Profile is ready"
 PREVIEW_TEXT = "A better understanding of how you naturally approach important decisions."
 SAVE_PROFILE_COPY = (
-    "Your Decision Profile can grow as you use Jaspen. Create a free account to save it, "
-    "revisit it, and begin seeing how your decision patterns show up in real decisions."
+    "Create a free account to save your Decision Profile and revisit it whenever you want a quick reminder "
+    "of how you naturally approach decisions."
 )
 FREE_START_COPY = "You can start with Jaspen for free."
 ESSENTIAL_COPY = (
@@ -15,9 +15,8 @@ ESSENTIAL_COPY = (
     "pressure test assumptions, compare tradeoffs, and preserve why you made the decision."
 )
 EXISTING_ACCOUNT_COPY = (
-    "Your Decision Profile is now part of your Jaspen workspace. As you work through real decisions, "
-    "your profile will become even more valuable by helping you recognize patterns that no single "
-    "assessment can capture on its own."
+    "Your Decision Profile is saved to your account. You can access it from the Decision Profile menu item "
+    "whenever you want to revisit your result."
 )
 STYLE_CONTEXT_COPY = (
     "Your decision style is not something to fix. It is something to understand. "
@@ -92,9 +91,9 @@ def render_decision_profile_email(
     has_account = cta_label == "View My Decision Profile"
     account_copy = EXISTING_ACCOUNT_COPY if has_account else SAVE_PROFILE_COPY
     postscript = (
-        "P.S. Your profile will be waiting in your workspace whenever you want to revisit it or use it on a real decision."
+        "P.S. You can access your Decision Profile from the menu settings any time."
         if has_account
-        else "P.S. If this sounded like you, save your profile and try Jaspen on one real decision when you are ready."
+        else "P.S. After you create an account, you can access your Decision Profile from the menu settings any time."
     )
     free_start_html = (
         '<p style="margin:0 0 14px; font-size:15px; line-height:1.65; color:#4f5d75;">'

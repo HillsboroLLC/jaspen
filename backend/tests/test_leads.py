@@ -219,6 +219,7 @@ def test_toolkit_lead_sends_email_before_success(client, db, monkeypatch):
     assert "Essential gives you more room to test assumptions" in sent[0].body
     assert "P.S. You do not need a perfect decision process to start." in sent[0].body
     assert "Kind regards" in sent[0].body
+    assert sent[0].body.index("Kind regards") < sent[0].body.index("P.S. You do not need a perfect decision process to start.")
     assert 'name="viewport"' in sent[0].html
     assert "—" not in sent[0].body
     assert "—" not in sent[0].html
@@ -384,7 +385,9 @@ def test_decision_profile_template_renders_every_style():
         assert "Essential gives you more room to explore the evidence" in rendered["body"]
         assert "Save My Decision Profile" in rendered["body"]
         assert "Save My Decision Profile" in rendered["html"]
-        assert "Your Decision Profile can grow as you use Jaspen." in rendered["body"]
+        assert "Create a free account to save your Decision Profile" in rendered["body"]
+        assert "After you create an account, you can access your Decision Profile from the menu settings any time." in rendered["body"]
+        assert "Your Decision Profile can grow as you use Jaspen." not in rendered["body"]
         assert "unsubscribe" in rendered["body"].lower()
         assert "—" not in rendered["body"]
         assert "—" not in rendered["html"]
@@ -419,9 +422,10 @@ def test_decision_profile_submission_saves_result_and_sends_email(client, db, mo
     assert "http://localhost:3000/decision-profile?auth=signup&amp;source=decision-profile-email" in sent[0].html
     assert "http://localhost:3000/decision-profile?auth=signup&source=decision-profile-email" in sent[0].body
     assert "Save My Decision Profile" in sent[0].html
-    assert "Your Decision Profile can grow as you use Jaspen." in sent[0].body
+    assert "Create a free account to save your Decision Profile" in sent[0].body
     assert "Kind regards" in sent[0].body
-    assert "P.S. If this sounded like you, save your profile" in sent[0].body
+    assert "P.S. After you create an account, you can access your Decision Profile from the menu settings any time." in sent[0].body
+    assert sent[0].body.index("Kind regards") < sent[0].body.index("P.S. After you create an account")
     assert "Thank you for letting me be part of your decision-making journey." not in sent[0].body
     assert "Reflection question" not in sent[0].html
     assert "Reflection question" not in sent[0].body
@@ -456,8 +460,10 @@ def test_decision_profile_email_cta_changes_for_existing_account(client, db, mon
     assert len(sent) == 1
     assert "View My Decision Profile" in sent[0].html
     assert "View My Decision Profile" in sent[0].body
-    assert "Your Decision Profile is now part of your Jaspen workspace." in sent[0].body
-    assert "P.S. Your profile will be waiting in your workspace" in sent[0].body
+    assert "Your Decision Profile is saved to your account." in sent[0].body
+    assert "P.S. You can access your Decision Profile from the menu settings any time." in sent[0].body
+    assert "Your Decision Profile is now part of your Jaspen workspace." not in sent[0].body
+    assert sent[0].body.index("Kind regards") < sent[0].body.index("P.S. You can access your Decision Profile")
     assert "Thank you for trusting Jaspen with your thinking." not in sent[0].body
     assert "Save My Decision Profile" not in sent[0].html
 

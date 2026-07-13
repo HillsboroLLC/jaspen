@@ -80,17 +80,14 @@ TOOLKIT_NO_ACCOUNT_COPY = (
     "That is where Jaspen comes in.\n\n"
     "Create a free account when you are ready to work through a real decision interactively.\n\n"
     "When the decision has real consequences for your career, business, finances, family, or the people affected by it, "
-    "Essential gives you more room to test assumptions, compare tradeoffs, and preserve the reasoning behind your decision.\n\n"
-    "P.S. You do not need a perfect decision process to start. Bring one real decision into Jaspen when you are ready, "
-    "and let it help you pressure-test the thinking."
+    "Essential gives you more room to test assumptions, compare tradeoffs, and preserve the reasoning behind your decision."
 )
 TOOLKIT_EXISTING_ACCOUNT_COPY = (
     "Once you have organized your thinking, open Jaspen and continue the conversation there.\n\n"
     "Unlike a spreadsheet, Jaspen can ask follow-up questions, challenge assumptions, highlight blind spots, and preserve "
     "your reasoning as a Decision Record.\n\n"
     "When the decision has real consequences for your career, business, finances, family, or the people affected by it, "
-    "Essential gives you more room to explore evidence, pressure test assumptions, compare tradeoffs, and preserve why you made the decision.\n\n"
-    "P.S. Your workspace is the place to turn this toolkit from a static exercise into a decision you can revisit, explain, and build on."
+    "Essential gives you more room to explore evidence, pressure test assumptions, compare tradeoffs, and preserve why you made the decision."
 )
 BOOL_FIELDS = ("marketing_opt_in",)
 OPTIONAL_TEXT_FIELDS = (
@@ -437,6 +434,11 @@ def _send_toolkit_email(email):
     has_account = _has_user_account(email)
     workspace_cta = "Open My Workspace" if has_account else "Create a free account"
     account_copy = TOOLKIT_EXISTING_ACCOUNT_COPY if has_account else TOOLKIT_NO_ACCOUNT_COPY
+    postscript = (
+        "P.S. You can come back to this toolkit email any time when you want a structured way to frame a decision."
+        if has_account
+        else "P.S. You do not need a perfect decision process to start. Bring one real decision into Jaspen when you are ready, and let it help you pressure-test the thinking."
+    )
     account_copy_html = "".join(
         f'<p style="margin:0 0 14px; font-size:15px; line-height:1.65; color:#4f5d75;">{escape(part)}</p>'
         for part in account_copy.split("\n\n")
@@ -462,6 +464,7 @@ def _send_toolkit_email(email):
         f"{workspace_link}\n\n"
         "Kind regards,\n"
         "Lydia\n\n"
+        f"{postscript}\n\n"
         "You can unsubscribe from Jaspen updates here:\n"
         f"{unsubscribe}\n\n"
         "Jaspen\n"
@@ -505,7 +508,8 @@ def _send_toolkit_email(email):
                     <td style="padding:20px;">
                       {account_copy_html}
                       <p style="margin:0 0 4px; font-size:15px; line-height:1.65; color:#4f5d75;">Kind regards,</p>
-                      <p style="margin:0; font-size:15px; line-height:1.65; color:#4f5d75;">Lydia</p>
+                      <p style="margin:0 0 18px; font-size:15px; line-height:1.65; color:#4f5d75;">Lydia</p>
+                      <p style="margin:0; font-size:15px; line-height:1.65; color:#4f5d75;">{escape(postscript)}</p>
                     </td>
                   </tr>
                 </table>
