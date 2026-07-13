@@ -24,7 +24,7 @@ const FALLBACK_PLANS = [
     plan_key: 'essential',
     label: 'Essential',
     price: '$39 / month',
-    detail: 'When the decision has real consequences, Essential is built for you. Use it to examine evidence, pressure test assumptions, compare tradeoffs, and preserve the reasoning behind decisions that matter · 7,000 credits/month.',
+    detail: 'When the decision has real consequences, Essential is built for you · 7,000 credits/month.',
     sales_only: false,
   },
   {
@@ -74,6 +74,8 @@ const FALLBACK_MODEL_TYPES = {
 };
 
 const MODEL_ORDER = ['pluto', 'orbit', 'titan'];
+const ESSENTIAL_POSITIONING_HEADLINE = 'When the decision has real consequences, Essential is built for you.';
+const ESSENTIAL_POSITIONING_DETAIL = 'Use Essential when you need room to examine evidence, pressure test assumptions, compare tradeoffs, and preserve the reasoning behind decisions that matter.';
 
 export default function PricingPage() {
   const { user, loading } = useAuth();
@@ -248,22 +250,13 @@ export default function PricingPage() {
           {plans.map((plan) => {
             const isEssential = plan.plan_key === 'essential';
             const isFree = plan.plan_key === 'free';
-            const essentialHeadline = 'When the decision has real consequences, Essential is built for you.';
-            const essentialDetail = 'Use Essential when you need enough room to examine the evidence, pressure test assumptions, compare tradeoffs, and preserve the reasoning behind decisions that matter.';
             return (
               <article key={plan.plan_key} id={plan.plan_key} className={`marketing-card pricing-plan-card ${isEssential ? 'is-featured' : ''}`}>
                 <div className="pricing-plan-head">
                   <h3>{plan.label}</h3>
                   <span className="plan-price">{plan.price}</span>
                 </div>
-                {isEssential ? (
-                  <>
-                    <p><strong>{essentialHeadline}</strong></p>
-                    <p>{essentialDetail}</p>
-                  </>
-                ) : (
-                  <p>{plan.detail}</p>
-                )}
+                <p>{isEssential ? <strong>{ESSENTIAL_POSITIONING_HEADLINE}</strong> : plan.detail}</p>
                 {plan.sales_only ? (
                   <a className="pricing-cta-link" href="/pages/pricing#plans">Talk to sales</a>
                 ) : !isLoggedIn ? (
@@ -286,6 +279,7 @@ export default function PricingPage() {
             );
           })}
         </div>
+        <p className="pricing-plan-note">{ESSENTIAL_POSITIONING_DETAIL}</p>
       </section>
 
       <section id="model-access" className="marketing-section">

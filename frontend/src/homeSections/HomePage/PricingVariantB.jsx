@@ -31,8 +31,7 @@ const PLANS = [
     annual: 32,
     seats: '1 seat',
     tagline: 'When the decision has real consequences, Essential is built for you.',
-    support: 'Use Essential when you need room to examine evidence, pressure test assumptions, compare tradeoffs, and preserve the reasoning behind decisions that matter.',
-    cta: 'Start with Essential',
+    cta: 'Start Free',
     href: '/?auth=1',
     featured: true,
   },
@@ -156,11 +155,10 @@ export default function PricingVariantB({ onOpenModal }) {
                 <p className="pvb-billed-note">{plan.seats}</p>
               )}
               <p className="pvb-card-tagline">{plan.tagline}</p>
-              {plan.support && <p className="pvb-card-support">{plan.support}</p>}
               <button
                 type="button"
                 className={`pvb-card-cta jaspen-btn ${plan.featured ? 'jaspen-btn-primary' : 'jaspen-btn-outline'}`}
-                onClick={() => onOpenModal?.('signup', plan.key === 'essential' ? 'essential' : 'free')}
+                onClick={() => onOpenModal?.('signup', 'free')}
               >
                 {plan.cta}
               </button>
@@ -168,6 +166,10 @@ export default function PricingVariantB({ onOpenModal }) {
           );
         })}
       </div>
+
+      <p className="pvb-plan-note">
+        Use Essential when you need room to examine evidence, pressure test assumptions, compare tradeoffs, and preserve the reasoning behind decisions that matter.
+      </p>
 
       {/* ── Compare plans accordion ── */}
       <div className="pvb-compare-accordion">
@@ -190,7 +192,7 @@ export default function PricingVariantB({ onOpenModal }) {
                   {PLANS.map(p => (
                     <th key={p.key} className={`pvb-th-plan ${p.featured ? 'is-featured' : ''}`}>
                       <span className="pvb-compare-plan-name">{p.name}</span>
-                      <button type="button" className={`pvb-compare-pill ${p.featured ? 'is-featured' : ''}`} onClick={() => onOpenModal?.('signup', p.key === 'essential' ? 'essential' : 'free')}>{p.cta}</button>
+                      <button type="button" className={`pvb-compare-pill ${p.featured ? 'is-featured' : ''}`} onClick={() => onOpenModal?.('signup', 'free')}>{p.cta}</button>
                     </th>
                   ))}
                 </tr>

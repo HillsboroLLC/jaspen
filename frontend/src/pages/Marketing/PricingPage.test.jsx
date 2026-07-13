@@ -30,7 +30,7 @@ describe('PricingPage', () => {
     expect((await screen.findAllByText('Essential')).length).toBeGreaterThan(0);
     expect(screen.getByText('$39 / month')).toBeInTheDocument();
     expect(screen.getByText('When the decision has real consequences, Essential is built for you.')).toBeInTheDocument();
-    expect(screen.getByText(/pressure test assumptions, compare tradeoffs/i)).toBeInTheDocument();
+    expect(screen.getByText(/pressure test assumptions, compare tradeoffs/i)).toHaveClass('pricing-plan-note');
     expect(screen.queryByText(/For people making real decisions regularly/i)).not.toBeInTheDocument();
   });
 });
