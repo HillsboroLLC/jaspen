@@ -14,6 +14,18 @@ body.jaspen-sidebar-open .decision-profile-inner {
   align-items: center;
 }
 
+.decision-profile-head-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.decision-profile-head-actions .int-btn {
+  white-space: nowrap;
+}
+
 .decision-profile-summary {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(260px, 360px);
@@ -399,6 +411,10 @@ body.jaspen-sidebar-open .decision-profile-inner {
   .decision-profile-head {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .decision-profile-head-actions {
+    justify-content: flex-start;
   }
 
   .decision-profile-summary-main h2 {

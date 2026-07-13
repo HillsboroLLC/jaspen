@@ -66,12 +66,19 @@ def _p(text):
     return escape(text or "")
 
 
-def render_decision_profile_email(style, *, workspace_url, unsubscribe_url):
+def render_decision_profile_email(
+    style,
+    *,
+    workspace_url,
+    unsubscribe_url,
+    cta_label="Save My Decision Profile",
+):
     key = style["key"]
     profile = STYLE_PROFILES[key]
     style_name = _p(style["name"])
     preview = _p(PREVIEW_TEXT)
     cta_url = _p(workspace_url)
+    cta_text = _p(cta_label)
     unsubscribe = _p(unsubscribe_url)
 
     text = f"""{SUBJECT}
@@ -100,7 +107,7 @@ How Jaspen can help:
 
 {SAVE_PROFILE_COPY}
 
-Save my Decision Profile:
+{cta_label}:
 {workspace_url}
 
 You received this because you requested your Jaspen Decision Profile. You can unsubscribe from Jaspen updates here:
@@ -179,7 +186,7 @@ Jaspen
             </tr>
             <tr>
               <td style="padding:18px 28px 34px;">
-                <a href="{cta_url}" style="display:inline-block; padding:13px 18px; background:#a0036c; color:#ffffff; text-decoration:none; border-radius:8px; font-size:15px; font-weight:700;">Save my Decision Profile</a>
+                <a href="{cta_url}" style="display:inline-block; padding:13px 18px; background:#a0036c; color:#ffffff; text-decoration:none; border-radius:8px; font-size:15px; font-weight:700;">{cta_text}</a>
               </td>
             </tr>
             <tr>

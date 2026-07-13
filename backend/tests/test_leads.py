@@ -11,6 +11,7 @@ from app.models import (
     LeadDecisionProfile,
     LeadDecisionProfileResponse,
     LeadEmailDelivery,
+    User,
 )
 
 
@@ -349,8 +350,8 @@ def test_decision_profile_template_renders_every_style():
         assert style["name"] in rendered["body"]
         assert "You've started thinking it through. Now let Jaspen help you work through it." in rendered["body"]
         assert "Essential gives you more room to explore the evidence" in rendered["body"]
-        assert "Save my Decision Profile" in rendered["body"]
-        assert "Save my Decision Profile" in rendered["html"]
+        assert "Save My Decision Profile" in rendered["body"]
+        assert "Save My Decision Profile" in rendered["html"]
         assert "Your Decision Profile can grow as you use Jaspen." in rendered["body"]
         assert "unsubscribe" in rendered["body"].lower()
         assert "—" not in rendered["body"]
@@ -383,7 +384,7 @@ def test_decision_profile_submission_saves_result_and_sends_email(client, db, mo
     assert "Fast Mover" in sent[0].body
     assert "http://localhost:3000/decision-profile?auth=signup&amp;source=decision-profile-email" in sent[0].html
     assert "http://localhost:3000/decision-profile?auth=signup&source=decision-profile-email" in sent[0].body
-    assert "Save my Decision Profile" in sent[0].html
+    assert "Save My Decision Profile" in sent[0].html
     assert "Your Decision Profile can grow as you use Jaspen." in sent[0].body
     assert "You've started thinking it through. Now let Jaspen help you work through it." in sent[0].body
     assert "Reflection question" not in sent[0].html
@@ -405,6 +406,21 @@ def test_decision_profile_submission_saves_result_and_sends_email(client, db, mo
     delivery = LeadEmailDelivery.query.one()
     assert delivery.email_type == "decision_profile_results"
     assert delivery.status == "sent"
+
+
+def test_decision_profile_email_cta_changes_for_existing_account(client, db, monkeypatch):
+    sent = []
+    db.session.add(User(email="person@example.com", name="Existing User", password_hash="hash"))
+    db.session.commit()
+
+    monkeypatch.setattr("app.routes.leads.mail.send", lambda msg: sent.append(msg))
+    response = client.post(LEADS_URL, json=decision_profile_payload(email="person@example.com"))
+
+    assert response.status_code == 201
+    assert len(sent) == 1
+    assert "View My Decision Profile" in sent[0].html
+    assert "View My Decision Profile" in sent[0].body
+    assert "Save My Decision Profile" not in sent[0].html
 
 
 def test_decision_profile_backend_overrides_client_style_mismatch(client, db, monkeypatch):

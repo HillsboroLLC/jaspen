@@ -19,7 +19,7 @@ from app.email_templates.decision_profile_results import (
     JASPEN_BRIDGE_HEADLINE,
     render_decision_profile_email,
 )
-from app.models import EmailSuppression, Lead, LeadAttributionEvent, LeadDecisionProfile, LeadEmailDelivery
+from app.models import EmailSuppression, Lead, LeadAttributionEvent, LeadDecisionProfile, LeadEmailDelivery, User
 
 
 leads_bp = Blueprint("leads", __name__)
@@ -253,6 +253,17 @@ def _workspace_link(source="decision-profile-email"):
     return f"{_frontend_base_url()}/?{query}"
 
 
+def _decision_profile_cta_label(email):
+    normalized = str(email or "").strip().lower()
+    has_account = (
+        User.query
+        .filter(db.func.lower(User.email) == normalized)
+        .first()
+        is not None
+    )
+    return "View My Decision Profile" if has_account else "Save My Decision Profile"
+
+
 def _unsubscribe_link(email, scope="marketing"):
     query = urlencode({"token": _unsubscribe_token(email, scope=scope)})
     return f"{request.url_root.rstrip('/')}/api/v1/public/leads/unsubscribe?{query}"
@@ -476,6 +487,7 @@ def _send_decision_profile_email(email, style):
         style,
         workspace_url=_workspace_link(),
         unsubscribe_url=unsubscribe,
+        cta_label=_decision_profile_cta_label(email),
     )
     msg = Message(
         subject=rendered["subject"],

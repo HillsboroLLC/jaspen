@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faArrowLeft,
+  faArrowRight,
   faArrowRotateRight,
   faCheck,
   faFingerprint,
@@ -202,6 +204,7 @@ function DecisionProfileModal({ open, mode, onClose, onSaved }) {
 }
 
 export default function DecisionProfile() {
+  const navigate = useNavigate();
   const [state, setState] = useState({ loading: true, error: '', data: null });
   const [modalOpen, setModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState('new');
@@ -258,9 +261,15 @@ export default function DecisionProfile() {
             </p>
           </div>
           {profile && (
-            <button className="int-btn int-btn-primary" type="button" onClick={() => openAssessment('retake')}>
-              Retake assessment
-            </button>
+            <div className="decision-profile-head-actions">
+              <button className="int-btn int-btn-primary" type="button" onClick={() => navigate('/new')}>
+                Start a decision
+                <FontAwesomeIcon icon={faArrowRight} aria-hidden="true" />
+              </button>
+              <button className="int-btn int-btn-ghost" type="button" onClick={() => openAssessment('retake')}>
+                Retake assessment
+              </button>
+            </div>
           )}
         </header>
 
