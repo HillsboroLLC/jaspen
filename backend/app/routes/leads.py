@@ -67,12 +67,12 @@ TOOLKIT_INTRO_TEXT = (
     "and collaborate with others."
 )
 TOOLKIT_INTRO_HTML = (
-    "<p style=\"margin:0 0 14px; font-size:16px; line-height:1.65; color:#4f5d75;\">Thank you for requesting the Decision Planning Toolkit.</p>"
-    "<p style=\"margin:0 0 14px; font-size:16px; line-height:1.65; color:#4f5d75;\">I created this toolkit because many important decisions become difficult long before anyone realizes it.</p>"
-    "<p style=\"margin:0 0 14px; font-size:16px; line-height:1.65; color:#4f5d75;\">Not because people do not care.</p>"
-    "<p style=\"margin:0 0 14px; font-size:16px; line-height:1.65; color:#4f5d75;\">Because assumptions stay hidden, tradeoffs are never fully explored, and everyone leaves with a different understanding of why the decision was made.</p>"
-    "<p style=\"margin:0 0 14px; font-size:16px; line-height:1.65; color:#4f5d75;\">This toolkit gives you a practical place to organize your thinking before making an important decision.</p>"
-    "<p style=\"margin:0; font-size:16px; line-height:1.65; color:#4f5d75;\">Use it to define your decision, build a rubric that fits your situation, capture assumptions, compare options, and collaborate with others.</p>"
+    "<p style=\"margin:0 0 14px; font-size:16px; line-height:1.65; color:#d9deec;\">Thank you for requesting the Decision Planning Toolkit.</p>"
+    "<p style=\"margin:0 0 14px; font-size:16px; line-height:1.65; color:#d9deec;\">I created this toolkit because many important decisions become difficult long before anyone realizes it.</p>"
+    "<p style=\"margin:0 0 14px; font-size:16px; line-height:1.65; color:#d9deec;\">Not because people do not care.</p>"
+    "<p style=\"margin:0 0 14px; font-size:16px; line-height:1.65; color:#d9deec;\">Because assumptions stay hidden, tradeoffs are never fully explored, and everyone leaves with a different understanding of why the decision was made.</p>"
+    "<p style=\"margin:0 0 14px; font-size:16px; line-height:1.65; color:#d9deec;\">This toolkit gives you a practical place to organize your thinking before making an important decision.</p>"
+    "<p style=\"margin:0; font-size:16px; line-height:1.65; color:#d9deec;\">Use it to define your decision, build a rubric that fits your situation, capture assumptions, compare options, and collaborate with others.</p>"
 )
 TOOLKIT_NO_ACCOUNT_COPY = (
     "A workbook can organize your thinking.\n\n"
@@ -437,7 +437,7 @@ def _send_toolkit_email(email):
     workspace_cta = "Open My Workspace" if has_account else "Create a free account"
     account_copy = TOOLKIT_EXISTING_ACCOUNT_COPY if has_account else TOOLKIT_NO_ACCOUNT_COPY
     account_copy_html = "".join(
-        f'<p style="margin:0 0 14px; font-size:15px; line-height:1.65; color:#4f5d75;">{escape(part)}</p>'
+        f'<p style="margin:0 0 14px; font-size:15px; line-height:1.65; color:#5f574b;">{escape(part)}</p>'
         for part in account_copy.split("\n\n")
     )
     download_link_html = escape(download_link)
@@ -472,37 +472,37 @@ def _send_toolkit_email(email):
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Decision Planning Toolkit</title>
   </head>
-  <body style="margin:0; padding:0; background:#f6f7fb; font-family: Arial, sans-serif; color: #172033; line-height: 1.5;">
+  <body style="margin:0; padding:0; background:#f3eadf; font-family: Arial, sans-serif; color: #172033; line-height: 1.5;">
     <div style="display:none; max-height:0; overflow:hidden; opacity:0; color:transparent;">{escape(TOOLKIT_PREVIEW)}</div>
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f6f7fb; padding:28px 12px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f3eadf; padding:28px 12px;">
       <tr>
         <td align="center">
-          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px; background:#ffffff; border:1px solid #e7eaf3; border-radius:18px; overflow:hidden;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px; background:#fffaf2; border:1px solid #d8c9b7; border-radius:18px; overflow:hidden;">
             <tr>
-              <td style="padding:24px 28px; border-bottom:1px solid #eef1f7;">
-                <div style="font-size:24px; line-height:1; color:#161f3b; font-weight:700;">Jaspen</div>
+              <td style="padding:24px 28px; background:#161f3b;">
+                <div style="font-size:24px; line-height:1; color:#ffffff; font-weight:700;">Jaspen</div>
               </td>
             </tr>
             <tr>
-              <td style="padding:30px 28px 10px;">
-                <p style="margin:0 0 10px; font-size:13px; line-height:1.4; letter-spacing:.08em; text-transform:uppercase; color:#a0036c; font-weight:700;">Decision Planning Toolkit</p>
-                <h1 style="margin:0 0 12px; font-size:28px; line-height:1.18; color:#07112f;">A practical place to organize your thinking</h1>
-                <p style="margin:0 0 14px; font-size:16px; line-height:1.65; color:#4f5d75;">Hi there,</p>
+              <td style="padding:34px 28px 26px; background:#161f3b;">
+                <p style="margin:0 0 10px; font-size:13px; line-height:1.4; letter-spacing:.08em; text-transform:uppercase; color:#f0a6d4; font-weight:700;">Decision Planning Toolkit</p>
+                <h1 style="margin:0 0 12px; font-size:28px; line-height:1.18; color:#ffffff;">A practical place to organize your thinking</h1>
+                <p style="margin:0 0 14px; font-size:16px; line-height:1.65; color:#d9deec;">Hi there,</p>
                 {TOOLKIT_INTRO_HTML}
               </td>
             </tr>
             <tr>
-              <td align="center" style="padding:18px 28px 16px;">
+              <td align="center" style="padding:24px 28px 18px;">
                 <a href="{download_link_html}" style="display:inline-block; padding:13px 18px; background:#a0036c; color:#ffffff; text-decoration:none; border-radius:8px; font-size:15px; font-weight:700;">Download the Decision Planning Toolkit</a>
               </td>
             </tr>
             <tr>
               <td style="padding:8px 28px 6px;">
-                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#eff9fc; border:1px solid #d8edf4; border-radius:14px;">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f8efe4; border:1px solid #d8c9b7; border-radius:14px;">
                   <tr>
                     <td style="padding:20px;">
                       {account_copy_html}
-                      <p style="margin:0; font-size:15px; line-height:1.65; color:#4f5d75;">Lydia</p>
+                      <p style="margin:0; font-size:15px; line-height:1.65; color:#5f574b;">Lydia</p>
                     </td>
                   </tr>
                 </table>
@@ -514,8 +514,8 @@ def _send_toolkit_email(email):
               </td>
             </tr>
             <tr>
-              <td style="padding:20px 28px; background:#f8f9fc; border-top:1px solid #eef1f7;">
-                <p style="margin:0; font-size:13px; line-height:1.5; color:#667085;">You can unsubscribe from Jaspen updates <a href="{unsubscribe_html}" style="color:#a0036c;">here</a>.</p>
+              <td style="padding:22px 28px; background:#161f3b;">
+                <p style="margin:0; font-size:13px; line-height:1.5; color:#d9deec;">You can unsubscribe from Jaspen updates <a href="{unsubscribe_html}" style="color:#f0a6d4;">here</a>.</p>
               </td>
             </tr>
           </table>
