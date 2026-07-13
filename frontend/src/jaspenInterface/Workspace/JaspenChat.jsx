@@ -31,6 +31,7 @@ import {
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faQuestionCircle,
+  faFingerprint,
   faPaperPlane, faSpinner, faTimes, faBars, faCheck, faExclamationTriangle,
   faChartLine, faTrash, faPlus, faMinus, faMicrophone,
   faBolt, faLayerGroup, faPlay, faListCheck, faArrowUpRightFromSquare, faGaugeHigh, faClockRotateLeft, faPaperclip, faFolder, faArrowUp,
@@ -5422,6 +5423,10 @@ useEffect(() => {
           <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/knowledge'); }}>
             <FontAwesomeIcon icon={faQuestionCircle} />
             <span className="jas-ud-item-label">Knowledge</span>
+          </button>
+          <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/decision-profile'); }}>
+            <FontAwesomeIcon icon={faFingerprint} />
+            <span className="jas-ud-item-label">Decision Profile</span>
           </button>
           <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/account'); }}>
             <FontAwesomeIcon icon={faUser} />
