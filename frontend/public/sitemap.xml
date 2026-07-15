@@ -10,8 +10,8 @@
   <url><loc>https://jaspen.ai/pages/resources/connectors</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
   <url><loc>https://jaspen.ai/pages/resources/demos</loc><changefreq>monthly</changefreq><priority>0.5</priority></url>
   <url><loc>https://jaspen.ai/pages/resources/tutorials</loc><changefreq>monthly</changefreq><priority>0.5</priority></url>
-  <url><loc>https://jaspen.ai/pages/resources/plugins</loc><changefreq>monthly</changefreq><priority>0.5</priority></url>
-  <url><loc>https://jaspen.ai/pages/api</loc><changefreq>monthly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://jaspen.ai/pages/resources/plugins</loc><changefreq>monthly</changefreq><priority>0.3</priority></url>
+  <url><loc>https://jaspen.ai/pages/api</loc><changefreq>monthly</changefreq><priority>0.3</priority></url>
   <url><loc>https://jaspen.ai/pages/support</loc><changefreq>monthly</changefreq><priority>0.3</priority></url>
   <url><loc>https://jaspen.ai/pages/privacy</loc><changefreq>yearly</changefreq><priority>0.2</priority></url>
   <url><loc>https://jaspen.ai/pages/terms</loc><changefreq>yearly</changefreq><priority>0.2</priority></url>
