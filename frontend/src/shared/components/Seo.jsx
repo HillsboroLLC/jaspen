@@ -17,6 +17,7 @@ export default function Seo({
   canonicalPath = '/',
   image = DEFAULT_IMAGE,
   type = 'website',
+  noindex = false,
 }) {
   const fullTitle = title ? `${title} | ${SITE_NAME}` : SITE_NAME;
   const canonical = buildCanonicalUrl(canonicalPath);
@@ -25,7 +26,11 @@ export default function Seo({
   return (
     <Helmet>
       <title>{fullTitle}</title>
-      <link rel="canonical" href={canonical} />
+      {noindex ? (
+        <meta name="robots" content="noindex, nofollow" />
+      ) : (
+        <link rel="canonical" href={canonical} />
+      )}
 
       {metaDescription && <meta name="description" content={metaDescription} />}
 

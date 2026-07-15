@@ -1,11 +1,13 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import PublicJaspenHeader from '../../homeSections/HomePage/PublicJaspenHeader';
+import Seo from '../../shared/components/Seo';
 import './NotFound.css';
 
 export default function NotFoundPage() {
   return (
     <>
+      <Seo title="Page Not Found" description="The page you're looking for doesn't exist." noindex />
       <PublicJaspenHeader />
       <main className="not-found-page" role="main" aria-labelledby="not-found-title">
         <div className="not-found-card">
