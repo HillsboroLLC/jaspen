@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import MarketingPageLayout from './MarketingPageLayout';
 import Seo from '../../shared/components/Seo';
 
@@ -168,6 +169,22 @@ export default function JaspenScorePage() {
               <p>{c.meaning}</p>
             </article>
           ))}
+        </div>
+      </section>
+
+      <section className="marketing-section">
+        <div className="demos-cta-block">
+          <div className="demos-cta-copy">
+            <h3>See the score generated inside a real decision</h3>
+            <p>
+              The Jaspen Score is one part of the full decision-to-execution flow. See how it fits
+              alongside planning and delivery tracking.
+            </p>
+          </div>
+          <div className="demos-cta-actions">
+            <Link to="/pages/pricing" className="demos-cta-btn demos-cta-btn-primary">View plans</Link>
+            <Link to="/pages/jaspen" className="demos-cta-btn demos-cta-btn-secondary">See how Jaspen works</Link>
+          </div>
         </div>
       </section>
     </MarketingPageLayout>

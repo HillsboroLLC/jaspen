@@ -1,10 +1,11 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import MarketingPageLayout from '../Marketing/MarketingPageLayout';
 import Seo from '../../shared/components/Seo';
 
 const EXECUTION_CONNECTORS = [
-  { name: 'Jira', state: 'All plans' },
-  { name: 'Smartsheet', state: 'All plans' },
+  { name: 'Jira', state: 'All plans', path: '/pages/jaspen-in-jira' },
+  { name: 'Smartsheet', state: 'All plans', path: '/pages/jaspen-in-smartsheets' },
 ];
 
 const DATA_CONNECTORS = [
@@ -62,7 +63,13 @@ export default function ConnectorsPage() {
             <div className="connector-matrix">
               {EXECUTION_CONNECTORS.map((connector) => (
                 <article key={connector.name} className="connector-cell">
-                  <h3>{connector.name}</h3>
+                  <h3>
+                    {connector.path ? (
+                      <Link to={connector.path}>{connector.name}</Link>
+                    ) : (
+                      connector.name
+                    )}
+                  </h3>
                   <span>{connector.state}</span>
                 </article>
               ))}

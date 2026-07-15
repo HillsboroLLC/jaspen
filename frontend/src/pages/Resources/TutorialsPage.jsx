@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import MarketingPageLayout from '../Marketing/MarketingPageLayout';
 import Seo from '../../shared/components/Seo';
 
@@ -26,12 +27,14 @@ const CONNECTOR_TYPES = [
     rows: [
       {
         connector: 'Jira',
+        path: '/pages/jaspen-in-jira',
         on: 'Issue sync, sprint tracking, and delivery status updates.',
         off: 'No Jira issue pull/push or Jira-driven status updates.',
         settings: 'Jira URL, project key, email, API token, issue type, sync mode, conflict policy.',
       },
       {
         connector: 'Smartsheet',
+        path: '/pages/jaspen-in-smartsheets',
         on: 'Sheet row progress, dates, and execution state mapping.',
         off: 'No Smartsheet timeline or status ingestion.',
         settings: 'External workspace/account id, sync mode, conflict policy.',
@@ -169,7 +172,7 @@ export default function TutorialsPage() {
               <tbody>
                 {type.rows.map((row) => (
                   <tr key={`${type.label}-${row.connector}`}>
-                    <td>{row.connector}</td>
+                    <td>{row.path ? <Link to={row.path}>{row.connector}</Link> : row.connector}</td>
                     <td>{row.on}</td>
                     <td>{row.off}</td>
                     <td>{row.settings}</td>

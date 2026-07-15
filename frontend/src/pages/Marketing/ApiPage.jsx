@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import MarketingPageLayout from './MarketingPageLayout';
 import Seo from '../../shared/components/Seo';
 
@@ -94,6 +95,22 @@ export default function ApiPage() {
               <p>{workflow.detail}</p>
             </article>
           ))}
+        </div>
+      </section>
+
+      <section className="marketing-section">
+        <div className="demos-cta-block">
+          <div className="demos-cta-copy">
+            <h3>See what Jaspen already does today</h3>
+            <p>
+              While the API is in development, the same decision, scoring, and execution planning
+              logic is available now in the Jaspen workspace.
+            </p>
+          </div>
+          <div className="demos-cta-actions">
+            <Link to="/pages/jaspen" className="demos-cta-btn demos-cta-btn-primary">See how Jaspen works</Link>
+            <Link to="/pages/resources/connectors" className="demos-cta-btn demos-cta-btn-secondary">View connectors</Link>
+          </div>
         </div>
       </section>
     </MarketingPageLayout>
