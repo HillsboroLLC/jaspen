@@ -1,23 +1,23 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import MarketingPageLayout from './MarketingPageLayout';
 import { API_BASE } from '../../config/apiBase';
 import { useAuth } from '../../shared/auth/AuthContext';
 import Seo from '../../shared/components/Seo';
-import { PLAN_ORDER, PLAN_RANK } from '../../shared/constants/appConstants';
+import { PLAN_ORDER } from '../../shared/constants/appConstants';
 
 const FALLBACK_PLANS = [
   {
     plan_key: 'free',
     label: 'Free',
     price: '$0',
-    detail: 'Test Jaspen on a real decision · 300 credits/month.',
+    detail: 'Try Jaspen on a real decision and see how structured thinking feels · 300 credits/month.',
     sales_only: false,
   },
   {
     plan_key: 'starter',
     label: 'Starter',
     price: '$7 / month',
-    detail: 'Light personal use when you need more room than Free · 1,000 credits/month.',
+    detail: 'More room for personal decisions, early ideas, and occasional planning · 1,000 credits/month.',
     sales_only: false,
   },
   {
@@ -31,14 +31,14 @@ const FALLBACK_PLANS = [
     plan_key: 'team',
     label: 'Team',
     price: '$129 / month',
-    detail: 'Align your team, pressure-test decisions, and execute with clarity · 29,000 shared credits/month.',
+    detail: 'Shared thinking power for teams deciding what to fund, prioritize, or execute next · 29,000 shared credits/month.',
     sales_only: false,
   },
   {
     plan_key: 'enterprise',
     label: 'Enterprise',
     price: '$299 / month+',
-    detail: 'Bring structure, speed, and consistency to how your business operates · 80,000 shared credits/month.',
+    detail: 'Governed decision support for organizations managing portfolios, resources, and cross-functional tradeoffs · 80,000 shared credits/month.',
     sales_only: false,
   },
 ];
@@ -49,39 +49,47 @@ const FALLBACK_PACKS = [
   { pack_key: 'credits_18000', label: '18,000 credits', price_usd: 50, credits: 18000 },
 ];
 
-const FALLBACK_MODEL_TYPES = {
-  pluto: {
-    model_type: 'pluto',
-    label: 'Pluto',
-    version: '1.0',
-    description: 'Fastest model for core intake and scorecard workflows.',
-    min_plan: 'free',
+const ESSENTIAL_POSITIONING_HEADLINE = 'When the decision has real consequences, Essential is built for you.';
+const ESSENTIAL_POSITIONING_DETAIL = 'Use Essential when you need room to examine evidence, pressure test assumptions, compare tradeoffs, and preserve the reasoning behind decisions that matter.';
+const PLAN_DISPLAY = {
+  free: {
+    fit: 'Try one real decision',
+    summary: 'Use Jaspen to frame a choice, compare options, and see how structured decision support feels.',
+    credits: '300 credits/month',
   },
-  orbit: {
-    model_type: 'orbit',
-    label: 'Orbit',
-    version: '1.0',
-    description: 'Balanced depth and speed for broader cross-functional synthesis.',
-    min_plan: 'free',
+  starter: {
+    fit: 'Light personal use',
+    summary: 'A little more thinking power for personal decisions, early ideas, and occasional planning.',
+    credits: '1,000 credits/month',
   },
-  titan: {
-    model_type: 'titan',
-    label: 'Titan',
-    version: '1.0',
-    description: 'Highest-depth reasoning for complex multi-team initiatives.',
-    min_plan: 'free',
+  essential: {
+    fit: 'Important decisions',
+    summary: ESSENTIAL_POSITIONING_HEADLINE,
+    credits: '7,000 credits/month',
+  },
+  team: {
+    fit: 'Shared resource choices',
+    summary: 'Give a team more room to prioritize work, compare tradeoffs, and turn decisions into plans.',
+    credits: '29,000 shared credits/month',
+  },
+  enterprise: {
+    fit: 'Governed rollout',
+    summary: 'Support portfolios, resource allocation, and cross-functional planning with more capacity.',
+    credits: '80,000 shared credits/month',
   },
 };
 
-const MODEL_ORDER = ['pluto', 'orbit', 'titan'];
-const ESSENTIAL_POSITIONING_HEADLINE = 'When the decision has real consequences, Essential is built for you.';
-const ESSENTIAL_POSITIONING_DETAIL = 'Use Essential when you need room to examine evidence, pressure test assumptions, compare tradeoffs, and preserve the reasoning behind decisions that matter.';
+const formatPlanPrice = (price) => {
+  if (!price) return '';
+  return String(price)
+    .replace(/\s*\/\s*month\+/i, '+/mo')
+    .replace(/\s*\/\s*month/i, '/mo');
+};
 
 export default function PricingPage() {
-  const { user, loading } = useAuth();
+  const { user } = useAuth();
   const [plans, setPlans] = useState(FALLBACK_PLANS);
   const [packs, setPacks] = useState(FALLBACK_PACKS);
-  const [modelTypes, setModelTypes] = useState(FALLBACK_MODEL_TYPES);
   const [statusMessage, setStatusMessage] = useState('');
   const planIntentCleanedRef = useRef(false);
 
@@ -120,10 +128,6 @@ export default function PricingPage() {
             .filter(Boolean);
           if (orderedPacks.length) setPacks(orderedPacks);
         }
-
-        if (data?.model_types) {
-          setModelTypes(data.model_types);
-        }
       })
       .catch(() => {
         // Keep fallback content if catalog fetch fails.
@@ -148,30 +152,7 @@ export default function PricingPage() {
     setStatusMessage('Start with a free account. You can upgrade from Account after sign-in.');
   }, []);
 
-  const planByKey = useMemo(
-    () => plans.reduce((acc, plan) => ({ ...acc, [plan.plan_key]: plan }), {}),
-    [plans]
-  );
-  const planOrder = useMemo(
-    () => PLAN_ORDER.filter((key) => Boolean(planByKey[key])),
-    [planByKey]
-  );
-  const orderedModelTypes = useMemo(
-    () => MODEL_ORDER.map((key) => modelTypes?.[key]).filter(Boolean),
-    [modelTypes]
-  );
   const isLoggedIn = !!user;
-  const formatModelDisplayName = (model) => {
-    const label = model?.label || model?.model_type || 'Model';
-    const version = String(model?.version || '1.0').trim();
-    return `${label}-${version}`;
-  };
-
-  const isModelAvailableForPlan = (minPlan, planKey) => {
-    const requiredRank = PLAN_RANK[String(minPlan || 'free').toLowerCase()] ?? 0;
-    const planRank = PLAN_RANK[String(planKey || 'free').toLowerCase()] ?? 0;
-    return planRank >= requiredRank;
-  };
 
   const openAccountPlans = () => {
     if (!user) {
@@ -181,58 +162,38 @@ export default function PricingPage() {
     window.location.href = '/account?tab=plans';
   };
 
-  const openAccountTab = (tab = 'plans') => {
-    if (!user) {
-      window.location.href = '/?auth=1';
-      return;
-    }
-
-    window.location.href = `/account?tab=${tab}`;
-  };
-
   return (
-    <MarketingPageLayout pageClass="page-pricing">
+    <MarketingPageLayout pageClass="page-pricing page-flat-refresh">
       <Seo
         title="Pricing"
-        description="Explore Jaspen pricing from Free and Starter to Essential, Team, and Enterprise plans."
+        description="Explore Jaspen pricing for individuals, teams, and organizations making important resource decisions."
         canonicalPath="/pages/pricing"
       />
-      <section className="page-hero page-hero-pricing">
+      <section className="page-hero page-hero-pricing page-flat-hero">
         <div className="hero-copy">
           <p className="hero-kicker">Pricing</p>
-          <h1>Clear pricing from individual use to enterprise rollout</h1>
+          <h1>Start with one decision. Scale when the work gets bigger.</h1>
           <p>
-            Start free, move to Starter at $7/month, upgrade to Essential at $39/month, and scale with Team or Enterprise.
-            Need more usage? Add thinking power credit packs as needed.
+            Jaspen starts free so you can try it on a real choice. Upgrade when you need more
+            room to examine evidence, compare tradeoffs, preserve reasoning, or bring a team
+            into the decision-to-plan workflow.
           </p>
-        </div>
-        <div className="hero-abstract pricing-abstract">
-          <div className="floating-price">Free 300 credits</div>
-          <div className="floating-price">Starter 1,000 credits</div>
-          <div className="floating-price">Essential 7,000 credits</div>
-          <div className="floating-price">Team 29,000 shared</div>
-          <div className="floating-price">Enterprise 80,000 shared</div>
         </div>
       </section>
 
-      <section id="overview" className="marketing-section">
-        <h2>Overview</h2>
-        <div className="pricing-overview-split">
-          <article className="marketing-card pricing-highlight">
-            <h3>Structured for modern AI-agent adoption</h3>
+      <section id="overview" className="marketing-section flat-navy-section">
+        <div className="lydia-story lydia-story-pricing">
+          <article className="lydia-content">
+            <h3>Pricing follows the way decisions grow.</h3>
             <p>
-              Free lets users test a real decision. Starter supports light personal use at $7/month. Essential is for decisions with real consequences at $39/month. Team and Enterprise add
-              pooled thinking power, governance, and rollout control.
+              A single person may need help choosing what deserves attention. A team may need
+              shared context, clearer tradeoffs, and a plan everyone can execute from. Larger
+              organizations need the same thinking with more governance and capacity.
             </p>
-          </article>
-          <article className="marketing-card pricing-summary">
-            <h3>Usage policy</h3>
-            <ul className="pricing-checks">
-              <li>Free: 300 credits/month</li>
-              <li>Starter: 1,000 credits/month</li>
-              <li>Essential: 7,000 credits/month</li>
-              <li>Team: 29,000 shared credits/month + seat pricing</li>
-              <li>Enterprise: 80,000 shared credits/month + seat pricing</li>
+            <ul className="lydia-bullets">
+              <li>Free and Starter help individuals test and use Jaspen</li>
+              <li>Essential gives more room for consequential decisions</li>
+              <li>Team and Enterprise support shared resources and rollout</li>
             </ul>
           </article>
         </div>
@@ -240,23 +201,30 @@ export default function PricingPage() {
 
       <section id="plans" className="marketing-section">
         <h2>Plans</h2>
-        {!loading && !isLoggedIn && (
-          <p className="pricing-inline-status">
-            Sign in to see your current plan and manage upgrades/downgrades from Settings or Account.
-          </p>
-        )}
         {statusMessage && <p className="pricing-inline-status">{statusMessage}</p>}
         <div className="plans-grid">
           {plans.map((plan) => {
             const isEssential = plan.plan_key === 'essential';
             const isFree = plan.plan_key === 'free';
+            const display = PLAN_DISPLAY[plan.plan_key] || {
+              fit: 'Plan',
+              summary: plan.detail,
+              credits: '',
+            };
             return (
               <article key={plan.plan_key} id={plan.plan_key} className={`marketing-card pricing-plan-card ${isEssential ? 'is-featured' : ''}`}>
-                <div className="pricing-plan-head">
-                  <h3>{plan.label}</h3>
-                  <span className="plan-price">{plan.price}</span>
+                <div>
+                  <div className="pricing-plan-head">
+                    <h3>{plan.label}</h3>
+                    {isEssential && <span className="pricing-plan-marker">Most useful</span>}
+                  </div>
+                  <div className="pricing-price-row">
+                    <span className="plan-price">{formatPlanPrice(plan.price)}</span>
+                  </div>
+                  <p className="pricing-plan-fit">{display.fit}</p>
+                  <p className="pricing-plan-summary">{display.summary}</p>
+                  {display.credits && <p className="pricing-plan-credits">{display.credits}</p>}
                 </div>
-                <p>{isEssential ? <strong>{ESSENTIAL_POSITIONING_HEADLINE}</strong> : plan.detail}</p>
                 {plan.sales_only ? (
                   <a className="pricing-cta-link" href="/pages/pricing#plans">Talk to sales</a>
                 ) : !isLoggedIn ? (
@@ -282,41 +250,7 @@ export default function PricingPage() {
         <p className="pricing-plan-note">{ESSENTIAL_POSITIONING_DETAIL}</p>
       </section>
 
-      <section id="model-access" className="marketing-section">
-        <h2>Model access by plan</h2>
-        <p className="pricing-pack-copy">
-          Access is plan-gated by model depth. You can switch models from the chat composer.
-        </p>
-        <div className="pricing-model-table-wrap">
-          <table className="pricing-model-table">
-            <thead>
-              <tr>
-                <th scope="col">Model</th>
-                {planOrder.map((planKey) => (
-                  <th scope="col" key={planKey}>{planByKey[planKey]?.label || planKey}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {orderedModelTypes.map((model) => (
-                <tr key={model.model_type || model.label}>
-                  <th scope="row">
-                    <div className="pricing-model-name">{formatModelDisplayName(model)}</div>
-                    <div className="pricing-model-desc">{model.description || ''}</div>
-                  </th>
-                  {planOrder.map((planKey) => (
-                    <td key={`${model.model_type}-${planKey}`}>
-                      {isModelAvailableForPlan(model.min_plan, planKey) ? 'Included' : 'Upgrade'}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section id="api" className="marketing-section">
+      <section id="credit-packs" className="marketing-section">
         <h2>One-time credit packs</h2>
         {isLoggedIn ? (
           <>
@@ -336,7 +270,9 @@ export default function PricingPage() {
                     <button
                       type="button"
                       className="pricing-cta-button"
-                      onClick={() => openAccountTab('packs')}
+                      onClick={() => {
+                        window.location.href = '/account?tab=packs';
+                      }}
                     >
                       Buy credit pack
                     </button>
@@ -350,40 +286,14 @@ export default function PricingPage() {
         )}
       </section>
 
-      <section className="marketing-section">
-        <div className="resource-callout">
-          <h3>Manage subscription</h3>
-          <p>
-            Update payment methods, manage Essential, or cancel at period end from your billing settings.
-          </p>
-          {isLoggedIn ? (
-            <button type="button" className="pricing-portal-button" onClick={() => openAccountTab('plans')}>
-              Manage billing
-            </button>
-          ) : (
-            <a href="/?auth=1" className="pricing-cta-link">Sign in to manage billing</a>
-          )}
-        </div>
-      </section>
-
-      <section className="marketing-section">
+      <section className="marketing-section flat-navy-section">
         <div className="lydia-story lydia-story-pricing">
-          <div className="lydia-visual pricing-architecture">
-            <div className="pricing-node">{planByKey.free?.label || 'Free'}</div>
-            <div className="pricing-link"></div>
-            <div className="pricing-node">{planByKey.starter?.label || 'Starter'}</div>
-            <div className="pricing-link"></div>
-            <div className="pricing-node emphasized">{planByKey.essential?.label || 'Essential'}</div>
-            <div className="pricing-link"></div>
-            <div className="pricing-node">{planByKey.team?.label || 'Team'}</div>
-            <div className="pricing-link"></div>
-            <div className="pricing-node">{planByKey.enterprise?.label || 'Enterprise'}</div>
-          </div>
           <article className="lydia-content">
             <h3>Upgrade path</h3>
             <p>
-              Start free, move to Starter ($7/month) for light use, upgrade to Essential ($39/month) as volume grows, then move to Team or Enterprise when
-              governance, shared thinking power, and cross-functional deployment become the priority.
+              Start free, use Starter when you need a little more room, choose Essential for
+              decisions with meaningful consequences, and move to Team or Enterprise when the
+              work involves shared resources, governance, or cross-functional planning.
             </p>
           </article>
         </div>

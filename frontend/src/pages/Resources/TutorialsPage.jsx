@@ -1,21 +1,22 @@
 import React from 'react';
 import MarketingPageLayout from '../Marketing/MarketingPageLayout';
+import Seo from '../../shared/components/Seo';
 
 const TUTORIALS = [
-  'Set up initiative framing and decision criteria',
-  'Build execution milestones and assign ownership',
-  'Configure recurring score reviews and updates',
-  'Create leadership-ready summaries and status signals',
+  'Frame the decision and define criteria',
+  'Compare options against the information you have',
+  'Review assumptions, tradeoffs, and recommendation rationale',
+  'Turn the chosen direction into an execution plan',
 ];
 
 const AGENT_COMPONENTS = [
-  { title: 'Intake Layer', detail: 'Captures prompt, constraints, workspace context, and selected model tier.' },
-  { title: 'Reasoning Core', detail: 'Generates options, tradeoffs, and recommended next actions from available context.' },
-  { title: 'Scoring & Readiness', detail: 'Tracks confidence and checklist completion against plan quality.' },
-  { title: 'Tradeoff Engine', detail: 'Builds and compares paths to quantify impact, cost, and risk across decision options.' },
-  { title: 'Execution Translator', detail: 'Converts decisions into milestones, owners, and execution artifacts.' },
-  { title: 'Connector Orchestrator', detail: 'Applies sync rules, credentials, conflict policies, and workspace mapping.' },
-  { title: 'Audit & Admin Controls', detail: 'Records connector/access changes and supports managed overrides.' },
+  { title: 'Intake Layer', detail: 'Captures the question, constraints, available context, and what the user is trying to decide.' },
+  { title: 'Reasoning Core', detail: 'Helps compare options, tradeoffs, and recommendation rationale from the information available.' },
+  { title: 'Scoring and Readiness', detail: 'Shows how strong the evidence and planning context appear without treating the score as absolute truth.' },
+  { title: 'Tradeoff Engine', detail: 'Compares paths across impact, cost, risk, effort, timing, and other criteria the user chooses.' },
+  { title: 'Execution Translator', detail: 'Turns an approved direction into milestones, owners, dependencies, and plan artifacts.' },
+  { title: 'Connector Orchestrator', detail: 'Defines which external systems can provide context or receive planning outputs.' },
+  { title: 'Audit and Admin Controls', detail: 'Records access and connector changes so teams can understand how context entered the workflow.' },
 ];
 
 const CONNECTOR_TYPES = [
@@ -77,38 +78,34 @@ const CONNECTOR_TYPES = [
 
 export default function TutorialsPage() {
   return (
-    <MarketingPageLayout pageClass="page-resources page-tutorials">
-      <section className="page-hero page-hero-resources">
+    <MarketingPageLayout pageClass="page-resources page-tutorials page-flat-refresh">
+      <Seo
+        title="Jaspen Tutorials: Setup, Rollout, and Connector Reference"
+        description="Step-by-step guides for setting up initiative framing, building execution milestones, and configuring Jaspen's Jira, Smartsheet, and data connectors."
+        canonicalPath="/pages/resources/tutorials"
+      />
+      <section className="page-hero page-hero-resources page-flat-hero">
         <div className="hero-copy">
           <p className="hero-kicker">Resources</p>
-          <h1>Tutorials for adoption and rollout</h1>
-          <p>Practical guides designed for operators, transformation leads, and execution teams.</p>
-        </div>
-        <div className="hero-abstract tutorials-abstract">
-          <div className="step-dot"></div>
-          <div className="step-dot"></div>
-          <div className="step-dot"></div>
-          <div className="step-dot"></div>
+          <h1>Tutorials for better decisions and clearer plans.</h1>
+          <p>
+            Learn how to frame a decision, compare options, preserve the reasoning,
+            and generate an execution plan once the direction is chosen.
+          </p>
         </div>
       </section>
-      <section className="marketing-section">
+      <section className="marketing-section flat-navy-section">
         <div className="lydia-story lydia-story-tutorials">
-          <div className="lydia-visual tutorials-canvas">
-            <div className="tutorial-step">01 Setup context</div>
-            <div className="tutorial-step">02 Define milestones</div>
-            <div className="tutorial-step">03 Track readiness</div>
-            <div className="tutorial-step">04 Report decisions</div>
-          </div>
           <article className="lydia-content">
-            <h3>Learning path with operational continuity</h3>
+            <h3>Learning path with the right order</h3>
             <p>
-              Each tutorial step builds on the last so users can progress from setup to leadership reporting
-              without switching frameworks or redoing artifacts.
+              The first job is choosing what deserves resources. The second job is creating a plan
+              people can execute. The tutorials should teach that sequence clearly.
             </p>
             <ul className="lydia-bullets">
               <li>Progressive path for first-time and advanced users</li>
-              <li>Hands-on exercises tied to real initiative data</li>
-              <li>Outcome format aligned to leadership updates</li>
+              <li>Exercises tied to real decisions, not abstract examples</li>
+              <li>Planning guidance that leaves execution ownership with the team</li>
             </ul>
           </article>
         </div>
@@ -136,11 +133,11 @@ export default function TutorialsPage() {
       <section className="marketing-section">
         <h2>The Agent Itself</h2>
         <p>
-          Jaspen is an execution-focused decision agent. It ingests structured and unstructured context, produces
-          recommendation-quality outputs, and translates approved direction into operational plans.
+          Jaspen is a decision-focused thought partner. It uses structured and unstructured context to
+          compare options, preserve reasoning, and translate an approved direction into a plan people can execute.
         </p>
         <p>
-          Connector settings define which external systems can supply context and receive synchronized updates.
+          Connector settings define which external systems can supply context or receive planning outputs.
         </p>
       </section>
       <section className="marketing-section">

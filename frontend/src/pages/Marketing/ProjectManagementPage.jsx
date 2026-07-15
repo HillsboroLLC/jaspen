@@ -1,94 +1,76 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import MarketingPageLayout from './MarketingPageLayout';
+import Seo from '../../shared/components/Seo';
 
 const CAPABILITIES = [
   {
-    title: 'Work plans from context',
-    detail: 'Jaspen reads the initiative framing, constraints, and approved direction — then generates a full work breakdown structure with tasks, phases, and sequencing already in place.',
+    title: 'Plans from the decision record',
+    detail: 'Jaspen uses the approved direction, constraints, criteria, and assumptions to draft a practical execution plan.',
   },
   {
-    title: 'Owner and timeline assignment',
-    detail: 'Each task includes an owner slot, estimated duration, and dependency map so teams can start assigning work immediately without a separate planning session.',
+    title: 'Owners, milestones, and dependencies',
+    detail: 'The plan gives teams a starting structure for assignments, sequencing, timelines, and handoffs.',
   },
   {
-    title: 'Delivery confidence scoring',
-    detail: 'Plan quality is scored in real time against readiness signals — giving teams an early view of where confidence is strong and where assumptions need testing before delivery begins.',
+    title: 'Assumptions stay visible',
+    detail: 'Teams can see what the plan depends on, where confidence is stronger, and what needs human review before work begins.',
   },
   {
-    title: 'Dependency and blocker detection',
-    detail: 'Jaspen surfaces sequencing conflicts and blocked dependencies as they emerge — before they become the reason a milestone slips.',
+    title: 'A better handoff into execution',
+    detail: 'Jaspen helps reduce the blank-page work after a decision, while your team still owns execution and follow-through.',
   },
 ];
 
 const CONNECTED = [
   {
     name: 'Jira',
-    detail: 'Push execution plan tasks to Jira as issues and sync delivery status back into the Jaspen workspace automatically.',
+    detail: 'Use Jira alongside Jaspen when your execution plan needs to become issue-based team work.',
     path: '/pages/jaspen-in-jira',
   },
   {
     name: 'Smartsheet',
-    detail: 'Map milestones to Smartsheet rows and pull operational progress back into Jaspen\'s readiness view without manual rework.',
+    detail: 'Use Smartsheet alongside Jaspen when plans, owners, and milestones need operational tracking.',
     path: '/pages/jaspen-in-smartsheets',
   },
 ];
 
 export default function ProjectManagementPage() {
   return (
-    <MarketingPageLayout pageClass="page-project-management">
-      <section className="page-hero page-hero-pm">
+    <MarketingPageLayout pageClass="page-project-management page-flat-refresh">
+      <Seo
+        title="Jaspen Project Management: Execution Plans From Context"
+        description="Jaspen turns an approved decision into a full execution plan, with milestones, owners, dependencies, and readiness tracking, without a separate planning step or template."
+        canonicalPath="/pages/project-management"
+      />
+      <section className="page-hero page-hero-pm page-flat-hero">
         <div className="hero-copy">
           <p className="hero-kicker">Feature</p>
-          <h1>Execution plans built from context, not templates</h1>
+          <h1>Turn the chosen direction into a plan people can execute.</h1>
           <p>
-            Jaspen generates structured work plans directly from initiative decisions — with milestones,
-            owners, dependencies, and readiness tracking built in from day one.
+            Jaspen is first a decision partner. Once a direction is chosen, it helps turn
+            that reasoning into milestones, owners, dependencies, and next steps your team can carry out.
           </p>
           <div className="hero-cta-row">
             <Link to="/pages/pricing" className="demos-cta-btn demos-cta-btn-primary">Get started</Link>
             <Link to="/pages/resources/connectors" className="demos-cta-btn demos-cta-btn-secondary-light">View connectors</Link>
           </div>
         </div>
-        <div className="hero-abstract pm-abstract">
-          <div className="pm-wbs-node pm-wbs-root">Initiative</div>
-          <div className="pm-wbs-row">
-            <div className="pm-wbs-node">Milestone 1</div>
-            <div className="pm-wbs-node">Milestone 2</div>
-            <div className="pm-wbs-node">Milestone 3</div>
-          </div>
-        </div>
       </section>
 
-      <section className="marketing-section">
+      <section className="marketing-section flat-navy-section">
         <div className="lydia-story lydia-story-pm">
-          <div className="lydia-visual pm-flow-visual">
-            <div className="pm-flow-step">
-              <span>01</span>
-              <p>Approved decision</p>
-            </div>
-            <div className="pm-flow-arrow">→</div>
-            <div className="pm-flow-step">
-              <span>02</span>
-              <p>WBS generated</p>
-            </div>
-            <div className="pm-flow-arrow">→</div>
-            <div className="pm-flow-step">
-              <span>03</span>
-              <p>Delivery tracked</p>
-            </div>
-          </div>
           <article className="lydia-content">
-            <h3>No translation step between strategy and delivery</h3>
+            <h3>Less translation between decision and delivery</h3>
             <p>
-              The gap between an approved decision and a managed execution plan is where most initiatives
-              lose momentum. Jaspen closes that gap by generating the plan from the same context that
-              produced the decision — so nothing is lost in translation.
+              The gap between an approved decision and a usable plan is where momentum often leaks.
+              Jaspen helps preserve the context behind the decision so the plan starts from the same
+              reasoning, evidence, and constraints.
             </p>
             <ul className="lydia-bullets">
               <li>Plan structure reflects the approved direction, not a generic template</li>
               <li>Original decision rationale stays attached to each milestone</li>
-              <li>Teams start executing with context, not catch-up conversations</li>
+              <li>Teams still review, assign, execute, and adjust the plan themselves</li>
             </ul>
           </article>
         </div>
@@ -109,15 +91,15 @@ export default function ProjectManagementPage() {
       <section className="marketing-section">
         <h2>Connected to where work happens</h2>
         <p className="section-subhead">
-          Jaspen execution plans sync with the tools your delivery teams already use — so you don't have
-          to maintain a separate tracking system.
+          Jaspen can sit beside the tools your delivery teams already use, so the decision record and
+          execution plan do not become a separate, forgotten document.
         </p>
         <div className="connected-tools-grid">
           {CONNECTED.map((tool) => (
             <article key={tool.name} className="marketing-card connected-tool-card">
               <h3>{tool.name}</h3>
               <p>{tool.detail}</p>
-              <Link to={tool.path} className="connected-tool-link">Learn about the {tool.name} connector →</Link>
+            <Link to={tool.path} className="connected-tool-link">Learn about the {tool.name} connector</Link>
             </article>
           ))}
         </div>
@@ -126,9 +108,10 @@ export default function ProjectManagementPage() {
       <section className="marketing-section">
         <div className="demos-cta-block">
           <div className="demos-cta-copy">
-            <h3>Start your next initiative with a plan already built</h3>
+            <h3>Start with the decision. Leave with a plan.</h3>
             <p>
-              Jaspen generates the execution plan as part of the decision workflow — no extra step required.
+              Use Jaspen to decide what deserves your resources, then generate the first version
+              of the execution plan your team can own.
             </p>
           </div>
           <div className="demos-cta-actions">

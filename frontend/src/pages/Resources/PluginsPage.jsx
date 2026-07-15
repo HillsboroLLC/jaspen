@@ -1,23 +1,24 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import MarketingPageLayout from '../Marketing/MarketingPageLayout';
+import Seo from '../../shared/components/Seo';
 
 const PLUGINS = [
   {
     title: 'Briefing Plugin',
-    detail: 'Generate executive-ready updates from active initiative context.',
-    expanded: 'Pulls live milestone status, score changes, and risk flags into a structured briefing format. Outputs are formatted for leadership review without requiring manual assembly.',
+    detail: 'Turn a decision record and plan into a clearer update.',
+    expanded: 'Summarizes the decision, the reasoning, the plan, and the open assumptions so stakeholders can review the work without reconstructing the context.',
     roles: 'Strategy leads, Chiefs of Staff',
   },
   {
-    title: 'Risk Escalation Plugin',
-    detail: 'Trigger escalations when readiness or dependency risk drops below threshold.',
-    expanded: 'Monitors execution signals and fires escalation alerts when confidence drops, blockers stack, or delivery risk crosses a defined threshold. Keeps the right people informed before issues become failures.',
+    title: 'Assumption Review Plugin',
+    detail: 'Bring hidden assumptions back into the conversation.',
+    expanded: 'Highlights the assumptions behind a decision or plan so teams can revisit what changed, what still holds, and where judgment may need to be updated.',
     roles: 'Program managers, PMO, delivery leads',
   },
   {
     title: 'Decision Log Plugin',
-    detail: 'Capture final decisions and rationale as a durable operating record.',
+    detail: 'Capture final decisions and rationale as a durable record.',
     expanded: 'Records the context, options considered, tradeoffs evaluated, and final direction for every significant initiative decision. Creates an auditable thread teams can reference during reviews or handoffs.',
     roles: 'All team roles, audit and compliance',
   },
@@ -25,41 +26,39 @@ const PLUGINS = [
 
 export default function PluginsPage() {
   return (
-    <MarketingPageLayout pageClass="page-resources page-plugins">
+    <MarketingPageLayout pageClass="page-resources page-plugins page-flat-refresh">
+      <Seo
+        title="Jaspen Plugins (Coming Soon) for Role-Specific Workflows"
+        description="Jaspen plugins for briefings, risk escalation, and decision logging are in development. Join the waitlist to extend Jaspen into role-specific workflows at launch."
+        canonicalPath="/pages/resources/plugins"
+      />
       <div className="coming-soon-banner">
         <span className="coming-soon-badge">Coming Soon</span>
         Plugins are in development. Join the waitlist to be notified when they launch.{' '}
         <a href="mailto:hello@jaspen.ai">Get notified</a>
       </div>
-      <section className="page-hero page-hero-resources">
+      <section className="page-hero page-hero-resources page-flat-hero">
         <div className="hero-copy">
           <p className="hero-kicker">Resources</p>
-          <h1>Plugins for workflow-specific extension</h1>
-          <p>Extend Jaspen into role-specific workflows without breaking your core decision-to-execution flow.</p>
-        </div>
-        <div className="hero-abstract plugins-abstract">
-          <div className="plugin-block"></div>
-          <div className="plugin-block"></div>
-          <div className="plugin-block"></div>
+          <h1>Future plugins for decision-specific workflows.</h1>
+          <p>
+            Plugins are planned extensions that will help teams turn decision records into
+            briefings, reviews, logs, and other recurring outputs.
+          </p>
         </div>
       </section>
-      <section className="marketing-section">
+      <section className="marketing-section flat-navy-section">
         <div className="lydia-story lydia-story-plugins">
-          <div className="lydia-visual plugins-canvas">
-            <div className="plugin-card plugin-card-large">Briefing Output</div>
-            <div className="plugin-card">Risk Escalation</div>
-            <div className="plugin-card">Decision Log</div>
-          </div>
           <article className="lydia-content">
-            <h3>Composable extensions for role-specific workflows</h3>
+            <h3>Extensions without changing the core promise</h3>
             <p>
-              Plugins let teams tailor outputs by function while preserving the same decision-to-execution backbone.
-              Leadership, PMO, and delivery teams each get purpose-built views.
+              The core product helps people choose where to spend resources and create a plan from
+              that choice. Plugins should extend that record into specific recurring outputs.
             </p>
             <ul className="lydia-bullets">
-              <li>Drop-in modules for recurring workflow requirements</li>
-              <li>Shared context across plugin outputs and core workflows</li>
-              <li>Faster adoption by role without platform fragmentation</li>
+              <li>Decision context stays shared across plugin outputs</li>
+              <li>Teams get useful formats without rebuilding the reasoning</li>
+              <li>Plugins remain optional and reviewed before release</li>
             </ul>
           </article>
         </div>

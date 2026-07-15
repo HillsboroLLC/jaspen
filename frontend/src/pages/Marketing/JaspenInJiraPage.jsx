@@ -1,23 +1,24 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import MarketingPageLayout from './MarketingPageLayout';
+import Seo from '../../shared/components/Seo';
 
 const WHAT_IT_DOES = [
   {
-    title: 'Create issues from execution plans',
-    detail: 'Jaspen pushes tasks from your generated work breakdown structure directly into Jira as issues — with titles, descriptions, and priority pre-populated from initiative context.',
+    title: 'Carry plan context into Jira',
+    detail: 'Use the execution plan Jaspen drafts from an approved decision as the starting point for Jira issue structure.',
   },
   {
-    title: 'Sync delivery status in real time',
-    detail: 'As your team closes issues and advances sprints in Jira, delivery status flows back into Jaspen\'s workspace view automatically — no manual status updates required.',
+    title: 'Keep the decision record close',
+    detail: 'Help teams understand why the work exists, what the tradeoffs were, and what assumptions shaped the plan.',
   },
   {
-    title: 'Track milestones against sprint progress',
-    detail: 'Jaspen maps Jira sprint data to original execution milestones so you can see whether delivery is on track against the plan that came from the approved decision.',
+    title: 'Support sprint planning',
+    detail: 'Translate milestones and dependencies into a structure your team can review before work enters Jira.',
   },
   {
-    title: 'Surface dependency and sequencing risk',
-    detail: 'Active Jira project data feeds Jaspen\'s readiness scoring — so when blockers stack or dependencies fall behind, confidence signals update before leadership has to ask.',
+    title: 'Reduce handoff loss',
+    detail: 'Keep the path from decision to plan to tracked work easier to follow without pretending the software does the execution.',
   },
 ];
 
@@ -32,52 +33,40 @@ const SETUP_FIELDS = [
 
 export default function JaspenInJiraPage() {
   return (
-    <MarketingPageLayout pageClass="page-jaspen-in-jira">
-      <section className="page-hero page-hero-integration">
+    <MarketingPageLayout pageClass="page-jaspen-in-jira page-flat-refresh">
+      <Seo
+        title="Jaspen for Jira: Carry Decision Context Into Planning"
+        description="Use Jaspen with Jira to carry approved decision context into execution planning, so teams can move from reasoning to tracked work with less handoff loss."
+        canonicalPath="/pages/jaspen-in-jira"
+      />
+      <section className="page-hero page-hero-integration page-flat-hero">
         <div className="hero-copy">
           <p className="hero-kicker">Integrations</p>
-          <h1>Jaspen and Jira — from decision to delivery in one connected flow</h1>
+          <h1>Bring Jaspen's decision context into Jira planning.</h1>
           <p>
-            Move from initiative approval to tracked project work without rebuilding context in your
-            project management system. Jaspen's Jira connector keeps execution plans and delivery
-            progress synchronized automatically.
+            Jaspen helps you choose what deserves resources, then turns the decision into an execution
+            plan. Jira is where many teams carry that plan into tracked work.
           </p>
           <div className="hero-cta-row">
             <Link to="/pages/pricing" className="demos-cta-btn demos-cta-btn-primary">Get started</Link>
             <Link to="/pages/resources/connectors" className="demos-cta-btn demos-cta-btn-secondary-light">All connectors</Link>
           </div>
         </div>
-        <div className="hero-abstract integration-abstract">
-          <span className="integration-chip">Jaspen plan</span>
-          <span className="integration-chip integration-chip-arrow">→</span>
-          <span className="integration-chip">Jira issues</span>
-          <span className="integration-chip integration-chip-arrow">↔</span>
-          <span className="integration-chip">Status sync</span>
-        </div>
       </section>
 
-      <section className="marketing-section">
+      <section className="marketing-section flat-navy-section">
         <div className="lydia-story lydia-story-integration">
-          <div className="lydia-visual integration-flow-visual">
-            <div className="int-flow-box int-flow-jaspen">Jaspen workspace</div>
-            <div className="int-flow-connector">
-              <span>Push tasks</span>
-              <span className="int-flow-arrow">⇄</span>
-              <span>Sync status</span>
-            </div>
-            <div className="int-flow-box int-flow-tool">Jira project</div>
-          </div>
           <article className="lydia-content">
-            <h3>Why teams lose time between planning and tracking</h3>
+            <h3>Why teams lose context between planning and tracking</h3>
             <p>
-              When a decision is approved, someone has to manually translate it into Jira tickets —
-              then manually update the plan as Jira progresses. That gap is where delivery confidence
-              erodes and status drift begins. The Jira connector closes it.
+              When a decision becomes work, the reasoning often disappears. Teams see the ticket,
+              but not the criteria, tradeoffs, or assumptions that shaped it. The Jira connector is
+              meant to keep that handoff cleaner.
             </p>
             <ul className="lydia-bullets">
-              <li>Approved plans push to Jira without manual ticket creation</li>
-              <li>Sprint and issue progress reflects back into Jaspen readiness scores</li>
-              <li>Teams operate in Jira while leadership sees the full delivery picture in Jaspen</li>
+              <li>Start from a plan tied to the approved decision</li>
+              <li>Translate milestones and dependencies into Jira-ready structure</li>
+              <li>Let teams execute in Jira while Jaspen preserves the reasoning</li>
             </ul>
           </article>
         </div>
@@ -115,8 +104,8 @@ export default function JaspenInJiraPage() {
         <div className="resource-callout">
           <h3>Works alongside other connectors</h3>
           <p>
-            The Jira connector can run alongside Smartsheet, Salesforce, and data connectors — giving
-            execution teams a synchronized view while keeping business data flowing into recommendations.
+            The Jira connector can run alongside Smartsheet, Salesforce, and data connectors, giving
+            teams a cleaner path from business context to decision to execution planning.
           </p>
         </div>
       </section>
@@ -124,10 +113,10 @@ export default function JaspenInJiraPage() {
       <section className="marketing-section">
         <div className="demos-cta-block">
           <div className="demos-cta-copy">
-            <h3>Connect your Jira project to Jaspen</h3>
+            <h3>Use Jira after Jaspen helps shape the plan</h3>
             <p>
-              Available on every plan. Setup takes under 10 minutes with an active Jira
-              project and API credentials.
+              Start with the decision in Jaspen, then use Jira when your team is ready to turn
+              the plan into tracked work.
             </p>
           </div>
           <div className="demos-cta-actions">

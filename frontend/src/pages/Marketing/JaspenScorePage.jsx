@@ -21,24 +21,24 @@ const DIMENSIONS = [
 ];
 
 const CONFIDENCE = [
-  { grade: 'High', cap: 100, meaning: 'Backed by evidence in front of you.' },
-  { grade: 'Medium', cap: 75, meaning: 'A reasonable inference from what you know.' },
-  { grade: 'Low', cap: 60, meaning: 'Limited signal so far.' },
-  { grade: 'Assumed', cap: 45, meaning: 'No direct evidence yet, so it is labeled and bounded.' },
+  { level: 'High', cap: 100, meaning: 'Backed by evidence in front of you.' },
+  { level: 'Medium', cap: 75, meaning: 'A reasonable inference from what you know.' },
+  { level: 'Low', cap: 60, meaning: 'Limited signal so far.' },
+  { level: 'Assumed', cap: 45, meaning: 'No direct evidence yet, so it is labeled and bounded.' },
 ];
 
 const FAQS = [
   {
     q: 'What is the Jaspen Score?',
-    a: 'The Jaspen Score is a single 0 to 100 number that rates how strong a decision or option is. It is built from six weighted dimensions, each judged on the evidence and graded for confidence. An AI judges the evidence, but the score itself is computed in code, so the same inputs always produce the same result.',
+    a: 'The Jaspen Score is a structured way to compare options using the criteria, evidence, weights, and confidence available for a decision. It helps you see why one option appears stronger than another without pretending the number is the whole answer.',
   },
   {
     q: 'How is the Jaspen Score calculated?',
-    a: 'Each dimension gets a 0 to 100 judgment and a confidence grade. Confidence caps the contribution before weighting, so an assumed dimension can never contribute more than 45 points no matter how optimistic the judgment. The capped, weighted values are averaged into the overall score, which is then placed in a category: Excellent at 80 and above, Good at 60, Fair at 40, and At Risk below that.',
+    a: 'Each criterion receives a judgment based on the evidence available, plus a confidence level. Confidence caps the contribution before weighting, so an assumption cannot carry the same influence as direct evidence. The weighted values roll up into a score you can inspect, question, and revise.',
   },
   {
     q: 'What are the six dimensions?',
-    a: 'Market opportunity, financial viability, execution readiness, strategic alignment, risk profile, and evidence quality. The sixth is unusual on purpose: the quality of the evidence itself is scored, so a decision built on thin support is penalized transparently rather than hidden. These six are a default starter rubric, not a fixed set.',
+    a: 'Market opportunity, financial viability, execution readiness, strategic alignment, risk profile, and evidence quality. These six are a default starter rubric, not a fixed set. You can change them when the decision needs a different lens.',
   },
   {
     q: 'Can I change the criteria Jaspen scores on?',
@@ -46,11 +46,11 @@ const FAQS = [
   },
   {
     q: 'How is it different from a weighted decision matrix or a spreadsheet?',
-    a: 'A spreadsheet does not grade its own confidence or cap weak evidence, and it does not interview you to surface what is missing. The Jaspen Score grades confidence on every dimension, enforces the caps in code, and decomposes every number back into evidence, weight, and confidence so you can defend it. You still own the criteria and the weights.',
+    a: 'A spreadsheet can calculate weighted totals, but it usually does not help you expose weak evidence, hidden assumptions, or missing context. Jaspen keeps the reasoning attached to the score so you can understand what is driving the result. You still own the criteria and the weights.',
   },
   {
     q: 'Does connecting more data change the score?',
-    a: 'Connecting data does not unlock the product or change what matters. It raises the confidence grade on the dimensions that data supports, which can lift a capped dimension toward its real judgment. You always get a full score with honest confidence, connected or not.',
+    a: 'Connecting data does not decide what matters. It can strengthen the evidence behind specific criteria and make the confidence level more reliable. You can still use Jaspen without connected data when you are working from notes, documents, or judgment.',
   },
 ];
 
@@ -66,10 +66,10 @@ const faqJsonLd = {
 
 export default function JaspenScorePage() {
   return (
-    <MarketingPageLayout pageClass="page-score">
+    <MarketingPageLayout pageClass="page-score page-flat-refresh">
       <Seo
         title="What Is the Jaspen Score"
-        description="The Jaspen Score rates a decision from 0 to 100 across six weighted dimensions, with confidence-capped evidence computed in code so the same inputs always produce the same result."
+        description="The Jaspen Score helps compare options with criteria, evidence, weights, and confidence so important decisions are easier to inspect and explain."
         canonicalPath="/pages/jaspen-score"
         type="article"
       />
@@ -77,20 +77,15 @@ export default function JaspenScorePage() {
         <script type="application/ld+json">{JSON.stringify(faqJsonLd)}</script>
       </Helmet>
 
-      <section className="page-hero page-hero-score">
+      <section className="page-hero page-hero-score page-flat-hero">
         <div className="hero-copy">
           <p className="hero-kicker">The methodology</p>
-          <h1>What is the Jaspen Score?</h1>
+          <h1>A score you can inspect, not just accept.</h1>
           <p>
-            The Jaspen Score rates a decision from 0 to 100 across six weighted dimensions.
-            An AI judges the evidence, then code does the math, so the number is reproducible
-            and every part of it is inspectable.
+            The Jaspen Score helps compare options using your criteria, the evidence you have,
+            and the confidence behind that evidence. It is there to support the decision,
+            not replace your judgment.
           </p>
-        </div>
-        <div className="hero-abstract score-abstract">
-          <div className="floating-pill">Evidence</div>
-          <div className="floating-pill">Weight</div>
-          <div className="floating-pill">Confidence</div>
         </div>
       </section>
 
@@ -107,7 +102,7 @@ export default function JaspenScorePage() {
                   <span>73</span>
                   <small>Overall</small>
                 </div>
-                <div className="scorecard-readiness">Good</div>
+                <div className="scorecard-readiness">Evidence-led</div>
               </div>
               <div className="scorecard-rows">
                 {DIMENSIONS.map((d) => (
@@ -122,15 +117,33 @@ export default function JaspenScorePage() {
               </div>
             </div>
             <p className="scorecard-footnote">
-              Overall is the confidence-capped, weighted average of the dimensions. Same inputs, same result.
+              The score is a structured read on the current evidence. Better inputs should make the reasoning clearer.
             </p>
           </article>
           <article className="score-guidance-panel">
-            <h3>What the score is for</h3>
+            <h3>What the score helps with</h3>
             <ul className="score-guidance-list">
-              <li>Compare options on the same honest basis</li>
+              <li>Compare options on the same decision criteria</li>
               <li>See exactly where a decision is strong or fragile</li>
-              <li>Defend the ranking with evidence, not opinion</li>
+              <li>Explain the reasoning behind a resource choice</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section className="marketing-section flat-navy-section">
+        <div className="lydia-story lydia-story-score">
+          <article className="lydia-content">
+            <h3>Why the number is useful</h3>
+            <p>
+              A raw AI chat can sound confident without showing why. Jaspen keeps the score tied
+              to criteria, evidence, weights, and confidence so you can see what is driving the
+              recommendation before you spend money, time, attention, or team capacity.
+            </p>
+            <ul className="lydia-bullets">
+              <li>Reproducible: the same inputs produce the same score</li>
+              <li>Explainable: every score traces back to reasoning</li>
+              <li>Useful: the result helps you choose where resources should go</li>
             </ul>
           </article>
         </div>
@@ -182,38 +195,20 @@ export default function JaspenScorePage() {
       <section className="marketing-section">
         <h2>Confidence caps: enthusiasm cannot outrun evidence</h2>
         <p className="section-lead">
-          Every dimension carries a confidence grade, and that grade caps how much it can
+          Every dimension carries a confidence level, and that level caps how much it can
           contribute before weighting. A confident guess with no evidence behind it is held to 45
           points, no matter how good the pitch sounds. Better evidence raises the ceiling.
         </p>
         <div className="score-pillars-grid">
           {CONFIDENCE.map((c) => (
-            <article key={c.grade} className="score-pillar-card">
+            <article key={c.level} className="score-pillar-card">
               <div className="score-pillar-head">
-                <h3>{c.grade}</h3>
+                <h3>{c.level}</h3>
                 <span>{c.cap}</span>
               </div>
               <p>{c.meaning}</p>
             </article>
           ))}
-        </div>
-      </section>
-
-      <section className="marketing-section">
-        <div className="lydia-story lydia-story-score">
-          <article className="lydia-content">
-            <h3>Why the number holds up</h3>
-            <p>
-              A raw AI chat writes the numbers itself, so they drift when you re-ask or reword.
-              The Jaspen Score is computed in code from graded evidence, so it does not move on
-              phrasing, and it decomposes all the way down to the facts behind it.
-            </p>
-            <ul className="lydia-bullets">
-              <li>Reproducible: the same inputs always produce the same answer</li>
-              <li>Decomposable: every score traces to evidence, weight, and confidence</li>
-              <li>Honest: a weak option scores meaningfully lower, with no grade inflation</li>
-            </ul>
-          </article>
         </div>
       </section>
 

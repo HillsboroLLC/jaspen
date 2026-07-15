@@ -1,56 +1,57 @@
 import React from 'react';
 import MarketingPageLayout from './MarketingPageLayout';
+import Seo from '../../shared/components/Seo';
 
 const API_CAPABILITIES = [
   {
-    title: 'Automate plan updates',
-    detail: 'Trigger milestone, owner, and status updates programmatically from your internal workflows.',
+    title: 'Send decision context',
+    detail: 'Pass goals, constraints, options, evidence, and operating context into Jaspen from internal systems.',
   },
   {
-    title: 'Generate insight payloads',
-    detail: 'Send operational context and receive structured recommendation outputs for downstream systems.',
+    title: 'Return structured reasoning',
+    detail: 'Receive decision-ready outputs your systems can store, review, or route into the next workflow.',
   },
   {
-    title: 'Embed Jaspen logic',
-    detail: 'Use API responses in internal apps, dashboards, and orchestration pipelines.',
+    title: 'Connect decisions to planning',
+    detail: 'Use approved direction to generate planning artifacts that teams can adapt before execution.',
   },
 ];
 
 const API_WORKFLOWS = [
   {
-    title: 'Regional variance detection',
-    detail: 'Detect differences in execution performance by region and return likely causes with action options.',
+    title: 'Resource prioritization',
+    detail: 'Compare competing investments, initiatives, or requests against the criteria and information available.',
   },
   {
-    title: 'Decision-to-delivery automation',
-    detail: 'Convert approved recommendations into executable updates via internal workflow runners.',
+    title: 'Decision-to-plan handoff',
+    detail: 'Convert an approved decision into plan structure that humans can review, assign, and carry forward.',
   },
   {
-    title: 'Executive signal generation',
-    detail: 'Create recurring, structured decision signals for leadership reporting and governance review.',
+    title: 'Governed decision records',
+    detail: 'Preserve why a recommendation was made, what evidence shaped it, and what assumptions should be revisited.',
   },
 ];
 
 export default function ApiPage() {
   return (
-    <MarketingPageLayout pageClass="page-api">
+    <MarketingPageLayout pageClass="page-api page-flat-refresh">
+      <Seo
+        title="Jaspen API (Coming Soon) for Decision Automation"
+        description="The Jaspen API is in development, built to let internal systems send context, evaluate scenarios, and receive decision-grade recommendations programmatically."
+        canonicalPath="/pages/api"
+      />
       <div className="coming-soon-banner">
         <span className="coming-soon-badge">Coming Soon</span>
         The Jaspen API is in development and not yet available. <a href="mailto:hello@jaspen.ai">Get notified when it launches</a>
       </div>
-      <section className="page-hero page-hero-api">
+      <section className="page-hero page-hero-api page-flat-hero">
         <div className="hero-copy">
           <p className="hero-kicker">API</p>
-          <h1>Jaspen API for custom automation and intelligence workflows</h1>
+          <h1>Decision context, structured for your internal systems.</h1>
           <p>
-            Build custom workflows that send context to Jaspen, evaluate scenarios, and return decision-grade
-            recommendations or action payloads to your internal systems.
+            The Jaspen API is planned for teams that want to bring governed context into
+            decision workflows and carry approved reasoning into their own systems.
           </p>
-        </div>
-        <div className="hero-abstract api-abstract">
-          <div className="api-tag">POST /analysis</div>
-          <div className="api-tag">POST /plan-updates</div>
-          <div className="api-tag">GET /insights</div>
         </div>
       </section>
 
@@ -66,23 +67,19 @@ export default function ApiPage() {
         </div>
       </section>
 
-      <section className="marketing-section">
+      <section className="marketing-section flat-navy-section">
         <div className="lydia-story lydia-story-api">
-          <div className="lydia-visual api-flow-canvas">
-            <div className="api-flow-node">Input context</div>
-            <div className="api-flow-node">Jaspen API evaluation</div>
-            <div className="api-flow-node">Action payloads</div>
-          </div>
           <article className="lydia-content">
-            <h3>How the flow works in practice</h3>
+            <h3>How the flow should work in practice</h3>
             <p>
-              Applications send structured context to the API, Jaspen evaluates risk and opportunity patterns, and your
-              systems receive response payloads ready for operational action.
+              Applications would send structured context to Jaspen, Jaspen would help compare the
+              decision against the available information, and your systems would receive a reasoning
+              record or planning artifact for review.
             </p>
             <ul className="lydia-bullets">
-              <li>Programmatic analysis for recurring or event-based workflows</li>
-              <li>Structured responses for deterministic system handoffs</li>
-              <li>Custom orchestration aligned to enterprise architecture</li>
+              <li>Programmatic support for recurring prioritization workflows</li>
+              <li>Structured responses for reviewable system handoffs</li>
+              <li>Decision records that preserve assumptions and tradeoffs</li>
             </ul>
           </article>
         </div>
