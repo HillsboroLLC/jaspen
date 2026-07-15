@@ -1,5 +1,4 @@
 import React from 'react';
-import { Helmet } from 'react-helmet-async';
 import MarketingPageLayout from './MarketingPageLayout';
 import Seo from '../../shared/components/Seo';
 
@@ -27,43 +26,6 @@ const CONFIDENCE = [
   { level: 'Assumed', cap: 45, meaning: 'No direct evidence yet, so it is labeled and bounded.' },
 ];
 
-const FAQS = [
-  {
-    q: 'What is the Jaspen Score?',
-    a: 'The Jaspen Score is a structured way to compare options using the criteria, evidence, weights, and confidence available for a decision. It helps you see why one option appears stronger than another without pretending the number is the whole answer.',
-  },
-  {
-    q: 'How is the Jaspen Score calculated?',
-    a: 'Each criterion receives a judgment based on the evidence available, plus a confidence level. Confidence caps the contribution before weighting, so an assumption cannot carry the same influence as direct evidence. The weighted values roll up into a score you can inspect, question, and revise.',
-  },
-  {
-    q: 'What are the six dimensions?',
-    a: 'Market opportunity, financial viability, execution readiness, strategic alignment, risk profile, and evidence quality. These six are a default starter rubric, not a fixed set. You can change them when the decision needs a different lens.',
-  },
-  {
-    q: 'Can I change the criteria Jaspen scores on?',
-    a: 'Yes. The six default dimensions are only a starting point. Jaspen proposes a rubric so you are not starting from a blank page, but you can edit the criteria and their weights, or define your own set of up to twelve weighted criteria. The criteria always belong to you; Jaspen never imposes them.',
-  },
-  {
-    q: 'How is it different from a weighted decision matrix or a spreadsheet?',
-    a: 'A spreadsheet can calculate weighted totals, but it usually does not help you expose weak evidence, hidden assumptions, or missing context. Jaspen keeps the reasoning attached to the score so you can understand what is driving the result. You still own the criteria and the weights.',
-  },
-  {
-    q: 'Does connecting more data change the score?',
-    a: 'Connecting data does not decide what matters. It can strengthen the evidence behind specific criteria and make the confidence level more reliable. You can still use Jaspen without connected data when you are working from notes, documents, or judgment.',
-  },
-];
-
-const faqJsonLd = {
-  '@context': 'https://schema.org',
-  '@type': 'FAQPage',
-  mainEntity: FAQS.map((f) => ({
-    '@type': 'Question',
-    name: f.q,
-    acceptedAnswer: { '@type': 'Answer', text: f.a },
-  })),
-};
-
 export default function JaspenScorePage() {
   return (
     <MarketingPageLayout pageClass="page-score page-flat-refresh">
@@ -73,9 +35,6 @@ export default function JaspenScorePage() {
         canonicalPath="/pages/jaspen-score"
         type="article"
       />
-      <Helmet>
-        <script type="application/ld+json">{JSON.stringify(faqJsonLd)}</script>
-      </Helmet>
 
       <section className="page-hero page-hero-score page-flat-hero">
         <div className="hero-copy">
@@ -207,18 +166,6 @@ export default function JaspenScorePage() {
                 <span>{c.cap}</span>
               </div>
               <p>{c.meaning}</p>
-            </article>
-          ))}
-        </div>
-      </section>
-
-      <section className="marketing-section">
-        <h2>Frequently asked questions</h2>
-        <div className="score-faq">
-          {FAQS.map((f) => (
-            <article key={f.q} className="score-faq-item">
-              <h3>{f.q}</h3>
-              <p>{f.a}</p>
             </article>
           ))}
         </div>
