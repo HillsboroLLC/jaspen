@@ -60,6 +60,8 @@ const JaspenChat = lazy(() => import('./jaspenInterface/Workspace/JaspenChat'));
 const JaspenWorkspace = lazy(() => import('./jaspenInterface/Workspace/JaspenWorkspace'));
 const StudioApp = lazy(() => import('./studio/StudioApp'));
 const ExecutionPlan = lazy(() => import('./jaspenInterface/ExecutionPlan/ExecutionPlan'));
+// Public business utilities (tools). Lazily loaded for bundle splitting.
+const CostOfTurnoverPage = lazy(() => import('./tools/costOfTurnover/components/CostOfTurnoverPage'));
 
 function AnimatedAppRoutes({ withShell }) {
   const location = useLocation();
@@ -98,6 +100,14 @@ function AnimatedAppRoutes({ withShell }) {
             <Route path="/auth/callback"  element={withShell(<AuthCallback />, { title: 'Authentication', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/api/v1/connectors/salesforce/oauth/callback" element={<SalesforceOAuthBridge />} />
             <Route path="/reset-password" element={withShell(<ResetPasswordPage />, { title: 'Reset password', showHeader: false, fullBleed: true, noPadding: true })} />
+
+            {/* Public business utilities (tools) */}
+            <Route path="/tools/cost-of-turnover" element={withShell(<CostOfTurnoverPage />, { title: 'Cost of Employee Turnover Calculator', showHeader: false, fullBleed: true, noPadding: true })} />
+            {/* Canonical redirects: never duplicate the page for these aliases */}
+            <Route path="/tools/cost-of-turnover-calculator" element={<Navigate to="/tools/cost-of-turnover" replace />} />
+            <Route path="/tools/employee-turnover-cost" element={<Navigate to="/tools/cost-of-turnover" replace />} />
+            <Route path="/tools/cost-of-employee-turnover" element={<Navigate to="/tools/cost-of-turnover" replace />} />
+            <Route path="/tools/attrition-cost-calculator" element={<Navigate to="/tools/cost-of-turnover" replace />} />
             <Route path="/server-error" element={withShell(<ServerErrorPage />, { title: 'Server error', showHeader: false, fullBleed: true, noPadding: true })} />
 
             {/* Protected (Market) */}

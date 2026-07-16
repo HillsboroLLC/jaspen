@@ -1112,3 +1112,70 @@ class OrgIdeaLedger(db.Model):
         db.Index('ix_org_idea_ledger_industry_score', 'industry', 'jaspen_score'),
         db.Index('ix_org_idea_ledger_org_created', 'organization_id', 'created_at'),
     )
+
+
+class SavedUtilityEstimate(db.Model):
+    """A saved result from a public business utility (e.g. the Cost of Turnover
+    calculator). Minimal and extensible: `utility_type` namespaces the utility,
+    and the versioned JSON payloads let the utility evolve without a schema
+    rewrite. Anonymous activity never creates a row here — a save only happens
+    for an authenticated user.
+    """
+
+    __tablename__ = 'saved_utility_estimates'
+
+    id = db.Column(
+        db.String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+    )
+    user_id = db.Column(
+        db.String(36),
+        db.ForeignKey('users.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    utility_type = db.Column(db.String(64), nullable=False, default='cost_of_turnover')
+    source = db.Column(db.String(80), nullable=True)
+    calculator_version = db.Column(db.String(32), nullable=True)
+    benchmark_version = db.Column(db.String(32), nullable=True)
+
+    # Versioned JSON payloads.
+    user_inputs = db.Column(db.JSON, nullable=False, default=dict)
+    defaults_used = db.Column(db.JSON, nullable=False, default=dict)
+    result_breakdown = db.Column(db.JSON, nullable=False, default=list)
+    built_using = db.Column(db.JSON, nullable=False, default=dict)
+
+    total_low = db.Column(db.Integer, nullable=True)
+    total_mid = db.Column(db.Integer, nullable=True)
+    total_high = db.Column(db.Integer, nullable=True)
+
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+    __table_args__ = (
+        db.Index('ix_saved_utility_estimates_user_utility', 'user_id', 'utility_type'),
+    )
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'utility_type': self.utility_type,
+            'source': self.source,
+            'calculator_version': self.calculator_version,
+            'benchmark_version': self.benchmark_version,
+            'user_inputs': self.user_inputs,
+            'defaults_used': self.defaults_used,
+            'result_breakdown': self.result_breakdown,
+            'built_using': self.built_using,
+            'total_low': self.total_low,
+            'total_mid': self.total_mid,
+            'total_high': self.total_high,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }

@@ -18,10 +18,15 @@ export default function Seo({
   image = DEFAULT_IMAGE,
   type = 'website',
   noindex = false,
+  jsonLd = null,
 }) {
   const fullTitle = title ? `${title} | ${SITE_NAME}` : SITE_NAME;
   const canonical = buildCanonicalUrl(canonicalPath);
   const metaDescription = String(description || '').trim();
+  // Optional structured data. Accepts a single object or an array of objects.
+  const structuredData = jsonLd
+    ? (Array.isArray(jsonLd) ? jsonLd : [jsonLd]).filter(Boolean)
+    : [];
 
   return (
     <Helmet>
@@ -44,6 +49,13 @@ export default function Seo({
       <meta name="twitter:title" content={fullTitle} />
       {metaDescription && <meta name="twitter:description" content={metaDescription} />}
       <meta name="twitter:image" content={image} />
+
+      {structuredData.map((entry, i) => (
+        // eslint-disable-next-line react/no-array-index-key
+        <script key={`ld-${i}`} type="application/ld+json">
+          {JSON.stringify(entry)}
+        </script>
+      ))}
     </Helmet>
   );
 }
