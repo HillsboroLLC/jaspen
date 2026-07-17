@@ -40,7 +40,7 @@ DECISION_PROFILE_REPLY_TO = "hello@jaspen.ai"
 LEAD_EMAIL_SENDER = "Jaspen <hello@jaspen.ai>"
 LEAD_EMAIL_REPLY_TO = "hello@jaspen.ai"
 ENTERPRISE_INQUIRY_SENDER = "Enterprise Sales Inquiry <hello@jaspen.ai>"
-ENTERPRISE_COPY_SENDER = "Jaspen Sales <hello@jaspen.ai>"
+ENTERPRISE_COPY_SENDER = "Jaspen Sales <sales@jaspen.ai>"
 SUBSCRIPTION_SCOPES = {
     "marketing": "Marketing",
     "updates": "Updates",
