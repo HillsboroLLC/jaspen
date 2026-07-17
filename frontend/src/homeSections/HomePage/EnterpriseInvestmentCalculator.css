@@ -55,6 +55,10 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 18px;
 }
+.eic-grid-three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 18px;
+}
 .eic label,
 .eic fieldset {
   font-size: 0.88rem;
@@ -252,6 +256,7 @@
     padding: 24px 18px;
   }
   .eic-grid,
+  .eic-grid-three,
   .eic-options,
   .eic-checks,
   .eic-result-grid {

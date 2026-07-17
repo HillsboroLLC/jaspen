@@ -228,7 +228,17 @@ export default function PricingVariantB({ onOpenModal }) {
       </div>
 
       {isBusinessAudience && <aside className="pvb-enterprise-intro">
-          <p><strong>Need more than 10 seats?</strong> Larger teams and organizations with advanced administration, integration, security, or support needs may qualify for an annual Enterprise agreement.</p>
+          <div>
+            <p className="pvb-enterprise-eyebrow">Enterprise</p>
+            <h3>Need more than 10 seats?</h3>
+            <p>Larger teams and organizations may qualify for an annual Enterprise agreement tailored to their deployment.</p>
+            <ul>
+              <li>Multiple workspaces and business units</li>
+              <li>Advanced security, SSO, and governance</li>
+              <li>Tailored AI capacity and integrations</li>
+              <li>Procurement and deployment support</li>
+            </ul>
+          </div>
           <button type="button" className="jaspen-btn jaspen-btn-outline" onClick={() => { analytics.track('contact_sales_clicked', { placement: 'business_card' }); document.getElementById('eic-title')?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}>Contact Sales</button>
         </aside>}
       </div>
