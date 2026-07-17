@@ -1,5 +1,5 @@
 from app.connector_store import update_connector_settings
-from app.models import EmailSuppression, Lead, LeadAttributionEvent, LeadDecisionProfile, LeadEmailDelivery, User
+from app.models import EmailSuppression, EnterpriseInquiry, Lead, LeadAttributionEvent, LeadDecisionProfile, LeadEmailDelivery, User
 
 
 def test_admin_user_no_stripe_ids(client, admin_auth_headers, admin_user, test_user, db):
@@ -104,11 +104,25 @@ def test_master_leads_support_only_and_includes_safe_lead_summary(client, admin_
         marketing_opt_in=False,
         email_delivery_requested=True,
     ))
-    db.session.add(LeadAttributionEvent(
+    enterprise_event = LeadAttributionEvent(
         lead_id=lead.id,
         source="enterprise-investment-calculator",
         marketing_opt_in=False,
         email_delivery_requested=False,
+    )
+    db.session.add(enterprise_event)
+    db.session.flush()
+    db.session.add(EnterpriseInquiry(
+        lead_id=lead.id,
+        attribution_event_id=enterprise_event.id,
+        participants=12,
+        teams=2,
+        usage="high",
+        requirements_json='["sso_saml"]',
+        hourly_cost=112.5,
+        recommendation="Enterprise Strategic",
+        annual_low=72000,
+        annual_high=96000,
     ))
     db.session.add(LeadDecisionProfile(
         lead_id=lead.id,
@@ -142,6 +156,10 @@ def test_master_leads_support_only_and_includes_safe_lead_summary(client, admin_
     assert data["leads"][0]["name"] == "Lead Person"
     assert data["leads"][0]["decision_profile"]["style_name"] == "Fast Mover"
     assert data["leads"][0]["latest_email"]["status"] == "sent"
+    assert len(data["leads"][0]["interactions"]["captures"]) == 3
+    assert len(data["leads"][0]["interactions"]["emails"]) == 1
+    assert data["leads"][0]["interactions"]["estimates"][0]["annual_low"] == 72000
+    assert data["leads"][0]["interactions"]["estimates"][0]["requirements"] == ["sso_saml"]
     assert data["leads"][0]["lead_tools"]["decision_profile"]["used"] is True
     assert data["leads"][0]["lead_tools"]["decision_profile"]["count"] == 1
     assert data["leads"][0]["lead_tools"]["decision_planning_toolkit"]["used"] is True

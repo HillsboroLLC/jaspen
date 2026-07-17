@@ -41,6 +41,7 @@ from app.models import (
     LeadAttributionEvent,
     LeadDecisionProfile,
     LeadEmailDelivery,
+    EnterpriseInquiry,
     User,
     UserAuthSession,
     UserSession,
@@ -413,6 +414,9 @@ def _serialize_lead_for_master_admin(
     suppressions=None,
     lead_tools=None,
     account=None,
+    events=None,
+    deliveries=None,
+    inquiries=None,
 ):
     suppressions = suppressions or {}
     globally_suppressed = GLOBAL_NON_TRANSACTIONAL_SCOPE in suppressions
@@ -431,6 +435,9 @@ def _serialize_lead_for_master_admin(
         contact_status = "limited"
     else:
         contact_status = "no_opt_out_recorded"
+    events = events or ([] if latest_event is None else [latest_event])
+    deliveries = deliveries or ([] if latest_delivery is None else [latest_delivery])
+    inquiries = inquiries or []
     return {
         "id": lead.id,
         "email": lead.email,
@@ -477,6 +484,48 @@ def _serialize_lead_for_master_admin(
         "lead_tools": lead_tools or {
             key: {"used": False, "count": 0, "latest_at": None}
             for key in LEAD_TOOL_SOURCES
+        },
+        "interactions": {
+            "captures": [
+                {
+                    "id": event.id,
+                    "source": event.source,
+                    "marketing_opt_in": bool(event.marketing_opt_in),
+                    "email_delivery_requested": bool(event.email_delivery_requested),
+                    "created_at": _iso(event.created_at),
+                }
+                for event in events
+            ],
+            "emails": [
+                {
+                    "id": delivery.id,
+                    "type": delivery.email_type,
+                    "status": delivery.status,
+                    "sent_at": _iso(delivery.sent_at),
+                    "created_at": _iso(delivery.created_at),
+                    "provider_message": delivery.provider_message,
+                }
+                for delivery in deliveries
+            ],
+            "estimates": [
+                {
+                    "id": inquiry.id,
+                    "recommendation": inquiry.recommendation,
+                    "participants": inquiry.participants,
+                    "teams": inquiry.teams,
+                    "usage": inquiry.usage,
+                    "requirements": inquiry.requirements,
+                    "hourly_cost": float(inquiry.hourly_cost) if inquiry.hourly_cost is not None else None,
+                    "annual_low": inquiry.annual_low,
+                    "annual_high": inquiry.annual_high,
+                    "phone": inquiry.phone,
+                    "preferred_contact": inquiry.preferred_contact,
+                    "comments": inquiry.comments,
+                    "source_url": inquiry.source_url,
+                    "created_at": _iso(inquiry.created_at),
+                }
+                for inquiry in inquiries
+            ],
         },
     }
 
@@ -694,16 +743,38 @@ def master_leads():
     if source:
         query = query.filter(func.lower(Lead.source) == source.lower())
 
-    total = query.count()
-    leads = (
-        query
-        .order_by(Lead.created_at.desc(), Lead.id.desc())
-        .offset((page - 1) * per_page)
-        .limit(per_page)
-        .all()
-    )
-    lead_ids = [lead.id for lead in leads]
-    normalized_emails = [lead.normalized_email for lead in leads if lead.normalized_email]
+    # Legacy production data can contain more than one Lead row for the same
+    # address. The admin surface is contact-centric: group those rows by a
+    # normalized email while preserving every interaction below the contact.
+    matching_leads = query.order_by(Lead.created_at.desc(), Lead.id.desc()).all()
+    contact_groups = {}
+    for lead in matching_leads:
+        # Use the actual address as the canonical grouping key so malformed
+        # legacy normalized_email values cannot create duplicate contact cards.
+        contact_key = str(lead.email or lead.normalized_email or '').strip().lower()
+        contact_groups.setdefault(contact_key, []).append(lead)
+    contact_keys = list(contact_groups.keys())
+    total = len(contact_keys)
+    page_keys = contact_keys[(page - 1) * per_page:page * per_page]
+    if page_keys:
+        # A source/search filter chooses which contacts appear, not which of
+        # that contact's interactions are visible once the card is opened.
+        # Reload every legacy Lead row for the contacts on this page.
+        contact_groups = {key: [] for key in page_keys}
+        for related_lead in (
+            Lead.query
+            .filter(func.lower(func.trim(Lead.email)).in_(page_keys))
+            .order_by(Lead.created_at.desc(), Lead.id.desc())
+            .all()
+        ):
+            contact_key = str(related_lead.email or related_lead.normalized_email or '').strip().lower()
+            if contact_key in contact_groups:
+                contact_groups[contact_key].append(related_lead)
+    leads = [contact_groups[key][0] for key in page_keys]
+    lead_ids_by_key = {key: [lead.id for lead in contact_groups[key]] for key in page_keys}
+    lead_ids = [lead_id for ids in lead_ids_by_key.values() for lead_id in ids]
+    lead_key_by_id = {lead_id: key for key, ids in lead_ids_by_key.items() for lead_id in ids}
+    normalized_emails = page_keys
 
     accounts = {}
     if normalized_emails:
@@ -711,12 +782,13 @@ def master_leads():
             accounts[str(account.email or "").strip().lower()] = account
 
     latest_events = {}
+    events_by_key = {key: [] for key in page_keys}
     lead_tools = {
-        lead_id: {
-            key: {"used": False, "count": 0, "latest_at": None}
-            for key in LEAD_TOOL_SOURCES
+        contact_key: {
+            tool_key: {"used": False, "count": 0, "latest_at": None}
+            for tool_key in LEAD_TOOL_SOURCES
         }
-        for lead_id in lead_ids
+        for contact_key in page_keys
     }
     if lead_ids:
         for event in (
@@ -725,12 +797,16 @@ def master_leads():
             .order_by(LeadAttributionEvent.created_at.desc(), LeadAttributionEvent.id.desc())
             .all()
         ):
-            latest_events.setdefault(event.lead_id, event)
+            contact_key = lead_key_by_id.get(event.lead_id)
+            if not contact_key:
+                continue
+            events_by_key[contact_key].append(event)
+            latest_events.setdefault(contact_key, event)
             source_key = str(event.source or "").strip().lower()
             for tool_key, expected_source in LEAD_TOOL_SOURCES.items():
                 if source_key != expected_source:
                     continue
-                tool = lead_tools.setdefault(event.lead_id, {}).setdefault(
+                tool = lead_tools.setdefault(contact_key, {}).setdefault(
                     tool_key,
                     {"used": False, "count": 0, "latest_at": None},
                 )
@@ -747,9 +823,12 @@ def master_leads():
             .order_by(LeadDecisionProfile.created_at.desc(), LeadDecisionProfile.id.desc())
             .all()
         ):
-            latest_profiles.setdefault(profile.lead_id, profile)
+            contact_key = lead_key_by_id.get(profile.lead_id)
+            if contact_key:
+                latest_profiles.setdefault(contact_key, profile)
 
     latest_deliveries = {}
+    deliveries_by_key = {key: [] for key in page_keys}
     if lead_ids:
         for delivery in (
             LeadEmailDelivery.query
@@ -757,7 +836,23 @@ def master_leads():
             .order_by(LeadEmailDelivery.created_at.desc(), LeadEmailDelivery.id.desc())
             .all()
         ):
-            latest_deliveries.setdefault(delivery.lead_id, delivery)
+            contact_key = lead_key_by_id.get(delivery.lead_id)
+            if not contact_key:
+                continue
+            deliveries_by_key[contact_key].append(delivery)
+            latest_deliveries.setdefault(contact_key, delivery)
+
+    inquiries_by_key = {key: [] for key in page_keys}
+    if lead_ids:
+        for inquiry in (
+            EnterpriseInquiry.query
+            .filter(EnterpriseInquiry.lead_id.in_(lead_ids))
+            .order_by(EnterpriseInquiry.created_at.desc(), EnterpriseInquiry.id.desc())
+            .all()
+        ):
+            contact_key = lead_key_by_id.get(inquiry.lead_id)
+            if contact_key:
+                inquiries_by_key[contact_key].append(inquiry)
 
     suppressions = {}
     if normalized_emails:
@@ -793,14 +888,17 @@ def master_leads():
         "leads": [
             _serialize_lead_for_master_admin(
                 lead,
-                latest_event=latest_events.get(lead.id),
-                latest_profile=latest_profiles.get(lead.id),
-                latest_delivery=latest_deliveries.get(lead.id),
-                suppressions=suppressions.get(lead.normalized_email, {}),
-                lead_tools=lead_tools.get(lead.id),
-                account=accounts.get(lead.normalized_email),
+                latest_event=latest_events.get(contact_key),
+                latest_profile=latest_profiles.get(contact_key),
+                latest_delivery=latest_deliveries.get(contact_key),
+                suppressions=suppressions.get(contact_key, {}),
+                lead_tools=lead_tools.get(contact_key),
+                account=accounts.get(contact_key),
+                events=events_by_key.get(contact_key),
+                deliveries=deliveries_by_key.get(contact_key),
+                inquiries=inquiries_by_key.get(contact_key),
             )
-            for lead in leads
+            for contact_key, lead in zip(page_keys, leads)
         ],
     }), 200
 

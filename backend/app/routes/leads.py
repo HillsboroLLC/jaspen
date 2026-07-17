@@ -816,7 +816,7 @@ def capture_enterprise_inquiry():
     try:
         lead, created = _get_or_create_lead(payload)
         db.session.flush()
-        event = _create_attribution_event(lead, payload, email_delivery_requested=False)
+        event = _create_attribution_event(lead, payload, email_delivery_requested=email_copy)
         db.session.flush()
         inquiry = EnterpriseInquiry(
             lead_id=lead.id,
@@ -948,8 +948,25 @@ def capture_enterprise_inquiry():
 </html>"""
                 mail.send(copy_message)
                 copy_sent = True
-            except Exception:
+                _record_email_delivery(
+                    lead,
+                    event,
+                    payload["email"],
+                    "sent",
+                    email_type="enterprise_planning_estimate",
+                )
+                db.session.commit()
+            except Exception as exc:
                 current_app.logger.exception("Enterprise inquiry customer copy email failed; inquiry remains stored")
+                _record_email_delivery(
+                    lead,
+                    event,
+                    payload["email"],
+                    "failed",
+                    str(exc),
+                    email_type="enterprise_planning_estimate",
+                )
+                db.session.commit()
 
         return jsonify({"ok": True, "inquiry_id": inquiry.id, "copy_sent": copy_sent}), 201 if created else 200
     except SQLAlchemyError:

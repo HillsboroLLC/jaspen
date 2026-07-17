@@ -11,11 +11,13 @@ from app.models import (
     LeadDecisionProfile,
     LeadDecisionProfileResponse,
     LeadEmailDelivery,
+    EnterpriseInquiry,
     User,
 )
 
 
 LEADS_URL = "/api/v1/public/leads"
+ENTERPRISE_LEADS_URL = "/api/v1/public/leads/enterprise-inquiry"
 
 STYLE_SCENARIOS = {
     "evidence_builder": {
@@ -571,3 +573,37 @@ def test_decision_profile_duplicate_normalized_email_preserves_each_result(clien
         "reflective_analyzer",
     ]
     assert LeadEmailDelivery.query.count() == 2
+
+
+def test_enterprise_estimate_copy_is_recorded_as_email_interaction(client, db, monkeypatch):
+    sent = []
+    monkeypatch.setattr("app.routes.leads.mail.send", lambda message: sent.append(message))
+
+    response = client.post(ENTERPRISE_LEADS_URL, json={
+        "source": "enterprise-investment-calculator",
+        "first_name": "Lead",
+        "last_name": "Person",
+        "email": "lead@acme.co",
+        "company": "Acme",
+        "title": "COO",
+        "email_copy": True,
+        "participants": 12,
+        "teams": 2,
+        "usage": "high",
+        "requirements": ["sso_saml", "audit_logs"],
+        "hourly_cost": 112.5,
+        "recommendation": "Enterprise Strategic",
+        "annual_low": 72000,
+        "source_url": "https://jaspen.ai/#pricing",
+    })
+
+    assert response.status_code == 201
+    assert response.get_json()["copy_sent"] is True
+    assert len(sent) == 2
+    assert EnterpriseInquiry.query.count() == 1
+    event = LeadAttributionEvent.query.one()
+    assert event.email_delivery_requested is True
+    delivery = LeadEmailDelivery.query.one()
+    assert delivery.email_type == "enterprise_planning_estimate"
+    assert delivery.status == "sent"
+    assert delivery.sent_at is not None

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faAddressBook, faCheck, faEnvelope, faFilter, faMinus, faRotateRight } from '@fortawesome/free-solid-svg-icons';
+import { faAddressBook, faBuilding, faCheck, faEnvelope, faFilter, faRotateRight, faXmark } from '@fortawesome/free-solid-svg-icons';
 import { API_BASE } from '../../config/apiBase';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import AppMenu from '../shared/AppMenu';
@@ -24,16 +24,6 @@ function formatDate(value) {
 
 function compactSource(lead) {
   return lead?.utm_source || lead?.source || 'unknown';
-}
-
-function LeadToolCell({ tool }) {
-  const used = Boolean(tool?.used);
-  return (
-    <span className={`master-tool-check${used ? ' is-used' : ''}`} title={used ? `${tool.count || 1} capture${Number(tool.count || 1) === 1 ? '' : 's'}` : 'No capture yet'}>
-      <FontAwesomeIcon icon={used ? faCheck : faMinus} />
-      {used && tool?.latest_at && <span>{formatDate(tool.latest_at)}</span>}
-    </span>
-  );
 }
 
 const PREFERENCE_LABELS = {
@@ -70,6 +60,7 @@ export default function MasterLeads() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [selectedLead, setSelectedLead] = useState(null);
 
   const loadLeads = useCallback(async () => {
     setLoading(true);
@@ -168,64 +159,35 @@ export default function MasterLeads() {
               {leads.length === 0 ? (
                 <p className="master-empty">No leads match this view.</p>
               ) : (
-                <div className="master-table-wrap">
-                  <table className="master-table master-leads-table">
-                    <thead>
-                      <tr>
-                        <th>Email</th>
-                        <th>Account</th>
-                        <th>Source</th>
-                        <th>Toolkit</th>
-                        <th>Decision Profile</th>
-                        <th>Enterprise Inquiry</th>
-                        <th>Profile</th>
-                        <th>Latest Email</th>
-                        <th>Contact Preferences</th>
-                        <th>Captured</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {leads.map((lead) => (
-                        <tr key={lead.id}>
-                          <td>
-                            <strong>{lead.email}</strong>
-                            {(lead.name || lead.company) && (
-                              <span>{[lead.name, lead.company].filter(Boolean).join(' / ')}</span>
-                            )}
-                          </td>
-                          <td>
-                            <strong>{lead.account?.exists ? 'Account' : 'Lead only'}</strong>
-                            {lead.account?.exists && <span>{lead.account.plan || 'Free'} plan</span>}
-                          </td>
-                          <td>
-                            {compactSource(lead)}
-                            {lead.utm_campaign && <span>{lead.utm_campaign}</span>}
-                          </td>
-                          <td>
-                            <LeadToolCell tool={lead.lead_tools?.decision_planning_toolkit} />
-                          </td>
-                          <td>
-                            <LeadToolCell tool={lead.lead_tools?.decision_profile} />
-                          </td>
-                          <td>
-                            <LeadToolCell tool={lead.lead_tools?.enterprise_inquiry} />
-                          </td>
-                          <td>
-                            {lead.decision_profile?.style_name || 'None yet'}
-                            {lead.decision_profile?.created_at && <span>{formatDate(lead.decision_profile.created_at)}</span>}
-                          </td>
-                          <td>
-                            <FontAwesomeIcon icon={faEnvelope} /> {lead.latest_email?.status || 'None'}
-                            {lead.latest_email?.type && <span>{lead.latest_email.type}</span>}
-                          </td>
-                          <td>
-                            <ContactStatus lead={lead} />
-                          </td>
-                          <td>{formatDate(lead.created_at)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="master-contact-grid">
+                  {leads.map((lead) => {
+                    const estimates = lead.interactions?.estimates || [];
+                    const emails = lead.interactions?.emails || [];
+                    const captures = lead.interactions?.captures || [];
+                    return (
+                      <button type="button" className="master-contact-card" key={lead.id} onClick={() => setSelectedLead(lead)}>
+                        <div className="master-contact-card-head">
+                          <div>
+                            <strong>{lead.name || lead.email}</strong>
+                            {lead.name && <span>{lead.email}</span>}
+                          </div>
+                          <span className={`master-account-badge${lead.account?.exists ? ' is-account' : ''}`}>
+                            {lead.account?.exists ? `${lead.account.plan || 'Free'} account` : 'Lead only'}
+                          </span>
+                        </div>
+                        {lead.company && <p><FontAwesomeIcon icon={faBuilding} /> {lead.company}</p>}
+                        <div className="master-contact-card-stats">
+                          <span><strong>{captures.length}</strong> interactions</span>
+                          <span><strong>{estimates.length}</strong> estimates</span>
+                          <span><strong>{emails.filter((item) => item.status === 'sent').length}</strong> emails sent</span>
+                        </div>
+                        <div className="master-contact-card-foot">
+                          <span>{compactSource(lead)}</span>
+                          <span><FontAwesomeIcon icon={faEnvelope} /> {lead.latest_email?.status === 'sent' ? `Sent ${formatDate(lead.latest_email.sent_at || lead.latest_email.created_at)}` : lead.latest_email?.status || 'No recorded email'}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               )}
               <div className="master-pagination">
@@ -238,6 +200,81 @@ export default function MasterLeads() {
                 </button>
               </div>
             </section>
+          )}
+          {selectedLead && (
+            <div className="master-contact-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedLead(null); }}>
+              <section className="master-contact-modal" role="dialog" aria-modal="true" aria-labelledby="master-contact-title">
+                <header>
+                  <div>
+                    <p className="int-eyebrow">Contact record</p>
+                    <h2 id="master-contact-title">{selectedLead.name || selectedLead.email}</h2>
+                    <a href={`mailto:${selectedLead.email}`}>{selectedLead.email}</a>
+                    {selectedLead.company && <span>{selectedLead.company}{selectedLead.title ? ` · ${selectedLead.title}` : ''}</span>}
+                  </div>
+                  <button type="button" aria-label="Close contact details" onClick={() => setSelectedLead(null)}><FontAwesomeIcon icon={faXmark} /></button>
+                </header>
+
+                <div className="master-contact-modal-summary">
+                  <div><span>Account</span><strong>{selectedLead.account?.exists ? `${selectedLead.account.plan || 'Free'} plan` : 'Lead only'}</strong></div>
+                  <div><span>First captured</span><strong>{formatDate(selectedLead.created_at)}</strong></div>
+                  <div><span>Decision profile</span><strong>{selectedLead.decision_profile?.style_name || 'None yet'}</strong></div>
+                  <div><span>Primary source</span><strong>{compactSource(selectedLead)}</strong></div>
+                </div>
+
+                <div className="master-contact-modal-section">
+                  <h3>Contact preferences</h3>
+                  <ContactStatus lead={selectedLead} />
+                </div>
+
+                <div className="master-contact-modal-section">
+                  <h3>Enterprise estimates ({selectedLead.interactions?.estimates?.length || 0})</h3>
+                  {(selectedLead.interactions?.estimates || []).length === 0 ? <p className="master-empty">No estimates recorded.</p> : (
+                    <div className="master-estimate-list">
+                      {selectedLead.interactions.estimates.map((estimate) => (
+                        <article key={estimate.id}>
+                          <div><strong>{estimate.recommendation}</strong><time>{formatDate(estimate.created_at)}</time></div>
+                          <p>{estimate.annual_low ? `${estimate.annual_high ? `$${Number(estimate.annual_low).toLocaleString()}–$${Number(estimate.annual_high).toLocaleString()}` : `Starting at $${Number(estimate.annual_low).toLocaleString()}`} annually` : 'Sales-scoped estimate'}</p>
+                          <dl>
+                            <div><dt>Participants</dt><dd>{estimate.participants}</dd></div>
+                            <div><dt>Teams</dt><dd>{estimate.teams}</dd></div>
+                            <div><dt>Usage</dt><dd>{estimate.usage}</dd></div>
+                            <div><dt>Leadership cost</dt><dd>{estimate.hourly_cost ? `$${estimate.hourly_cost}/hr` : 'Not provided'}</dd></div>
+                          </dl>
+                          {estimate.requirements?.length > 0 && <small>Needs: {estimate.requirements.join(', ')}</small>}
+                          {estimate.comments && <blockquote>{estimate.comments}</blockquote>}
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="master-contact-modal-section">
+                  <h3>Email history ({selectedLead.interactions?.emails?.length || 0})</h3>
+                  {(selectedLead.interactions?.emails || []).length === 0 ? <p className="master-empty">No email delivery was recorded.</p> : (
+                    <div className="master-interaction-list">
+                      {selectedLead.interactions.emails.map((email) => (
+                        <div key={email.id}>
+                          <FontAwesomeIcon icon={faEnvelope} />
+                          <span><strong>{email.type?.replaceAll('_', ' ')}</strong><small>{email.status} · {formatDate(email.sent_at || email.created_at)}</small></span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="master-contact-modal-section">
+                  <h3>Capture history ({selectedLead.interactions?.captures?.length || 0})</h3>
+                  <div className="master-interaction-list">
+                    {(selectedLead.interactions?.captures || []).map((capture) => (
+                      <div key={capture.id}>
+                        <FontAwesomeIcon icon={capture.email_delivery_requested ? faEnvelope : faCheck} />
+                        <span><strong>{capture.source}</strong><small>{formatDate(capture.created_at)}{capture.email_delivery_requested ? ' · Email requested' : ''}</small></span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </section>
+            </div>
           )}
         </main>
       </div>
