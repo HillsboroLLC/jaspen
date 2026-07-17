@@ -34,6 +34,7 @@ import DemosPage from './pages/Resources/DemosPage';
 import TutorialsPage from './pages/Resources/TutorialsPage';
 import ConnectorsPage from './pages/Resources/ConnectorsPage';
 import PluginsPage from './pages/Resources/PluginsPage';
+import CalculatorsHubPage from './pages/Calculators/CalculatorsHubPage';
 import NotFoundPage from './pages/NotFound/NotFound';
 import ServerErrorPage from './pages/ServerError/ServerError';
 import OfflineBanner from './shared/components/OfflineBanner';
@@ -99,6 +100,7 @@ function AnimatedAppRoutes({ withShell }) {
             <Route path="/pages/resources/tutorials" element={withShell(<TutorialsPage />, { title: 'Tutorials', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/pages/resources/connectors" element={withShell(<ConnectorsPage />, { title: 'Connectors', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/pages/resources/plugins" element={withShell(<PluginsPage />, { title: 'Plugins', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/calculators" element={withShell(<CalculatorsHubPage />, { title: 'Free Calculators', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/auth/callback"  element={withShell(<AuthCallback />, { title: 'Authentication', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/api/v1/connectors/salesforce/oauth/callback" element={<SalesforceOAuthBridge />} />
             <Route path="/reset-password" element={withShell(<ResetPasswordPage />, { title: 'Reset password', showHeader: false, fullBleed: true, noPadding: true })} />

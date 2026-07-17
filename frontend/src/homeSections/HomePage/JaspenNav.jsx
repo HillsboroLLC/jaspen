@@ -59,6 +59,7 @@ const NAV_MENUS = [
       {
         title: 'Tools',
         items: [
+          { label: 'Free Calculators', path: '/calculators' },
           { label: 'Connectors', path: '/pages/resources/connectors' },
           { label: 'Plugins', path: '/pages/resources/plugins' },
         ],

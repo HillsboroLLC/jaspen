@@ -31,6 +31,7 @@ export default function MarketingPageLayout({ pageClass = '', children }) {
         <div className="marketing-container marketing-footer-inner">
           <p className="marketing-footer-copy">&copy; {new Date().getFullYear()} Jaspen. All rights reserved.</p>
           <nav className="marketing-footer-links">
+            <Link to="/calculators">Free Calculators</Link>
             <Link to="/pages/privacy">Privacy</Link>
             <Link to="/pages/terms">Terms</Link>
             <Link to="/pages/support">Support</Link>

@@ -448,6 +448,7 @@ export default function HomePage() {
             </div>
             <div className="jaspen-footer-col">
               <h4>Resources</h4>
+              <Link to="/calculators">Free Calculators</Link>
               <Link to="/pages/resources/demos">Demos</Link>
               <Link to="/pages/resources/tutorials">Tutorials</Link>
             </div>

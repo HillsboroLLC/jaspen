@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Helmet } from 'react-helmet-async';
 
 const SITE_NAME = 'Jaspen';
@@ -28,14 +28,17 @@ export default function Seo({
     ? (Array.isArray(jsonLd) ? jsonLd : [jsonLd]).filter(Boolean)
     : [];
 
+  // index.html supplies the homepage canonical before React loads. Update that
+  // single element for routed public pages instead of adding a duplicate link.
+  useEffect(() => {
+    const canonicalLink = document.getElementById('jaspen-canonical');
+    if (canonicalLink) canonicalLink.setAttribute('href', canonical);
+  }, [canonical]);
+
   return (
     <Helmet>
       <title>{fullTitle}</title>
-      {noindex ? (
-        <meta name="robots" content="noindex, nofollow" />
-      ) : (
-        <link rel="canonical" href={canonical} />
-      )}
+      {noindex ? <meta name="robots" content="noindex, nofollow" /> : null}
 
       {metaDescription && <meta name="description" content={metaDescription} />}
 

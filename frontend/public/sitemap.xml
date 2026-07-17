@@ -4,6 +4,10 @@
   <url><loc>https://jaspen.ai/pages/jaspen-score</loc><changefreq>monthly</changefreq><priority>0.9</priority></url>
   <url><loc>https://jaspen.ai/pages/jaspen</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://jaspen.ai/pages/pricing</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://jaspen.ai/calculators</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://jaspen.ai/tools/mortgage-calculator</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://jaspen.ai/tools/cost-of-turnover</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://jaspen.ai/tools/rent-calculator</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://jaspen.ai/pages/project-management</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://jaspen.ai/pages/jaspen-in-jira</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
   <url><loc>https://jaspen.ai/pages/jaspen-in-smartsheets</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
