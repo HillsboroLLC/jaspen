@@ -1,6 +1,6 @@
 """Public business utilities (tools) — authenticated persistence.
 
-Currently backs the Cost of Turnover calculator's optional "Save this estimate"
+Backs the public calculators' optional "Save this estimate"
 flow. The utility itself is fully usable anonymously; this endpoint only stores
 an estimate for a signed-in user and associates it with their existing account.
 
@@ -19,7 +19,7 @@ from app.models import SavedUtilityEstimate, User
 
 tools_bp = Blueprint("tools", __name__)
 
-ALLOWED_UTILITY_TYPES = {"cost_of_turnover"}
+ALLOWED_UTILITY_TYPES = {"cost_of_turnover", "mortgage", "rent"}
 MAX_PAYLOAD_BYTES = 64 * 1024
 
 

@@ -62,6 +62,8 @@ const StudioApp = lazy(() => import('./studio/StudioApp'));
 const ExecutionPlan = lazy(() => import('./jaspenInterface/ExecutionPlan/ExecutionPlan'));
 // Public business utilities (tools). Lazily loaded for bundle splitting.
 const CostOfTurnoverPage = lazy(() => import('./tools/costOfTurnover/components/CostOfTurnoverPage'));
+const MortgageCalculatorPage = lazy(() => import('./tools/mortgage/components/MortgageCalculatorPage'));
+const RentCalculatorPage = lazy(() => import('./tools/rent/components/RentCalculatorPage'));
 
 function AnimatedAppRoutes({ withShell }) {
   const location = useLocation();
@@ -108,6 +110,13 @@ function AnimatedAppRoutes({ withShell }) {
             <Route path="/tools/employee-turnover-cost" element={<Navigate to="/tools/cost-of-turnover" replace />} />
             <Route path="/tools/cost-of-employee-turnover" element={<Navigate to="/tools/cost-of-turnover" replace />} />
             <Route path="/tools/attrition-cost-calculator" element={<Navigate to="/tools/cost-of-turnover" replace />} />
+
+            <Route path="/tools/mortgage-calculator" element={withShell(<MortgageCalculatorPage />, { title: 'True Cost of Home Ownership Calculator', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/tools/true-cost-of-mortgage" element={<Navigate to="/tools/mortgage-calculator" replace />} />
+            <Route path="/tools/home-ownership-cost-calculator" element={<Navigate to="/tools/mortgage-calculator" replace />} />
+
+            <Route path="/tools/rent-calculator" element={withShell(<RentCalculatorPage />, { title: 'True Cost of Renting Calculator', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/tools/true-cost-of-rent" element={<Navigate to="/tools/rent-calculator" replace />} />
             <Route path="/server-error" element={withShell(<ServerErrorPage />, { title: 'Server error', showHeader: false, fullBleed: true, noPadding: true })} />
 
             {/* Protected (Market) */}
