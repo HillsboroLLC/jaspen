@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from app import db
 from app.admin_policy import is_global_admin
 from app.models import StripeWebhookEvent, User
+from app.orgs import build_seat_usage, can_manage_org, resolve_active_org_for_user
 from app.billing_config import (
     apply_plan_to_user,
     add_credits,
@@ -913,6 +914,121 @@ def set_default_payment_method():
 
 # Plan tier used to detect upgrade vs downgrade direction.
 _PLAN_TIER = {'free': 0, 'starter': 1, 'essential': 2, 'team': 3, 'business': 4}
+
+
+def _seat_billing_context(user):
+    org, membership = resolve_active_org_for_user(user)
+    plan_key = to_public_plan(getattr(org, 'plan_key', None) or user.subscription_plan)
+    plan = get_plan_catalog(current_app.config).get(plan_key) or {}
+    if plan_key not in {'team', 'business'}:
+        return None, ({'msg': 'Seat add-ons are available only on Team and Business.'}, 404)
+    if not org or not membership or not can_manage_org(membership.role):
+        return None, ({'msg': 'Only an organization owner or admin can manage seats.'}, 403)
+
+    included = int(plan.get('included_seats') or plan.get('min_seats') or 0)
+    maximum = int(plan.get('max_total_paid_seats') or included)
+    current = int(getattr(org, 'max_total_paid_seats', None) or included)
+    current = max(included, min(current, maximum))
+    usage = build_seat_usage(org) or {}
+    return {
+        'org': org,
+        'membership': membership,
+        'plan_key': plan_key,
+        'plan': plan,
+        'included_seats': included,
+        'current_seats': current,
+        'additional_seats': max(0, current - included),
+        'max_total_seats': maximum,
+        'used_seats': int(usage.get('total_paid_used') or 0),
+        'price_id': (current_app.config.get('STRIPE_ADDITIONAL_SEAT_PRICE_IDS', {}) or {}).get(plan_key),
+    }, None
+
+
+def _seat_billing_payload(ctx):
+    return {
+        'available': True,
+        'plan_key': ctx['plan_key'],
+        'plan_label': ctx['plan'].get('label', ctx['plan_key'].title()),
+        'included_seats': ctx['included_seats'],
+        'current_seats': ctx['current_seats'],
+        'additional_seats': ctx['additional_seats'],
+        'max_total_seats': ctx['max_total_seats'],
+        'used_seats': ctx['used_seats'],
+        'additional_seat_price_usd': ctx['plan'].get('additional_seat_price'),
+        'purchase_configured': bool(ctx['price_id']),
+        'can_purchase': str(ctx['membership'].role or '').lower() == 'owner',
+    }
+
+
+@billing_bp.route('/seats', methods=['GET'])
+@jwt_required()
+def get_seat_billing():
+    user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({'msg': 'User not found'}), 404
+    ctx, error = _seat_billing_context(user)
+    if error:
+        body, status = error
+        return jsonify(body), status
+    return jsonify(_seat_billing_payload(ctx)), 200
+
+
+@billing_bp.route('/seats', methods=['POST'])
+@jwt_required()
+def add_billed_seat():
+    user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({'msg': 'User not found'}), 404
+    ctx, error = _seat_billing_context(user)
+    if error:
+        body, status = error
+        return jsonify(body), status
+    if str(ctx['membership'].role or '').lower() != 'owner':
+        return jsonify({'msg': 'Only the organization owner can purchase seats.'}), 403
+    if not user.stripe_subscription_id:
+        return jsonify({'msg': 'No active subscription to add a seat to.'}), 400
+    if not ctx['price_id']:
+        return jsonify({'msg': f"{ctx['plan'].get('label')} seat purchasing is not configured yet."}), 503
+    target = ctx['current_seats'] + 1
+    if target > ctx['max_total_seats']:
+        upgrade = 'Business' if ctx['plan_key'] == 'team' else 'Enterprise'
+        return jsonify({'msg': f"{ctx['plan'].get('label')} supports up to {ctx['max_total_seats']} users. Contact Sales about {upgrade}."}), 400
+
+    quantity = target - ctx['included_seats']
+    try:
+        subscription = stripe.Subscription.retrieve(user.stripe_subscription_id)
+        items = (subscription.get('items') or {}).get('data') or []
+        seat_item = next(
+            (item for item in items if str((item.get('price') or {}).get('id') or '') == str(ctx['price_id'])),
+            None,
+        )
+        item_change = (
+            {'id': seat_item.get('id'), 'quantity': quantity}
+            if seat_item else {'price': ctx['price_id'], 'quantity': quantity}
+        )
+        updated = stripe.Subscription.modify(
+            user.stripe_subscription_id,
+            items=[item_change],
+            proration_behavior='always_invoice',
+            expand=['latest_invoice'],
+        )
+    except stripe.error.StripeError as exc:
+        return jsonify({'msg': str(getattr(exc, 'user_message', None) or exc)}), 400
+
+    latest_invoice = updated.get('latest_invoice')
+    invoice_status = str(latest_invoice.get('status') or '').lower() if isinstance(latest_invoice, dict) else ''
+    subscription_status = str(updated.get('status') or '').lower()
+    if subscription_status not in {'active', 'trialing'} or invoice_status not in {'', 'paid'}:
+        return jsonify({
+            'msg': "We couldn't add the seat because the prorated payment did not complete.",
+            'payment_problem': True,
+        }), 402
+
+    ctx['org'].max_total_paid_seats = target
+    db.session.commit()
+    ctx['current_seats'] = target
+    ctx['additional_seats'] = quantity
+    return jsonify({**_seat_billing_payload(ctx), 'success': True}), 200
 
 
 @billing_bp.route('/modify-subscription', methods=['POST'])

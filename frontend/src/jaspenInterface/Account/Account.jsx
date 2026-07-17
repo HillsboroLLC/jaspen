@@ -16,6 +16,7 @@ import {
   faLayerGroup,
   faPlug,
   faShieldHalved,
+  faUsers,
 } from '@fortawesome/free-solid-svg-icons';
 import FieldError from '../../shared/components/FieldError';
 import { PLAN_ORDER, PLAN_RANK } from '../../shared/constants/appConstants';
@@ -531,6 +532,7 @@ export default function Account() {
   // Invoices tab: null = loading, [] = loaded/empty.
   const [invoices, setInvoices] = useState(null);
   const [selectedReceipt, setSelectedReceipt] = useState(null);
+  const [seatBilling, setSeatBilling] = useState(null);
 
   useEffect(() => {
     if (activeTab !== 'invoices') return undefined;
@@ -543,6 +545,26 @@ export default function Account() {
         if (alive) setInvoices(Array.isArray(data.invoices) ? data.invoices : []);
       } catch {
         if (alive) setInvoices([]);
+      }
+    })();
+    return () => { alive = false; };
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== 'seats') return undefined;
+    let alive = true;
+    setSeatBilling(null);
+    (async () => {
+      try {
+        const response = await authFetch(`${API_BASE}/api/v1/billing/seats`, {
+          headers: authHeaders({}, 'GET'),
+          credentials: 'include',
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data?.msg || 'Unable to load seat billing.');
+        if (alive) setSeatBilling(data);
+      } catch (error) {
+        if (alive) setMessage(error.message || 'Unable to load seat billing.');
       }
     })();
     return () => { alive = false; };
@@ -1300,6 +1322,27 @@ export default function Account() {
       packLabel: pack.label || `${Number(pack.credits || 0).toLocaleString()} credits`,
       priceLabel: Number.isFinite(packPrice) ? `$${packPrice}` : '',
     });
+  };
+
+  const addSeat = async () => {
+    setMessage('');
+    setPendingAction('add-seat');
+    try {
+      const response = await authFetch(`${API_BASE}/api/v1/billing/seats`, {
+        method: 'POST',
+        headers: authHeaders({ 'Content-Type': 'application/json' }, 'POST'),
+        credentials: 'include',
+        body: JSON.stringify({}),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.msg || 'Unable to add the seat.');
+      setSeatBilling(data);
+      setMessage(`Seat added. Your ${data.plan_label} workspace now supports ${data.current_seats} users.`);
+    } catch (error) {
+      setMessage(error.message || 'Unable to add the seat.');
+    } finally {
+      setPendingAction('');
+    }
   };
 
   const updateConnector = async (connectorId, updates) => {
@@ -2226,12 +2269,17 @@ export default function Account() {
   // /jaspen-admin — so they're removed from this page rather than duplicated here.
   // One "Account" drawer with two sections: Billing and Settings. Each holds its own
   // items so the IA is clear (billing artifacts vs account/security settings).
+  const seatPlanKey = String(
+    userProfile?.active_organization_plan_key || status?.plan_key || status?.plan?.key || ''
+  ).toLowerCase();
+  const canManagePaidSeats = seatPlanKey === 'team' || seatPlanKey === 'business';
   const drawerGroups = [
     {
       group: 'Billing',
       items: [
         { key: 'overview', label: 'Overview', icon: faChartLine },
         { key: 'plans', label: 'Plans', icon: faLayerGroup },
+        ...(canManagePaidSeats ? [{ key: 'seats', label: 'Seats', icon: faUsers }] : []),
         { key: 'packs', label: 'Credit packs', icon: faBolt },
         { key: 'invoices', label: 'Invoices', icon: faFileInvoiceDollar },
       ],
@@ -3477,6 +3525,56 @@ export default function Account() {
               );
             })}
           </div>
+        </section>
+        )}
+
+        {activeTab === 'seats' && canManagePaidSeats && (
+        <section className="account-section">
+          <h2 className="account-tab-title">Workspace seats</h2>
+          {!seatBilling ? (
+            <div className="account-seat-loading">Loading seat details…</div>
+          ) : (
+            <div className="account-seat-card">
+              <div className="account-seat-summary">
+                <div>
+                  <span className="account-seat-eyebrow">{seatBilling.plan_label} plan</span>
+                  <h3>{seatBilling.current_seats} total seats</h3>
+                  <p>{seatBilling.used_seats} currently in use · {seatBilling.included_seats} included with your plan</p>
+                </div>
+                <div className="account-seat-price">
+                  <strong>${seatBilling.additional_seat_price_usd}</strong>
+                  <span>per added seat / month</span>
+                </div>
+              </div>
+
+              <div className="account-seat-rule">
+                {seatBilling.plan_key === 'team' ? (
+                  <p><strong>Team supports up to 4 users.</strong> Your plan includes 3 seats and you may add 1 more. At 5 users, upgrade to Business.</p>
+                ) : (
+                  <p><strong>Business supports up to 10 users.</strong> Your plan includes 5 seats and you may add up to 5 more. Contact Sales if you need more than 10.</p>
+                )}
+              </div>
+
+              <div className="account-seat-actions">
+                <span>{seatBilling.current_seats} of {seatBilling.max_total_seats} available seats purchased</span>
+                <button
+                  type="button"
+                  className="account-primary-btn"
+                  onClick={addSeat}
+                  disabled={pendingAction === 'add-seat' || !seatBilling.can_purchase || !seatBilling.purchase_configured || seatBilling.current_seats >= seatBilling.max_total_seats}
+                  aria-disabled={pendingAction === 'add-seat' || !seatBilling.can_purchase || !seatBilling.purchase_configured || seatBilling.current_seats >= seatBilling.max_total_seats}
+                >
+                  {pendingAction === 'add-seat' ? 'Adding seat…' : seatBilling.current_seats >= seatBilling.max_total_seats ? 'Seat limit reached' : `Add 1 seat for $${seatBilling.additional_seat_price_usd}/mo`}
+                </button>
+              </div>
+              {!seatBilling.purchase_configured && (
+                <p className="account-seat-config-note">Seat purchasing will be available after the Stripe seat price is connected.</p>
+              )}
+              {!seatBilling.can_purchase && (
+                <p className="account-seat-config-note">Only the organization owner can purchase additional seats.</p>
+              )}
+            </div>
+          )}
         </section>
         )}
 

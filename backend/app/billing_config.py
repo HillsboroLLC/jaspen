@@ -69,7 +69,7 @@ DEFAULT_PLAN_CATALOG = {
         'sales_only': False,
         'description': 'Align your team, pressure-test decisions, and execute with clarity.',
         'max_admin_seats': 3,
-        'max_total_paid_seats': None,
+        'max_total_paid_seats': 4,
         'max_viewer_seats': None,
     },
     'business': {
@@ -79,7 +79,7 @@ DEFAULT_PLAN_CATALOG = {
         'min_seats': 5,
         'included_seats': 5,
         'included_admins': 1,
-        'additional_seat_price': None,
+        'additional_seat_price': 30,
         'monthly_credits': 80_000_000,
         'self_serve': True,
         'sales_only': False,

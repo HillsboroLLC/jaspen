@@ -235,8 +235,12 @@ def create_app():
         'business': _stripe_price_id_from_env('PRICE_ID_BUSINESS_ANNUAL'),
     }
     app.config['STRIPE_ADDITIONAL_SEAT_PRICE_IDS'] = {
-        # Intentionally disabled until the owner supplies confirmed Stripe IDs.
-        'business': _stripe_price_id_from_env('PRICE_ID_BUSINESS_ADDITIONAL_SEAT'),
+        'team': _stripe_price_id_from_env('PRICE_ID_TEAM_ADDITIONAL_SEAT', 'PRICE_ID_TEAM_SEAT'),
+        'business': _stripe_price_id_from_env(
+            'PRICE_ID_BUSINESS_ADDITIONAL_SEAT',
+            'PRICE_ID_BUSINESS_SEAT',
+            'PRICE_ID_ENTERPRISE_SEAT',
+        ),
     }
     # Backward-compatible alias used by legacy code paths.
     app.config['STRIPE_OVERAGE_PACK_PRICE_IDS'] = app.config['STRIPE_CREDIT_PACK_PRICE_IDS']

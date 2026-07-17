@@ -480,6 +480,96 @@ body.jaspen-sidebar-open .account-page.billing-drawer-open {
   line-height: 1.35;
 }
 
+.account-seat-loading {
+  color: var(--account-muted);
+  padding: 12px 0;
+}
+
+.account-seat-card {
+  max-width: 760px;
+  border: 1px solid var(--account-border);
+  border-radius: var(--int-radius-sm);
+  background: var(--int-surface);
+  padding: 20px;
+  display: grid;
+  gap: 18px;
+}
+
+.account-seat-summary,
+.account-seat-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.account-seat-eyebrow {
+  color: #a0036c;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.account-seat-summary h3 {
+  margin: 5px 0;
+  color: var(--account-ink);
+  font-size: 1.4rem;
+}
+
+.account-seat-summary p,
+.account-seat-rule p,
+.account-seat-actions span,
+.account-seat-config-note {
+  margin: 0;
+  color: var(--account-muted);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.account-seat-price {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.account-seat-price strong {
+  display: block;
+  color: var(--account-ink);
+  font-size: 1.35rem;
+}
+
+.account-seat-price span {
+  color: var(--account-muted);
+  font-size: 0.78rem;
+}
+
+.account-seat-rule {
+  border-left: 3px solid #a0036c;
+  background: rgba(160, 3, 108, 0.045);
+  padding: 12px 14px;
+}
+
+.account-seat-rule strong {
+  color: var(--account-ink);
+}
+
+.account-seat-actions {
+  padding-top: 2px;
+}
+
+.account-seat-config-note {
+  color: #9a5b00;
+}
+
+@media (max-width: 680px) {
+  .account-seat-summary,
+  .account-seat-actions {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .account-seat-price { text-align: left; }
+}
+
 .account-plan-meta {
   font-size: 0.83rem;
 }
