@@ -791,6 +791,7 @@ def capture_enterprise_inquiry():
         phone = str(data.get("phone") or "").strip()[:40] or None
         preferred_contact = str(data.get("preferred_contact") or "").strip().lower()[:20] or None
         comments = str(data.get("comments") or "").strip()[:2000] or None
+        email_copy = data.get("email_copy") is True
         source_url = str(data.get("source_url") or "").strip()[:1024] or None
     except (TypeError, ValueError, OverflowError):
         return _bad_request("invalid_estimate", "Estimate fields are invalid.")
@@ -820,10 +821,13 @@ def capture_enterprise_inquiry():
         db.session.commit()
 
         sales_recipient = current_app.config.get("SALES_NOTIFICATION_EMAIL") or "sales@jaspen.ai"
+        sender_address = current_app.config.get("MAIL_DEFAULT_SENDER") or current_app.config.get("MAIL_USERNAME") or "no-reply@jaspen.ai"
+        sender = ("Jaspen Sales", sender_address)
         try:
             message = Message(
                 subject=f"Enterprise inquiry: {payload.get('company') or payload['email']}",
                 recipients=[sales_recipient],
+                sender=sender,
                 reply_to=payload["email"],
             )
             message.body = (
@@ -842,7 +846,41 @@ def capture_enterprise_inquiry():
         except Exception:
             current_app.logger.exception("Enterprise inquiry notification email failed; inquiry remains stored")
 
-        return jsonify({"ok": True, "inquiry_id": inquiry.id}), 201 if created else 200
+        copy_sent = False
+        if email_copy:
+            try:
+                range_text = (
+                    f"${annual_low:,}–${annual_high:,} annually"
+                    if annual_low is not None and annual_high is not None
+                    else f"Starting around ${annual_low:,} annually"
+                    if annual_low is not None
+                    else "To be scoped with Jaspen Sales"
+                )
+                copy_message = Message(
+                    subject="Your Jaspen Enterprise planning estimate",
+                    recipients=[payload["email"]],
+                    sender=sender,
+                    reply_to=sales_recipient,
+                )
+                copy_message.body = (
+                    f"Hi {payload.get('first_name') or 'there'},\n\n"
+                    f"Here is a copy of your Jaspen Enterprise planning estimate.\n\n"
+                    f"Recommended fit: {recommendation}\n"
+                    f"Indicative annual investment: {range_text}\n"
+                    f"Active participants: {participants}\n"
+                    f"Teams or business units: {teams}\n"
+                    f"Expected usage: {usage}\n"
+                    f"Requirements selected: {', '.join(requirements) or 'None'}\n\n"
+                    "Important: This is an indicative planning estimate, not a quote or guaranteed outcome. "
+                    "Final pricing and scope are confirmed with Jaspen Sales.\n\n"
+                    f"Questions? Reply to this email or contact {sales_recipient}.\n"
+                )
+                mail.send(copy_message)
+                copy_sent = True
+            except Exception:
+                current_app.logger.exception("Enterprise inquiry customer copy email failed; inquiry remains stored")
+
+        return jsonify({"ok": True, "inquiry_id": inquiry.id, "copy_sent": copy_sent}), 201 if created else 200
     except SQLAlchemyError:
         db.session.rollback()
         current_app.logger.exception("Enterprise inquiry database error")

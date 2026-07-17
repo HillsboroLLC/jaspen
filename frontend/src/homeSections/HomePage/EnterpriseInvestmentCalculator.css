@@ -59,6 +59,28 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
   margin-top: 18px;
 }
+
+.eic-copy-option {
+  align-items: flex-start;
+  display: flex;
+  gap: 10px;
+  margin: 16px 0;
+}
+
+.eic-copy-option input {
+  flex: 0 0 auto;
+  margin-top: 3px;
+  width: auto;
+}
+
+.eic-copy-option span,
+.eic-copy-option small {
+  display: block;
+}
+
+.eic-copy-option small {
+  margin-top: 3px;
+}
 .eic label,
 .eic fieldset {
   font-size: 0.88rem;

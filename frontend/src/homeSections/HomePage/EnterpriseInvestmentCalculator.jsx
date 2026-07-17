@@ -98,7 +98,7 @@ function calculateEstimate(inputs) {
 export default function EnterpriseInvestmentCalculator({ billing = 'monthly', onOpenModal }) {
   const [step, setStep] = useState(0);
   const [inputs, setInputs] = useState({ participants: 10, teams: 1, usage: 'standard', requirements: [], hourlyCost: 112.5, billing });
-  const [contact, setContact] = useState({ firstName: '', lastName: '', email: '', company: '', title: '', phone: '', preferredContact: '', comments: '', website: '' });
+  const [contact, setContact] = useState({ firstName: '', lastName: '', email: '', company: '', title: '', phone: '', preferredContact: '', comments: '', emailCopy: false, website: '' });
   const [submitState, setSubmitState] = useState({ status: 'idle', message: '' });
   const estimate = useMemo(() => calculateEstimate({ ...inputs, billing }), [inputs, billing]);
   const isEnterpriseQualified = estimate.band !== 'Business';
@@ -140,6 +140,7 @@ export default function EnterpriseInvestmentCalculator({ billing = 'monthly', on
           phone: contact.phone,
           preferred_contact: contact.preferredContact,
           comments: contact.comments,
+          email_copy: contact.emailCopy,
           website: contact.website,
           participants: Number(inputs.participants),
           teams: Number(inputs.teams),
@@ -158,7 +159,11 @@ export default function EnterpriseInvestmentCalculator({ billing = 'monthly', on
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || 'We could not submit your inquiry.');
       analytics.track('enterprise_inquiry_submitted', { recommended_fit: estimate.fit });
-      setSubmitState({ status: 'success', message: 'Thank you. Your estimate and deployment context have been sent to Jaspen Sales.' });
+      setSubmitState({ status: 'success', message: contact.emailCopy && data.copy_sent
+        ? 'Thank you. Your estimate was sent to Jaspen Sales, and a copy was emailed to you.'
+        : contact.emailCopy
+        ? 'Your estimate was sent to Jaspen Sales, but we could not email your copy. Sales still received your inquiry.'
+        : 'Thank you. Your estimate and deployment context have been sent to Jaspen Sales.' });
     } catch (error) {
       setSubmitState({ status: 'error', message: error.message });
     }
@@ -205,6 +210,7 @@ export default function EnterpriseInvestmentCalculator({ billing = 'monthly', on
             <div className="eic-grid"><label>First name<input required value={contact.firstName} onChange={e => setContact({ ...contact, firstName: e.target.value })} /></label><label>Last name<input required value={contact.lastName} onChange={e => setContact({ ...contact, lastName: e.target.value })} /></label><label>Work email<input required type="email" inputMode="email" autoComplete="email" value={contact.email} onChange={e => { setContact({ ...contact, email: e.target.value }); if (submitState.status === 'error') setSubmitState({ status: 'idle', message: '' }); }} /><small>Use your company email address; personal email providers are not accepted.</small></label><label>Company<input required value={contact.company} onChange={e => setContact({ ...contact, company: e.target.value })} /></label></div>
             <div className="eic-grid eic-grid-three"><label>Job title <span>(optional)</span><input value={contact.title} onChange={e => setContact({ ...contact, title: e.target.value })} /></label><label>Phone <span>(optional)</span><input type="tel" value={contact.phone} onChange={e => setContact({ ...contact, phone: e.target.value })} /></label><label>Preferred contact <span>(optional)</span><select value={contact.preferredContact} onChange={e => setContact({ ...contact, preferredContact: e.target.value })}><option value="">No preference</option><option value="email">Email</option><option value="phone">Phone</option></select></label></div>
             <label>Anything else we should know? <span>(optional)</span><textarea rows="3" value={contact.comments} onChange={e => setContact({ ...contact, comments: e.target.value })} /></label>
+            <label className="eic-copy-option"><input type="checkbox" checked={contact.emailCopy} onChange={e => setContact({ ...contact, emailCopy: e.target.checked })} /><span><strong>Email me a copy of this estimate</strong><small>This is an indicative planning estimate, not a quote.</small></span></label>
             <label className="eic-honeypot" aria-hidden="true">Website<input tabIndex="-1" autoComplete="off" value={contact.website} onChange={e => setContact({ ...contact, website: e.target.value })} /></label>
             {submitState.message && <p className="eic-error" role="alert">{submitState.message}</p>}
             <button className="jaspen-btn jaspen-btn-primary" disabled={submitState.status === 'submitting'}>{submitState.status === 'submitting' ? 'Sending…' : 'Send to Sales'}</button>
