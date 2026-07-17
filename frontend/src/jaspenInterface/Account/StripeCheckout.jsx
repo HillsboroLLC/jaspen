@@ -32,7 +32,7 @@ const APPEARANCE = {
   },
 };
 
-function CheckoutForm({ mode, planKey, subscriptionId, planLabel, packLabel, priceLabel, onSuccess }) {
+function CheckoutForm({ mode, planKey, subscriptionId, planLabel, packLabel, priceLabel, billingInterval = 'monthly', onSuccess }) {
   const stripe = useStripe();
   const elements = useElements();
   const [submitting, setSubmitting] = useState(false);
@@ -208,7 +208,7 @@ function CheckoutForm({ mode, planKey, subscriptionId, planLabel, packLabel, pri
       )}
       {!isUpdate && !isCreditPack && (
         <div style={{ marginTop: 14, fontSize: 11.5, color: '#64748b', lineHeight: 1.5 }}>
-          By subscribing, you agree to be charged {priceLabel} now and on a recurring monthly
+          By subscribing, you agree to be charged {priceLabel} now and on a recurring {billingInterval}
           basis until you cancel. You can cancel anytime in your account settings.
         </div>
       )}
@@ -231,7 +231,7 @@ function CheckoutForm({ mode, planKey, subscriptionId, planLabel, packLabel, pri
   );
 }
 
-export default function StripeCheckout({ mode = 'subscribe', planKey, planLabel, packKey, packLabel, priceLabel, plans = [], onSuccess, onClose }) {
+export default function StripeCheckout({ mode = 'subscribe', planKey, planLabel, packKey, packLabel, priceLabel, billingInterval = 'monthly', plans = [], onSuccess, onClose }) {
   const isUpdate = mode === 'update_payment';
   const isCreditPack = mode === 'credit_pack';
   const [selectedPlanKey, setSelectedPlanKey] = useState(planKey);
@@ -263,7 +263,7 @@ export default function StripeCheckout({ mode = 'subscribe', planKey, planLabel,
           ? {}
           : isCreditPack
             ? { pack_key: packKey }
-            : { plan_key: selectedPlanKey, coupon_code: appliedCoupon || undefined };
+            : { plan_key: selectedPlanKey, billing_interval: billingInterval, coupon_code: appliedCoupon || undefined };
         const resp = await authFetch(`${API_BASE}/api/v1/billing/${endpoint}`, {
           method: 'POST',
           headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
@@ -283,7 +283,7 @@ export default function StripeCheckout({ mode = 'subscribe', planKey, planLabel,
       }
     })();
     return () => { alive = false; };
-  }, [selectedPlanKey, isUpdate, isCreditPack, packKey, appliedCoupon]);
+  }, [selectedPlanKey, billingInterval, isUpdate, isCreditPack, packKey, appliedCoupon]);
 
   const applyCoupon = () => {
     setAppliedCoupon(String(couponInput || '').trim());
@@ -313,7 +313,7 @@ export default function StripeCheckout({ mode = 'subscribe', planKey, planLabel,
             </div>
             {!isUpdate && effPrice && (
               <div style={{ fontSize: 13, color: '#cbd5e1', marginTop: 2 }}>
-                {isCreditPack ? `${effPrice} one-time purchase` : `${effPrice} · billed monthly · cancel anytime`}
+                {isCreditPack ? `${effPrice} one-time purchase` : `${effPrice} · billed ${billingInterval} · cancel anytime`}
               </div>
             )}
           </div>
@@ -392,7 +392,7 @@ export default function StripeCheckout({ mode = 'subscribe', planKey, planLabel,
           ) : (clientSecret && stripePromise) ? (
             // key forces a clean Elements remount when the plan (clientSecret) changes.
             <Elements key={clientSecret} stripe={stripePromise} options={{ clientSecret, appearance: APPEARANCE }}>
-              <CheckoutForm mode={mode} planKey={selectedPlanKey} subscriptionId={subscriptionId} planLabel={effLabel} packLabel={packLabel} priceLabel={effPrice} onSuccess={onSuccess} />
+              <CheckoutForm mode={mode} planKey={selectedPlanKey} subscriptionId={subscriptionId} planLabel={effLabel} packLabel={packLabel} priceLabel={effPrice} billingInterval={billingInterval} onSuccess={onSuccess} />
             </Elements>
           ) : (
             <div style={{ padding: '32px 0', textAlign: 'center', color: '#64748b', fontSize: 13 }}>Loading secure checkout…</div>

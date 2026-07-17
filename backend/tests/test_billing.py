@@ -26,6 +26,72 @@ def test_seat_catalog_enforces_team_and_business_limits(client, app):
     assert plans['business']['additional_seat_price'] == 30
 
 
+def test_catalog_exposes_every_configured_annual_plan(client, app):
+    app.config['STRIPE_ANNUAL_PRICE_IDS'] = {
+        'starter': 'price_starter_annual',
+        'essential': 'price_essential_annual',
+        'team': 'price_team_annual',
+        'business': 'price_business_annual',
+    }
+
+    response = client.get('/api/v1/billing/catalog')
+    assert response.status_code == 200
+    plans = response.get_json()['plans']
+    assert plans['starter']['stripe_annual_price_id'] == 'price_starter_annual'
+    assert plans['essential']['stripe_annual_price_id'] == 'price_essential_annual'
+    assert plans['team']['stripe_annual_price_id'] == 'price_team_annual'
+    assert plans['business']['stripe_annual_price_id'] == 'price_business_annual'
+    assert plans['starter']['annual_monthly_price_usd'] == 6
+    assert plans['essential']['annual_monthly_price_usd'] == 32
+    assert plans['team']['annual_monthly_price_usd'] == 107
+    assert plans['business']['annual_monthly_price_usd'] == 249
+
+
+def test_embedded_checkout_uses_selected_annual_price(
+    client, app, db, test_user, auth_headers, monkeypatch
+):
+    from app.routes import billing as billing_routes
+
+    test_user.stripe_customer_id = 'cus_test'
+    db.session.commit()
+    app.config['STRIPE_ANNUAL_PRICE_IDS']['essential'] = 'price_essential_annual'
+
+    monkeypatch.setattr(
+        billing_routes.stripe.Subscription,
+        'list',
+        lambda **_kwargs: {'data': []},
+    )
+    captured = {}
+
+    def create_subscription(**kwargs):
+        captured.update(kwargs)
+        subscription = {
+            'id': 'sub_annual',
+            'latest_invoice': {'id': 'in_annual'},
+        }
+        return type('StripeSubscription', (dict,), {'id': 'sub_annual'})(subscription)
+
+    monkeypatch.setattr(billing_routes.stripe.Subscription, 'create', create_subscription)
+    monkeypatch.setattr(
+        billing_routes.stripe.Invoice,
+        'retrieve',
+        lambda _invoice_id, **_kwargs: {
+            'confirmation_secret': {'client_secret': 'pi_secret'},
+            'payment_intent': None,
+        },
+    )
+
+    response = client.post(
+        '/api/v1/billing/create-subscription',
+        headers=auth_headers,
+        json={'plan_key': 'essential', 'billing_interval': 'annual'},
+    )
+    assert response.status_code == 200
+    assert captured['items'] == [{'price': 'price_essential_annual'}]
+    assert captured['metadata']['billing_interval'] == 'annual'
+    assert response.get_json()['billing_interval'] == 'annual'
+
+
 def test_free_plan_does_not_expose_seat_billing(client, auth_headers):
     response = client.get('/api/v1/billing/seats', headers=auth_headers)
     assert response.status_code == 404

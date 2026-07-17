@@ -44,6 +44,7 @@ DEFAULT_PLAN_CATALOG = {
     'starter': {
         'label': 'Starter',
         'monthly_price_usd': 7,
+        'annual_monthly_price_usd': 6,
         'monthly_credits': 1_000_000,
         'self_serve': True,
         'sales_only': False,
@@ -52,6 +53,7 @@ DEFAULT_PLAN_CATALOG = {
     'essential': {
         'label': 'Essential',
         'monthly_price_usd': 39,
+        'annual_monthly_price_usd': 32,
         'monthly_credits': 7_000_000,
         'self_serve': True,
         'sales_only': False,
@@ -60,6 +62,7 @@ DEFAULT_PLAN_CATALOG = {
     'team': {
         'label': 'Team',
         'monthly_price_usd': 129,
+        'annual_monthly_price_usd': 107,
         'price_model': 'per_seat',
         'min_seats': 3,
         'included_seats': 3,
@@ -75,6 +78,7 @@ DEFAULT_PLAN_CATALOG = {
     'business': {
         'label': 'Business',
         'monthly_price_usd': 299,
+        'annual_monthly_price_usd': 249,
         'price_model': 'per_seat',
         'min_seats': 5,
         'included_seats': 5,

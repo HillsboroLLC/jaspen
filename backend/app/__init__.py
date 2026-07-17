@@ -232,6 +232,9 @@ def create_app():
         'credits_18000':   _stripe_price_id_from_env('PRICE_ID_CREDITS_18000', 'PRICE_ID_OVERAGE_20000'),
     }
     app.config['STRIPE_ANNUAL_PRICE_IDS'] = {
+        'starter': _stripe_price_id_from_env('PRICE_ID_STARTER_ANNUAL'),
+        'essential': _stripe_price_id_from_env('PRICE_ID_ESSENTIAL_ANNUAL'),
+        'team': _stripe_price_id_from_env('PRICE_ID_TEAM_ANNUAL'),
         'business': _stripe_price_id_from_env('PRICE_ID_BUSINESS_ANNUAL'),
     }
     app.config['STRIPE_ADDITIONAL_SEAT_PRICE_IDS'] = {

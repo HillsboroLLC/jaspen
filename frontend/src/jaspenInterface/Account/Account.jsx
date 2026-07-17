@@ -29,15 +29,22 @@ function authHeaders(extra = {}, method = 'GET') {
   return buildAuthHeaders(extra, method);
 }
 
-function priceDisplay(plan) {
-  if (plan?.price_model === 'per_seat' && Number.isFinite(plan?.monthly_price_usd)) {
-    return `$${plan.monthly_price_usd}/mo`;
+function priceDisplay(plan, billingInterval = 'monthly') {
+  const annual = billingInterval === 'annual' && Number.isFinite(plan?.annual_monthly_price_usd);
+  const monthlyPrice = annual ? plan.annual_monthly_price_usd : plan?.monthly_price_usd;
+  if (plan?.price_model === 'per_seat' && Number.isFinite(monthlyPrice)) {
+    return annual
+      ? `$${monthlyPrice}/mo · $${(monthlyPrice * 12).toLocaleString()} billed annually`
+      : `$${monthlyPrice}/mo`;
   }
   if (plan?.price_model === 'custom') {
     return 'Contact sales';
   }
-  if (Number.isFinite(plan?.monthly_price_usd)) {
-    return plan.monthly_price_usd === 0 ? '$0' : `$${plan.monthly_price_usd}/mo`;
+  if (Number.isFinite(monthlyPrice)) {
+    if (monthlyPrice === 0) return '$0';
+    return annual
+      ? `$${monthlyPrice}/mo · $${(monthlyPrice * 12).toLocaleString()} billed annually`
+      : `$${monthlyPrice}/mo`;
   }
   return 'Contact sales';
 }
@@ -527,6 +534,7 @@ export default function Account() {
   const [userProfile, setUserProfile] = useState(null);
   const [discardDialog, setDiscardDialog] = useState(null);
   const [planConfirm, setPlanConfirm] = useState(null);
+  const [billingInterval, setBillingInterval] = useState('monthly');
   // Embedded Stripe checkout modal (Payment Element) — { planKey, planLabel, priceLabel }.
   const [embeddedCheckout, setEmbeddedCheckout] = useState(null);
   // Invoices tab: null = loading, [] = loaded/empty.
@@ -732,6 +740,7 @@ export default function Account() {
         if (mounted) {
           const connectorItems = Array.isArray(connectorsData?.connectors) ? connectorsData.connectors : [];
           setStatus(statusData);
+          setBillingInterval(statusData?.billing_interval === 'annual' ? 'annual' : 'monthly');
           setCatalog(catalogData || { plans: {}, credit_packs: {}, overage_packs: {}, model_types: FALLBACK_MODEL_TYPES });
           setConnectorState({
             loading: false,
@@ -1099,7 +1108,7 @@ export default function Account() {
   };
 
   // Tier map mirrors the backend _PLAN_TIER dict — used to detect upgrade vs downgrade.
-  const PLAN_TIER_MAP = { free: 0, starter: 1, essential: 2, team: 3, enterprise: 4 };
+  const PLAN_TIER_MAP = { free: 0, starter: 1, essential: 2, team: 3, business: 4 };
 
   // Build a clear "here's what will happen" confirmation before any plan change
   // touches Stripe — especially the in-place upgrade, which charges the card on
@@ -1108,7 +1117,7 @@ export default function Account() {
     const currentPlanKey = status?.plan_key || 'free';
     const hasSubscription = Boolean(status?.stripe_subscription_id);
     const label = plan?.label || planKey;
-    const price = priceDisplay(plan);
+    const price = priceDisplay(plan, billingInterval);
     const currentLabel = plans?.[currentPlanKey]?.label || currentPlanKey;
     const currentTier = PLAN_TIER_MAP[currentPlanKey] ?? 0;
     const newTier = PLAN_TIER_MAP[planKey] ?? 0;
@@ -1116,7 +1125,7 @@ export default function Account() {
     // New subscriber: open the embedded checkout DIRECTLY — no separate confirm step.
     // The modal itself carries the plan, price, disclaimer, and payment on one card.
     if (planKey !== 'free' && (!hasSubscription || currentPlanKey === 'free')) {
-      setEmbeddedCheckout({ planKey, planLabel: label, priceLabel: price });
+      setEmbeddedCheckout({ planKey, planLabel: label, priceLabel: price, billingInterval });
       return;
     }
 
@@ -1137,10 +1146,10 @@ export default function Account() {
       confirmLabel = `Switch to ${label}`;
     }
 
-    setPlanConfirm({ planKey, title, message, confirmLabel });
+    setPlanConfirm({ planKey, billingInterval, title, message, confirmLabel });
   };
 
-  const startPlanChange = async (planKey) => {
+  const startPlanChange = async (planKey, selectedBillingInterval = billingInterval) => {
     setPendingAction(planKey);
     setMessage('');
 
@@ -1176,7 +1185,8 @@ export default function Account() {
         setEmbeddedCheckout({
           planKey,
           planLabel: planInfo.label || planKey,
-          priceLabel: priceDisplay(planInfo),
+          priceLabel: priceDisplay(planInfo, selectedBillingInterval),
+          billingInterval: selectedBillingInterval,
         });
         setPendingAction('');
         return;
@@ -1191,7 +1201,7 @@ export default function Account() {
         method: 'POST',
         headers: authHeaders({ 'Content-Type': 'application/json' }, 'POST'),
         credentials: 'include',
-        body: JSON.stringify({ plan_key: planKey }),
+        body: JSON.stringify({ plan_key: planKey, billing_interval: selectedBillingInterval }),
       });
       const data = await response.json();
       if (!response.ok) {
@@ -2606,11 +2616,32 @@ export default function Account() {
               </button>
             </p>
           )}
+          <div
+            role="group"
+            aria-label="Billing interval"
+            style={{ display: 'flex', justifyContent: 'center', gap: 8, margin: '8px 0 18px' }}
+          >
+            {['monthly', 'annual'].map((interval) => {
+              const active = billingInterval === interval;
+              return (
+                <button
+                  key={interval}
+                  type="button"
+                  className={active ? 'account-primary-btn' : 'account-secondary-btn'}
+                  aria-pressed={active}
+                  onClick={() => setBillingInterval(interval)}
+                >
+                  {interval === 'monthly' ? 'Monthly' : 'Annual · save 17%'}
+                </button>
+              );
+            })}
+          </div>
           <div className="account-plan-grid">
             {PLAN_ORDER.map((key) => {
               const plan = plans[key];
               if (!plan) return null;
               const isCurrent = currentPlan === key;
+              const isCurrentInterval = isCurrent && (status?.billing_interval || 'monthly') === billingInterval;
               const isSalesOnly = !!plan.sales_only;
               const isPending = pendingAction === key;
               const PLAN_HEADLINES = {
@@ -2618,14 +2649,14 @@ export default function Account() {
                 starter: 'Keep exploring',
                 essential: 'Onboard your strategy partner',
                 team: 'Move faster together',
-                enterprise: 'Scale decision-making across your organization',
+                business: 'Scale decision-making across your organization',
               };
               const PLAN_AUDIENCE = {
                 free: 'Start without commitment',
                 starter: 'For light personal use',
                 essential: 'For individual operators and builders',
                 team: 'For small teams and cross-functional work',
-                enterprise: 'For organizations and large-scale execution',
+                business: 'For organizations and large-scale execution',
               };
               const isUpgrade = PLAN_TIER_MAP[key] > PLAN_TIER_MAP[currentPlan];
               return (
@@ -2637,7 +2668,7 @@ export default function Account() {
                     )}
                   </div>
                   <p className="account-plan-price">
-                    {priceDisplay(plan)}
+                    {priceDisplay(plan, billingInterval)}
                   </p>
                   <p className="account-plan-meta" style={{ fontStyle: 'italic', color: 'rgba(22,31,59,0.6)', fontSize: '0.78rem' }}>
                     {PLAN_AUDIENCE[key]}
@@ -2663,7 +2694,7 @@ export default function Account() {
                   </div>
 
                   <div className="account-plan-action-row">
-                    {isCurrent ? null : isSalesOnly ? (
+                    {isCurrentInterval ? null : isSalesOnly ? (
                       <a href="mailto:hello@jaspen.ai" className="account-primary-btn">Talk to sales</a>
                     ) : (
                       <button
@@ -2673,6 +2704,7 @@ export default function Account() {
                         disabled={isPending} aria-disabled={isPending}
                       >
                         {isPending ? 'Opening...'
+                          : isCurrent ? `Switch to ${billingInterval === 'annual' ? 'annual' : 'monthly'} billing`
                           : isUpgrade ? `Upgrade to ${plan.label}`
                           : key === 'free' ? 'Cancel subscription'
                           : `Downgrade to ${plan.label}`}
@@ -2686,7 +2718,7 @@ export default function Account() {
                     >
                       Need more than the baseline?{' '}
                       <a
-                        href="mailto:hello@jaspen.ai?subject=Business%20plan%20%E2%80%94%20custom%20capacity"
+                        href="mailto:sales@jaspen.ai?subject=Business%20plan%20%E2%80%94%20custom%20capacity"
                         style={{ color: 'var(--magenta, #c026a6)', textDecoration: 'underline' }}
                       >
                         Contact sales
@@ -4065,8 +4097,9 @@ export default function Account() {
           confirmVariant="primary"
           onConfirm={() => {
             const planKey = planConfirm?.planKey;
+            const selectedBillingInterval = planConfirm?.billingInterval;
             setPlanConfirm(null);
-            if (planKey) startPlanChange(planKey);
+            if (planKey) startPlanChange(planKey, selectedBillingInterval);
           }}
           onCancel={() => setPlanConfirm(null)}
         />
@@ -4148,12 +4181,13 @@ export default function Account() {
             mode={embeddedCheckout.mode || 'subscribe'}
             planKey={embeddedCheckout.planKey}
             planLabel={embeddedCheckout.planLabel}
+            billingInterval={embeddedCheckout.billingInterval || 'monthly'}
             packKey={embeddedCheckout.packKey}
             packLabel={embeddedCheckout.packLabel}
             priceLabel={embeddedCheckout.priceLabel}
             plans={PLAN_ORDER
               .filter((key) => key !== 'free' && plans[key] && !plans[key]?.sales_only)
-              .map((key) => ({ key, label: plans[key]?.label || key, priceLabel: priceDisplay(plans[key]) }))}
+              .map((key) => ({ key, label: plans[key]?.label || key, priceLabel: priceDisplay(plans[key], embeddedCheckout.billingInterval || 'monthly') }))}
             onClose={() => setEmbeddedCheckout(null)}
             onSuccess={async () => {
               const wasUpdate = embeddedCheckout.mode === 'update_payment';

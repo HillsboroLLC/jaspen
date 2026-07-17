@@ -109,14 +109,24 @@ def _validated_frontend_redirect(url, *, fallback_path):
 
 
 def _plan_key_for_price_id(price_id, app_config):
-    """Reverse-map a Stripe price id -> our plan_key (STRIPE_PRICE_IDS is plan->price)."""
+    """Reverse-map either a monthly or annual Stripe price id to its plan key."""
     if not price_id:
         return None
-    mapping = app_config.get('STRIPE_PRICE_IDS', {}) or {}
-    for plan_key, pid in mapping.items():
-        if pid == price_id:
-            return normalize_plan_key(plan_key)
+    for mapping_name in ('STRIPE_PRICE_IDS', 'STRIPE_ANNUAL_PRICE_IDS'):
+        mapping = app_config.get(mapping_name, {}) or {}
+        for plan_key, pid in mapping.items():
+            if pid == price_id:
+                return normalize_plan_key(plan_key)
     return None
+
+
+def _normalize_billing_interval(value):
+    return 'annual' if str(value or '').strip().lower() == 'annual' else 'monthly'
+
+
+def _price_id_for_plan(plan_key, billing_interval, app_config):
+    mapping_name = 'STRIPE_ANNUAL_PRICE_IDS' if billing_interval == 'annual' else 'STRIPE_PRICE_IDS'
+    return (app_config.get(mapping_name, {}) or {}).get(plan_key)
 
 
 def _ensure_customer_for_user(user):
@@ -269,6 +279,7 @@ def get_billing_status():
     cancel_at_period_end = False
     current_period_end = None
     scheduled_plan_change = None
+    billing_interval = 'monthly'
     if user.stripe_subscription_id:
         try:
             sub = stripe.Subscription.retrieve(user.stripe_subscription_id)
@@ -277,6 +288,12 @@ def get_billing_status():
             if cpe:
                 current_period_end = datetime.utcfromtimestamp(int(cpe)).isoformat()
             sub_meta = sub.get('metadata') or {}
+            items = (sub.get('items') or {}).get('data') or []
+            current_price_id = (items[0].get('price') or {}).get('id') if items else None
+            if current_price_id in set((current_app.config.get('STRIPE_ANNUAL_PRICE_IDS', {}) or {}).values()):
+                billing_interval = 'annual'
+            elif str(sub_meta.get('billing_interval') or '').strip().lower() == 'annual':
+                billing_interval = 'annual'
             scheduled_raw = str(sub_meta.get('scheduled_plan_change') or '').strip()
             if scheduled_raw:
                 scheduled_plan_change = to_public_plan(scheduled_raw)
@@ -294,6 +311,7 @@ def get_billing_status():
         'cancel_at_period_end': cancel_at_period_end,
         'current_period_end': current_period_end,
         'scheduled_plan_change': scheduled_plan_change,
+        'billing_interval': billing_interval,
         'access_restricted': (not admin_override) and (effective_plan_key(user, current_app.config) != plan_key),
         'effective_plan_key': plan_key if admin_override else effective_plan_key(user, current_app.config),
         'credits_remaining': credits_remaining,
@@ -492,6 +510,7 @@ def create_checkout_session():
     data = request.get_json() or {}
     raw_plan_key = data.get('plan_key') or data.get('plan')
     plan_key = normalize_plan_key(raw_plan_key)
+    billing_interval = _normalize_billing_interval(data.get('billing_interval'))
     if not raw_plan_key:
         return jsonify({'msg': 'Missing plan_key'}), 400
 
@@ -515,9 +534,9 @@ def create_checkout_session():
             'plan_key': 'free',
         }), 200
 
-    price_id = current_app.config.get('STRIPE_PRICE_IDS', {}).get(plan_key)
+    price_id = _price_id_for_plan(plan_key, billing_interval, current_app.config)
     if not price_id:
-        return jsonify({'msg': f"No Stripe price configured for '{plan_key}'"}), 400
+        return jsonify({'msg': f"No {billing_interval} Stripe price configured for '{plan_key}'"}), 400
 
     customer_id = _ensure_customer_for_user(user)
 
@@ -541,6 +560,7 @@ def create_checkout_session():
         metadata={
             'user_id': str(user.id),
             'plan_key': plan_key,
+            'billing_interval': billing_interval,
             'checkout_type': 'subscription',
         },
         success_url=success_url,
@@ -688,6 +708,7 @@ def create_subscription_embedded():
     data = request.get_json() or {}
     raw_plan_key = data.get('plan_key') or data.get('plan')
     plan_key = normalize_plan_key(raw_plan_key)
+    billing_interval = _normalize_billing_interval(data.get('billing_interval'))
     if not raw_plan_key:
         return jsonify({'msg': 'Missing plan_key'}), 400
 
@@ -703,9 +724,9 @@ def create_subscription_embedded():
             'plan_key': plan_key,
         }), 400
 
-    price_id = current_app.config.get('STRIPE_PRICE_IDS', {}).get(plan_key)
+    price_id = _price_id_for_plan(plan_key, billing_interval, current_app.config)
     if not price_id:
-        return jsonify({'msg': f"No Stripe price configured for '{plan_key}'."}), 400
+        return jsonify({'msg': f"No {billing_interval} Stripe price configured for '{plan_key}'."}), 400
 
     coupon_code = str(data.get('coupon_code') or '').strip()
     discounts = []
@@ -753,6 +774,7 @@ def create_subscription_embedded():
             'metadata': {
                 'user_id': str(user.id),
                 'plan_key': plan_key,
+                'billing_interval': billing_interval,
                 'checkout_type': 'subscription_embedded',
             },
         }
@@ -778,6 +800,7 @@ def create_subscription_embedded():
         'subscription_id': subscription.id,
         'client_secret': client_secret,
         'plan_key': plan_key,
+        'billing_interval': billing_interval,
         'publishable_key': current_app.config.get('STRIPE_PUBLISHABLE_KEY') or '',
     }), 200
 
@@ -1058,6 +1081,7 @@ def modify_subscription():
     if not raw_plan_key:
         return jsonify({'msg': 'Missing plan_key'}), 400
     plan_key = normalize_plan_key(raw_plan_key)
+    billing_interval = _normalize_billing_interval(data.get('billing_interval'))
 
     plan_catalog = get_plan_catalog(current_app.config)
     if plan_key not in plan_catalog:
@@ -1074,9 +1098,9 @@ def modify_subscription():
             'plan_key': plan_key,
         }), 400
 
-    price_id = current_app.config.get('STRIPE_PRICE_IDS', {}).get(plan_key)
+    price_id = _price_id_for_plan(plan_key, billing_interval, current_app.config)
     if not price_id:
-        return jsonify({'msg': f"No Stripe price configured for '{plan_key}'"}), 400
+        return jsonify({'msg': f"No {billing_interval} Stripe price configured for '{plan_key}'"}), 400
 
     current_plan = to_public_plan(user.subscription_plan)
     current_tier = _PLAN_TIER.get(current_plan, 0)
@@ -1101,7 +1125,7 @@ def modify_subscription():
                 user.stripe_subscription_id,
                 items=[{'id': item_id, 'price': price_id}],
                 proration_behavior='always_invoice',
-                metadata={'scheduled_plan_change': ''},
+                metadata={'scheduled_plan_change': '', 'billing_interval': billing_interval},
                 expand=['latest_invoice'],
             )
         else:
@@ -1110,7 +1134,7 @@ def modify_subscription():
                 user.stripe_subscription_id,
                 items=[{'id': item_id, 'price': price_id}],
                 proration_behavior='none',
-                metadata={'scheduled_plan_change': plan_key},
+                metadata={'scheduled_plan_change': plan_key, 'billing_interval': billing_interval},
             )
     except stripe.error.StripeError as exc:
         return jsonify({'msg': str(exc)}), 400
@@ -1154,6 +1178,7 @@ def modify_subscription():
             'success': True,
             'effective': 'immediate',
             'plan_key': plan_key,
+            'billing_interval': billing_interval,
             'plan_label': plan_catalog[plan_key].get('label', plan_key),
             'subscription_status': user.subscription_status,
         }), 200
@@ -1168,6 +1193,7 @@ def modify_subscription():
             'success': True,
             'effective': 'period_end',
             'plan_key': plan_key,
+            'billing_interval': billing_interval,
             'plan_label': plan_catalog[plan_key].get('label', plan_key),
             'current_plan_label': plan_catalog.get(current_plan, {}).get('label', current_plan),
             'current_period_end': current_period_end,
