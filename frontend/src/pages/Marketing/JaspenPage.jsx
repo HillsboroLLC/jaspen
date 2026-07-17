@@ -70,7 +70,7 @@ export default function JaspenPage() {
             connected context, evidence-aware scoring, and a record of why the decision was made.
           </p>
           <div className="hero-cta-row">
-            <Link to="/pages/pricing" className="demos-cta-btn demos-cta-btn-primary">Get started</Link>
+            <Link to="/#pricing-variant-b" className="demos-cta-btn demos-cta-btn-primary">Get started</Link>
             <Link to="/pages/jaspen-score" className="demos-cta-btn demos-cta-btn-secondary-light">See how scoring works</Link>
           </div>
         </div>
@@ -148,7 +148,7 @@ export default function JaspenPage() {
           </p>
         </div>
         <div className="demos-cta-actions">
-          <Link to="/pages/pricing" className="demos-cta-btn demos-cta-btn-primary">Get started</Link>
+          <Link to="/#pricing-variant-b" className="demos-cta-btn demos-cta-btn-primary">Get started</Link>
           <Link to="/pages/resources/demos" className="demos-cta-btn demos-cta-btn-secondary">Request a demo</Link>
         </div>
       </section>

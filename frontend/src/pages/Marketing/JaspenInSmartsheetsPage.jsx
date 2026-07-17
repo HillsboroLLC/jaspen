@@ -46,7 +46,7 @@ export default function JaspenInSmartsheetsPage() {
             carry that plan into the operational tracking they already use.
           </p>
           <div className="hero-cta-row">
-            <Link to="/pages/pricing" className="demos-cta-btn demos-cta-btn-primary">Get started</Link>
+            <Link to="/#pricing-variant-b" className="demos-cta-btn demos-cta-btn-primary">Get started</Link>
             <Link to="/pages/resources/connectors" className="demos-cta-btn demos-cta-btn-secondary-light">All connectors</Link>
           </div>
         </div>
@@ -118,7 +118,7 @@ export default function JaspenInSmartsheetsPage() {
             </p>
           </div>
           <div className="demos-cta-actions">
-            <Link to="/pages/pricing" className="demos-cta-btn demos-cta-btn-primary">View plans</Link>
+            <Link to="/#pricing-variant-b" className="demos-cta-btn demos-cta-btn-primary">View plans</Link>
             <Link to="/pages/resources/connectors" className="demos-cta-btn demos-cta-btn-secondary">See all connectors</Link>
           </div>
         </div>

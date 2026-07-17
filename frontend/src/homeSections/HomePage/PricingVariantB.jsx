@@ -298,7 +298,7 @@ export default function PricingVariantB({ onOpenModal }) {
 
       {isAnnual && <p className="pvb-annual-note">* Per-month price shown. Charged as one annual payment.</p>}
       {!isBusinessAudience && <p className="pvb-addons-note">
-        Mid-cycle top-ups: <a href="/pages/pricing#credits">3,000 credits for $10 · 8,000 for $25 · 18,000 for $50</a>
+        Mid-cycle top-ups: <a href="#pricing-variant-b">3,000 credits for $10 · 8,000 for $25 · 18,000 for $50</a>
       </p>}
 
     </section>

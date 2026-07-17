@@ -28,7 +28,6 @@ import JaspenPage from './pages/Marketing/JaspenPage';
 import ProjectManagementPage from './pages/Marketing/ProjectManagementPage';
 import JaspenInJiraPage from './pages/Marketing/JaspenInJiraPage';
 import JaspenInSmartsheetsPage from './pages/Marketing/JaspenInSmartsheetsPage';
-import PricingPage from './pages/Marketing/PricingPage';
 import ApiPage from './pages/Marketing/ApiPage';
 import DemosPage from './pages/Resources/DemosPage';
 import TutorialsPage from './pages/Resources/TutorialsPage';
@@ -94,7 +93,7 @@ function AnimatedAppRoutes({ withShell }) {
             <Route path="/pages/project-management" element={withShell(<ProjectManagementPage />, { title: 'Project Management | Jaspen', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/pages/jaspen-in-jira" element={withShell(<JaspenInJiraPage />, { title: 'Jaspen in Jira', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/pages/jaspen-in-smartsheets" element={withShell(<JaspenInSmartsheetsPage />, { title: 'Jaspen in Smartsheet', showHeader: false, fullBleed: true, noPadding: true })} />
-            <Route path="/pages/pricing" element={withShell(<PricingPage />, { title: 'Pricing', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/pages/pricing" element={<Navigate to="/#pricing-variant-b" replace />} />
             <Route path="/pages/api" element={withShell(<ApiPage />, { title: 'API', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/pages/resources/demos" element={withShell(<DemosPage />, { title: 'Demos', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/pages/resources/tutorials" element={withShell(<TutorialsPage />, { title: 'Tutorials', showHeader: false, fullBleed: true, noPadding: true })} />

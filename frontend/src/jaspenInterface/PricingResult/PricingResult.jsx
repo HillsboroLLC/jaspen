@@ -55,7 +55,7 @@ export default function PricingResult() {
           <h1>Subscription Canceled</h1>
           <p>
             It looks like you canceled.{' '}
-            <Link to="/pages/pricing">Try again →</Link>
+            <Link to="/#pricing-variant-b">View pricing →</Link>
           </p>
         </div>
       )}

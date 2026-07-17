@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import JaspenNav from './JaspenNav';
 import WorkWithJaspenCanvas from './WorkWithJaspenCanvas';
 import InteractiveDecisionHero from './InteractiveDecisionHero';
@@ -243,6 +243,7 @@ const STEPS = [
 ];
 
 export default function HomePage() {
+  const location = useLocation();
   const [activeStep, setActiveStep] = useState(0);
   const [activeFeatureTab, setActiveFeatureTab] = useState(0);
   const stepRefs = useRef([]);
@@ -252,6 +253,15 @@ export default function HomePage() {
   const heroRef = useRef(null);
   const spacerRef = useRef(null);
   const heroHeight = useRef(0);
+
+  useEffect(() => {
+    if (!location.hash) return undefined;
+    const targetId = location.hash.slice(1);
+    const timer = window.setTimeout(() => {
+      document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
+    return () => window.clearTimeout(timer);
+  }, [location.hash]);
 
   useEffect(() => {
     const hero = heroRef.current;
@@ -434,7 +444,7 @@ export default function HomePage() {
             </div>
             <div className="jaspen-footer-col">
               <h4>Product</h4>
-              <Link to="/pages/pricing">Pricing</Link>
+              <Link to="/#pricing-variant-b">Pricing</Link>
               <Link to="/pages/jaspen-score">Jaspen Score</Link>
               <Link to="/pages/project-management">Project Management</Link>
               <Link to="/pages/api">API</Link>

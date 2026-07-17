@@ -182,7 +182,7 @@ export default function JaspenScorePage() {
             </p>
           </div>
           <div className="demos-cta-actions">
-            <Link to="/pages/pricing" className="demos-cta-btn demos-cta-btn-primary">View plans</Link>
+            <Link to="/#pricing-variant-b" className="demos-cta-btn demos-cta-btn-primary">View plans</Link>
             <Link to="/pages/jaspen" className="demos-cta-btn demos-cta-btn-secondary">See how Jaspen works</Link>
           </div>
         </div>

@@ -52,7 +52,7 @@ export default function ProjectManagementPage() {
             that reasoning into milestones, owners, dependencies, and next steps your team can carry out.
           </p>
           <div className="hero-cta-row">
-            <Link to="/pages/pricing" className="demos-cta-btn demos-cta-btn-primary">Get started</Link>
+            <Link to="/#pricing-variant-b" className="demos-cta-btn demos-cta-btn-primary">Get started</Link>
             <Link to="/pages/resources/connectors" className="demos-cta-btn demos-cta-btn-secondary-light">View connectors</Link>
           </div>
         </div>
@@ -115,7 +115,7 @@ export default function ProjectManagementPage() {
             </p>
           </div>
           <div className="demos-cta-actions">
-            <Link to="/pages/pricing" className="demos-cta-btn demos-cta-btn-primary">View plans</Link>
+            <Link to="/#pricing-variant-b" className="demos-cta-btn demos-cta-btn-primary">View plans</Link>
             <Link to="/pages/resources/demos" className="demos-cta-btn demos-cta-btn-secondary">See a demo</Link>
           </div>
         </div>

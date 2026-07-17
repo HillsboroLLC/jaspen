@@ -12,6 +12,7 @@ const NAV_MENUS = [
           { label: 'Jaspen', path: '/pages/jaspen' },
           { label: 'Jaspen Score', path: '/pages/jaspen-score' },
           { label: 'Project Management', path: '/pages/project-management' },
+          { label: 'API', path: '/pages/api' },
         ],
       },
       {
@@ -19,28 +20,6 @@ const NAV_MENUS = [
         items: [
           { label: 'Jaspen in Jira', path: '/pages/jaspen-in-jira' },
           { label: 'Jaspen in Smartsheets', path: '/pages/jaspen-in-smartsheets' },
-        ],
-      },
-    ],
-  },
-  {
-    label: 'Pricing',
-    columns: [
-      {
-        title: 'Overview',
-        items: [
-          { label: 'Overview', path: '/pages/pricing' },
-          { label: 'API', path: '/pages/api' },
-        ],
-      },
-      {
-        title: 'Plans',
-        items: [
-          { label: 'Free', path: '/pages/pricing#free' },
-          { label: 'Starter ($7)', path: '/pages/pricing#starter' },
-          { label: 'Essential ($39)', path: '/pages/pricing#essential' },
-          { label: 'Team', path: '/pages/pricing#team' },
-          { label: 'Business', path: '/pages/pricing#enterprise' },
         ],
       },
     ],
@@ -65,6 +44,10 @@ const NAV_MENUS = [
         ],
       },
     ],
+  },
+  {
+    label: 'Pricing',
+    path: '/#pricing-variant-b',
   },
 ];
 
@@ -125,10 +108,16 @@ export default function JaspenNav({ onOpenModal } = {}) {
             <div
               key={menu.label}
               className={`jaspen-nav-item ${activeDesktopMenu === menu.label ? 'is-open' : ''}`}
-              onMouseEnter={() => openDesktopMenu(menu.label)}
+              onMouseEnter={() => !menu.path && openDesktopMenu(menu.label)}
               onMouseLeave={closeDesktopMenu}
             >
-              <button
+              {menu.path ? <Link
+                to={menu.path}
+                className="jaspen-nav-trigger"
+                onClick={closeNavMenus}
+              >
+                {menu.label}
+              </Link> : <button
                 type="button"
                 className="jaspen-nav-trigger"
                 aria-haspopup="true"
@@ -137,9 +126,9 @@ export default function JaspenNav({ onOpenModal } = {}) {
               >
                 {menu.label}
                 <i className="fa-solid fa-chevron-down"></i>
-              </button>
+              </button>}
 
-              <div
+              {!menu.path && <div
                 className={`jaspen-mega-menu ${menu.label === "I'm Jaspen" ? 'is-im-jaspen' : ''}`}
                 style={{ '--menu-columns': menu.columns.length }}
               >
@@ -179,7 +168,7 @@ export default function JaspenNav({ onOpenModal } = {}) {
                     </div>
                   ))}
                 </div>
-              </div>
+              </div>}
             </div>
           ))}
         </nav>
@@ -204,6 +193,7 @@ export default function JaspenNav({ onOpenModal } = {}) {
           <div className="jaspen-mobile-menu-inner">
             {NAV_MENUS.map((menu) => (
               <div key={`mobile-${menu.label}`} className="mobile-menu-group">
+                {menu.path ? <Link className="mobile-menu-group-title" to={menu.path} onClick={closeNavMenus}>{menu.label}</Link> : <>
                 <p className="mobile-menu-group-title">{menu.label}</p>
                 <div className="mobile-menu-columns">
                   {menu.columns.map((column) => (
@@ -226,6 +216,7 @@ export default function JaspenNav({ onOpenModal } = {}) {
                     </div>
                   ))}
                 </div>
+                </>}
               </div>
             ))}
             <div className="mobile-menu-actions">
