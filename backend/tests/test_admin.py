@@ -104,6 +104,12 @@ def test_master_leads_support_only_and_includes_safe_lead_summary(client, admin_
         marketing_opt_in=False,
         email_delivery_requested=True,
     ))
+    db.session.add(LeadAttributionEvent(
+        lead_id=lead.id,
+        source="enterprise-investment-calculator",
+        marketing_opt_in=False,
+        email_delivery_requested=False,
+    ))
     db.session.add(LeadDecisionProfile(
         lead_id=lead.id,
         email="lead@example.com",
@@ -140,7 +146,13 @@ def test_master_leads_support_only_and_includes_safe_lead_summary(client, admin_
     assert data["leads"][0]["lead_tools"]["decision_profile"]["count"] == 1
     assert data["leads"][0]["lead_tools"]["decision_planning_toolkit"]["used"] is True
     assert data["leads"][0]["lead_tools"]["decision_planning_toolkit"]["count"] == 1
+    assert data["leads"][0]["lead_tools"]["enterprise_inquiry"]["used"] is True
     assert data["leads"][0]["suppression"]["reason"] == "unsubscribe"
+    assert data["leads"][0]["subscription_preferences"]["marketing"]["subscribed"] is False
+    assert data["leads"][0]["subscription_preferences"]["updates"]["subscribed"] is True
+    assert data["leads"][0]["contact_status"] == "limited"
+    assert data["leads"][0]["non_transactional_contact_blocked"] is False
+    assert data["leads"][0]["account"]["exists"] is False
     assert "answers" not in data["leads"][0]["decision_profile"]
 
     denied = client.get("/api/v1/admin/master/leads", headers=auth_headers)

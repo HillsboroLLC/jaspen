@@ -69,7 +69,7 @@ export default function FAQSection() {
     },
     {
       q: 'Can I add seats to Business?',
-      a: <><p>Business supports up to 10 total users. Five seats are included. Additional-seat billing will be enabled once its Stripe configuration is confirmed; Jaspen will not invent or silently apply an add-on price.</p></>
+      a: <><p>Business supports up to 10 total users. Five seats are included. Additional seats are arranged with Jaspen until self-serve seat billing and its Stripe price are enabled.</p></>
     },
     {
       q: 'How does Enterprise pricing work?',

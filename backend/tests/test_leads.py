@@ -362,6 +362,22 @@ def test_subscription_preferences_form_updates_scopes(client, db, app):
     assert scopes == ["marketing"]
 
 
+def test_subscription_preferences_all_off_sets_global_non_transactional_suppression(client, db, app):
+    from app.routes.leads import _unsubscribe_token
+
+    with app.test_request_context():
+        token = _unsubscribe_token("person@example.com", scope="marketing")
+
+    response = client.post(
+        f"/api/v1/public/leads/unsubscribe?token={token}",
+        data={"preferences_form": "1"},
+    )
+
+    assert response.status_code == 200
+    scopes = sorted(row.scope for row in EmailSuppression.query.filter_by(normalized_email="person@example.com").all())
+    assert scopes == ["all_non_transactional", "decision_notes", "marketing", "updates"]
+
+
 def test_decision_profile_style_mapping_covers_all_styles():
     for key, answers in STYLE_SCENARIOS.items():
         result = derive_decision_style(answers)

@@ -59,7 +59,10 @@ MASTER_ADMIN_EMAIL = "support@jaspen.ai"
 LEAD_TOOL_SOURCES = {
     "decision_planning_toolkit": "decision-planning-toolkit",
     "decision_profile": "decision-style-assessment",
+    "enterprise_inquiry": "enterprise-investment-calculator",
 }
+LEAD_SUBSCRIPTION_SCOPES = ("marketing", "updates", "decision_notes")
+GLOBAL_NON_TRANSACTIONAL_SCOPE = "all_non_transactional"
 
 
 def _to_bool(value, default=False):
@@ -407,9 +410,27 @@ def _serialize_lead_for_master_admin(
     latest_event=None,
     latest_profile=None,
     latest_delivery=None,
-    suppression=None,
+    suppressions=None,
     lead_tools=None,
+    account=None,
 ):
+    suppressions = suppressions or {}
+    globally_suppressed = GLOBAL_NON_TRANSACTIONAL_SCOPE in suppressions
+    preferences = {
+        scope: {
+            "subscribed": not globally_suppressed and scope not in suppressions,
+            "reason": getattr(suppressions.get(scope), "reason", None),
+            "updated_at": _iso(getattr(suppressions.get(scope), "created_at", None)),
+        }
+        for scope in LEAD_SUBSCRIPTION_SCOPES
+    }
+    suppressed_count = sum(not item["subscribed"] for item in preferences.values())
+    if globally_suppressed or suppressed_count == len(LEAD_SUBSCRIPTION_SCOPES):
+        contact_status = "do_not_contact"
+    elif suppressed_count:
+        contact_status = "limited"
+    else:
+        contact_status = "no_opt_out_recorded"
     return {
         "id": lead.id,
         "email": lead.email,
@@ -441,10 +462,18 @@ def _serialize_lead_for_master_admin(
             "created_at": _iso(latest_delivery.created_at),
         } if latest_delivery else None,
         "suppression": {
-            "scope": suppression.scope,
-            "reason": suppression.reason,
-            "created_at": _iso(suppression.created_at),
-        } if suppression else None,
+            "scope": suppressions["marketing"].scope,
+            "reason": suppressions["marketing"].reason,
+            "created_at": _iso(suppressions["marketing"].created_at),
+        } if suppressions.get("marketing") else None,
+        "subscription_preferences": preferences,
+        "contact_status": contact_status,
+        "non_transactional_contact_blocked": contact_status == "do_not_contact",
+        "account": {
+            "exists": True,
+            "plan": to_public_plan(account.subscription_plan),
+            "created_at": _iso(account.created_at),
+        } if account else {"exists": False, "plan": None, "created_at": None},
         "lead_tools": lead_tools or {
             key: {"used": False, "count": 0, "latest_at": None}
             for key in LEAD_TOOL_SOURCES
@@ -676,6 +705,11 @@ def master_leads():
     lead_ids = [lead.id for lead in leads]
     normalized_emails = [lead.normalized_email for lead in leads if lead.normalized_email]
 
+    accounts = {}
+    if normalized_emails:
+        for account in User.query.filter(func.lower(User.email).in_(normalized_emails)).all():
+            accounts[str(account.email or "").strip().lower()] = account
+
     latest_events = {}
     lead_tools = {
         lead_id: {
@@ -733,7 +767,7 @@ def master_leads():
             .order_by(EmailSuppression.created_at.desc(), EmailSuppression.id.desc())
             .all()
         ):
-            suppressions.setdefault((suppression.normalized_email, suppression.scope), suppression)
+            suppressions.setdefault(suppression.normalized_email, {})[suppression.scope] = suppression
 
     source_rows = (
         db.session.query(Lead.source, func.count(Lead.id))
@@ -762,8 +796,9 @@ def master_leads():
                 latest_event=latest_events.get(lead.id),
                 latest_profile=latest_profiles.get(lead.id),
                 latest_delivery=latest_deliveries.get(lead.id),
-                suppression=suppressions.get((lead.normalized_email, "marketing")),
+                suppressions=suppressions.get(lead.normalized_email, {}),
                 lead_tools=lead_tools.get(lead.id),
+                account=accounts.get(lead.normalized_email),
             )
             for lead in leads
         ],

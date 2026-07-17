@@ -227,6 +227,28 @@ body.jaspen-sidebar-open .master-admin-inner {
   font-weight: 400;
 }
 
+.master-contact-status strong {
+  color: #047857;
+}
+
+.master-contact-status.is-limited strong {
+  color: #a16207;
+}
+
+.master-contact-status.is-do_not_contact strong {
+  color: #b42318;
+}
+
+.master-contact-status small {
+  display: block;
+  margin-top: 6px;
+  max-width: 220px;
+  color: var(--int-text-sub);
+  font-size: 0.76rem;
+  line-height: 1.35;
+  white-space: normal;
+}
+
 .master-filter-bar {
   display: grid;
   grid-template-columns: minmax(240px, 1fr) minmax(200px, 280px) auto;

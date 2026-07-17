@@ -46,6 +46,7 @@ SUBSCRIPTION_SCOPES = {
     "updates": "Updates",
     "decision_notes": "Decision Notes",
 }
+GLOBAL_NON_TRANSACTIONAL_SCOPE = "all_non_transactional"
 TOOLKIT_OPT_IN_SCOPES = ("marketing", "updates", "decision_notes")
 TOOLKIT_FILENAME = "Jaspen-Decision-Planning-Toolkit.xlsx"
 HONEYPOT_FIELDS = ("website", "url", "hp_name")
@@ -327,8 +328,9 @@ def _subscription_preferences(email):
         row.scope
         for row in EmailSuppression.query.filter_by(normalized_email=email).all()
     }
+    globally_suppressed = GLOBAL_NON_TRANSACTIONAL_SCOPE in suppressions
     return {
-        scope: scope not in suppressions
+        scope: not globally_suppressed and scope not in suppressions
         for scope in SUBSCRIPTION_SCOPES
     }
 
@@ -340,6 +342,19 @@ def _set_subscription_preferences(email, subscribed_scopes):
         if scope in SUBSCRIPTION_SCOPES
     }
     changed = False
+    global_suppression = _suppression_for(email, GLOBAL_NON_TRANSACTIONAL_SCOPE)
+    if subscribed:
+        if global_suppression is not None:
+            db.session.delete(global_suppression)
+            changed = True
+    elif global_suppression is None:
+        db.session.add(EmailSuppression(
+            email=email,
+            normalized_email=email,
+            scope=GLOBAL_NON_TRANSACTIONAL_SCOPE,
+            reason="all_preferences_off",
+        ))
+        changed = True
     for scope in SUBSCRIPTION_SCOPES:
         existing = _suppression_for(email, scope)
         if scope in subscribed:
@@ -435,7 +450,7 @@ def _record_marketing_opt_in(email, opted_in):
     if not opted_in:
         return False
     removed = False
-    for scope in TOOLKIT_OPT_IN_SCOPES:
+    for scope in (*TOOLKIT_OPT_IN_SCOPES, GLOBAL_NON_TRANSACTIONAL_SCOPE):
         existing = _suppression_for(email, scope)
         if existing is not None:
             db.session.delete(existing)

@@ -36,6 +36,33 @@ function LeadToolCell({ tool }) {
   );
 }
 
+const PREFERENCE_LABELS = {
+  marketing: 'Marketing',
+  updates: 'Updates',
+  decision_notes: 'Decision Notes',
+};
+
+function ContactStatus({ lead }) {
+  const preferences = lead?.subscription_preferences || {};
+  const status = lead?.contact_status || 'no_opt_out_recorded';
+  const label = status === 'do_not_contact'
+    ? 'Do not contact'
+    : status === 'limited'
+    ? 'Limited contact'
+    : 'No opt-out recorded';
+  return (
+    <div className={`master-contact-status is-${status}`}>
+      <strong>{label}</strong>
+      {Object.entries(PREFERENCE_LABELS).map(([scope, scopeLabel]) => (
+        <span key={scope}>
+          {scopeLabel}: {preferences?.[scope]?.subscribed === false ? 'Unsubscribed' : 'Subscribed'}
+        </span>
+      ))}
+      {status === 'do_not_contact' && <small>Transactional account, security, and billing email only.</small>}
+    </div>
+  );
+}
+
 export default function MasterLeads() {
   const [data, setData] = useState(null);
   const [query, setQuery] = useState('');
@@ -92,7 +119,7 @@ export default function MasterLeads() {
             <div>
               <p className="int-eyebrow">Master Admin</p>
               <h1>Leads</h1>
-              <p>Read-only lead capture list with tool usage, attribution, email status, Decision Profile style, and unsubscribe state.</p>
+              <p>Read-only lead capture list with account status, tool usage, attribution, email delivery, and category-level contact preferences.</p>
             </div>
             <button type="button" className="master-admin-refresh" onClick={loadLeads} disabled={loading}>
               <FontAwesomeIcon icon={faRotateRight} />
@@ -146,12 +173,14 @@ export default function MasterLeads() {
                     <thead>
                       <tr>
                         <th>Email</th>
+                        <th>Account</th>
                         <th>Source</th>
                         <th>Toolkit</th>
                         <th>Decision Profile</th>
+                        <th>Enterprise Inquiry</th>
                         <th>Profile</th>
-                        <th>Email</th>
-                        <th>Unsubscribed</th>
+                        <th>Latest Email</th>
+                        <th>Contact Preferences</th>
                         <th>Captured</th>
                       </tr>
                     </thead>
@@ -165,6 +194,10 @@ export default function MasterLeads() {
                             )}
                           </td>
                           <td>
+                            <strong>{lead.account?.exists ? 'Account' : 'Lead only'}</strong>
+                            {lead.account?.exists && <span>{lead.account.plan || 'Free'} plan</span>}
+                          </td>
+                          <td>
                             {compactSource(lead)}
                             {lead.utm_campaign && <span>{lead.utm_campaign}</span>}
                           </td>
@@ -175,6 +208,9 @@ export default function MasterLeads() {
                             <LeadToolCell tool={lead.lead_tools?.decision_profile} />
                           </td>
                           <td>
+                            <LeadToolCell tool={lead.lead_tools?.enterprise_inquiry} />
+                          </td>
+                          <td>
                             {lead.decision_profile?.style_name || 'None yet'}
                             {lead.decision_profile?.created_at && <span>{formatDate(lead.decision_profile.created_at)}</span>}
                           </td>
@@ -183,8 +219,7 @@ export default function MasterLeads() {
                             {lead.latest_email?.type && <span>{lead.latest_email.type}</span>}
                           </td>
                           <td>
-                            {lead.suppression ? 'Yes' : 'No'}
-                            {lead.suppression?.created_at && <span>{formatDate(lead.suppression.created_at)}</span>}
+                            <ContactStatus lead={lead} />
                           </td>
                           <td>{formatDate(lead.created_at)}</td>
                         </tr>

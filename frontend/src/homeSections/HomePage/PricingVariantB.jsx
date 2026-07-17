@@ -212,7 +212,7 @@ export default function PricingVariantB({ onOpenModal }) {
               <p className="pvb-card-tagline">{plan.tagline}</p>
               {plan.key === 'business' && (
                 <p className="pvb-business-seat-note">
-                  Need a few more seats? Add up to 5 additional seats for a maximum of 10 users on Business.
+                  Business supports up to 10 total users. Additional seats are arranged with Jaspen until self-serve seat billing is enabled.
                 </p>
               )}
               <button
