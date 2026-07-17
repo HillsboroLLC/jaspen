@@ -83,12 +83,13 @@ function calculateEstimate(inputs) {
   };
 }
 
-export default function EnterpriseInvestmentCalculator({ billing = 'monthly' }) {
+export default function EnterpriseInvestmentCalculator({ billing = 'monthly', onOpenModal }) {
   const [step, setStep] = useState(0);
   const [inputs, setInputs] = useState({ participants: 10, teams: 1, usage: 'standard', requirements: [], hourlyCost: 112.5, billing });
   const [contact, setContact] = useState({ firstName: '', lastName: '', email: '', company: '', title: '', phone: '', preferredContact: '', comments: '', website: '' });
   const [submitState, setSubmitState] = useState({ status: 'idle', message: '' });
   const estimate = useMemo(() => calculateEstimate({ ...inputs, billing }), [inputs, billing]);
+  const isEnterpriseQualified = estimate.band !== 'Business';
   const steps = ['Deployment', 'Requirements', 'Estimate'];
 
   const toggleRequirement = (key) => setInputs(current => ({
@@ -182,7 +183,7 @@ export default function EnterpriseInvestmentCalculator({ billing = 'monthly' }) 
           <p className="eic-disclaimer">This comparison puts the investment into organizational terms. It does not predict or guarantee time savings, financial savings, or business outcomes. Enterprise estimates are indicative, not final quotes.</p>
         </div>
 
-        <div className="eic-contact">
+        {isEnterpriseQualified ? <div className="eic-contact">
           <h4>Discuss your Enterprise fit</h4><p>Your estimate is visible above. Contact information is only needed if you want Sales to follow up.</p>
           {submitState.status === 'success' ? <div className="eic-success" role="status">{submitState.message}</div> : <form onSubmit={submit}>
             <div className="eic-grid"><label>First name<input required value={contact.firstName} onChange={e => setContact({ ...contact, firstName: e.target.value })} /></label><label>Last name<input required value={contact.lastName} onChange={e => setContact({ ...contact, lastName: e.target.value })} /></label><label>Work email<input required type="email" value={contact.email} onChange={e => setContact({ ...contact, email: e.target.value })} /></label><label>Company<input required value={contact.company} onChange={e => setContact({ ...contact, company: e.target.value })} /></label><label>Job title <span>(optional)</span><input value={contact.title} onChange={e => setContact({ ...contact, title: e.target.value })} /></label><label>Phone <span>(optional)</span><input type="tel" value={contact.phone} onChange={e => setContact({ ...contact, phone: e.target.value })} /></label></div>
@@ -193,7 +194,11 @@ export default function EnterpriseInvestmentCalculator({ billing = 'monthly' }) 
             <button className="jaspen-btn jaspen-btn-primary" disabled={submitState.status === 'submitting'}>{submitState.status === 'submitting' ? 'Sending…' : 'Send to Sales'}</button>
             <small>No newsletter signup is included with this request.</small>
           </form>}
-        </div>
+        </div> : <div className="eic-contact">
+          <h4>Business looks like the right fit</h4>
+          <p>You can start with Business directly. Contact Sales is reserved for deployments that require Enterprise scoping.</p>
+          <button type="button" className="jaspen-btn jaspen-btn-primary" onClick={() => { analytics.track('business_recommendation_cta_clicked'); onOpenModal?.('signup', 'free'); }}>Start with Business</button>
+        </div>}
       </div>}
 
       <footer className="eic-actions">{step > 0 && <button type="button" className="jaspen-btn jaspen-btn-outline" onClick={() => setStep(current => current - 1)}>Back</button>}{step < 2 && <button type="button" className="jaspen-btn jaspen-btn-primary" onClick={next}>Continue</button>}</footer>

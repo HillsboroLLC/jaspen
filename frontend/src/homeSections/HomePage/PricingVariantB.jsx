@@ -227,7 +227,7 @@ export default function PricingVariantB({ onOpenModal }) {
         })}
       </div>
 
-      {isBusinessAudience && <EnterpriseInvestmentCalculator billing={isAnnual ? 'annual' : 'monthly'} />}
+      {isBusinessAudience && <EnterpriseInvestmentCalculator billing={isAnnual ? 'annual' : 'monthly'} onOpenModal={onOpenModal} />}
       </div>
 
       {isBusinessAudience && <>
