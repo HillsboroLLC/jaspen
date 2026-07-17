@@ -949,6 +949,7 @@ def _seat_billing_payload(ctx):
         'available': True,
         'plan_key': ctx['plan_key'],
         'plan_label': ctx['plan'].get('label', ctx['plan_key'].title()),
+        'seat_product_label': f"{ctx['plan'].get('label', ctx['plan_key'].title())} Seat",
         'included_seats': ctx['included_seats'],
         'current_seats': ctx['current_seats'],
         'additional_seats': ctx['additional_seats'],

@@ -61,6 +61,7 @@ def test_team_owner_can_purchase_only_one_additional_seat(
     payload = response.get_json()
     assert payload['current_seats'] == 4
     assert payload['max_total_seats'] == 4
+    assert payload['seat_product_label'] == 'Team Seat'
     assert calls[0][1]['items'] == [{'price': 'price_team_seat', 'quantity': 1}]
 
     response = client.post('/api/v1/billing/seats', headers=auth_headers, json={})

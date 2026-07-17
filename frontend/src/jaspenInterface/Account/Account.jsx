@@ -3543,7 +3543,7 @@ export default function Account() {
                 </div>
                 <div className="account-seat-price">
                   <strong>${seatBilling.additional_seat_price_usd}</strong>
-                  <span>per added seat / month</span>
+                  <span>per {seatBilling.seat_product_label || 'additional seat'} / month</span>
                 </div>
               </div>
 
@@ -3564,7 +3564,7 @@ export default function Account() {
                   disabled={pendingAction === 'add-seat' || !seatBilling.can_purchase || !seatBilling.purchase_configured || seatBilling.current_seats >= seatBilling.max_total_seats}
                   aria-disabled={pendingAction === 'add-seat' || !seatBilling.can_purchase || !seatBilling.purchase_configured || seatBilling.current_seats >= seatBilling.max_total_seats}
                 >
-                  {pendingAction === 'add-seat' ? 'Adding seat…' : seatBilling.current_seats >= seatBilling.max_total_seats ? 'Seat limit reached' : `Add 1 seat for $${seatBilling.additional_seat_price_usd}/mo`}
+                  {pendingAction === 'add-seat' ? 'Adding seat…' : seatBilling.current_seats >= seatBilling.max_total_seats ? 'Seat limit reached' : `Add 1 ${seatBilling.seat_product_label || 'seat'} for $${seatBilling.additional_seat_price_usd}/mo`}
                 </button>
               </div>
               {!seatBilling.purchase_configured && (
