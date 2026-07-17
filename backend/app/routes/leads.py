@@ -1,4 +1,5 @@
 import hashlib
+import json
 from datetime import datetime
 from pathlib import Path
 import re
@@ -17,7 +18,7 @@ from app.decision_profile import derive_decision_style, validate_answers
 from app.email_templates.decision_profile_results import (
     render_decision_profile_email,
 )
-from app.models import EmailSuppression, Lead, LeadAttributionEvent, LeadDecisionProfile, LeadEmailDelivery, User
+from app.models import EmailSuppression, EnterpriseInquiry, Lead, LeadAttributionEvent, LeadDecisionProfile, LeadEmailDelivery, User
 
 
 leads_bp = Blueprint("leads", __name__)
@@ -742,6 +743,95 @@ def capture_lead():
     except Exception:
         db.session.rollback()
         current_app.logger.exception("Lead capture unexpected error")
+        return jsonify({"error": "Internal server error"}), 500
+
+
+@leads_bp.route("/leads/enterprise-inquiry", methods=["POST"])
+@limiter.limit("3 per minute")
+@limiter.limit("12 per hour")
+def capture_enterprise_inquiry():
+    payload, error_response = _parse_payload()
+    if error_response is not None:
+        return error_response
+
+    data = request.get_json(silent=True) or {}
+    try:
+        participants = max(1, min(100000, int(data.get("participants") or 1)))
+        teams = max(1, min(10000, int(data.get("teams") or 1)))
+        usage = str(data.get("usage") or "unsure").strip().lower()
+        if usage not in {"light", "standard", "high", "unsure"}:
+            raise ValueError("invalid_usage")
+        requirements = data.get("requirements") or []
+        if not isinstance(requirements, list) or len(requirements) > 20:
+            raise ValueError("invalid_requirements")
+        requirements = [str(item).strip()[:80] for item in requirements if str(item).strip()]
+        recommendation = str(data.get("recommendation") or "Enterprise").strip()[:80]
+        hourly_cost = data.get("hourly_cost")
+        hourly_cost = None if hourly_cost in (None, "") else max(0, min(100000, float(hourly_cost)))
+        annual_low = None if data.get("annual_low") in (None, "") else max(0, int(data["annual_low"]))
+        annual_high = None if data.get("annual_high") in (None, "") else max(0, int(data["annual_high"]))
+        phone = str(data.get("phone") or "").strip()[:40] or None
+        preferred_contact = str(data.get("preferred_contact") or "").strip().lower()[:20] or None
+        comments = str(data.get("comments") or "").strip()[:2000] or None
+        source_url = str(data.get("source_url") or "").strip()[:1024] or None
+    except (TypeError, ValueError, OverflowError):
+        return _bad_request("invalid_estimate", "Estimate fields are invalid.")
+
+    try:
+        lead, created = _get_or_create_lead(payload)
+        db.session.flush()
+        event = _create_attribution_event(lead, payload, email_delivery_requested=False)
+        db.session.flush()
+        inquiry = EnterpriseInquiry(
+            lead_id=lead.id,
+            attribution_event_id=event.id,
+            phone=phone,
+            preferred_contact=preferred_contact,
+            comments=comments,
+            participants=participants,
+            teams=teams,
+            usage=usage,
+            requirements_json=json.dumps(requirements),
+            hourly_cost=hourly_cost,
+            recommendation=recommendation,
+            annual_low=annual_low,
+            annual_high=annual_high,
+            source_url=source_url,
+        )
+        db.session.add(inquiry)
+        db.session.commit()
+
+        sales_recipient = current_app.config.get("SALES_NOTIFICATION_EMAIL") or "sales@jaspen.ai"
+        try:
+            message = Message(
+                subject=f"Enterprise inquiry: {payload.get('company') or payload['email']}",
+                recipients=[sales_recipient],
+                reply_to=payload["email"],
+            )
+            message.body = (
+                f"New Enterprise Investment Calculator inquiry\n\n"
+                f"Name: {payload.get('first_name') or ''} {payload.get('last_name') or ''}\n"
+                f"Email: {payload['email']}\nCompany: {payload.get('company') or ''}\n"
+                f"Title: {payload.get('title') or ''}\nPhone: {phone or ''}\n"
+                f"Preferred contact: {preferred_contact or 'No preference'}\n\n"
+                f"Recommendation: {recommendation}\nParticipants: {participants}\nTeams: {teams}\n"
+                f"Usage: {usage}\nRequirements: {', '.join(requirements) or 'None'}\n"
+                f"Indicative annual range: {annual_low or ''} - {annual_high or ''}\n"
+                f"Hourly planning assumption: {hourly_cost or ''}\nSource: {source_url or ''}\n\n"
+                f"Comments: {comments or ''}"
+            )
+            mail.send(message)
+        except Exception:
+            current_app.logger.exception("Enterprise inquiry notification email failed; inquiry remains stored")
+
+        return jsonify({"ok": True, "inquiry_id": inquiry.id}), 201 if created else 200
+    except SQLAlchemyError:
+        db.session.rollback()
+        current_app.logger.exception("Enterprise inquiry database error")
+        return jsonify({"error": "Internal server error"}), 500
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Enterprise inquiry unexpected error")
         return jsonify({"error": "Internal server error"}), 500
 
 

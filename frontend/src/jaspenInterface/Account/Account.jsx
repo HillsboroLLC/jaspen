@@ -2638,7 +2638,7 @@ export default function Account() {
                     >
                       Need more than the baseline?{' '}
                       <a
-                        href="mailto:hello@jaspen.ai?subject=Enterprise%20plan%20%E2%80%94%20custom%20capacity"
+                        href="mailto:hello@jaspen.ai?subject=Business%20plan%20%E2%80%94%20custom%20capacity"
                         style={{ color: 'var(--magenta, #c026a6)', textDecoration: 'underline' }}
                       >
                         Contact sales
@@ -3526,7 +3526,7 @@ export default function Account() {
                   <h3>Multi-factor authentication</h3>
                   <p>
                     Protect your account with a one-time code from an authenticator app. This is optional on Free,
-                    Starter, and Essential plans. Team and Enterprise orgs can enforce it.
+                    Starter, and Essential plans. Team and Business orgs can enforce it.
                   </p>
                 </div>
                 <span className={`account-pill ${mfaEnabled ? 'is-enabled' : ''}`}>

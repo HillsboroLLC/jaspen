@@ -8296,7 +8296,7 @@ def _batch_access_context(user):
     if plan_key not in {"team", "enterprise"}:
         return None, None, plan_key, (
             jsonify({
-                "error": "Batch idea upload is available on Team and Enterprise plans.",
+                "error": "Batch idea upload is available on Team and Business plans.",
                 "code": "batch_ideas_plan_required",
                 "plan_key": plan_key,
             }),

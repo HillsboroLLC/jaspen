@@ -16,11 +16,11 @@ def apply_enterprise():
 
     # 1) Email you/sales ops
     admin_msg = Message(
-        subject=f"[Enterprise Application] {data['company_name']}",
+        subject=f"[Business Application] {data['company_name']}",
         recipients=[os.environ['ADMIN_NOTIFICATION_EMAIL']],
     )
     admin_msg.body = f"""
-New enterprise application:
+New business application:
 
 Name:       {data['name']}
 Company:    {data['company_name']}
@@ -31,12 +31,13 @@ Notes:      {data['notes']}
 """
     mail.send(admin_msg)
 
-    # 2) Create Stripe Checkout session for Enterprise
+    # 2) Create Stripe Checkout session for Business. Keep the legacy env
+    # name as a fallback for existing production configuration.
     session = stripe.checkout.Session.create(
         customer_email=data['company_email'],
         payment_method_types=['card'],
         line_items=[{
-            'price': os.environ['ENTERPRISE_PRICE_ID'],
+            'price': os.environ.get('BUSINESS_PRICE_ID') or os.environ['ENTERPRISE_PRICE_ID'],
             'quantity': 1,
         }],
         mode='subscription',
@@ -46,11 +47,11 @@ Notes:      {data['notes']}
 
     # 3) Email applicant the link
     user_msg = Message(
-        subject="Your Enterprise Signup Link",
+        subject="Your Business Signup Link",
         recipients=[data['company_email']],
     )
     user_msg.body = f"""
-Thanks for your interest in our Enterprise plan!
+Thanks for your interest in our Business plan!
 
 Please complete your subscription here:
 {session.url}

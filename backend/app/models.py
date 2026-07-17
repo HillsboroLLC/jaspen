@@ -76,6 +76,34 @@ class LeadAttributionEvent(db.Model):
     )
 
 
+class EnterpriseInquiry(db.Model):
+    __tablename__ = 'enterprise_inquiries'
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    lead_id = db.Column(db.String(36), db.ForeignKey('leads.id', ondelete='CASCADE'), nullable=False, index=True)
+    attribution_event_id = db.Column(db.Integer, db.ForeignKey('lead_attribution_events.id', ondelete='SET NULL'), nullable=True, index=True)
+    phone = db.Column(db.String(40), nullable=True)
+    preferred_contact = db.Column(db.String(20), nullable=True)
+    comments = db.Column(db.Text, nullable=True)
+    participants = db.Column(db.Integer, nullable=False)
+    teams = db.Column(db.Integer, nullable=False)
+    usage = db.Column(db.String(20), nullable=False)
+    requirements_json = db.Column(db.Text, nullable=False, default='[]')
+    hourly_cost = db.Column(db.Numeric(10, 2), nullable=True)
+    recommendation = db.Column(db.String(80), nullable=False)
+    annual_low = db.Column(db.Integer, nullable=True)
+    annual_high = db.Column(db.Integer, nullable=True)
+    source_url = db.Column(db.String(1024), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+    @property
+    def requirements(self):
+        try:
+            return json.loads(self.requirements_json or '[]')
+        except (TypeError, ValueError):
+            return []
+
+
 class LeadEmailDelivery(db.Model):
     __tablename__ = 'lead_email_deliveries'
 

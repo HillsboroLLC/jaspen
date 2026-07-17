@@ -7,6 +7,12 @@ import { analytics } from '../services/analytics';
 // connected business knowledge. Makes no claim that Jaspen prevents departures
 // or recovers every cost shown.
 export default function JaspenCta() {
+  const handleCta = () => {
+    analytics.jaspenCtaClicked('home');
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    window.setTimeout(() => window.scrollTo({ top: 0, left: 0, behavior: 'auto' }), 0);
+  };
+
   return (
     <section className="cot-cta" aria-labelledby="cot-cta-title">
       <p className="cot-kicker">Beyond the number</p>
@@ -32,9 +38,9 @@ export default function JaspenCta() {
       </p>
       <div style={{ marginTop: 20 }}>
         <Link
-          to="/pages/jaspen"
+          to="/"
           className="cot-btn cot-btn-primary"
-          onClick={() => analytics.jaspenCtaClicked('jaspen_overview')}
+          onClick={handleCta}
         >
           See how Jaspen helps preserve organizational context
         </Link>

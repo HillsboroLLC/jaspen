@@ -1,5 +1,9 @@
 import React, { useState } from 'react';
+import { createAnalytics } from '../../tools/shared/createAnalytics';
+import EnterpriseInvestmentCalculator from './EnterpriseInvestmentCalculator';
 import './PricingVariantB.css';
+
+const analytics = createAnalytics('homepage_pricing');
 
 const PLANS = [
   {
@@ -48,12 +52,12 @@ const PLANS = [
   },
   {
     key: 'enterprise',
-    name: 'Enterprise',
+    name: 'Business',
     monthly: 299,
     annual: 249,
     seats: '5 seats included',
-    tagline: 'Decision-making at org scale.',
-    cta: 'Start free',
+    tagline: 'Bring a team together around clearer decisions, stronger execution, and reasoning that does not disappear when work changes hands.',
+    cta: 'Start with Business',
     href: '/?auth=1',
     featured: false,
   },
@@ -72,7 +76,7 @@ const FEATURES = [
     category: 'Workspace & seats',
     rows: [
       { label: 'Seats included',             sub: '',                                   free: '1',       starter: '1',       essential: '1',      team: '3',           enterprise: '5'         },
-      { label: 'Additional seats',           sub: 'Pay as you grow',                    free: false,     starter: false,     essential: false,    team: '+$25/seat',   enterprise: '+$30/seat' },
+      { label: 'Additional seats',           sub: 'Pay as you grow',                    free: false,     starter: false,     essential: false,    team: '+$25/seat',   enterprise: 'Up to 10 users' },
       { label: 'Shared team workspace',      sub: '',                                   free: false,     starter: false,     essential: false,    team: true,          enterprise: true        },
       { label: 'Scorecard export',           sub: 'PDF download',                       free: true,      starter: true,      essential: true,     team: true,          enterprise: true        },
     ],
@@ -104,6 +108,23 @@ function Cell({ value }) {
 export default function PricingVariantB({ onOpenModal }) {
   const [isAnnual, setIsAnnual] = useState(false);
   const [compareOpen, setCompareOpen] = useState(false);
+  const [activeAudience, setActiveAudience] = useState('individuals');
+  const isBusinessAudience = activeAudience === 'business';
+  const individualPlans = PLANS.filter(plan => plan.key !== 'enterprise');
+  const visiblePlans = isBusinessAudience ? PLANS.filter(plan => plan.key === 'enterprise') : individualPlans;
+
+  const selectAudience = (audience) => {
+    setActiveAudience(audience);
+    analytics.track('pricing_audience_tab_selected', { audience });
+  };
+
+  const handleTabKeyDown = (event, audience) => {
+    if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+    event.preventDefault();
+    const nextAudience = audience === 'individuals' ? 'business' : 'individuals';
+    selectAudience(nextAudience);
+    document.getElementById(`pricing-tab-${nextAudience}`)?.focus();
+  };
 
   return (
     <section className="pvb-section" id="pricing-variant-b">
@@ -112,6 +133,34 @@ export default function PricingVariantB({ onOpenModal }) {
       <div className="pvb-header">
         <h2>Plans for every stage</h2>
         <p className="pvb-subhead">All models available on every plan. You move up when you need more capacity.</p>
+        <div className="pvb-audience-tabs" role="tablist" aria-label="Pricing audiences">
+          <button
+            id="pricing-tab-individuals"
+            type="button"
+            role="tab"
+            aria-selected={!isBusinessAudience}
+            aria-controls="pricing-panel-individuals"
+            tabIndex={!isBusinessAudience ? 0 : -1}
+            className={`pvb-audience-tab${!isBusinessAudience ? ' is-active' : ''}`}
+            onClick={() => selectAudience('individuals')}
+            onKeyDown={(event) => handleTabKeyDown(event, 'individuals')}
+          >
+            Individuals &amp; Teams
+          </button>
+          <button
+            id="pricing-tab-business"
+            type="button"
+            role="tab"
+            aria-selected={isBusinessAudience}
+            aria-controls="pricing-panel-business"
+            tabIndex={isBusinessAudience ? 0 : -1}
+            className={`pvb-audience-tab${isBusinessAudience ? ' is-active' : ''}`}
+            onClick={() => selectAudience('business')}
+            onKeyDown={(event) => handleTabKeyDown(event, 'business')}
+          >
+            Business &amp; Enterprise
+          </button>
+        </div>
         <div className="pvb-billing-toggle">
           <span className={!isAnnual ? 'pvb-toggle-label is-active' : 'pvb-toggle-label'}>Monthly</span>
           <button
@@ -119,7 +168,7 @@ export default function PricingVariantB({ onOpenModal }) {
             role="switch"
             aria-checked={isAnnual}
             className={`pvb-toggle-track ${isAnnual ? 'is-on' : ''}`}
-            onClick={() => setIsAnnual(v => !v)}
+            onClick={() => setIsAnnual(value => { const next = !value; analytics.track('billing_interval_selected', { interval: next ? 'annual' : 'monthly' }); return next; })}
           >
             <span className="pvb-toggle-thumb" />
           </button>
@@ -130,8 +179,14 @@ export default function PricingVariantB({ onOpenModal }) {
       </div>
 
       {/* ── Plan cards ── */}
-      <div className="pvb-cards-row">
-        {PLANS.map(plan => {
+      <div className={`pvb-plan-layout${isBusinessAudience ? ' is-business' : ''}`}>
+      <div
+        id={`pricing-panel-${activeAudience}`}
+        role="tabpanel"
+        aria-labelledby={`pricing-tab-${activeAudience}`}
+        className={`pvb-cards-row ${isBusinessAudience ? 'is-business' : 'is-individuals'}`}
+      >
+        {visiblePlans.map(plan => {
           const price = isAnnual ? plan.annual : plan.monthly;
           return (
             <div key={plan.key} className={`pvb-card ${plan.featured ? 'is-featured' : ''}`}>
@@ -149,16 +204,21 @@ export default function PricingVariantB({ onOpenModal }) {
                 )}
               </div>
               {isAnnual && price > 0 && (
-                <p className="pvb-billed-note">Billed annually · {plan.seats}</p>
+                <p className="pvb-billed-note">{`$${(price * 12).toLocaleString()} billed annually · ${plan.seats}`}</p>
               )}
               {(!isAnnual || price === 0) && (
                 <p className="pvb-billed-note">{plan.seats}</p>
               )}
               <p className="pvb-card-tagline">{plan.tagline}</p>
+              {plan.key === 'enterprise' && (
+                <p className="pvb-business-seat-note">
+                  Need a few more seats? Add up to 5 additional seats for a maximum of 10 users on Business.
+                </p>
+              )}
               <button
                 type="button"
                 className={`pvb-card-cta jaspen-btn ${plan.featured ? 'jaspen-btn-primary' : 'jaspen-btn-outline'}`}
-                onClick={() => onOpenModal?.('signup', 'free')}
+                onClick={() => { analytics.track(plan.key === 'enterprise' ? 'business_cta_clicked' : 'pricing_cta_clicked', { plan: plan.key, interval: isAnnual ? 'annual' : 'monthly' }); onOpenModal?.('signup', 'free'); }}
               >
                 {plan.cta}
               </button>
@@ -167,12 +227,24 @@ export default function PricingVariantB({ onOpenModal }) {
         })}
       </div>
 
-      <p className="pvb-plan-note">
-        Use Essential when you need room to examine evidence, pressure test assumptions, compare tradeoffs, and preserve the reasoning behind decisions that matter.
-      </p>
+      {isBusinessAudience && <EnterpriseInvestmentCalculator billing={isAnnual ? 'annual' : 'monthly'} />}
+      </div>
+
+      {isBusinessAudience && <>
+        <aside className="pvb-enterprise-intro">
+          <p><strong>Need more than 10 seats?</strong> Larger teams and organizations with advanced administration, integration, security, or support needs may qualify for an annual Enterprise agreement.</p>
+          <button type="button" className="jaspen-btn jaspen-btn-outline" onClick={() => { analytics.track('contact_sales_clicked', { placement: 'business_card' }); document.getElementById('eic-title')?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}>Contact Sales</button>
+        </aside>
+      </>}
+
+      {!isBusinessAudience && (
+        <p className="pvb-plan-note">
+          Use Essential when you need room to examine evidence, pressure test assumptions, compare tradeoffs, and preserve the reasoning behind decisions that matter.
+        </p>
+      )}
 
       {/* ── Compare plans accordion ── */}
-      <div className="pvb-compare-accordion">
+      {!isBusinessAudience && <div className="pvb-compare-accordion">
         <button
           type="button"
           className="pvb-compare-toggle"
@@ -189,7 +261,7 @@ export default function PricingVariantB({ onOpenModal }) {
               <thead>
                 <tr>
                   <th className="pvb-th-label">Key features</th>
-                  {PLANS.map(p => (
+                  {individualPlans.map(p => (
                     <th key={p.key} className={`pvb-th-plan ${p.featured ? 'is-featured' : ''}`}>
                       <span className="pvb-compare-plan-name">{p.name}</span>
                       <button type="button" className={`pvb-compare-pill ${p.featured ? 'is-featured' : ''}`} onClick={() => onOpenModal?.('signup', 'free')}>{p.cta}</button>
@@ -201,7 +273,7 @@ export default function PricingVariantB({ onOpenModal }) {
                 {FEATURES.map(section => (
                   <React.Fragment key={section.category}>
                     <tr className="pvb-category-row">
-                      <td colSpan={PLANS.length + 1}>{section.category}</td>
+                      <td colSpan={individualPlans.length + 1}>{section.category}</td>
                     </tr>
                     {section.rows.map(row => (
                       <tr key={row.label} className="pvb-feature-row">
@@ -209,7 +281,7 @@ export default function PricingVariantB({ onOpenModal }) {
                           {row.label}
                           {row.sub && <span className="pvb-feature-sub">{row.sub}</span>}
                         </td>
-                        {PLANS.map(plan => (
+                        {individualPlans.map(plan => (
                           <td key={plan.key} className={`pvb-cell ${plan.featured ? 'is-featured' : ''}`}>
                             <Cell value={row[plan.key]} />
                           </td>
@@ -222,12 +294,12 @@ export default function PricingVariantB({ onOpenModal }) {
             </table>
           </div>
         )}
-      </div>
+      </div>}
 
       {isAnnual && <p className="pvb-annual-note">* Per-month price shown. Charged as one annual payment.</p>}
-      <p className="pvb-addons-note">
+      {!isBusinessAudience && <p className="pvb-addons-note">
         Mid-cycle top-ups: <a href="/pages/pricing#credits">3,000 credits for $10 · 8,000 for $25 · 18,000 for $50</a>
-      </p>
+      </p>}
 
     </section>
   );

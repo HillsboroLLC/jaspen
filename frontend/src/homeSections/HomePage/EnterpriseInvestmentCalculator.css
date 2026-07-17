@@ -1,0 +1,285 @@
+.eic {
+  max-width: 1180px;
+  margin: 0 auto;
+  background: #fff;
+  border: 1.5px solid #e8e4dc;
+  border-radius: 18px;
+  padding: 34px;
+  box-shadow: 0 4px 24px rgba(22, 31, 59, 0.07);
+  color: #161f3b;
+}
+.eic-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+.eic-head h3 {
+  margin: 3px 0 0;
+  font-size: 1.7rem;
+}
+.eic-head > span {
+  font-size: 0.82rem;
+  color: #7b8498;
+}
+.eic-eyebrow {
+  margin: 0;
+  color: #a0036c;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.eic-progress {
+  height: 6px;
+  margin: 20px 0 30px;
+  background: #eeeae4;
+  border-radius: 999px;
+  overflow: hidden;
+}
+.eic-progress span {
+  display: block;
+  height: 100%;
+  background: #a0036c;
+  transition: width 0.2s;
+}
+.eic-step {
+  max-width: 960px;
+}
+.eic-lead {
+  color: #657087;
+  line-height: 1.6;
+}
+.eic-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+.eic label,
+.eic fieldset {
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+.eic input,
+.eic select,
+.eic textarea {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 8px;
+  padding: 12px 14px;
+  border: 1.5px solid #cfd6e2;
+  border-radius: 10px;
+  background: #fff;
+  color: #161f3b;
+  font: inherit;
+}
+.eic input:focus,
+.eic select:focus,
+.eic textarea:focus {
+  outline: 3px solid rgba(160, 3, 108, 0.18);
+  border-color: #a0036c;
+}
+.eic fieldset {
+  margin: 26px 0 0;
+  padding: 0;
+  border: 0;
+}
+.eic-options,
+.eic-checks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+.eic-options label,
+.eic-checks label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #e3dfd8;
+  border-radius: 10px;
+  font-weight: 500;
+}
+.eic-options input,
+.eic-checks input {
+  width: auto;
+  margin: 0;
+  accent-color: #a0036c;
+}
+.eic-usage-option {
+  min-width: 0;
+}
+.eic-usage-option > small {
+  margin: 5px 2px 0;
+  color: #9ca3af;
+  font-size: 0.66rem;
+  white-space: nowrap;
+  text-align: center;
+}
+.eic-hourly {
+  display: block;
+  margin-top: 28px;
+  max-width: 430px;
+}
+.eic-hourly > span,
+.eic-contact label > span {
+  font-weight: 400;
+  color: #8a93a5;
+}
+.eic-hourly > div {
+  position: relative;
+}
+.eic-hourly > div span {
+  position: absolute;
+  left: 14px;
+  top: 20px;
+  color: #8a93a5;
+}
+.eic-hourly input {
+  padding-left: 30px;
+}
+.eic small {
+  display: block;
+  margin-top: 8px;
+  color: #7b8498;
+  font-weight: 400;
+  line-height: 1.5;
+}
+.eic-result {
+  background: #161f3b;
+  color: #fff;
+  border-radius: 15px;
+  padding: 30px;
+}
+.eic-result h4 {
+  margin: 6px 0;
+  font-size: 2rem;
+}
+.eic-result > strong {
+  color: #ef78c1;
+  font-size: 1.1rem;
+}
+.eic-result-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  margin-top: 24px;
+}
+.eic-result h5 {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+}
+.eic-result ul {
+  margin: 0;
+  padding-left: 20px;
+  color: #d8ddeb;
+  line-height: 1.65;
+}
+.eic-equivalent {
+  margin-top: 24px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  line-height: 1.6;
+}
+.eic-disclaimer {
+  margin: 18px 0 0;
+  color: #aeb7ca;
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+.eic-contact {
+  margin-top: 26px;
+  padding-top: 26px;
+  border-top: 1px solid #e3dfd8;
+}
+.eic-contact h4 {
+  margin: 0;
+  font-size: 1.3rem;
+}
+.eic-contact > p {
+  color: #657087;
+}
+.eic-contact form > label {
+  display: block;
+  margin-top: 18px;
+}
+.eic-contact textarea {
+  resize: vertical;
+}
+.eic-honeypot {
+  position: absolute !important;
+  left: -10000px !important;
+}
+.eic-error {
+  color: #a0036c;
+}
+.eic-success {
+  padding: 18px;
+  border-radius: 10px;
+  background: #edf8f1;
+  color: #205b39;
+}
+.eic-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 28px;
+}
+.eic-actions .jaspen-btn {
+  min-width: 120px;
+}
+@media (max-width: 700px) {
+  .eic {
+    padding: 24px 18px;
+  }
+  .eic-grid,
+  .eic-options,
+  .eic-checks,
+  .eic-result-grid {
+    grid-template-columns: 1fr;
+  }
+  .eic-head {
+    display: block;
+  }
+  .eic-head > span {
+    display: block;
+    margin-top: 8px;
+  }
+}
+
+/* Compact calculator card beside Business pricing. */
+.pvb-plan-layout.is-business .eic {
+  max-width: none;
+  min-width: 0;
+  margin: 0;
+  padding: 18px 22px;
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+}
+.pvb-plan-layout.is-business .eic-head h3 { font-size: 1.15rem; }
+.pvb-plan-layout.is-business .eic-head > span { font-size: 0.74rem; }
+.pvb-plan-layout.is-business .eic-progress { margin: 10px 0 12px; height: 4px; }
+.pvb-plan-layout.is-business .eic-lead { margin: 0 0 9px; font-size: 0.8rem; line-height: 1.4; }
+.pvb-plan-layout.is-business .eic-grid { gap: 10px; }
+.pvb-plan-layout.is-business .eic-step { max-width: 640px; }
+.pvb-plan-layout.is-business .eic fieldset { margin-top: 10px; }
+.pvb-plan-layout.is-business .eic input,
+.pvb-plan-layout.is-business .eic select,
+.pvb-plan-layout.is-business .eic textarea { padding: 7px 10px; margin-top: 5px; }
+.pvb-plan-layout.is-business .eic-options,
+.pvb-plan-layout.is-business .eic-checks { gap: 6px; margin-top: 6px; }
+.pvb-plan-layout.is-business .eic-options { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin-top: 6px; }
+.pvb-plan-layout.is-business .eic-options label,
+.pvb-plan-layout.is-business .eic-checks label { padding: 7px 9px; font-size: 0.76rem; }
+.pvb-plan-layout.is-business .eic-actions { margin-top: auto; padding-top: 16px; }
+.pvb-plan-layout.is-business .eic-actions .jaspen-btn { min-width: 100px; padding: 8px 14px; }
+.pvb-plan-layout.is-business .eic-result { padding: 20px; }
+.pvb-plan-layout.is-business .eic-result h4 { font-size: 1.5rem; }
+.pvb-plan-layout.is-business .eic-contact { margin-top: 18px; padding-top: 18px; }
+
+@media (max-width: 760px) {
+  .pvb-plan-layout.is-business .eic { padding: 24px 18px; }
+}

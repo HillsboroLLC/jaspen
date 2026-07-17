@@ -36,7 +36,7 @@ const FALLBACK_PLANS = [
   },
   {
     plan_key: 'enterprise',
-    label: 'Enterprise',
+    label: 'Business',
     price: '$299 / month+',
     detail: 'Governed decision support for organizations managing portfolios, resources, and cross-functional tradeoffs · 80,000 shared credits/month.',
     sales_only: false,
@@ -193,7 +193,7 @@ export default function PricingPage() {
             <ul className="lydia-bullets">
               <li>Free and Starter help individuals test and use Jaspen</li>
               <li>Essential gives more room for consequential decisions</li>
-              <li>Team and Enterprise support shared resources and rollout</li>
+              <li>Team and Business support shared resources and rollout</li>
             </ul>
           </article>
         </div>

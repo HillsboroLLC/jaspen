@@ -935,7 +935,7 @@ export default function Team({ mode = 'team' }) {
 
       {isEnterpriseMode && !canAccessEnterpriseView && (
         <div className="team-state error">
-          Enterprise Admin requires an Enterprise plan. Switch to an Enterprise team or upgrade in Billing.
+          Enterprise Admin requires a Business plan. Switch to a Business workspace or upgrade in Billing.
         </div>
       )}
 

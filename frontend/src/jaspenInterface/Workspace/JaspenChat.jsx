@@ -11887,7 +11887,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
         if (id === 'scenario' && effectiveIsViewer) {
           showToast('Viewers can review shared project results but cannot use scenario tools.', 'info');
         } else if (id === 'scenario') {
-          showToast('Scenarios are available on Essential, Team, and Enterprise plans.', 'info');
+          showToast('Scenarios are available on Essential, Team, and Business plans.', 'info');
           setBillingModalOpen(true);
         }
         return;

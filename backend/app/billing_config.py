@@ -11,6 +11,10 @@ except ImportError:
         pass
 
 PLAN_ALIASES = {
+    # Business is the customer-facing name for the legacy enterprise plan key.
+    # Keep the stored key stable so existing subscriptions and entitlements
+    # continue to work without a data migration.
+    'business': 'enterprise',
     'growth': 'team',
     'transform': 'enterprise',
     'transform_basic': 'enterprise',
@@ -26,6 +30,7 @@ PLAN_RANK = {
     'essential': 2,
     'team': 3,
     'enterprise': 4,
+    'enterprise_custom': 5,
 }
 
 DEFAULT_PLAN_CATALOG = {
@@ -69,22 +74,33 @@ DEFAULT_PLAN_CATALOG = {
         'max_viewer_seats': None,
     },
     'enterprise': {
-        'label': 'Enterprise',
+        'label': 'Business',
         'monthly_price_usd': 299,
         'price_model': 'per_seat',
         'min_seats': 5,
         'included_seats': 5,
         'included_admins': 1,
-        'additional_seat_price': 30,
+        'additional_seat_price': None,
         'monthly_credits': 80_000_000,
         'self_serve': True,
         'sales_only': False,
         'description': 'Bring structure, speed, and consistency to how your business operates.',
         'max_admins': 5,
         'max_admin_seats': 5,
-        'max_total_paid_seats': None,
+        'max_total_paid_seats': 10,
         'collaborators': None,
         'viewer_seats': None,
+        'max_viewer_seats': None,
+    },
+    'enterprise_custom': {
+        'label': 'Enterprise',
+        'monthly_price_usd': None,
+        'monthly_credits': None,
+        'self_serve': False,
+        'sales_only': True,
+        'description': 'Custom annual deployment scoped with Jaspen Sales.',
+        'max_admin_seats': None,
+        'max_total_paid_seats': None,
         'max_viewer_seats': None,
     },
 }
@@ -115,7 +131,7 @@ DEFAULT_CREDIT_PACKS = {
 # Backward-compatible alias used by legacy callsites.
 DEFAULT_OVERAGE_PACKS = DEFAULT_CREDIT_PACKS
 
-SHARED_POOL_PLANS = {'team', 'enterprise'}
+SHARED_POOL_PLANS = {'team', 'enterprise', 'enterprise_custom'}
 SOFT_STOP_GRACE_MULTIPLIER = 1.05
 TOKENS_PER_CREDIT = 1000
 
@@ -164,7 +180,7 @@ MARGIN_MULTIPLIER = float(os.getenv('JASPEN_MARGIN_MULTIPLIER', '3.0'))
 #   Essential  $39  → $13 budget × 3 = $39 retail → break-even on heavy users,
 #                     comfortable margin on light users
 #   Team      $129  → $43 budget × 3 = $129
-#   Enterprise $299 → $100 budget × 3 = $300
+#   Business   $299 → $100 budget × 3 = $300
 #
 # These are intentionally calibrated so the heaviest users hit zero margin
 # (not negative) — most users use far less. Tunable via env.
@@ -173,7 +189,7 @@ PLAN_THINKING_BUDGET_USD = {
     'starter':    float(os.getenv('JASPEN_BUDGET_STARTER',    '2.00')),
     'essential':  float(os.getenv('JASPEN_BUDGET_ESSENTIAL', '13.00')),
     'team':       float(os.getenv('JASPEN_BUDGET_TEAM',      '43.00')),
-    'enterprise': float(os.getenv('JASPEN_BUDGET_ENTERPRISE','100.00')),
+    'enterprise': float(os.getenv('JASPEN_BUDGET_BUSINESS') or os.getenv('JASPEN_BUDGET_ENTERPRISE', '100.00')),
 }
 
 
@@ -298,6 +314,8 @@ def get_plan_catalog(app_config):
     for key, value in catalog.items():
         value['plan_key'] = key
         value['stripe_price_id'] = stripe_price_ids.get(key)
+        value['stripe_annual_price_id'] = (app_config.get('STRIPE_ANNUAL_PRICE_IDS', {}) or {}).get(key)
+        value['additional_seat_price_id'] = (app_config.get('STRIPE_ADDITIONAL_SEAT_PRICE_IDS', {}) or {}).get(key)
     return catalog
 
 

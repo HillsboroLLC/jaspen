@@ -40,7 +40,7 @@ const NAV_MENUS = [
           { label: 'Starter ($7)', path: '/pages/pricing#starter' },
           { label: 'Essential ($39)', path: '/pages/pricing#essential' },
           { label: 'Team', path: '/pages/pricing#team' },
-          { label: 'Enterprise', path: '/pages/pricing#enterprise' },
+          { label: 'Business', path: '/pages/pricing#enterprise' },
         ],
       },
     ],

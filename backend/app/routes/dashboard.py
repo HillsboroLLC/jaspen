@@ -252,7 +252,7 @@ def get_dashboard_data():
     plan_key = str(org.plan_key or "").strip().lower()
     global_admin = is_global_admin(user, app_config=current_app.config)
     if plan_key not in ALLOWED_PLANS and not global_admin:
-        return jsonify({"error": "Dashboard is available on Team and Enterprise plans."}), 403
+        return jsonify({"error": "Dashboard is available on Team and Business plans."}), 403
 
     membership_role = normalize_org_role(membership.role)
     manager_scope = global_admin or can_manage_org(membership_role)

@@ -25,7 +25,7 @@ export default function FAQSection() {
     {
       q: 'What is a credit, and how many will I need?',
       a: <>
-        <p>Credits are how you pay for AI work as you go. Every plan includes a monthly allotment that resets each cycle: Free 300, Starter 1,000, Essential 7,000, Team 29,000 shared, and Enterprise 80,000 shared.</p>
+        <p>Credits are how you pay for AI work as you go. Every plan includes a monthly allotment that resets each cycle: Free 300, Starter 1,000, Essential 7,000, Team 29,000 shared, and Business 80,000 shared. Enterprise capacity is scoped with Sales.</p>
         <p>How fast they burn depends on which model you pick. You can top up any time: 3,000 credits for $10, 8,000 for $25, or 18,000 for $50.</p>
       </>
     },
@@ -62,6 +62,26 @@ export default function FAQSection() {
         <p>People who own hard, cross-functional calls and have to defend them: operators, strategy and transformation leads, project managers, founders, and consultants.</p>
         <p>The same method works for an individual choice or a boardroom portfolio without changing how it thinks.</p>
       </>
+    },
+    {
+      q: 'What is the difference between Team, Business, and Enterprise?',
+      a: <><p>Team supports a small collaborative group. Business is a self-service plan for one workspace with five included seats and no more than 10 total users. Enterprise is for multi-team deployments or organizations that need advanced administration, integrations, security review, procurement, or negotiated support.</p><p>Company size alone does not require Enterprise. A small team inside a large company can still use Business when its needs fit.</p></>
+    },
+    {
+      q: 'Can I add seats to Business?',
+      a: <><p>Business supports up to 10 total users. Five seats are included. Additional-seat billing will be enabled once its Stripe configuration is confirmed; Jaspen will not invent or silently apply an add-on price.</p></>
+    },
+    {
+      q: 'How does Enterprise pricing work?',
+      a: <><p>Enterprise uses a custom annual agreement based on deployment size, teams, usage, administration, integrations, security, support, and contractual scope. The calculator provides an indicative planning range, not a final quote.</p></>
+    },
+    {
+      q: 'What does the calculator’s investment equivalent mean?',
+      a: <><p>It converts the indicative annual investment into minutes of leadership time per participant using the hourly-cost assumption you provide or accept. It is a way to understand scale, not a prediction of savings, time saved, ROI, or business outcomes.</p></>
+    },
+    {
+      q: 'How do I contact Enterprise Sales?',
+      a: <><p>Complete the Enterprise Investment Calculator and submit the optional contact form after viewing your result. Your estimate and deployment context will be routed securely to sales@jaspen.ai without subscribing you to marketing emails.</p></>
     },
     {
       q: 'Can I cancel or change plans anytime?',

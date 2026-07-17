@@ -318,7 +318,7 @@ export default function BatchIdeaManager({
               <strong>
                 {lockReason === 'role'
                   ? 'Only creators and admins can use Batch Ideas.'
-                  : 'Batch Ideas is available on Team and Enterprise.'}
+                  : 'Batch Ideas is available on Team and Business.'}
               </strong>
               <p>
                 {lockReason === 'role'
