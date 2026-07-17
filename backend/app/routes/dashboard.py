@@ -10,7 +10,7 @@ from app.orgs import can_manage_org, normalize_org_role, resolve_active_org_for_
 
 dashboard_bp = Blueprint("dashboard", __name__)
 
-ALLOWED_PLANS = {"team", "enterprise"}
+ALLOWED_PLANS = {"team", "business", "enterprise_custom"}
 COLLABORATOR_ROLES = {"collaborator", "viewer"}
 
 

@@ -35,9 +35,16 @@ DEFAULT_SEAT_POLICIES = {
         ORG_ROLE_COLLABORATOR: None,
         ORG_ROLE_VIEWER: None,
     },
-    "enterprise": {
+    "business": {
         ORG_ROLE_OWNER: 1,
         ORG_ROLE_ADMIN: 5,
+        ORG_ROLE_CREATOR: None,
+        ORG_ROLE_COLLABORATOR: None,
+        ORG_ROLE_VIEWER: None,
+    },
+    "enterprise_custom": {
+        ORG_ROLE_OWNER: 1,
+        ORG_ROLE_ADMIN: None,
         ORG_ROLE_CREATOR: None,
         ORG_ROLE_COLLABORATOR: None,
         ORG_ROLE_VIEWER: None,
@@ -119,7 +126,7 @@ def seat_policy_for_plan(plan_key):
 
 def default_mfa_policy_for_plan(plan_key):
     canonical = normalize_plan_key(plan_key)
-    if canonical == "enterprise":
+    if canonical == "business":
         return MFA_POLICY_REQUIRED
     if canonical == "team":
         return MFA_POLICY_OPTIONAL
@@ -405,7 +412,7 @@ def role_has_capacity(org, role, exclude_member_id=None):
             status="active",
         ).first()
 
-    if public_plan in {"team", "enterprise"}:
+    if public_plan in {"team", "business"}:
         usage = build_seat_usage(org)
         if role == ORG_ROLE_ADMIN:
             admin_used = int((usage.get(ORG_ROLE_ADMIN) or {}).get("used") or 0)
@@ -508,8 +515,8 @@ def organization_access_payload_for_user(user):
         "active_organization_role": active_membership.role if active_membership else None,
         "active_organization_plan_key": to_public_plan(active_org.plan_key) if active_org else None,
         "active_organization_mfa_policy": mfa_policy_for_org(active_org) if active_org else None,
-        "can_access_team": bool(normalized_plans.intersection({"team", "enterprise"})),
-        "can_access_enterprise_admin": "enterprise" in normalized_plans,
+        "can_access_team": bool(normalized_plans.intersection({"team", "business", "enterprise_custom"})),
+        "can_access_enterprise_admin": "enterprise_custom" in normalized_plans,
     }
 
 

@@ -580,12 +580,12 @@ def master_analytics():
     )
 
     active_paid_statuses = {"active", "trialing"}
-    paid_plans = {"starter", "essential", "team", "enterprise"}
+    paid_plans = {"starter", "essential", "team", "business"}
     plan_mrr = {
         "starter": 7,
         "essential": 39,
         "team": 0,
-        "enterprise": 0,
+        "business": 0,
     }
     paid_users = User.query.filter(func.lower(User.subscription_plan).in_(paid_plans)).all()
     completed_purchases = sum(
@@ -821,7 +821,7 @@ def get_model_access_matrix():
     if err:
         return err
 
-    plan_order = ["free", "starter", "essential", "team", "enterprise"]
+    plan_order = ["free", "starter", "essential", "team", "business"]
     model_catalog = get_model_catalog(current_app.config, include_backing_ids=True)
     plans = []
     for plan_key in plan_order:

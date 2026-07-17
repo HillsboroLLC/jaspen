@@ -18,7 +18,7 @@ shared-pool branch of `add_credits`**.
      in `user.ui_preferences['thinking_power']`, then PERSISTS it
      (`user.ui_preferences = deepcopy(prefs)` + `_flag_modified(user, ...)`).
      ✅ Works.
-   - **Shared-pool plans** (`team`, `enterprise` — `SHARED_POOL_PLANS`,
+   - **Shared-pool plans** (`team`, `business`, `enterprise_custom` — `SHARED_POOL_PLANS`,
      billing_config.py:109) → org-pool branch (lines 534–544): mutates
      `pool["meter"]` and sets `user.credits_remaining`, then `return`s —
      **but never writes back to `org.settings` and never calls

@@ -3,7 +3,8 @@ export const PLAN_CONNECTORS = {
   starter: ['Salesforce', 'Snowflake', 'Jira', 'Smartsheet', 'Oracle Fusion', 'ServiceNow', 'NetSuite'],
   essential: ['Salesforce', 'Snowflake', 'Jira', 'Smartsheet', 'Oracle Fusion', 'ServiceNow', 'NetSuite'],
   team: ['Salesforce', 'Snowflake', 'Jira', 'Smartsheet', 'Oracle Fusion', 'ServiceNow', 'NetSuite'],
-  enterprise: ['Salesforce', 'Snowflake', 'Jira', 'Smartsheet', 'Oracle Fusion', 'ServiceNow', 'NetSuite'],
+  business: ['Salesforce', 'Snowflake', 'Jira', 'Smartsheet', 'Oracle Fusion', 'ServiceNow', 'NetSuite'],
+  enterprise_custom: ['Salesforce', 'Snowflake', 'Jira', 'Smartsheet', 'Oracle Fusion', 'ServiceNow', 'NetSuite'],
 };
 
 function normalizePlanKey(planKey) {

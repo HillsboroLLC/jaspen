@@ -194,8 +194,10 @@ export default function AppMenu() {
     user?.subscription_plan,
   );
   const previewPlanCategory =
-    effectivePlanKey === 'enterprise'
+    effectivePlanKey === 'enterprise_custom'
       ? 'enterprise'
+      : effectivePlanKey === 'business'
+      ? 'business'
       : effectivePlanKey === 'team'
       ? 'team'
       : 'individual';

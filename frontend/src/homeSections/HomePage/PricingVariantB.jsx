@@ -51,7 +51,7 @@ const PLANS = [
     featured: false,
   },
   {
-    key: 'enterprise',
+    key: 'business',
     name: 'Business',
     monthly: 299,
     annual: 249,
@@ -67,34 +67,34 @@ const FEATURES = [
   {
     category: 'Credits & capacity',
     rows: [
-      { label: 'Monthly credits',            sub: 'Resets each billing cycle',         free: '300',     starter: '1,000',   essential: '7,000',  team: '29,000',      enterprise: '80,000'    },
-      { label: 'Credits shared across team', sub: 'Pool drawn from one balance',        free: false,     starter: false,     essential: false,    team: true,          enterprise: true        },
-      { label: 'Buy additional credits',     sub: 'Top up any time mid-cycle',          free: true,      starter: true,      essential: true,     team: true,          enterprise: true        },
+      { label: 'Monthly credits',            sub: 'Resets each billing cycle',         free: '300',     starter: '1,000',   essential: '7,000',  team: '29,000',      business: '80,000'    },
+      { label: 'Credits shared across team', sub: 'Pool drawn from one balance',        free: false,     starter: false,     essential: false,    team: true,          business: true        },
+      { label: 'Buy additional credits',     sub: 'Top up any time mid-cycle',          free: true,      starter: true,      essential: true,     team: true,          business: true        },
     ],
   },
   {
     category: 'Workspace & seats',
     rows: [
-      { label: 'Seats included',             sub: '',                                   free: '1',       starter: '1',       essential: '1',      team: '3',           enterprise: '5'         },
-      { label: 'Additional seats',           sub: 'Pay as you grow',                    free: false,     starter: false,     essential: false,    team: '+$25/seat',   enterprise: 'Up to 10 users' },
-      { label: 'Shared team workspace',      sub: '',                                   free: false,     starter: false,     essential: false,    team: true,          enterprise: true        },
-      { label: 'Scorecard export',           sub: 'PDF download',                       free: true,      starter: true,      essential: true,     team: true,          enterprise: true        },
+      { label: 'Seats included',             sub: '',                                   free: '1',       starter: '1',       essential: '1',      team: '3',           business: '5'         },
+      { label: 'Additional seats',           sub: 'Pay as you grow',                    free: false,     starter: false,     essential: false,    team: '+$25/seat',   business: 'Up to 10 users' },
+      { label: 'Shared team workspace',      sub: '',                                   free: false,     starter: false,     essential: false,    team: true,          business: true        },
+      { label: 'Scorecard export',           sub: 'PDF download',                       free: true,      starter: true,      essential: true,     team: true,          business: true        },
     ],
   },
   {
     category: 'AI models',
     rows: [
-      { label: 'Pluto',                      sub: 'Fastest, lowest credit burn',        free: true,      starter: true,      essential: true,     team: true,          enterprise: true        },
-      { label: 'Orbit',                      sub: 'Deeper reasoning, moderate burn',    free: true,      starter: true,      essential: true,     team: true,          enterprise: true        },
-      { label: 'Titan',                      sub: 'Highest depth, highest burn',        free: true,      starter: true,      essential: true,     team: true,          enterprise: true        },
+      { label: 'Pluto',                      sub: 'Fastest, lowest credit burn',        free: true,      starter: true,      essential: true,     team: true,          business: true        },
+      { label: 'Orbit',                      sub: 'Deeper reasoning, moderate burn',    free: true,      starter: true,      essential: true,     team: true,          business: true        },
+      { label: 'Titan',                      sub: 'Highest depth, highest burn',        free: true,      starter: true,      essential: true,     team: true,          business: true        },
     ],
   },
   {
     category: 'Support',
     rows: [
-      { label: 'Community support',          sub: '',                                   free: true,      starter: true,      essential: true,     team: true,          enterprise: true        },
-      { label: 'Priority support',           sub: '',                                   free: false,     starter: false,     essential: false,    team: true,          enterprise: true        },
-      { label: 'Dedicated success manager',  sub: '',                                   free: false,     starter: false,     essential: false,    team: false,         enterprise: true        },
+      { label: 'Community support',          sub: '',                                   free: true,      starter: true,      essential: true,     team: true,          business: true        },
+      { label: 'Priority support',           sub: '',                                   free: false,     starter: false,     essential: false,    team: true,          business: true        },
+      { label: 'Dedicated success manager',  sub: '',                                   free: false,     starter: false,     essential: false,    team: false,         business: true        },
     ],
   },
 ];
@@ -110,8 +110,8 @@ export default function PricingVariantB({ onOpenModal }) {
   const [compareOpen, setCompareOpen] = useState(false);
   const [activeAudience, setActiveAudience] = useState('individuals');
   const isBusinessAudience = activeAudience === 'business';
-  const individualPlans = PLANS.filter(plan => plan.key !== 'enterprise');
-  const visiblePlans = isBusinessAudience ? PLANS.filter(plan => plan.key === 'enterprise') : individualPlans;
+  const individualPlans = PLANS.filter(plan => plan.key !== 'business');
+  const visiblePlans = isBusinessAudience ? PLANS.filter(plan => plan.key === 'business') : individualPlans;
 
   const selectAudience = (audience) => {
     setActiveAudience(audience);
@@ -210,7 +210,7 @@ export default function PricingVariantB({ onOpenModal }) {
                 <p className="pvb-billed-note">{plan.seats}</p>
               )}
               <p className="pvb-card-tagline">{plan.tagline}</p>
-              {plan.key === 'enterprise' && (
+              {plan.key === 'business' && (
                 <p className="pvb-business-seat-note">
                   Need a few more seats? Add up to 5 additional seats for a maximum of 10 users on Business.
                 </p>
@@ -218,7 +218,7 @@ export default function PricingVariantB({ onOpenModal }) {
               <button
                 type="button"
                 className={`pvb-card-cta jaspen-btn ${plan.featured ? 'jaspen-btn-primary' : 'jaspen-btn-outline'}`}
-                onClick={() => { analytics.track(plan.key === 'enterprise' ? 'business_cta_clicked' : 'pricing_cta_clicked', { plan: plan.key, interval: isAnnual ? 'annual' : 'monthly' }); onOpenModal?.('signup', 'free'); }}
+                onClick={() => { analytics.track(plan.key === 'business' ? 'business_cta_clicked' : 'pricing_cta_clicked', { plan: plan.key, interval: isAnnual ? 'annual' : 'monthly' }); onOpenModal?.('signup', 'free'); }}
               >
                 {plan.cta}
               </button>

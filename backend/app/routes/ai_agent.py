@@ -109,7 +109,7 @@ _PLAN_HOURLY_LIMITS = {
     'starter':    '10 per hour',
     'essential':  '20 per hour',
     'team':       '60 per hour',
-    'enterprise': '150 per hour',
+    'business': '150 per hour',
 }
 
 _PLAN_DAILY_LIMITS = {
@@ -117,7 +117,7 @@ _PLAN_DAILY_LIMITS = {
     'starter':    '25 per day',
     'essential':  '50 per day',
     'team':       '150 per day',
-    'enterprise': '500 per day',
+    'business': '500 per day',
 }
 
 _AI_USAGE_LIMIT_ENDPOINTS = (
@@ -3883,7 +3883,7 @@ def _max_output_tokens_for_plan(plan_key):
         "free": default_free,
         "essential": 4000,
         "team": 4000,
-        "enterprise": 8000,
+        "business": 8000,
     }
 
     raw_caps = (
@@ -3907,7 +3907,7 @@ def _max_output_tokens_for_plan(plan_key):
                 except Exception:
                     continue
 
-    for plan in ("free", "starter", "essential", "team", "enterprise"):
+    for plan in ("free", "starter", "essential", "team", "business"):
         env_key = f"AI_AGENT_MAX_OUTPUT_TOKENS_{plan.upper()}"
         raw = current_app.config.get(env_key) or os.getenv(env_key)
         if raw is None:
@@ -8293,7 +8293,7 @@ def _visible_batch_payload(batch):
 
 def _batch_access_context(user):
     plan_key = to_public_plan(user.subscription_plan)
-    if plan_key not in {"team", "enterprise"}:
+    if plan_key not in {"team", "business", "enterprise_custom"}:
         return None, None, plan_key, (
             jsonify({
                 "error": "Batch idea upload is available on Team and Business plans.",

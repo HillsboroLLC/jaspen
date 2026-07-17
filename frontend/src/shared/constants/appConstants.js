@@ -1,11 +1,13 @@
-export const PLAN_ORDER = ['free', 'starter', 'essential', 'team', 'enterprise'];
+export const PLAN_ORDER = ['free', 'starter', 'essential', 'team', 'business'];
 
 export const PLAN_RANK = {
   free: 0,
   starter: 1,
   essential: 2,
   team: 3,
-  enterprise: 4,
+  business: 4,
+  enterprise: 4, // Legacy subscription metadata alias.
+  enterprise_custom: 5,
 };
 
 export const ROLE_OPTIONS = ['owner', 'admin', 'creator', 'collaborator', 'viewer'];

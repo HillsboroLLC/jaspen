@@ -85,7 +85,7 @@ function normalizeCsvIds(value) {
 
 function planSeatSummary(planKey) {
   const map = PLAN_SEAT_MATRIX?.[planKey] || PLAN_SEAT_MATRIX.team;
-  if (planKey === 'team' || planKey === 'enterprise') {
+  if (planKey === 'team' || planKey === 'business' || planKey === 'enterprise_custom') {
     return `Admin ${map.admin} • Paid seats pooled across admin, creator, and collaborator • Viewer Unlimited`;
   }
   const fmt = (value) => (value == null ? 'Unlimited' : String(value));
@@ -176,7 +176,7 @@ export default function Team({ mode = 'team' }) {
   const assistantAbortRef = useRef(null);
 
   const isEnterpriseMode = String(mode || '').toLowerCase() === 'enterprise';
-  const routePlanForCopy = isEnterpriseMode ? 'enterprise' : 'team';
+  const routePlanForCopy = isEnterpriseMode ? 'enterprise_custom' : 'team';
   const teamLabel = isEnterpriseMode ? 'Enterprise' : 'Team';
   const teamLabelLower = teamLabel.toLowerCase();
   const teamNameLabel = isEnterpriseMode ? 'Enterprise name' : 'Team name';
@@ -198,7 +198,7 @@ export default function Team({ mode = 'team' }) {
   const activeOrg = summary?.organization || null;
   const activeOrgId = String(activeOrg?.id || '');
   const activeOrgPlanKey = String(activeOrg?.plan_key || '').toLowerCase();
-  const canAccessEnterpriseView = isGlobalAdmin || activeOrgPlanKey === 'enterprise';
+  const canAccessEnterpriseView = isGlobalAdmin || activeOrgPlanKey === 'enterprise_custom';
   const seatPolicyDefaults = activeOrg?.seat_policy_defaults || {};
   const seatUsage = summary?.seat_usage || {};
   const assistantAdminSeatsUsed = Number(seatUsage?.admin?.used ?? 0);
@@ -791,7 +791,7 @@ export default function Team({ mode = 'team' }) {
   const activePlanLabel = activeOrgPlanKey
     ? `${activeOrgPlanKey.charAt(0).toUpperCase()}${activeOrgPlanKey.slice(1)}`
     : 'Current';
-  const seatSummaryLabel = (routePlanForCopy === 'team' || routePlanForCopy === 'enterprise')
+  const seatSummaryLabel = ['team', 'business', 'enterprise_custom'].includes(routePlanForCopy)
     ? `Admin: ${Number(seatUsage?.admin?.used ?? 0)}/${seatLimitForPlanRole(routePlanForCopy, 'admin') ?? '∞'} · Paid seats: ${Number(seatUsage?.total_paid_used ?? 0)}/${seatUsage?.total_paid_limit ?? '∞'} · Viewers: ${Number(seatUsage?.viewer?.used ?? 0)}`
     : ['admin', 'creator', 'collaborator', 'viewer']
         .map((role) => {
@@ -807,7 +807,7 @@ export default function Team({ mode = 'team' }) {
   const totalPaidLimit = seatUsage?.total_paid_limit;
   const totalPaidAvailable = totalPaidLimit == null ? null : Math.max(Number(totalPaidLimit) - totalPaidUsed, 0);
   const viewerUsed = Number(seatUsage?.viewer?.used || 0);
-  const seatPolicyHelperCopy = (routePlanForCopy === 'team' || routePlanForCopy === 'enterprise')
+  const seatPolicyHelperCopy = ['team', 'business', 'enterprise_custom'].includes(routePlanForCopy)
     ? `Admin cap can be managed here. Paid seats are pooled across admin, creator, and collaborator and are managed ${routePlanForCopy === 'team' ? 'in Billing' : 'by contract'}. Viewers remain unlimited.`
     : `${routePlanForCopy.charAt(0).toUpperCase() + routePlanForCopy.slice(1)} defaults: ${planSeatSummary(routePlanForCopy)}.`;
 
@@ -983,7 +983,7 @@ export default function Team({ mode = 'team' }) {
       <section className="team-seat-grid">
         {ROLE_OPTIONS.filter((role) => {
           if (role === 'owner') return false;
-          if (routePlanForCopy === 'team' || routePlanForCopy === 'enterprise') {
+          if (['team', 'business', 'enterprise_custom'].includes(routePlanForCopy)) {
             return role === 'admin';
           }
           return true;
@@ -1051,7 +1051,7 @@ export default function Team({ mode = 'team' }) {
             </article>
           );
         })}
-        {(routePlanForCopy === 'team' || routePlanForCopy === 'enterprise') && (
+        {['team', 'business', 'enterprise_custom'].includes(routePlanForCopy) && (
           <article className="team-seat-card">
             <h3>Total Paid Seats</h3>
             <p className="team-seat-main">
@@ -1068,7 +1068,7 @@ export default function Team({ mode = 'team' }) {
             </p>
           </article>
         )}
-        {(routePlanForCopy === 'team' || routePlanForCopy === 'enterprise') && (
+        {['team', 'business', 'enterprise_custom'].includes(routePlanForCopy) && (
           <article className="team-seat-card">
             <h3>Viewer Seats</h3>
             <p className="team-seat-main">

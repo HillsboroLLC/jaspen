@@ -11,8 +11,8 @@ import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
 import { sendPageAssistantMessage } from '../shared/pageAssistant';
 
 
-const PLAN_OPTIONS = ['free', 'starter', 'essential', 'team', 'enterprise'];
-const PLAN_ACCESS_ORDER = ['free', 'starter', 'essential', 'team', 'enterprise'];
+const PLAN_OPTIONS = ['free', 'starter', 'essential', 'team', 'business'];
+const PLAN_ACCESS_ORDER = ['free', 'starter', 'essential', 'team', 'business'];
 const MODEL_DISPLAY_ORDER = ['pluto', 'orbit', 'titan'];
 const CREDIT_MODE_OPTIONS = [
   { value: 'adjust', label: 'Adjust (+/-)' },
@@ -58,17 +58,17 @@ const ROLE_EXPERIENCE_OPTIONS = [
   {
     label: 'Enterprise · Viewer',
     description: 'Read-only access to shared enterprise projects using the active org data.',
-    path: '/new?admin_preview=workspace&plan_key=enterprise&role=viewer',
+    path: '/new?admin_preview=workspace&plan_key=enterprise_custom&role=viewer',
   },
   {
     label: 'Enterprise · Collaborator',
     description: 'Can work inside shared enterprise projects but cannot start new ones.',
-    path: '/new?admin_preview=workspace&plan_key=enterprise&role=collaborator',
+    path: '/new?admin_preview=workspace&plan_key=enterprise_custom&role=collaborator',
   },
   {
     label: 'Enterprise · Creator',
     description: 'Can create and develop projects in the active enterprise org without org admin controls.',
-    path: '/new?admin_preview=workspace&plan_key=enterprise&role=creator',
+    path: '/new?admin_preview=workspace&plan_key=enterprise_custom&role=creator',
   },
   {
     label: 'Enterprise · Admin',
@@ -1245,8 +1245,8 @@ export default function JaspenAdmin() {
                   <button type="button" className="jas-admin-secondary int-btn int-btn-ghost" onClick={() => forcePlan('essential', true)} disabled={pending} aria-disabled={pending}>
                     Force Essential
                   </button>
-                  <button type="button" className="jas-admin-secondary int-btn int-btn-ghost" onClick={() => forcePlan('enterprise', true)} disabled={pending} aria-disabled={pending}>
-                    Force Enterprise
+                  <button type="button" className="jas-admin-secondary int-btn int-btn-ghost" onClick={() => forcePlan('business', true)} disabled={pending} aria-disabled={pending}>
+                    Force Business
                   </button>
                 </div>
 

@@ -11,7 +11,7 @@ export default function RequireTeamAccess({ children }) {
   const canAccessTeam = Boolean(user?.can_access_team);
   const isGlobalAdmin = Boolean(user?.is_admin);
   const isAdminPreview = Boolean(
-    isGlobalAdmin && ['team', 'enterprise'].includes(String(params.get('admin_preview') || '').trim().toLowerCase())
+    isGlobalAdmin && ['team', 'business'].includes(String(params.get('admin_preview') || '').trim().toLowerCase())
   );
 
   if (canAccessTeam || hasInviteToken || isGlobalAdmin || isAdminPreview) {

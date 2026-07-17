@@ -216,9 +216,9 @@ def get_billing_status():
     admin_override = is_global_admin(user, app_config=current_app.config)
     if admin_override:
         changed = False
-        # Global Jaspen admins should always have enterprise internal access.
-        if to_public_plan(user.subscription_plan) != 'enterprise' or user.credits_remaining is not None:
-            apply_plan_to_user(user, 'enterprise', current_app.config, reset_credits=True)
+        # Global Jaspen admins should always have the highest self-service plan.
+        if to_public_plan(user.subscription_plan) != 'business' or user.credits_remaining is not None:
+            apply_plan_to_user(user, 'business', current_app.config, reset_credits=True)
             changed = True
         if not bool(user.unlimited_analysis):
             user.unlimited_analysis = True
@@ -912,7 +912,7 @@ def set_default_payment_method():
 
 
 # Plan tier used to detect upgrade vs downgrade direction.
-_PLAN_TIER = {'free': 0, 'starter': 1, 'essential': 2, 'team': 3, 'enterprise': 4}
+_PLAN_TIER = {'free': 0, 'starter': 1, 'essential': 2, 'team': 3, 'business': 4}
 
 
 @billing_bp.route('/modify-subscription', methods=['POST'])

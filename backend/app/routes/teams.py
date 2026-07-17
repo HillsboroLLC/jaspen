@@ -61,7 +61,7 @@ def _normalize_org_mfa_settings(org, incoming_settings):
     plan = to_public_plan(org.plan_key)
     if plan in {"free", "starter", "essential"} and policy == MFA_POLICY_REQUIRED:
         return None, "MFA enforcement is only available on Team or Business plans"
-    if plan == "enterprise":
+    if plan == "business":
         policy = MFA_POLICY_REQUIRED
     next_settings = dict(incoming_settings)
     next_settings["mfa_policy"] = policy
@@ -129,10 +129,10 @@ def _plan_caps_for_org(org):
     default_viewer = plan.get("max_viewer_seats")
 
     admin_cap = org.max_admin_seats if getattr(org, "max_admin_seats", None) is not None else default_admin
-    creator_cap = None if plan_key in {"team", "enterprise"} else (
+    creator_cap = None if plan_key in {"team", "business"} else (
         org.max_creator_seats if getattr(org, "max_creator_seats", None) is not None else plan.get("max_creator_seats")
     )
-    collaborator_cap = None if plan_key in {"team", "enterprise"} else (
+    collaborator_cap = None if plan_key in {"team", "business"} else (
         org.max_collaborator_seats if getattr(org, "max_collaborator_seats", None) is not None else plan.get("max_collaborator_seats")
     )
     total_paid_cap = getattr(org, "max_total_paid_seats", None)
@@ -185,7 +185,7 @@ def _role_has_capacity(org, role, exclude_member=None):
     plan_key = to_public_plan(org.plan_key)
     ex_role = _normalize_role(getattr(exclude_member, "role", ""), default="") if exclude_member is not None else ""
 
-    if plan_key in {"team", "enterprise"}:
+    if plan_key in {"team", "business"}:
         if role == ROLE_ADMIN:
             admin_used = int((usage.get(ROLE_ADMIN) or {}).get("used") or 0)
             if ex_role in {ROLE_OWNER, ROLE_ADMIN}:
@@ -303,7 +303,7 @@ def create_team_org():
         return jsonify({"error": "name is required"}), 400
 
     plan_key = to_public_plan(normalize_plan_key(user.subscription_plan))
-    if plan_key not in {"team", "enterprise"}:
+    if plan_key not in {"team", "business"}:
         plan_key = "team"
 
     catalog = get_plan_catalog(current_app.config)

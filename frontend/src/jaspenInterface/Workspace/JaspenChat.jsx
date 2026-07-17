@@ -480,7 +480,7 @@ const PM_VARIANT  = "monitor-check";
 const LSS_VARIANT = "chart-scatter";
 const MODEL_DISPLAY_ORDER = ['pluto', 'orbit', 'titan'];
 const MODEL_VERSION_BY_TYPE = { pluto: '1.0', orbit: '1.0', titan: '1.0' };
-const ADMIN_PREVIEW_PLAN_KEYS = new Set(['free', 'starter', 'essential', 'team', 'enterprise']);
+const ADMIN_PREVIEW_PLAN_KEYS = new Set(['free', 'starter', 'essential', 'team', 'business', 'enterprise_custom']);
 const OBJECTIVE_OPTIONS = [
   { key: 'balanced', label: 'Balanced' },
   { key: 'cost', label: 'Cost Optimization' },
@@ -1478,12 +1478,12 @@ const SUPPORT_ROLE_SWITCH_OPTIONS = [
   { value: 'workspace:team:collaborator', label: 'Team · Collaborator', path: '/new?admin_preview=workspace&plan_key=team&role=collaborator' },
   { value: 'workspace:team:creator', label: 'Team · Creator', path: '/new?admin_preview=workspace&plan_key=team&role=creator' },
   { value: 'workspace:team:admin', label: 'Team · Admin', path: '/new?admin_preview=workspace&plan_key=team&role=admin' },
-  { value: 'workspace:enterprise:viewer', label: 'Enterprise · Viewer', path: '/new?admin_preview=workspace&plan_key=enterprise&role=viewer' },
-  { value: 'workspace:enterprise:collaborator', label: 'Enterprise · Collaborator', path: '/new?admin_preview=workspace&plan_key=enterprise&role=collaborator' },
-  { value: 'workspace:enterprise:creator', label: 'Enterprise · Creator', path: '/new?admin_preview=workspace&plan_key=enterprise&role=creator' },
+  { value: 'workspace:enterprise_custom:viewer', label: 'Enterprise · Viewer', path: '/new?admin_preview=workspace&plan_key=enterprise_custom&role=viewer' },
+  { value: 'workspace:enterprise_custom:collaborator', label: 'Enterprise · Collaborator', path: '/new?admin_preview=workspace&plan_key=enterprise_custom&role=collaborator' },
+  { value: 'workspace:enterprise_custom:creator', label: 'Enterprise · Creator', path: '/new?admin_preview=workspace&plan_key=enterprise_custom&role=creator' },
   { value: 'enterprise:admin', label: 'Enterprise · Admin', path: '/enterprise-admin?admin_preview=enterprise&role=admin' },
 ];
-const MFA_ROLLOUT_TARGET_PLANS = new Set(['team', 'enterprise']);
+const MFA_ROLLOUT_TARGET_PLANS = new Set(['team', 'business', 'enterprise_custom']);
 const MFA_ROLLOUT_DISMISS_KEY_PREFIX = 'jas_mfa_rollout_banner_dismissed_v1';
 const MFA_ROLLOUT_ENFORCE_AT = '2026-12-16T00:00:00Z';
 const MFA_ROLLOUT_NOTICE_DATE_LABEL = 'December 15, 2026';
@@ -1503,12 +1503,12 @@ function resolveSupportRoleSwitchValue(location) {
     const planKey = normalizePlanKey(params.get('plan_key'));
     if (!ADMIN_PREVIEW_PLAN_KEYS.has(planKey)) return 'actual';
     const role = String(params.get('role') || '').trim().toLowerCase();
-    if (['team', 'enterprise'].includes(planKey) && ['viewer', 'collaborator', 'creator', 'admin'].includes(role)) {
+    if (['team', 'business', 'enterprise_custom'].includes(planKey) && ['viewer', 'collaborator', 'creator', 'admin'].includes(role)) {
       return `workspace:${planKey}:${role}`;
     }
     return `workspace:${planKey}`;
   }
-  if (previewType === 'team' || previewType === 'enterprise') {
+  if (previewType === 'team' || previewType === 'business') {
     const role = String(params.get('role') || '').trim().toLowerCase();
     if (role) return `${previewType}:${role}`;
   }
@@ -3843,7 +3843,7 @@ useEffect(() => {
     return ADMIN_PREVIEW_PLAN_KEYS.has(planKey) ? planKey : '';
   }, [location.search, user?.is_admin]);
   const adminPreviewRole = useMemo(() => {
-    if (!isPlatformAdmin || !['team', 'enterprise'].includes(adminWorkspacePreviewPlan)) return null;
+    if (!isPlatformAdmin || !['team', 'business', 'enterprise_custom'].includes(adminWorkspacePreviewPlan)) return null;
     const params = new URLSearchParams(location.search);
     const role = String(params.get('role') || '').trim().toLowerCase();
     return ['viewer', 'collaborator', 'creator', 'admin'].includes(role) ? role : null;
@@ -3880,8 +3880,10 @@ useEffect(() => {
     if (!owner) return '';
     return `${MFA_ROLLOUT_DISMISS_KEY_PREFIX}:${owner}:2026-12-15`;
   }, [user?.email, user?.id]);
-  const previewPlanCategory = effectivePlanKey === 'enterprise'
+  const previewPlanCategory = effectivePlanKey === 'enterprise_custom'
     ? 'enterprise'
+    : effectivePlanKey === 'business'
+    ? 'business'
     : effectivePlanKey === 'team'
     ? 'team'
     : 'individual';
@@ -3892,8 +3894,10 @@ useEffect(() => {
   );
   const customerPreviewActive = Boolean(isPlatformAdmin && supportRoleSwitchValue !== 'actual');
   const footerPlanKey = customerPreviewActive ? effectivePlanKey : (
-    planCategory === 'enterprise'
-      ? 'enterprise'
+    planCategory === 'business'
+      ? 'business'
+      : planCategory === 'enterprise'
+      ? 'enterprise_custom'
       : planCategory === 'team'
       ? 'team'
       : currentPlanKey

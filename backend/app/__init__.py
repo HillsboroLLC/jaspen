@@ -222,9 +222,9 @@ def create_app():
         'essential':       _stripe_price_id_from_env('PRICE_ID_ESSENTIAL'),
         # Legacy fallback: allow existing env values to keep working.
         'team':            _stripe_price_id_from_env('PRICE_ID_TEAM', 'PRICE_ID_GROWTH'),
-        # Business is the public name; enterprise remains the internal key so
-        # existing Stripe subscriptions and persisted entitlements stay valid.
-        'enterprise':      _stripe_price_id_from_env('PRICE_ID_BUSINESS', 'PRICE_ID_ENTERPRISE', 'PRICE_ID_TRANSFORM_BASIC'),
+        # Business is canonical. The legacy Enterprise env name remains a
+        # fallback because Stripe uses the same existing price ID.
+        'business':      _stripe_price_id_from_env('PRICE_ID_BUSINESS', 'PRICE_ID_ENTERPRISE', 'PRICE_ID_TRANSFORM_BASIC'),
     }
     app.config['STRIPE_CREDIT_PACK_PRICE_IDS'] = {
         'credits_3000':    _stripe_price_id_from_env('PRICE_ID_CREDITS_3000', 'PRICE_ID_OVERAGE_1000'),
@@ -232,11 +232,11 @@ def create_app():
         'credits_18000':   _stripe_price_id_from_env('PRICE_ID_CREDITS_18000', 'PRICE_ID_OVERAGE_20000'),
     }
     app.config['STRIPE_ANNUAL_PRICE_IDS'] = {
-        'enterprise': _stripe_price_id_from_env('PRICE_ID_BUSINESS_ANNUAL'),
+        'business': _stripe_price_id_from_env('PRICE_ID_BUSINESS_ANNUAL'),
     }
     app.config['STRIPE_ADDITIONAL_SEAT_PRICE_IDS'] = {
         # Intentionally disabled until the owner supplies confirmed Stripe IDs.
-        'enterprise': _stripe_price_id_from_env('PRICE_ID_BUSINESS_ADDITIONAL_SEAT'),
+        'business': _stripe_price_id_from_env('PRICE_ID_BUSINESS_ADDITIONAL_SEAT'),
     }
     # Backward-compatible alias used by legacy code paths.
     app.config['STRIPE_OVERAGE_PACK_PRICE_IDS'] = app.config['STRIPE_CREDIT_PACK_PRICE_IDS']
@@ -250,7 +250,7 @@ def create_app():
     optional_stripe_values = {
         'PRICE_ID_STARTER': app.config['STRIPE_PRICE_IDS'].get('starter'),
         'PRICE_ID_TEAM': app.config['STRIPE_PRICE_IDS'].get('team'),
-        'PRICE_ID_BUSINESS': app.config['STRIPE_PRICE_IDS'].get('enterprise'),
+        'PRICE_ID_BUSINESS': app.config['STRIPE_PRICE_IDS'].get('business'),
     }
     missing_required_stripe = [key for key, value in required_stripe_values.items() if not str(value or '').strip()]
     missing_optional_stripe = [key for key, value in optional_stripe_values.items() if not str(value or '').strip()]

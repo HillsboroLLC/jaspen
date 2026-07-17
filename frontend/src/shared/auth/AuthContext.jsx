@@ -159,7 +159,8 @@ const resolvePlanCategory = (user) => {
     normalizePlanKey(user?.active_organization_plan_key),
     normalizePlanKey(user?.subscription_plan),
   ];
-  if (rankedPlans.includes('enterprise')) return 'enterprise';
+  if (rankedPlans.includes('enterprise_custom')) return 'enterprise';
+  if (rankedPlans.includes('business')) return 'business';
   if (rankedPlans.includes('team')) return 'team';
   return 'individual';
 };
@@ -865,7 +866,7 @@ export function AuthProvider({ children }) {
     ? 'Personal Workspace'
     : (
         String(user?.active_organization_name || '').trim()
-        || (planCategory === 'enterprise' ? 'Enterprise Workspace' : 'Team Workspace')
+        || (planCategory === 'business' ? 'Business Workspace' : 'Team Workspace')
       );
   const orgRole = String(user?.active_organization_role || '').toLowerCase() || null;
   const isPlatformAdmin = Boolean(user?.is_admin);

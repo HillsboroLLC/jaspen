@@ -3,8 +3,13 @@ from copy import deepcopy
 from app.billing_config import normalize_plan_key
 
 
-PLAN_ORDER = ["free", "starter", "essential", "team", "enterprise"]
+PLAN_ORDER = ["free", "starter", "essential", "team", "business"]
 PLAN_RANK = {key: idx for idx, key in enumerate(PLAN_ORDER)}
+
+
+def _entitlement_plan(plan_key):
+    normalized = normalize_plan_key(plan_key)
+    return "business" if normalized == "enterprise_custom" else normalized
 
 
 CONTEXT_BUDGET_BY_TIER = {
@@ -26,7 +31,7 @@ CONTEXT_BUDGET_BY_TIER = {
         "include_active_scenario_and_wbs_snapshot": True,
         "include_connector_insight_snapshot": True,
     },
-    "enterprise": {
+    "business": {
         "recent_turns": 64,
         "include_rolling_summary": True,
         "include_active_scenario_and_wbs_snapshot": True,
@@ -41,7 +46,7 @@ TOOL_REGISTRY = [
         "type": "internal",
         "access": "read",
         "purpose": "Return readiness percent, missing checklist items, and next best question.",
-        "tiers": ["free", "starter", "essential", "team", "enterprise"],
+        "tiers": ["free", "starter", "essential", "team", "business"],
         "limits": "Standard request rate limits.",
         "preconditions": ["active_thread"],
     },
@@ -50,7 +55,7 @@ TOOL_REGISTRY = [
         "type": "internal",
         "access": "read",
         "purpose": "Return required KPI/financial baseline fields for structured intake.",
-        "tiers": ["free", "starter", "essential", "team", "enterprise"],
+        "tiers": ["free", "starter", "essential", "team", "business"],
         "limits": "Standard request rate limits.",
         "preconditions": ["active_thread"],
     },
@@ -59,11 +64,11 @@ TOOL_REGISTRY = [
         "type": "internal",
         "access": "write",
         "purpose": "Create scenario deltas from baseline scorecard.",
-        "tiers": ["free", "starter", "essential", "team", "enterprise"],
+        "tiers": ["free", "starter", "essential", "team", "business"],
         "limits": {
             "essential": {"max_scenarios_per_thread": 10},
             "team": {"max_scenarios_per_thread": 50},
-            "enterprise": {"max_scenarios_per_thread": None},
+            "business": {"max_scenarios_per_thread": None},
         },
         "preconditions": ["baseline_exists"],
     },
@@ -72,7 +77,7 @@ TOOL_REGISTRY = [
         "type": "internal",
         "access": "write",
         "purpose": "Compute deterministic scenario scorecard from baseline + deltas.",
-        "tiers": ["free", "starter", "essential", "team", "enterprise"],
+        "tiers": ["free", "starter", "essential", "team", "business"],
         "preconditions": ["scenario_exists", "baseline_exists"],
     },
     {
@@ -80,7 +85,7 @@ TOOL_REGISTRY = [
         "type": "internal",
         "access": "write",
         "purpose": "Set adopted scenario pointer as current continuation context.",
-        "tiers": ["free", "starter", "essential", "team", "enterprise"],
+        "tiers": ["free", "starter", "essential", "team", "business"],
         "behavior": "Non-destructive pointer switch. Baseline and scenarios are retained.",
         "preconditions": ["scenario_exists_in_thread"],
     },
@@ -89,7 +94,7 @@ TOOL_REGISTRY = [
         "type": "internal",
         "access": "write",
         "purpose": "Delete a scenario only when explicitly requested by user.",
-        "tiers": ["free", "starter", "essential", "team", "enterprise"],
+        "tiers": ["free", "starter", "essential", "team", "business"],
         "guardrails": [
             "Requires explicit user intent.",
             "Deleting adopted scenario resets adopted pointer to baseline.",
@@ -100,7 +105,7 @@ TOOL_REGISTRY = [
         "type": "internal",
         "access": "read",
         "purpose": "Read WBS tasks, owners, milestones, and dependencies for execution tracking.",
-        "tiers": ["free", "starter", "essential", "team", "enterprise"],
+        "tiers": ["free", "starter", "essential", "team", "business"],
         "preconditions": ["thread_exists"],
     },
     {
@@ -108,7 +113,7 @@ TOOL_REGISTRY = [
         "type": "internal",
         "access": "write",
         "purpose": "Create or update WBS tasks, owners, statuses, and dependencies.",
-        "tiers": ["free", "starter", "essential", "team", "enterprise"],
+        "tiers": ["free", "starter", "essential", "team", "business"],
         "limits": {
             "essential": {
                 "max_active_wbs_per_thread": 1,
@@ -120,7 +125,7 @@ TOOL_REGISTRY = [
                 "max_tasks_per_wbs": 300,
                 "max_dependencies_per_wbs": 1000,
             },
-            "enterprise": {
+            "business": {
                 "max_active_wbs_per_thread": None,
                 "max_tasks_per_wbs": None,
                 "max_dependencies_per_wbs": None,
@@ -133,7 +138,7 @@ TOOL_REGISTRY = [
         "type": "connector",
         "access": "read_write",
         "purpose": "Sync epics/stories/status/owners/sprints with Jira.",
-        "tiers": ["free", "starter", "essential", "team", "enterprise"],
+        "tiers": ["free", "starter", "essential", "team", "business"],
         "preconditions": ["connector_configured", "workspace_mapping_configured"],
     },
     {
@@ -141,7 +146,7 @@ TOOL_REGISTRY = [
         "type": "connector",
         "access": "read_write",
         "purpose": "Sync sheet rows, task statuses, and timeline updates with Smartsheet.",
-        "tiers": ["free", "starter", "essential", "team", "enterprise"],
+        "tiers": ["free", "starter", "essential", "team", "business"],
         "preconditions": ["connector_configured", "sheet_mapping_configured"],
     },
     {
@@ -149,7 +154,7 @@ TOOL_REGISTRY = [
         "type": "connector",
         "access": "read_write",
         "purpose": "Analyze customer and pipeline trends from Salesforce for strategic insights.",
-        "tiers": ["free", "starter", "essential", "team", "enterprise"],
+        "tiers": ["free", "starter", "essential", "team", "business"],
         "preconditions": ["connector_configured", "object_mapping_configured"],
     },
     {
@@ -157,7 +162,7 @@ TOOL_REGISTRY = [
         "type": "connector",
         "access": "read",
         "purpose": "Query governed KPI and financial trend views from Snowflake.",
-        "tiers": ["free", "starter", "essential", "team", "enterprise"],
+        "tiers": ["free", "starter", "essential", "team", "business"],
         "preconditions": ["connector_configured", "query_allowlist_configured"],
     },
     {
@@ -165,7 +170,7 @@ TOOL_REGISTRY = [
         "type": "connector",
         "access": "read_write",
         "purpose": "Use Oracle Fusion operational and financial signals for execution insights.",
-        "tiers": ["free", "starter", "essential", "team", "enterprise"],
+        "tiers": ["free", "starter", "essential", "team", "business"],
         "preconditions": ["connector_configured"],
     },
     {
@@ -173,7 +178,7 @@ TOOL_REGISTRY = [
         "type": "connector",
         "access": "read_write",
         "purpose": "Track service and change trends impacting delivery confidence.",
-        "tiers": ["free", "starter", "essential", "team", "enterprise"],
+        "tiers": ["free", "starter", "essential", "team", "business"],
         "preconditions": ["connector_configured"],
     },
     {
@@ -181,14 +186,14 @@ TOOL_REGISTRY = [
         "type": "connector",
         "access": "read_write",
         "purpose": "Monitor NetSuite finance and operations trends for decision support.",
-        "tiers": ["free", "starter", "essential", "team", "enterprise"],
+        "tiers": ["free", "starter", "essential", "team", "business"],
         "preconditions": ["connector_configured"],
     },
 ]
 
 
 def _plan_rank(plan_key):
-    normalized = normalize_plan_key(plan_key)
+    normalized = _entitlement_plan(plan_key)
     return PLAN_RANK.get(normalized, 0)
 
 
@@ -204,7 +209,7 @@ def _is_access_compatible(tool_access, requested_access):
 
 
 def get_context_budget(plan_key):
-    normalized = normalize_plan_key(plan_key)
+    normalized = _entitlement_plan(plan_key)
     return deepcopy(CONTEXT_BUDGET_BY_TIER.get(normalized) or CONTEXT_BUDGET_BY_TIER["free"])
 
 
@@ -236,7 +241,7 @@ def is_tool_allowed(plan_key, tool_id, access="read"):
     if not tool:
         return False
 
-    normalized_plan = normalize_plan_key(plan_key)
+    normalized_plan = _entitlement_plan(plan_key)
     allowed_tiers = tool.get("tiers") or []
     if normalized_plan not in allowed_tiers:
         return False
@@ -245,7 +250,7 @@ def is_tool_allowed(plan_key, tool_id, access="read"):
 
 
 def get_tool_entitlements(plan_key):
-    normalized_plan = normalize_plan_key(plan_key)
+    normalized_plan = _entitlement_plan(plan_key)
     items = []
     for tool in TOOL_REGISTRY:
         tool_id = tool.get("id")
@@ -261,14 +266,14 @@ def get_tool_entitlements(plan_key):
 def get_wbs_limits_for_plan(plan_key):
     tool = get_tool_definition("wbs_write") or {}
     limits = tool.get("limits") or {}
-    normalized_plan = normalize_plan_key(plan_key)
+    normalized_plan = _entitlement_plan(plan_key)
     return deepcopy(limits.get(normalized_plan) or {})
 
 
 def get_scenario_limits_for_plan(plan_key):
     tool = get_tool_definition("scenario_create") or {}
     limits = tool.get("limits") or {}
-    normalized_plan = normalize_plan_key(plan_key)
+    normalized_plan = _entitlement_plan(plan_key)
     return deepcopy(limits.get(normalized_plan) or {})
 
 
@@ -281,7 +286,7 @@ def get_active_connector_tools(user_id, plan_key):
     except Exception:
         return []
 
-    normalized_plan = normalize_plan_key(plan_key)
+    normalized_plan = _entitlement_plan(plan_key)
     active = []
     for tool in TOOL_REGISTRY:
         if str(tool.get("type") or "").strip().lower() != "connector":

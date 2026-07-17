@@ -5,7 +5,7 @@ Status: implementation audit for owner review before production. No live Stripe 
 ## Business configuration
 
 - Public name: Business.
-- Legacy internal key: `enterprise`, retained to protect existing subscriptions and entitlements until production records can be classified safely.
+- Canonical self-service plan key: `business`. Legacy `enterprise` metadata is accepted as an alias and migrated to `business`; custom sales-led accounts use `enterprise_custom`.
 - Price shown: $299 monthly or $249 per month billed as one $2,988 annual payment.
 - Seats: five included, one workspace, maximum 10 total paid users.
 - Additional seats: UI and entitlement limit are prepared, but checkout is disabled until `PRICE_ID_BUSINESS_ADDITIONAL_SEAT` is supplied and its price is confirmed.
@@ -41,4 +41,4 @@ Top-up prices cannot be certified for margin from catalog values alone because t
 2. Supply or confirm Business monthly and annual price IDs.
 3. Supply the additional-seat monthly/annual IDs and price before enabling add-on checkout.
 4. Review actual production utilization and model mix before increasing the 80,000-credit pool.
-5. Decide how to classify any manually provisioned custom Enterprise accounts before migrating the legacy internal `enterprise` key to a distinct first-class `business` database value.
+5. Keep manually provisioned custom Enterprise accounts on `enterprise_custom`; the former self-service `enterprise` key migrates to the first-class `business` value.

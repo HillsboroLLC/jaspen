@@ -61,7 +61,7 @@ GOOGLE_USERINFO_URL = 'https://openidconnect.googleapis.com/v1/userinfo'
 MAX_FAILED_ATTEMPTS = 10
 LOCKOUT_DURATION_MINUTES = 15
 MFA_ROLLOUT_ENFORCE_UTC = datetime(2026, 12, 16, 0, 0, 0, tzinfo=timezone.utc)
-MFA_ROLLOUT_ENFORCED_PLANS = {"team", "enterprise"}
+MFA_ROLLOUT_ENFORCED_PLANS = {"team", "business", "enterprise_custom"}
 
 
 def _max_failed_attempts():
@@ -741,8 +741,8 @@ def _enforce_admin_account_profile(user):
         return False
 
     changed = False
-    if to_public_plan(user.subscription_plan) != 'enterprise' or user.credits_remaining is not None:
-        apply_plan_to_user(user, 'enterprise', current_app.config, reset_credits=True)
+    if to_public_plan(user.subscription_plan) != 'business' or user.credits_remaining is not None:
+        apply_plan_to_user(user, 'business', current_app.config, reset_credits=True)
         changed = True
     if not bool(user.unlimited_analysis):
         user.unlimited_analysis = True

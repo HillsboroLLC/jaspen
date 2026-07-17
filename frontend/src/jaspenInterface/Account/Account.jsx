@@ -227,7 +227,7 @@ const FALLBACK_MODEL_TYPES = {
     label: 'Titan',
     version: '1.0',
     description: 'Highest-depth reasoning for complex multi-team initiatives.',
-    min_plan: 'enterprise',
+    min_plan: 'business',
   },
 };
 // Billing page tabs (unified). connectors/knowledge/models/admin were removed —
@@ -2417,7 +2417,7 @@ export default function Account() {
             <article className="account-overview-card">
               <h3>Current plan</h3>
               <p>{(plans[currentPlan]?.label || currentPlan).toString()}</p>
-              {currentPlan !== 'enterprise' && (
+              {currentPlan !== 'business' && (
                 <button
                   type="button"
                   className="account-secondary-btn"
@@ -2631,7 +2631,7 @@ export default function Account() {
                       </button>
                     )}
                   </div>
-                  {key === 'enterprise' && !isSalesOnly && (
+                  {key === 'business' && !isSalesOnly && (
                     <p
                       className="account-plan-meta"
                       style={{ marginTop: 8, fontSize: '0.78rem', textAlign: 'center' }}

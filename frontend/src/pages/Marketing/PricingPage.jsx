@@ -35,7 +35,7 @@ const FALLBACK_PLANS = [
     sales_only: false,
   },
   {
-    plan_key: 'enterprise',
+    plan_key: 'business',
     label: 'Business',
     price: '$299 / month+',
     detail: 'Governed decision support for organizations managing portfolios, resources, and cross-functional tradeoffs · 80,000 shared credits/month.',
@@ -72,7 +72,7 @@ const PLAN_DISPLAY = {
     summary: 'Give a team more room to prioritize work, compare tradeoffs, and turn decisions into plans.',
     credits: '29,000 shared credits/month',
   },
-  enterprise: {
+  business: {
     fit: 'Governed rollout',
     summary: 'Support portfolios, resource allocation, and cross-functional planning with more capacity.',
     credits: '80,000 shared credits/month',

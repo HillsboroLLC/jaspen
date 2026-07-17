@@ -11,16 +11,15 @@ except ImportError:
         pass
 
 PLAN_ALIASES = {
-    # Business is the customer-facing name for the legacy enterprise plan key.
-    # Keep the stored key stable so existing subscriptions and entitlements
-    # continue to work without a data migration.
-    'business': 'enterprise',
+    # Business is now the canonical plan key. Accept the former key in old
+    # subscription metadata and persisted records during the transition.
+    'enterprise': 'business',
     'growth': 'team',
-    'transform': 'enterprise',
-    'transform_basic': 'enterprise',
-    'transform_standard': 'enterprise',
-    'transform_premium': 'enterprise',
-    'transform_enterprise': 'enterprise',
+    'transform': 'business',
+    'transform_basic': 'business',
+    'transform_standard': 'business',
+    'transform_premium': 'business',
+    'transform_enterprise': 'business',
     'founder': 'essential',
 }
 
@@ -29,7 +28,7 @@ PLAN_RANK = {
     'starter': 1,
     'essential': 2,
     'team': 3,
-    'enterprise': 4,
+    'business': 4,
     'enterprise_custom': 5,
 }
 
@@ -73,7 +72,7 @@ DEFAULT_PLAN_CATALOG = {
         'max_total_paid_seats': None,
         'max_viewer_seats': None,
     },
-    'enterprise': {
+    'business': {
         'label': 'Business',
         'monthly_price_usd': 299,
         'price_model': 'per_seat',
@@ -131,7 +130,7 @@ DEFAULT_CREDIT_PACKS = {
 # Backward-compatible alias used by legacy callsites.
 DEFAULT_OVERAGE_PACKS = DEFAULT_CREDIT_PACKS
 
-SHARED_POOL_PLANS = {'team', 'enterprise', 'enterprise_custom'}
+SHARED_POOL_PLANS = {'team', 'business', 'enterprise_custom'}
 SOFT_STOP_GRACE_MULTIPLIER = 1.05
 TOKENS_PER_CREDIT = 1000
 
@@ -189,7 +188,7 @@ PLAN_THINKING_BUDGET_USD = {
     'starter':    float(os.getenv('JASPEN_BUDGET_STARTER',    '2.00')),
     'essential':  float(os.getenv('JASPEN_BUDGET_ESSENTIAL', '13.00')),
     'team':       float(os.getenv('JASPEN_BUDGET_TEAM',      '43.00')),
-    'enterprise': float(os.getenv('JASPEN_BUDGET_BUSINESS') or os.getenv('JASPEN_BUDGET_ENTERPRISE', '100.00')),
+    'business': float(os.getenv('JASPEN_BUDGET_BUSINESS') or os.getenv('JASPEN_BUDGET_ENTERPRISE', '100.00')),
 }
 
 

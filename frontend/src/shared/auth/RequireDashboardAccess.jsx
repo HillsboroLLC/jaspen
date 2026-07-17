@@ -2,7 +2,7 @@ import React from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 
-const DASHBOARD_PLAN_KEYS = new Set(['team', 'enterprise']);
+const DASHBOARD_PLAN_KEYS = new Set(['team', 'business', 'enterprise_custom']);
 
 function normalizePlan(value) {
   return String(value || '').trim().toLowerCase();
