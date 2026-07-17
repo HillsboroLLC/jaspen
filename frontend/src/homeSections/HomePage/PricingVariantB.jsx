@@ -227,15 +227,15 @@ export default function PricingVariantB({ onOpenModal }) {
         })}
       </div>
 
-      {isBusinessAudience && <EnterpriseInvestmentCalculator billing={isAnnual ? 'annual' : 'monthly'} onOpenModal={onOpenModal} />}
-      </div>
-
-      {isBusinessAudience && <>
-        <aside className="pvb-enterprise-intro">
+      {isBusinessAudience && <aside className="pvb-enterprise-intro">
           <p><strong>Need more than 10 seats?</strong> Larger teams and organizations with advanced administration, integration, security, or support needs may qualify for an annual Enterprise agreement.</p>
           <button type="button" className="jaspen-btn jaspen-btn-outline" onClick={() => { analytics.track('contact_sales_clicked', { placement: 'business_card' }); document.getElementById('eic-title')?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}>Contact Sales</button>
-        </aside>
-      </>}
+        </aside>}
+      </div>
+
+      {isBusinessAudience && <div className="pvb-enterprise-calculator-section">
+        <EnterpriseInvestmentCalculator billing={isAnnual ? 'annual' : 'monthly'} onOpenModal={onOpenModal} />
+      </div>}
 
       {!isBusinessAudience && (
         <p className="pvb-plan-note">

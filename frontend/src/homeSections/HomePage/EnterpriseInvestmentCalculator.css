@@ -128,16 +128,33 @@
   color: #8a93a5;
 }
 .eic-hourly > div {
-  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding-left: 14px;
+  border: 1.5px solid #cfd6e2;
+  border-radius: 10px;
+  background: #fff;
 }
 .eic-hourly > div span {
-  position: absolute;
-  left: 14px;
-  top: 20px;
+  flex: 0 0 auto;
   color: #8a93a5;
 }
 .eic-hourly input {
-  padding-left: 30px;
+  min-width: 0;
+  margin: 0;
+  padding: 12px 14px 12px 0;
+  border: 0;
+  border-radius: 0;
+}
+.eic-hourly > div:focus-within {
+  outline: 3px solid rgba(160, 3, 108, 0.18);
+  border-color: #a0036c;
+}
+.eic-hourly > div input:focus {
+  outline: 0;
+  border-color: transparent;
 }
 .eic small {
   display: block;
@@ -249,8 +266,8 @@
   }
 }
 
-/* Compact calculator card beside Business pricing. */
-.pvb-plan-layout.is-business .eic {
+/* Compact calculator controls within the dedicated Enterprise section. */
+.pvb-enterprise-calculator-section .eic {
   max-width: none;
   min-width: 0;
   margin: 0;
@@ -259,27 +276,14 @@
   display: flex;
   flex-direction: column;
 }
-.pvb-plan-layout.is-business .eic-head h3 { font-size: 1.15rem; }
-.pvb-plan-layout.is-business .eic-head > span { font-size: 0.74rem; }
-.pvb-plan-layout.is-business .eic-progress { margin: 10px 0 12px; height: 4px; }
-.pvb-plan-layout.is-business .eic-lead { margin: 0 0 9px; font-size: 0.8rem; line-height: 1.4; }
-.pvb-plan-layout.is-business .eic-grid { gap: 10px; }
-.pvb-plan-layout.is-business .eic-step { max-width: 640px; }
-.pvb-plan-layout.is-business .eic fieldset { margin-top: 10px; }
-.pvb-plan-layout.is-business .eic input,
-.pvb-plan-layout.is-business .eic select,
-.pvb-plan-layout.is-business .eic textarea { padding: 7px 10px; margin-top: 5px; }
-.pvb-plan-layout.is-business .eic-options,
-.pvb-plan-layout.is-business .eic-checks { gap: 6px; margin-top: 6px; }
-.pvb-plan-layout.is-business .eic-options { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin-top: 6px; }
-.pvb-plan-layout.is-business .eic-options label,
-.pvb-plan-layout.is-business .eic-checks label { padding: 7px 9px; font-size: 0.76rem; }
-.pvb-plan-layout.is-business .eic-actions { margin-top: auto; padding-top: 16px; }
-.pvb-plan-layout.is-business .eic-actions .jaspen-btn { min-width: 100px; padding: 8px 14px; }
-.pvb-plan-layout.is-business .eic-result { padding: 20px; }
-.pvb-plan-layout.is-business .eic-result h4 { font-size: 1.5rem; }
-.pvb-plan-layout.is-business .eic-contact { margin-top: 18px; padding-top: 18px; }
+.pvb-enterprise-calculator-section .eic-head h3 { font-size: 1.35rem; }
+.pvb-enterprise-calculator-section .eic-progress { margin: 14px 0 18px; height: 4px; }
+.pvb-enterprise-calculator-section .eic-grid { gap: 14px; }
+.pvb-enterprise-calculator-section .eic fieldset { margin-top: 18px; }
+.pvb-enterprise-calculator-section .eic-options { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.pvb-enterprise-calculator-section .eic-actions { margin-top: 22px; }
 
 @media (max-width: 760px) {
-  .pvb-plan-layout.is-business .eic { padding: 24px 18px; }
+  .pvb-enterprise-calculator-section .eic { padding: 24px 18px; }
+  .pvb-enterprise-calculator-section .eic-options { grid-template-columns: 1fr; }
 }

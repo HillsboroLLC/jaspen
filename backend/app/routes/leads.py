@@ -25,6 +25,12 @@ leads_bp = Blueprint("leads", __name__)
 
 MAX_LEAD_PAYLOAD_BYTES = 8 * 1024
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+PERSONAL_EMAIL_DOMAINS = {
+    "gmail.com", "googlemail.com", "yahoo.com", "ymail.com", "hotmail.com",
+    "outlook.com", "live.com", "msn.com", "icloud.com", "me.com", "mac.com",
+    "aol.com", "proton.me", "protonmail.com", "mail.com", "gmx.com",
+    "fastmail.com", "hey.com", "zoho.com",
+}
 TOOLKIT_SOURCE = "decision-planning-toolkit"
 TOOLKIT_EMAIL_TYPE = "decision_planning_toolkit"
 DECISION_PROFILE_SOURCE = "decision-style-assessment"
@@ -113,6 +119,13 @@ def _lead_fingerprint(email):
 def _bad_request(code, message):
     current_app.logger.info("Lead capture validation failed: %s", code)
     return jsonify({"error": message, "code": code}), 400
+
+
+def _is_business_email(value):
+    normalized = str(value or "").strip().lower()
+    if not EMAIL_RE.match(normalized):
+        return False
+    return normalized.rsplit("@", 1)[-1] not in PERSONAL_EMAIL_DOMAINS
 
 
 def _normalized_text(data, field, *, required=False):
@@ -755,6 +768,11 @@ def capture_enterprise_inquiry():
         return error_response
 
     data = request.get_json(silent=True) or {}
+    if not _is_business_email(payload.get("email")):
+        return _bad_request(
+            "business_email_required",
+            "Please use your business email address. Personal email providers are not accepted for Enterprise inquiries.",
+        )
     try:
         participants = max(1, min(100000, int(data.get("participants") or 1)))
         teams = max(1, min(10000, int(data.get("teams") or 1)))

@@ -24,6 +24,18 @@ const USAGE_OPTIONS = [
   { value: 'unsure', label: 'Unsure', range: 'Not estimated yet' },
 ];
 
+const PERSONAL_EMAIL_DOMAINS = new Set([
+  'gmail.com', 'googlemail.com', 'yahoo.com', 'ymail.com', 'hotmail.com',
+  'outlook.com', 'live.com', 'msn.com', 'icloud.com', 'me.com', 'mac.com',
+  'aol.com', 'proton.me', 'protonmail.com', 'mail.com', 'gmx.com',
+  'fastmail.com', 'hey.com', 'zoho.com',
+]);
+
+const isBusinessEmail = (value) => {
+  const parts = String(value || '').trim().toLowerCase().split('@');
+  return parts.length === 2 && parts[0] && parts[1] && !PERSONAL_EMAIL_DOMAINS.has(parts[1]);
+};
+
 const money = (value) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value);
 
 function calculateEstimate(inputs) {
@@ -108,6 +120,10 @@ export default function EnterpriseInvestmentCalculator({ billing = 'monthly', on
 
   const submit = async (event) => {
     event.preventDefault();
+    if (!isBusinessEmail(contact.email)) {
+      setSubmitState({ status: 'error', message: 'Please use your business email address. Personal email providers are not accepted for Enterprise inquiries.' });
+      return;
+    }
     setSubmitState({ status: 'submitting', message: '' });
     const params = new URLSearchParams(window.location.search);
     try {
@@ -186,7 +202,7 @@ export default function EnterpriseInvestmentCalculator({ billing = 'monthly', on
         {isEnterpriseQualified ? <div className="eic-contact">
           <h4>Discuss your Enterprise fit</h4><p>Your estimate is visible above. Contact information is only needed if you want Sales to follow up.</p>
           {submitState.status === 'success' ? <div className="eic-success" role="status">{submitState.message}</div> : <form onSubmit={submit}>
-            <div className="eic-grid"><label>First name<input required value={contact.firstName} onChange={e => setContact({ ...contact, firstName: e.target.value })} /></label><label>Last name<input required value={contact.lastName} onChange={e => setContact({ ...contact, lastName: e.target.value })} /></label><label>Work email<input required type="email" value={contact.email} onChange={e => setContact({ ...contact, email: e.target.value })} /></label><label>Company<input required value={contact.company} onChange={e => setContact({ ...contact, company: e.target.value })} /></label><label>Job title <span>(optional)</span><input value={contact.title} onChange={e => setContact({ ...contact, title: e.target.value })} /></label><label>Phone <span>(optional)</span><input type="tel" value={contact.phone} onChange={e => setContact({ ...contact, phone: e.target.value })} /></label></div>
+            <div className="eic-grid"><label>First name<input required value={contact.firstName} onChange={e => setContact({ ...contact, firstName: e.target.value })} /></label><label>Last name<input required value={contact.lastName} onChange={e => setContact({ ...contact, lastName: e.target.value })} /></label><label>Work email<input required type="email" inputMode="email" autoComplete="email" value={contact.email} onChange={e => { setContact({ ...contact, email: e.target.value }); if (submitState.status === 'error') setSubmitState({ status: 'idle', message: '' }); }} /><small>Use your company email address; personal email providers are not accepted.</small></label><label>Company<input required value={contact.company} onChange={e => setContact({ ...contact, company: e.target.value })} /></label><label>Job title <span>(optional)</span><input value={contact.title} onChange={e => setContact({ ...contact, title: e.target.value })} /></label><label>Phone <span>(optional)</span><input type="tel" value={contact.phone} onChange={e => setContact({ ...contact, phone: e.target.value })} /></label></div>
             <label>Preferred contact method <span>(optional)</span><select value={contact.preferredContact} onChange={e => setContact({ ...contact, preferredContact: e.target.value })}><option value="">No preference</option><option value="email">Email</option><option value="phone">Phone</option></select></label>
             <label>Anything else we should know? <span>(optional)</span><textarea rows="3" value={contact.comments} onChange={e => setContact({ ...contact, comments: e.target.value })} /></label>
             <label className="eic-honeypot" aria-hidden="true">Website<input tabIndex="-1" autoComplete="off" value={contact.website} onChange={e => setContact({ ...contact, website: e.target.value })} /></label>
