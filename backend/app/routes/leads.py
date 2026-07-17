@@ -875,6 +875,62 @@ def capture_enterprise_inquiry():
                     "Final pricing and scope are confirmed with Jaspen Sales.\n\n"
                     f"Questions? Reply to this email or contact {sales_recipient}.\n"
                 )
+                first_name = escape(payload.get("first_name") or "there")
+                recommendation_html = escape(recommendation)
+                range_html = escape(range_text)
+                usage_html = escape(usage.title())
+                requirements_html = escape(", ".join(requirements) or "None selected")
+                sales_email_html = escape(sales_recipient)
+                copy_message.html = f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Your Jaspen Enterprise planning estimate</title>
+  </head>
+  <body style="margin:0; padding:0; background:#eff9fc; font-family:Arial,sans-serif; color:#172033; line-height:1.5;">
+    <div style="display:none; max-height:0; overflow:hidden; opacity:0; color:transparent;">Your indicative Jaspen Enterprise investment estimate and deployment summary.</div>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#eff9fc; padding:28px 12px;">
+      <tr><td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px; background:#ffffff; border:1px solid #cde7f0; border-radius:18px; overflow:hidden;">
+          <tr><td style="padding:24px 28px; background:#161f3b;"><div style="font-size:24px; line-height:1; color:#ffffff; font-weight:700;">Jaspen</div></td></tr>
+          <tr><td style="padding:34px 28px 30px; background:#161f3b;">
+            <p style="margin:0 0 10px; font-size:13px; line-height:1.4; letter-spacing:.08em; text-transform:uppercase; color:#f0a6d4; font-weight:700;">Enterprise planning estimate</p>
+            <h1 style="margin:0 0 14px; font-size:28px; line-height:1.18; color:#ffffff;">A starting point for the conversation</h1>
+            <p style="margin:0 0 12px; font-size:16px; line-height:1.65; color:#d9deec;">Hi {first_name},</p>
+            <p style="margin:0; font-size:16px; line-height:1.65; color:#d9deec;">Thank you for exploring what a Jaspen deployment could look like for your organization. Here is a copy of the planning estimate you created.</p>
+          </td></tr>
+          <tr><td style="padding:28px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f7f4f1; border:1px solid #e7ded5; border-radius:14px;">
+              <tr><td style="padding:22px;">
+                <p style="margin:0 0 6px; font-size:13px; letter-spacing:.06em; text-transform:uppercase; color:#a0036c; font-weight:700;">Recommended fit</p>
+                <p style="margin:0 0 18px; font-size:24px; line-height:1.25; color:#161f3b; font-weight:700;">{recommendation_html}</p>
+                <p style="margin:0 0 6px; font-size:13px; color:#7a8499;">Indicative annual investment</p>
+                <p style="margin:0; font-size:22px; line-height:1.3; color:#161f3b; font-weight:700;">{range_html}</p>
+              </td></tr>
+            </table>
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:18px; border-collapse:collapse;">
+              <tr><td style="padding:10px 0; border-bottom:1px solid #e7edf3; color:#68758d;">Active participants</td><td align="right" style="padding:10px 0; border-bottom:1px solid #e7edf3; color:#161f3b; font-weight:700;">{participants}</td></tr>
+              <tr><td style="padding:10px 0; border-bottom:1px solid #e7edf3; color:#68758d;">Teams or business units</td><td align="right" style="padding:10px 0; border-bottom:1px solid #e7edf3; color:#161f3b; font-weight:700;">{teams}</td></tr>
+              <tr><td style="padding:10px 0; border-bottom:1px solid #e7edf3; color:#68758d;">Expected usage</td><td align="right" style="padding:10px 0; border-bottom:1px solid #e7edf3; color:#161f3b; font-weight:700;">{usage_html}</td></tr>
+              <tr><td colspan="2" style="padding:14px 0 4px; color:#68758d;"><strong style="color:#161f3b;">Deployment needs:</strong> {requirements_html}</td></tr>
+            </table>
+          </td></tr>
+          <tr><td style="padding:0 28px 8px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#fff3fa; border-left:4px solid #a0036c; border-radius:8px;">
+              <tr><td style="padding:16px 18px; font-size:14px; line-height:1.6; color:#4f5d75;"><strong style="color:#161f3b;">Planning estimate only.</strong> This is an indicative estimate, not a quote or guaranteed outcome. Final pricing and scope are confirmed with Jaspen Sales.</td></tr>
+            </table>
+          </td></tr>
+          <tr><td align="center" style="padding:22px 28px 34px;">
+            <p style="margin:0 0 18px; font-size:15px; line-height:1.65; color:#4f5d75;">When you are ready, reply to this email and we can talk through the deployment that fits your organization.</p>
+            <a href="mailto:{sales_email_html}?subject=Jaspen%20Enterprise%20planning%20estimate" style="display:inline-block; padding:13px 20px; background:#a0036c; color:#ffffff; text-decoration:none; border-radius:8px; font-size:15px; font-weight:700;">Discuss this estimate</a>
+          </td></tr>
+          <tr><td style="padding:22px 28px; background:#161f3b;"><p style="margin:0; font-size:13px; line-height:1.5; color:#d9deec;">Questions? Reply to this email to reach Jaspen Sales.</p></td></tr>
+        </table>
+      </td></tr>
+    </table>
+  </body>
+</html>"""
                 mail.send(copy_message)
                 copy_sent = True
             except Exception:
