@@ -39,6 +39,8 @@ DECISION_PROFILE_SENDER = "Jaspen <hello@jaspen.ai>"
 DECISION_PROFILE_REPLY_TO = "hello@jaspen.ai"
 LEAD_EMAIL_SENDER = "Jaspen <hello@jaspen.ai>"
 LEAD_EMAIL_REPLY_TO = "hello@jaspen.ai"
+ENTERPRISE_INQUIRY_SENDER = "Enterprise Sales Inquiry <hello@jaspen.ai>"
+ENTERPRISE_COPY_SENDER = "Jaspen Sales <hello@jaspen.ai>"
 SUBSCRIPTION_SCOPES = {
     "marketing": "Marketing",
     "updates": "Updates",
@@ -821,13 +823,11 @@ def capture_enterprise_inquiry():
         db.session.commit()
 
         sales_recipient = current_app.config.get("SALES_NOTIFICATION_EMAIL") or "sales@jaspen.ai"
-        sender_address = current_app.config.get("MAIL_DEFAULT_SENDER") or current_app.config.get("MAIL_USERNAME") or "no-reply@jaspen.ai"
-        sender = ("Jaspen Sales", sender_address)
         try:
             message = Message(
                 subject=f"Enterprise inquiry: {payload.get('company') or payload['email']}",
                 recipients=[sales_recipient],
-                sender=sender,
+                sender=ENTERPRISE_INQUIRY_SENDER,
                 reply_to=payload["email"],
             )
             message.body = (
@@ -859,7 +859,7 @@ def capture_enterprise_inquiry():
                 copy_message = Message(
                     subject="Your Jaspen Enterprise planning estimate",
                     recipients=[payload["email"]],
-                    sender=sender,
+                    sender=ENTERPRISE_COPY_SENDER,
                     reply_to=sales_recipient,
                 )
                 copy_message.body = (
