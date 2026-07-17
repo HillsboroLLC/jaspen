@@ -903,6 +903,51 @@ def master_leads():
     }), 200
 
 
+@admin_bp.route("/master/leads/<lead_id>", methods=["DELETE"])
+@jwt_required()
+def delete_master_lead(lead_id):
+    admin_user, err = _require_master_admin()
+    if err:
+        return err
+
+    selected = db.session.get(Lead, lead_id)
+    if selected is None:
+        return jsonify({"error": "Lead record not found"}), 404
+
+    canonical_email = str(selected.email or selected.normalized_email or "").strip().lower()
+    records = (
+        Lead.query
+        .filter(func.lower(func.trim(Lead.email)) == canonical_email)
+        .all()
+    )
+    record_ids = [record.id for record in records]
+
+    # Delete dependents explicitly so this remains reliable even when a local
+    # database does not enforce ON DELETE CASCADE foreign keys.
+    EnterpriseInquiry.query.filter(EnterpriseInquiry.lead_id.in_(record_ids)).delete(synchronize_session=False)
+    LeadDecisionProfile.query.filter(LeadDecisionProfile.lead_id.in_(record_ids)).delete(synchronize_session=False)
+    LeadEmailDelivery.query.filter(LeadEmailDelivery.lead_id.in_(record_ids)).delete(synchronize_session=False)
+    LeadAttributionEvent.query.filter(LeadAttributionEvent.lead_id.in_(record_ids)).delete(synchronize_session=False)
+    Lead.query.filter(Lead.id.in_(record_ids)).delete(synchronize_session=False)
+    db.session.commit()
+
+    meta = _request_meta()
+    append_admin_audit_event(
+        actor_user_id=admin_user.id,
+        actor_email=admin_user.email,
+        action="master_lead_deleted",
+        target_email=canonical_email,
+        details={"lead_ids": record_ids, "records_deleted": len(record_ids)},
+        remote_addr=meta.get("remote_addr"),
+        user_agent=meta.get("user_agent"),
+    )
+    return jsonify({
+        "ok": True,
+        "email": canonical_email,
+        "records_deleted": len(record_ids),
+    }), 200
+
+
 @admin_bp.route("/master/errors", methods=["GET"])
 @jwt_required()
 def master_errors():

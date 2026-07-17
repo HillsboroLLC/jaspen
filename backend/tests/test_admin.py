@@ -175,3 +175,48 @@ def test_master_leads_support_only_and_includes_safe_lead_summary(client, admin_
 
     denied = client.get("/api/v1/admin/master/leads", headers=auth_headers)
     assert denied.status_code == 403
+
+
+def test_master_admin_can_delete_one_email_record_without_deleting_similar_contact(
+    client, admin_auth_headers, db
+):
+    typo = Lead(
+        email="lydia@hillsbrorow.com",
+        normalized_email="lydia@hillsbrorow.com",
+        source="enterprise-investment-calculator",
+        first_name="Lydia",
+        last_name="Bailey",
+        company="Hillsboro Row LLC",
+    )
+    correct = Lead(
+        email="lydia@hillsbororow.com",
+        normalized_email="lydia@hillsbororow.com",
+        source="enterprise-investment-calculator",
+        first_name="Lydia",
+        last_name="Bailey",
+        company="Hillsboro Row LLC",
+    )
+    db.session.add_all([typo, correct])
+    db.session.flush()
+    event = LeadAttributionEvent(lead_id=typo.id, source="enterprise-investment-calculator")
+    db.session.add(event)
+    db.session.flush()
+    db.session.add(EnterpriseInquiry(
+        lead_id=typo.id,
+        attribution_event_id=event.id,
+        participants=10,
+        teams=1,
+        usage="standard",
+        recommendation="Enterprise",
+        annual_low=72000,
+    ))
+    db.session.commit()
+    typo_id = typo.id
+    correct_id = correct.id
+
+    response = client.delete(f"/api/v1/admin/master/leads/{typo_id}", headers=admin_auth_headers)
+    assert response.status_code == 200
+    assert response.get_json()["records_deleted"] == 1
+    assert db.session.get(Lead, typo_id) is None
+    assert db.session.get(Lead, correct_id) is not None
+    assert EnterpriseInquiry.query.filter_by(lead_id=typo_id).count() == 0

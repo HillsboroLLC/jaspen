@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faAddressBook, faBuilding, faCheck, faEnvelope, faFilter, faRotateRight, faXmark } from '@fortawesome/free-solid-svg-icons';
+import { faAddressBook, faBuilding, faCheck, faEnvelope, faFilter, faRotateRight, faTrash, faXmark } from '@fortawesome/free-solid-svg-icons';
 import { API_BASE } from '../../config/apiBase';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import AppMenu from '../shared/AppMenu';
@@ -61,6 +61,7 @@ export default function MasterLeads() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selectedLead, setSelectedLead] = useState(null);
+  const [deletingLead, setDeletingLead] = useState(false);
 
   const loadLeads = useCallback(async () => {
     setLoading(true);
@@ -101,6 +102,30 @@ export default function MasterLeads() {
     loadLeads();
   };
 
+  const deleteSelectedLead = async () => {
+    if (!selectedLead || deletingLead) return;
+    const label = selectedLead.name ? `${selectedLead.name} (${selectedLead.email})` : selectedLead.email;
+    if (!window.confirm(`Delete ${label} and all interactions recorded under this email address? This cannot be undone.`)) return;
+
+    setDeletingLead(true);
+    setError('');
+    try {
+      const res = await authFetch(`${API_BASE}/api/v1/admin/master/leads/${encodeURIComponent(selectedLead.id)}`, {
+        method: 'DELETE',
+        credentials: 'include',
+        headers: authHeaders('DELETE'),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload?.error || `Unable to delete lead (${res.status})`);
+      setSelectedLead(null);
+      await loadLeads();
+    } catch (err) {
+      setError(err?.message || 'Unable to delete lead.');
+    } finally {
+      setDeletingLead(false);
+    }
+  };
+
   return (
     <MasterAdminGuard>
       <div className="master-admin-page int-page">
@@ -110,7 +135,7 @@ export default function MasterLeads() {
             <div>
               <p className="int-eyebrow">Master Admin</p>
               <h1>Leads</h1>
-              <p>Read-only lead capture list with account status, tool usage, attribution, email delivery, and category-level contact preferences.</p>
+              <p>Lead capture contacts with account status, tool usage, attribution, email delivery, and category-level contact preferences.</p>
             </div>
             <button type="button" className="master-admin-refresh" onClick={loadLeads} disabled={loading}>
               <FontAwesomeIcon icon={faRotateRight} />
@@ -273,6 +298,14 @@ export default function MasterLeads() {
                     ))}
                   </div>
                 </div>
+
+                <footer className="master-contact-modal-actions">
+                  <button type="button" className="master-danger-button" onClick={deleteSelectedLead} disabled={deletingLead}>
+                    <FontAwesomeIcon icon={faTrash} />
+                    {deletingLead ? 'Deleting…' : 'Delete contact record'}
+                  </button>
+                  <small>Deletes this email address and its recorded lead interactions. Account data is not affected.</small>
+                </footer>
               </section>
             </div>
           )}

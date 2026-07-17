@@ -442,6 +442,45 @@ body.jaspen-sidebar-open .master-admin-inner {
   color: var(--int-text-sub);
 }
 
+.master-contact-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-top: 18px;
+  border-top: 1px solid var(--int-border);
+}
+
+.master-contact-modal-actions small {
+  color: var(--int-text-sub);
+  line-height: 1.4;
+}
+
+.master-danger-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 0 16px;
+  border: 1px solid #c94a5c;
+  border-radius: var(--int-radius-sm);
+  background: #fff;
+  color: #a51f36;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.master-danger-button:hover:not(:disabled) {
+  background: #fff3f5;
+}
+
+.master-danger-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
 .master-health-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -493,5 +532,10 @@ body.jaspen-sidebar-open .master-admin-inner {
   .master-health-grid,
   .master-filter-bar {
     grid-template-columns: 1fr;
+  }
+
+  .master-contact-modal-actions {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
