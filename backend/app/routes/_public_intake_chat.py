@@ -60,8 +60,10 @@ from .ai_agent import (
 )
 from .public_intake import (
     _band_for,
+    _public_turn_limit,
     _sanitize_history,
     _user_authored_length,
+    _user_turn_count,
     deterministic_reply_text,
 )
 
@@ -243,6 +245,9 @@ def stream_public_chat_response(request):
     ready = _is_ready_to_analyze(readiness)
     overall_percent = int((readiness.get("overall") or {}).get("percent") or 0)
     next_question_value = None if ready else _next_question(readiness)
+    user_turns = _user_turn_count(chat_history)
+    turn_limit = _public_turn_limit()
+    turn_limit_reached = user_turns >= turn_limit
 
     user_message = chat_history[-1]["content"]
     prior_history = chat_history[:-1]
@@ -255,7 +260,12 @@ def stream_public_chat_response(request):
         for c in categories if not c.get("completed")
     ]
 
-    fallback_text = deterministic_reply_text(ready, next_question_value, is_first_turn)
+    fallback_text = (
+        "To continue, create a free account so this conversation can be securely saved. "
+        "Jaspen will continue the intake inside your workspace."
+        if turn_limit_reached and not ready
+        else deterministic_reply_text(ready, next_question_value, is_first_turn)
+    )
 
     @stream_with_context
     def event_stream():
@@ -264,7 +274,7 @@ def stream_public_chat_response(request):
             skip_reason = None
             if is_ai_kill_switched():
                 skip_reason = "kill_switch"
-            elif assistant_turn_count(chat_history) >= max_ai_turns():
+            elif turn_limit_reached or assistant_turn_count(chat_history) >= max_ai_turns():
                 skip_reason = "turn_cap"
             elif not check_and_reserve_budget():
                 skip_reason = "budget"
@@ -296,6 +306,9 @@ def stream_public_chat_response(request):
             "spec_version": readiness.get("version") or spec.get("version"),
             "characters_used": used,
             "characters_remaining": max(0, MAX_USER_MESSAGE_LENGTH - used),
+            "user_turns": user_turns,
+            "turn_limit": turn_limit,
+            "turn_limit_reached": turn_limit_reached,
         })
 
     return Response(

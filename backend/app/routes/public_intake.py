@@ -35,6 +35,18 @@ from app.intake_readiness import (
 public_intake_bp = Blueprint("public_intake", __name__)
 
 
+def _public_turn_limit():
+    """Maximum user turns allowed before the anonymous intake must hand off.
+
+    This is intentionally separate from readiness: a strong first message can
+    hand off immediately, while a vague conversation still has a firm ceiling.
+    """
+    try:
+        return max(1, int(os.getenv("PUBLIC_INTAKE_MAX_TURNS", "6")))
+    except (TypeError, ValueError):
+        return 6
+
+
 def _public_intake_ai_enabled():
     return str(os.getenv("PUBLIC_INTAKE_AI_ENABLED", "false")).strip().lower() in ("1", "true", "yes", "on")
 
@@ -59,6 +71,10 @@ def _user_authored_length(chat_history):
     return sum(len(m["content"]) for m in chat_history if m["role"] == "user")
 
 
+def _user_turn_count(chat_history):
+    return sum(1 for m in chat_history if m["role"] == "user")
+
+
 def _band_for(ready, overall_percent):
     if ready:
         return "ready"
@@ -78,7 +94,7 @@ def deterministic_reply_text(ready, next_question, is_first_turn):
     the SAME sentence Option A would have given them, never a generic error.
     """
     if ready:
-        return "You've told Jaspen enough to start building a scorecard on this."
+        return "You've told Jaspen enough to start building a scorecard. Create a free account to securely save this conversation and continue in your workspace."
     question = next_question or "Tell me more about what you're working through."
     return question if is_first_turn else f"Got it. {question}"
 
@@ -104,6 +120,9 @@ def analyze_intake():
     readiness = _compute_readiness(chat_history, strategy_objective="balanced", spec=spec)
     ready = _is_ready_to_analyze(readiness)
     overall_percent = int((readiness.get("overall") or {}).get("percent") or 0)
+    user_turns = _user_turn_count(chat_history)
+    turn_limit = _public_turn_limit()
+    turn_limit_reached = user_turns >= turn_limit
 
     categories = readiness.get("categories") or []
     known = [
@@ -127,6 +146,9 @@ def analyze_intake():
         "next_question": None if ready else _next_question(readiness),
         "characters_used": used,
         "characters_remaining": max(0, MAX_USER_MESSAGE_LENGTH - used),
+        "user_turns": user_turns,
+        "turn_limit": turn_limit,
+        "turn_limit_reached": turn_limit_reached,
     }), 200
 
 

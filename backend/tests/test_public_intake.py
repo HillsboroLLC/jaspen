@@ -300,6 +300,7 @@ class TestResponseShape:
         assert set(data.keys()) == {
             "spec_version", "ready", "overall_percent", "band", "known",
             "missing", "next_question", "characters_used", "characters_remaining",
+            "user_turns", "turn_limit", "turn_limit_reached",
         }
 
     def test_category_labels_are_server_authoritative(self, app, client):
@@ -583,7 +584,27 @@ class TestCaps:
         events = _parse_sse(_chat(client, history))
         text = _deltas_text(events)
         assert text != "This should never be seen."
-        assert text == _expected_fallback(app, history)
+        assert text == (
+            "To continue, create a free account so this conversation can be securely saved. "
+            "Jaspen will continue the intake inside your workspace."
+        )
+
+    def test_analyze_reports_required_handoff_at_public_turn_limit(self, client, monkeypatch):
+        monkeypatch.setenv("PUBLIC_INTAKE_MAX_TURNS", "2")
+        history = [
+            {"role": "user", "content": VAGUE_INPUT},
+            {"role": "assistant", "content": "Tell me more."},
+            {"role": "user", "content": "I am still working through it."},
+        ]
+
+        res = client.post(ANALYZE_URL, json={"history": history})
+
+        assert res.status_code == 200
+        data = res.get_json()
+        assert data["ready"] is False
+        assert data["user_turns"] == 2
+        assert data["turn_limit"] == 2
+        assert data["turn_limit_reached"] is True
 
     def test_oversized_content_rejected_before_ai_attempted(self, client, monkeypatch, _ai_enabled):
         _patch_ai_success(monkeypatch)

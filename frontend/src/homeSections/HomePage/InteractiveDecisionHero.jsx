@@ -64,8 +64,11 @@ export { PENDING_CONTEXT_STORAGE_KEY };
 // public_intake.py's deterministic_reply_text() exactly; keep both in sync.
 // This is what every turn shows when AI is off, unavailable, or falls back.
 function assistantBubbleFor(analysis, isFirstTurn) {
+  if (analysis.turn_limit_reached && !analysis.ready) {
+    return 'To continue, create a free account so this conversation can be securely saved. Jaspen will continue the intake inside your workspace.';
+  }
   if (analysis.ready) {
-    return "You've told Jaspen enough to start building a scorecard on this.";
+    return "You've told Jaspen enough to start building a scorecard. Create a free account to securely save this conversation and continue in your workspace.";
   }
   const question = analysis.next_question || "Tell me more about what you're working through.";
   return isFirstTurn ? question : `Got it. ${question}`;
@@ -346,7 +349,7 @@ export default function InteractiveDecisionHero({ onOpenModal, onContextChange }
 
   const handleSend = async () => {
     const answer = draftText.trim();
-    if (!answer || isAnalyzing) return;
+    if (!answer || isAnalyzing || insights?.ready || insights?.turn_limit_reached) return;
 
     const isFirstTurn = messages.filter((m) => m.role === 'user').length === 0;
     const projected = userAuthoredText([...messages, { role: 'user', content: answer }]);
@@ -388,7 +391,9 @@ export default function InteractiveDecisionHero({ onOpenModal, onContextChange }
   const displayBarPercent = insights ? Math.min(92, Math.max(6, insights.overall_percent || 0)) : 0;
 
   const charactersRemaining = insights?.characters_remaining;
-  const showLowBudgetNotice = !insights?.ready
+  const turnLimitReached = Boolean(insights?.turn_limit_reached);
+  const handoffRequired = Boolean(insights?.ready || turnLimitReached);
+  const showLowBudgetNotice = !handoffRequired
     && typeof charactersRemaining === 'number'
     && charactersRemaining <= LOW_BUDGET_WARNING_THRESHOLD;
 
@@ -447,6 +452,8 @@ export default function InteractiveDecisionHero({ onOpenModal, onContextChange }
                   ? "Paste notes, emails, meeting context, or whatever you're working with..."
                   : 'Type your reply...'}
                 rows={hasStarted ? 2 : 3}
+                disabled={handoffRequired}
+                aria-describedby={handoffRequired ? 'idh-handoff-message' : undefined}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
@@ -483,7 +490,7 @@ export default function InteractiveDecisionHero({ onOpenModal, onContextChange }
                 type="button"
                 className="idh-analyze-btn"
                 onClick={handleSend}
-                disabled={isAnalyzing || draftText.trim().length < 1}
+                disabled={isAnalyzing || handoffRequired || draftText.trim().length < 1}
                 aria-label="Send to Jaspen"
                 title="Send to Jaspen"
               >
@@ -499,15 +506,15 @@ export default function InteractiveDecisionHero({ onOpenModal, onContextChange }
               )}
             </div>
 
-            {insights?.ready && (
-              <div className="idh-workspace-explainer">
+            {handoffRequired && (
+              <div className="idh-workspace-explainer" id="idh-handoff-message">
                 <p className="idh-workspace-explainer-heading">
-                  Your scorecard becomes the beginning of your decision workspace.
+                  Create a free account to continue.
                 </p>
                 <p className="idh-workspace-explainer-body">
-                  We create your workspace before generating it so your context, scorecards,
-                  evidence, and execution plans stay together as your decision evolves. This is
-                  why we ask you to create a free account at this point—not before.
+                  {insights?.ready
+                    ? 'Securely save this conversation to your workspace and use it to begin building your scorecard.'
+                    : 'Securely save this conversation. Jaspen will continue the intake inside your workspace.'}
                 </p>
               </div>
             )}
@@ -542,14 +549,14 @@ export default function InteractiveDecisionHero({ onOpenModal, onContextChange }
               </div>
             )}
 
-            {insights && !insights.ready && insights.next_question && (
+            {insights && !handoffRequired && insights.next_question && (
               <div className="idh-question-callout">
                 <p className="idh-question-eyebrow">Jaspen's next question</p>
                 <p className="idh-question-text">{insights.next_question}</p>
               </div>
             )}
 
-            {insights?.ready && (
+            {handoffRequired && (
               <div className="idh-panel-cta-wrap">
                 <button type="button" className="idh-panel-cta" onClick={() => handleContinue('signup')}>
                   <span>Create my workspace</span>
