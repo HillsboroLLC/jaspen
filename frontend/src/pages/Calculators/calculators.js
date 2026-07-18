@@ -1,4 +1,4 @@
-import { Building2, BriefcaseBusiness, Home } from 'lucide-react';
+import { Building2, BriefcaseBusiness, Home, Repeat2 } from 'lucide-react';
 
 export const CALCULATORS = [
   {
@@ -27,13 +27,22 @@ export const CALCULATORS = [
     status: 'New',
     icon: Building2,
   },
+  {
+    title: 'Rework Cost Calculator',
+    description: 'Estimate the labor, coordination, material, and documented delay costs absorbed when completed work has to be redone.',
+    audience: 'Work',
+    topic: 'Operations and execution',
+    route: '/tools/rework-cost-calculator',
+    status: 'New',
+    icon: Repeat2,
+  },
 ];
 
 export const AUDIENCE_FILTERS = ['All', 'Personal', 'Work'];
 
 export const SEO = {
   title: 'Free Calculators for Personal and Work Decisions',
-  description: 'Explore Jaspen’s free calculators for understanding the true cost of home ownership, renting, and employee turnover. Transparent estimates with no sign-up required.',
+  description: 'Explore Jaspen’s free calculators for understanding the true cost of home ownership, renting, employee turnover, and rework. Transparent estimates with no sign-up required.',
   canonicalPath: '/calculators',
 };
 

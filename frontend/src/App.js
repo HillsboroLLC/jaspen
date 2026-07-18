@@ -64,6 +64,7 @@ const ExecutionPlan = lazy(() => import('./jaspenInterface/ExecutionPlan/Executi
 const CostOfTurnoverPage = lazy(() => import('./tools/costOfTurnover/components/CostOfTurnoverPage'));
 const MortgageCalculatorPage = lazy(() => import('./tools/mortgage/components/MortgageCalculatorPage'));
 const RentCalculatorPage = lazy(() => import('./tools/rent/components/RentCalculatorPage'));
+const ReworkCostCalculatorPage = lazy(() => import('./tools/reworkCost/components/ReworkCostCalculatorPage'));
 
 function AnimatedAppRoutes({ withShell }) {
   const location = useLocation();
@@ -118,6 +119,8 @@ function AnimatedAppRoutes({ withShell }) {
 
             <Route path="/tools/rent-calculator" element={withShell(<RentCalculatorPage />, { title: 'True Cost of Renting Calculator', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/tools/true-cost-of-rent" element={<Navigate to="/tools/rent-calculator" replace />} />
+            <Route path="/tools/rework-cost-calculator" element={withShell(<ReworkCostCalculatorPage />, { title: 'Rework Cost Calculator', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/free-calculators/rework-cost-calculator" element={<Navigate to="/tools/rework-cost-calculator" replace />} />
             <Route path="/server-error" element={withShell(<ServerErrorPage />, { title: 'Server error', showHeader: false, fullBleed: true, noPadding: true })} />
 
             {/* Protected (Market) */}
