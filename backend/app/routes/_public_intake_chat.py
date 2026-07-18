@@ -27,9 +27,8 @@
 #
 # Every gate in app.public_intake_controls runs BEFORE any network call, and
 # failing ANY of them (or the AI call itself failing/timing out/yielding
-# nothing) falls back to deterministic_reply_text() — the exact sentence the
-# fully-deterministic /analyze path would have produced. A visitor can never
-# tell AI failed.
+# nothing) returns an explicit unavailable event. The public UI must never
+# present a deterministic follow-up as though it were a live AI reply.
 
 import json
 import time
@@ -64,7 +63,6 @@ from .public_intake import (
     _sanitize_history,
     _user_authored_length,
     _user_turn_count,
-    deterministic_reply_text,
 )
 
 # Deliberately smaller than the authenticated agent's output budget — this is
@@ -169,8 +167,8 @@ def _sse_payload(payload):
 def _stream_ai_reply(user_message, prior_history, readiness, ready):
     """Yields {"type": "delta", "text": ...} events with REAL AI text only.
     Yields nothing at all if a reply isn't possible for any reason (no key,
-    import failure, exception before any token, timeout before any token) —
-    the caller treats "yielded nothing" as "use the deterministic reply."
+    import failure, exception before any token, timeout before any token).
+    The caller reports that explicitly instead of fabricating a reply.
     """
     api_key = _anthropic_api_key()
     if not api_key:
@@ -260,16 +258,15 @@ def stream_public_chat_response(request):
         for c in categories if not c.get("completed")
     ]
 
-    fallback_text = (
+    handoff_text = (
         "To continue, create a free account so this conversation can be securely saved. "
         "Jaspen will continue the intake inside your workspace."
-        if turn_limit_reached and not ready
-        else deterministic_reply_text(ready, next_question_value, is_first_turn)
     )
 
     @stream_with_context
     def event_stream():
         used_ai = False
+        response_mode = "unavailable"
         try:
             skip_reason = None
             if is_ai_kill_switched():
@@ -284,16 +281,26 @@ def stream_public_chat_response(request):
                     with stream_slot():
                         for payload in _stream_ai_reply(user_message, prior_history, readiness, ready):
                             used_ai = True
+                            response_mode = "ai"
                             yield _sse_payload(payload)
                 except StreamSlotUnavailable:
                     pass
 
-            if not used_ai:
-                yield _sse_payload({"type": "delta", "text": fallback_text})
+            if not used_ai and turn_limit_reached:
+                response_mode = "handoff"
+                yield _sse_payload({"type": "delta", "text": handoff_text})
+            elif not used_ai:
+                yield _sse_payload({
+                    "type": "unavailable",
+                    "message": "Jaspen is temporarily unavailable. Please try again.",
+                })
         except Exception:
             current_app.logger.exception("public intake event_stream failed")
             if not used_ai:
-                yield _sse_payload({"type": "delta", "text": fallback_text})
+                yield _sse_payload({
+                    "type": "unavailable",
+                    "message": "Jaspen is temporarily unavailable. Please try again.",
+                })
 
         yield _sse_payload({
             "type": "done",
@@ -309,6 +316,7 @@ def stream_public_chat_response(request):
             "user_turns": user_turns,
             "turn_limit": turn_limit,
             "turn_limit_reached": turn_limit_reached,
+            "response_mode": response_mode,
         })
 
     return Response(

@@ -1,8 +1,7 @@
 """Tests for the pre-signup homepage intake endpoint
 (/api/v1/public/intake/analyze).
 
-Launch mode (Option A, per 2026-07-06 decision review): deterministic only.
-The endpoint answers exactly one question — does Jaspen have enough to build
+The readiness endpoint answers exactly one question — does Jaspen have enough to build
 a scorecard — using the SAME engine (_compute_readiness / _is_ready_to_analyze
 / _next_question) the authenticated workspace runs. There is no separate
 "public readiness" profile. TestEquivalence is the load-bearing acceptance
@@ -13,11 +12,13 @@ The pre-signup AI-facilitated conversation (/chat) is feature-flagged behind
 PUBLIC_INTAKE_AI_ENABLED (default false/unset). TestNoAiPreauthGuarantee
 proves that with the flag off, the module holding `import anthropic` is
 never even loaded — the no-AI guarantee is structural, not just behavioral.
-With the flag on, TestFallbackMatrix / TestCaps / TestNoDurableStorageOnAiPath
-/ TestLeakFilterOnPublicPath prove that the deterministic engine remains the
-sole authority on readiness regardless of whether the AI reply succeeds,
-fails, times out, or is capped — the `done` event's fields never depend on
-the AI path's outcome.
+With the flag on, TestUnavailableMatrix / TestCaps /
+TestNoDurableStorageOnAiPath / TestLeakFilterOnPublicPath prove that live AI
+supplies every conversational response before the handoff wall, while the
+deterministic engine remains the sole authority on readiness. If live AI is
+unavailable, the stream reports that explicitly instead of fabricating a
+scripted follow-up; the `done` event's fields never depend on the AI path's
+outcome.
 """
 
 import json
@@ -380,8 +381,8 @@ class TestNoAiPreauthGuarantee:
 
 # ---------------------------------------------------------------------------
 # Below: PUBLIC_INTAKE_AI_ENABLED=true tests. The AI call itself is always
-# mocked (no real network/API key needed) — these tests verify the fallback
-# matrix, caps, and safety plumbing around it, not the model's actual output.
+# mocked (no real network/API key needed) — these tests verify unavailable
+# responses, caps, and safety plumbing around it, not the model's actual output.
 # ---------------------------------------------------------------------------
 
 
@@ -451,15 +452,8 @@ def _deltas_text(events):
     return "".join(e.get("text") or "" for e in events if e.get("type") == "delta")
 
 
-def _expected_fallback(app, history):
-    from app.intake_readiness import _compute_readiness, _is_ready_to_analyze, _next_question
-    from app.routes.public_intake import deterministic_reply_text
-    with app.app_context():
-        readiness = _compute_readiness(history, strategy_objective="balanced")
-        ready = _is_ready_to_analyze(readiness)
-        next_q = None if ready else _next_question(readiness)
-    is_first_turn = sum(1 for m in history if m["role"] == "user") == 1
-    return deterministic_reply_text(ready, next_q, is_first_turn)
+def _unavailable_event(events):
+    return next(e for e in events if e.get("type") == "unavailable")
 
 
 @pytest.fixture
@@ -510,40 +504,44 @@ class TestAiStreamingSmoke:
         assert done["overall_percent"] == workspace_readiness["overall"]["percent"]
 
 
-class TestFallbackMatrix:
-    """T4 — every way the AI path can fail must fall back to the exact
-    deterministic reply (deterministic_reply_text) — never an error, never a
-    generic apology, never silence."""
+class TestUnavailableMatrix:
+    """T4 — AI failures are explicit and never impersonate live AI with a
+    deterministic follow-up question."""
 
-    def test_falls_back_when_kill_switch_engaged(self, app, client, monkeypatch, _ai_enabled):
+    def test_reports_unavailable_when_kill_switch_engaged(self, app, client, monkeypatch, _ai_enabled):
         _patch_ai_success(monkeypatch, chunks=("Would stream if allowed.",))
         monkeypatch.setattr("app.routes._public_intake_chat.is_ai_kill_switched", lambda: True)
         history = _single_turn(VAGUE_INPUT)
         events = _parse_sse(_chat(client, history))
-        assert _deltas_text(events) == _expected_fallback(app, history)
+        assert _deltas_text(events) == ""
+        assert "try again" in _unavailable_event(events)["message"].lower()
         assert _done_event(events)["ready"] is False
+        assert _done_event(events)["response_mode"] == "unavailable"
 
-    def test_falls_back_when_budget_exceeded(self, app, client, monkeypatch, _ai_enabled):
+    def test_reports_unavailable_when_budget_exceeded(self, app, client, monkeypatch, _ai_enabled):
         _patch_ai_success(monkeypatch, chunks=("Would stream if allowed.",))
         monkeypatch.setattr("app.routes._public_intake_chat.check_and_reserve_budget", lambda: False)
         history = _single_turn(VAGUE_INPUT)
         events = _parse_sse(_chat(client, history))
-        assert _deltas_text(events) == _expected_fallback(app, history)
+        assert _deltas_text(events) == ""
+        assert _unavailable_event(events)
 
-    def test_falls_back_when_no_api_key(self, app, client, _ai_enabled):
+    def test_reports_unavailable_when_no_api_key(self, app, client, _ai_enabled):
         # Test environment has no ANTHROPIC_API_KEY configured — the natural
         # default case, no monkeypatching needed.
         history = _single_turn(VAGUE_INPUT)
         events = _parse_sse(_chat(client, history))
-        assert _deltas_text(events) == _expected_fallback(app, history)
+        assert _deltas_text(events) == ""
+        assert _unavailable_event(events)
 
-    def test_falls_back_on_model_exception(self, app, client, monkeypatch, _ai_enabled):
+    def test_reports_unavailable_on_model_exception(self, app, client, monkeypatch, _ai_enabled):
         _patch_ai_exception(monkeypatch)
         history = _single_turn(VAGUE_INPUT)
         events = _parse_sse(_chat(client, history))
-        assert _deltas_text(events) == _expected_fallback(app, history)
+        assert _deltas_text(events) == ""
+        assert _unavailable_event(events)
 
-    def test_falls_back_when_concurrency_slot_unavailable(self, app, client, monkeypatch, _ai_enabled):
+    def test_reports_unavailable_when_concurrency_slot_unavailable(self, app, client, monkeypatch, _ai_enabled):
         from app.public_intake_controls import _stream_semaphore
         _patch_ai_success(monkeypatch, chunks=("Would stream if allowed.",))
         acquired_count = 0
@@ -553,7 +551,8 @@ class TestFallbackMatrix:
         try:
             history = _single_turn(VAGUE_INPUT)
             events = _parse_sse(_chat(client, history))
-            assert _deltas_text(events) == _expected_fallback(app, history)
+            assert _deltas_text(events) == ""
+            assert _unavailable_event(events)
         finally:
             for _ in range(acquired_count):
                 _stream_semaphore.release()
@@ -573,7 +572,7 @@ class TestCaps:
     it's even attempted, proven by configuring AI to succeed and confirming
     its text is never seen."""
 
-    def test_turn_cap_forces_deterministic_reply(self, app, client, monkeypatch, _ai_enabled):
+    def test_turn_cap_forces_fixed_handoff(self, app, client, monkeypatch, _ai_enabled):
         from app.public_intake_controls import max_ai_turns
         _patch_ai_success(monkeypatch, chunks=("This should never be seen.",))
         history = []

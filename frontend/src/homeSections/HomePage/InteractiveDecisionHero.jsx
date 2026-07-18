@@ -46,23 +46,12 @@ const BAND_LABELS = {
 // workspace instead of letting the visitor run into the hard server cap.
 const LOW_BUDGET_WARNING_THRESHOLD = 800;
 
-// How long to stay off the AI path after it fails to produce a single token
-// (network error, timeout, kill switch, flag off, etc.) before trying again.
-// This is a COOLDOWN, not a permanent session-long disable: a transient
-// outage should degrade one conversation's tone for about a minute, never
-// the rest of the visit. Retried lazily — on the next message the visitor
-// sends after the cooldown elapses — rather than on a background timer, so
-// we never poll an endpoint nobody is actively using.
-const AI_RETRY_COOLDOWN_MS = 60_000;
-
 // Re-exported for existing importers; canonical definition lives in
 // shared/auth/pendingIntakeContext.js.
 export { PENDING_CONTEXT_STORAGE_KEY };
 
-// Deterministic assistant bubble — built entirely from the engine's own
-// next_question, never invented copy. Mirrors backend/app/routes/
-// public_intake.py's deterministic_reply_text() exactly; keep both in sync.
-// This is what every turn shows when AI is off, unavailable, or falls back.
+// Fixed interface copy for the account handoff. It is not used as a
+// substitute chat response when live AI is unavailable.
 function assistantBubbleFor(analysis, isFirstTurn) {
   if (analysis.turn_limit_reached && !analysis.ready) {
     return 'To continue, create a free account so this conversation can be securely saved. Jaspen will continue the intake inside your workspace.';
@@ -76,7 +65,7 @@ function assistantBubbleFor(analysis, isFirstTurn) {
 
 // Parses a fetch Response's SSE body, calling onEvent(parsedJson) for each
 // "data: {...}" frame as it arrives. Used only for the pre-signup AI chat
-// attempt (/chat) — the deterministic path (/analyze) is plain JSON.
+// attempt (/chat).
 async function readSseEvents(response, onEvent) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -104,7 +93,7 @@ async function readSseEvents(response, onEvent) {
 export default function InteractiveDecisionHero({ onOpenModal, onContextChange }) {
   // Real conversation transcript: [{ role: 'user'|'assistant', content }].
   // Readiness — and everything the UI shows (progress, insights, CTA) — is
-  // ALWAYS driven by the deterministic engine's response (the `insights`
+  // ALWAYS driven by the readiness engine's response (the `insights`
   // state below), regardless of which transport produced the reply text.
   // AI (when available) only changes what the assistant bubble SAYS.
   const [messages, setMessages] = useState([]);
@@ -112,19 +101,11 @@ export default function InteractiveDecisionHero({ onOpenModal, onContextChange }
   const [hasStarted, setHasStarted] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analyzeError, setAnalyzeError] = useState('');
-  const [insights, setInsights] = useState(null); // latest deterministic `done`/`/analyze` payload
+  const [insights, setInsights] = useState(null); // latest canonical `done` payload
   const [bottomIdx, setBottomIdx] = useState(0);
   const [bottomVisible, setBottomVisible] = useState(true);
   const inputRef = useRef(null);
   const transcriptRef = useRef(null);
-  // Timestamp (ms since epoch) until which /chat is skipped in favor of the
-  // deterministic path directly — 0 means "not on cooldown, try AI." Set
-  // whenever /chat fails to produce a single token; cleared naturally once
-  // Date.now() passes it, so the very next message after the cooldown tries
-  // AI again on its own. Never persisted (no storage) — a page refresh
-  // starts a fresh component instance with this back at 0.
-  const aiCooldownUntilRef = useRef(0);
-
   // Speech-to-text (Web Speech API). Feature-detected so the mic only appears
   // where it works (Chrome, Edge, Safari). The AI/analyze flow is untouched:
   // dictation just writes into the same draft textarea the user types into.
@@ -227,52 +208,16 @@ export default function InteractiveDecisionHero({ onOpenModal, onContextChange }
     msgList.filter((m) => m.role === 'user').map((m) => m.content)
   );
 
-  // The always-available path: deterministic readiness only, no AI call at
-  // all. Used directly when AI is unavailable, and as the fallback target
-  // when an AI attempt yields zero tokens for any reason. Byte-identical to
-  // the original Option A implementation — the fallback a visitor gets is
-  // exactly what they'd have gotten had AI never existed.
-  const runDeterministicTurn = async (nextMessages, isFirstTurn) => {
-    try {
-      const res = await fetch(`${API_BASE}/api/v1/public/intake/analyze`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ history: nextMessages }),
-      });
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        if (data?.code === 'message_too_long') {
-          setAnalyzeError(
-            "That's a lot of context. Let's continue this in your workspace, where Jaspen can go deeper."
-          );
-        } else {
-          setAnalyzeError(data?.error || "Jaspen couldn't respond just now. Try again.");
-        }
-        setMessages((prev) => prev.slice(0, -1));
-        return;
-      }
-
-      setInsights(data);
-      setMessages((prev) => [...prev, { role: 'assistant', content: assistantBubbleFor(data, isFirstTurn) }]);
-
-      const canonical = userAuthoredText(nextMessages);
-      if (onContextChange) onContextChange(canonical);
-      writePendingIntakeContext(canonical);
-    } catch {
-      setAnalyzeError("Jaspen couldn't reach the server. Check your connection and try again.");
-      setMessages((prev) => prev.slice(0, -1));
-    }
-  };
-
-  // Attempts the AI-facilitated conversation. Returns true if any real AI
+  // Attempts the AI-facilitated conversation. Returns handled=true if real AI
   // text arrived (in which case the caller does nothing further — this
   // function already updated messages/insights/handoff itself); returns
-  // false if nothing arrived at all, meaning the caller should run the
-  // deterministic turn instead. Readiness/insights ALWAYS come from the
+  // text or the final handoff arrived. Otherwise the caller restores the
+  // user's draft and presents a retry message. Readiness/insights come from the
   // `done` event this stream sends — never inferred from the AI's own text.
   const tryAiTurn = async (nextMessages, isFirstTurn) => {
     let gotAnyDelta = false;
+    let handoffReceived = false;
+    let unavailableMessage = '';
     let hasAppendedAssistantMessage = false;
     // Accumulated OUTSIDE any setState updater (mutated here, in the plain
     // callback body) so the updaters below stay pure functions of (prev,
@@ -291,8 +236,7 @@ export default function InteractiveDecisionHero({ onOpenModal, onContextChange }
       });
 
       if (!res.ok || !res.body) {
-        aiCooldownUntilRef.current = Date.now() + AI_RETRY_COOLDOWN_MS;
-        return false;
+        return { handled: false, error: "Jaspen couldn't respond just now. Please try again." };
       }
 
       await readSseEvents(res, (evt) => {
@@ -312,30 +256,30 @@ export default function InteractiveDecisionHero({ onOpenModal, onContextChange }
             });
           }
         } else if (evt.type === 'done') {
-          setInsights(evt);
+          if (gotAnyDelta || evt.ready || evt.turn_limit_reached) {
+            setInsights(evt);
+          }
+          if (!gotAnyDelta && (evt.ready || evt.turn_limit_reached)) {
+            handoffReceived = true;
+            setMessages((prev) => [...prev, { role: 'assistant', content: assistantBubbleFor(evt, isFirstTurn) }]);
+          }
+        } else if (evt.type === 'unavailable') {
+          unavailableMessage = evt.message || 'Jaspen is temporarily unavailable. Please try again.';
         }
       });
     } catch {
       // Network failure mid-stream. If nothing arrived yet, treat exactly
-      // like "AI unavailable" and let the caller fall back. If some text
-      // already streamed, leave it — do not also append a deterministic
-      // reply on top of a partial AI one.
+      // like "AI unavailable" and let the caller offer a retry. If some text
+      // already streamed, leave it rather than duplicating the response.
       if (!gotAnyDelta) {
-        aiCooldownUntilRef.current = Date.now() + AI_RETRY_COOLDOWN_MS;
+        unavailableMessage = "Jaspen couldn't reach the server. Check your connection and try again.";
       }
-      return gotAnyDelta;
+      return { handled: gotAnyDelta, error: unavailableMessage };
     }
 
     if (!gotAnyDelta) {
-      aiCooldownUntilRef.current = Date.now() + AI_RETRY_COOLDOWN_MS;
-      return false;
+      return { handled: handoffReceived, error: unavailableMessage };
     }
-
-    // A real reply arrived — clear any earlier cooldown outright rather than
-    // just letting it lapse, so a mid-cooldown recovery (e.g. an admin
-    // re-enabling the kill switch) is picked up immediately rather than
-    // waiting out the rest of the timer.
-    aiCooldownUntilRef.current = 0;
 
     // If the stream ended without a `done` event (rare — a raw connection
     // drop after some deltas), insights stay one turn stale until the next
@@ -344,7 +288,7 @@ export default function InteractiveDecisionHero({ onOpenModal, onContextChange }
     if (onContextChange) onContextChange(canonical);
     writePendingIntakeContext(canonical);
 
-    return true;
+    return { handled: true, error: '' };
   };
 
   const handleSend = async () => {
@@ -368,14 +312,11 @@ export default function InteractiveDecisionHero({ onOpenModal, onContextChange }
     setAnalyzeError('');
 
     try {
-      if (Date.now() >= aiCooldownUntilRef.current) {
-        const handled = await tryAiTurn(nextMessages, isFirstTurn);
-        if (handled) return;
-        // No AI text arrived at all — a cooldown is now set, so turns sent
-        // in the next ~60s skip straight past /chat. Fall through to the
-        // deterministic path so this turn still gets a reply.
-      }
-      await runDeterministicTurn(nextMessages, isFirstTurn);
+      const result = await tryAiTurn(nextMessages, isFirstTurn);
+      if (result.handled) return;
+      setAnalyzeError(result.error || 'Jaspen is temporarily unavailable. Please try again.');
+      setMessages((prev) => prev.slice(0, -1));
+      setDraftText(answer);
     } finally {
       setIsAnalyzing(false);
     }
