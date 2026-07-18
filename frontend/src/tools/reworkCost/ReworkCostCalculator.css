@@ -2,14 +2,12 @@
   --navy: #161f3b;
   --magenta: #a0036c;
   --cream: #f8f5f0;
-  --sky: #eff9fc;
   --ink: #161f3b;
   --muted: #5d6880;
   --faint: #8993a7;
   --border: #d9e4ea;
   color: var(--ink);
   min-height: 100vh;
-  background: var(--sky);
 }
 .rwc * { box-sizing: border-box; }
 .rwc-shell { max-width: 1440px; margin: 0 auto; padding: 56px 32px 96px; }
