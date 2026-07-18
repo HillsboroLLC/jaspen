@@ -2546,6 +2546,8 @@
 
   position: fixed;
   inset: 0;
+  min-height: 100dvh;
+  box-sizing: border-box;
   z-index: 9000;
   display: flex;
   align-items: center;
@@ -2558,10 +2560,20 @@
 
 .sac-modal-shell {
   position: relative;
+  isolation: isolate;
+  flex: 0 0 auto;
+  width: min(420px, calc(100vw - 48px));
+  max-width: 100%;
   overflow: visible;
   box-shadow: 0 40px 100px rgba(0, 0, 0, 0.35);
   border-radius: 24px;
-  animation: float-soft 7.5s infinite alternate ease-in-out;
+}
+
+.sac-modal-shell > .strategy-access-card {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .sac-modal-shell::before {
@@ -2573,14 +2585,16 @@
   border: 1px solid rgba(15, 23, 42, 0.06);
   box-shadow: 0 10px 30px -10px rgba(15, 23, 42, 0.08);
   transform: rotate(-2deg);
-  z-index: -1;
+  transform-origin: center;
+  z-index: 0;
+  pointer-events: none;
 }
 
 .sac-modal-close {
   position: absolute;
   top: 14px;
   right: 14px;
-  z-index: 1;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: center;
