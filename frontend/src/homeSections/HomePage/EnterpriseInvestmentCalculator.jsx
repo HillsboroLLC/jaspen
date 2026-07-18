@@ -38,38 +38,54 @@ const isBusinessEmail = (value) => {
 
 const money = (value) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value);
 
-function calculateEstimate(inputs) {
+const REQUIREMENT_WEIGHTS = {
+  multiple_workspaces: 2, sso_saml: 1, scim: 1, audit_logs: 1,
+  custom_permissions: 1, enterprise_integrations: 2, custom_retention: 1,
+  security_review: 2, procurement: 1, negotiated_support: 2,
+};
+const USAGE_WEIGHTS = { light: 0, standard: 1, high: 2, unsure: 1 };
+
+export function calculateEstimate(inputs) {
   const participants = Math.max(1, Number(inputs.participants) || 1);
   const teams = Math.max(1, Number(inputs.teams) || 1);
   const selected = inputs.requirements;
   const enterpriseRequired = participants > 10 || teams > 1 || selected.length > 0;
 
   if (!enterpriseRequired) {
-    const needsAddOns = participants > 5;
+    const additionalSeats = Math.max(0, participants - 5);
+    const monthly = 299 + (additionalSeats * 30);
+    const annual = 2988 + (additionalSeats * 360);
     return {
       fit: 'Business',
       band: 'Business',
-      annualLow: 2988,
-      annualHigh: 3588,
-      price: needsAddOns ? 'Business base plan plus configured additional seats' : '$299 monthly or $2,988 billed annually',
+      annualLow: annual,
+      annualHigh: annual,
+      price: inputs.billing === 'annual' ? `${money(annual)} billed annually` : `${money(monthly)} monthly`,
       reasons: [
         `${participants} active participant${participants === 1 ? '' : 's'}`,
         'One team or workspace',
         'No enterprise-level requirements selected',
       ],
       scope: ['One shared workspace', '5 seats included', 'Standard permissions and support', 'Shared AI usage pool'],
-      equivalentInvestment: inputs.billing === 'annual' ? 2988 : 3588,
+      equivalentInvestment: inputs.billing === 'annual' ? annual : monthly * 12,
     };
   }
 
+  const teamScore = teams >= 4 ? 4 : teams === 3 ? 3 : teams === 2 ? 2 : 0;
+  const complexityScore = (USAGE_WEIGHTS[inputs.usage] ?? 1)
+    + teamScore
+    + selected.reduce((sum, key) => sum + (REQUIREMENT_WEIGHTS[key] || 0), 0);
+  const participantTier = participants > 50 ? 2 : participants > 20 ? 1 : 0;
+  const complexityTier = complexityScore > 9 ? 2 : complexityScore > 4 ? 1 : 0;
+  const tier = Math.max(participantTier, complexityTier);
   let band = 'Enterprise Core';
   let annualLow = 24000;
-  let annualHigh = 48000;
-  if (participants > 50 || teams > 5 || selected.length >= 5) {
+  let annualHigh = 36000;
+  if (tier === 2) {
     band = 'Enterprise Strategic';
     annualLow = 72000;
     annualHigh = null;
-  } else if (participants > 20 || teams > 1 || selected.length >= 2 || inputs.usage === 'high') {
+  } else if (tier === 1) {
     band = 'Enterprise Scale';
     annualLow = 48000;
     annualHigh = 72000;
@@ -92,6 +108,7 @@ function calculateEstimate(inputs) {
       'Annual agreement and structured deployment',
     ],
     equivalentInvestment: annualHigh ? Math.round((annualLow + annualHigh) / 2) : annualLow,
+    complexityScore,
   };
 }
 
