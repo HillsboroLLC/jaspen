@@ -18,6 +18,7 @@ from app import db, limiter
 from app.admin_audit import append_admin_audit_event, list_admin_audit_events
 from app.admin_policy import is_global_admin
 from app.billing_config import (
+    TOKENS_PER_CREDIT,
     apply_plan_to_user,
     get_allowed_model_types,
     get_model_catalog,
@@ -26,6 +27,7 @@ from app.billing_config import (
     get_plan_catalog,
     normalize_plan_key,
     to_public_plan,
+    provider_cost_usd,
 )
 from app.connector_registry import get_connector_catalog, get_connector_definition
 from app.connector_store import (
@@ -45,6 +47,7 @@ from app.models import (
     User,
     UserAuthSession,
     UserSession,
+    UsageEvent,
 )
 from app.public_intake_controls import (
     get_kill_switch_state,
@@ -712,6 +715,99 @@ def master_analytics():
             "todays_visitors": "Uses authenticated visitor sessions when present, otherwise today's signups.",
             "upgrades_started": "Reserved for checkout-intent instrumentation.",
             "mrr": "Self-serve MRR estimate; team and enterprise contract revenue are not inferred.",
+        },
+    }), 200
+
+
+@admin_bp.route("/master/ai-economics", methods=["GET"])
+@jwt_required()
+def master_ai_economics():
+    _, err = _require_master_admin()
+    if err:
+        return err
+
+    days = min(max(_to_int(request.args.get("days"), 30) or 30, 1), 365)
+    since = datetime.utcnow() - timedelta(days=days)
+    events = UsageEvent.query.filter(UsageEvent.created_at >= since).all()
+    users = {str(row.id): row for row in User.query.all()}
+    catalog = get_plan_catalog(current_app.config)
+
+    providers = {}
+    models = {}
+    plans = {}
+    total_cost = 0.0
+    total_internal_credits = 0
+    unpriced_events = 0
+    input_tokens = 0
+    output_tokens = 0
+
+    for event in events:
+        cost = provider_cost_usd(event.model, event.input_tokens, event.output_tokens)
+        total_cost += cost
+        internal_credits = int(event.credits_charged or 0)
+        jaspen_credits = internal_credits / float(TOKENS_PER_CREDIT)
+        total_internal_credits += internal_credits
+        if cost <= 0 and (int(event.input_tokens or 0) + int(event.output_tokens or 0)) > 0:
+            unpriced_events += 1
+        input_tokens += int(event.input_tokens or 0)
+        output_tokens += int(event.output_tokens or 0)
+        provider = str(event.provider or "unknown").lower()
+        model = str(event.model or "unknown")
+        plan = to_public_plan(getattr(users.get(str(event.user_id)), "subscription_plan", "free"))
+        for bucket, key in ((providers, provider), (models, model), (plans, plan)):
+            row = bucket.setdefault(key, {"events": 0, "cost_usd": 0.0, "credits": 0.0, "input_tokens": 0, "output_tokens": 0})
+            row["events"] += 1
+            row["cost_usd"] += cost
+            row["credits"] += jaspen_credits
+            row["input_tokens"] += int(event.input_tokens or 0)
+            row["output_tokens"] += int(event.output_tokens or 0)
+
+    paid_statuses = {"active", "trialing"}
+    estimated_monthly_revenue = 0.0
+    active_plan_counts = {}
+    for user in users.values():
+        plan = to_public_plan(user.subscription_plan)
+        if plan == "free" or str(user.subscription_status or "").lower() not in paid_statuses:
+            continue
+        active_plan_counts[plan] = active_plan_counts.get(plan, 0) + 1
+        estimated_monthly_revenue += float((catalog.get(plan) or {}).get("monthly_price_usd") or 0)
+
+    for plan, count in active_plan_counts.items():
+        row = plans.setdefault(plan, {"events": 0, "cost_usd": 0.0, "credits": 0.0, "input_tokens": 0, "output_tokens": 0})
+        row["active_accounts"] = count
+
+    period_revenue = estimated_monthly_revenue * (days / 30.0)
+    gross_profit = period_revenue - total_cost
+    gross_margin = (gross_profit / period_revenue * 100.0) if period_revenue > 0 else None
+
+    def rows(mapping, label):
+        return [
+            {label: key, **value, "cost_usd": round(value["cost_usd"], 6), "credits": round(value["credits"], 3)}
+            for key, value in sorted(mapping.items(), key=lambda item: item[1]["cost_usd"], reverse=True)
+        ]
+
+    return jsonify({
+        "generated_at": _iso(datetime.utcnow()),
+        "period_days": days,
+        "metrics": {
+            "provider_cost_usd": round(total_cost, 6),
+            "estimated_revenue_usd": round(period_revenue, 2),
+            "ai_gross_profit_usd": round(gross_profit, 2),
+            "ai_gross_margin_percent": round(gross_margin, 1) if gross_margin is not None else None,
+            "credits_consumed": round(total_internal_credits / float(TOKENS_PER_CREDIT), 3),
+            "unpriced_events": unpriced_events,
+            "events": len(events),
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+        },
+        "providers": rows(providers, "provider"),
+        "models": rows(models, "model"),
+        "plans": rows(plans, "plan"),
+        "active_plan_counts": active_plan_counts,
+        "notes": {
+            "revenue": "Estimated from active subscriptions at current monthly list price; Stripe-settled revenue, annual discounts, seats, refunds, taxes, and fees are not included.",
+            "cost": "Calculated from recorded input/output tokens and configured published Claude and Gemini rates. Unpriced events are called out separately and are not included in provider cost.",
+            "margin": "AI gross margin is estimated revenue less AI provider cost only; it is not company gross margin.",
         },
     }), 200
 

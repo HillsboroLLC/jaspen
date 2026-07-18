@@ -1,5 +1,5 @@
 from app.connector_store import update_connector_settings
-from app.models import EmailSuppression, EnterpriseInquiry, Lead, LeadAttributionEvent, LeadDecisionProfile, LeadEmailDelivery, User
+from app.models import EmailSuppression, EnterpriseInquiry, Lead, LeadAttributionEvent, LeadDecisionProfile, LeadEmailDelivery, UsageEvent, User
 
 
 def test_admin_user_no_stripe_ids(client, admin_auth_headers, admin_user, test_user, db):
@@ -53,6 +53,24 @@ def test_master_analytics_support_only(client, admin_auth_headers, auth_headers,
 
     denied = client.get("/api/v1/admin/master/analytics", headers=auth_headers)
     assert denied.status_code == 403
+
+
+def test_master_ai_economics_includes_claude_and_gemini_costs(client, admin_auth_headers, auth_headers, test_user, db):
+    test_user.subscription_plan = "business"
+    test_user.subscription_status = "active"
+    db.session.add_all([
+        UsageEvent(user_id=test_user.id, provider="anthropic", model="claude-sonnet-4-6", input_tokens=1_000_000, output_tokens=100_000, total_tokens=1_100_000, credits_charged=1000),
+        UsageEvent(user_id=test_user.id, provider="gemini", model="gemini-2.5-flash", input_tokens=1_000_000, output_tokens=100_000, total_tokens=1_100_000, credits_charged=500),
+    ])
+    db.session.commit()
+
+    allowed = client.get("/api/v1/admin/master/ai-economics?days=30", headers=admin_auth_headers)
+    assert allowed.status_code == 200
+    payload = allowed.get_json()
+    assert payload["metrics"]["provider_cost_usd"] == 5.05
+    assert payload["metrics"]["credits_consumed"] == 1.5
+    assert {row["provider"] for row in payload["providers"]} == {"anthropic", "gemini"}
+    assert client.get("/api/v1/admin/master/ai-economics", headers=auth_headers).status_code == 403
 
 
 def test_master_errors_support_only_for_global_admin(client, admin_auth_headers, app, db):

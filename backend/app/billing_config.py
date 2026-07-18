@@ -170,13 +170,21 @@ ANTHROPIC_PRICES_USD_PER_M = {
     '__default_claude__':          {'input': 3.00,  'output': 15.00},
 }
 
-# Margin multiplier on Anthropic cost. Anthropic cost × this number = what
+# Google AI standard paid-tier prices ($ per million tokens). Gemini output
+# pricing includes thinking tokens.
+GEMINI_PRICES_USD_PER_M = {
+    'gemini-2.5-flash': {'input': 0.30, 'output': 2.50},
+    'gemini-2.5-pro': {'input': 1.25, 'output': 10.00},
+    '__default_gemini__': {'input': 1.25, 'output': 10.00},
+}
+
+# Margin multiplier on provider cost. Provider cost × this number = what
 # we debit from the user's Thinking Power budget. Default 3.0× (≈67% margin).
-# Tunable via env so we can adjust without code changes if Anthropic raises
-# prices significantly.
+# Tunable via env so we can adjust without code changes if provider prices
+# change significantly.
 MARGIN_MULTIPLIER = float(os.getenv('JASPEN_MARGIN_MULTIPLIER', '3.0'))
 
-# Plan-level Anthropic cost ceiling (USD per month, BEFORE margin). At 3.0×
+# Plan-level provider-cost ceiling (USD per month, BEFORE margin). At 3.0×
 # margin these map to comfortable margins per Stripe pricing:
 #   Free        $0  → $0.25 budget (small sample path)
 #   Starter     $7  → $2.00 budget × 3 = $6 retail → modest margin
@@ -199,12 +207,12 @@ PLAN_THINKING_BUDGET_USD = {
 def anthropic_cost_usd(model_name, input_tokens, output_tokens):
     """Anthropic's $ cost for one completion. Sticky-on-decrease per the
     ANTHROPIC_PRICES_USD_PER_M table. Unknown Claude models fall back to
-    Sonnet rates; non-Claude (e.g., Gemini) models return 0."""
+    Sonnet rates; non-Claude models return 0."""
     if not model_name:
         return 0.0
     name = str(model_name).strip().lower()
     if not name.startswith('claude'):
-        # Gemini / other providers don't debit Thinking Power.
+        # Other providers are handled by provider_cost_usd().
         return 0.0
     prices = ANTHROPIC_PRICES_USD_PER_M.get(name) or ANTHROPIC_PRICES_USD_PER_M['__default_claude__']
     in_tokens = max(0, int(input_tokens or 0))
@@ -212,8 +220,25 @@ def anthropic_cost_usd(model_name, input_tokens, output_tokens):
     return (in_tokens * prices['input'] + out_tokens * prices['output']) / 1_000_000.0
 
 
+def provider_cost_usd(model_name, input_tokens, output_tokens):
+    """Published provider cost for one completion.
+
+    Unknown Gemini models conservatively use Pro rates; unknown providers
+    remain visible in telemetry but return zero until a rate is configured.
+    """
+    name = str(model_name or '').strip().lower()
+    if name.startswith('claude'):
+        return anthropic_cost_usd(name, input_tokens, output_tokens)
+    if not name.startswith('gemini'):
+        return 0.0
+    prices = GEMINI_PRICES_USD_PER_M.get(name) or GEMINI_PRICES_USD_PER_M['__default_gemini__']
+    in_tokens = max(0, int(input_tokens or 0))
+    out_tokens = max(0, int(output_tokens or 0))
+    return (in_tokens * prices['input'] + out_tokens * prices['output']) / 1_000_000.0
+
+
 def plan_thinking_budget_usd(plan_key):
-    """Monthly Anthropic-cost budget for a plan (USD, before margin)."""
+    """Monthly AI-provider-cost budget for a plan (USD, before margin)."""
     canonical = normalize_plan_key(plan_key)
     return PLAN_THINKING_BUDGET_USD.get(canonical, PLAN_THINKING_BUDGET_USD['essential'])
 
@@ -221,15 +246,15 @@ def plan_thinking_budget_usd(plan_key):
 def thinking_power_debit_pct(plan_key, model_name, input_tokens, output_tokens):
     """How much of a user's monthly Thinking Power % to debit for one call.
 
-    Returns a float in 0–100. Gemini and other non-Claude models return 0.0
-    (they're free background processing per the pricing policy).
+    Returns a float in 0–100. Supported Claude and Gemini models debit from
+    the same plan-level provider-cost ceiling.
     """
-    raw_cost = anthropic_cost_usd(model_name, input_tokens, output_tokens)
+    raw_cost = provider_cost_usd(model_name, input_tokens, output_tokens)
     if raw_cost <= 0:
         return 0.0
     budget = plan_thinking_budget_usd(plan_key)
     if budget <= 0:
-        # Free plan with zero budget → any Claude call is "100%" so the
+        # Free plan with zero budget → any metered provider call is "100%" so the
         # caller can decide what to do (typically: deny or pop the paywall).
         return 100.0
     return (raw_cost * MARGIN_MULTIPLIER / budget) * 100.0
@@ -237,7 +262,7 @@ def thinking_power_debit_pct(plan_key, model_name, input_tokens, output_tokens):
 
 def credits_for_completion(plan_key, model_name, input_tokens, output_tokens):
     """Credits to debit (in the legacy 1 credit = 1000 tokens unit) for one
-    completion, derived from Anthropic's $ cost × MARGIN_MULTIPLIER. This is
+    completion, derived from provider $ cost × MARGIN_MULTIPLIER. This is
     the bridge between the new $-based model and the existing credits-based
     consume_credits() machinery — we don't have to rip out the old plumbing.
     """

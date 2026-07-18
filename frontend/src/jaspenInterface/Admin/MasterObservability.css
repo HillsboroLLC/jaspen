@@ -46,6 +46,13 @@ body.jaspen-sidebar-open .master-admin-inner {
   cursor: pointer;
 }
 
+.ai-econ-controls { display: flex; align-items: center; gap: 10px; }
+.ai-econ-controls select { height: 40px; border: 1px solid var(--int-border-md); border-radius: var(--int-radius-sm); background: var(--int-surface); color: var(--int-text); padding: 0 34px 0 12px; }
+.ai-econ-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.ai-econ-columns { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.ai-econ-notes p { margin: 8px 0 0; color: var(--int-text-sub); line-height: 1.55; }
+.ai-econ-notes strong { color: var(--int-text); }
+
 .master-admin-state {
   border: 1px solid var(--int-border);
   border-radius: var(--int-radius-md);
@@ -400,6 +407,14 @@ body.jaspen-sidebar-open .master-admin-inner {
   .master-contact-modal-summary { grid-template-columns: repeat(2, 1fr); }
   .master-estimate-list dl { grid-template-columns: repeat(2, 1fr); }
   .master-contact-card-foot { flex-direction: column; }
+}
+
+@media (max-width: 980px) {
+  .ai-econ-metrics, .ai-econ-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 620px) {
+  .master-admin-head, .ai-econ-controls { flex-direction: column; align-items: stretch; }
+  .ai-econ-metrics, .ai-econ-columns { grid-template-columns: 1fr; }
 }
 
 .master-filter-bar {
