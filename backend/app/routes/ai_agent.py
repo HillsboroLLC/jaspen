@@ -3698,15 +3698,14 @@ def _estimate_usage_credit_charge(total_tokens, model_type, provider=None, *,
     """Compute credits to debit for one completion.
 
     Preferred path (Thinking Power model): when we have input/output token
-    counts plus the Anthropic model name, we use the real $/M cost from
-    ANTHROPIC_PRICES_USD_PER_M × MARGIN_MULTIPLIER, then convert to credit
+    counts plus the provider model name, we use configured published $/M
+    rates × MARGIN_MULTIPLIER, then convert to credit
     units against the user's plan. This is what makes Sonnet turns more
     expensive than Haiku turns, mirroring actual Anthropic cost.
 
     Fallback path (legacy): flat 1 credit-unit = 1 token, model-agnostic.
     Used when the caller didn't pass enough info to do real cost math
-    (or for non-Claude providers like Gemini — which are intended to be
-    "free background processing" per Bailey's pricing policy).
+    for calls where provider-cost math is unavailable.
     """
     # New path: real-cost math
     if anthropic_model and input_tokens is not None and output_tokens is not None and plan_key:
@@ -3719,9 +3718,6 @@ def _estimate_usage_credit_charge(total_tokens, model_type, provider=None, *,
             )
             if charge > 0:
                 return int(charge)
-            # Gemini / other non-Claude → 0 (free background per pricing policy)
-            if anthropic_model and not str(anthropic_model).lower().startswith('claude'):
-                return 0
         except Exception:
             current_app.logger.exception("Thinking-Power debit math failed; falling back to flat token charge")
 
@@ -3735,10 +3731,10 @@ def _estimate_usage_credit_charge(total_tokens, model_type, provider=None, *,
 def _charge_for_usage(usage, model_type, user):
     """Thinking-Power-aware wrapper around _estimate_usage_credit_charge.
 
-    Pulls input/output tokens + Anthropic model name from the usage dict
-    and the user's plan key, so we can compute the real Anthropic-cost ×
+    Pulls input/output tokens + provider model name from the usage dict
+    and the user's plan key, so we can compute the real provider-cost ×
     margin debit. Falls back to the legacy flat-token math if any of those
-    pieces are missing (or if the call wasn't Claude — Gemini debits 0).
+    pieces are missing.
     """
     if not isinstance(usage, dict):
         return _estimate_usage_credit_charge(0, model_type, None)

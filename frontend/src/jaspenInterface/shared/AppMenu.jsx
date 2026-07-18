@@ -11,7 +11,7 @@ import {
   faBars, faTimes, faListCheck, faPlus, faLayerGroup, faChartLine,
   faDownload, faClockRotateLeft, faUser, faGaugeHigh, faQuestionCircle,
   faBolt, faBell, faLock, faArrowUpRightFromSquare, faAddressBook,
-  faFingerprint,
+  faFingerprint, faCoins,
 } from '@fortawesome/free-solid-svg-icons';
 
 import { useAuth } from '../../shared/auth/AuthContext';
@@ -634,6 +634,10 @@ export default function AppMenu() {
               <button className={menuItemClass('/admin/leads')} onClick={() => { close(); navigate('/admin/leads'); }}>
                 <FontAwesomeIcon icon={faAddressBook} />
                 <span className="jas-ud-item-label">Leads</span>
+              </button>
+              <button className={menuItemClass('/admin/ai-economics')} onClick={() => { close(); navigate('/admin/ai-economics'); }}>
+                <FontAwesomeIcon icon={faCoins} />
+                <span className="jas-ud-item-label">AI Economics</span>
               </button>
               <button className={menuItemClass('/admin/errors')} onClick={() => { close(); navigate('/admin/errors'); }}>
                 <FontAwesomeIcon icon={faGaugeHigh} />

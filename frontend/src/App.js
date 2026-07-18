@@ -50,6 +50,7 @@ const ConnectorsManage = lazy(() => import('./jaspenInterface/Connectors/Connect
 const Account = lazy(() => import('./jaspenInterface/Account/Account'));
 const JaspenAdmin = lazy(() => import('./jaspenInterface/Admin/JaspenAdmin'));
 const MasterAnalytics = lazy(() => import('./jaspenInterface/Admin/MasterAnalytics'));
+const MasterAIEconomics = lazy(() => import('./jaspenInterface/Admin/MasterAIEconomics'));
 const MasterLeads = lazy(() => import('./jaspenInterface/Admin/MasterLeads'));
 const MasterErrors = lazy(() => import('./jaspenInterface/Admin/MasterErrors'));
 const DecisionProfile = lazy(() => import('./jaspenInterface/DecisionProfile/DecisionProfile'));
@@ -293,6 +294,17 @@ function AnimatedAppRoutes({ withShell }) {
                     title: 'Leads',
                     showHeader: false,
                     fullBleed: true,
+                    noPadding: true, backToJaspen: true,
+                  })}
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/ai-economics"
+              element={
+                <ProtectedRoute>
+                  {withShell(<MasterAIEconomics />, {
+                    title: 'AI Economics', showHeader: false, fullBleed: true,
                     noPadding: true, backToJaspen: true,
                   })}
                 </ProtectedRoute>
