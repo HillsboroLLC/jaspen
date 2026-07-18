@@ -953,6 +953,27 @@ def _seat_billing_context(user):
     current = int(getattr(org, 'max_total_paid_seats', None) or included)
     current = max(included, min(current, maximum))
     usage = build_seat_usage(org) or {}
+    subscription = None
+    billing_interval = 'monthly'
+    if user.stripe_subscription_id:
+        try:
+            subscription = stripe.Subscription.retrieve(user.stripe_subscription_id)
+        except stripe.error.StripeError as exc:
+            return None, ({'msg': str(getattr(exc, 'user_message', None) or 'Could not verify the subscription billing interval.')}, 400)
+        items = (subscription.get('items') or {}).get('data') or []
+        annual_price_ids = set(
+            value for value in (current_app.config.get('STRIPE_ANNUAL_PRICE_IDS', {}) or {}).values() if value
+        )
+        if any(str((item.get('price') or {}).get('id') or '') in annual_price_ids for item in items):
+            billing_interval = 'annual'
+        elif str((subscription.get('metadata') or {}).get('billing_interval') or '').strip().lower() == 'annual':
+            billing_interval = 'annual'
+
+    seat_mapping_name = (
+        'STRIPE_ANNUAL_ADDITIONAL_SEAT_PRICE_IDS'
+        if billing_interval == 'annual'
+        else 'STRIPE_ADDITIONAL_SEAT_PRICE_IDS'
+    )
     return {
         'org': org,
         'membership': membership,
@@ -963,11 +984,19 @@ def _seat_billing_context(user):
         'additional_seats': max(0, current - included),
         'max_total_seats': maximum,
         'used_seats': int(usage.get('total_paid_used') or 0),
-        'price_id': (current_app.config.get('STRIPE_ADDITIONAL_SEAT_PRICE_IDS', {}) or {}).get(plan_key),
+        'billing_interval': billing_interval,
+        'subscription': subscription,
+        'price_id': (current_app.config.get(seat_mapping_name, {}) or {}).get(plan_key),
     }, None
 
 
 def _seat_billing_payload(ctx):
+    monthly_seat_price = ctx['plan'].get('additional_seat_price')
+    displayed_seat_price = (
+        monthly_seat_price * 12
+        if ctx['billing_interval'] == 'annual' and monthly_seat_price is not None
+        else monthly_seat_price
+    )
     return {
         'available': True,
         'plan_key': ctx['plan_key'],
@@ -978,7 +1007,8 @@ def _seat_billing_payload(ctx):
         'additional_seats': ctx['additional_seats'],
         'max_total_seats': ctx['max_total_seats'],
         'used_seats': ctx['used_seats'],
-        'additional_seat_price_usd': ctx['plan'].get('additional_seat_price'),
+        'billing_interval': ctx['billing_interval'],
+        'additional_seat_price_usd': displayed_seat_price,
         'purchase_configured': bool(ctx['price_id']),
         'can_purchase': str(ctx['membership'].role or '').lower() == 'owner',
     }
@@ -1020,7 +1050,7 @@ def add_billed_seat():
 
     quantity = target - ctx['included_seats']
     try:
-        subscription = stripe.Subscription.retrieve(user.stripe_subscription_id)
+        subscription = ctx['subscription'] or stripe.Subscription.retrieve(user.stripe_subscription_id)
         items = (subscription.get('items') or {}).get('data') or []
         seat_item = next(
             (item for item in items if str((item.get('price') or {}).get('id') or '') == str(ctx['price_id'])),

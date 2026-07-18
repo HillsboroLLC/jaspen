@@ -133,3 +133,41 @@ def test_team_owner_can_purchase_only_one_additional_seat(
     response = client.post('/api/v1/billing/seats', headers=auth_headers, json={})
     assert response.status_code == 400
     assert 'up to 4 users' in response.get_json()['msg']
+
+
+def test_annual_team_owner_purchases_annual_seat(
+    client, app, db, test_user, auth_headers, monkeypatch
+):
+    from app.routes import billing as billing_routes
+
+    test_user.subscription_plan = 'team'
+    test_user.stripe_subscription_id = 'sub_team_annual'
+    db.session.commit()
+    app.config['STRIPE_ANNUAL_PRICE_IDS']['team'] = 'price_team_annual'
+    app.config['STRIPE_ANNUAL_ADDITIONAL_SEAT_PRICE_IDS'] = {
+        'team': 'price_team_seat_annual',
+        'business': 'price_business_seat_annual',
+    }
+
+    monkeypatch.setattr(
+        billing_routes.stripe.Subscription,
+        'retrieve',
+        lambda _subscription_id: {
+            'items': {'data': [{'id': 'si_base', 'price': {'id': 'price_team_annual'}}]},
+            'metadata': {'billing_interval': 'annual'},
+        },
+    )
+    calls = []
+
+    def modify(subscription_id, **kwargs):
+        calls.append((subscription_id, kwargs))
+        return {'status': 'active', 'latest_invoice': {'status': 'paid'}}
+
+    monkeypatch.setattr(billing_routes.stripe.Subscription, 'modify', modify)
+
+    response = client.post('/api/v1/billing/seats', headers=auth_headers, json={})
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload['billing_interval'] == 'annual'
+    assert payload['additional_seat_price_usd'] == 300
+    assert calls[0][1]['items'] == [{'price': 'price_team_seat_annual', 'quantity': 1}]

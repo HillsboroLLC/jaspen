@@ -245,6 +245,10 @@ def create_app():
             'PRICE_ID_ENTERPRISE_SEAT',
         ),
     }
+    app.config['STRIPE_ANNUAL_ADDITIONAL_SEAT_PRICE_IDS'] = {
+        'team': _stripe_price_id_from_env('PRICE_ID_TEAM_SEAT_ANNUAL'),
+        'business': _stripe_price_id_from_env('PRICE_ID_BUSINESS_SEAT_ANNUAL'),
+    }
     # Backward-compatible alias used by legacy code paths.
     app.config['STRIPE_OVERAGE_PACK_PRICE_IDS'] = app.config['STRIPE_CREDIT_PACK_PRICE_IDS']
     required_stripe_values = {
