@@ -3,7 +3,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import * as Sentry from '@sentry/react';
-import { HelmetProvider } from 'react-helmet-async';
 import './index.css';
 import './styles/colors.css';
 import './styles/tokens.css';
@@ -45,11 +44,9 @@ window.addEventListener('unhandledrejection', (event) => {
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
   <React.StrictMode>
-    <HelmetProvider>
-      <AuthProvider>
-        <App /> {/* App.js already provides BrowserRouter + other Providers */}
-      </AuthProvider>
-    </HelmetProvider>
+    <AuthProvider>
+      <App /> {/* App.js already provides BrowserRouter + other Providers */}
+    </AuthProvider>
   </React.StrictMode>
 );
 

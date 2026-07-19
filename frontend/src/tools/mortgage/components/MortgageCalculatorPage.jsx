@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Home, ShieldCheck, FileText } from 'lucide-react';
 import MarketingPageLayout from '../../../pages/Marketing/MarketingPageLayout';
 import Seo from '../../../shared/components/Seo';
+import CalculatorSeoFooter from '../../../shared/components/CalculatorSeoFooter';
 import Stepper from '../../shared/components/Stepper';
 import CompositionPanel from '../../shared/components/CompositionPanel';
 import MethodologyModal from '../../shared/components/MethodologyModal';
@@ -11,7 +12,7 @@ import CashStep from './steps/CashStep';
 import ResultsStep from './steps/ResultsStep';
 import { useMortgage } from '../hooks/useMortgage';
 import { STEPS } from '../config/questions';
-import { SEO, seoJsonLd } from '../config/seo';
+import { SEO, seoJsonLd, FAQS } from '../config/seo';
 import { BENCHMARKS, METHODOLOGY_VERSION, BENCHMARK_VERSION } from '../data/benchmarks';
 import { analytics } from '../services/analytics';
 import { CALC_VERSION } from '../engine/version';
@@ -185,6 +186,8 @@ export default function MortgageCalculatorPage() {
           )}
         </div>
       </div>
+
+      <CalculatorSeoFooter faqs={FAQS} />
 
       <MethodologyModal
         open={methodologyOpen}

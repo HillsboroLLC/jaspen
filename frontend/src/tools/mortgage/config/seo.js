@@ -8,6 +8,23 @@ export const SEO = {
   canonicalPath: CANONICAL_PATH,
 };
 
+// Single source of truth for the on-page FAQ and the FAQPage structured data.
+// Keeping both from one array guarantees the visible answers match the markup.
+export const FAQS = [
+  {
+    q: 'What is the true cost of owning a home vs. the mortgage payment?',
+    a: 'The required lender payment covers principal, interest, property taxes, homeowners insurance, and PMI (PITI), plus any HOA. The true carrying cost adds a maintenance reserve and optional utilities — the full monthly cost of owning, which is higher than the mortgage payment alone.',
+  },
+  {
+    q: 'How much cash do I need to close on a house?',
+    a: 'Cash to close is your down payment plus closing costs (a planning default of about 3% of the purchase price) plus any points or prepaids, minus lender credits. Your lender Loan Estimate controls the actual figure.',
+  },
+  {
+    q: 'Is this mortgage calculator free?',
+    a: 'Yes. The full results, cost breakdown, multi-year cost, equity, sensitivity, and methodology are available with no account and no email required.',
+  },
+];
+
 export function seoJsonLd() {
   const url = `${SITE_URL}${CANONICAL_PATH}`;
   return [
@@ -25,32 +42,11 @@ export function seoJsonLd() {
     {
       '@context': 'https://schema.org',
       '@type': 'FAQPage',
-      mainEntity: [
-        {
-          '@type': 'Question',
-          name: 'What is the true cost of owning a home vs. the mortgage payment?',
-          acceptedAnswer: {
-            '@type': 'Answer',
-            text: 'The required lender payment covers principal, interest, property taxes, homeowners insurance, and PMI (PITI), plus any HOA. The true carrying cost adds a maintenance reserve and optional utilities — the full monthly cost of owning, which is higher than the mortgage payment alone.',
-          },
-        },
-        {
-          '@type': 'Question',
-          name: 'How much cash do I need to close on a house?',
-          acceptedAnswer: {
-            '@type': 'Answer',
-            text: 'Cash to close is your down payment plus closing costs (a planning default of about 3% of the purchase price) plus any points or prepaids, minus lender credits. Your lender Loan Estimate controls the actual figure.',
-          },
-        },
-        {
-          '@type': 'Question',
-          name: 'Is this mortgage calculator free?',
-          acceptedAnswer: {
-            '@type': 'Answer',
-            text: 'Yes. The full results, cost breakdown, multi-year cost, equity, sensitivity, and methodology are available with no account and no email required.',
-          },
-        },
-      ],
+      mainEntity: FAQS.map((item) => ({
+        '@type': 'Question',
+        name: item.q,
+        acceptedAnswer: { '@type': 'Answer', text: item.a },
+      })),
     },
   ];
 }

@@ -3,9 +3,10 @@ import { Link } from 'react-router-dom';
 import { Check, ChevronDown, RotateCcw } from 'lucide-react';
 import MarketingPageLayout from '../../../pages/Marketing/MarketingPageLayout';
 import Seo from '../../../shared/components/Seo';
+import CalculatorSeoFooter from '../../../shared/components/CalculatorSeoFooter';
 import { createAnalytics } from '../../shared/createAnalytics';
 import { calculateReworkCost, REWORK_DEFAULTS } from '../engine/calculator';
-import { SEO, seoJsonLd } from '../config/seo';
+import { SEO, seoJsonLd, FAQS } from '../config/seo';
 import '../ReworkCostCalculator.css';
 
 const analytics = createAnalytics('rework_cost_calculator');
@@ -250,6 +251,8 @@ export default function ReworkCostCalculatorPage() {
           )}
         </div>
       </main>
+
+      <CalculatorSeoFooter faqs={FAQS} />
     </MarketingPageLayout>
   );
 }

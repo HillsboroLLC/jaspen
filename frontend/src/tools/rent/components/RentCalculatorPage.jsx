@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Building2, ShieldCheck, FileText } from 'lucide-react';
 import MarketingPageLayout from '../../../pages/Marketing/MarketingPageLayout';
 import Seo from '../../../shared/components/Seo';
+import CalculatorSeoFooter from '../../../shared/components/CalculatorSeoFooter';
 import Stepper from '../../shared/components/Stepper';
 import CompositionPanel from '../../shared/components/CompositionPanel';
 import MethodologyModal from '../../shared/components/MethodologyModal';
@@ -11,7 +12,7 @@ import MoveInStep from './steps/MoveInStep';
 import ResultsStep from './steps/ResultsStep';
 import { useRent } from '../hooks/useRent';
 import { STEPS } from '../config/questions';
-import { SEO, seoJsonLd } from '../config/seo';
+import { SEO, seoJsonLd, FAQS } from '../config/seo';
 import { BENCHMARKS, METHODOLOGY_VERSION, BENCHMARK_VERSION } from '../data/benchmarks';
 import { analytics } from '../services/analytics';
 import { CALC_VERSION } from '../engine/version';
@@ -74,6 +75,15 @@ export default function RentCalculatorPage() {
           <div className="tool-actions">{rent.step > 0 ? <button type="button" className="tool-btn tool-btn-ghost" onClick={rent.back}>← Back</button> : <span />}<button type="button" className="tool-btn tool-btn-primary" onClick={rent.next}>{rent.step === 2 ? 'See my true cost' : 'Continue'} →</button></div>
         </div><div className="tool-insights"><CompositionPanel composition={rent.composition} /></div></div>}
     </div></div>
+    <CalculatorSeoFooter
+      faqs={FAQS}
+      intro={(
+        <>
+          <p>This calculator turns a lease into its real numbers: the advertised rent, the effective rent after any free month or credit, the recurring fees and utilities you pay each month, and the cash you need to move in. It separates money you spend from refundable deposits you get back, and shows how the cost changes if the rent rises at renewal.</p>
+          <p>Every input starts from a researched default and stays fully editable, the math is deterministic (no AI), and it never tells you whether to rent or buy.</p>
+        </>
+      )}
+    />
     <MethodologyModal open={methodologyOpen} onClose={() => setMethodologyOpen(false)} title="How We Built These Rent Estimates" versionLine={`Methodology v${METHODOLOGY_VERSION} · Benchmark library v${BENCHMARK_VERSION}. An estimation tool, not a lease quote or recommendation.`} principles={METHOD_PRINCIPLES} benchmarks={METHOD_BENCHMARKS} notes={METHOD_NOTES} />
   </MarketingPageLayout>;
 }

@@ -11,8 +11,24 @@ export const SEO = {
   canonicalPath: CANONICAL_PATH,
 };
 
-// Structured data: a WebApplication for the tool + an FAQ built around the
-// natural search language this page targets.
+// Single source of truth for the on-page FAQ and the FAQPage structured data.
+// Claims are limited to what the methodology actually uses (SHRM, BLS, APQC);
+// no unsourced statistics.
+export const FAQS = [
+  {
+    q: 'How do you calculate the cost of employee turnover?',
+    a: 'You sum recruiting and sourcing, vacancy capacity loss, onboarding and training, and ramp-up productivity loss using published benchmarks (SHRM cost-per-hire and time-to-fill, BLS employer compensation), then add the knowledge and context costs most calculators omit — knowledge transfer, time to rebuild historical context, institutional-memory reconstruction, and documented project disruption. Every assumption is visible and editable.',
+  },
+  {
+    q: 'What is the true cost of losing an employee?',
+    a: 'Beyond recruiting and vacancy, a departure takes institutional and tribal knowledge with it — the context, history, and working relationships the person carried. The true cost includes the labor spent transferring that knowledge and rebuilding the context that was never documented, which is why a flat salary multiple usually understates it.',
+  },
+  {
+    q: 'Is this attrition cost calculator free?',
+    a: 'Yes. The full results, category breakdown, assumptions, and methodology are available with no account and no email required.',
+  },
+];
+
 export function seoJsonLd() {
   const url = `${SITE_URL}${CANONICAL_PATH}`;
   return [
@@ -30,32 +46,11 @@ export function seoJsonLd() {
     {
       '@context': 'https://schema.org',
       '@type': 'FAQPage',
-      mainEntity: [
-        {
-          '@type': 'Question',
-          name: 'How do you calculate the cost of employee turnover?',
-          acceptedAnswer: {
-            '@type': 'Answer',
-            text: 'We sum recruiting and sourcing, vacancy capacity loss, onboarding and training, and ramp-up productivity loss using published benchmarks (SHRM, BLS, Gallup), then add the knowledge and context costs traditional calculators omit — knowledge transfer, time to rebuild context, institutional-memory reconstruction, and project disruption — using documented research-based estimates. Every assumption is visible and editable.',
-          },
-        },
-        {
-          '@type': 'Question',
-          name: 'What is the true cost of losing an employee?',
-          acceptedAnswer: {
-            '@type': 'Answer',
-            text: 'Beyond recruiting and vacancy, a departure removes institutional and tribal knowledge. Research finds about 42% of a role’s institutional knowledge is unique to the person who holds it, so the true cost includes the time and labor spent rebuilding lost context and history.',
-          },
-        },
-        {
-          '@type': 'Question',
-          name: 'Is this attrition cost calculator free?',
-          acceptedAnswer: {
-            '@type': 'Answer',
-            text: 'Yes. The full results, category breakdown, assumptions, and methodology are available with no account and no email required.',
-          },
-        },
-      ],
+      mainEntity: FAQS.map((item) => ({
+        '@type': 'Question',
+        name: item.q,
+        acceptedAnswer: { '@type': 'Answer', text: item.a },
+      })),
     },
   ];
 }

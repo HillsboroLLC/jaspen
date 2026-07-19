@@ -65,6 +65,13 @@ const Privacy = () => {
         </section>
 
         <section className="policy-section">
+          <h2>Advertising and Cookies</h2>
+          <p>Jaspen displays ads served by Google, including through Google AdSense. Third-party vendors, including Google, use cookies to serve ads based on your prior visits to this and other websites. Google&rsquo;s use of advertising cookies enables it and its partners to serve ads to you based on your visit to Jaspen and/or other sites on the internet.</p>
+          <p>You may opt out of personalized advertising by visiting <a href="https://adssettings.google.com" target="_blank" rel="noreferrer">Google Ads Settings</a>. You can also opt out of some third-party vendors&rsquo; use of cookies for personalized advertising at <a href="https://www.aboutads.info/choices/" target="_blank" rel="noreferrer">aboutads.info</a>. For visitors in the EEA, the UK, and Switzerland, we request consent for personalized advertising and cookies before they are used.</p>
+          <p>For more information on how Google uses data when you use our site, see <a href="https://policies.google.com/technologies/partner-sites" target="_blank" rel="noreferrer">Google&rsquo;s Privacy &amp; Terms</a>.</p>
+        </section>
+
+        <section className="policy-section">
           <h2>Data Retention</h2>
           <p>We retain workspace and account data for as long as needed to provide the service, meet legal obligations, resolve disputes, and enforce agreements.</p>
         </section>

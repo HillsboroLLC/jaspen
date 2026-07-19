@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import MarketingPageLayout from '../../../pages/Marketing/MarketingPageLayout';
 import Seo from '../../../shared/components/Seo';
+import CalculatorSeoFooter from '../../../shared/components/CalculatorSeoFooter';
 import Stepper from './Stepper';
 import RoleSetupStep from './steps/RoleSetupStep';
 import BenchmarkReviewStep from './steps/BenchmarkReviewStep';
@@ -12,7 +13,7 @@ import { useCostOfTurnover } from '../hooks/useCostOfTurnover';
 import { STEPS } from '../config/questions';
 import { analytics } from '../services/analytics';
 import { buildSnapshot } from '../services/savedEstimate';
-import { seoJsonLd, SEO } from '../config/seo';
+import { seoJsonLd, SEO, FAQS } from '../config/seo';
 import '../CostOfTurnover.css';
 
 export default function CostOfTurnoverPage() {
@@ -184,6 +185,8 @@ export default function CostOfTurnoverPage() {
           )}
         </div>
       </div>
+
+      <CalculatorSeoFooter faqs={FAQS} />
 
       <MethodologyModal open={methodologyOpen} onClose={() => setMethodologyOpen(false)} />
     </MarketingPageLayout>
