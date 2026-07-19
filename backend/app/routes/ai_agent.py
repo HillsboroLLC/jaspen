@@ -56,6 +56,7 @@ from app.scenarios_store import save_scenarios_data
 from app.connector_store import get_connector_settings, get_thread_sync_profile, update_thread_sync_profile
 from app.jira_sync import sync_wbs_to_jira
 from app.smartsheet_sync import sync_wbs_to_smartsheet
+from app.rate_limits import AI_CONVERSATION_SCOPE, shared_limit_usage
 
 # The deterministic decision-readiness engine lives in app.intake_readiness so
 # the unauthenticated public intake endpoint can import it WITHOUT pulling in
@@ -120,12 +121,6 @@ _PLAN_DAILY_LIMITS = {
     'business': '500 per day',
 }
 
-_AI_USAGE_LIMIT_ENDPOINTS = (
-    'conversation_start',
-    'conversation_continue',
-    'conversation_regenerate',
-)
-
 def _plan_hourly_limit():
     """Dynamic rate-limit string based on the current user's plan."""
     try:
@@ -158,30 +153,9 @@ def _next_utc_midnight_epoch():
     return int(tomorrow.timestamp())
 
 
-def _rate_limit_usage_count(rate_key, limit_item, endpoint_names):
-    """Read Flask-Limiter's storage counters for the AI conversation routes."""
-    try:
-        storage = limiter.limiter.storage
-    except Exception:
-        return 0, None
-
-    total = 0
-    latest_expiry = None
-    for endpoint in endpoint_names:
-        endpoint_count = 0
-        for scope in (endpoint, f'ai_agent.{endpoint}'):
-            try:
-                key = limit_item.key_for(rate_key, scope)
-                count = int(storage.get(key) or 0)
-                endpoint_count = max(endpoint_count, count)
-                if count:
-                    expiry = storage.get_expiry(key)
-                    if expiry:
-                        latest_expiry = max(latest_expiry or 0, float(expiry))
-            except Exception:
-                continue
-        total += endpoint_count
-    return total, latest_expiry
+def _rate_limit_usage_count(rate_key, limit_item):
+    """Read the shared AI conversation counter used for enforcement."""
+    return shared_limit_usage(limiter, rate_key, limit_item)
 
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -218,12 +192,10 @@ def ai_usage_daily_status():
     daily_used, daily_expiry = _rate_limit_usage_count(
         rate_key,
         RateLimitItemPerDay(daily_limit),
-        _AI_USAGE_LIMIT_ENDPOINTS,
     )
     hourly_used, _hourly_expiry = _rate_limit_usage_count(
         rate_key,
         RateLimitItemPerHour(hourly_limit),
-        _AI_USAGE_LIMIT_ENDPOINTS,
     )
     reset_epoch = daily_expiry or _next_utc_midnight_epoch()
 
@@ -8826,8 +8798,8 @@ def _persist_thread_insight(user_id, thread_id, filename, insight_payload, summa
 @ai_agent_bp.route("/conversation/start", methods=["POST"])
 @jwt_required()
 @limiter.limit("3 per minute")          # C — burst protection
-@limiter.limit(_plan_hourly_limit)      # A — per-plan hourly cap
-@limiter.limit(_plan_daily_limit)       # B — per-plan daily cap
+@limiter.shared_limit(_plan_hourly_limit, scope=AI_CONVERSATION_SCOPE)  # A — shared hourly cap
+@limiter.shared_limit(_plan_daily_limit, scope=AI_CONVERSATION_SCOPE)   # B — shared daily cap
 def conversation_start():
     try:
         data, attachments = _conversation_request_payload()
@@ -9399,8 +9371,8 @@ def conversation_start():
 @ai_agent_bp.route("/conversation/continue", methods=["POST"])
 @jwt_required()
 @limiter.limit("10 per minute")         # C — tightened burst (was 30)
-@limiter.limit(_plan_hourly_limit)      # A — per-plan hourly cap
-@limiter.limit(_plan_daily_limit)       # B — per-plan daily cap
+@limiter.shared_limit(_plan_hourly_limit, scope=AI_CONVERSATION_SCOPE)  # A — shared hourly cap
+@limiter.shared_limit(_plan_daily_limit, scope=AI_CONVERSATION_SCOPE)   # B — shared daily cap
 def conversation_continue():
     try:
         data, attachments = _conversation_request_payload()
@@ -11152,8 +11124,8 @@ def conversation_undo_mutations():
 @ai_agent_bp.route("/conversation/regenerate", methods=["POST"])
 @jwt_required()
 @limiter.limit("3 per minute")          # C — burst protection
-@limiter.limit(_plan_hourly_limit)      # A — shares the per-plan hourly pool
-@limiter.limit(_plan_daily_limit)       # B — shares the per-plan daily pool
+@limiter.shared_limit(_plan_hourly_limit, scope=AI_CONVERSATION_SCOPE)  # A — shared hourly pool
+@limiter.shared_limit(_plan_daily_limit, scope=AI_CONVERSATION_SCOPE)   # B — shared daily pool
 def conversation_regenerate():
     data = request.get_json() or {}
     user_id = get_jwt_identity()

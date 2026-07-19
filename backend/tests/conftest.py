@@ -43,6 +43,10 @@ def app(tmp_path_factory):
         "ADMIN_EMAILS",
         "ENABLE_FLASK_CORS",
         "REQUIRE_EMAIL_VERIFICATION",
+        "RATELIMIT_STORAGE_URI",
+        "APP_ENV",
+        "ENV",
+        "FLASK_ENV",
     )}
 
     os.environ["DATABASE_URL"] = f"sqlite:///{db_file}"
@@ -53,6 +57,10 @@ def app(tmp_path_factory):
     os.environ["ADMIN_EMAILS"] = "support@jaspen.ai"
     os.environ["ENABLE_FLASK_CORS"] = "false"
     os.environ["REQUIRE_EMAIL_VERIFICATION"] = "false"
+    os.environ["RATELIMIT_STORAGE_URI"] = "memory://"
+    os.environ["APP_ENV"] = "test"
+    os.environ.pop("ENV", None)
+    os.environ.pop("FLASK_ENV", None)
 
     app = create_app()
     app.config.update(

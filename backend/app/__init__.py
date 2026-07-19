@@ -17,6 +17,11 @@ from sqlalchemy import text
 from flask_sqlalchemy import SQLAlchemy
 from flask_mail import Mail
 
+from app.rate_limits import (
+    assert_rate_limit_storage_available,
+    resolve_rate_limit_storage_uri,
+)
+
 load_dotenv()  # pull in .env
 
 # initialize extensions
@@ -440,9 +445,12 @@ def create_app():
     limiter = Limiter(
         key_func=rate_limit_key,
         default_limits=["200 per minute"],
-        storage_uri=os.getenv("RATELIMIT_STORAGE_URI", "memory://"),
+        storage_uri=resolve_rate_limit_storage_uri(),
+        in_memory_fallback_enabled=False,
+        swallow_errors=False,
     )
     limiter.init_app(app)
+    assert_rate_limit_storage_available(limiter)
 
     # —— Mail setup —— #
     mail.init_app(app)
