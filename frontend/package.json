@@ -36,7 +36,8 @@
   },
   "scripts": {
     "start": "react-scripts start",
-    "build": "react-scripts build",
+    "build": "react-scripts build && node ./scripts/prerender-public.mjs",
+    "prerender:verify": "node ./scripts/verify-prerendered.mjs",
     "css:organize:pretty": "postcss src/jaspenInterface/Workspace/JaspenWorkspace.css -o src/jaspenInterface/Workspace/JaspenWorkspace.organized.css && prettier --write src/jaspenInterface/Workspace/JaspenWorkspace.organized.css",
     "deploy": "node ./scripts/deploy.mjs",
     "build:deploy": "npm run build && npm run deploy",
@@ -76,6 +77,7 @@
     "postcss-merge-rules": "^7.0.7",
     "postcss-unique-selectors": "^7.0.4",
     "prettier": "^3.6.2",
+    "puppeteer": "^25.3.0",
     "ssh2-sftp-client": "^12.0.1",
     "typescript": "^4.9.5"
   }

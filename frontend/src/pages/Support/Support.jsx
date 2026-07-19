@@ -3,11 +3,17 @@
 // =====================================================
 import React from 'react';
 import PublicJaspenHeader from '../../homeSections/HomePage/PublicJaspenHeader';
+import Seo from '../../shared/components/Seo';
 import './support.css'; // reuses Terms styles for identical layout
 
 const Support = () => {
   return (
     <>
+      <Seo
+        title="Support"
+        description="Get help with your Jaspen account, billing, technical issues, and data requests."
+        canonicalPath="/pages/support"
+      />
       <PublicJaspenHeader />
       <div className="support-container">
       <div className="support-content">
