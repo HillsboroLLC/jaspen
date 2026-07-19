@@ -35,8 +35,12 @@
     "web-vitals": "^5.0.3"
   },
   "scripts": {
+    "articles:generate": "node ./scripts/generate-article-content.mjs",
+    "prestart": "node ./scripts/generate-article-content.mjs",
     "start": "react-scripts start",
+    "prebuild": "node ./scripts/generate-article-content.mjs",
     "build": "react-scripts build && node ./scripts/prerender-public.mjs",
+    "pretest": "node ./scripts/generate-article-content.mjs",
     "prerender:verify": "node ./scripts/verify-prerendered.mjs",
     "css:organize:pretty": "postcss src/jaspenInterface/Workspace/JaspenWorkspace.css -o src/jaspenInterface/Workspace/JaspenWorkspace.organized.css && prettier --write src/jaspenInterface/Workspace/JaspenWorkspace.organized.css",
     "deploy": "node ./scripts/deploy.mjs",

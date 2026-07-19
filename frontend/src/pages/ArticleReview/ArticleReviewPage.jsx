@@ -5,6 +5,7 @@ import { ArrowLeft, ArrowRight, BookOpen, Calculator, Clock3, Pause, Volume2 } f
 import { Link, useParams } from 'react-router-dom';
 import MarketingPageLayout from '../Marketing/MarketingPageLayout';
 import Seo from '../../shared/components/Seo';
+import { ARTICLE_MARKDOWN } from '../../content/generatedArticles';
 import './ArticleReviewPage.css';
 
 const ARTICLES = [
@@ -198,24 +199,13 @@ function ArticleNavigation({ article, reviewMode }) {
 }
 
 function ArticleDraft({ article, reviewMode = false }) {
-  const [markdown, setMarkdown] = useState('');
-  const [error, setError] = useState(false);
+  // The article body is bundled at build time (see scripts/generate-article-content.mjs)
+  // rather than fetched, so it renders on the first pass and the prerenderer captures
+  // the full text into the static HTML.
+  const markdown = ARTICLE_MARKDOWN[article.slug] || '';
+  const error = !markdown;
   const [isListening, setIsListening] = useState(false);
   const audioRef = useRef(null);
-
-  useEffect(() => {
-    let active = true;
-    setMarkdown('');
-    setError(false);
-    fetch(`/article-review-drafts/${article.slug}.md`)
-      .then((response) => {
-        if (!response.ok) throw new Error('Draft could not be loaded.');
-        return response.text();
-      })
-      .then((text) => { if (active) setMarkdown(text); })
-      .catch(() => { if (active) setError(true); });
-    return () => { active = false; };
-  }, [article.slug]);
 
   useEffect(() => {
     const audio = audioRef.current;
