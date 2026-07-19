@@ -141,13 +141,13 @@ function ArticleIndex({ reviewMode = false }) {
         <div>
           <p className="article-review-kicker"><BookOpen size={15} aria-hidden="true" /> {reviewMode ? 'Editorial review room' : 'Jaspen articles'}</p>
           <h1>{reviewMode ? <>Four useful answers.<br /><span>No content-farm voice.</span></> : <>Better decisions start<br /><span>with clearer numbers.</span></>}</h1>
-          <p>{reviewMode ? 'These drafts explain the thinking behind Jaspen’s calculators without pretending an estimate is a verdict. They are visible here for style and editorial review only.' : 'Practical explanations of the costs, assumptions, and tradeoffs that are easy to miss when one headline number gets all the attention.'}</p>
+          <p>{reviewMode ? 'These published articles explain the thinking behind Jaspen’s calculators without pretending an estimate is a verdict. This room mirrors the live articles for ongoing editorial review.' : 'Practical explanations of the costs, assumptions, and tradeoffs that are easy to miss when one headline number gets all the attention.'}</p>
         </div>
         {reviewMode ? (
           <aside className="article-review-note">
             <span>Review status</span>
-            <strong>Drafts, not published</strong>
-            <p>These pages are excluded from search indexing and are not linked from the public navigation or sitemap.</p>
+            <strong>Published</strong>
+            <p>All four articles are live in Articles, linked in the public navigation, and included in the sitemap.</p>
           </aside>
         ) : (
           <aside className="article-review-note article-review-note-public">
@@ -170,7 +170,7 @@ function ArticleIndex({ reviewMode = false }) {
               <p>{article.description}</p>
               <div className="article-review-card-footer">
                 <span><Clock3 size={15} aria-hidden="true" /> {article.readingTime}</span>
-                <span className="article-review-open">{reviewMode ? 'Read draft' : 'Read article'} <ArrowRight size={16} aria-hidden="true" /></span>
+                <span className="article-review-open">Read article <ArrowRight size={16} aria-hidden="true" /></span>
               </div>
             </article>
           </Link>
@@ -262,7 +262,7 @@ function ArticleDraft({ article, reviewMode = false }) {
   return (
     <MarketingPageLayout pageClass="page-article-draft">
       <Seo
-        title={reviewMode ? `${article.title} — Draft review` : article.title}
+        title={reviewMode ? `${article.title} — Editorial review` : article.title}
         description={article.description}
         canonicalPath={reviewMode ? `/review/articles/${article.slug}` : `/articles/${article.slug}`}
         type="article"
@@ -273,7 +273,7 @@ function ArticleDraft({ article, reviewMode = false }) {
       {reviewMode ? (
         <div className="article-draft-toolbar">
           <Link to="/review/articles"><ArrowLeft size={16} aria-hidden="true" /> Editorial review room</Link>
-          <span>Production layout preview · Not published</span>
+          <span>Published · Production layout mirror</span>
         </div>
       ) : null}
 

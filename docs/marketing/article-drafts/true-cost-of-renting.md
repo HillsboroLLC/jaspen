@@ -1,6 +1,6 @@
 # What Does Rent Actually Cost Each Month?
 
-> **Review status:** Draft — not published
+> **Review status:** Published
 > **Proposed public path:** `/articles/true-cost-of-renting`
 > **Primary search intent:** Calculate rent after concessions, fees, utilities, and move-in costs
 > **Methodology:** `docs/utilities/Jaspen_Rent_Calculator_Methodology_v1.xlsx`

@@ -1,6 +1,6 @@
 # What Is the True Monthly Cost of Owning a Home?
 
-> **Review status:** Draft — not published
+> **Review status:** Published
 > **Proposed public path:** `/articles/true-cost-of-home-ownership`
 > **Primary search intent:** Understand the costs beyond principal and interest
 > **Methodology:** `docs/utilities/Jaspen_Mortgage_Calculator_Methodology_v1.xlsx`

@@ -1,6 +1,6 @@
 # How to Calculate the Cost of Rework
 
-> **Review status:** Draft — not published
+> **Review status:** Published
 > **Proposed public path:** `/articles/cost-of-rework`
 > **Primary search intent:** Estimate the annual labor and documented nonlabor cost of rework
 > **Methodology:** `docs/utilities/Jaspen_Rework_Cost_Calculator_Methodology_v1.xlsx`

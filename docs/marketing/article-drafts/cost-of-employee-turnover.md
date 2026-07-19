@@ -1,6 +1,6 @@
 # Employee Turnover Cost: Beyond the Flat Salary Multiple
 
-> **Review status:** Draft — not published
+> **Review status:** Published
 > **Proposed public path:** `/articles/cost-of-employee-turnover`
 > **Primary search intent:** Build an evidence-based turnover-cost estimate for a specific role
 > **Methodology:** `docs/utilities/Utility_Lead - Cost_of_Turnover (refined).xlsx`

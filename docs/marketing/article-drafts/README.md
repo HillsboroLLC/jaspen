@@ -1,8 +1,8 @@
-# Calculator article drafts
+# Calculator article sources
 
-These files are review drafts. They are not connected to a public route, included in the sitemap, or published by the application.
+These source files support the published Jaspen Articles pages. The Editorial Review Room mirrors the production layout for ongoing review while the public routes are included in navigation and the sitemap.
 
-| Draft | Proposed public path | Calculator |
+| Article | Public path | Calculator |
 | --- | --- | --- |
 | [True cost of home ownership](./true-cost-of-home-ownership.md) | `/articles/true-cost-of-home-ownership` | `/tools/mortgage-calculator` |
 | [True cost of renting](./true-cost-of-renting.md) | `/articles/true-cost-of-renting` | `/tools/rent-calculator` |
