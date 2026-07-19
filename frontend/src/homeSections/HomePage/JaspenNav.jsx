@@ -30,6 +30,7 @@ const NAV_MENUS = [
       {
         title: 'Learn',
         items: [
+          { label: 'Articles', path: '/articles' },
           { label: 'Docs', path: '/pages/resources/tutorials' },
           { label: 'Demos', path: '/pages/resources/demos' },
           { label: 'Tutorials', path: '/pages/resources/tutorials' },

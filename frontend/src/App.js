@@ -66,6 +66,7 @@ const CostOfTurnoverPage = lazy(() => import('./tools/costOfTurnover/components/
 const MortgageCalculatorPage = lazy(() => import('./tools/mortgage/components/MortgageCalculatorPage'));
 const RentCalculatorPage = lazy(() => import('./tools/rent/components/RentCalculatorPage'));
 const ReworkCostCalculatorPage = lazy(() => import('./tools/reworkCost/components/ReworkCostCalculatorPage'));
+const ArticleReviewPage = lazy(() => import('./pages/ArticleReview/ArticleReviewPage'));
 
 function AnimatedAppRoutes({ withShell }) {
   const location = useLocation();
@@ -102,6 +103,10 @@ function AnimatedAppRoutes({ withShell }) {
             <Route path="/pages/resources/connectors" element={withShell(<ConnectorsPage />, { title: 'Connectors', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/pages/resources/plugins" element={withShell(<PluginsPage />, { title: 'Plugins', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/calculators" element={withShell(<CalculatorsHubPage />, { title: 'Free Calculators', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/articles" element={withShell(<ArticleReviewPage />, { title: 'Jaspen Articles', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/articles/:slug" element={withShell(<ArticleReviewPage />, { title: 'Jaspen Articles', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/review/articles" element={withShell(<ArticleReviewPage reviewMode />, { title: 'Article Draft Review', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/review/articles/:slug" element={withShell(<ArticleReviewPage reviewMode />, { title: 'Article Draft Review', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/auth/callback"  element={withShell(<AuthCallback />, { title: 'Authentication', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/api/v1/connectors/salesforce/oauth/callback" element={<SalesforceOAuthBridge />} />
             <Route path="/reset-password" element={withShell(<ResetPasswordPage />, { title: 'Reset password', showHeader: false, fullBleed: true, noPadding: true })} />
