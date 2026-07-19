@@ -2,13 +2,32 @@ import { createServer } from 'node:http';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import puppeteer from 'puppeteer';
+import chromium from '@sparticuz/chromium';
+import puppeteer from 'puppeteer-core';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const frontendDir = resolve(scriptDir, '..');
 const buildDir = join(frontendDir, 'build');
 const sitemapPath = join(buildDir, 'sitemap.xml');
 const siteOrigin = 'https://jaspen.ai';
+
+async function browserLaunchOptions() {
+  if (process.env.VERCEL) {
+    return {
+      args: chromium.args,
+      executablePath: await chromium.executablePath(),
+      headless: chromium.headless,
+    };
+  }
+
+  const executablePath =
+    process.env.PUPPETEER_EXECUTABLE_PATH ||
+    (process.platform === 'darwin'
+      ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+      : '/usr/bin/google-chrome');
+
+  return { executablePath, headless: true };
+}
 
 const mimeTypes = {
   '.css': 'text/css; charset=utf-8',
@@ -130,7 +149,7 @@ async function renderRoute(page, origin, route) {
 const sitemap = await readFile(sitemapPath, 'utf8');
 const routes = sitemapRoutes(sitemap);
 const { server, origin } = await startBuildServer();
-const browser = await puppeteer.launch({ headless: true });
+const browser = await puppeteer.launch(await browserLaunchOptions());
 
 try {
   const page = await browser.newPage();
