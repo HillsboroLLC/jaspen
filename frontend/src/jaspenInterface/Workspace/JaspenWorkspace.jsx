@@ -27,6 +27,7 @@ import GridLayout, { WidthProvider } from 'react-grid-layout';
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
 import JaspenExecutionCanvas from './JaspenExecutionCanvas';
+import { userMessageWhitespaceStyle } from './messageFormatting';
 
 // Custom scorecard blocks live on a true 12-col grid: drag the handle to move,
 // drag the corner to resize to ANY size (not 4 fixed widths). WidthProvider makes
@@ -1269,6 +1270,7 @@ export default function JaspenWorkspace() {
                 background: m.role === 'user' ? '#0f172a' : '#f1f5f9',
                 color: m.role === 'user' ? '#fff' : '#0f172a',
                 fontSize:13, lineHeight:1.5,
+                ...(m.role === 'user' ? userMessageWhitespaceStyle : {}),
               }}
             >
               {m.role === 'user' ? (

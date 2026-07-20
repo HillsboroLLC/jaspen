@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faPaperPlane } from '@fortawesome/free-solid-svg-icons';
+import { userMessageWhitespaceStyle } from './messageFormatting';
 
 export default function WorkspaceAssistantShell({
   isOpen = false,
@@ -240,6 +241,7 @@ export default function WorkspaceAssistantShell({
                     color: msg.role === 'user' ? '#fff' : '#0f172a',
                     fontSize: 13,
                     lineHeight: 1.5,
+                    ...(msg.role === 'user' ? userMessageWhitespaceStyle : {}),
                   }}
                 >
                   <div>{renderMsg(msg)}</div>
