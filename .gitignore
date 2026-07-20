@@ -27,6 +27,10 @@ backend/instance/
 *.chatbak*
 *.fixbak*
 
+# Locally generated article narration scripts and audio masters.
+# These production assets are not part of the deployed website bundle.
+Voices/
+
 
 # Python virtualenvs
 backend/venv/
