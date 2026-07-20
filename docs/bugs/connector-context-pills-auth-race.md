@@ -1,5 +1,9 @@
 # Connector Context Pills Auth Race
 
+Status: resolved in production code on 2026-07-19; runtime verification remains recommended with an account that has connected sources.
+
+Resolution: the connector-status loader now uses the shared retry-aware `authFetch` path, reruns when the authenticated user changes, retains existing connector state on transient failures, and emits development-only status/message warnings without logging connector data.
+
 ## Summary
 
 On a fresh login, the workspace Data Context connector pills can temporarily be missing even when the account has connected sources. The objective pills continue to render because they are driven by local/session objective state, while connector pills depend on an async connector-status request.

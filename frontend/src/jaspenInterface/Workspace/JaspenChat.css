@@ -3551,6 +3551,9 @@
   color: var(--navy);
   text-align: left;
   font-size: 0.875rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .jas-message.ai .jas-message-bubble {
@@ -6751,6 +6754,9 @@
   background: var(--magenta);
   color: var(--white);
   border-bottom-right-radius: 2px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .jas-chat-tab .agent-chat-message.ai .message-content {

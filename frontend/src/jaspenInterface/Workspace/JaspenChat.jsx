@@ -8440,12 +8440,15 @@ useEffect(() => {
   const loadConnectedSources = async () => {
     try {
       const headers = buildAuthHeaders({}, 'GET');
-      const response = await fetch(`${API_BASE}/api/v1/connectors/status`, {
+      const response = await authFetch(`${API_BASE}/api/v1/connectors/status`, {
         method: 'GET',
         headers,
         credentials: 'include',
       });
-      if (!response.ok) return;
+      if (!response.ok) {
+        devWarn('[connectors/status] request failed', { status: response.status });
+        return;
+      }
       const data = await response.json().catch(() => ({}));
       const allowed = ['jira_sync', 'salesforce_insights', 'snowflake_insights', 'servicenow_insights', 'netsuite_insights', 'oracle_fusion_insights'];
       const connected = (Array.isArray(data?.connectors) ? data.connectors : [])
@@ -8456,10 +8459,12 @@ useEffect(() => {
           defaultTable: Array.isArray(item?.snowflake?.table_allowlist) ? (item.snowflake.table_allowlist[0] || '') : '',
         }));
       setConnectedDataSources(connected);
-    } catch {}
+    } catch (error) {
+      devWarn('[connectors/status] request failed', { message: error?.message || 'unknown error' });
+    }
   };
   loadConnectedSources();
-}, [planCategory]);
+}, [authFetch, planCategory, user?.email, user?.id]);
 
 function formatConnectorContextForAgent(data, connectorType) {
   if (connectorType === 'jira') {

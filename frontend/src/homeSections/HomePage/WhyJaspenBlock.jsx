@@ -7,9 +7,9 @@ import './WhyJaspenBlock.css';
 // Kept intentionally minimal: no cards, no panels inside panels.
 
 const PROOFS = [
-  { label: 'Reproducible', text: 'Same inputs, same answer, every time.' },
-  { label: 'Evidence-capped', text: 'It cannot sound more certain than the evidence allows.' },
-  { label: 'Shows its work', text: 'Every score breaks down into the facts behind it.' },
+  { label: 'User-owned', text: 'Jaspen proposes; you own the criteria, weights, and decision.' },
+  { label: 'Evidence-capped', text: 'Confidence cannot outrun the evidence, and assumptions stay visible.' },
+  { label: 'Decomposed', text: 'Every score opens into evidence, weights, confidence, and reasoning.' },
 ];
 
 const STEPS = [
@@ -30,11 +30,11 @@ export default function WhyJaspenBlock() {
         <div className="wjb-panel wjb-panel--dark">
           <div className="wjb-content">
             <p className="wjb-eyebrow wjb-eyebrow--light">Why not just ChatGPT?</p>
-            <h2 className="wjb-heading wjb-heading--light">Because a chatbot can’t show its work.</h2>
+            <h2 className="wjb-heading wjb-heading--light">Built to resist AI hallucinations—not hide them.</h2>
             <p className="wjb-sub wjb-sub--light">
-              A raw AI chat writes the numbers itself, so they drift when you re-ask or reword.
-              Jaspen lets AI judge the evidence, then <strong>code does the math</strong>. The
-              answer holds up when someone asks how you got it.
+              A raw AI chat can sound confident even when an answer is unsupported. Jaspen
+              keeps the reasoning inspectable: <strong>code does the scoring math</strong>,
+              evidence is graded, assumptions are labeled, and your context grounds the analysis.
             </p>
             <p className="wjb-proof-kicker">Jaspen Is...</p>
             <div className="wjb-points">
