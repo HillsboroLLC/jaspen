@@ -7,6 +7,7 @@ import {
   writePendingIntakeContext,
   MAX_INTAKE_LENGTH_HINT,
 } from '../../shared/auth/pendingIntakeContext';
+import StarterDecisionChips from './StarterDecisionChips';
 
 const BOTTOM_WORDS = [
   { word: 'idea',       article: 'an', color: '#e9b57b' },
@@ -195,6 +196,28 @@ export default function InteractiveDecisionHero({ onOpenModal, onContextChange }
 
   const handleTextChange = (event) => {
     setDraftText(event.target.value);
+  };
+
+  const [starterPromptText, setStarterPromptText] = useState('');
+
+  const handleStarterDecisionSelect = (starter) => {
+    const nextPrompt = String(starter?.prompt || '');
+    if (!nextPrompt) return;
+
+    const hasDraft = draftText.trim().length > 0;
+    const hasEditedStarter = starterPromptText
+      && draftText.trim() !== starterPromptText.trim();
+    const hasOwnDraft = hasDraft && !starterPromptText;
+
+    if ((hasEditedStarter || hasOwnDraft) && !window.confirm('Replace your current draft with this example decision?')) {
+      return;
+    }
+
+    setDraftText(nextPrompt);
+    setStarterPromptText(nextPrompt);
+    window.requestAnimationFrame(() => {
+      if (inputRef.current) inputRef.current.focus();
+    });
   };
 
   const userAuthoredText = (msgList) => joinTurns(
@@ -445,6 +468,10 @@ export default function InteractiveDecisionHero({ onOpenModal, onContextChange }
                 </div>
               )}
             </div>
+
+            {!hasStarted && (
+              <StarterDecisionChips onSelect={handleStarterDecisionSelect} />
+            )}
 
             <div className="idh-analyze-row">
               <button
