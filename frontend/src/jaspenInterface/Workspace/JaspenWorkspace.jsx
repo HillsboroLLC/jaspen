@@ -819,6 +819,27 @@ export default function JaspenWorkspace() {
     }
   }
 
+  async function downloadExecutionExport(format, label) {
+    try {
+      const activeScorecardId = execIdeaId || resolvedExecScorecardId || undefined;
+      const result = format === 'xlsx'
+        ? await Jaspen.downloadWbsXlsx(threadId, { scorecardId: activeScorecardId })
+        : await Jaspen.downloadWbsCsv(threadId, { scorecardId: activeScorecardId });
+      const blob = result?.blob;
+      if (!(blob instanceof Blob)) throw new Error('The export did not return a file.');
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = result?.filename || `jaspen-execution-plan.${format}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
+    } catch (error) {
+      setSaveError(error?.message || `${label} export failed.`);
+    }
+  }
+
   async function copyShareLink() {
     try {
       await navigator.clipboard.writeText(window.location.href);
@@ -1557,10 +1578,14 @@ export default function JaspenWorkspace() {
                         { label:'Download Excel', disabled:true },
                         { label:'Download PowerPoint', disabled:true },
                       ] : []),
+                      ...(isExecution ? [
+                        { label:'Download Excel', act:() => downloadExecutionExport('xlsx','Excel') },
+                        { label:'Download CSV', act:() => downloadExecutionExport('csv','CSV') },
+                      ] : []),
                       { label: linkCopied ? 'Link copied ✓' : 'Copy link', act: copyShareLink, keepOpen:true, divider:true },
                     ].map((it, i) => (
                       <React.Fragment key={i}>
-                        {it.divider && isScorecard && <div style={{ height:1, background:'#eef1f6', margin:'4px 2px' }} />}
+                        {it.divider && (isScorecard || isExecution) && <div style={{ height:1, background:'#eef1f6', margin:'4px 2px' }} />}
                         <button
                           type="button"
                           disabled={Boolean(it.disabled)}

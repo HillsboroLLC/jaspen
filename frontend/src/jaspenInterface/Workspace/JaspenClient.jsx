@@ -76,7 +76,10 @@ export const endpoints = {
     `${API_BASE}/api/v1/export/threads/${encodeURIComponent(threadId)}/scorecard/pdf${scorecardId ? `?scorecard_id=${encodeURIComponent(scorecardId)}` : ''}`,
   exportScorecardPptx: (threadId, scorecardId = '') =>
     `${API_BASE}/api/v1/export/threads/${encodeURIComponent(threadId)}/scorecard/pptx${scorecardId ? `?scorecard_id=${encodeURIComponent(scorecardId)}` : ''}`,
-  exportWbsCsv:      (threadId) => `${API_BASE}/api/v1/export/threads/${encodeURIComponent(threadId)}/wbs/csv`,
+  exportWbsCsv:      (threadId, scorecardId = '') =>
+    `${API_BASE}/api/v1/export/threads/${encodeURIComponent(threadId)}/wbs/csv${scorecardId ? `?scorecard_id=${encodeURIComponent(scorecardId)}` : ''}`,
+  exportWbsXlsx:     (threadId, scorecardId = '') =>
+    `${API_BASE}/api/v1/export/threads/${encodeURIComponent(threadId)}/wbs/xlsx${scorecardId ? `?scorecard_id=${encodeURIComponent(scorecardId)}` : ''}`,
   exportConversationMarkdown: (threadId) => `${API_BASE}/api/v1/export/threads/${encodeURIComponent(threadId)}/conversation/markdown`,
   exportConversationPdf: (threadId) => `${API_BASE}/api/v1/export/threads/${encodeURIComponent(threadId)}/conversation/pdf`,
   scorecardAssistant: (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/scorecard-assistant`,
@@ -1225,9 +1228,14 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
     return downloadBinary(endpoints.exportScorecardPptx(threadId, scorecardId || ''));
   },
 
-  downloadWbsCsv: async (threadId) => {
+  downloadWbsCsv: async (threadId, { scorecardId } = {}) => {
     if (!threadId) throw new Error('threadId is required');
-    return downloadBinary(endpoints.exportWbsCsv(threadId));
+    return downloadBinary(endpoints.exportWbsCsv(threadId, scorecardId || ''));
+  },
+
+  downloadWbsXlsx: async (threadId, { scorecardId } = {}) => {
+    if (!threadId) throw new Error('threadId is required');
+    return downloadBinary(endpoints.exportWbsXlsx(threadId, scorecardId || ''));
   },
 
   downloadConversationMarkdown: async (threadId) => {

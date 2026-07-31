@@ -1,7 +1,7 @@
 import csv
 import io
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 
 from flask import Blueprint, jsonify, request, send_file
 from flask_jwt_extended import get_jwt_identity, jwt_required
@@ -13,7 +13,7 @@ from app.orgs import active_membership_for_user, resolve_active_org_for_user
 from .ai_agent import _normalize_analysis_history
 from .reports import _markdown_to_pdf_bytes, _safe_text
 from .sessions import load_user_sessions
-from .strategy import _load_scenarios, _scorecard_snapshot_state
+from .strategy import _load_scenarios, _resolve_thread_wbs, _scorecard_snapshot_state
 
 export_bp = Blueprint("export", __name__)
 
@@ -67,7 +67,10 @@ def _resolve_export_context(user, session):
 
 
 def _require_export_plan(plan_key, export_type):
-    required_plan = "team" if export_type in {"pptx", "csv"} else "essential"
+    if export_type in {"csv", "wbs_xlsx"}:
+        return None
+
+    required_plan = "team" if export_type == "pptx" else "essential"
     if PLAN_RANK.get(plan_key, 0) >= PLAN_RANK.get(required_plan, 0):
         return None
 
@@ -75,6 +78,7 @@ def _require_export_plan(plan_key, export_type):
         "pdf": "PDF export",
         "pptx": "PowerPoint export",
         "csv": "WBS CSV export",
+        "wbs_xlsx": "Execution plan Excel export",
         "xlsx": "Excel export",
         "docx": "Word export",
     }.get(export_type, "Export")
@@ -878,6 +882,348 @@ def _wbs_csv_bytes(project_wbs):
     return output.getvalue().encode("utf-8")
 
 
+def _xlsx_text(value):
+    """Keep exported user text from being interpreted as an Excel formula."""
+    text = str(value or "")
+    if text.startswith(("=", "+", "-", "@")):
+        return f"'{text}"
+    return text
+
+
+def _finalize_xlsx_text_cells(worksheet):
+    """Hide the formula-injection escape while retaining a literal text cell."""
+    for row in worksheet.iter_rows():
+        for cell in row:
+            value = cell.value
+            if not isinstance(value, str) or len(value) < 2:
+                continue
+            if value[0] == "'" and value[1] in "=+-@":
+                cell.value = value[1:]
+                cell.data_type = "s"
+                cell.quotePrefix = True
+
+
+def _xlsx_date(value):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.strptime(text[:10], "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return _xlsx_text(text)
+
+
+def _wbs_phase_names(project_wbs, tasks):
+    names = []
+    seen = set()
+    for phase in project_wbs.get("phases") or []:
+        if not isinstance(phase, dict):
+            continue
+        name = str(phase.get("name") or phase.get("title") or "").strip()
+        if name and name not in seen:
+            names.append(name)
+            seen.add(name)
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        name = str(task.get("phase") or "Execution").strip() or "Execution"
+        if name not in seen:
+            names.append(name)
+            seen.add(name)
+    return names
+
+
+def _wbs_xlsx_bytes(project_wbs, *, project_name=None, workspace_name=None):
+    tasks = project_wbs.get("tasks") if isinstance(project_wbs, dict) else []
+    tasks = [task for task in tasks if isinstance(task, dict) and str(task.get("title") or "").strip()]
+    if not tasks:
+        return None
+
+    try:
+        from openpyxl import Workbook
+        from openpyxl.formatting.rule import FormulaRule
+        from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+        from openpyxl.worksheet.datavalidation import DataValidation
+        from openpyxl.worksheet.table import Table, TableStyleInfo
+    except Exception as exc:
+        raise RuntimeError("openpyxl is required for Excel export.") from exc
+
+    wb = Workbook()
+    wb.properties.title = _xlsx_text(project_name or project_wbs.get("name") or "Execution Plan")
+    wb.properties.subject = "Jaspen execution plan export"
+    wb.properties.creator = "Jaspen"
+    try:
+        wb.calculation.calcMode = "auto"
+        wb.calculation.fullCalcOnLoad = True
+        wb.calculation.forceFullCalc = True
+    except Exception:
+        pass
+
+    overview = wb.active
+    overview.title = "Overview"
+    task_sheet = wb.create_sheet("Tasks")
+
+    navy = "161F3B"
+    rose = "A0036C"
+    slate = "475569"
+    pale = "F4F6FA"
+    line = "D9E1EC"
+    white = "FFFFFF"
+    green = "DCFCE7"
+    blue = "DBEAFE"
+    amber = "FEF3C7"
+    red = "FEE2E2"
+    thin = Side(style="thin", color=line)
+    section_border = Border(bottom=Side(style="medium", color=rose))
+    body_border = Border(bottom=thin)
+    title = _xlsx_text(project_name or project_wbs.get("name") or "Execution Plan")
+    workspace = _xlsx_text(workspace_name or "Personal Workspace")
+    generated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    # Overview sheet: a compact project snapshot plus phase-level rollup.
+    overview.merge_cells("A1:F1")
+    overview["A1"] = title
+    overview["A1"].font = Font(bold=True, size=18, color=white)
+    overview["A1"].fill = PatternFill("solid", fgColor=navy)
+    overview["A1"].alignment = Alignment(vertical="center")
+    overview.row_dimensions[1].height = 30
+
+    overview.merge_cells("A2:F2")
+    overview["A2"] = "Use the Tasks tab filters to focus on a phase, owner, status, priority, or date range."
+    overview["A2"].font = Font(size=10, color=slate)
+    overview["A2"].fill = PatternFill("solid", fgColor=pale)
+    overview["A2"].alignment = Alignment(wrap_text=True, vertical="center")
+    overview.row_dimensions[2].height = 30
+
+    metadata = [
+        ("Project", title),
+        ("Workspace", workspace),
+        ("Plan start", _xlsx_date(project_wbs.get("start_date"))),
+        ("Generated", generated_at),
+    ]
+    for row_idx, (label, value) in enumerate(metadata, start=4):
+        overview.cell(row=row_idx, column=1, value=label).font = Font(bold=True, color=navy)
+        overview.cell(row=row_idx, column=2, value=value)
+        overview.cell(row=row_idx, column=1).border = body_border
+        overview.cell(row=row_idx, column=2).border = body_border
+    overview["B6"].number_format = "yyyy-mm-dd"
+    overview["B7"].number_format = "yyyy-mm-dd hh:mm"
+
+    overview["A9"] = "Progress snapshot"
+    overview["A9"].font = Font(bold=True, size=12, color=navy)
+    overview["A9"].border = section_border
+    overview.merge_cells("A9:B9")
+    summary_rows = [
+        ("Total tasks", "=ROWS(ExecutionTasks[Task])", "0"),
+        ("To Do", '=COUNTIF(ExecutionTasks[Status],"To Do")', "0"),
+        ("In Progress", '=COUNTIF(ExecutionTasks[Status],"In Progress")', "0"),
+        ("Blocked", '=COUNTIF(ExecutionTasks[Status],"Blocked")', "0"),
+        ("Done", '=COUNTIF(ExecutionTasks[Status],"Done")', "0"),
+        ("Completion", '=IFERROR(COUNTIF(ExecutionTasks[Status],"Done")/ROWS(ExecutionTasks[Task]),0)', "0%"),
+    ]
+    for row_idx, (label, formula, number_format) in enumerate(summary_rows, start=10):
+        overview.cell(row=row_idx, column=1, value=label).font = Font(color=slate)
+        overview.cell(row=row_idx, column=2, value=formula).font = Font(bold=True, color=rose)
+        overview.cell(row=row_idx, column=2).number_format = number_format
+
+    phases = _wbs_phase_names(project_wbs, tasks)
+    phase_start = 18
+    overview.cell(row=phase_start, column=1, value="Phase summary")
+    overview.cell(row=phase_start, column=1).font = Font(bold=True, size=12, color=navy)
+    overview.cell(row=phase_start, column=1).border = section_border
+    overview.merge_cells(start_row=phase_start, start_column=1, end_row=phase_start, end_column=6)
+    phase_headers = ["Phase #", "Phase", "Tasks", "Done", "High Priority", "Date Range"]
+    for col_idx, header in enumerate(phase_headers, start=1):
+        cell = overview.cell(row=phase_start + 1, column=col_idx, value=header)
+        cell.font = Font(bold=True, color=white)
+        cell.fill = PatternFill("solid", fgColor=navy)
+        cell.alignment = Alignment(vertical="center")
+    for offset, phase_name in enumerate(phases, start=1):
+        row_idx = phase_start + 1 + offset
+        overview.cell(row=row_idx, column=1, value=offset)
+        overview.cell(row=row_idx, column=2, value=_xlsx_text(phase_name))
+        overview.cell(row=row_idx, column=3, value=f'=COUNTIF(ExecutionTasks[Phase],B{row_idx})')
+        overview.cell(row=row_idx, column=4, value=f'=COUNTIFS(ExecutionTasks[Phase],B{row_idx},ExecutionTasks[Status],"Done")')
+        overview.cell(row=row_idx, column=5, value=f'=COUNTIFS(ExecutionTasks[Phase],B{row_idx},ExecutionTasks[Priority],"High")')
+        overview.cell(
+            row=row_idx,
+            column=6,
+            value=(
+                f'=IF(OR(COUNTIFS(ExecutionTasks[Phase],B{row_idx},ExecutionTasks[Start Date],">0")=0,'
+                f'COUNTIFS(ExecutionTasks[Phase],B{row_idx},ExecutionTasks[Due Date],">0")=0),"",'
+                f'TEXT(MINIFS(ExecutionTasks[Start Date],ExecutionTasks[Phase],B{row_idx}),"yyyy-mm-dd")'
+                f'&" to "&TEXT(MAXIFS(ExecutionTasks[Due Date],ExecutionTasks[Phase],B{row_idx}),"yyyy-mm-dd"))'
+            ),
+        )
+        for col_idx in range(1, 7):
+            overview.cell(row=row_idx, column=col_idx).border = body_border
+        overview.cell(row=row_idx, column=6).alignment = Alignment(wrap_text=True)
+
+    overview.freeze_panes = "A4"
+    overview.sheet_view.showGridLines = False
+    for column, width in {"A": 18, "B": 32, "C": 12, "D": 12, "E": 16, "F": 25}.items():
+        overview.column_dimensions[column].width = width
+
+    # Tasks sheet: one flat, filterable row per task. Phase rows are data, not
+    # decorative headers, so filtering Phase # = 1 returns every Phase 1 task.
+    headers = [
+        "Phase #",
+        "Phase",
+        "Task",
+        "Status",
+        "Priority",
+        "Owner",
+        "Suggested Role",
+        "Start Date",
+        "Due Date",
+        "Duration (days)",
+        "Dependencies",
+        "Description / Acceptance Criteria",
+        "Risk Area",
+        "Rationale",
+        "Jira Key",
+        "Function",
+        "Activity Type",
+        "Task ID",
+        "Dependency IDs",
+        "Task Order",
+    ]
+    task_sheet.append(headers)
+    phase_order = {name: index for index, name in enumerate(phases, start=1)}
+    task_by_id = {str(task.get("id") or ""): task for task in tasks}
+
+    def task_sort_key(task):
+        phase_name = str(task.get("phase") or "Execution").strip() or "Execution"
+        order = task.get("order")
+        try:
+            order = int(order)
+        except (TypeError, ValueError):
+            order = tasks.index(task) + 1
+        return (phase_order.get(phase_name, len(phase_order) + 1), order)
+
+    status_labels = {
+        "todo": "To Do",
+        "in_progress": "In Progress",
+        "blocked": "Blocked",
+        "done": "Done",
+    }
+    for fallback_order, task in enumerate(sorted(tasks, key=task_sort_key), start=1):
+        phase_name = str(task.get("phase") or "Execution").strip() or "Execution"
+        raw_dependency_ids = task.get("depends_on") if isinstance(task.get("depends_on"), list) else []
+        dependency_ids = [str(dep).strip() for dep in raw_dependency_ids if str(dep).strip()]
+        dependency_names = [
+            str(task_by_id.get(dep_id, {}).get("title") or dep_id).strip()
+            for dep_id in dependency_ids
+        ]
+        refs = task.get("external_refs") if isinstance(task.get("external_refs"), dict) else {}
+        status_key = str(task.get("status") or "todo").strip().lower()
+        priority = str(task.get("priority") or "").strip().lower()
+        task_order = task.get("order")
+        try:
+            task_order = int(task_order)
+        except (TypeError, ValueError):
+            task_order = fallback_order
+        duration = task.get("timeline_days")
+        if duration is None:
+            duration = task.get("estimated_days")
+        try:
+            duration = int(duration) if duration is not None else None
+        except (TypeError, ValueError):
+            duration = None
+        task_sheet.append([
+            phase_order.get(phase_name, len(phase_order) + 1),
+            _xlsx_text(phase_name),
+            _xlsx_text(task.get("title")),
+            status_labels.get(status_key, _format_label(status_key)),
+            _format_label(priority) if priority else "",
+            _xlsx_text(task.get("owner")),
+            _xlsx_text(task.get("suggested_role")),
+            _xlsx_date(task.get("start_date")),
+            _xlsx_date(task.get("due_date")),
+            duration,
+            _xlsx_text("; ".join(dependency_names)),
+            _xlsx_text(task.get("description") or task.get("acceptance")),
+            _xlsx_text(task.get("risk_area")),
+            _xlsx_text(task.get("rationale")),
+            _xlsx_text(task.get("jira_issue_key") or refs.get("jira_issue_key")),
+            _xlsx_text(task.get("function")),
+            _xlsx_text(task.get("activity_type")),
+            _xlsx_text(task.get("id")),
+            _xlsx_text("; ".join(dependency_ids)),
+            task_order,
+        ])
+
+    last_row = task_sheet.max_row
+    last_col = task_sheet.max_column
+    table = Table(displayName="ExecutionTasks", ref=f"A1:T{last_row}")
+    table.tableStyleInfo = TableStyleInfo(
+        name="TableStyleMedium2",
+        showFirstColumn=False,
+        showLastColumn=False,
+        showRowStripes=True,
+        showColumnStripes=False,
+    )
+    task_sheet.add_table(table)
+    task_sheet.freeze_panes = "C2"
+    task_sheet.sheet_view.showGridLines = False
+    task_sheet.auto_filter.ref = f"A1:T{last_row}"
+    task_sheet.row_dimensions[1].height = 28
+    for cell in task_sheet[1]:
+        cell.font = Font(bold=True, color=white)
+        cell.fill = PatternFill("solid", fgColor=navy)
+        cell.alignment = Alignment(wrap_text=True, vertical="center")
+
+    for row_idx in range(2, last_row + 1):
+        for col_idx in range(1, last_col + 1):
+            task_sheet.cell(row=row_idx, column=col_idx).alignment = Alignment(
+                wrap_text=col_idx in {3, 11, 12, 13, 14, 19},
+                vertical="top",
+            )
+        task_sheet.cell(row=row_idx, column=8).number_format = "yyyy-mm-dd"
+        task_sheet.cell(row=row_idx, column=9).number_format = "yyyy-mm-dd"
+        task_sheet.cell(row=row_idx, column=10).number_format = "0"
+
+    status_validation = DataValidation(type="list", formula1='"To Do,In Progress,Blocked,Done"', allow_blank=False)
+    priority_validation = DataValidation(type="list", formula1='"High,Medium,Low"', allow_blank=True)
+    task_sheet.add_data_validation(status_validation)
+    task_sheet.add_data_validation(priority_validation)
+    status_validation.add(f"D2:D{last_row}")
+    priority_validation.add(f"E2:E{last_row}")
+
+    status_range = f"D2:D{last_row}"
+    priority_range = f"E2:E{last_row}"
+    for label, color in (("Done", green), ("In Progress", blue), ("Blocked", red), ("To Do", pale)):
+        task_sheet.conditional_formatting.add(
+            status_range,
+            FormulaRule(formula=[f'$D2="{label}"'], fill=PatternFill("solid", fgColor=color)),
+        )
+    for label, color in (("High", red), ("Medium", amber), ("Low", green)):
+        task_sheet.conditional_formatting.add(
+            priority_range,
+            FormulaRule(formula=[f'$E2="{label}"'], fill=PatternFill("solid", fgColor=color)),
+        )
+
+    widths = {
+        "A": 10, "B": 24, "C": 38, "D": 14, "E": 11, "F": 20, "G": 20,
+        "H": 12, "I": 12, "J": 14, "K": 34, "L": 52, "M": 20, "N": 44,
+        "O": 14, "P": 20, "Q": 16, "R": 22, "S": 30, "T": 12,
+    }
+    for column, width in widths.items():
+        task_sheet.column_dimensions[column].width = width
+    task_sheet.auto_filter.ref = f"A1:T{last_row}"
+    task_sheet.print_title_rows = "1:1"
+    task_sheet.page_setup.orientation = "landscape"
+    task_sheet.page_setup.fitToWidth = 1
+    task_sheet.sheet_properties.pageSetUpPr.fitToPage = True
+
+    _finalize_xlsx_text_cells(overview)
+    _finalize_xlsx_text_cells(task_sheet)
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+
 def _scorecard_dim_keys(scorecard):
     dims = scorecard.get("dimensions") if isinstance(scorecard.get("dimensions"), dict) else {}
     rubric = scorecard.get("rubric") if isinstance(scorecard.get("rubric"), dict) else {}
@@ -1160,7 +1506,7 @@ def export_wbs_csv(thread_id):
 
     scenario_data = _load_scenarios(user.id) or {}
     thread_data = scenario_data.get(thread_id) if isinstance(scenario_data, dict) else {}
-    project_wbs = thread_data.get("project_wbs") if isinstance(thread_data, dict) else None
+    project_wbs = _resolve_thread_wbs(thread_data, request.args.get("scorecard_id"))
     if not isinstance(project_wbs, dict):
         return jsonify({"error": "No execution plan is available for this thread."}), 404
 
@@ -1171,6 +1517,45 @@ def export_wbs_csv(thread_id):
     project_name = session.get("name") or thread_id
     filename = f"{_safe_filename_base(project_name)}-wbs.csv"
     return _send_bytes(payload, filename=filename, mimetype=CSV_MIMETYPE)
+
+
+@export_bp.route("/threads/<thread_id>/wbs/xlsx", methods=["GET"])
+@jwt_required()
+def export_wbs_xlsx(thread_id):
+    user = User.query.filter_by(id=str(get_jwt_identity())).first()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    sessions = load_user_sessions(user.id) or {}
+    session = _resolve_thread_session(sessions, thread_id)
+    if not isinstance(session, dict):
+        return jsonify({"error": "Thread not found"}), 404
+
+    plan_key, org, _membership = _resolve_export_context(user, session)
+    access_error = _require_export_plan(plan_key, "wbs_xlsx")
+    if access_error:
+        return access_error
+
+    scenario_data = _load_scenarios(user.id) or {}
+    thread_data = scenario_data.get(thread_id) if isinstance(scenario_data, dict) else {}
+    project_wbs = _resolve_thread_wbs(thread_data, request.args.get("scorecard_id"))
+    if not isinstance(project_wbs, dict):
+        return jsonify({"error": "No execution plan is available for this thread."}), 404
+
+    project_name = session.get("name") or project_wbs.get("name") or thread_id
+    try:
+        payload = _wbs_xlsx_bytes(
+            project_wbs,
+            project_name=project_name,
+            workspace_name=getattr(org, "name", None) or "Personal Workspace",
+        )
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc), "code": "xlsx_dependency_missing"}), 503
+    if payload is None:
+        return jsonify({"error": "No WBS tasks are available to export."}), 404
+
+    filename = f"{_safe_filename_base(project_name)}-execution-plan.xlsx"
+    return _send_bytes(payload, filename=filename, mimetype=XLSX_MIMETYPE)
 
 
 @export_bp.route("/threads/<thread_id>/conversation/markdown", methods=["GET"])

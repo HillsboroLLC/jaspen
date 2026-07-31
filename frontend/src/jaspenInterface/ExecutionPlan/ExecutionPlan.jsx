@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom';
 import BackToJaspen from '../../shared/components/BackToJaspen';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faCheck, faCopy, faRotate, faSpinner, faThumbsDown, faThumbsUp, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons';
+import { faCheck, faCopy, faFileCsv, faFileExcel, faRotate, faSpinner, faThumbsDown, faThumbsUp, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons';
 import AppMenu from '../shared/AppMenu';
 import { Jaspen } from '../Workspace/JaspenClient';
 import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
@@ -126,6 +126,7 @@ export default function ExecutionPlan() {
   const [copiedMessageKey, setCopiedMessageKey] = useState(null);
   const [feedbackByMessageKey, setFeedbackByMessageKey] = useState({});
   const [planBusy, setPlanBusy] = useState(false);
+  const [exportBusyType, setExportBusyType] = useState(null);
   const assistantMessagesEndRef = useRef(null);
   const copyResetTimeoutRef = useRef(null);
 
@@ -575,9 +576,62 @@ export default function ExecutionPlan() {
     setAssistantInput(prefill);
   }, []);
 
+  const triggerDownload = useCallback((blob, filename) => {
+    if (!(blob instanceof Blob)) throw new Error('The export did not return a file.');
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = filename || 'jaspen-execution-plan';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
+  }, []);
+
+  const handleExportPlan = useCallback(async (format) => {
+    const tid = String(threadId || '').trim();
+    if (!tid || exportBusyType) return;
+    const scorecardId = String(threadWbs?.scorecard_id || '').trim() || undefined;
+    setExportBusyType(format);
+    try {
+      const result = format === 'xlsx'
+        ? await Jaspen.downloadWbsXlsx(tid, { scorecardId })
+        : await Jaspen.downloadWbsCsv(tid, { scorecardId });
+      triggerDownload(
+        result?.blob,
+        result?.filename || `jaspen-execution-plan.${format === 'xlsx' ? 'xlsx' : 'csv'}`,
+      );
+      showToast(`Exported execution plan ${format === 'xlsx' ? 'Excel workbook' : 'CSV'}`, 'success');
+    } catch (error) {
+      showToast(error?.message || `Could not export the execution plan as ${format.toUpperCase()}.`, 'error');
+    } finally {
+      setExportBusyType(null);
+    }
+  }, [exportBusyType, showToast, threadId, threadWbs?.scorecard_id, triggerDownload]);
+
   const pageActions = (
     <div className="execution-plan-actions">
       <BackToJaspen to={threadId ? `/new?sid=${encodeURIComponent(threadId)}` : '/new'} />
+      <button
+        type="button"
+        className="int-btn int-btn-ghost"
+        onClick={() => { void handleExportPlan('xlsx'); }}
+        disabled={!hasExistingPlan || Boolean(exportBusyType)}
+        aria-disabled={!hasExistingPlan || Boolean(exportBusyType)}
+      >
+        <FontAwesomeIcon icon={exportBusyType === 'xlsx' ? faSpinner : faFileExcel} spin={exportBusyType === 'xlsx'} />
+        <span>{exportBusyType === 'xlsx' ? 'Exporting…' : 'Excel'}</span>
+      </button>
+      <button
+        type="button"
+        className="int-btn int-btn-ghost"
+        onClick={() => { void handleExportPlan('csv'); }}
+        disabled={!hasExistingPlan || Boolean(exportBusyType)}
+        aria-disabled={!hasExistingPlan || Boolean(exportBusyType)}
+      >
+        <FontAwesomeIcon icon={exportBusyType === 'csv' ? faSpinner : faFileCsv} spin={exportBusyType === 'csv'} />
+        <span>{exportBusyType === 'csv' ? 'Exporting…' : 'CSV'}</span>
+      </button>
       <button
         type="button"
         className="int-btn int-btn-primary"
