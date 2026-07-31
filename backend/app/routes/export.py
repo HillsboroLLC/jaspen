@@ -979,6 +979,13 @@ def _wbs_xlsx_bytes(project_wbs, *, project_name=None, workspace_name=None):
     title = _xlsx_text(project_name or project_wbs.get("name") or "Execution Plan")
     workspace = _xlsx_text(workspace_name or "Personal Workspace")
     generated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    task_data_last_row = len(tasks) + 1
+    task_phase_range = f"'Tasks'!$B$2:$B${task_data_last_row}"
+    task_title_range = f"'Tasks'!$C$2:$C${task_data_last_row}"
+    task_status_range = f"'Tasks'!$D$2:$D${task_data_last_row}"
+    task_priority_range = f"'Tasks'!$E$2:$E${task_data_last_row}"
+    task_start_range = f"'Tasks'!$H$2:$H${task_data_last_row}"
+    task_due_range = f"'Tasks'!$I$2:$I${task_data_last_row}"
 
     # Overview sheet: a compact project snapshot plus phase-level rollup.
     overview.merge_cells("A1:F1")
@@ -1014,12 +1021,12 @@ def _wbs_xlsx_bytes(project_wbs, *, project_name=None, workspace_name=None):
     overview["A9"].border = section_border
     overview.merge_cells("A9:B9")
     summary_rows = [
-        ("Total tasks", "=ROWS(ExecutionTasks[Task])", "0"),
-        ("To Do", '=COUNTIF(ExecutionTasks[Status],"To Do")', "0"),
-        ("In Progress", '=COUNTIF(ExecutionTasks[Status],"In Progress")', "0"),
-        ("Blocked", '=COUNTIF(ExecutionTasks[Status],"Blocked")', "0"),
-        ("Done", '=COUNTIF(ExecutionTasks[Status],"Done")', "0"),
-        ("Completion", '=IFERROR(COUNTIF(ExecutionTasks[Status],"Done")/ROWS(ExecutionTasks[Task]),0)', "0%"),
+        ("Total tasks", f"=COUNTA({task_title_range})", "0"),
+        ("To Do", f'=COUNTIF({task_status_range},"To Do")', "0"),
+        ("In Progress", f'=COUNTIF({task_status_range},"In Progress")', "0"),
+        ("Blocked", f'=COUNTIF({task_status_range},"Blocked")', "0"),
+        ("Done", f'=COUNTIF({task_status_range},"Done")', "0"),
+        ("Completion", f'=IFERROR(COUNTIF({task_status_range},"Done")/COUNTA({task_title_range}),0)', "0%"),
     ]
     for row_idx, (label, formula, number_format) in enumerate(summary_rows, start=10):
         overview.cell(row=row_idx, column=1, value=label).font = Font(color=slate)
@@ -1042,24 +1049,23 @@ def _wbs_xlsx_bytes(project_wbs, *, project_name=None, workspace_name=None):
         row_idx = phase_start + 1 + offset
         overview.cell(row=row_idx, column=1, value=offset)
         overview.cell(row=row_idx, column=2, value=_xlsx_text(phase_name))
-        overview.cell(row=row_idx, column=3, value=f'=COUNTIF(ExecutionTasks[Phase],B{row_idx})')
-        overview.cell(row=row_idx, column=4, value=f'=COUNTIFS(ExecutionTasks[Phase],B{row_idx},ExecutionTasks[Status],"Done")')
-        overview.cell(row=row_idx, column=5, value=f'=COUNTIFS(ExecutionTasks[Phase],B{row_idx},ExecutionTasks[Priority],"High")')
+        overview.cell(row=row_idx, column=3, value=f'=COUNTIF({task_phase_range},B{row_idx})')
+        overview.cell(row=row_idx, column=4, value=f'=COUNTIFS({task_phase_range},B{row_idx},{task_status_range},"Done")')
+        overview.cell(row=row_idx, column=5, value=f'=COUNTIFS({task_phase_range},B{row_idx},{task_priority_range},"High")')
         overview.cell(
             row=row_idx,
             column=6,
             value=(
-                f'=IF(OR(COUNTIFS(ExecutionTasks[Phase],B{row_idx},ExecutionTasks[Start Date],">0")=0,'
-                f'COUNTIFS(ExecutionTasks[Phase],B{row_idx},ExecutionTasks[Due Date],">0")=0),"",'
-                f'TEXT(MINIFS(ExecutionTasks[Start Date],ExecutionTasks[Phase],B{row_idx}),"yyyy-mm-dd")'
-                f'&" to "&TEXT(MAXIFS(ExecutionTasks[Due Date],ExecutionTasks[Phase],B{row_idx}),"yyyy-mm-dd"))'
+                f'=IF(OR(COUNTIFS({task_phase_range},B{row_idx},{task_start_range},">0")=0,'
+                f'COUNTIFS({task_phase_range},B{row_idx},{task_due_range},">0")=0),"",'
+                f'TEXT(MINIFS({task_start_range},{task_phase_range},B{row_idx}),"yyyy-mm-dd")'
+                f'&" to "&TEXT(MAXIFS({task_due_range},{task_phase_range},B{row_idx}),"yyyy-mm-dd"))'
             ),
         )
         for col_idx in range(1, 7):
             overview.cell(row=row_idx, column=col_idx).border = body_border
         overview.cell(row=row_idx, column=6).alignment = Alignment(wrap_text=True)
 
-    overview.freeze_panes = "A4"
     overview.sheet_view.showGridLines = False
     for column, width in {"A": 18, "B": 32, "C": 12, "D": 12, "E": 16, "F": 25}.items():
         overview.column_dimensions[column].width = width
@@ -1164,9 +1170,7 @@ def _wbs_xlsx_bytes(project_wbs, *, project_name=None, workspace_name=None):
         showColumnStripes=False,
     )
     task_sheet.add_table(table)
-    task_sheet.freeze_panes = "C2"
     task_sheet.sheet_view.showGridLines = False
-    task_sheet.auto_filter.ref = f"A1:T{last_row}"
     task_sheet.row_dimensions[1].height = 28
     for cell in task_sheet[1]:
         cell.font = Font(bold=True, color=white)
@@ -1210,7 +1214,6 @@ def _wbs_xlsx_bytes(project_wbs, *, project_name=None, workspace_name=None):
     }
     for column, width in widths.items():
         task_sheet.column_dimensions[column].width = width
-    task_sheet.auto_filter.ref = f"A1:T{last_row}"
     task_sheet.print_title_rows = "1:1"
     task_sheet.page_setup.orientation = "landscape"
     task_sheet.page_setup.fitToWidth = 1

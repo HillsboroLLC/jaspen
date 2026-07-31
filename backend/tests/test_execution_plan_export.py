@@ -1,5 +1,6 @@
 import io
 import importlib
+import zipfile
 
 import pytest
 from openpyxl import load_workbook
@@ -93,17 +94,23 @@ def test_wbs_xlsx_has_overview_and_filterable_task_table(export_routes):
     assert overview["A1"].value == "Launch Program"
     assert overview["B4"].value == "Launch Program"
     assert overview["B5"].value == "Strategy Team"
-    assert overview["B10"].value == "=ROWS(ExecutionTasks[Task])"
+    assert overview.freeze_panes is None
+    assert overview["B10"].value == "=COUNTA('Tasks'!$C$2:$C$4)"
     assert overview["B15"].value.startswith("=IFERROR")
     assert overview["B20"].value == "Discovery"
     assert overview["B21"].value == "Delivery"
-    assert "ExecutionTasks[Phase]" in overview["C20"].value
+    assert "'Tasks'!$B$2:$B$4" in overview["C20"].value
+    assert "ExecutionTasks[" not in "".join(
+        str(overview.cell(row=row, column=column).value or "")
+        for row in range(1, overview.max_row + 1)
+        for column in range(1, overview.max_column + 1)
+    )
 
     tasks = workbook["Tasks"]
-    assert tasks.freeze_panes == "C2"
+    assert tasks.freeze_panes is None
     assert list(tasks.tables) == ["ExecutionTasks"]
     assert tasks.tables["ExecutionTasks"].ref == "A1:T4"
-    assert tasks.auto_filter.ref == "A1:T4"
+    assert tasks.auto_filter.ref is None
     assert [tasks.cell(row=1, column=column).value for column in range(1, 21)] == [
         "Phase #", "Phase", "Task", "Status", "Priority", "Owner", "Suggested Role",
         "Start Date", "Due Date", "Duration (days)", "Dependencies",
@@ -126,6 +133,15 @@ def test_wbs_xlsx_has_overview_and_filterable_task_table(export_routes):
     assert tasks["I2"].number_format == "yyyy-mm-dd"
     assert len(tasks.data_validations.dataValidation) == 2
     assert sum(len(rules) for rules in tasks.conditional_formatting._cf_rules.values()) == 7
+
+    # A table already owns its filter. A second worksheet-level autoFilter over
+    # the same cells causes desktop Excel to repair the workbook and remove the
+    # table, which breaks all formulas that reference it.
+    with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+        task_sheet_xml = archive.read("xl/worksheets/sheet2.xml")
+        table_xml = archive.read("xl/tables/table1.xml")
+    assert b"<autoFilter" not in task_sheet_xml
+    assert b'<autoFilter ref="A1:T4"' in table_xml
 
 
 def test_wbs_xlsx_returns_none_without_tasks(export_routes):
