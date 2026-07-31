@@ -1040,6 +1040,8 @@ class UsageEvent(db.Model):
         index=True,
     )
     thread_id = db.Column(db.String(255), nullable=True, index=True)
+    evaluation_id = db.Column(db.String(36), nullable=True, index=True)
+    plan_key = db.Column(db.String(32), nullable=True, index=True)
     model_type = db.Column(db.String(16), nullable=True, index=True)
     provider = db.Column(db.String(32), nullable=True)
     model = db.Column(db.String(255), nullable=True)
@@ -1061,6 +1063,8 @@ class UsageEvent(db.Model):
     success = db.Column(db.Boolean, nullable=False, default=True, index=True)
     error_code = db.Column(db.String(120), nullable=True)
     scorecard_id = db.Column(db.String(255), nullable=True, index=True)
+    attachment_count = db.Column(db.Integer, nullable=False, default=0)
+    extracted_attachment_tokens = db.Column(db.Integer, nullable=False, default=0)
     metadata_json = db.Column(db.JSON, nullable=True, default=dict)
     is_failover = db.Column(db.Boolean, nullable=False, default=False)
     created_at = db.Column(
@@ -1212,6 +1216,7 @@ class Scorecard(db.Model):
     )
     thread_id = db.Column(db.String(255), nullable=False, index=True)
     session_id = db.Column(db.String(255), nullable=True, index=True)
+    evaluation_id = db.Column(db.String(36), nullable=True, index=True)
     decision_record_id = db.Column(
         db.String(36),
         db.ForeignKey('decision_records.id', ondelete='SET NULL'),
@@ -1242,6 +1247,7 @@ class Scorecard(db.Model):
             'id': self.id,
             'analysis_id': self.id,
             'thread_id': self.thread_id,
+            'evaluation_id': self.evaluation_id,
             'project_name': self.project_name,
             'name': payload.get('name') or self.project_name,
             'isBaseline': False,

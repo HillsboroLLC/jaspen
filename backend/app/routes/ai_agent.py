@@ -55,11 +55,19 @@ from app.tool_registry import (
 from app.orgs import normalize_org_role, resolve_active_org_for_user
 from app.scenarios_store import save_scenarios_data
 from app.scorecards import (
+    COMPARISON_SESSION_LIMIT_MESSAGE,
     archive_thread_scorecards,
     collect_peer_scorecards,
     delete_thread_scorecards,
     scorecard_limit_for,
     upsert_scorecard,
+)
+from app.evaluation_telemetry import (
+    attachment_metrics,
+    chat_operation_type,
+    ensure_session_evaluation_id,
+    evaluation_id_for_new_scorecard,
+    evaluation_id_for_scorecard,
 )
 from app.connector_store import get_connector_settings, get_thread_sync_profile, update_thread_sync_profile
 from app.jira_sync import sync_wbs_to_jira
@@ -2105,6 +2113,7 @@ def _new_session(
         "timestamp": now,
         "status": "in_progress",
         "user_id": user_id,
+        "active_evaluation_id": str(uuid.uuid4()),
         "created_by_user_id": user_id,
         "organization_id": organization_id,
         "visibility": str(visibility or "private").strip().lower() or "private",
@@ -5226,6 +5235,15 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         # objective dimensions. Absent a rubric, this is None → default behavior.
         rubric = session.get("scoring_rubric") if isinstance(session, dict) else None
         rescore_id = str(tool_input.get("rescore_scorecard_id") or "").strip() or None
+        if rescore_id:
+            evaluation_id = (
+                evaluation_id_for_scorecard(user_id, rescore_id)
+                or ensure_session_evaluation_id(session, user_id=user_id, force_new=True)
+            )
+            session["active_evaluation_id"] = evaluation_id
+            session["active_evaluation_scorecard_id"] = rescore_id
+        else:
+            evaluation_id = evaluation_id_for_new_scorecard(session, user_id=user_id)
         if not rescore_id:
             legacy_thread_data = (_load_scenarios(user_id) or {}).get(thread_id) or {}
             current_peers = collect_peer_scorecards(
@@ -5237,11 +5255,8 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             view_limit = scorecard_limit_for(user, plan_key)
             if len(current_peers) >= view_limit:
                 return _tool_error(
-                    (
-                        f"This portfolio has reached its supported size of {view_limit} projects. "
-                        "No project was generated or discarded. Start another portfolio to continue."
-                    ),
-                    code="portfolio_view_limit_reached",
+                    COMPARISON_SESSION_LIMIT_MESSAGE,
+                    code="comparison_session_limit_reached",
                 )
         client = get_llm_client()
         reservation = _reserve_preflight_credits(
@@ -5277,6 +5292,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 settled_credits=0,
                 success=False,
                 error_code=type(generation_error).__name__,
+                evaluation_id=evaluation_id,
             )
             db.session.commit()
             raise
@@ -5304,6 +5320,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             success=bool(settlement.get("ok")),
             error_code=None if settlement.get("ok") else "thinking_power_exhausted",
             scorecard_id=analysis_id,
+            evaluation_id=evaluation_id,
         )
         db.session.commit()
         if not settlement.get("ok"):
@@ -5316,6 +5333,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             **(scorecard_payload if isinstance(scorecard_payload, dict) else {}),
             "id": analysis_id,
             "analysis_id": analysis_id,
+            "evaluation_id": evaluation_id,
             "thread_id": thread_id,
             "project_name": requested_name,
             "name": requested_name,
@@ -5374,16 +5392,21 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
 
             updated = apply_scorecard_edit_in_place(user_id, thread_id, rescore_id, _do_rescore)
             if isinstance(updated, dict):
+                keep_id = str(updated.get("id") or updated.get("analysis_id") or rescore_id)
                 upsert_scorecard(
                     user_id=user_id,
                     thread_id=thread_id,
                     payload=updated,
                     organization_id=session.get("organization_id"),
                     session_id=session.get("session_id") or thread_id,
+                    evaluation_id=evaluation_id,
                     source="score_next_rescore",
                 )
+                session["active_evaluation_id"] = evaluation_id
+                session["active_evaluation_scorecard_id"] = keep_id
+                sessions[session_key or thread_id] = session
+                save_user_sessions(user_id, sessions)
                 db.session.commit()
-                keep_id = str(updated.get("id") or updated.get("analysis_id") or rescore_id)
                 keep_name = str(updated.get("name") or updated.get("project_name") or requested_name)
                 new_score = int(round(float(updated.get("jaspen_score") or 0)))
                 return _tool_success({
@@ -5391,6 +5414,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     "confirmation": f"Re-scored '{keep_name}' in place ({new_score}).",
                     "updated_scorecard": updated,
                     "scorecard_id": keep_id,
+                    "evaluation_id": evaluation_id,
                     "selected_scorecard_id": keep_id,
                     "rescored": True,
                 })
@@ -5403,6 +5427,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 payload=scorecard,
                 organization_id=session.get("organization_id"),
                 session_id=session.get("session_id") or thread_id,
+                evaluation_id=evaluation_id,
                 source="score_next",
             )
             db.session.commit()
@@ -5456,6 +5481,8 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 return _tool_error(str(limit_error), code="scenario_limit_reached")
 
         session["name"] = requested_name or session.get("name") or "Jaspen Intake"
+        session["active_evaluation_id"] = evaluation_id
+        session["active_evaluation_scorecard_id"] = analysis_id
         session["model_type"] = model_selection["model_type"]
         session["strategy_objective"] = strategy_objective
         session["status"] = "completed"
@@ -5469,6 +5496,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             "tool": tool_name,
             "confirmation": f"Generated scorecard '{requested_name}' ({int(round(float(scorecard.get('jaspen_score') or 0)))}).",
             "scorecard": scorecard,
+            "evaluation_id": evaluation_id,
             "artifact": {
                 "type": "scorecard",
                 "data": scorecard,
@@ -7721,7 +7749,19 @@ def _sanitize_user_visible_payload(payload, *, fallback_model_type=None):
     return payload
 
 
-def _record_usage(session, usage, credits_charged):
+def _record_usage(
+    session,
+    usage,
+    credits_charged,
+    *,
+    actions=None,
+    attachments=None,
+    operation_type=None,
+    scorecard_id=None,
+    regenerated=False,
+    success=True,
+    error_code=None,
+):
     if not isinstance(session, dict):
         return
     usage = usage if isinstance(usage, dict) else {}
@@ -7733,6 +7773,21 @@ def _record_usage(session, usage, credits_charged):
     provider = str(usage.get("provider") or "unknown").strip().lower() or "unknown"
     model = usage.get("model")
     model_type = normalize_model_type(usage.get("model_type") or session.get("model_type") or "pluto") or "pluto"
+    attachment_count, extracted_attachment_tokens = attachment_metrics(attachments)
+    user_id = str(session.get("user_id") or "").strip()
+    scorecard_id = str(
+        scorecard_id or session.get('active_evaluation_scorecard_id') or ''
+    ).strip() or None
+    evaluation_id = ensure_session_evaluation_id(
+        session,
+        user_id=user_id or None,
+        scorecard_id=scorecard_id,
+    )
+    operation_type = operation_type or chat_operation_type(
+        actions,
+        attachment_count=attachment_count,
+        regenerated=regenerated,
+    )
 
     summary = session.get("usage_summary")
     if not isinstance(summary, dict):
@@ -7768,19 +7823,29 @@ def _record_usage(session, usage, credits_charged):
         "output_tokens": output_tokens,
         "total_tokens": total_tokens,
         "credits_charged": int(credits_charged or 0),
+        "evaluation_id": evaluation_id,
+        "operation_type": operation_type,
+        "scorecard_id": scorecard_id,
+        "attachment_count": attachment_count,
+        "extracted_attachment_tokens": extracted_attachment_tokens,
+        "success": bool(success),
+        "error_code": str(error_code or '').strip() or None,
         "failover": _clone_json_payload(failover) if failover else None,
     })
     session["usage_events"] = events[-150:]
 
     try:
-        user_id = str(session.get("user_id") or "").strip()
         thread_id = str(session.get("session_id") or "").strip() or None
         if user_id:
+            usage_user = User.query.get(user_id)
             db.session.add(UsageEvent(
                 user_id=user_id,
+                organization_id=session.get('organization_id') or getattr(usage_user, 'active_organization_id', None),
                 thread_id=thread_id,
+                evaluation_id=evaluation_id,
+                plan_key=effective_plan_key(usage_user, current_app.config) if usage_user else None,
                 endpoint='ai.conversation',
-                operation_type='chat_completion',
+                operation_type=operation_type,
                 model_type=model_type,
                 provider=provider,
                 model=(str(model).strip() or None) if model is not None else None,
@@ -7791,11 +7856,29 @@ def _record_usage(session, usage, credits_charged):
                 credits_charged=int(credits_charged or 0),
                 reserved_credits=int(credits_charged or 0),
                 settled_credits=int(credits_charged or 0),
-                success=True,
+                success=bool(success),
+                error_code=str(error_code or '').strip() or None,
+                scorecard_id=scorecard_id,
+                attachment_count=attachment_count,
+                extracted_attachment_tokens=extracted_attachment_tokens,
+                metadata_json={'retry_attempts_recorded': 0},
                 is_failover=bool(failover),
             ))
     except Exception:
         current_app.logger.exception("Failed queuing usage event persistence")
+
+
+def _record_failed_chat_usage(session, error, *, regenerated=False, attachments=None):
+    _record_usage(
+        session,
+        {},
+        0,
+        attachments=attachments,
+        regenerated=regenerated,
+        success=False,
+        error_code=type(error).__name__,
+    )
+    db.session.commit()
 
 
 def _resolve_model_selection(user, requested_model_type=None, fallback_model_type=None):
@@ -7957,6 +8040,16 @@ def _apply_rubric_action_to_session(session, actions):
             queue = result.get("queue")
             if isinstance(queue, list):
                 session["scorecard_queue"] = queue
+        elif tool == "generate_scorecard":
+            evaluation_id = str(result.get('evaluation_id') or '').strip()
+            scorecard_id = str(
+                result.get('scorecard_id')
+                or ((result.get('scorecard') or {}).get('id') if isinstance(result.get('scorecard'), dict) else '')
+            ).strip()
+            if evaluation_id:
+                session['active_evaluation_id'] = evaluation_id
+            if scorecard_id:
+                session['active_evaluation_scorecard_id'] = scorecard_id
 
 
 def _extract_baseline_inputs(baseline):
@@ -9286,7 +9379,13 @@ def conversation_start():
                 session["timestamp"] = _iso_now()
                 session["status"] = "in_progress"
                 session["readiness"] = final_readiness
-                _record_usage(session, usage, credits_charged)
+                _record_usage(
+                    session,
+                    usage,
+                    credits_charged,
+                    actions=actions,
+                    attachments=attachments,
+                )
                 sessions[thread_id] = session
                 if not save_user_sessions(user_id, sessions):
                     yield _sse_payload({"type": "error", "error": "Failed to persist conversation state"})
@@ -9349,9 +9448,10 @@ def conversation_start():
                     "objective_options": list(STRATEGY_OBJECTIVE_OPTIONS),
                 }
                 yield _sse_payload(done_payload)
-            except Exception:
+            except Exception as generation_error:
                 if not credits_settled:
                     _release_reserved_credits(user, reserved_credits)
+                    _record_failed_chat_usage(session, generation_error, attachments=attachments)
                 current_app.logger.exception("conversation_start stream failed")
                 yield _sse_payload({"type": "error", "error": "Streaming failed"})
                 return
@@ -9381,8 +9481,9 @@ def conversation_start():
             view_context=session.get("view_context"),
             attachments=attachments,
         )
-    except Exception:
+    except Exception as generation_error:
         _release_reserved_credits(user, reserved_credits)
+        _record_failed_chat_usage(session, generation_error, attachments=attachments)
         raise
 
     credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
@@ -9426,7 +9527,13 @@ def conversation_start():
         _compute_readiness(chat_history, session.get("strategy_objective")),
     )
     session["readiness"] = final_readiness_non_stream
-    _record_usage(session, usage, credits_charged)
+    _record_usage(
+        session,
+        usage,
+        credits_charged,
+        actions=actions,
+        attachments=attachments,
+    )
     sessions[thread_id] = session
     if not save_user_sessions(user_id, sessions):
         return jsonify({"error": "Failed to persist conversation state"}), 500
@@ -9839,7 +9946,13 @@ def conversation_continue():
                 session["timestamp"] = _iso_now()
                 session["status"] = "ready_to_analyze" if _is_ready_to_analyze(final_readiness) else "in_progress"
                 session["readiness"] = final_readiness
-                _record_usage(session, usage, credits_charged)
+                _record_usage(
+                    session,
+                    usage,
+                    credits_charged,
+                    actions=actions,
+                    attachments=attachments,
+                )
                 sessions[thread_id] = session
                 if not save_user_sessions(user_id, sessions):
                     yield _sse_payload({"type": "error", "error": "Failed to persist conversation state"})
@@ -9902,9 +10015,10 @@ def conversation_continue():
                     "objective_options": list(STRATEGY_OBJECTIVE_OPTIONS),
                 }
                 yield _sse_payload(done_payload)
-            except Exception:
+            except Exception as generation_error:
                 if not credits_settled:
                     _release_reserved_credits(user, reserved_credits)
+                    _record_failed_chat_usage(session, generation_error, attachments=attachments)
                 current_app.logger.exception("conversation_continue stream failed")
                 yield _sse_payload({"type": "error", "error": "Streaming failed"})
                 return
@@ -9934,8 +10048,9 @@ def conversation_continue():
             view_context=session.get("view_context"),
             attachments=attachments,
         )
-    except Exception:
+    except Exception as generation_error:
         _release_reserved_credits(user, reserved_credits)
+        _record_failed_chat_usage(session, generation_error, attachments=attachments)
         raise
 
     credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
@@ -9978,7 +10093,13 @@ def conversation_continue():
     )
     session["status"] = "ready_to_analyze" if _is_ready_to_analyze(final_readiness_non_stream) else "in_progress"
     session["readiness"] = final_readiness_non_stream
-    _record_usage(session, usage, credits_charged)
+    _record_usage(
+        session,
+        usage,
+        credits_charged,
+        actions=actions,
+        attachments=attachments,
+    )
     sessions[thread_id] = session
     if not save_user_sessions(user_id, sessions):
         return jsonify({"error": "Failed to persist conversation state"}), 500
@@ -11409,7 +11530,7 @@ def conversation_regenerate():
                 session["chat_history"] = chat_history
                 session["timestamp"] = _iso_now()
                 session["readiness"] = final_readiness
-                _record_usage(session, usage, credits_charged)
+                _record_usage(session, usage, credits_charged, regenerated=True)
                 sessions[session_key or thread_id] = session
                 if not save_user_sessions(user_id, sessions):
                     yield _sse_payload({"type": "error", "error": "Failed to persist regenerated response"})
@@ -11461,9 +11582,10 @@ def conversation_regenerate():
                     "organization_id": session.get("organization_id"),
                     "visibility": session.get("visibility") or "private",
                 })
-            except Exception:
+            except Exception as generation_error:
                 if not credits_settled:
                     _release_reserved_credits(user, reserved_credits)
+                    _record_failed_chat_usage(session, generation_error, regenerated=True)
                 current_app.logger.exception("conversation_regenerate stream failed")
                 yield _sse_payload({"type": "error", "error": "Streaming failed"})
                 return
@@ -11493,8 +11615,9 @@ def conversation_regenerate():
             view_context=session.get("view_context"),
             disable_mutations=True,
         )
-    except Exception:
+    except Exception as generation_error:
         _release_reserved_credits(user, reserved_credits)
+        _record_failed_chat_usage(session, generation_error, regenerated=True)
         raise
 
     credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
@@ -11520,7 +11643,7 @@ def conversation_regenerate():
 
     session["chat_history"] = chat_history
     session["timestamp"] = _iso_now()
-    _record_usage(session, usage, credits_charged)
+    _record_usage(session, usage, credits_charged, regenerated=True)
     final_readiness = _clamp_readiness_with_delta(
         previous_readiness,
         _compute_readiness(chat_history, session.get("strategy_objective")),
