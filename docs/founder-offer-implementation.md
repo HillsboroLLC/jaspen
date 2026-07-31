@@ -42,9 +42,8 @@
   credits remain. At zero persistent balance, active-plan limits apply
   automatically. These counters are account scoped and shared across Claude
   endpoints.
-- Initial portfolio view limit: 40 peer scorecards. This follows the audit's
-  supported candidate and is enforced before generation. It is not an account
-  retention limit.
+- Initial comparison-session limit: 30 peer projects for every plan, including
+  Founder. It is enforced before generation and is not an account retention cap.
 
-The 20/30/40/50 performance measurements remain a release-validation task; the
-40-card limit must not be raised without that evidence.
+The 20/30/40/50 performance measurements support the initial 30-project limit;
+revalidate backend, frontend, and trade-off readability before raising it.

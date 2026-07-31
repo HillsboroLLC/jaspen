@@ -32,16 +32,16 @@ chat, score-next, score-batch, and AI execution-plan generation. Rate-limit
 responses must include `Retry-After`; Thinking Power exhaustion includes the
 monthly reset timestamp.
 
-Initial peer-scorecard creation limits per portfolio view are Free 5, Starter 10,
-Essential 30, and Team/Business/Founder 40. These are creation/view guards, not
-retention limits. Reaching a view limit is checked before Claude is invoked. The
+Every plan, including Founder, supports up to 30 peer projects in one comparison
+session. This is a comparison-session creation guard, not an account storage or
+retention cap. Reaching the limit is checked before Claude is invoked. The
 response lists requested, generated, and persisted counts plus every name not
-persisted. The user is told to start another portfolio; an upgrade is mentioned
-only when a larger plan genuinely changes the limit.
+persisted, keeps all existing scorecards accessible, and directs the user to a
+new session.
 
-The 40-card ceiling is provisional pending measured 20/30/40/50-card validation
-of payload, query, browser render, quadrant, PowerPoint, PDF, Excel, and agent
-context behavior.
+The 30-project launch limit reflects the measured 20/30/40/50-card validation of
+payload, query, browser rendering, and trade-off readability. Revalidate before
+raising it.
 
 ## Retention and peer scorecards
 

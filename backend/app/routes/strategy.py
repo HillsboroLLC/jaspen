@@ -14,10 +14,18 @@ from app import db, limiter
 from app.admin_audit import append_user_audit_event
 from app.models import Scorecard, UsageEvent, User
 from app.scorecards import (
+    COMPARISON_SESSION_LIMIT_MESSAGE,
     archive_scorecard,
     collect_peer_scorecards,
     scorecard_limit_for,
     upsert_scorecard,
+)
+from app.evaluation_telemetry import (
+    ensure_session_evaluation_id,
+    evaluation_id_for_new_scorecard,
+    evaluation_id_for_scorecard,
+    new_evaluation_id,
+    split_integer,
 )
 from app.scenarios_store import load_scenarios_data, save_scenarios_data
 from app.billing_config import (
@@ -69,6 +77,9 @@ def _record_claude_operation(
     success=True,
     error_code=None,
     scorecard_id=None,
+    evaluation_id=None,
+    attachment_count=0,
+    extracted_attachment_tokens=0,
     metadata=None,
 ):
     usage = usage if isinstance(usage, dict) else {}
@@ -80,6 +91,8 @@ def _record_claude_operation(
         user_id=str(user.id),
         organization_id=getattr(user, 'active_organization_id', None),
         thread_id=str(thread_id or '').strip() or None,
+        evaluation_id=str(evaluation_id or '').strip() or None,
+        plan_key=effective_plan_key(user, current_app.config),
         endpoint=endpoint,
         operation_type=operation_type,
         model_type=usage.get('model_type'),
@@ -95,8 +108,40 @@ def _record_claude_operation(
         success=bool(success),
         error_code=str(error_code or '').strip() or None,
         scorecard_id=str(scorecard_id or '').strip() or None,
+        attachment_count=max(0, int(attachment_count or 0)),
+        extracted_attachment_tokens=max(0, int(extracted_attachment_tokens or 0)),
         metadata_json=dict(metadata or {}),
     ))
+
+
+def _record_claude_operation_batch(user, *, evaluation_contexts, usage=None, **kwargs):
+    """Allocate one provider batch exactly once across its project evaluations."""
+    contexts = [item for item in evaluation_contexts if isinstance(item, dict)]
+    if not contexts:
+        _record_claude_operation(user, usage=usage, **kwargs)
+        return
+    usage = dict(usage or {})
+    count = len(contexts)
+    input_parts = split_integer(usage.get('input_tokens'), count)
+    output_parts = split_integer(usage.get('output_tokens'), count)
+    reserved_parts = split_integer(kwargs.pop('reserved_credits', 0), count)
+    settled_parts = split_integer(kwargs.pop('settled_credits', 0), count)
+    for index, context in enumerate(contexts):
+        item_usage = {
+            **usage,
+            'input_tokens': input_parts[index],
+            'output_tokens': output_parts[index],
+            'total_tokens': input_parts[index] + output_parts[index],
+        }
+        _record_claude_operation(
+            user,
+            usage=item_usage,
+            reserved_credits=reserved_parts[index],
+            settled_credits=settled_parts[index],
+            evaluation_id=context.get('evaluation_id'),
+            scorecard_id=context.get('scorecard_id'),
+            **kwargs,
+        )
 
 
 class ScorecardConflictError(Exception):
@@ -3180,18 +3225,56 @@ def analyze_project():
             load_user_sessions(current_user_id) or {},
             thread_id,
         ) if thread_id else (None, None)
+        telemetry_session = current_session if isinstance(current_session, dict) else {
+            'session_id': str(thread_id or ''),
+            'user_id': str(current_user_id),
+        }
+        resolved_capacity_thread_id = str(thread_id or '').strip()
+        if resolved_capacity_thread_id:
+            existing_peers = collect_peer_scorecards(
+                current_user_id,
+                resolved_capacity_thread_id,
+                legacy_session=current_session,
+                legacy_thread_data=(_load_scenarios(current_user_id) or {}).get(resolved_capacity_thread_id) or {},
+            )
+            view_limit = scorecard_limit_for(user, effective_plan_key(user, current_app.config))
+            if len(existing_peers) >= view_limit:
+                return jsonify({
+                    'error': COMPARISON_SESSION_LIMIT_MESSAGE,
+                    'code': 'comparison_session_limit_reached',
+                    'portfolio_view_limit': view_limit,
+                }), 409
+        evaluation_id = ensure_session_evaluation_id(
+            telemetry_session,
+            user_id=current_user_id,
+            scorecard_id=(current_session or {}).get('active_evaluation_scorecard_id'),
+        )
         strategy_objective = _normalize_strategy_objective(
             data.get('strategy_objective')
             or (current_session or {}).get('strategy_objective')
             or 'balanced'
         )
-        analysis_result = _generate_jaspen_scorecard(
-            client,
-            effective_description,
-            llm_model=model_selection['llm_model'],
-            model_selection=model_selection,
-            strategy_objective=strategy_objective,
-        )
+        try:
+            analysis_result, provider_usage = _generate_jaspen_scorecard(
+                client,
+                effective_description,
+                llm_model=model_selection['llm_model'],
+                model_selection=model_selection,
+                strategy_objective=strategy_objective,
+                return_usage=True,
+            )
+        except Exception as generation_error:
+            _record_claude_operation(
+                user,
+                thread_id=thread_id,
+                endpoint='/analyze',
+                operation_type='scorecard_generation',
+                evaluation_id=evaluation_id,
+                success=False,
+                error_code=type(generation_error).__name__,
+            )
+            db.session.commit()
+            raise
 
         analysis_id = str(uuid.uuid4())
         generated_at = datetime.utcnow().isoformat()
@@ -3248,6 +3331,7 @@ def analyze_project():
             **analysis_result,
             'id': analysis_id,
             'analysis_id': analysis_id,
+            'evaluation_id': evaluation_id,
             'thread_id': resolved_thread_id,
             'framework_id': framework_id,
             'project_name': project_name,
@@ -3267,7 +3351,25 @@ def analyze_project():
         }
 
         charged, remaining = consume_credits(user, analysis_credit_cost)
+        provider_usage = dict(provider_usage or {})
+        provider_usage.setdefault('provider', 'anthropic')
+        provider_usage.setdefault('model', model_selection.get('llm_model'))
+        provider_usage.setdefault('model_type', model_selection.get('model_type'))
+        _record_claude_operation(
+            user,
+            thread_id=resolved_thread_id,
+            endpoint='/analyze',
+            operation_type='scorecard_generation',
+            usage=provider_usage,
+            reserved_credits=analysis_credit_cost,
+            settled_credits=analysis_credit_cost if charged else 0,
+            success=bool(charged),
+            error_code=None if charged else 'thinking_power_exhausted',
+            scorecard_id=analysis_id,
+            evaluation_id=evaluation_id,
+        )
         if not charged:
+            db.session.commit()
             return jsonify({
                 'error': 'Thinking power limit reached',
                 'required_credits': analysis_credit_cost,
@@ -3284,6 +3386,7 @@ def analyze_project():
                 payload=analysis,
                 organization_id=active_org_id,
                 session_id=resolved_thread_id,
+                evaluation_id=evaluation_id,
                 source='analyze',
             )
             db.session.commit()
@@ -3318,8 +3421,12 @@ def analyze_project():
                 'organization_id': active_org_id,
                 'visibility': 'private',
                 'shared_with_user_ids': [],
+                'active_evaluation_id': evaluation_id,
+                'active_evaluation_scorecard_id': analysis_id,
             }
             session_key = resolved_thread_id
+        session['active_evaluation_id'] = evaluation_id
+        session['active_evaluation_scorecard_id'] = analysis_id
 
         history = session.get('analysis_history')
         if not isinstance(history, list):
@@ -6394,18 +6501,23 @@ def score_batch_queued(thread_id):
             names = [str(item.get('name') or '').strip() for item in ideas]
             return jsonify({
                 'ok': False,
-                'code': 'portfolio_view_limit_reached',
-                'reason': 'portfolio_view_limit_reached',
-                'error': (
-                    f'This portfolio has reached its supported size of {view_limit} projects. '
-                    'No project was generated or discarded. Start another portfolio to continue.'
-                ),
+                'code': 'comparison_session_limit_reached',
+                'reason': 'comparison_session_limit_reached',
+                'error': COMPARISON_SESSION_LIMIT_MESSAGE,
                 'requested_project_count': requested_count,
                 'generated_project_count': 0,
                 'persisted_project_count': 0,
                 'not_persisted_project_names': names,
                 'portfolio_view_limit': view_limit,
             }), 409
+        first_evaluation_id = evaluation_id_for_new_scorecard(session, user_id=user_id)
+        evaluation_contexts = [
+            {
+                'evaluation_id': first_evaluation_id if index == 0 else new_evaluation_id(),
+                'scorecard_id': str(uuid.uuid4()),
+            }
+            for index, _idea in enumerate(ideas_to_generate)
+        ]
         reservation = _reserve_preflight_credits(
             user,
             model_selection['model_type'],
@@ -6432,8 +6544,9 @@ def score_batch_queued(thread_id):
             )
         except Exception as generation_error:
             _release_reserved_credits(user, reserved_credits)
-            _record_claude_operation(
+            _record_claude_operation_batch(
                 user,
+                evaluation_contexts=evaluation_contexts,
                 thread_id=thread_id,
                 endpoint='/threads/<id>/score-batch',
                 operation_type='score_batch',
@@ -6456,8 +6569,9 @@ def score_batch_queued(thread_id):
             actual_credits=actual_credits,
         )
         settled_credits = int(settlement.get('charged') or 0)
-        _record_claude_operation(
+        _record_claude_operation_batch(
             user,
+            evaluation_contexts=evaluation_contexts,
             thread_id=thread_id,
             endpoint='/threads/<id>/score-batch',
             operation_type='score_batch',
@@ -6483,19 +6597,21 @@ def score_batch_queued(thread_id):
         persistence_failures = []
         model_failures = []
         generated_count = 0
-        for idea, payload in zip(ideas_to_generate, cards):
+        for idea, payload, evaluation_context in zip(ideas_to_generate, cards, evaluation_contexts):
             if not isinstance(payload, dict):
                 model_failures.append(str(idea.get('name') or '').strip())
                 continue
             generated_count += 1
             name = str(idea.get('name')).strip()
             description = str(idea.get('description') or '').strip() or name
-            analysis_id = str(uuid.uuid4())
+            analysis_id = evaluation_context['scorecard_id']
+            evaluation_id = evaluation_context['evaluation_id']
             generated_at = datetime.utcnow().isoformat()
             scorecard = {
                 **payload,
                 'id': analysis_id,
                 'analysis_id': analysis_id,
+                'evaluation_id': evaluation_id,
                 'thread_id': thread_id,
                 'project_name': name,
                 'name': name,
@@ -6519,6 +6635,7 @@ def score_batch_queued(thread_id):
                     payload=scorecard,
                     organization_id=session.get('organization_id'),
                     session_id=session.get('session_id') or thread_id,
+                    evaluation_id=evaluation_id,
                     source='score_batch',
                 )
                 db.session.commit()
@@ -6574,6 +6691,8 @@ def score_batch_queued(thread_id):
                 chat_history.append(entry)
                 session['chat_history'] = chat_history
             session['name'] = session.get('name') or name
+            session['active_evaluation_id'] = evaluation_id
+            session['active_evaluation_scorecard_id'] = analysis_id
             session['timestamp'] = generated_at
             sessions[session_key or thread_id] = session
             save_user_sessions(user_id, sessions)
@@ -6594,11 +6713,10 @@ def score_batch_queued(thread_id):
         reason = None
         message = None
         if capacity_names:
-            reason = 'portfolio_view_limit_reached'
+            reason = 'comparison_session_limit_reached'
             message = (
                 f'{len(scored_out)} of {requested_count} projects were retained. '
-                f'This portfolio supports {view_limit} projects; no project was discarded silently. '
-                'Start another portfolio to continue.'
+                f'{COMPARISON_SESSION_LIMIT_MESSAGE}'
             )
         elif model_failures:
             reason = 'partial_model_failure'
@@ -6835,17 +6953,29 @@ def generate_ai_wbs(thread_id):
             reserved_credits=reserved_credits,
             actual_credits=actual_credits,
         )
+        telemetry_scorecard_id = str(
+            scorecard_id
+            or current_scorecard.get('id')
+            or current_scorecard.get('analysis_id')
+            or ''
+        ).strip() or None
+        execution_evaluation_id = evaluation_id_for_scorecard(user_id, telemetry_scorecard_id)
         _record_claude_operation(
             user,
             thread_id=thread_id,
             endpoint='/threads/<id>/ai-wbs',
-            operation_type='execution_plan',
+            operation_type=(
+                'execution_plan_refinement'
+                if bool(payload.get('force') or payload.get('regenerate'))
+                else 'execution_plan'
+            ),
             usage=provider_usage,
             reserved_credits=reserved_credits,
             settled_credits=int(settlement.get('charged') or 0),
             success=bool(provider_success and settlement.get('ok')),
             error_code=provider_error or (None if settlement.get('ok') else 'thinking_power_exhausted'),
-            scorecard_id=scorecard_id,
+            scorecard_id=telemetry_scorecard_id,
+            evaluation_id=execution_evaluation_id,
             metadata={'heuristic_fallback': not provider_success},
         )
         db.session.commit()

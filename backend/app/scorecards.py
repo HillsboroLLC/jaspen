@@ -7,15 +7,16 @@ from . import db
 from .models import Scorecard
 
 
+COMPARISON_SESSION_PROJECT_LIMIT = 30
+COMPARISON_SESSION_LIMIT_MESSAGE = (
+    'This comparison session supports up to 30 projects. Start a new session to continue '
+    'evaluating additional projects. Your existing scorecards remain saved and accessible.'
+)
 SCORECARD_VIEW_LIMITS = {
-    'free': 5,
-    'starter': 10,
-    'essential': 30,
-    'team': 40,
-    'business': 40,
-    'enterprise_custom': 40,
+    plan_key: COMPARISON_SESSION_PROJECT_LIMIT
+    for plan_key in ('free', 'starter', 'essential', 'team', 'business', 'enterprise_custom')
 }
-FOUNDER_VIEW_LIMIT = 40
+FOUNDER_VIEW_LIMIT = COMPARISON_SESSION_PROJECT_LIMIT
 
 
 def _score_value(payload):
@@ -45,6 +46,7 @@ def upsert_scorecard(
     payload,
     organization_id=None,
     session_id=None,
+    evaluation_id=None,
     source='native',
 ):
     if not isinstance(payload, dict):
@@ -59,6 +61,10 @@ def upsert_scorecard(
     row.organization_id = organization_id
     row.thread_id = str(thread_id)
     row.session_id = str(session_id or thread_id)
+    if evaluation_id:
+        row.evaluation_id = str(evaluation_id)
+    elif not row.evaluation_id:
+        row.evaluation_id = str(payload.get('evaluation_id') or '').strip() or None
     row.project_name = _project_name(payload)
     row.rubric = payload.get('scoring_rubric') or payload.get('rubric') or {}
     row.evidence = payload.get('evidence') or payload.get('evidence_items') or []
@@ -71,6 +77,7 @@ def upsert_scorecard(
     normalized['analysis_id'] = scorecard_id
     normalized['thread_id'] = str(thread_id)
     normalized['project_name'] = row.project_name
+    normalized['evaluation_id'] = row.evaluation_id
     normalized['isBaseline'] = False
     normalized['is_baseline'] = False
     normalized.pop('delta_vs_baseline', None)
