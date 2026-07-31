@@ -80,26 +80,25 @@ database retrieval; rendering; and ordinary Jira synchronization are not charged
 
 ## Provisional project-capacity estimates
 
-These estimates are ranges, not guarantees. A “project evaluation” assumes
-framing/chat, rubric work, one scored scorecard, review, and one initial AI
-execution plan. Code-based planning assumptions are roughly 145 credits for an
-efficient complete-input project, 305 for typical moderate questioning, and 829
-for a heavy attachment/revision workflow. Real production `usage_events` should
-replace these assumptions.
+These estimates are ranges, not guarantees. A “project evaluation” assumes an
+end-to-end workflow from framing through a reviewed recommendation and initial
+execution plan. Actual usage varies based on model selection, input completeness,
+attachments, analysis depth, revisions, and follow-up. Production telemetry
+should refine these provisional ranges over time.
 
 | Allowance | Approximate project evaluations |
 |---|---:|
-| Free (300) | ~0–2 |
-| Starter (1,000) | ~1–6 |
-| Essential (7,000) | ~8–48 |
-| Team (29,000) | ~35–200 |
-| Business (80,000) | ~95–550 |
-| Founder persistent 300,000 | ~360–2,060 |
+| Free (300) | ~1 focused evaluation with complete inputs |
+| Starter (1,000) | ~3–4 typical project evaluations |
+| Essential (7,000) | ~17–29 typical project evaluations |
+| Team (29,000 shared credits) | ~57–96 typical project evaluations across the shared allowance |
+| Business (80,000 shared credits) | ~133–222 typical project evaluations across the shared allowance |
+| Founder gift (300,000 persistent credits) | ~750–1,200 typical project evaluations over the life of the gift; available until used |
 
-Suitable external wording: “Approximately ~360–2,060 project evaluations from
-the Founder balance, depending on input completeness, supporting documentation,
-model selection, analysis depth, and revisions.” Never describe Thinking Power
-credits as tokens and never promise an exact project count.
+Suitable external wording: “300,000 persistent credits, available until used,
+support approximately ~750–1,200 typical project evaluations over the life of
+the gift.” Follow it with the variability explanation above. Never describe
+Thinking Power credits as tokens and never promise an exact project count.
 
 ## Margin decision note
 
