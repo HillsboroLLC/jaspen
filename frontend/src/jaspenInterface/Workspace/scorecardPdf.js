@@ -79,64 +79,6 @@ function makeScrollableContentVisible(root) {
   });
 }
 
-/**
- * React Grid Layout uses absolute positions and user-selected fixed heights.
- * Those are useful while editing but create blank cards/pages in a printout.
- * Reflow only the detached export clone into the same 12-column visual order,
- * with each card sized to its complete saved content.
- */
-export function compactScorecardGrid(originalRoot, clonedRoot) {
-  const originalGrid = originalRoot.querySelector('.jw-block-grid');
-  const clonedGrid = clonedRoot.querySelector('.jw-block-grid');
-  if (!originalGrid || !clonedGrid) return;
-
-  const gridRect = originalGrid.getBoundingClientRect();
-  const gridWidth = Math.max(1, gridRect.width);
-  const originals = Array.from(originalGrid.querySelectorAll(':scope > .react-grid-item'));
-  const clones = Array.from(clonedGrid.querySelectorAll(':scope > .react-grid-item'));
-  const entries = clones.map((clone, index) => {
-    const rect = originals[index]?.getBoundingClientRect() || { top: index, left: 0, width: gridWidth };
-    const relativeLeft = Math.max(0, rect.left - gridRect.left);
-    const column = Math.max(0, Math.min(11, Math.round(relativeLeft / gridWidth * 12)));
-    const span = Math.max(1, Math.min(12 - column, Math.round(rect.width / gridWidth * 12)));
-    return { clone, top: rect.top - gridRect.top, left: relativeLeft, column, span };
-  }).sort((a, b) => (a.top - b.top) || (a.left - b.left));
-
-  Object.assign(clonedGrid.style, {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(12, minmax(0, 1fr))',
-    gap: '16px',
-    alignItems: 'start',
-    height: 'auto',
-    minHeight: '0',
-    position: 'relative',
-  });
-
-  entries.forEach(({ clone, column, span }) => {
-    clonedGrid.appendChild(clone);
-    Object.assign(clone.style, {
-      position: 'relative',
-      transform: 'none',
-      inset: 'auto',
-      left: 'auto',
-      top: 'auto',
-      width: 'auto',
-      height: 'auto',
-      minHeight: '0',
-      gridColumn: `${column + 1} / span ${span}`,
-      gridRow: 'auto',
-      transition: 'none',
-    });
-    const card = clone.firstElementChild;
-    if (card) {
-      card.style.height = 'auto';
-      card.style.minHeight = '0';
-      card.style.overflow = 'visible';
-    }
-    makeScrollableContentVisible(clone);
-  });
-}
-
 export function createWorkspacePdfClone(element, kind = 'scorecard') {
   const cssWidth = Math.max(element.scrollWidth, element.offsetWidth);
   const wrapper = document.createElement('div');
@@ -160,8 +102,10 @@ export function createWorkspacePdfClone(element, kind = 'scorecard') {
     boxShadow: 'none',
   });
   hideExportChrome(clone);
-  makeScrollableContentVisible(clone);
-  if (kind === 'scorecard') compactScorecardGrid(element, clone);
+  // Trade-off's flow view should expose every comparison row. Scorecards are
+  // different: their fixed grid geometry is a saved design choice, so retain
+  // each card's exact position, height, and overflow behavior from the page.
+  if (kind === 'tradeoff') makeScrollableContentVisible(clone);
 
   wrapper.appendChild(clone);
   document.body.appendChild(wrapper);
@@ -185,9 +129,10 @@ export async function downloadRenderedWorkspacePdf(element, title, options = {})
   const { clone, wrapper, cssWidth } = createWorkspacePdfClone(element, kind);
   let canvas;
   let breaks;
+  let cssHeight;
   try {
     await nextFrame();
-    const cssHeight = visibleHeight(clone);
+    cssHeight = visibleHeight(clone);
     const scale = Math.min(2, Math.max(1.5, Number(window.devicePixelRatio) || 1));
     canvas = await html2canvas(clone, {
       backgroundColor: '#ffffff',
@@ -204,20 +149,52 @@ export async function downloadRenderedWorkspacePdf(element, title, options = {})
       },
     });
 
-    const format = kind === 'tradeoff' ? 'a3' : 'letter';
-    const probePdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format, compress: true });
-    const margin = 28;
-    const imageWidth = probePdf.internal.pageSize.getWidth() - margin * 2;
-    const imageHeight = probePdf.internal.pageSize.getHeight() - margin * 2;
-    const cssPageHeight = imageHeight * cssWidth / imageWidth;
-    breaks = safePageBreaks(clone, cssPageHeight);
+    if (kind === 'tradeoff') {
+      const probePdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a3', compress: true });
+      const margin = 28;
+      const imageWidth = probePdf.internal.pageSize.getWidth() - margin * 2;
+      const imageHeight = probePdf.internal.pageSize.getHeight() - margin * 2;
+      const cssPageHeight = imageHeight * cssWidth / imageWidth;
+      breaks = safePageBreaks(clone, cssPageHeight);
+    }
   } finally {
     wrapper.remove();
   }
 
-  const format = kind === 'tradeoff' ? 'a3' : 'letter';
-  const pdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format, compress: true });
   const margin = 28;
+  if (kind === 'scorecard') {
+    // Match the saved Workspace canvas instead of forcing it into a standard
+    // sheet that reflows or crops user-sized cards. This produces one complete
+    // PDF page with the same aspect ratio and box geometry as the online view.
+    const orientation = cssWidth >= cssHeight ? 'landscape' : 'portrait';
+    const pdf = new jsPDF({
+      orientation,
+      unit: 'pt',
+      format: [cssWidth + margin * 2, cssHeight + margin * 2],
+      compress: true,
+    });
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const availableWidth = pageWidth - margin * 2;
+    const availableHeight = pageHeight - margin * 2;
+    const scaleToFit = Math.min(availableWidth / canvas.width, availableHeight / canvas.height);
+    const renderedWidth = canvas.width * scaleToFit;
+    const renderedHeight = canvas.height * scaleToFit;
+    pdf.addImage(
+      canvas.toDataURL('image/png'),
+      'PNG',
+      margin + (availableWidth - renderedWidth) / 2,
+      margin + (availableHeight - renderedHeight) / 2,
+      renderedWidth,
+      renderedHeight,
+      undefined,
+      'FAST',
+    );
+    pdf.save(safeFilename(title, kind));
+    return pdf;
+  }
+
+  const pdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a3', compress: true });
   const pageWidth = pdf.internal.pageSize.getWidth();
   const pageHeight = pdf.internal.pageSize.getHeight();
   const availableWidth = pageWidth - margin * 2;
