@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom';
 import BackToJaspen from '../../shared/components/BackToJaspen';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faCheck, faCopy, faFileCsv, faFileExcel, faRotate, faSpinner, faThumbsDown, faThumbsUp, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons';
+import { faCheck, faCopy, faFileExcel, faRotate, faSpinner, faThumbsDown, faThumbsUp, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons';
 import AppMenu from '../shared/AppMenu';
 import { Jaspen } from '../Workspace/JaspenClient';
 import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
@@ -588,22 +588,20 @@ export default function ExecutionPlan() {
     window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
   }, []);
 
-  const handleExportPlan = useCallback(async (format) => {
+  const handleExportPlan = useCallback(async () => {
     const tid = String(threadId || '').trim();
     if (!tid || exportBusyType) return;
     const scorecardId = String(threadWbs?.scorecard_id || '').trim() || undefined;
-    setExportBusyType(format);
+    setExportBusyType('xlsx');
     try {
-      const result = format === 'xlsx'
-        ? await Jaspen.downloadWbsXlsx(tid, { scorecardId })
-        : await Jaspen.downloadWbsCsv(tid, { scorecardId });
+      const result = await Jaspen.downloadWbsXlsx(tid, { scorecardId });
       triggerDownload(
         result?.blob,
-        result?.filename || `jaspen-execution-plan.${format === 'xlsx' ? 'xlsx' : 'csv'}`,
+        result?.filename || 'jaspen-execution-plan.xlsx',
       );
-      showToast(`Exported execution plan ${format === 'xlsx' ? 'Excel workbook' : 'CSV'}`, 'success');
+      showToast('Exported execution plan Excel workbook', 'success');
     } catch (error) {
-      showToast(error?.message || `Could not export the execution plan as ${format.toUpperCase()}.`, 'error');
+      showToast(error?.message || 'Could not export the execution plan as Excel.', 'error');
     } finally {
       setExportBusyType(null);
     }
@@ -615,22 +613,12 @@ export default function ExecutionPlan() {
       <button
         type="button"
         className="int-btn int-btn-ghost"
-        onClick={() => { void handleExportPlan('xlsx'); }}
+        onClick={() => { void handleExportPlan(); }}
         disabled={!hasExistingPlan || Boolean(exportBusyType)}
         aria-disabled={!hasExistingPlan || Boolean(exportBusyType)}
       >
         <FontAwesomeIcon icon={exportBusyType === 'xlsx' ? faSpinner : faFileExcel} spin={exportBusyType === 'xlsx'} />
-        <span>{exportBusyType === 'xlsx' ? 'Exporting…' : 'Excel'}</span>
-      </button>
-      <button
-        type="button"
-        className="int-btn int-btn-ghost"
-        onClick={() => { void handleExportPlan('csv'); }}
-        disabled={!hasExistingPlan || Boolean(exportBusyType)}
-        aria-disabled={!hasExistingPlan || Boolean(exportBusyType)}
-      >
-        <FontAwesomeIcon icon={exportBusyType === 'csv' ? faSpinner : faFileCsv} spin={exportBusyType === 'csv'} />
-        <span>{exportBusyType === 'csv' ? 'Exporting…' : 'CSV'}</span>
+        <span>{exportBusyType === 'xlsx' ? 'Downloading…' : 'Download Excel'}</span>
       </button>
       <button
         type="button"

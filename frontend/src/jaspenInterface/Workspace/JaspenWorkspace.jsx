@@ -219,6 +219,7 @@ export default function JaspenWorkspace() {
   const [chatInput, setChatInput] = useState('');
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [executionExporting, setExecutionExporting] = useState(false);
   // Element picker for "+ Add block": choose a block TYPE (text / callout / quote).
   const [addBlockMenuOpen, setAddBlockMenuOpen] = useState(false);
   // Two-step delete confirm for custom blocks (the × shouldn't nuke a section in one click).
@@ -819,24 +820,26 @@ export default function JaspenWorkspace() {
     }
   }
 
-  async function downloadExecutionExport(format, label) {
+  async function downloadExecutionExport() {
+    if (executionExporting) return;
+    setExecutionExporting(true);
     try {
       const activeScorecardId = execIdeaId || resolvedExecScorecardId || undefined;
-      const result = format === 'xlsx'
-        ? await Jaspen.downloadWbsXlsx(threadId, { scorecardId: activeScorecardId })
-        : await Jaspen.downloadWbsCsv(threadId, { scorecardId: activeScorecardId });
+      const result = await Jaspen.downloadWbsXlsx(threadId, { scorecardId: activeScorecardId });
       const blob = result?.blob;
       if (!(blob instanceof Blob)) throw new Error('The export did not return a file.');
       const objectUrl = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = objectUrl;
-      link.download = result?.filename || `jaspen-execution-plan.${format}`;
+      link.download = result?.filename || 'jaspen-execution-plan.xlsx';
       document.body.appendChild(link);
       link.click();
       link.remove();
       setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
     } catch (error) {
-      setSaveError(error?.message || `${label} export failed.`);
+      setSaveError(error?.message || 'Excel export failed.');
+    } finally {
+      setExecutionExporting(false);
     }
   }
 
@@ -1555,6 +1558,17 @@ export default function JaspenWorkspace() {
                 {buildingPlan ? 'Building…' : 'Build Execution Plan'}
               </button>
             )}
+            {isExecution ? (
+              <button
+                type="button"
+                onClick={() => { void downloadExecutionExport(); }}
+                disabled={executionExporting}
+                style={{ padding:'8px 14px', borderRadius:8, border:'none', background:'#0f172a', color:'#fff', cursor: executionExporting ? 'wait' : 'pointer', fontSize:13, fontWeight:500, display:'flex', alignItems:'center', gap:6, opacity: executionExporting ? 0.72 : 1 }}
+              >
+                <FontAwesomeIcon icon={executionExporting ? faSpinner : faDownload} spin={executionExporting} />
+                {executionExporting ? 'Downloading…' : 'Download Excel'}
+              </button>
+            ) : (
             <div style={{ position:'relative' }}>
               <button
                 type="button"
@@ -1578,10 +1592,6 @@ export default function JaspenWorkspace() {
                         { label:'Download Excel', disabled:true },
                         { label:'Download PowerPoint', disabled:true },
                       ] : []),
-                      ...(isExecution ? [
-                        { label:'Download Excel', act:() => downloadExecutionExport('xlsx','Excel') },
-                        { label:'Download CSV', act:() => downloadExecutionExport('csv','CSV') },
-                      ] : []),
                       { label: linkCopied ? 'Link copied ✓' : 'Copy link', act: copyShareLink, keepOpen:true, divider:true },
                     ].map((it, i) => (
                       <React.Fragment key={i}>
@@ -1603,7 +1613,8 @@ export default function JaspenWorkspace() {
                 </>
               )}
             </div>
-            {/* Single, always-visible Back to Jaspen link, right of Download/Share —
+            )}
+            {/* Single, always-visible Back to Jaspen link, right of the export action —
                 replaces the sidebar + collapsed variants so there's one consistent
                 control across surfaces. Preserves the thread via ?sid. */}
             <Link
