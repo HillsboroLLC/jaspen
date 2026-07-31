@@ -76,6 +76,29 @@ def _sample_wbs():
     }
 
 
+def _sample_scorecard():
+    return {
+        "analysis_id": "idea-1",
+        "project_name": "Launch Program",
+        "jaspen_score": 72,
+        "score_category": "Good",
+        "component_scores": {
+            "strategic_alignment": 82,
+            "financial_viability": 68,
+            "execution_readiness": 74,
+            "risk_profile": 63,
+        },
+        "financial_impact": {"estimated_value": "$1.2M", "payback_period": "18 months"},
+        "risks": ["Adoption may lag without an owner."],
+        "recommendations": ["Confirm ownership before launch."],
+        "updated_at": "2026-07-31T20:00:00Z",
+        "scenario_variants": [],
+        "dimensions": {},
+        "executive_summary": "The launch is strategically sound but needs a named owner.",
+        "rubric": None,
+    }
+
+
 def _load(payload):
     return load_workbook(io.BytesIO(payload), data_only=False)
 
@@ -197,3 +220,49 @@ def test_free_user_can_export_excel_and_csv_for_selected_scorecard(
     assert csv_response.status_code == 200
     assert "Confirm launch requirements" in csv_response.get_data(as_text=True)
     assert "Wrong task" not in csv_response.get_data(as_text=True)
+
+
+def test_free_user_can_download_scorecard_pdf_and_editable_powerpoint(
+    client,
+    auth_headers,
+    monkeypatch,
+    export_routes,
+):
+    monkeypatch.setattr(
+        export_routes,
+        "load_user_sessions",
+        lambda _user_id: {"thread-1": {"session_id": "thread-1", "name": "Launch Program"}},
+    )
+    monkeypatch.setattr(
+        export_routes,
+        "_scorecard_record_for_export",
+        lambda _session, _thread_id, scorecard_id=None, user_id=None: (_sample_scorecard(), None),
+    )
+
+    pdf_response = client.get(
+        "/api/v1/export/threads/thread-1/scorecard/pdf?scorecard_id=idea-1",
+        headers=auth_headers,
+    )
+    assert pdf_response.status_code == 200
+    assert pdf_response.mimetype == export_routes.PDF_MIMETYPE
+    assert pdf_response.data.startswith(b"%PDF-")
+    assert "launch-program-scorecard.pdf" in pdf_response.headers["Content-Disposition"].lower()
+
+    pptx_response = client.get(
+        "/api/v1/export/threads/thread-1/scorecard/pptx?scorecard_id=idea-1",
+        headers=auth_headers,
+    )
+    assert pptx_response.status_code == 200
+    assert pptx_response.mimetype == export_routes.PPTX_MIMETYPE
+    assert "launch-program-scorecard.pptx" in pptx_response.headers["Content-Disposition"].lower()
+
+    # Every exported scorecard element is a native PowerPoint shape/text box,
+    # not a flattened screenshot, so customers can edit the deck.
+    with zipfile.ZipFile(io.BytesIO(pptx_response.data)) as archive:
+        slide_names = sorted(name for name in archive.namelist() if name.startswith("ppt/slides/slide") and name.endswith(".xml"))
+        slide_xml = b"".join(archive.read(name) for name in slide_names)
+        media_names = [name for name in archive.namelist() if name.startswith("ppt/media/")]
+    assert len(slide_names) >= 2
+    assert b"Launch Program" in slide_xml
+    assert b"Score breakdown" in slide_xml
+    assert media_names == []

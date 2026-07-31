@@ -4,7 +4,7 @@
 //          Opens in its own browser tab via /workspace/:threadId/:scorecardId.
 //          Layout: left sidebar = Jaspen chat (scoped to this artifact);
 //          center = canvas with renderScorecardCard + inline editable text;
-//          footer = Download PDF / Share / Reset to original.
+//          footer = Download PDF/PowerPoint / Reset to original.
 //
 //          v1 / BETA scope: cosmetic edits only (title, headings, narrative,
 //          accent color). Analytical fields (scores, risks, recommendations)
@@ -14,7 +14,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faArrowLeft, faDownload, faShare, faRotateLeft, faPaperPlane, faDiagramProject, faSpinner } from '@fortawesome/free-solid-svg-icons';
+import { faArrowLeft, faDownload, faRotateLeft, faPaperPlane, faDiagramProject, faSpinner } from '@fortawesome/free-solid-svg-icons';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -215,11 +215,12 @@ export default function JaspenWorkspace() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
+  const [exportError, setExportError] = useState(null);
   const [error, setError] = useState(null);
   const [chatInput, setChatInput] = useState('');
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
-  const [linkCopied, setLinkCopied] = useState(false);
   const [executionExporting, setExecutionExporting] = useState(false);
+  const [scorecardExporting, setScorecardExporting] = useState(null);
   // Element picker for "+ Add block": choose a block TYPE (text / callout / quote).
   const [addBlockMenuOpen, setAddBlockMenuOpen] = useState(false);
   // Two-step delete confirm for custom blocks (the × shouldn't nuke a section in one click).
@@ -795,15 +796,18 @@ export default function JaspenWorkspace() {
 
   // Set or remove a single cosmetic override. Auto-save fires from the
   // useEffect above on the next tick (debounced).
-  // Download the current scorecard as Excel / Word via the backend exporter.
+  // Download the current scorecard in the two supported customer formats.
   async function downloadExport(format, ext, label) {
+    if (scorecardExporting) return;
+    setScorecardExporting(format);
+    setExportError(null);
     try {
       const url = `${API_BASE}/api/v1/export/threads/${encodeURIComponent(threadId)}/scorecard/${format}?scorecard_id=${encodeURIComponent(scorecardId)}`;
       const res = await authFetch(url);
       if (!res.ok) {
         let msg = `${label} export failed.`;
         try { const j = await res.json(); if (j?.error) msg = j.error; } catch { /* not json */ }
-        setSaveError(msg);
+        setExportError(msg);
         return;
       }
       const blob = await res.blob();
@@ -816,7 +820,9 @@ export default function JaspenWorkspace() {
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(objUrl), 1500);
     } catch {
-      setSaveError(`${label} export failed.`);
+      setExportError(`${label} export failed.`);
+    } finally {
+      setScorecardExporting(null);
     }
   }
 
@@ -840,16 +846,6 @@ export default function JaspenWorkspace() {
       setSaveError(error?.message || 'Excel export failed.');
     } finally {
       setExecutionExporting(false);
-    }
-  }
-
-  async function copyShareLink() {
-    try {
-      await navigator.clipboard.writeText(window.location.href);
-      setLinkCopied(true);
-      setTimeout(() => setLinkCopied(false), 1800);
-    } catch {
-      setSaveError('Could not copy the link.');
     }
   }
 
@@ -1480,7 +1476,10 @@ export default function JaspenWorkspace() {
             {!saving && saveError && (
               <span style={{ fontSize:11, color:'#dc2626' }} title={saveError}>Save failed</span>
             )}
-            {!saving && !saveError && Object.keys(overrides).length > 0 && (
+            {!saving && !saveError && exportError && (
+              <span style={{ fontSize:11, color:'#dc2626' }} title={exportError}>{exportError}</span>
+            )}
+            {!saving && !saveError && !exportError && Object.keys(overrides).length > 0 && (
               <span style={{ fontSize:11, color:'#94a3b8' }}>Saved</span>
             )}
           </div>
@@ -1568,15 +1567,16 @@ export default function JaspenWorkspace() {
                 <FontAwesomeIcon icon={executionExporting ? faSpinner : faDownload} spin={executionExporting} />
                 {executionExporting ? 'Downloading…' : 'Download Excel'}
               </button>
-            ) : (
+            ) : isScorecard ? (
             <div style={{ position:'relative' }}>
               <button
                 type="button"
                 onClick={() => setExportMenuOpen((o) => !o)}
-                style={{ padding:'8px 14px', borderRadius:8, border:'none', background:'#0f172a', color:'#fff', cursor:'pointer', fontSize:13, fontWeight:500, display:'flex', alignItems:'center', gap:6 }}
+                disabled={Boolean(scorecardExporting)}
+                style={{ padding:'8px 14px', borderRadius:8, border:'none', background:'#0f172a', color:'#fff', cursor: scorecardExporting ? 'wait' : 'pointer', fontSize:13, fontWeight:500, display:'flex', alignItems:'center', gap:6, opacity: scorecardExporting ? 0.72 : 1 }}
               >
-                <FontAwesomeIcon icon={faDownload} />
-                Download / Share
+                <FontAwesomeIcon icon={scorecardExporting ? faSpinner : faDownload} spin={Boolean(scorecardExporting)} />
+                {scorecardExporting ? 'Downloading…' : 'Download'}
                 <span style={{ fontSize:10, opacity:0.8 }}>▾</span>
               </button>
               {exportMenuOpen && (
@@ -1584,28 +1584,18 @@ export default function JaspenWorkspace() {
                   <div onClick={() => setExportMenuOpen(false)} style={{ position:'fixed', inset:0, zIndex:40 }} />
                   <div style={{ position:'absolute', top:'calc(100% + 6px)', right:0, zIndex:41, background:'#fff', border:'1px solid #e6eaf2', borderRadius:10, boxShadow:'0 8px 24px rgba(22,31,59,0.12)', minWidth:210, padding:6, display:'flex', flexDirection:'column' }}>
                     {[
-                      ...(isScorecard ? [
-                        { label:'Download PDF', act:() => downloadExport('pdf','pdf','PDF') },
-                        { label:'Download Word', act:() => downloadExport('docx','docx','Word') },
-                        // MVP: Excel + PowerPoint are visible but disabled until polished
-                        // (PPTX needs condensing to 1–2 slides; Excel grid pending).
-                        { label:'Download Excel', disabled:true },
-                        { label:'Download PowerPoint', disabled:true },
-                      ] : []),
-                      { label: linkCopied ? 'Link copied ✓' : 'Copy link', act: copyShareLink, keepOpen:true, divider:true },
+                      { label:'Download PDF', act:() => downloadExport('pdf','pdf','PDF') },
+                      { label:'Download PowerPoint', act:() => downloadExport('pptx','pptx','PowerPoint') },
                     ].map((it, i) => (
                       <React.Fragment key={i}>
-                        {it.divider && (isScorecard || isExecution) && <div style={{ height:1, background:'#eef1f6', margin:'4px 2px' }} />}
                         <button
                           type="button"
-                          disabled={Boolean(it.disabled)}
-                          onClick={() => { if (it.disabled) return; it.act?.(); if (!it.keepOpen) setExportMenuOpen(false); }}
-                          style={{ textAlign:'left', padding:'8px 10px', border:'none', background:'transparent', color: it.disabled ? '#aab2c0' : (it.label.includes('copied') ? '#0d7a3e' : '#0f172a'), cursor: it.disabled ? 'default' : 'pointer', fontSize:13, borderRadius:6, display:'flex', justifyContent:'space-between', alignItems:'center', gap:10 }}
-                          onMouseEnter={(e) => { if (!it.disabled) e.currentTarget.style.background = '#f5f7fa'; }}
+                          onClick={() => { it.act(); setExportMenuOpen(false); }}
+                          style={{ textAlign:'left', padding:'8px 10px', border:'none', background:'transparent', color:'#0f172a', cursor:'pointer', fontSize:13, borderRadius:6, display:'flex', justifyContent:'space-between', alignItems:'center', gap:10 }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = '#f5f7fa'; }}
                           onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
                         >
                           <span>{it.label}</span>
-                          {it.disabled && <span style={{ fontSize:10, color:'#aab2c0', fontWeight:600 }}>Soon</span>}
                         </button>
                       </React.Fragment>
                     ))}
@@ -1613,7 +1603,7 @@ export default function JaspenWorkspace() {
                 </>
               )}
             </div>
-            )}
+            ) : null}
             {/* Single, always-visible Back to Jaspen link, right of the export action —
                 replaces the sidebar + collapsed variants so there's one consistent
                 control across surfaces. Preserves the thread via ?sid. */}

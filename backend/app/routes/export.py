@@ -67,7 +67,10 @@ def _resolve_export_context(user, session):
 
 
 def _require_export_plan(plan_key, export_type):
-    if export_type in {"csv", "wbs_xlsx"}:
+    # Customer-facing artifact downloads are available on every signed-in plan.
+    # Keep the legacy scorecard Word/Excel endpoints gated for backwards
+    # compatibility, but the supported UI only offers PDF and PowerPoint.
+    if export_type in {"scorecard_pdf", "scorecard_pptx", "csv", "wbs_xlsx"}:
         return None
 
     required_plan = "team" if export_type == "pptx" else "essential"
@@ -77,6 +80,8 @@ def _require_export_plan(plan_key, export_type):
     label = {
         "pdf": "PDF export",
         "pptx": "PowerPoint export",
+        "scorecard_pdf": "Scorecard PDF export",
+        "scorecard_pptx": "Scorecard PowerPoint export",
         "csv": "WBS CSV export",
         "wbs_xlsx": "Execution plan Excel export",
         "xlsx": "Excel export",
@@ -303,7 +308,7 @@ def _list_text_items(items, *, fallback):
     if not isinstance(items, list) or not items:
         return [fallback]
     output = []
-    for idx, item in enumerate(items, start=1):
+    for item in items:
         if isinstance(item, dict):
             text = (
                 item.get("title")
@@ -315,7 +320,7 @@ def _list_text_items(items, *, fallback):
             text = item
         text = str(text or "").strip()
         if text:
-            output.append(f"{idx}. {text}")
+            output.append(text)
     return output or [fallback]
 
 
@@ -694,132 +699,191 @@ def _pptx_bytes(scorecard, *, org=None):
     try:
         from pptx import Presentation
         from pptx.dml.color import RGBColor
-        from pptx.enum.text import PP_ALIGN
+        from pptx.enum.shapes import MSO_SHAPE
+        from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
         from pptx.util import Inches, Pt
     except Exception as exc:
         raise RuntimeError("python-pptx is required for PowerPoint export.") from exc
 
     prs = Presentation()
+    prs.slide_width = Inches(13.333)
+    prs.slide_height = Inches(7.5)
+
     navy = RGBColor(0x16, 0x1F, 0x3B)
-    magenta = RGBColor(0xA0, 0x03, 0x6C)
+    accent_hex = _accent_hex(scorecard)
+    magenta = RGBColor.from_string(accent_hex.lstrip("#"))
     gray = RGBColor(0x60, 0x67, 0x74)
+    pale = RGBColor(0xEF, 0xF9, 0xFC)
+    border = RGBColor(0xD7, 0xDE, 0xE8)
 
-    def add_title(slide, title, subtitle=None):
-        title_box = slide.shapes.add_textbox(Inches(0.6), Inches(0.4), Inches(8.8), Inches(0.8))
-        title_frame = title_box.text_frame
-        title_frame.clear()
-        title_para = title_frame.paragraphs[0]
-        title_para.text = title
-        title_para.font.size = Pt(28)
-        title_para.font.bold = True
-        title_para.font.color.rgb = navy
-
-        if subtitle:
-            subtitle_box = slide.shapes.add_textbox(Inches(0.6), Inches(1.1), Inches(8.8), Inches(0.5))
-            subtitle_frame = subtitle_box.text_frame
-            subtitle_frame.clear()
-            subtitle_para = subtitle_frame.paragraphs[0]
-            subtitle_para.text = subtitle
-            subtitle_para.font.size = Pt(12)
-            subtitle_para.font.color.rgb = gray
-
-    def add_bullets(slide, items, *, left=0.9, top=1.7, width=8.2, height=4.8):
-        box = slide.shapes.add_textbox(Inches(left), Inches(top), Inches(width), Inches(height))
+    def add_text(
+        slide,
+        text,
+        left,
+        top,
+        width,
+        height,
+        *,
+        size=18,
+        color=navy,
+        bold=False,
+        align=PP_ALIGN.LEFT,
+        valign=MSO_ANCHOR.TOP,
+    ):
+        box = slide.shapes.add_textbox(
+            Inches(left), Inches(top), Inches(width), Inches(height)
+        )
         frame = box.text_frame
         frame.clear()
-        for idx, item in enumerate(items):
+        frame.word_wrap = True
+        frame.margin_left = Inches(0.02)
+        frame.margin_right = Inches(0.02)
+        frame.margin_top = Inches(0.01)
+        frame.margin_bottom = Inches(0.01)
+        frame.vertical_anchor = valign
+        para = frame.paragraphs[0]
+        para.text = _safe_text(text, 1600)
+        para.alignment = align
+        para.font.name = "Aptos"
+        para.font.size = Pt(size)
+        para.font.bold = bold
+        para.font.color.rgb = color
+        return box
+
+    def add_rule(slide, left, top, width, *, color=border, height=0.02):
+        shape = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE,
+            Inches(left), Inches(top), Inches(width), Inches(height),
+        )
+        shape.fill.solid()
+        shape.fill.fore_color.rgb = color
+        shape.line.fill.background()
+        return shape
+
+    def add_header(slide, title, subtitle=None):
+        add_rule(slide, 0.65, 0.38, 0.78, color=magenta, height=0.06)
+        add_text(slide, title, 0.65, 0.55, 12.0, 0.62, size=27, bold=True)
+        if subtitle:
+            add_text(slide, subtitle, 0.65, 1.17, 12.0, 0.35, size=11, color=gray)
+
+    def add_list(slide, items, left, top, width, height, *, size=15, fallback):
+        cleaned = _list_text_items(items, fallback=fallback)[:6]
+        box = slide.shapes.add_textbox(
+            Inches(left), Inches(top), Inches(width), Inches(height)
+        )
+        frame = box.text_frame
+        frame.clear()
+        frame.word_wrap = True
+        frame.margin_left = Inches(0.02)
+        frame.margin_right = Inches(0.02)
+        frame.margin_top = Inches(0.02)
+        frame.margin_bottom = Inches(0.02)
+        for idx, item in enumerate(cleaned):
             para = frame.paragraphs[0] if idx == 0 else frame.add_paragraph()
-            para.text = item
-            para.level = 0
-            para.font.size = Pt(20 if idx == 0 else 18)
+            para.text = f"• {_safe_text(item, 280)}"
+            para.font.name = "Aptos"
+            para.font.size = Pt(size)
             para.font.color.rgb = navy
+            para.space_after = Pt(8)
+        return box
+
+    def component_display(value):
+        numeric = _safe_float(value)
+        if numeric is None:
+            return "N/A", 0
+        normalized = numeric / 10 if numeric > 10 else numeric
+        return f"{normalized:.1f}/10", max(0, min(100, normalized * 10))
 
     project_name = scorecard.get("project_name") or "Untitled Idea"
     generated_at = scorecard.get("updated_at") or _iso_now()
-    component_scores = scorecard.get("component_scores") or {}
-    variants = scorecard.get("scenario_variants") if isinstance(scorecard.get("scenario_variants"), list) else []
-    score_pairs = list(component_scores.items())[:4]
-    while len(score_pairs) < 4:
-        score_pairs.append((f"Metric {len(score_pairs) + 1}", "N/A"))
+    workspace_name = org.name if org else "Personal Workspace"
+    category = scorecard.get("score_category") or "Not categorized"
+    component_scores = scorecard.get("component_scores") if isinstance(scorecard.get("component_scores"), dict) else {}
+    dimensions = scorecard.get("dimensions") if isinstance(scorecard.get("dimensions"), dict) else {}
+    criteria = ((scorecard.get("rubric") or {}).get("criteria") or []) if isinstance(scorecard.get("rubric"), dict) else []
+    criterion_by_key = {
+        str(item.get("key")): item for item in criteria
+        if isinstance(item, dict) and item.get("key")
+    }
+    component_keys = [str(item.get("key")) for item in criteria if isinstance(item, dict) and item.get("key")]
+    component_keys.extend(str(key) for key in component_scores if str(key) not in component_keys)
+    component_keys.extend(str(key) for key in dimensions if str(key) not in component_keys)
+    component_rows = []
+    for key in component_keys:
+        dim = dimensions.get(key) if isinstance(dimensions.get(key), dict) else {}
+        criterion = criterion_by_key.get(key) or {}
+        value = dim.get("score") if dim.get("score") is not None else component_scores.get(key)
+        label = dim.get("label") or criterion.get("label") or _format_label(key)
+        rationale = dim.get("rationale") or ""
+        component_rows.append((label, value, rationale))
+    if not component_rows:
+        component_rows = [("No component scores recorded", None, "")]
 
+    # Slide 1: the decision at a glance.
     slide = prs.slides.add_slide(prs.slide_layouts[6])
-    add_title(
-        slide,
-        project_name,
-        f"{(org.name if org else 'Personal Workspace')} • Generated {generated_at}",
+    add_header(slide, project_name, f"{workspace_name}  •  Generated {generated_at}")
+    score_panel = slide.shapes.add_shape(
+        MSO_SHAPE.ROUNDED_RECTANGLE,
+        Inches(0.65), Inches(1.75), Inches(3.0), Inches(4.85),
     )
-    score_box = slide.shapes.add_textbox(Inches(0.8), Inches(2.0), Inches(8.0), Inches(2.2))
-    score_frame = score_box.text_frame
-    score_frame.clear()
-    para = score_frame.paragraphs[0]
-    para.text = "Jaspen Score"
-    para.font.size = Pt(20)
-    para.font.color.rgb = gray
-    para.alignment = PP_ALIGN.CENTER
-    value_para = score_frame.add_paragraph()
-    value_para.text = _display_value(scorecard.get("jaspen_score"))
-    value_para.font.size = Pt(40)
-    value_para.font.bold = True
-    value_para.font.color.rgb = magenta
-    value_para.alignment = PP_ALIGN.CENTER
+    score_panel.fill.solid()
+    score_panel.fill.fore_color.rgb = pale
+    score_panel.line.color.rgb = border
+    add_text(slide, "JASPEN SCORE", 0.95, 2.1, 2.4, 0.35, size=12, color=gray, bold=True, align=PP_ALIGN.CENTER)
+    add_text(slide, _display_value(scorecard.get("jaspen_score")), 0.9, 2.55, 2.5, 1.05, size=48, color=magenta, bold=True, align=PP_ALIGN.CENTER)
+    add_text(slide, str(category).upper(), 0.95, 3.65, 2.4, 0.35, size=13, color=magenta, bold=True, align=PP_ALIGN.CENTER)
+    add_rule(slide, 1.15, 4.25, 2.0)
+    add_text(slide, "Editable scorecard", 0.95, 4.6, 2.4, 0.32, size=12, color=gray, align=PP_ALIGN.CENTER)
+    add_text(slide, "Every label, score, bar, and narrative can be updated directly in PowerPoint.", 0.95, 5.05, 2.4, 0.95, size=13, color=navy, align=PP_ALIGN.CENTER)
 
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
-    add_title(slide, "Component Scores", "Four-quadrant score overview")
-    positions = [
-        (0.8, 1.8),
-        (5.0, 1.8),
-        (0.8, 4.0),
-        (5.0, 4.0),
-    ]
-    for idx, (key, value) in enumerate(score_pairs[:4]):
-        left, top = positions[idx]
-        shape = slide.shapes.add_shape(1, Inches(left), Inches(top), Inches(3.4), Inches(1.6))
-        fill = shape.fill
-        fill.solid()
-        fill.fore_color.rgb = RGBColor(0xEF, 0xF9, 0xFC)
-        shape.line.color.rgb = navy
-        frame = shape.text_frame
-        frame.clear()
-        p1 = frame.paragraphs[0]
-        p1.text = _format_label(key)
-        p1.font.size = Pt(16)
-        p1.font.bold = True
-        p1.font.color.rgb = navy
-        p2 = frame.add_paragraph()
-        p2.text = _display_value(value)
-        p2.font.size = Pt(24)
-        p2.font.bold = True
-        p2.font.color.rgb = magenta
+    add_text(slide, "Executive summary", 4.25, 1.85, 8.25, 0.45, size=18, bold=True)
+    add_rule(slide, 4.25, 2.38, 8.25)
+    executive_summary = scorecard.get("executive_summary") or "No executive summary recorded."
+    add_text(slide, executive_summary, 4.25, 2.65, 8.25, 2.0, size=18)
+    add_text(slide, "Decision signal", 4.25, 5.05, 8.25, 0.38, size=14, color=gray, bold=True)
+    decision_signal = (scorecard.get("recommendations") or [None])[0]
+    if isinstance(decision_signal, dict):
+        decision_signal = decision_signal.get("text") or decision_signal.get("action")
+    add_text(slide, decision_signal or "Review the score, evidence, and risks before committing resources.", 4.25, 5.48, 8.25, 1.0, size=18, color=magenta, bold=True)
 
-    if len(variants) > 1:
+    # Slides 2+: criterion detail in readable groups of six.
+    for page_index in range(0, len(component_rows), 6):
+        page_rows = component_rows[page_index:page_index + 6]
         slide = prs.slides.add_slide(prs.slide_layouts[6])
-        add_title(slide, "Project Comparison", "Peer scorecard outcomes")
-        rows = ["Project | Score | Category"]
-        for item in variants[:8]:
-            if not isinstance(item, dict):
-                continue
-            label = str(item.get("label") or "Project").strip() or "Project"
-            if item.get("is_selected"):
-                label = f"{label} (Selected)"
-            score_text = _display_value(item.get("jaspen_score"))
-            rows.append(f"{label} | {score_text} | {_display_value(item.get('score_category'))}")
-        add_bullets(slide, rows, left=0.7, top=1.7, width=8.8, height=4.9)
+        page_number = page_index // 6 + 1
+        page_count = (len(component_rows) + 5) // 6
+        subtitle = "Scores, rubric labels, and supporting rationale"
+        if page_count > 1:
+            subtitle = f"{subtitle}  •  {page_number} of {page_count}"
+        add_header(slide, "Score breakdown", subtitle)
+        for row_index, (label, value, rationale) in enumerate(page_rows):
+            y = 1.72 + row_index * 0.88
+            score_text, percent = component_display(value)
+            add_text(slide, label, 0.7, y, 3.55, 0.48, size=14, bold=True)
+            add_text(slide, score_text, 11.75, y, 0.85, 0.35, size=14, color=magenta, bold=True, align=PP_ALIGN.RIGHT)
+            add_rule(slide, 4.35, y + 0.08, 7.15, color=border, height=0.14)
+            if percent > 0:
+                add_rule(slide, 4.35, y + 0.08, 7.15 * percent / 100, color=magenta, height=0.14)
+            if rationale:
+                add_text(slide, rationale, 0.7, y + 0.52, 11.9, 0.24, size=10.5, color=gray)
+            add_rule(slide, 0.7, y + 0.78, 11.9, height=0.01)
 
+    # Final slide: evidence customers need to act on the scorecard.
     slide = prs.slides.add_slide(prs.slide_layouts[6])
-    add_title(slide, "Financial Impact")
-    fin_items = [
+    add_header(slide, "Decision details", "Risks, financial impact, and recommended next steps")
+    add_text(slide, "Top risks", 0.7, 1.75, 5.65, 0.38, size=18, bold=True)
+    add_rule(slide, 0.7, 2.2, 5.65)
+    add_list(slide, scorecard.get("risks"), 0.7, 2.45, 5.65, 2.25, fallback="No key risks recorded.")
+    add_text(slide, "Financial impact", 0.7, 5.05, 5.65, 0.38, size=18, bold=True)
+    add_rule(slide, 0.7, 5.5, 5.65)
+    financial_items = [
         f"{_format_label(key)}: {_display_value(value)}"
         for key, value in (scorecard.get("financial_impact") or {}).items()
-    ] or ["No financial impact data recorded."]
-    add_bullets(slide, fin_items)
-
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
-    add_title(slide, "Key Risks")
-    add_bullets(slide, _list_text_items(scorecard.get("risks"), fallback="No key risks recorded."))
-
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
-    add_title(slide, "Recommendations + Next Steps")
-    add_bullets(slide, _list_text_items(scorecard.get("recommendations"), fallback="No recommendations recorded."))
+    ]
+    add_list(slide, financial_items, 0.7, 5.72, 5.65, 1.05, size=13, fallback="No financial impact data recorded.")
+    add_text(slide, "Recommendations + next steps", 6.95, 1.75, 5.65, 0.38, size=18, bold=True)
+    add_rule(slide, 6.95, 2.2, 5.65, color=magenta)
+    add_list(slide, scorecard.get("recommendations"), 6.95, 2.45, 5.65, 4.3, fallback="No recommendations recorded.")
 
     buffer = io.BytesIO()
     prs.save(buffer)
@@ -1441,7 +1505,7 @@ def export_scorecard_pdf(thread_id):
         return jsonify({"error": "Thread not found"}), 404
 
     plan_key, org, _membership = _resolve_export_context(user, session)
-    access_error = _require_export_plan(plan_key, "pdf")
+    access_error = _require_export_plan(plan_key, "scorecard_pdf")
     if access_error:
         return access_error
 
@@ -1472,7 +1536,7 @@ def export_scorecard_pptx(thread_id):
         return jsonify({"error": "Thread not found"}), 404
 
     plan_key, org, _membership = _resolve_export_context(user, session)
-    access_error = _require_export_plan(plan_key, "pptx")
+    access_error = _require_export_plan(plan_key, "scorecard_pptx")
     if access_error:
         return access_error
 

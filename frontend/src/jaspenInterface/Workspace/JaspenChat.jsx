@@ -2916,12 +2916,36 @@ const renderScorecardCard = (result, opts = {}) => {
       {/* Footer: action buttons */}
       <div className="jas-scorecard-footer">
         <div className="jas-scorecard-footer-actions">
-          <button className="jas-scorecard-action-ghost" title="Download scorecard">
-            ↓ Download
-          </button>
-          <button className="jas-scorecard-action-ghost" title="Share scorecard">
-            Share
-          </button>
+          {opts.onExportScorecardPdf && (
+            <button
+              type="button"
+              className="jas-scorecard-action-ghost"
+              title="Download scorecard as PDF"
+              disabled={opts.exportBusyType === 'pdf' || opts.exportBusyType === 'pptx'}
+              onClick={() => opts.onExportScorecardPdf({
+                threadBundleId: opts.threadId,
+                scorecardId: result?.id || result?.analysis_id,
+                projectName: title,
+              })}
+            >
+              {opts.exportBusyType === 'pdf' ? 'Downloading PDF…' : '↓ Download PDF'}
+            </button>
+          )}
+          {opts.onExportScorecardPptx && (
+            <button
+              type="button"
+              className="jas-scorecard-action-ghost"
+              title="Download an editable PowerPoint scorecard"
+              disabled={opts.exportBusyType === 'pdf' || opts.exportBusyType === 'pptx'}
+              onClick={() => opts.onExportScorecardPptx({
+                threadBundleId: opts.threadId,
+                scorecardId: result?.id || result?.analysis_id,
+                projectName: title,
+              })}
+            >
+              {opts.exportBusyType === 'pptx' ? 'Downloading PowerPoint…' : 'Download PowerPoint'}
+            </button>
+          )}
           {opts.onOpenWorkspaceScorecard && (
             <button
               className="jas-scorecard-action-ghost"
@@ -4006,8 +4030,6 @@ useEffect(() => {
   // per-plan show/lock vars for those items were removed.
   const showRealConnectors = true;
   const showLockedConnectors = false;
-  const canExportScorecardPdf = (isPlatformAdmin && !customerPreviewActive) || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.essential;
-  const canExportScorecardPptx = (isPlatformAdmin && !customerPreviewActive) || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.team;
   const canExportWbsCsv = (isPlatformAdmin && !customerPreviewActive) || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.team;
   const canExportConversationPdf = (isPlatformAdmin && !customerPreviewActive) || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.essential;
   const canExportConversationMarkdown = true;
@@ -12086,8 +12108,8 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       {renderPostAdoptWbsPrompt()}
       {renderPlanExistsPrompt()}
 
-      {/* Scorecard lightbox: dark backdrop, scorecard at larger size, with
-          per-artifact actions (Download is wired to print-to-PDF). */}
+      {/* Scorecard lightbox: dark backdrop with the same real PDF/PPTX actions
+          as the inline scorecard. */}
       {lightboxScorecard && (
         <div
           className="jas-lightbox-backdrop"
@@ -12135,6 +12157,9 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                   void handleGenerateAiWbsFromScorecard({ threadBundleId: sessionId || currentSessionId, scorecardId: cid });
                 },
                 buildingExecutionPlanFor,
+                exportBusyType,
+                onExportScorecardPdf: handleExportScorecardPdf,
+                onExportScorecardPptx: handleExportScorecardPptx,
               })}
             </div>
             <div
@@ -12144,19 +12169,6 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                 background: '#fafbfc',
               }}
             >
-              <button
-                type="button"
-                className="jas-mini-btn"
-                onClick={() => window.print()}
-                style={{
-                  padding: '8px 14px', borderRadius: 8,
-                  border: '1px solid #d6dce6', background: '#fff', cursor: 'pointer',
-                  fontSize: 13, color: '#0f172a',
-                }}
-              >
-                <FontAwesomeIcon icon={faDownload} style={{ marginRight: 6 }} />
-                Download as PDF
-              </button>
               <button
                 type="button"
                 className="jas-mini-btn"
@@ -12283,6 +12295,9 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       buildingExecutionPlanFor,
       onOpenWorkspaceScorecard: (scorecard) => openWorkspaceScorecard(scorecard),
       onOpenWorkspaceRoute: (threadIdValue, artifactIdValue) => openWorkspaceRoute(threadIdValue, artifactIdValue),
+      exportBusyType,
+      onExportScorecardPdf: handleExportScorecardPdf,
+      onExportScorecardPptx: handleExportScorecardPptx,
       onSendText: (txt) => void onSubmit({ text: txt, force: true }),
       lastMessage: Array.isArray(messages) && messages.length ? messages[messages.length - 1] : null,
     })}
@@ -13932,10 +13947,13 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                     messages,
                     onBuildExecutionPlan: (cid) => void handleGenerateAiWbsFromScorecard({ threadBundleId: sessionId || currentSessionId, scorecardId: cid }),
                     onRegenerateExecutionPlan: (cid) => void handleGenerateAiWbsFromScorecard({ threadBundleId: sessionId || currentSessionId, scorecardId: cid, force: true }),
-                    buildingExecutionPlanFor,
-                    onOpenWorkspaceScorecard: (scorecard) => openWorkspaceScorecard(scorecard),
-                    onOpenWorkspaceRoute: (threadIdValue, artifactIdValue) => openWorkspaceRoute(threadIdValue, artifactIdValue),
-                    onSendText: (txt) => void onSubmit({ text: txt, force: true }),
+	                    buildingExecutionPlanFor,
+	                    onOpenWorkspaceScorecard: (scorecard) => openWorkspaceScorecard(scorecard),
+	                    onOpenWorkspaceRoute: (threadIdValue, artifactIdValue) => openWorkspaceRoute(threadIdValue, artifactIdValue),
+	                    exportBusyType,
+	                    onExportScorecardPdf: handleExportScorecardPdf,
+	                    onExportScorecardPptx: handleExportScorecardPptx,
+	                    onSendText: (txt) => void onSubmit({ text: txt, force: true }),
                     lastMessage: Array.isArray(displayMessages) && displayMessages.length ? displayMessages[displayMessages.length - 1] : null,
                   })}</div>
 	                  {renderMessageAttachments(m)}
