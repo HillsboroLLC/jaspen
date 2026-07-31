@@ -25,7 +25,6 @@ from app import db, limiter, mail
 from app.admin_audit import append_user_audit_event
 from app.models import BatchIdeaUpload, UsageEvent, User
 from app.billing_config import (
-    add_credits,
     bootstrap_legacy_credits,
     consume_credits,
     credits_for_completion,
@@ -38,6 +37,8 @@ from app.billing_config import (
     normalize_model_type,
     normalize_plan_key,
     plan_thinking_budget_usd,
+    provider_cost_usd,
+    release_consumed_credits,
     thinking_power_debit_pct,
     tokens_to_credits,
     to_public_plan,
@@ -53,6 +54,13 @@ from app.tool_registry import (
 )
 from app.orgs import normalize_org_role, resolve_active_org_for_user
 from app.scenarios_store import save_scenarios_data
+from app.scorecards import (
+    archive_thread_scorecards,
+    collect_peer_scorecards,
+    delete_thread_scorecards,
+    scorecard_limit_for,
+    upsert_scorecard,
+)
 from app.connector_store import get_connector_settings, get_thread_sync_profile, update_thread_sync_profile
 from app.jira_sync import sync_wbs_to_jira
 from app.smartsheet_sync import sync_wbs_to_smartsheet
@@ -126,6 +134,10 @@ def _plan_hourly_limit():
     try:
         user_id = get_jwt_identity()
         user = User.query.get(user_id) if user_id else None
+        if user:
+            from app.founder_entitlements import founder_limits_active, FOUNDER_HOURLY_REQUEST_LIMIT
+            if founder_limits_active(user):
+                return f'{FOUNDER_HOURLY_REQUEST_LIMIT} per hour'
         plan = to_public_plan(user.subscription_plan) if user else 'free'
         return _PLAN_HOURLY_LIMITS.get(plan, _PLAN_HOURLY_LIMITS['free'])
     except Exception:
@@ -136,6 +148,10 @@ def _plan_daily_limit():
     try:
         user_id = get_jwt_identity()
         user = User.query.get(user_id) if user_id else None
+        if user:
+            from app.founder_entitlements import founder_limits_active, FOUNDER_DAILY_REQUEST_LIMIT
+            if founder_limits_active(user):
+                return f'{FOUNDER_DAILY_REQUEST_LIMIT} per day'
         plan = to_public_plan(user.subscription_plan) if user else 'free'
         return _PLAN_DAILY_LIMITS.get(plan, _PLAN_DAILY_LIMITS['free'])
     except Exception:
@@ -3935,8 +3951,7 @@ def _release_reserved_credits(user, reserved_credits):
         return user.credits_remaining
     if user.credits_remaining is None:
         return None
-    add_credits(user, reserved)
-    return user.credits_remaining
+    return release_consumed_credits(user, reserved)
 
 
 def _persist_credit_deduction(user_id, remaining):
@@ -3951,16 +3966,11 @@ def _persist_credit_deduction(user_id, remaining):
         fresh_user = User.query.get(user_id)
         if fresh_user is None:
             return
+        # consume_credits/_settle_reserved_credits already update the resettable
+        # monthly meter and persistent ledger independently. `remaining` is the
+        # combined display balance; copying it into meter.remaining would make
+        # persistent Founder credits expire on the next monthly reset.
         fresh_user.credits_remaining = int(remaining)
-        prefs = fresh_user.ui_preferences if isinstance(fresh_user.ui_preferences, dict) else {}
-        meter = prefs.get("thinking_power") if isinstance(prefs.get("thinking_power"), dict) else {}
-        meter["remaining"] = int(remaining)
-        cycle_limit = int(meter.get("cycle_limit") or 0)
-        meter["tokens_used_this_month"] = max(0, cycle_limit - int(remaining))
-        prefs["thinking_power"] = meter
-        fresh_user.ui_preferences = copy.deepcopy(prefs)
-        from sqlalchemy.orm.attributes import flag_modified as _flag_modified
-        _flag_modified(fresh_user, "ui_preferences")
         db.session.commit()
     except Exception:
         current_app.logger.exception(
@@ -3988,7 +3998,7 @@ def _settle_reserved_credits(user, *, reserved_credits, actual_credits):
         return {"ok": True, "charged": actual, "remaining": remaining, "payload": None}
 
     if actual < reserved:
-        add_credits(user, reserved - actual)
+        release_consumed_credits(user, reserved - actual)
 
     return {"ok": True, "charged": actual, "remaining": user.credits_remaining, "payload": None}
 
@@ -4960,6 +4970,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         _load_scenarios,
         _materialize_ai_wbs,
         _normalize_project_wbs,
+        _record_claude_operation,
         _resolve_user_model_selection,
         _resolve_thread_baseline,
         _resolve_thread_wbs,
@@ -5214,17 +5225,92 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         # (deterministic weighted sum of their criteria) instead of the built-in
         # objective dimensions. Absent a rubric, this is None → default behavior.
         rubric = session.get("scoring_rubric") if isinstance(session, dict) else None
+        rescore_id = str(tool_input.get("rescore_scorecard_id") or "").strip() or None
+        if not rescore_id:
+            legacy_thread_data = (_load_scenarios(user_id) or {}).get(thread_id) or {}
+            current_peers = collect_peer_scorecards(
+                user_id,
+                thread_id,
+                legacy_session=session,
+                legacy_thread_data=legacy_thread_data,
+            )
+            view_limit = scorecard_limit_for(user, plan_key)
+            if len(current_peers) >= view_limit:
+                return _tool_error(
+                    (
+                        f"This portfolio has reached its supported size of {view_limit} projects. "
+                        "No project was generated or discarded. Start another portfolio to continue."
+                    ),
+                    code="portfolio_view_limit_reached",
+                )
         client = get_llm_client()
-        scorecard_payload = _generate_jaspen_scorecard(
-            client,
-            idea_description,
-            llm_model=model_selection["llm_model"],
-            model_selection=model_selection,
-            strategy_objective=strategy_objective,
-            rubric=rubric,
+        reservation = _reserve_preflight_credits(
+            user,
+            model_selection["model_type"],
+            token_hint=8000,
+        )
+        if not reservation.get("ok"):
+            return _tool_error(
+                str((reservation.get("payload") or {}).get("error") or "Thinking Power exhausted."),
+                code="thinking_power_exhausted",
+            )
+        reserved_credits = int(reservation.get("reserved") or 0)
+        db.session.commit()
+        try:
+            scorecard_payload, provider_usage = _generate_jaspen_scorecard(
+                client,
+                idea_description,
+                llm_model=model_selection["llm_model"],
+                model_selection=model_selection,
+                strategy_objective=strategy_objective,
+                rubric=rubric,
+                return_usage=True,
+            )
+        except Exception as generation_error:
+            _release_reserved_credits(user, reserved_credits)
+            _record_claude_operation(
+                user,
+                thread_id=thread_id,
+                endpoint="generate_scorecard",
+                operation_type="score_next",
+                reserved_credits=reserved_credits,
+                settled_credits=0,
+                success=False,
+                error_code=type(generation_error).__name__,
+            )
+            db.session.commit()
+            raise
+
+        provider_usage = dict(provider_usage or {})
+        provider_usage.setdefault("provider", "anthropic")
+        provider_usage.setdefault("model", model_selection.get("llm_model"))
+        provider_usage.setdefault("model_type", model_selection.get("model_type"))
+        actual_credits = _charge_for_usage(provider_usage, model_selection["model_type"], user)
+        settlement = _settle_reserved_credits(
+            user,
+            reserved_credits=reserved_credits,
+            actual_credits=actual_credits,
         )
 
         analysis_id = str(uuid.uuid4())
+        _record_claude_operation(
+            user,
+            thread_id=thread_id,
+            endpoint="generate_scorecard",
+            operation_type="score_next",
+            usage=provider_usage,
+            reserved_credits=reserved_credits,
+            settled_credits=int(settlement.get("charged") or 0),
+            success=bool(settlement.get("ok")),
+            error_code=None if settlement.get("ok") else "thinking_power_exhausted",
+            scorecard_id=analysis_id,
+        )
+        db.session.commit()
+        if not settlement.get("ok"):
+            return _tool_error(
+                str((settlement.get("payload") or {}).get("error") or "Thinking Power exhausted."),
+                code="thinking_power_exhausted",
+            )
         generated_at = _iso_now()
         scorecard = {
             **(scorecard_payload if isinstance(scorecard_payload, dict) else {}),
@@ -5254,7 +5340,6 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         # new inputs. (Only the AI changes scores this way — never the user.)
         # Only honor an explicit rescore request — don't silently overwrite the
         # open idea just because one is on screen.
-        rescore_id = str(tool_input.get("rescore_scorecard_id") or "").strip() or None
         if rescore_id:
             from .strategy import apply_scorecard_edit_in_place
 
@@ -5289,6 +5374,15 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
 
             updated = apply_scorecard_edit_in_place(user_id, thread_id, rescore_id, _do_rescore)
             if isinstance(updated, dict):
+                upsert_scorecard(
+                    user_id=user_id,
+                    thread_id=thread_id,
+                    payload=updated,
+                    organization_id=session.get("organization_id"),
+                    session_id=session.get("session_id") or thread_id,
+                    source="score_next_rescore",
+                )
+                db.session.commit()
                 keep_id = str(updated.get("id") or updated.get("analysis_id") or rescore_id)
                 keep_name = str(updated.get("name") or updated.get("project_name") or requested_name)
                 new_score = int(round(float(updated.get("jaspen_score") or 0)))
@@ -5301,6 +5395,24 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     "rescored": True,
                 })
             # Fall through to new-idea creation if the id no longer exists.
+
+        try:
+            upsert_scorecard(
+                user_id=user_id,
+                thread_id=thread_id,
+                payload=scorecard,
+                organization_id=session.get("organization_id"),
+                session_id=session.get("session_id") or thread_id,
+                source="score_next",
+            )
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            current_app.logger.exception("Failed to persist peer scorecard %s", analysis_id)
+            return _tool_error(
+                "The scorecard was generated but could not be retained. It has not been reported as scored.",
+                code="scorecard_persistence_failed",
+            )
 
         result_blob = session.get("result") if isinstance(session.get("result"), dict) else {}
         baseline = result_blob.get("_baseline_scorecard") if isinstance(result_blob.get("_baseline_scorecard"), dict) else result_blob if isinstance(result_blob, dict) and result_blob.get("jaspen_score") is not None else None
@@ -7667,13 +7779,19 @@ def _record_usage(session, usage, credits_charged):
             db.session.add(UsageEvent(
                 user_id=user_id,
                 thread_id=thread_id,
+                endpoint='ai.conversation',
+                operation_type='chat_completion',
                 model_type=model_type,
                 provider=provider,
                 model=(str(model).strip() or None) if model is not None else None,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 total_tokens=total_tokens,
+                raw_provider_cost_usd=provider_cost_usd(model, input_tokens, output_tokens) if model else 0,
                 credits_charged=int(credits_charged or 0),
+                reserved_credits=int(credits_charged or 0),
+                settled_credits=int(credits_charged or 0),
+                success=True,
                 is_failover=bool(failover),
             ))
     except Exception:
@@ -8595,7 +8713,7 @@ def _rollback_promoted_session(user, thread_id, credits_to_refund=0):
     try:
         refund = int(credits_to_refund or 0)
         if refund > 0:
-            add_credits(user, refund)
+            release_consumed_credits(user, refund)
     except Exception:
         current_app.logger.exception("Rollback failed while refunding credits")
 
@@ -10666,6 +10784,9 @@ def delete_thread(thread_id):
             if hard_delete_user_session(user_id, sid):
                 removed_any = True
                 break
+        for sid in candidate_ids:
+            delete_thread_scorecards(user_id, sid)
+        db.session.commit()
         # Anonymize the ledger row: null the user + session links, stamp
         # purged_at. Aggregate signals stay for the org's "ideas like this"
         # ML / benchmarking surface.
@@ -10733,6 +10854,10 @@ def delete_thread(thread_id):
             "deleted_thread_id": resolved_thread_id,
             "note": "hard-deleted (no row matched soft-archive)",
         }), 200
+
+    for sid in candidate_ids:
+        archive_thread_scorecards(user_id, sid)
+    db.session.commit()
 
     # Best-effort ledger write — distillation is silent on failure so the
     # user's delete action still succeeds end-to-end.

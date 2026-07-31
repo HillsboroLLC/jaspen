@@ -369,7 +369,7 @@ def complete_session():
 @sessions_bp.route('/<session_id>', methods=['DELETE'])
 @jwt_required()
 def delete_session(session_id):
-    """Delete a session."""
+    """Explicitly archive a session; scorecard deletion is never implicit elsewhere."""
     try:
         current_user_id = get_jwt_identity()
         sessions = load_user_sessions(current_user_id)
@@ -377,8 +377,11 @@ def delete_session(session_id):
         if sid not in sessions:
             return jsonify({'error': 'Session not found'}), 404
 
-        del sessions[sid]
-        if save_user_sessions(current_user_id, sessions):
+        row = archive_user_session(current_user_id, sid, grace_days=30)
+        if row is not None:
+            from app.scorecards import archive_thread_scorecards
+            archive_thread_scorecards(current_user_id, sid)
+            db.session.commit()
             logger.info(f"Session {sid} deleted for user {current_user_id}")
             return jsonify({'success': True})
         return jsonify({'error': 'Failed to delete session'}), 500

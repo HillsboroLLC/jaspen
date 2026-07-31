@@ -97,12 +97,42 @@ def _format_label(key):
     return token.title() if token else "Item"
 
 
-def _scorecard_record_for_export(session, thread_id, scorecard_id=None):
+def _scorecard_record_for_export(session, thread_id, scorecard_id=None, user_id=None):
     analyses = _normalize_analysis_history(session, thread_id)
     scorecard_id = str(scorecard_id or "").strip()
     selected = None
 
-    if scorecard_id:
+    if user_id is not None:
+        from app.scenarios_store import load_scenarios_data
+        from app.scorecards import collect_peer_scorecards
+        thread_data = (load_scenarios_data(user_id) or {}).get(thread_id) or {}
+        peers = collect_peer_scorecards(
+            user_id,
+            thread_id,
+            legacy_session=session,
+            legacy_thread_data=thread_data,
+        )
+        chosen = None
+        if scorecard_id:
+            chosen = next((
+                item for item in peers
+                if str(item.get('id') or item.get('analysis_id') or '') == scorecard_id
+            ), None)
+            if chosen is None:
+                return None, (
+                    jsonify({"error": "Scorecard not found in this thread.", "code": "scorecard_not_found"}),
+                    404,
+                )
+        elif peers:
+            chosen = peers[0]
+        if isinstance(chosen, dict):
+            selected = {
+                'analysis_id': str(chosen.get('id') or chosen.get('analysis_id') or thread_id),
+                'created_at': chosen.get('createdAt') or chosen.get('timestamp'),
+                'result': chosen,
+            }
+
+    if scorecard_id and selected is None:
         for item in analyses:
             if not isinstance(item, dict):
                 continue
@@ -169,7 +199,12 @@ def _scorecard_record_for_export(session, thread_id, scorecard_id=None):
         "risks": risks,
         "recommendations": recommendations,
         "updated_at": selected.get("created_at") or result.get("timestamp") or session.get("timestamp"),
-        "scenario_variants": _scorecard_variants_for_export(session, thread_id, selected_scorecard_id=scorecard_id),
+        "scenario_variants": _scorecard_variants_for_export(
+            session,
+            thread_id,
+            selected_scorecard_id=scorecard_id,
+            user_id=user_id,
+        ),
         # Full content for rich exports (Excel/Word): the per-criterion grid, the
         # written summary, and the rubric (for ordering/labels).
         "dimensions": result.get("dimensions") if isinstance(result.get("dimensions"), dict) else {},
@@ -211,34 +246,33 @@ def _safe_float(value):
     return None
 
 
-def _scorecard_variants_for_export(session, thread_id, selected_scorecard_id=None):
+def _scorecard_variants_for_export(session, thread_id, selected_scorecard_id=None, user_id=None):
     if not isinstance(session, dict):
         return []
 
-    result_blob = session.get("result") if isinstance(session.get("result"), dict) else {}
-    if not result_blob:
-        return []
-
-    try:
-        snapshot_state = _scorecard_snapshot_state(result_blob, thread_id)
-    except Exception:
-        return []
-
-    snapshots = snapshot_state.get("snapshots") if isinstance(snapshot_state.get("snapshots"), list) else []
+    if user_id is not None:
+        from app.scenarios_store import load_scenarios_data
+        from app.scorecards import collect_peer_scorecards
+        snapshots = collect_peer_scorecards(
+            user_id,
+            thread_id,
+            legacy_session=session,
+            legacy_thread_data=(load_scenarios_data(user_id) or {}).get(thread_id) or {},
+        )
+        snapshot_state = {'selected_id': selected_scorecard_id}
+    else:
+        result_blob = session.get("result") if isinstance(session.get("result"), dict) else {}
+        if not result_blob:
+            return []
+        try:
+            snapshot_state = _scorecard_snapshot_state(result_blob, thread_id)
+        except Exception:
+            return []
+        snapshots = snapshot_state.get("snapshots") if isinstance(snapshot_state.get("snapshots"), list) else []
     if len(snapshots) <= 1:
         return []
 
     selected_id = str(selected_scorecard_id or snapshot_state.get("selected_id") or "").strip()
-    baseline_score = None
-    for snap in snapshots:
-        if not isinstance(snap, dict):
-            continue
-        if bool(snap.get("isBaseline")):
-            baseline_score = _safe_float(
-                snap.get("jaspen_score") or snap.get("overall_score") or snap.get("score")
-            )
-            break
-
     variants = []
     for snap in snapshots:
         if not isinstance(snap, dict):
@@ -247,22 +281,18 @@ def _scorecard_variants_for_export(session, thread_id, selected_scorecard_id=Non
         if not snap_id:
             continue
         score = _safe_float(snap.get("jaspen_score") or snap.get("overall_score") or snap.get("score"))
-        delta = None
-        if baseline_score is not None and score is not None:
-            delta = round(score - baseline_score, 2)
         variants.append(
             {
                 "id": snap_id,
-                "label": _safe_text(snap.get("label") or ("Baseline" if snap.get("isBaseline") else "Scenario"), 120),
-                "is_baseline": bool(snap.get("isBaseline")),
+                "label": _safe_text(snap.get("project_name") or snap.get("name") or snap.get("label") or "Project", 120),
+                "is_baseline": False,
                 "is_selected": bool(selected_id and snap_id == selected_id),
                 "jaspen_score": score,
                 "score_category": _safe_text(snap.get("score_category"), 64) or None,
-                "delta_vs_baseline": delta,
             }
         )
 
-    return variants[:12]
+    return variants
 
 
 def _list_text_items(items, *, fallback):
@@ -507,53 +537,44 @@ def _scorecard_pdf_bytes(scorecard, *, org=None):
 
         variants = scorecard.get("scenario_variants") if isinstance(scorecard.get("scenario_variants"), list) else []
         if len(variants) > 1:
-            story.append(Paragraph("Scenario Comparison", section_style))
-            variant_rows = [["Variant", "Score", "Category", "Delta vs Baseline"]]
+            story.append(Paragraph("Project Comparison", section_style))
+            variant_rows = [["Project", "Score", "Category"]]
             for item in variants[:10]:
                 if not isinstance(item, dict):
                     continue
-                label = str(item.get("label") or "Scenario").strip() or "Scenario"
+                label = str(item.get("label") or "Project").strip() or "Project"
                 if item.get("is_selected"):
                     label = f"{label} (Selected)"
-                if item.get("is_baseline"):
-                    label = f"{label} (Baseline)"
-                delta = item.get("delta_vs_baseline")
-                if delta is None:
-                    delta_text = "N/A"
-                else:
-                    delta_text = f"{delta:+.2f}"
                 variant_rows.append(
                     [
                         _safe_text(label, 80),
                         _display_value(item.get("jaspen_score")),
                         _display_value(item.get("score_category")),
-                        delta_text,
                     ]
                 )
             if len(variant_rows) == 1:
-                variant_rows.append(["No scenario variants recorded.", "N/A", "N/A", "N/A"])
+                variant_rows.append(["No peer projects recorded.", "N/A", "N/A"])
             variant_table = Table(
                 variant_rows,
-                colWidths=[2.8 * inch, 1.0 * inch, 1.4 * inch, 1.7 * inch],
+                colWidths=[3.6 * inch, 1.2 * inch, 1.8 * inch],
                 hAlign="LEFT",
             )
             variant_table.setStyle(
                 TableStyle(
                     [
-                        ("BACKGROUND", (0, 0), (3, 0), ice),
-                        ("TEXTCOLOR", (0, 0), (3, 0), navy),
-                        ("FONTNAME", (0, 0), (3, 0), "Helvetica-Bold"),
-                        ("FONTSIZE", (0, 0), (3, 0), 9),
-                        ("GRID", (0, 0), (3, -1), 0.5, border),
-                        ("FONTNAME", (0, 1), (3, -1), "Helvetica"),
-                        ("FONTSIZE", (0, 1), (3, -1), 8.5),
+                        ("BACKGROUND", (0, 0), (2, 0), ice),
+                        ("TEXTCOLOR", (0, 0), (2, 0), navy),
+                        ("FONTNAME", (0, 0), (2, 0), "Helvetica-Bold"),
+                        ("FONTSIZE", (0, 0), (2, 0), 9),
+                        ("GRID", (0, 0), (2, -1), 0.5, border),
+                        ("FONTNAME", (0, 1), (2, -1), "Helvetica"),
+                        ("FONTSIZE", (0, 1), (2, -1), 8.5),
                         ("ALIGN", (1, 1), (1, -1), "RIGHT"),
-                        ("ALIGN", (3, 1), (3, -1), "RIGHT"),
-                        ("ROWBACKGROUNDS", (0, 1), (3, -1), [colors.white, colors.HexColor("#F8FAFC")]),
-                        ("LEFTPADDING", (0, 0), (3, -1), 6),
-                        ("RIGHTPADDING", (0, 0), (3, -1), 6),
-                        ("TOPPADDING", (0, 0), (3, -1), 5),
-                        ("BOTTOMPADDING", (0, 0), (3, -1), 5),
+                        ("ROWBACKGROUNDS", (0, 1), (2, -1), [colors.white, colors.HexColor("#F8FAFC")]),
+                        ("LEFTPADDING", (0, 0), (2, -1), 6),
+                        ("RIGHTPADDING", (0, 0), (2, -1), 6),
+                        ("TOPPADDING", (0, 0), (2, -1), 5),
+                        ("BOTTOMPADDING", (0, 0), (2, -1), 5),
                     ]
                 )
             )
@@ -768,20 +789,16 @@ def _pptx_bytes(scorecard, *, org=None):
 
     if len(variants) > 1:
         slide = prs.slides.add_slide(prs.slide_layouts[6])
-        add_title(slide, "Scenario Comparison", "Baseline vs scenario score outcomes")
-        rows = ["Variant | Score | Delta vs Baseline"]
+        add_title(slide, "Project Comparison", "Peer scorecard outcomes")
+        rows = ["Project | Score | Category"]
         for item in variants[:8]:
             if not isinstance(item, dict):
                 continue
-            label = str(item.get("label") or "Scenario").strip() or "Scenario"
-            if item.get("is_baseline"):
-                label = f"{label} (Baseline)"
-            elif item.get("is_selected"):
+            label = str(item.get("label") or "Project").strip() or "Project"
+            if item.get("is_selected"):
                 label = f"{label} (Selected)"
             score_text = _display_value(item.get("jaspen_score"))
-            delta = item.get("delta_vs_baseline")
-            delta_text = "N/A" if delta is None else f"{float(delta):+,.2f}"
-            rows.append(f"{label} | {score_text} | {delta_text}")
+            rows.append(f"{label} | {score_text} | {_display_value(item.get('score_category'))}")
         add_bullets(slide, rows, left=0.7, top=1.7, width=8.8, height=4.9)
 
     slide = prs.slides.add_slide(prs.slide_layouts[6])
@@ -1022,7 +1039,7 @@ def export_scorecard_xlsx(thread_id):
     access_error = _require_export_plan(plan_key, "xlsx")
     if access_error:
         return access_error
-    scorecard, error_response = _scorecard_record_for_export(session, thread_id, scorecard_id=request.args.get("scorecard_id"))
+    scorecard, error_response = _scorecard_record_for_export(session, thread_id, scorecard_id=request.args.get("scorecard_id"), user_id=user.id)
     if error_response:
         return error_response
     try:
@@ -1047,7 +1064,7 @@ def export_scorecard_docx(thread_id):
     access_error = _require_export_plan(plan_key, "docx")
     if access_error:
         return access_error
-    scorecard, error_response = _scorecard_record_for_export(session, thread_id, scorecard_id=request.args.get("scorecard_id"))
+    scorecard, error_response = _scorecard_record_for_export(session, thread_id, scorecard_id=request.args.get("scorecard_id"), user_id=user.id)
     if error_response:
         return error_response
     try:
@@ -1079,6 +1096,7 @@ def export_scorecard_pdf(thread_id):
         session,
         thread_id,
         scorecard_id=request.args.get("scorecard_id"),
+        user_id=user.id,
     )
     if error_response:
         return error_response
@@ -1109,6 +1127,7 @@ def export_scorecard_pptx(thread_id):
         session,
         thread_id,
         scorecard_id=request.args.get("scorecard_id"),
+        user_id=user.id,
     )
     if error_response:
         return error_response

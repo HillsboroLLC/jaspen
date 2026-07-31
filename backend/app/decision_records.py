@@ -60,7 +60,7 @@ def _load_thread_sources(user_id, thread_id):
     return session, thread_data
 
 
-def _collect_peer_scorecards(session, thread_data):
+def _collect_peer_scorecards(session, thread_data, *, user_id=None, thread_id=None):
     """Every scored artifact for the thread as a FLAT PEER LIST.
 
     Deliberately erases the legacy baseline/variant hierarchy: the session's
@@ -111,6 +111,17 @@ def _collect_peer_scorecards(session, thread_data):
             'assumptions': card.get('assumptions') if isinstance(card.get('assumptions'), list) else [],
             'generated_at': card.get('timestamp') or card.get('createdAt'),
         })
+
+    if user_id is not None and thread_id is not None:
+        from .scorecards import collect_peer_scorecards
+        for peer in collect_peer_scorecards(
+            user_id,
+            thread_id,
+            legacy_session=session,
+            legacy_thread_data=thread_data,
+        ):
+            _add(peer)
+        return cards
 
     if isinstance(session, dict):
         result = session.get('result')
@@ -180,7 +191,12 @@ def assemble_record_payload(user_id, thread_id):
         raise LookupError(f'No conversation or analysis found for thread {thread_id}')
 
     session = session if isinstance(session, dict) else {}
-    cards = _collect_peer_scorecards(session, thread_data)
+    cards = _collect_peer_scorecards(
+        session,
+        thread_data,
+        user_id=user_id,
+        thread_id=thread_id,
+    )
 
     rubric = session.get('scoring_rubric') if isinstance(session.get('scoring_rubric'), dict) else None
     portfolio = session.get('portfolio_summary') if isinstance(session.get('portfolio_summary'), dict) else {}

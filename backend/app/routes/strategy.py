@@ -12,7 +12,13 @@ import uuid
 from types import SimpleNamespace
 from app import db, limiter
 from app.admin_audit import append_user_audit_event
-from app.models import User
+from app.models import Scorecard, UsageEvent, User
+from app.scorecards import (
+    archive_scorecard,
+    collect_peer_scorecards,
+    scorecard_limit_for,
+    upsert_scorecard,
+)
 from app.scenarios_store import load_scenarios_data, save_scenarios_data
 from app.billing_config import (
     bootstrap_legacy_credits,
@@ -23,6 +29,7 @@ from app.billing_config import (
     get_model_catalog,
     get_monthly_credit_limit,
     normalize_model_type,
+    provider_cost_usd,
     to_public_plan,
 )
 from app.tool_registry import (
@@ -34,9 +41,62 @@ from app.tool_registry import (
 from app.jira_sync import sync_wbs_to_jira
 from app.connector_store import get_thread_sync_profile
 from app.orgs import resolve_active_org_for_user
+from app.rate_limits import AI_CONVERSATION_SCOPE
 from .sessions import load_user_sessions, save_user_sessions
 
 strategy_bp = Blueprint('strategy', __name__)
+
+
+def _claude_hourly_limit():
+    from .ai_agent import _plan_hourly_limit
+    return _plan_hourly_limit()
+
+
+def _claude_daily_limit():
+    from .ai_agent import _plan_daily_limit
+    return _plan_daily_limit()
+
+
+def _record_claude_operation(
+    user,
+    *,
+    thread_id,
+    endpoint,
+    operation_type,
+    usage=None,
+    reserved_credits=0,
+    settled_credits=0,
+    success=True,
+    error_code=None,
+    scorecard_id=None,
+    metadata=None,
+):
+    usage = usage if isinstance(usage, dict) else {}
+    input_tokens = int(usage.get('input_tokens') or 0)
+    output_tokens = int(usage.get('output_tokens') or 0)
+    model = str(usage.get('model') or '').strip() or None
+    provider = str(usage.get('provider') or ('anthropic' if model and model.startswith('claude') else 'unknown'))
+    db.session.add(UsageEvent(
+        user_id=str(user.id),
+        organization_id=getattr(user, 'active_organization_id', None),
+        thread_id=str(thread_id or '').strip() or None,
+        endpoint=endpoint,
+        operation_type=operation_type,
+        model_type=usage.get('model_type'),
+        provider=provider,
+        model=model,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=int(usage.get('total_tokens') or input_tokens + output_tokens),
+        raw_provider_cost_usd=provider_cost_usd(model, input_tokens, output_tokens) if model else 0,
+        credits_charged=int(settled_credits or 0),
+        reserved_credits=int(reserved_credits or 0),
+        settled_credits=int(settled_credits or 0),
+        success=bool(success),
+        error_code=str(error_code or '').strip() or None,
+        scorecard_id=str(scorecard_id or '').strip() or None,
+        metadata_json=dict(metadata or {}),
+    ))
 
 
 class ScorecardConflictError(Exception):
@@ -178,12 +238,13 @@ _SCENARIO_LETTER = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 
 
 def _variant_display_name(base_project_name, snapshot, index):
-    """Build display name: 'Project Name' for baseline, 'Project Name A' for first scenario, etc."""
-    if snapshot.get('isBaseline'):
-        return base_project_name
-    if index < len(_SCENARIO_LETTER):
-        return f'{base_project_name} {_SCENARIO_LETTER[index]}'
-    return f'{base_project_name} Variant {index + 1}'
+    """Every scorecard is named as an independent peer, never by order."""
+    return str(
+        snapshot.get('project_name')
+        or snapshot.get('name')
+        or snapshot.get('label')
+        or base_project_name
+    ).strip()
 
 
 def _row_from_snapshot(snapshot, thread_id, base_project_name, variant_index, session_created_at):
@@ -206,7 +267,7 @@ def _row_from_snapshot(snapshot, thread_id, base_project_name, variant_index, se
 
     snapshot_id = str(snapshot.get('id') or snapshot.get('analysis_id') or '')
     display_name = _variant_display_name(base_project_name, snapshot, variant_index)
-    variant_label = snapshot.get('label') or ('Baseline' if snapshot.get('isBaseline') else f'Scenario {_SCENARIO_LETTER[variant_index] if variant_index < len(_SCENARIO_LETTER) else variant_index + 1}')
+    variant_label = snapshot.get('label') or display_name
 
     return {
         'thread_id': thread_id,
@@ -214,7 +275,7 @@ def _row_from_snapshot(snapshot, thread_id, base_project_name, variant_index, se
         'project_name': display_name,
         'base_project_name': base_project_name,
         'variant_label': variant_label,
-        'is_baseline': bool(snapshot.get('isBaseline')),
+        'is_baseline': False,
         'jaspen_score': jaspen_score,
         'score_category': score_category,
         'component_scores': component_scores,
@@ -248,6 +309,34 @@ def _collect_completed_scores(
 
         session_status = str(session.get('status') or '').strip().lower()
         session_completed = session_status == 'completed'
+
+        thread_data = all_scenarios.get(thread_id) or all_scenarios.get(key) or {}
+        peer_snapshots = collect_peer_scorecards(
+            user_id,
+            thread_id,
+            legacy_session=session,
+            legacy_thread_data=thread_data,
+        )
+        if peer_snapshots:
+            session_created_at = session.get('created') or session.get('timestamp')
+            for index, snapshot in enumerate(peer_snapshots):
+                if not isinstance(snapshot, dict):
+                    continue
+                row = _row_from_snapshot(
+                    snapshot,
+                    thread_id,
+                    str(session.get('name') or f'Thread {thread_id}'),
+                    index,
+                    session_created_at,
+                )
+                if row['jaspen_score'] is None and not session_completed:
+                    continue
+                if category_filter and row['score_category'] != category_filter:
+                    continue
+                if search and search not in row['project_name'].lower():
+                    continue
+                scores.append(row)
+            continue
 
         # Get the session result which contains _baseline_scorecard and scorecard_snapshots
         analyses = _scores_analysis_entries(session, thread_id)
@@ -1587,8 +1676,37 @@ def _rename_snapshot_in_session(
     all_data = _load_scenarios(user_id)
     resolved_thread_id, session_key, session = _resolve_strategy_thread_state(sessions, all_data, thread_id)
     resolved_thread_id = resolved_thread_id or thread_id
+    native_row = Scorecard.query.filter_by(
+        id=str(snapshot_id),
+        user_id=str(user_id),
+        thread_id=str(resolved_thread_id),
+        archived_at=None,
+    ).first()
     if not isinstance(session, dict):
-        return None
+        if native_row is None:
+            return None
+        next_label = str(label or '').strip()
+        if not next_label:
+            return None
+        native_payload = native_row.to_peer_dict()
+        native_payload['project_name'] = next_label
+        native_payload['name'] = next_label
+        native_payload['label'] = next_label
+        upsert_scorecard(
+            user_id=user_id,
+            thread_id=resolved_thread_id,
+            payload=native_payload,
+            organization_id=native_row.organization_id,
+            session_id=native_row.session_id,
+            source='peer_rename',
+        )
+        db.session.commit()
+        peers = collect_peer_scorecards(user_id, resolved_thread_id)
+        return {
+            'snapshot': native_payload,
+            'scorecard_snapshots': peers,
+            'selected_scorecard_id': str(snapshot_id),
+        }
 
     next_label = str(label or '').strip()
     if not next_label:
@@ -1619,8 +1737,23 @@ def _rename_snapshot_in_session(
         elif not snapshot.get('isBaseline'):
             next_snapshots.append(snapshot)
 
+    if not renamed_snapshot and native_row is not None:
+        renamed_snapshot = native_row.to_peer_dict()
+        renamed_snapshot['project_name'] = next_label
+        renamed_snapshot['name'] = next_label
+        renamed_snapshot['label'] = next_label
     if not renamed_snapshot:
         return None
+
+    if native_row is not None:
+        upsert_scorecard(
+            user_id=user_id,
+            thread_id=resolved_thread_id,
+            payload=renamed_snapshot,
+            organization_id=native_row.organization_id,
+            session_id=native_row.session_id,
+            source='peer_rename',
+        )
 
     baseline_snapshot = snapshot_state.get('baseline') if snapshot_state and isinstance(snapshot_state.get('baseline'), dict) else None
     baseline_scorecard = (
@@ -1677,13 +1810,40 @@ def _delete_snapshot_from_session(
     all_data = _load_scenarios(user_id)
     resolved_thread_id, session_key, session = _resolve_strategy_thread_state(sessions, all_data, thread_id)
     resolved_thread_id = resolved_thread_id or thread_id
+    native_row = Scorecard.query.filter_by(
+        id=str(snapshot_id),
+        user_id=str(user_id),
+        thread_id=str(resolved_thread_id),
+        archived_at=None,
+    ).first()
     if not isinstance(session, dict):
-        return None
+        if native_row is None:
+            return None
+        native_row.archived_at = datetime.utcnow()
+        db.session.commit()
+        return {
+            'deleted_snapshot_id': str(snapshot_id),
+            'scorecard_snapshots': collect_peer_scorecards(user_id, resolved_thread_id),
+            'selected_scorecard_id': None,
+        }
 
     result_payload = session.get('result') if isinstance(session.get('result'), dict) else {}
     snapshot_state = _scorecard_snapshot_state(result_payload, resolved_thread_id) if result_payload else None
     if not snapshot_state:
-        return None
+        if native_row is None:
+            return None
+        native_row.archived_at = datetime.utcnow()
+        db.session.commit()
+        return {
+            'deleted_snapshot_id': str(snapshot_id),
+            'scorecard_snapshots': collect_peer_scorecards(
+                user_id,
+                resolved_thread_id,
+                legacy_session=session,
+                legacy_thread_data=all_data.get(resolved_thread_id, {}),
+            ),
+            'selected_scorecard_id': None,
+        }
     _assert_scorecard_write_fresh(
         snapshot_state,
         resolved_thread_id,
@@ -1695,7 +1855,29 @@ def _delete_snapshot_from_session(
     target_id = str(snapshot_id or '').strip()
     baseline_snapshot = snapshot_state.get('baseline') if isinstance(snapshot_state.get('baseline'), dict) else None
     if baseline_snapshot and str(baseline_snapshot.get('id') or '').strip() == target_id:
-        raise ValueError('Baseline snapshot cannot be deleted.')
+        archive_scorecard(
+            user_id,
+            target_id,
+            legacy_payload=baseline_snapshot,
+            thread_id=resolved_thread_id,
+        )
+        session.pop('result', None)
+        session.pop('analysis_result', None)
+        session['selected_scorecard_id'] = None
+        session['analysis_history'] = [
+            entry for entry in (session.get('analysis_history') or [])
+            if isinstance(entry, dict)
+            and str(entry.get('analysis_id') or entry.get('id') or '').strip() != target_id
+        ]
+        session['analyses'] = list(session['analysis_history'])
+        sessions[session_key or resolved_thread_id] = session
+        if not save_user_sessions(user_id, sessions):
+            raise RuntimeError('Failed to persist scorecard deletion.')
+        return {
+            'deleted_snapshot_id': target_id,
+            'scorecard_snapshots': [],
+            'selected_scorecard_id': None,
+        }
 
     next_snapshots = _remove_snapshot_entry(
         [item for item in snapshot_state.get('snapshots', []) if isinstance(item, dict) and not item.get('isBaseline')],
@@ -2258,6 +2440,7 @@ def _generate_jaspen_scorecard(
     model_selection=None,
     strategy_objective='balanced',
     rubric=None,
+    return_usage=False,
 ):
     """Run the existing LLM scoring flow and return parsed scorecard JSON.
 
@@ -2517,8 +2700,9 @@ The executive_summary must read like a concise leadership briefing. It should ne
 """
 
     analysis_text = None
+    generation_usage = None
     try:
-        analysis_text, _usage = _strategy_generate_reply(
+        analysis_text, generation_usage = _strategy_generate_reply(
             [{"role": "user", "content": analysis_prompt}],
             system_prompt=system_prompt,
             model_selection=model_selection,
@@ -2543,6 +2727,14 @@ The executive_summary must read like a concise leadership briefing. It should ne
             max_tokens=4000
         )
         analysis_text = response.choices[0].message.content
+        usage_payload = getattr(response, 'usage', None)
+        generation_usage = {
+            'provider': 'anthropic',
+            'model': getattr(response, 'model', None) or llm_model,
+            'input_tokens': int(getattr(usage_payload, 'prompt_tokens', 0) or 0),
+            'output_tokens': int(getattr(usage_payload, 'completion_tokens', 0) or 0),
+            'total_tokens': int(getattr(usage_payload, 'total_tokens', 0) or 0),
+        }
 
     parsed = _normalize_scorecard_payload(_extract_json_object(analysis_text))
 
@@ -2567,11 +2759,12 @@ The executive_summary must read like a concise leadership briefing. It should ne
     # Deterministic final step: recompute the score from the (capped) dimensions
     # in Python instead of trusting the model's arithmetic. `weights` is the
     # rubric weight map (custom mode) or the objective preset (default mode).
-    return _recompute_jaspen_score(parsed, weights)
+    scored = _recompute_jaspen_score(parsed, weights)
+    return (scored, generation_usage) if return_usage else scored
 
 
 def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective='balanced',
-                               model_selection=None, llm_model=None):
+                               model_selection=None, llm_model=None, return_usage=False):
     """Score MANY ideas in a SINGLE model pass — the 'build the Excel' approach.
 
     One call returns a grid of every idea scored on every criterion (score +
@@ -2585,7 +2778,7 @@ def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective
     """
     ideas = [i for i in (ideas or []) if isinstance(i, dict) and str(i.get('name') or '').strip()]
     if not ideas:
-        return [], None
+        return ([], None, None) if return_usage else ([], None)
 
     # CHUNKING: scoring every idea in ONE pass overflows the model's output budget
     # once there are many ideas (10+ truncates the JSON at max_tokens=8000 → parse
@@ -2597,18 +2790,19 @@ def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective
     if len(ideas) > BATCH_CHUNK_SIZE:
         all_results = []
         chunk_summaries = []
+        chunk_usages = []
         for start in range(0, len(ideas), BATCH_CHUNK_SIZE):
             chunk = ideas[start:start + BATCH_CHUNK_SIZE]
             try:
-                c_results, c_summary = _generate_batch_scorecards(
+                c_results, c_summary, c_usage = _generate_batch_scorecards(
                     client, chunk, rubric=rubric, strategy_objective=strategy_objective,
-                    model_selection=model_selection, llm_model=llm_model,
+                    model_selection=model_selection, llm_model=llm_model, return_usage=True,
                 )
             except Exception:
                 current_app.logger.exception(
                     '[_generate_batch_scorecards] chunk %s-%s failed', start, start + len(chunk)
                 )
-                c_results, c_summary = [], None
+                c_results, c_summary, c_usage = [], None, None
             # Keep positional alignment with `ideas`: the caller zips ideas↔cards and
             # adds each idea's name by position, so a failed/short chunk MUST be padded
             # with None (the caller skips non-dict payloads) or names would shift.
@@ -2618,6 +2812,8 @@ def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective
             all_results.extend(c_results[:len(chunk)])
             if c_summary:
                 chunk_summaries.append(c_summary)
+            if isinstance(c_usage, dict):
+                chunk_usages.append(c_usage)
         # Re-derive tiers from the GLOBAL absolute score bands so per-chunk relativity
         # doesn't skew them (locked Strategic-Necessity anchors are preserved).
         for scored in all_results:
@@ -2634,7 +2830,17 @@ def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective
         # Portfolio summary is per-chunk; surface the first as a stopgap (a true
         # all-ideas summary would need a second synthesis pass — deferred).
         merged_summary = chunk_summaries[0] if chunk_summaries else None
-        return all_results, merged_summary
+        merged_usage = None
+        if chunk_usages:
+            merged_usage = {
+                'provider': chunk_usages[-1].get('provider'),
+                'model': chunk_usages[-1].get('model'),
+                'model_type': chunk_usages[-1].get('model_type'),
+                'input_tokens': sum(int(item.get('input_tokens') or 0) for item in chunk_usages),
+                'output_tokens': sum(int(item.get('output_tokens') or 0) for item in chunk_usages),
+                'total_tokens': sum(int(item.get('total_tokens') or 0) for item in chunk_usages),
+            }
+        return (all_results, merged_summary, merged_usage) if return_usage else (all_results, merged_summary)
 
     rubric_criteria = None
     if isinstance(rubric, dict) and isinstance(rubric.get('criteria'), list):
@@ -2883,7 +3089,7 @@ def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective
         scored["tier"] = tier
         results.append(scored)
 
-    return results, portfolio_summary
+    return (results, portfolio_summary, _usage) if return_usage else (results, portfolio_summary)
 
 
 @strategy_bp.route('/analyze', methods=['POST'])
@@ -3071,6 +3277,26 @@ def analyze_project():
         db.session.commit()
         analysis['meta']['credits_charged'] = analysis_credit_cost
         analysis['meta']['credits_remaining'] = remaining
+        try:
+            upsert_scorecard(
+                user_id=current_user_id,
+                thread_id=resolved_thread_id,
+                payload=analysis,
+                organization_id=active_org_id,
+                session_id=resolved_thread_id,
+                source='analyze',
+            )
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            current_app.logger.exception('Failed to persist analyzed peer scorecard %s', analysis_id)
+            return jsonify({
+                'error': 'The scorecard was generated but could not be retained.',
+                'code': 'scorecard_persistence_failed',
+                'generated_project_count': 1,
+                'persisted_project_count': 0,
+                'not_persisted_project_names': [project_name],
+            }), 500
 
         # Persist analysis onto the thread/session so Finish & Analyze creates a real thread bundle.
         sessions = load_user_sessions(current_user_id) or {}
@@ -3105,7 +3331,7 @@ def analyze_project():
                 'analysis_id': analysis_id,
                 'id': analysis_id,
                 'created_at': generated_at,
-                'label': 'Baseline',
+                'label': project_name,
                 'thread_id': resolved_thread_id,
                 'result': analysis,
             },
@@ -3457,59 +3683,78 @@ def get_completed_scores():
 @strategy_bp.route('/scores/<thread_id>/<snapshot_id>', methods=['DELETE'])
 @jwt_required()
 def delete_score_entry(thread_id, snapshot_id):
-    """Delete a single scorecard variant (snapshot) from a thread's score history."""
+    """Delete exactly one peer scorecard; session deletion is a separate action."""
     try:
         current_user_id = get_jwt_identity()
         sessions = load_user_sessions(current_user_id) or {}
         if not isinstance(sessions, dict):
             return jsonify({'error': 'No sessions found'}), 404
 
+        session_key = thread_id
         session = sessions.get(thread_id)
         if not session:
             for k, v in sessions.items():
                 if str((v or {}).get('session_id', '')) == str(thread_id):
                     session = v
-                    thread_id = k
+                    session_key = k
                     break
 
         if not isinstance(session, dict):
             return jsonify({'error': 'Thread not found'}), 404
 
-        result = session.get('result')
-        if not isinstance(result, dict):
-            return jsonify({'error': 'No analysis result for this thread'}), 404
-
-        snapshot_state = _scorecard_snapshot_state(result, thread_id)
-        all_snapshots = snapshot_state.get('snapshots') or []
-
-        # Find the snapshot to delete
-        target = None
-        for s in all_snapshots:
-            if str(s.get('id') or s.get('analysis_id') or '') == str(snapshot_id):
-                target = s
-                break
+        all_data = _load_scenarios(current_user_id)
+        thread_data = all_data.get(thread_id) or all_data.get(session_key) or {}
+        all_snapshots = collect_peer_scorecards(
+            current_user_id,
+            thread_id,
+            legacy_session=session,
+            legacy_thread_data=thread_data,
+        )
+        target = next((
+            item for item in all_snapshots
+            if str(item.get('id') or item.get('analysis_id') or '') == str(snapshot_id)
+        ), None)
 
         if target is None:
             return jsonify({'error': 'Snapshot not found'}), 404
 
-        is_baseline = bool(target.get('isBaseline'))
+        archive_scorecard(
+            current_user_id,
+            snapshot_id,
+            legacy_payload=target,
+            thread_id=thread_id,
+        )
 
-        if is_baseline:
-            # Deleting baseline means removing the entire thread/session
-            del sessions[thread_id]
-            save_user_sessions(current_user_id, sessions)
-            return jsonify({'deleted': 'thread', 'thread_id': thread_id}), 200
-
-        # Deleting a non-baseline snapshot: remove it from scorecard_snapshots
-        existing_snapshots = result.get('scorecard_snapshots')
-        if isinstance(existing_snapshots, list):
+        result = session.get('result') if isinstance(session.get('result'), dict) else {}
+        result_id = str(result.get('id') or result.get('analysis_id') or thread_id)
+        baseline = result.get('_baseline_scorecard') if isinstance(result.get('_baseline_scorecard'), dict) else {}
+        baseline_id = str(baseline.get('id') or baseline.get('analysis_id') or result_id)
+        if str(snapshot_id) in {result_id, baseline_id}:
+            session.pop('result', None)
+            session.pop('analysis_result', None)
+            session['selected_scorecard_id'] = None
+        elif result:
             result['scorecard_snapshots'] = [
-                s for s in existing_snapshots
-                if str(s.get('id') or s.get('analysis_id') or '') != str(snapshot_id)
+                item for item in (result.get('scorecard_snapshots') or [])
+                if isinstance(item, dict)
+                and str(item.get('id') or item.get('analysis_id') or '') != str(snapshot_id)
             ]
-        session['result'] = result
-        sessions[thread_id] = session
-        save_user_sessions(current_user_id, sessions)
+            session['result'] = result
+        for history_key in ('analysis_history', 'analyses'):
+            session[history_key] = [
+                item for item in (session.get(history_key) or [])
+                if isinstance(item, dict)
+                and str(item.get('id') or item.get('analysis_id') or '') != str(snapshot_id)
+            ]
+        sessions[session_key] = session
+        if not save_user_sessions(current_user_id, sessions):
+            raise RuntimeError('Failed to persist scorecard deletion')
+
+        scenarios = thread_data.get('scenarios') if isinstance(thread_data.get('scenarios'), dict) else {}
+        scenarios.pop(str(snapshot_id), None)
+        thread_data['scenarios'] = scenarios
+        all_data[thread_id] = thread_data
+        _save_scenarios(current_user_id, all_data)
 
         return jsonify({'deleted': 'snapshot', 'thread_id': thread_id, 'snapshot_id': snapshot_id}), 200
 
@@ -4773,6 +5018,7 @@ def _generate_ai_wbs_suggestion(
     model_selection=None,
     strategy_objective='balanced',
     chat_history=None,
+    return_usage=False,
 ):
     scorecard_payload = scorecard if isinstance(scorecard, dict) else {}
     scenario_context = scenario_payload if isinstance(scenario_payload, dict) else {}
@@ -4874,6 +5120,7 @@ Rules:
 - MINIMUM 10 tasks. If you return fewer than 10 the response will be rejected.
 """.strip()
 
+    generation_usage = None
     try:
         from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FuturesTimeout
         def _call_llm():
@@ -4889,7 +5136,7 @@ Rules:
         with ThreadPoolExecutor(max_workers=1) as _pool:
             _future = _pool.submit(_call_llm)
             try:
-                raw_reply, _usage = _future.result(timeout=55)
+                raw_reply, generation_usage = _future.result(timeout=55)
             except _FuturesTimeout:
                 raise ValueError('wbs_ai_timeout')
         parsed = _extract_json_object(raw_reply)
@@ -4906,9 +5153,17 @@ Rules:
             all_tasks = parsed['tasks']
         if len(all_tasks) < 6:
             raise ValueError('wbs_too_thin')
-        return parsed
-    except Exception:
-        return _heuristic_wbs_suggestion(scorecard, instruction, scenario_payload=scenario_context, chat_history=chat_history)
+        return (parsed, generation_usage, True, None) if return_usage else parsed
+    except Exception as generation_error:
+        heuristic = _heuristic_wbs_suggestion(
+            scorecard,
+            instruction,
+            scenario_payload=scenario_context,
+            chat_history=chat_history,
+        )
+        if return_usage:
+            return heuristic, generation_usage, False, type(generation_error).__name__
+        return heuristic
 
 
 def _stable_wbs_task_id(phase_name, title, used_ids):
@@ -5968,6 +6223,9 @@ def create_ai_scenario(thread_id):
 
 @strategy_bp.route('/threads/<thread_id>/score-next', methods=['POST'])
 @jwt_required()
+@limiter.limit('10 per minute')
+@limiter.shared_limit(_claude_hourly_limit, scope=AI_CONVERSATION_SCOPE)
+@limiter.shared_limit(_claude_daily_limit, scope=AI_CONVERSATION_SCOPE)
 def score_next_queued(thread_id):
     """Score exactly ONE queued idea for this thread and return it.
 
@@ -6063,6 +6321,9 @@ def score_next_queued(thread_id):
 
 @strategy_bp.route('/threads/<thread_id>/score-batch', methods=['POST'])
 @jwt_required()
+@limiter.limit('10 per minute')
+@limiter.shared_limit(_claude_hourly_limit, scope=AI_CONVERSATION_SCOPE)
+@limiter.shared_limit(_claude_daily_limit, scope=AI_CONVERSATION_SCOPE)
 def score_batch_queued(thread_id):
     """Score ALL queued ideas in ONE model pass, then persist each as a scorecard.
 
@@ -6078,7 +6339,14 @@ def score_batch_queued(thread_id):
         if not user:
             return jsonify({'error': 'User not found'}), 404
 
-        from .ai_agent import _artifact_chat_entry, _resolve_user_session
+        from .ai_agent import (
+            _artifact_chat_entry,
+            _charge_for_usage,
+            _release_reserved_credits,
+            _reserve_preflight_credits,
+            _resolve_user_session,
+            _settle_reserved_credits,
+        )
 
         sessions = load_user_sessions(user_id) or {}
         session_key, session = _resolve_user_session(sessions, thread_id)
@@ -6091,7 +6359,16 @@ def score_batch_queued(thread_id):
             ideas = session.get('scorecard_queue') if isinstance(session.get('scorecard_queue'), list) else []
         ideas = [i for i in ideas if isinstance(i, dict) and str(i.get('name') or '').strip()]
         if not ideas:
-            return jsonify({'ok': True, 'scored': [], 'count': 0, 'done': True})
+            return jsonify({
+                'ok': True,
+                'scored': [],
+                'count': 0,
+                'requested_project_count': 0,
+                'generated_project_count': 0,
+                'persisted_project_count': 0,
+                'not_persisted_project_names': [],
+                'done': True,
+            })
 
         model_selection, model_error = _resolve_user_model_selection(user)
         if model_error:
@@ -6100,17 +6377,117 @@ def score_batch_queued(thread_id):
         plan_key = effective_plan_key(user, current_app.config)
         strategy_objective = _normalize_strategy_objective(session.get('strategy_objective'))
         rubric = session.get('scoring_rubric') if isinstance(session.get('scoring_rubric'), dict) else None
+        all_scenarios = _load_scenarios(user_id)
+        thread_data = all_scenarios.get(thread_id) or {}
+        existing_peers = collect_peer_scorecards(
+            user_id,
+            thread_id,
+            legacy_session=session,
+            legacy_thread_data=thread_data,
+        )
+        view_limit = scorecard_limit_for(user, plan_key)
+        available = max(0, view_limit - len(existing_peers))
+        requested_count = len(ideas)
+        capacity_skipped = ideas[available:] if available < requested_count else []
+        ideas_to_generate = ideas[:available]
+        if not ideas_to_generate:
+            names = [str(item.get('name') or '').strip() for item in ideas]
+            return jsonify({
+                'ok': False,
+                'code': 'portfolio_view_limit_reached',
+                'reason': 'portfolio_view_limit_reached',
+                'error': (
+                    f'This portfolio has reached its supported size of {view_limit} projects. '
+                    'No project was generated or discarded. Start another portfolio to continue.'
+                ),
+                'requested_project_count': requested_count,
+                'generated_project_count': 0,
+                'persisted_project_count': 0,
+                'not_persisted_project_names': names,
+                'portfolio_view_limit': view_limit,
+            }), 409
+        reservation = _reserve_preflight_credits(
+            user,
+            model_selection['model_type'],
+            token_hint=max(4000, len(ideas_to_generate) * 1800),
+        )
+        if not reservation.get('ok'):
+            payload = dict(reservation.get('payload') or {})
+            payload.update({
+                'requested_project_count': requested_count,
+                'generated_project_count': 0,
+                'persisted_project_count': 0,
+                'not_persisted_project_names': [str(item.get('name') or '').strip() for item in ideas],
+            })
+            return jsonify(payload), 402
+        reserved_credits = int(reservation.get('reserved') or 0)
+        db.session.commit()
         client = get_llm_client()
 
-        cards, portfolio_summary = _generate_batch_scorecards(
-            client, ideas, rubric=rubric, strategy_objective=strategy_objective,
-            model_selection=model_selection, llm_model=model_selection['llm_model'],
+        try:
+            cards, portfolio_summary, provider_usage = _generate_batch_scorecards(
+                client, ideas_to_generate, rubric=rubric, strategy_objective=strategy_objective,
+                model_selection=model_selection, llm_model=model_selection['llm_model'],
+                return_usage=True,
+            )
+        except Exception as generation_error:
+            _release_reserved_credits(user, reserved_credits)
+            _record_claude_operation(
+                user,
+                thread_id=thread_id,
+                endpoint='/threads/<id>/score-batch',
+                operation_type='score_batch',
+                reserved_credits=reserved_credits,
+                settled_credits=0,
+                success=False,
+                error_code=type(generation_error).__name__,
+            )
+            db.session.commit()
+            raise
+
+        provider_usage = dict(provider_usage or {})
+        provider_usage.setdefault('model', model_selection.get('llm_model'))
+        provider_usage.setdefault('model_type', model_selection.get('model_type'))
+        provider_usage.setdefault('provider', 'anthropic')
+        actual_credits = _charge_for_usage(provider_usage, model_selection['model_type'], user)
+        settlement = _settle_reserved_credits(
+            user,
+            reserved_credits=reserved_credits,
+            actual_credits=actual_credits,
         )
+        settled_credits = int(settlement.get('charged') or 0)
+        _record_claude_operation(
+            user,
+            thread_id=thread_id,
+            endpoint='/threads/<id>/score-batch',
+            operation_type='score_batch',
+            usage=provider_usage,
+            reserved_credits=reserved_credits,
+            settled_credits=settled_credits,
+            success=bool(settlement.get('ok')),
+            error_code=None if settlement.get('ok') else 'thinking_power_exhausted',
+            metadata={'requested_projects': requested_count, 'generated_slots': len(ideas_to_generate)},
+        )
+        db.session.commit()
+        if not settlement.get('ok'):
+            payload = dict(settlement.get('payload') or {})
+            payload.update({
+                'requested_project_count': requested_count,
+                'generated_project_count': sum(1 for item in cards if isinstance(item, dict)),
+                'persisted_project_count': 0,
+                'not_persisted_project_names': [str(item.get('name') or '').strip() for item in ideas],
+            })
+            return jsonify(payload), 402
 
         scored_out = []
-        for idea, payload in zip(ideas, cards):
+        persistence_failures = []
+        model_failures = []
+        generated_count = 0
+        for idea, payload in zip(ideas_to_generate, cards):
             if not isinstance(payload, dict):
+                model_failures.append(str(idea.get('name') or '').strip())
                 continue
+            generated_count += 1
             name = str(idea.get('name')).strip()
             description = str(idea.get('description') or '').strip() or name
             analysis_id = str(uuid.uuid4())
@@ -6134,6 +6511,24 @@ def score_batch_queued(thread_id):
                     'model_type': model_selection['model_type'],
                 },
             }
+
+            try:
+                upsert_scorecard(
+                    user_id=user_id,
+                    thread_id=thread_id,
+                    payload=scorecard,
+                    organization_id=session.get('organization_id'),
+                    session_id=session.get('session_id') or thread_id,
+                    source='score_batch',
+                )
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+                current_app.logger.exception(
+                    '[score_batch_queued] failed to persist peer scorecard %s', analysis_id,
+                )
+                persistence_failures.append(name)
+                continue
 
             # Reload fresh each iteration so prior writes in this loop are visible.
             sessions = load_user_sessions(user_id) or {}
@@ -6164,9 +6559,14 @@ def score_batch_queued(thread_id):
                         scenario_id=analysis_id, plan_key=plan_key, result=scorecard,
                         metadata={'ai_rationale': 'Created from score_batch.', 'strategy_objective': strategy_objective},
                     )
-                except PermissionError:
-                    # Scenario cap reached on this plan — keep what we already scored.
-                    pass
+                except PermissionError as legacy_limit_error:
+                    # The peer row above is authoritative and durable. A legacy
+                    # scenario cap must never discard or hide the generated card.
+                    current_app.logger.info(
+                        '[score_batch_queued] legacy scenario dual-write skipped for %s: %s',
+                        analysis_id,
+                        legacy_limit_error,
+                    )
 
             entry = _artifact_chat_entry({'type': 'scorecard', 'data': scorecard})
             if entry:
@@ -6189,10 +6589,35 @@ def score_batch_queued(thread_id):
             sessions[session_key or thread_id] = session
             save_user_sessions(user_id, sessions)
 
+        capacity_names = [str(item.get('name') or '').strip() for item in capacity_skipped]
+        not_persisted_names = capacity_names + model_failures + persistence_failures
+        reason = None
+        message = None
+        if capacity_names:
+            reason = 'portfolio_view_limit_reached'
+            message = (
+                f'{len(scored_out)} of {requested_count} projects were retained. '
+                f'This portfolio supports {view_limit} projects; no project was discarded silently. '
+                'Start another portfolio to continue.'
+            )
+        elif model_failures:
+            reason = 'partial_model_failure'
+            message = 'Some projects were not generated by the model and were not reported as scored.'
+        elif persistence_failures:
+            reason = 'partial_persistence_failure'
+            message = 'Some generated projects could not be retained and are listed explicitly.'
+
         return jsonify({
             'ok': True,
             'scored': scored_out,
             'count': len(scored_out),
+            'requested_project_count': requested_count,
+            'generated_project_count': generated_count,
+            'persisted_project_count': len(scored_out),
+            'not_persisted_project_names': not_persisted_names,
+            'reason': reason,
+            'message': message,
+            'portfolio_view_limit': view_limit,
             'portfolio_summary': portfolio_summary,
             'done': True,
         })
@@ -6203,6 +6628,9 @@ def score_batch_queued(thread_id):
 
 @strategy_bp.route('/threads/<thread_id>/ai-wbs', methods=['POST'])
 @jwt_required()
+@limiter.limit('10 per minute')
+@limiter.shared_limit(_claude_hourly_limit, scope=AI_CONVERSATION_SCOPE)
+@limiter.shared_limit(_claude_daily_limit, scope=AI_CONVERSATION_SCOPE)
 def generate_ai_wbs(thread_id):
     """
     Generate an AI-driven WBS from baseline/adopted scorecard context.
@@ -6372,7 +6800,21 @@ def generate_ai_wbs(thread_id):
             wbs_scorecard['project_name'] = session_name
 
         client = get_llm_client()
-        raw_wbs = _generate_ai_wbs_suggestion(
+        from .ai_agent import (
+            _charge_for_usage,
+            _reserve_preflight_credits,
+            _settle_reserved_credits,
+        )
+        reservation = _reserve_preflight_credits(
+            user,
+            model_selection['model_type'],
+            token_hint=5000,
+        )
+        if not reservation.get('ok'):
+            return jsonify(reservation.get('payload') or {'error': 'Thinking Power exhausted.'}), 402
+        reserved_credits = int(reservation.get('reserved') or 0)
+        db.session.commit()
+        raw_wbs, provider_usage, provider_success, provider_error = _generate_ai_wbs_suggestion(
             client,
             model_selection['llm_model'],
             scorecard=wbs_scorecard,
@@ -6381,7 +6823,34 @@ def generate_ai_wbs(thread_id):
             model_selection=model_selection,
             strategy_objective=_strategy_objective,
             chat_history=chat_turns,
+            return_usage=True,
         )
+        provider_usage = dict(provider_usage or {})
+        provider_usage.setdefault('provider', 'anthropic')
+        provider_usage.setdefault('model', model_selection.get('llm_model'))
+        provider_usage.setdefault('model_type', model_selection.get('model_type'))
+        actual_credits = _charge_for_usage(provider_usage, model_selection['model_type'], user) if provider_usage else 0
+        settlement = _settle_reserved_credits(
+            user,
+            reserved_credits=reserved_credits,
+            actual_credits=actual_credits,
+        )
+        _record_claude_operation(
+            user,
+            thread_id=thread_id,
+            endpoint='/threads/<id>/ai-wbs',
+            operation_type='execution_plan',
+            usage=provider_usage,
+            reserved_credits=reserved_credits,
+            settled_credits=int(settlement.get('charged') or 0),
+            success=bool(provider_success and settlement.get('ok')),
+            error_code=provider_error or (None if settlement.get('ok') else 'thinking_power_exhausted'),
+            scorecard_id=scorecard_id,
+            metadata={'heuristic_fallback': not provider_success},
+        )
+        db.session.commit()
+        if not settlement.get('ok'):
+            return jsonify(settlement.get('payload') or {'error': 'Thinking Power exhausted.'}), 402
         materialized = _materialize_ai_wbs(raw_wbs, start_date=requested_start_date)
         normalized_wbs = _normalize_project_wbs({'project_wbs': materialized}, existing=None)
         normalized_wbs['ai_generated'] = True
@@ -6394,6 +6863,13 @@ def generate_ai_wbs(thread_id):
         # the resolved scorecard, falling back to the explicit CTA scorecard_id.
         _stamp_wbs_identity(normalized_wbs, current_scorecard, fallback_id=scorecard_id)
         canonical_scorecard_id = str(normalized_wbs.get('scorecard_id') or scorecard_id or '').strip() or None
+        if canonical_scorecard_id:
+            scorecard_row = Scorecard.query.filter_by(
+                id=canonical_scorecard_id,
+                user_id=str(user_id),
+            ).first()
+            if scorecard_row is not None:
+                scorecard_row.execution_plan_ref = f'thread:{thread_id}:wbs'
 
         limits = get_wbs_limits_for_plan(plan_key)
         max_tasks = limits.get('max_tasks_per_wbs')
@@ -7668,6 +8144,28 @@ def get_thread_bundle(thread_id):
             merged_snapshots.append(_snap)
             _existing_snap_ids.add(_aid)
 
+        peer_scorecards = collect_peer_scorecards(
+            user_id,
+            thread_id,
+            legacy_session=session,
+            legacy_thread_data=td,
+        )
+        if peer_scorecards:
+            merged_snapshots = peer_scorecards
+            selected_id = str(
+                (session_result or {}).get('selected_scorecard_id')
+                or td.get('adopted_scenario_id')
+                or peer_scorecards[0].get('id')
+                or ''
+            ).strip() or None
+            current_scorecard = next((
+                item for item in peer_scorecards
+                if str(item.get('id') or item.get('analysis_id') or '') == selected_id
+            ), peer_scorecards[0])
+            baseline = peer_scorecards[0]  # compatibility field; no baseline flag/meaning
+        else:
+            selected_id = snapshot_state['selected_id'] if snapshot_state else None
+
         return jsonify({
             'thread': {
                 'id': thread_id,
@@ -7682,7 +8180,8 @@ def get_thread_bundle(thread_id):
             'baseline_scorecard': baseline,
             'current_scorecard': current_scorecard,
             'scorecard_snapshots': merged_snapshots,
-            'selected_scorecard_id': snapshot_state['selected_id'] if snapshot_state else None,
+            'peer_scorecards': merged_snapshots,
+            'selected_scorecard_id': selected_id,
             'scenarios': scenarios_list,
             'scenario_levers': scenario_levers,
             'lever_catalog': lever_catalog,
@@ -7698,6 +8197,18 @@ def get_thread_bundle(thread_id):
     except Exception as e:
         current_app.logger.error("[get_thread_bundle] %s", e)
         return jsonify({'error': str(e)}), 500
+
+
+def _canonical_thread_peers(user_id, thread_id):
+    sessions = load_user_sessions(user_id) or {}
+    _resolved, session = _resolve_session_entry(sessions, thread_id)
+    all_data = _load_scenarios(user_id)
+    return collect_peer_scorecards(
+        user_id,
+        thread_id,
+        legacy_session=session,
+        legacy_thread_data=all_data.get(thread_id, {}),
+    )
 
 
 @strategy_bp.route('/threads/<thread_id>/scorecard-snapshots/<snapshot_id>', methods=['PATCH'])
@@ -7751,7 +8262,26 @@ def update_scorecard_snapshot(thread_id, snapshot_id):
                 expected_snapshot_revision=expected_snapshot_revision,
             )
             if not active_meta:
-                return jsonify({'error': 'Snapshot not found'}), 404
+                native_row = Scorecard.query.filter_by(
+                    id=str(snapshot_id),
+                    user_id=str(user_id),
+                    thread_id=str(thread_id),
+                    archived_at=None,
+                ).first()
+                if native_row is None:
+                    return jsonify({'error': 'Snapshot not found'}), 404
+                sessions = load_user_sessions(user_id) or {}
+                resolved_id, session = _resolve_session_entry(sessions, thread_id)
+                if isinstance(session, dict):
+                    result = session.get('result') if isinstance(session.get('result'), dict) else {}
+                    result['selected_scorecard_id'] = str(snapshot_id)
+                    session['result'] = result
+                    sessions[resolved_id or thread_id] = session
+                    save_user_sessions(user_id, sessions)
+                active_meta = {
+                    'snapshot': native_row.to_peer_dict(),
+                    'selected_scorecard_id': str(snapshot_id),
+                }
             snapshot_meta = {
                 **(snapshot_meta or {}),
                 **active_meta,
@@ -7760,10 +8290,12 @@ def update_scorecard_snapshot(thread_id, snapshot_id):
         if not snapshot_meta:
             return jsonify({'error': 'No changes requested'}), 400
 
+        peers = _canonical_thread_peers(user_id, thread_id)
         return jsonify({
             'success': True,
             'snapshot': snapshot_meta.get('snapshot'),
-            'scorecard_snapshots': snapshot_meta.get('scorecard_snapshots'),
+            'scorecard_snapshots': peers,
+            'peer_scorecards': peers,
             'selected_scorecard_id': snapshot_meta.get('selected_scorecard_id'),
         }), 200
     except ScorecardConflictError as conflict:
@@ -7892,6 +8424,15 @@ def _find_scorecard_carrier(user_id, thread_id, scorecard_id):
     _key, session = _resolve_session_entry(sessions, thread_id)
     sid = str(scorecard_id or '').strip()
 
+    peer_row = Scorecard.query.filter_by(
+        id=sid,
+        user_id=str(user_id),
+        thread_id=str(thread_id),
+        archived_at=None,
+    ).first()
+    if peer_row is not None:
+        return ('peer', None, peer_row.id, {'result': peer_row.to_peer_dict(), 'row': peer_row})
+
     # Baseline match: session.result has matching analysis_id OR scorecard_id == thread_id
     if isinstance(session, dict) and isinstance(session.get('result'), dict):
         res = session['result']
@@ -7987,7 +8528,17 @@ def apply_scorecard_edit_in_place(user_id, thread_id, scorecard_id, mutate_fn):
     result_blob.clear()
     result_blob.update(updated)
 
-    if kind == 'baseline':
+    if kind == 'peer':
+        upsert_scorecard(
+            user_id=user_id,
+            thread_id=thread_id,
+            payload=result_blob,
+            organization_id=getattr(carrier.get('row'), 'organization_id', None),
+            session_id=getattr(carrier.get('row'), 'session_id', None),
+            source='peer_edit',
+        )
+        db.session.commit()
+    elif kind == 'baseline':
         # container is the sessions dict; carrier is the session, result_blob is
         # session['result']. Ground the open idea so chat re-grounds correctly.
         result_blob['selected_scorecard_id'] = card_id
@@ -8035,7 +8586,7 @@ def get_scorecard_for_workspace(thread_id, scorecard_id):
             or normalized.get('analysis_id')
             or scorecard_id
         )
-        normalized['isBaseline'] = (kind == 'baseline')
+        normalized['isBaseline'] = False
         overrides = result_blob.get('display_overrides') if isinstance(result_blob.get('display_overrides'), dict) else {}
 
         return jsonify({
@@ -8092,7 +8643,17 @@ def scorecard_display_overrides(thread_id, scorecard_id):
         result_blob['display_overrides'] = next_overrides
         result_blob['display_overrides_updated_at'] = datetime.utcnow().isoformat()
 
-        if kind == 'baseline':
+        if kind == 'peer':
+            upsert_scorecard(
+                user_id=user_id,
+                thread_id=thread_id,
+                payload=result_blob,
+                organization_id=getattr(carrier.get('row'), 'organization_id', None),
+                session_id=getattr(carrier.get('row'), 'session_id', None),
+                source='peer_override',
+            )
+            db.session.commit()
+        elif kind == 'baseline':
             # container is the sessions dict, key is the session_key
             container[key]['result'] = result_blob
             container[key]['timestamp'] = datetime.utcnow().isoformat()
@@ -8287,6 +8848,8 @@ def delete_scorecard_snapshot(thread_id, snapshot_id):
         if not snapshot_meta:
             return jsonify({'error': 'Snapshot not found'}), 404
 
+        archive_scorecard(user_id, snapshot_id, thread_id=thread_id)
+
         all_data = _load_scenarios(user_id)
         td = all_data.get(thread_id, {})
         scenarios = td.get('scenarios') if isinstance(td.get('scenarios'), dict) else {}
@@ -8295,11 +8858,14 @@ def delete_scorecard_snapshot(thread_id, snapshot_id):
             if td.get('adopted_scenario_id') == snapshot_id:
                 td['adopted_scenario_id'] = None
             _save_scenarios(user_id, all_data)
+        db.session.commit()
 
+        peers = _canonical_thread_peers(user_id, thread_id)
         return jsonify({
             'success': True,
             'deleted_snapshot_id': snapshot_meta.get('deleted_snapshot_id'),
-            'scorecard_snapshots': snapshot_meta.get('scorecard_snapshots'),
+            'scorecard_snapshots': peers,
+            'peer_scorecards': peers,
             'selected_scorecard_id': snapshot_meta.get('selected_scorecard_id'),
         }), 200
     except ScorecardConflictError as conflict:
