@@ -184,17 +184,11 @@ GEMINI_PRICES_USD_PER_M = {
 # change significantly.
 MARGIN_MULTIPLIER = float(os.getenv('JASPEN_MARGIN_MULTIPLIER', '3.0'))
 
-# Plan-level provider-cost ceiling (USD per month, BEFORE margin). At 3.0×
-# margin these map to comfortable margins per Stripe pricing:
-#   Free        $0  → $0.25 budget (small sample path)
-#   Starter     $7  → $2.00 budget × 3 = $6 retail → modest margin
-#   Essential  $39  → $13 budget × 3 = $39 retail → break-even on heavy users,
-#                     comfortable margin on light users
-#   Team      $129  → $43 budget × 3 = $129
-#   Business   $299 → $100 budget × 3 = $300
-#
-# These are intentionally calibrated so the heaviest users hit zero margin
-# (not negative) — most users use far less. Tunable via env.
+# Plan-level Thinking Power budget denominator. Provider cost is multiplied by
+# MARGIN_MULTIPLIER before comparison with this value, as established by the
+# original Thinking Power commit (2149e33a). Consequently the raw provider-cost
+# ceiling is `budget / margin`; changing that commercial formula requires an
+# explicit pricing decision. Values remain environment-tunable.
 PLAN_THINKING_BUDGET_USD = {
     'free':       float(os.getenv('JASPEN_BUDGET_FREE',       '0.25')),
     'starter':    float(os.getenv('JASPEN_BUDGET_STARTER',    '2.00')),
@@ -238,7 +232,7 @@ def provider_cost_usd(model_name, input_tokens, output_tokens):
 
 
 def plan_thinking_budget_usd(plan_key):
-    """Monthly AI-provider-cost budget for a plan (USD, before margin)."""
+    """Monthly Thinking Power budget denominator in margin-adjusted USD."""
     canonical = normalize_plan_key(plan_key)
     return PLAN_THINKING_BUDGET_USD.get(canonical, PLAN_THINKING_BUDGET_USD['essential'])
 
@@ -537,26 +531,45 @@ def _resolve_user_pool(user, app_config, now=None, force_reset=False):
     if force_reset or _cycle_reset_due(reset_at, now):
         overage_tokens = 0
         cycle_limit = monthly_limit
-        remaining = monthly_limit
+        monthly_remaining = monthly_limit
         reset_at = now
     else:
-        remaining = int(meter.get("remaining", user.credits_remaining if user.credits_remaining is not None else cycle_limit))
+        # `meter.remaining` is deliberately monthly/expiring only. Persistent
+        # purchased credits live in their own ledger and are added for display.
+        if 'remaining' in meter:
+            monthly_remaining = int(meter.get('remaining', cycle_limit))
+        else:
+            # Preserve partially consumed legacy balances when first creating
+            # the structured meter; never silently replenish them.
+            from app.founder_entitlements import persistent_credit_balance
+            legacy_combined = user.credits_remaining
+            persistent_existing = persistent_credit_balance(user)
+            monthly_remaining = (
+                cycle_limit
+                if legacy_combined is None
+                else int(legacy_combined) - persistent_existing
+            )
 
     meter["overage_tokens"] = overage_tokens
     meter["cycle_limit"] = cycle_limit
-    meter["remaining"] = remaining
-    meter["tokens_used_this_month"] = max(0, cycle_limit - remaining)
+    meter["remaining"] = monthly_remaining
+    meter["tokens_used_this_month"] = max(0, cycle_limit - monthly_remaining)
     meter["cycle_reset_at"] = reset_at.isoformat() if isinstance(reset_at, datetime) else now.isoformat()
     prefs["thinking_power"] = meter
     user.ui_preferences = deepcopy(prefs)
     _flag_modified(user, "ui_preferences")
-    user.credits_remaining = remaining
+    from app.founder_entitlements import persistent_credit_balance
+    persistent_remaining = persistent_credit_balance(user)
+    combined_remaining = monthly_remaining + persistent_remaining
+    user.credits_remaining = combined_remaining
     user.credits_reset_at = reset_at if isinstance(reset_at, datetime) else now
     return {
         "meter": meter,
         "monthly_limit": monthly_limit,
         "cycle_limit": cycle_limit,
-        "remaining": remaining,
+        "monthly_remaining": monthly_remaining,
+        "persistent_remaining": persistent_remaining,
+        "remaining": combined_remaining,
         "reset_at": user.credits_reset_at,
     }
 
@@ -577,7 +590,9 @@ def apply_plan_to_user(user, plan_key, app_config, reset_credits=True):
         if canonical in SHARED_POOL_PLANS:
             user.credits_remaining = monthly_limit
             user.credits_reset_at = datetime.utcnow()
-            _resolve_org_pool(user, app_config, now=datetime.utcnow(), force_reset=True)
+            pool = _resolve_org_pool(user, app_config, now=datetime.utcnow(), force_reset=True)
+            from app.founder_entitlements import persistent_credit_balance
+            user.credits_remaining = int((pool or {}).get('remaining', monthly_limit or 0)) + persistent_credit_balance(user)
         else:
             _resolve_user_pool(user, app_config, now=datetime.utcnow(), force_reset=True)
     elif monthly_limit is None and user.credits_remaining is not None:
@@ -604,7 +619,8 @@ def add_credits(user, amount):
             settings["thinking_power"] = meter
             org.settings = deepcopy(settings)
             _flag_modified(org, "settings")
-            user.credits_remaining = int(meter.get("remaining", 0))
+            from app.founder_entitlements import persistent_credit_balance
+            user.credits_remaining = int(meter.get("remaining", 0)) + persistent_credit_balance(user)
             user.credits_reset_at = datetime.utcnow()
             return
 
@@ -618,7 +634,8 @@ def add_credits(user, amount):
     prefs["thinking_power"] = meter
     user.ui_preferences = deepcopy(prefs)
     _flag_modified(user, "ui_preferences")
-    user.credits_remaining = int(meter.get("remaining", 0))
+    from app.founder_entitlements import persistent_credit_balance
+    user.credits_remaining = int(meter.get("remaining", 0)) + persistent_credit_balance(user)
 
 
 def bootstrap_legacy_credits(user, app_config):
@@ -635,7 +652,8 @@ def bootstrap_legacy_credits(user, app_config):
         pool = _resolve_org_pool(user, app_config, now=datetime.utcnow(), force_reset=False)
         if pool is None:
             return False
-        user.credits_remaining = int(pool["remaining"])
+        from app.founder_entitlements import persistent_credit_balance
+        user.credits_remaining = int(pool["remaining"]) + persistent_credit_balance(user)
         if not user.credits_reset_at:
             user.credits_reset_at = datetime.utcnow()
         return True
@@ -687,7 +705,8 @@ def reset_user_monthly_credits(user, app_config, now=None, force=False):
             return False
         if not force and not _cycle_reset_due(user.credits_reset_at, now):
             return False
-        user.credits_remaining = int(pool["remaining"])
+        from app.founder_entitlements import persistent_credit_balance
+        user.credits_remaining = int(pool["remaining"]) + persistent_credit_balance(user)
         user.credits_reset_at = now
         return True
     pool = _resolve_user_pool(user, app_config, now=now, force_reset=force)
@@ -708,6 +727,12 @@ def consume_credits(user, amount):
     if amount <= 0:
         return True, user.credits_remaining
 
+    # Reservation callers release unused capacity immediately after settlement.
+    # Keep the source split on this in-memory ORM instance so a release cannot
+    # accidentally refund an older persistent-ledger debit.
+    user._last_monthly_credit_debit = 0
+    user._last_persistent_credit_debit = 0
+
     plan_key = normalize_plan_key(getattr(user, "subscription_plan", None))
     monthly_limit = get_monthly_credit_limit(plan_key, {})
     grace_floor = 0
@@ -719,7 +744,10 @@ def consume_credits(user, amount):
         if pool is None:
             return False, user.credits_remaining
         meter = pool["meter"]
-        remaining = int(meter.get("remaining", 0))
+        monthly_remaining = int(meter.get("remaining", 0))
+        from app.founder_entitlements import persistent_credit_balance
+        persistent_remaining = persistent_credit_balance(user)
+        remaining = monthly_remaining + persistent_remaining
         cycle_limit = int(meter.get("cycle_limit", monthly_limit or 0))
         if cycle_limit > 0:
             grace_floor = -int(math.floor(cycle_limit * max(0.0, SOFT_STOP_GRACE_MULTIPLIER - 1.0)))
@@ -727,25 +755,64 @@ def consume_credits(user, amount):
         if cycle_limit > 0 and next_remaining < grace_floor:
             user.credits_remaining = remaining
             return False, remaining
-        meter["remaining"] = next_remaining
-        meter["tokens_used_this_month"] = max(0, int(meter.get("cycle_limit", 0)) - next_remaining)
-        user.credits_remaining = next_remaining
+
+        monthly_debit = min(amount, max(0, monthly_remaining))
+        next_monthly_remaining = monthly_remaining - monthly_debit
+        persistent_needed = max(0, amount - monthly_debit)
+        if persistent_needed:
+            from app.founder_entitlements import consume_persistent_credits
+            persistent_consumed = consume_persistent_credits(
+                user,
+                min(persistent_needed, persistent_remaining),
+                metadata={'reason': 'thinking_power_usage'},
+            )
+            user._last_persistent_credit_debit = persistent_consumed
+            persistent_needed -= persistent_consumed
+        if persistent_needed:
+            next_monthly_remaining -= persistent_needed
+        user._last_monthly_credit_debit = monthly_debit + persistent_needed
+
+        meter["remaining"] = next_monthly_remaining
+        meter["tokens_used_this_month"] = max(0, int(meter.get("cycle_limit", 0)) - next_monthly_remaining)
+        user.credits_remaining = next_monthly_remaining + persistent_credit_balance(user)
         user.credits_reset_at = now
-        return True, next_remaining
+        return True, user.credits_remaining
 
     pool = _resolve_user_pool(user, {}, now=now, force_reset=False)
-    remaining = int(pool.get("remaining", user.credits_remaining or 0))
+    monthly_remaining = int(pool.get("monthly_remaining", 0))
+    persistent_remaining = int(pool.get("persistent_remaining", 0))
+    remaining = monthly_remaining + persistent_remaining
     cycle_limit = int(pool.get("cycle_limit", monthly_limit or 0))
     if cycle_limit > 0:
         grace_floor = -int(math.floor(cycle_limit * max(0.0, SOFT_STOP_GRACE_MULTIPLIER - 1.0)))
     next_remaining = remaining - amount
     if cycle_limit > 0 and next_remaining < grace_floor:
         return False, remaining
-    user.credits_remaining = next_remaining
+
+    monthly_debit = min(amount, max(0, monthly_remaining))
+    next_monthly_remaining = monthly_remaining - monthly_debit
+    persistent_needed = max(0, amount - monthly_debit)
+    if persistent_needed:
+        from app.founder_entitlements import consume_persistent_credits
+        persistent_consumed = consume_persistent_credits(
+            user,
+            min(persistent_needed, persistent_remaining),
+            metadata={'reason': 'thinking_power_usage'},
+        )
+        user._last_persistent_credit_debit = persistent_consumed
+        persistent_needed -= persistent_consumed
+    if persistent_needed:
+        # The soft-stop grace applies only after both paid balances are empty.
+        next_monthly_remaining -= persistent_needed
+    user._last_monthly_credit_debit = monthly_debit + persistent_needed
+
+    from app.founder_entitlements import persistent_credit_balance
+    persistent_after = persistent_credit_balance(user)
+    user.credits_remaining = next_monthly_remaining + persistent_after
     prefs = user.ui_preferences if isinstance(user.ui_preferences, dict) else {}
     meter = prefs.get("thinking_power") if isinstance(prefs.get("thinking_power"), dict) else {}
-    meter["remaining"] = next_remaining
-    meter["tokens_used_this_month"] = max(0, cycle_limit - next_remaining)
+    meter["remaining"] = next_monthly_remaining
+    meter["tokens_used_this_month"] = max(0, cycle_limit - next_monthly_remaining)
     meter["cycle_limit"] = cycle_limit
     if not meter.get("cycle_reset_at"):
         meter["cycle_reset_at"] = now.isoformat()
@@ -755,7 +822,86 @@ def consume_credits(user, amount):
     return True, user.credits_remaining
 
 
+def release_consumed_credits(user, amount):
+    """Release a reservation back to the same durable source where possible."""
+    amount = max(0, int(amount or 0))
+    if amount <= 0 or user.credits_remaining is None:
+        return user.credits_remaining
+    from app.founder_entitlements import refund_persistent_usage, persistent_credit_balance
+    persistent_debit = max(0, int(getattr(user, '_last_persistent_credit_debit', 0) or 0))
+    restored_persistent = refund_persistent_usage(
+        user,
+        min(amount, persistent_debit),
+        metadata={'reason': 'provider_reservation_release'},
+    )
+    monthly_release = amount - restored_persistent
+    if monthly_release > 0:
+        plan_key = normalize_plan_key(getattr(user, 'subscription_plan', None))
+        if plan_key in SHARED_POOL_PLANS:
+            pool = _resolve_org_pool(user, {}, now=datetime.utcnow(), force_reset=False)
+            if pool is not None:
+                meter = pool['meter']
+                meter['remaining'] = int(meter.get('remaining', 0)) + monthly_release
+                meter['tokens_used_this_month'] = max(
+                    0,
+                    int(meter.get('cycle_limit', 0)) - meter['remaining'],
+                )
+                user.credits_remaining = meter['remaining'] + persistent_credit_balance(user)
+        else:
+            prefs = user.ui_preferences if isinstance(user.ui_preferences, dict) else {}
+            meter = prefs.get('thinking_power') if isinstance(prefs.get('thinking_power'), dict) else {}
+            meter['remaining'] = int(meter.get('remaining', 0)) + monthly_release
+            meter['tokens_used_this_month'] = max(
+                0,
+                int(meter.get('cycle_limit', 0)) - meter['remaining'],
+            )
+            prefs['thinking_power'] = meter
+            user.ui_preferences = deepcopy(prefs)
+            _flag_modified(user, 'ui_preferences')
+            user.credits_remaining = meter['remaining'] + persistent_credit_balance(user)
+    else:
+        prefs = user.ui_preferences if isinstance(user.ui_preferences, dict) else {}
+        meter = prefs.get('thinking_power') if isinstance(prefs.get('thinking_power'), dict) else {}
+        user.credits_remaining = int(meter.get('remaining', 0)) + persistent_credit_balance(user)
+    user._last_persistent_credit_debit = max(0, persistent_debit - restored_persistent)
+    user._last_monthly_credit_debit = max(
+        0,
+        int(getattr(user, '_last_monthly_credit_debit', 0) or 0) - monthly_release,
+    )
+    return user.credits_remaining
+
+
+def cap_monthly_credits(user, amount, app_config):
+    """Cap only the resettable monthly meter, preserving durable credit lots."""
+    cap = max(0, int(amount or 0))
+    plan_key = normalize_plan_key(getattr(user, 'subscription_plan', None))
+    if plan_key in SHARED_POOL_PLANS:
+        pool = _resolve_org_pool(user, app_config, now=datetime.utcnow(), force_reset=False)
+        if pool is None:
+            return user.credits_remaining
+        meter = pool['meter']
+        meter['remaining'] = min(int(meter.get('remaining', 0)), cap)
+        meter['tokens_used_this_month'] = max(0, int(meter.get('cycle_limit', 0)) - meter['remaining'])
+        from app.founder_entitlements import persistent_credit_balance
+        user.credits_remaining = meter['remaining'] + persistent_credit_balance(user)
+        return user.credits_remaining
+
+    pool = _resolve_user_pool(user, app_config, now=datetime.utcnow(), force_reset=False)
+    meter = pool['meter']
+    meter['remaining'] = min(int(pool.get('monthly_remaining', 0)), cap)
+    meter['tokens_used_this_month'] = max(0, int(meter.get('cycle_limit', 0)) - meter['remaining'])
+    prefs = user.ui_preferences if isinstance(user.ui_preferences, dict) else {}
+    prefs['thinking_power'] = meter
+    user.ui_preferences = deepcopy(prefs)
+    _flag_modified(user, 'ui_preferences')
+    from app.founder_entitlements import persistent_credit_balance
+    user.credits_remaining = meter['remaining'] + persistent_credit_balance(user)
+    return user.credits_remaining
+
+
 def get_usage_meter_state(user, app_config, now=None):
+    from app.founder_entitlements import persistent_credit_balance, founder_credit_balance
+
     now = now or datetime.utcnow()
     plan_key = normalize_plan_key(getattr(user, "subscription_plan", None))
     monthly_limit = get_monthly_credit_limit(plan_key, app_config)
@@ -781,8 +927,10 @@ def get_usage_meter_state(user, app_config, now=None):
                 "overage_tokens": 0,
             }
         meter = pool["meter"]
-        remaining = int(meter.get("remaining", pool["cycle_limit"]))
-        cycle_limit = int(meter.get("cycle_limit", pool["cycle_limit"]))
+        monthly_remaining = int(meter.get("remaining", pool["cycle_limit"]))
+        persistent_remaining = persistent_credit_balance(user)
+        remaining = monthly_remaining + persistent_remaining
+        cycle_limit = int(meter.get("cycle_limit", pool["cycle_limit"])) + persistent_remaining
         used = max(0, cycle_limit - remaining)
         reset_at = None
         reset_at_raw = meter.get("cycle_reset_at")
@@ -796,17 +944,22 @@ def get_usage_meter_state(user, app_config, now=None):
             "plan_key": plan_key,
             "organization_id": pool["organization"].id,
             "monthly_limit": int(pool["monthly_limit"] or 0),
+            "monthly_remaining": monthly_remaining,
             "cycle_limit": cycle_limit,
             "remaining": remaining,
             "used": used,
             "grace_tokens": grace_tokens,
             "reset_at": reset_at or user.credits_reset_at,
             "overage_tokens": int(meter.get("overage_tokens", 0) or 0),
+            "persistent_credits": persistent_remaining,
+            "founder_credits": founder_credit_balance(user),
         }
 
     pool = _resolve_user_pool(user, app_config, now=now, force_reset=False)
     remaining = int(pool.get("remaining", user.credits_remaining or 0))
-    cycle_limit = int(pool.get("cycle_limit", monthly_limit or 0))
+    persistent_remaining = int(pool.get('persistent_remaining', 0))
+    monthly_cycle_limit = int(pool.get("cycle_limit", monthly_limit or 0))
+    cycle_limit = monthly_cycle_limit + persistent_remaining
     used = None
     if cycle_limit is not None and remaining is not None:
         used = max(0, cycle_limit - remaining)
@@ -814,12 +967,15 @@ def get_usage_meter_state(user, app_config, now=None):
         "scope": "user",
         "plan_key": plan_key,
         "monthly_limit": monthly_limit,
+        "monthly_remaining": int(pool.get('monthly_remaining', 0)),
         "cycle_limit": cycle_limit,
         "remaining": remaining,
         "used": used,
         "grace_tokens": grace_tokens,
         "reset_at": user.credits_reset_at,
-        "overage_tokens": 0,
+        "overage_tokens": int(pool.get('meter', {}).get('overage_tokens', 0) or 0),
+        "persistent_credits": persistent_remaining,
+        "founder_credits": founder_credit_balance(user),
     }
 
 

@@ -1047,6 +1047,21 @@ class UsageEvent(db.Model):
     output_tokens = db.Column(db.Integer, nullable=False, default=0)
     total_tokens = db.Column(db.Integer, nullable=False, default=0)
     credits_charged = db.Column(db.Integer, nullable=False, default=0)
+    organization_id = db.Column(
+        db.String(36),
+        db.ForeignKey('organizations.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    endpoint = db.Column(db.String(120), nullable=True, index=True)
+    operation_type = db.Column(db.String(80), nullable=True, index=True)
+    raw_provider_cost_usd = db.Column(db.Numeric(14, 8), nullable=True)
+    reserved_credits = db.Column(db.Integer, nullable=False, default=0)
+    settled_credits = db.Column(db.Integer, nullable=False, default=0)
+    success = db.Column(db.Boolean, nullable=False, default=True, index=True)
+    error_code = db.Column(db.String(120), nullable=True)
+    scorecard_id = db.Column(db.String(36), nullable=True, index=True)
+    metadata_json = db.Column(db.JSON, nullable=True, default=dict)
     is_failover = db.Column(db.Boolean, nullable=False, default=False)
     created_at = db.Column(
         db.DateTime,
@@ -1074,6 +1089,165 @@ class StripeWebhookEvent(db.Model):
         index=True,
     )
     processed_at = db.Column(db.DateTime, nullable=True, index=True)
+
+
+class AccountEntitlement(db.Model):
+    """Permanent, auditable capabilities that are independent of plan state."""
+
+    __tablename__ = 'account_entitlements'
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = db.Column(
+        db.String(36),
+        db.ForeignKey('users.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    organization_id = db.Column(
+        db.String(36),
+        db.ForeignKey('organizations.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    entitlement_key = db.Column(db.String(80), nullable=False, index=True)
+    source = db.Column(db.String(80), nullable=False, default='system')
+    external_reference = db.Column(db.String(255), nullable=True, unique=True, index=True)
+    grant_metadata = db.Column(db.JSON, nullable=True, default=dict)
+    granted_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    revoked_at = db.Column(db.DateTime, nullable=True, index=True)
+    revoke_reason = db.Column(db.String(255), nullable=True)
+
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'entitlement_key', name='uq_account_entitlements_user_key'),
+    )
+
+
+class PersistentCreditGrant(db.Model):
+    """A non-expiring purchased/gifted balance, separate from monthly credits."""
+
+    __tablename__ = 'persistent_credit_grants'
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = db.Column(
+        db.String(36),
+        db.ForeignKey('users.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    organization_id = db.Column(
+        db.String(36),
+        db.ForeignKey('organizations.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    entitlement_id = db.Column(
+        db.String(36),
+        db.ForeignKey('account_entitlements.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    source = db.Column(db.String(80), nullable=False, index=True)
+    original_amount = db.Column(db.BigInteger, nullable=False)
+    remaining_amount = db.Column(db.BigInteger, nullable=False)
+    status = db.Column(db.String(32), nullable=False, default='active', index=True)
+    external_reference = db.Column(db.String(255), nullable=False, unique=True, index=True)
+    stripe_checkout_id = db.Column(db.String(255), nullable=True, index=True)
+    stripe_invoice_id = db.Column(db.String(255), nullable=True, index=True)
+    grant_metadata = db.Column(db.JSON, nullable=True, default=dict)
+    granted_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    reversed_at = db.Column(db.DateTime, nullable=True)
+
+
+class PersistentCreditTransaction(db.Model):
+    """Append-only audit ledger for persistent credit changes."""
+
+    __tablename__ = 'persistent_credit_transactions'
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    grant_id = db.Column(
+        db.String(36),
+        db.ForeignKey('persistent_credit_grants.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    user_id = db.Column(
+        db.String(36),
+        db.ForeignKey('users.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    transaction_type = db.Column(db.String(32), nullable=False, index=True)
+    amount = db.Column(db.BigInteger, nullable=False)
+    balance_after = db.Column(db.BigInteger, nullable=False)
+    idempotency_key = db.Column(db.String(255), nullable=True, unique=True, index=True)
+    usage_event_id = db.Column(
+        db.Integer,
+        db.ForeignKey('usage_events.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    transaction_metadata = db.Column(db.JSON, nullable=True, default=dict)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+
+class Scorecard(db.Model):
+    """Standalone peer scorecard. Creation order has no comparison meaning."""
+
+    __tablename__ = 'scorecards'
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = db.Column(
+        db.String(36),
+        db.ForeignKey('users.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    organization_id = db.Column(
+        db.String(36),
+        db.ForeignKey('organizations.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    thread_id = db.Column(db.String(255), nullable=False, index=True)
+    session_id = db.Column(db.String(255), nullable=True, index=True)
+    decision_record_id = db.Column(
+        db.String(36),
+        db.ForeignKey('decision_records.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    project_name = db.Column(db.String(255), nullable=False, index=True)
+    rubric = db.Column(db.JSON, nullable=True, default=dict)
+    evidence = db.Column(db.JSON, nullable=True, default=list)
+    score = db.Column(db.Numeric(8, 3), nullable=True, index=True)
+    assumptions = db.Column(db.JSON, nullable=True, default=list)
+    recommendation = db.Column(db.JSON, nullable=True)
+    execution_plan_ref = db.Column(db.String(255), nullable=True, index=True)
+    data = db.Column(db.JSON, nullable=False, default=dict)
+    search_metadata = db.Column(db.JSON, nullable=True, default=dict)
+    source = db.Column(db.String(40), nullable=False, default='native', index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    archived_at = db.Column(db.DateTime, nullable=True, index=True)
+
+    __table_args__ = (
+        db.Index('ix_scorecards_user_thread_created', 'user_id', 'thread_id', 'created_at'),
+    )
+
+    def to_peer_dict(self):
+        payload = dict(self.data) if isinstance(self.data, dict) else {}
+        payload.update({
+            'id': self.id,
+            'analysis_id': self.id,
+            'thread_id': self.thread_id,
+            'project_name': self.project_name,
+            'name': payload.get('name') or self.project_name,
+            'isBaseline': False,
+            'is_baseline': False,
+            'createdAt': payload.get('createdAt') or (self.created_at.isoformat() if self.created_at else None),
+        })
+        payload.pop('delta_vs_baseline', None)
+        return payload
 
 
 class OrgIdeaLedger(db.Model):
