@@ -22,6 +22,7 @@ import {
   clearPendingIntakeThreadId,
 } from '../../shared/auth/pendingIntakeContext';
 import { getPlanConnectorSentence } from '../../shared/billing/planConnectors';
+import { projectEstimateForPlan } from '../../shared/billing/thinkingPowerEstimates';
 import {
   GuidedDecisionButton,
   GuidedDecisionModal,
@@ -5068,6 +5069,7 @@ useEffect(() => {
                       ? 'Contracted pooled thinking power'
                       : `${Number(plan.monthly_credits).toLocaleString()} credits/month`}
                   </p>
+                  <p className="detail">{projectEstimateForPlan(key, plan)}</p>
                   <p className="detail jas-account-plan-connectors">
                     Connectors: {getPlanConnectorSentence(key)}
                   </p>
@@ -12561,7 +12563,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                   <p className="jas-low-credits-banner-title">Welcome to Jaspen — here's what you get on the free plan</p>
                   <ul className="jas-free-tier-list">
                     <li>10 AI-powered analyses per day (5 per hour)</li>
-                    <li>300 thinking credits per month</li>
+                    <li>300 Thinking Power credits per month · ~1 focused evaluation with complete inputs</li>
                     <li>Resets monthly on your signup anniversary</li>
                   </ul>
                   <p>

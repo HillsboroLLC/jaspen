@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { THINKING_POWER_VARIABILITY_NOTE } from '../../shared/billing/thinkingPowerEstimates';
 import './FAQSection.css';
 
 // Content reflects the CURRENT product and pricing (credit-based plans, the
@@ -25,8 +26,8 @@ export default function FAQSection() {
     {
       q: 'What is a credit, and how many will I need?',
       a: <>
-        <p>Credits are how you pay for AI work as you go. Every plan includes a monthly allotment that resets each cycle: Free 300, Starter 1,000, Essential 7,000, Team 29,000 shared, and Business 80,000 shared. Enterprise capacity is scoped with Sales.</p>
-        <p>How fast they burn depends on which model you pick. You can top up any time: 3,000 credits for $10, 8,000 for $25, or 18,000 for $50.</p>
+        <p>Credits are how Thinking Power usage is measured. Every plan includes a monthly allowance: Free 300 supports ~1 focused evaluation with complete inputs; Starter 1,000 supports ~3–4 typical project evaluations; Essential 7,000 supports ~17–29 typical project evaluations; Team 29,000 shared supports ~57–96 typical evaluations across the shared allowance; and Business 80,000 shared supports ~133–222 typical evaluations across the shared allowance.</p>
+        <p>These ranges are approximate, not guaranteed. {THINKING_POWER_VARIABILITY_NOTE} You can top up any time.</p>
       </>
     },
     {
@@ -39,7 +40,7 @@ export default function FAQSection() {
     {
       q: 'Is the Free plan just a trial?',
       a: <>
-        <p>No. Free is a real plan with 300 credits every month, not a countdown. It is meant to let you test Jaspen on a real decision before you decide to pay.</p>
+        <p>No. Free is a real plan with 300 credits every month, not a countdown. That supports ~1 focused evaluation with complete inputs; it is not a promise of a complete typical or heavy evaluation.</p>
       </>
     },
     {

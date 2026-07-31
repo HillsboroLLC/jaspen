@@ -4,6 +4,11 @@ import BackToJaspen from '../../shared/components/BackToJaspen';
 import StripeCheckout from './StripeCheckout';
 import { API_BASE } from '../../config/apiBase';
 import { getPlanConnectorSentence } from '../../shared/billing/planConnectors';
+import {
+  FOUNDER_THINKING_POWER_SUMMARY,
+  THINKING_POWER_VARIABILITY_NOTE,
+  projectEstimateForPlan,
+} from '../../shared/billing/thinkingPowerEstimates';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import ConfirmDialog from '../../shared/components/ConfirmDialog';
@@ -2512,6 +2517,17 @@ export default function Account() {
               <p style={{ fontSize: '0.8rem', color: '#64748b', margin: 0 }}>
                 Resets {resetDateLabel}
               </p>
+              <p style={{ fontSize: '0.8rem', color: '#475569', margin: '8px 0 0' }}>
+                {projectEstimateForPlan(currentPlan, plans[currentPlan])}
+              </p>
+              {status?.is_founder && (
+                <p style={{ fontSize: '0.8rem', color: '#475569', margin: '8px 0 0' }}>
+                  Founder gift: {FOUNDER_THINKING_POWER_SUMMARY}
+                </p>
+              )}
+              <p style={{ fontSize: '0.72rem', color: '#64748b', margin: '8px 0 0' }}>
+                Approximate, not guaranteed. {THINKING_POWER_VARIABILITY_NOTE}
+              </p>
 
               {thinkingPowerLow && (
                 <button
@@ -2681,6 +2697,9 @@ export default function Account() {
                       const seats = plan.included_seats ? ` · ${plan.included_seats} seats included` : '';
                       return `${base}${seats}`;
                     })()}
+                  </p>
+                  <p className="account-plan-meta">
+                    {projectEstimateForPlan(key, plan)}
                   </p>
                   {plan.description && (
                     <p className="account-plan-connectors" style={{ color: 'rgba(22,31,59,0.72)' }}>

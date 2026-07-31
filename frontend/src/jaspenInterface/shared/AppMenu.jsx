@@ -19,6 +19,7 @@ import { AUTH_EVENTS, buildAuthHeaders } from '../../shared/auth/http';
 import { API_BASE } from '../../config/apiBase';
 import { buildInviteLink, buildInviteDisplay } from '../../shared/inviteLink';
 import { getPlanConnectorSentence } from '../../shared/billing/planConnectors';
+import { projectEstimateForPlan } from '../../shared/billing/thinkingPowerEstimates';
 import { PLAN_ORDER, PLAN_RANK } from '../../shared/constants/appConstants';
 import { formatNextResetDate } from '../../shared/utils/dateUtils';
 import { isMasterAdminUser } from '../../shared/auth/masterAdmin';
@@ -869,6 +870,7 @@ export default function AppMenu() {
                       ? 'Contracted pooled thinking power'
                       : `${Number(plan.monthly_credits).toLocaleString()} credits/month`}
                   </p>
+                  <p className="detail">{projectEstimateForPlan(key, plan)}</p>
                   <p className="detail jas-account-plan-connectors">
                     Connectors: {getPlanConnectorSentence(key)}
                   </p>

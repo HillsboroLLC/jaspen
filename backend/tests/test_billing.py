@@ -26,6 +26,21 @@ def test_seat_catalog_enforces_team_and_business_limits(client, app):
     assert plans['business']['additional_seat_price'] == 30
 
 
+def test_catalog_exposes_project_estimates_and_shared_allowance_wording(client):
+    response = client.get('/api/v1/billing/catalog')
+    assert response.status_code == 200
+    plans = response.get_json()['plans']
+
+    assert plans['free']['monthly_credits'] == 300
+    assert plans['free']['project_evaluation_estimate'] == '~1 focused evaluation with complete inputs'
+    assert plans['starter']['project_evaluation_estimate'] == '~3–4 typical project evaluations'
+    assert plans['essential']['project_evaluation_estimate'] == '~17–29 typical project evaluations'
+    assert plans['team']['monthly_credits'] == 29_000
+    assert plans['team']['project_evaluation_estimate'] == '~57–96 typical project evaluations across the shared allowance'
+    assert plans['business']['monthly_credits'] == 80_000
+    assert plans['business']['project_evaluation_estimate'] == '~133–222 typical project evaluations across the shared allowance'
+
+
 def test_catalog_exposes_every_configured_annual_plan(client, app):
     app.config['STRIPE_ANNUAL_PRICE_IDS'] = {
         'starter': 'price_starter_annual',
