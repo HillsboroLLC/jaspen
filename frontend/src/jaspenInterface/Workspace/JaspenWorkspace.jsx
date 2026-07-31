@@ -28,6 +28,7 @@ import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
 import JaspenExecutionCanvas from './JaspenExecutionCanvas';
 import { userMessageWhitespaceStyle } from './messageFormatting';
+import { downloadRenderedScorecardPdf } from './scorecardPdf';
 
 // Custom scorecard blocks live on a true 12-col grid: drag the handle to move,
 // drag the corner to resize to ANY size (not 4 fixed widths). WidthProvider makes
@@ -239,6 +240,7 @@ export default function JaspenWorkspace() {
   // Auto-grow the workspace composer as the user types (and reset after send).
   const chatComposerRef = useRef(null);
   const chatAbortRef = useRef(null);
+  const scorecardExportRef = useRef(null);
   useEffect(() => {
     const el = chatComposerRef.current;
     if (el) { el.style.height = 'auto'; el.style.height = `${Math.min(el.scrollHeight, 140)}px`; }
@@ -802,6 +804,10 @@ export default function JaspenWorkspace() {
     setScorecardExporting(format);
     setExportError(null);
     try {
+      if (format === 'pdf') {
+        await downloadRenderedScorecardPdf(scorecardExportRef.current, displayTitle);
+        return;
+      }
       const url = `${API_BASE}/api/v1/export/threads/${encodeURIComponent(threadId)}/scorecard/${format}?scorecard_id=${encodeURIComponent(scorecardId)}`;
       const res = await authFetch(url);
       if (!res.ok) {
@@ -1729,6 +1735,8 @@ export default function JaspenWorkspace() {
             />
           ) : (
           <div
+            ref={scorecardExportRef}
+            data-scorecard-export
             style={{
               maxWidth:980, margin:'0 auto', background:'#fff', borderRadius:14,
               boxShadow:'0 1px 3px rgba(15,23,42,0.06), 0 8px 24px rgba(15,23,42,0.04)',
@@ -2049,13 +2057,13 @@ export default function JaspenWorkspace() {
                                 />
                               </div>
                               {confirmDeleteBlockId === (blk?.id || bi) ? (
-                                <span style={{ display:'flex', alignItems:'center', gap:6, flexShrink:0 }}>
+                                <span data-scorecard-export-hide style={{ display:'flex', alignItems:'center', gap:6, flexShrink:0 }}>
                                   <span style={{ fontSize:11, color:'#94a3b8' }}>Delete?</span>
                                   <button onClick={() => { updateBlocks(blocks.filter((_, i) => i !== bi)); setConfirmDeleteBlockId(null); }} title="Confirm delete" style={{ border:'none', background:'transparent', color:'#dc2626', cursor:'pointer', fontSize:12, fontWeight:600, padding:2 }}>Yes</button>
                                   <button onClick={() => setConfirmDeleteBlockId(null)} title="Keep" style={{ border:'none', background:'transparent', color:'#64748b', cursor:'pointer', fontSize:12, padding:2 }}>No</button>
                                 </span>
                               ) : (
-                                <button onClick={() => setConfirmDeleteBlockId(blk?.id || bi)} title="Remove block" onMouseEnter={(e) => { e.currentTarget.style.color = '#94a3b8'; }} onMouseLeave={(e) => { e.currentTarget.style.color = '#cbd5e1'; }} style={{ border:'none', background:'transparent', color:'#cbd5e1', cursor:'pointer', fontSize:14, lineHeight:1, padding:2, flexShrink:0 }}>×</button>
+                                <button data-scorecard-export-hide onClick={() => setConfirmDeleteBlockId(blk?.id || bi)} title="Remove block" onMouseEnter={(e) => { e.currentTarget.style.color = '#94a3b8'; }} onMouseLeave={(e) => { e.currentTarget.style.color = '#cbd5e1'; }} style={{ border:'none', background:'transparent', color:'#cbd5e1', cursor:'pointer', fontSize:14, lineHeight:1, padding:2, flexShrink:0 }}>×</button>
                               )}
                             </div>
                             <EditableText
@@ -2068,7 +2076,7 @@ export default function JaspenWorkspace() {
                         );
                       })}
               </BlockGrid>
-              <div style={{ position:'relative', marginTop: 12 }}>
+              <div data-scorecard-export-hide style={{ position:'relative', marginTop: 12 }}>
                     <button
                       onClick={() => setAddBlockMenuOpen((o) => !o)}
                       style={{ border:'1px dashed #c7d2da', background:'#fff', color:'#475569', borderRadius:8, padding:'8px 14px', fontSize:13, cursor:'pointer', fontWeight:500, display:'inline-flex', alignItems:'center', gap:6 }}
@@ -2098,7 +2106,7 @@ export default function JaspenWorkspace() {
             })()}
 
             {/* Footer hint */}
-            <div style={{
+            <div data-scorecard-export-hide style={{
               marginTop:32, paddingTop:18, borderTop:'1px solid #e6eaf2',
               fontSize:12, color:'#64748b',
             }}>

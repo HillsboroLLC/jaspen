@@ -188,17 +188,31 @@ def _scorecard_record_for_export(session, thread_id, scorecard_id=None, user_id=
         component_scores = result.get("scores")
     component_scores = component_scores if isinstance(component_scores, dict) else {}
 
+    overrides = result.get("display_overrides") if isinstance(result.get("display_overrides"), dict) else {}
     financial_impact = result.get("financial_impact") if isinstance(result.get("financial_impact"), dict) else {}
     risks = result.get("top_risks")
     if not isinstance(risks, list):
         risks = result.get("risks")
     risks = risks if isinstance(risks, list) else []
+    if "top_risks" in overrides and isinstance(overrides.get("top_risks"), list):
+        risks = overrides.get("top_risks")
     recommendations = result.get("recommendations") if isinstance(result.get("recommendations"), list) else []
+    executive_summary = (
+        overrides.get("executive_summary")
+        if "executive_summary" in overrides
+        else result.get("executive_summary")
+    )
+    recommended_scenario = (
+        overrides.get("recommended_scenario")
+        if "recommended_scenario" in overrides
+        else result.get("recommended_scenario")
+    )
+    custom_blocks = overrides.get("custom_blocks") if isinstance(overrides.get("custom_blocks"), list) else []
 
     payload = {
         "analysis_id": str(selected.get("analysis_id") or thread_id),
         "project_name": _safe_text(
-            result.get("project_name") or result.get("name") or session.get("name") or f"Thread {thread_id}",
+            overrides.get("title") or result.get("project_name") or result.get("name") or session.get("name") or f"Thread {thread_id}",
             255,
         ),
         "jaspen_score": result.get("jaspen_score") or result.get("overall_score") or result.get("score"),
@@ -217,12 +231,15 @@ def _scorecard_record_for_export(session, thread_id, scorecard_id=None, user_id=
         # Full content for rich exports (Excel/Word): the per-criterion grid, the
         # written summary, and the rubric (for ordering/labels).
         "dimensions": result.get("dimensions") if isinstance(result.get("dimensions"), dict) else {},
-        "executive_summary": _safe_text(result.get("executive_summary"), 4000) or None,
+        "executive_summary": _safe_text(executive_summary, 4000) or None,
         "rubric": result.get("rubric") if isinstance(result.get("rubric"), dict) else None,
         "top_risks": risks,
+        "recommended_scenario": _safe_text(recommended_scenario, 4000) or None,
+        "custom_blocks": custom_blocks,
+        "display_overrides": overrides,
         # #4 custom colors: carry the user's brand accent into exports.
         "accent_color": (
-            str((result.get("display_overrides") or {}).get("accent_color") or result.get("_accent_color") or "").strip()
+            str(overrides.get("accent_color") or result.get("_accent_color") or "").strip()
             or None
         ),
     }
@@ -253,6 +270,72 @@ def _safe_float(value):
     except Exception:
         return None
     return None
+
+
+def _scorecard_component_rows(scorecard):
+    """Return the single authoritative dimension set in rubric order.
+
+    Modern scorecards store rubric-aligned detail in ``dimensions`` while some
+    records retain legacy ``component_scores`` keys. Mixing both creates
+    duplicate slides and misleading zeroes, so dimensions win whenever present.
+    """
+    component_scores = scorecard.get("component_scores") if isinstance(scorecard.get("component_scores"), dict) else {}
+    dimensions = scorecard.get("dimensions") if isinstance(scorecard.get("dimensions"), dict) else {}
+    criteria = ((scorecard.get("rubric") or {}).get("criteria") or []) if isinstance(scorecard.get("rubric"), dict) else []
+    criterion_by_key = {
+        str(item.get("key")): item
+        for item in criteria
+        if isinstance(item, dict) and item.get("key")
+    }
+
+    source_keys = list(dimensions) if dimensions else list(component_scores)
+    ordered_keys = [
+        str(item.get("key"))
+        for item in criteria
+        if isinstance(item, dict) and str(item.get("key") or "") in source_keys
+    ]
+    ordered_keys.extend(str(key) for key in source_keys if str(key) not in ordered_keys)
+
+    rows = []
+    for key in ordered_keys:
+        dim = dimensions.get(key) if isinstance(dimensions.get(key), dict) else {}
+        criterion = criterion_by_key.get(key) or {}
+        value = dim.get("score") if dimensions and dim.get("score") is not None else component_scores.get(key)
+        rows.append(
+            {
+                "key": key,
+                "label": dim.get("label") or criterion.get("label") or _format_label(key),
+                "value": value,
+                "rationale": dim.get("rationale") or dim.get("reasoning") or "",
+                "is_risk": bool(dim.get("is_risk", criterion.get("is_risk", False))),
+            }
+        )
+    return rows
+
+
+def _meaningful_financial_items(scorecard):
+    financial = scorecard.get("financial_impact") if isinstance(scorecard.get("financial_impact"), dict) else {}
+    items = []
+    for key, value in financial.items():
+        if str(key).lower() in {"numeric", "_numeric"} or isinstance(value, (dict, list, tuple)):
+            continue
+        if value is None or str(value).strip().lower() in {"", "n/a", "none", "null"}:
+            continue
+        items.append(f"{_format_label(key)}: {_display_value(value)}")
+    return items
+
+
+def _scorecard_custom_blocks(scorecard):
+    raw = scorecard.get("custom_blocks") if isinstance(scorecard.get("custom_blocks"), list) else []
+    blocks = []
+    for index, item in enumerate(raw[:12]):
+        if not isinstance(item, dict):
+            continue
+        heading = _safe_text(item.get("heading") or item.get("title") or f"Additional context {index + 1}", 160)
+        body = _safe_text(item.get("body") or item.get("text"), 5000)
+        if heading or body:
+            blocks.append({"heading": heading or "Additional context", "body": body, "type": item.get("type") or "text"})
+    return blocks
 
 
 def _scorecard_variants_for_export(session, thread_id, selected_scorecard_id=None, user_id=None):
@@ -373,255 +456,196 @@ def _scorecard_pdf_bytes(scorecard, *, org=None):
 
     try:
         from reportlab.lib import colors
-        from reportlab.lib.pagesizes import letter
+        from reportlab.lib.pagesizes import landscape, letter
         from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
         from reportlab.lib.units import inch
-        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+        from reportlab.platypus import Flowable, KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+        from xml.sax.saxutils import escape
     except Exception:
         return _markdown_to_pdf_bytes(project_name, markdown_fallback)
 
     try:
-        navy = colors.HexColor("#161F3B")
+        navy = colors.HexColor("#0F172A")
         accent_hex = _accent_hex(scorecard)
-        magenta = colors.HexColor(accent_hex)
-        ice = colors.HexColor("#EFF9FC")
-        ink = colors.HexColor("#1F2937")
-        slate = colors.HexColor("#475569")
-        border = colors.HexColor("#D7DEE8")
+        accent = colors.HexColor(accent_hex)
+        ink = colors.HexColor("#334155")
+        slate = colors.HexColor("#64748B")
+        border = colors.HexColor("#E6EAF2")
+        track = colors.HexColor("#EEF2F6")
+        page_bg = colors.HexColor("#F8FAFC")
 
-        component_scores = scorecard.get("component_scores") if isinstance(scorecard.get("component_scores"), dict) else {}
-        financial_impact = scorecard.get("financial_impact") if isinstance(scorecard.get("financial_impact"), dict) else {}
-        risks = _list_text_items(scorecard.get("risks"), fallback="No key risks recorded.")
-        recommendations = _list_text_items(scorecard.get("recommendations"), fallback="No recommendations recorded.")
-        generated_at = str(scorecard.get("updated_at") or _iso_now())
-        workspace_name = org.name if org else "Personal Workspace"
+        component_rows = _scorecard_component_rows(scorecard)
+        risks = _list_text_items(scorecard.get("risks"), fallback="")
         score_text = _display_value(scorecard.get("jaspen_score"))
-        category_text = _display_value(scorecard.get("score_category"))
+        category_text = str(scorecard.get("score_category") or "Not categorized").upper()
+        recommended = _safe_text(scorecard.get("recommended_scenario"), 3000)
+        if not recommended:
+            recommendation_items = _list_text_items(scorecard.get("recommendations"), fallback="")
+            recommended = recommendation_items[0] if recommendation_items and recommendation_items[0] else ""
+        custom_blocks = _scorecard_custom_blocks(scorecard)
 
         styles = getSampleStyleSheet()
         title_style = ParagraphStyle(
-            "ScoreTitle",
-            parent=styles["Heading1"],
-            fontName="Helvetica-Bold",
-            fontSize=20,
-            leading=24,
-            textColor=colors.white,
-            spaceAfter=0,
-        )
-        subtitle_style = ParagraphStyle(
-            "ScoreSubtitle",
+            "WorkspaceTitle",
             parent=styles["Normal"],
-            fontName="Helvetica",
-            fontSize=9,
-            leading=12,
-            textColor=colors.white,
-            spaceAfter=0,
+            fontName="Helvetica-Bold",
+            fontSize=22,
+            leading=27,
+            textColor=navy,
         )
         section_style = ParagraphStyle(
-            "SectionTitle",
-            parent=styles["Heading3"],
+            "WorkspaceSection",
+            parent=styles["Normal"],
             fontName="Helvetica-Bold",
-            fontSize=12,
-            leading=14,
-            textColor=navy,
-            spaceBefore=2,
-            spaceAfter=6,
+            fontSize=8.5,
+            leading=10,
+            textColor=slate,
+            uppercase=True,
+            tracking=0.7,
         )
         body_style = ParagraphStyle(
-            "Body",
+            "WorkspaceBody",
             parent=styles["Normal"],
             fontName="Helvetica",
-            fontSize=10,
-            leading=14,
+            fontSize=10.5,
+            leading=15,
             textColor=ink,
         )
         bullet_style = ParagraphStyle(
-            "Bullet",
+            "WorkspaceBullet",
             parent=body_style,
-            leftIndent=10,
-            firstLineIndent=-8,
-            spaceBefore=1,
-            spaceAfter=1,
+            leftIndent=9,
+            firstLineIndent=-7,
+            spaceAfter=4,
         )
+        small_style = ParagraphStyle(
+            "WorkspaceSmall",
+            parent=body_style,
+            fontSize=8.5,
+            leading=11,
+            textColor=slate,
+        )
+
+        class ScoreBar(Flowable):
+            def __init__(self, value, width, color):
+                super().__init__()
+                self.width = width
+                self.height = 5
+                numeric = _safe_float(value)
+                normalized = (numeric or 0) / 10 if (numeric or 0) > 10 else (numeric or 0)
+                self.percent = max(0, min(1, normalized / 10))
+                self.color = color
+
+            def draw(self):
+                self.canv.setFillColor(track)
+                self.canv.roundRect(0, 0, self.width, self.height, 2.5, fill=1, stroke=0)
+                if self.percent:
+                    self.canv.setFillColor(self.color)
+                    self.canv.roundRect(0, 0, self.width * self.percent, self.height, 2.5, fill=1, stroke=0)
+
+        def section_card(title, content, *, left_accent=False, background=colors.white):
+            inner = [[Paragraph(escape(str(title).upper()), section_style)], [content]]
+            table = Table(inner, colWidths=[None], hAlign="LEFT")
+            commands = [
+                ("BACKGROUND", (0, 0), (-1, -1), background),
+                ("BOX", (0, 0), (-1, -1), 0.75, border),
+                ("LINEBELOW", (0, 0), (-1, 0), 0.6, border),
+                ("LEFTPADDING", (0, 0), (-1, -1), 12),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+                ("TOPPADDING", (0, 0), (-1, 0), 9),
+                ("BOTTOMPADDING", (0, 0), (-1, 0), 8),
+                ("TOPPADDING", (0, 1), (-1, -1), 10),
+                ("BOTTOMPADDING", (0, 1), (-1, -1), 12),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]
+            if left_accent:
+                commands.append(("LINEBEFORE", (0, 0), (0, -1), 2.5, accent))
+            table.setStyle(TableStyle(commands))
+            return table
 
         buffer = io.BytesIO()
         doc = SimpleDocTemplate(
             buffer,
-            pagesize=letter,
-            leftMargin=0.55 * inch,
-            rightMargin=0.55 * inch,
-            topMargin=0.5 * inch,
-            bottomMargin=0.5 * inch,
+            pagesize=landscape(letter),
+            leftMargin=0.5 * inch,
+            rightMargin=0.5 * inch,
+            topMargin=0.42 * inch,
+            bottomMargin=0.42 * inch,
             title=_safe_text(project_name, 200),
         )
 
-        story = []
+        story = [Paragraph(escape(_safe_text(project_name, 240)), title_style), Spacer(1, 14)]
 
-        header = Table(
-            [[
-                Paragraph(_safe_text(project_name, 180), title_style),
-                Paragraph(
-                    f"<b>Jaspen Score</b><br/><font color='{accent_hex}' size='18'><b>{score_text}</b></font>",
-                    ParagraphStyle(
-                        "ScoreChip",
-                        parent=styles["Normal"],
-                        fontName="Helvetica",
-                        fontSize=9,
-                        leading=13,
-                        alignment=2,
-                        textColor=ink,
-                    ),
-                ),
-            ]],
-            colWidths=[4.9 * inch, 2.0 * inch],
-            hAlign="LEFT",
+        score_style = ParagraphStyle(
+            "WorkspaceScore", parent=styles["Normal"], fontName="Helvetica-Bold",
+            fontSize=34, leading=38, alignment=1, textColor=navy,
         )
-        header.setStyle(
-            TableStyle(
-                [
-                    ("BACKGROUND", (0, 0), (0, 0), navy),
-                    ("BACKGROUND", (1, 0), (1, 0), ice),
-                    ("BOX", (0, 0), (1, 0), 0.75, border),
-                    ("VALIGN", (0, 0), (1, 0), "MIDDLE"),
-                    ("LEFTPADDING", (0, 0), (0, 0), 14),
-                    ("RIGHTPADDING", (0, 0), (0, 0), 10),
-                    ("TOPPADDING", (0, 0), (1, 0), 12),
-                    ("BOTTOMPADDING", (0, 0), (1, 0), 12),
-                    ("LEFTPADDING", (1, 0), (1, 0), 10),
-                    ("RIGHTPADDING", (1, 0), (1, 0), 12),
-                ]
-            )
+        score_meta_style = ParagraphStyle(
+            "WorkspaceScoreMeta", parent=small_style, alignment=1,
+            fontName="Helvetica-Bold", textColor=accent,
         )
-        story.append(header)
-
-        subtitle = Table(
-            [[Paragraph(
-                f"Generated: {generated_at} &nbsp;&nbsp;•&nbsp;&nbsp; Workspace: {_safe_text(workspace_name, 120)} &nbsp;&nbsp;•&nbsp;&nbsp; Category: {category_text}",
-                subtitle_style,
-            )]],
-            colWidths=[6.9 * inch],
-            hAlign="LEFT",
-        )
-        subtitle.setStyle(
-            TableStyle(
-                [
-                    ("BACKGROUND", (0, 0), (0, 0), navy),
-                    ("LEFTPADDING", (0, 0), (0, 0), 14),
-                    ("RIGHTPADDING", (0, 0), (0, 0), 12),
-                    ("TOPPADDING", (0, 0), (0, 0), 6),
-                    ("BOTTOMPADDING", (0, 0), (0, 0), 8),
-                ]
-            )
-        )
-        story.append(subtitle)
-        story.append(Spacer(1, 12))
-
-        story.append(Paragraph("Component Scores", section_style))
-        component_rows = [["Component", "Score"]]
-        for key, value in component_scores.items():
-            component_rows.append([_format_label(key), _display_value(value)])
-        if len(component_rows) == 1:
-            component_rows.append(["No component scores recorded.", "N/A"])
-
-        component_table = Table(component_rows, colWidths=[5.4 * inch, 1.5 * inch], hAlign="LEFT")
-        component_style = [
-            ("BACKGROUND", (0, 0), (1, 0), ice),
-            ("TEXTCOLOR", (0, 0), (1, 0), navy),
-            ("FONTNAME", (0, 0), (1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (1, 0), 10),
-            ("ALIGN", (1, 1), (1, -1), "RIGHT"),
-            ("GRID", (0, 0), (1, -1), 0.5, border),
-            ("FONTNAME", (0, 1), (1, -1), "Helvetica"),
-            ("FONTSIZE", (0, 1), (1, -1), 9),
-            ("TEXTCOLOR", (0, 1), (1, -1), ink),
-            ("ROWBACKGROUNDS", (0, 1), (1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
-            ("LEFTPADDING", (0, 0), (1, -1), 8),
-            ("RIGHTPADDING", (0, 0), (1, -1), 8),
-            ("TOPPADDING", (0, 0), (1, -1), 6),
-            ("BOTTOMPADDING", (0, 0), (1, -1), 6),
+        score_content = [
+            Paragraph(escape(score_text), score_style),
+            Paragraph(escape(category_text), score_meta_style),
+            Spacer(1, 5),
+            Paragraph("Strategy scorecard", ParagraphStyle("WorkspaceScoreLabel", parent=body_style, alignment=1, fontName="Helvetica-Bold")),
+            Paragraph("Scores reflect Jaspen's analysis.", ParagraphStyle("WorkspaceScoreHint", parent=small_style, alignment=1)),
         ]
-        component_table.setStyle(TableStyle(component_style))
-        story.append(component_table)
-        story.append(Spacer(1, 12))
-
-        variants = scorecard.get("scenario_variants") if isinstance(scorecard.get("scenario_variants"), list) else []
-        if len(variants) > 1:
-            story.append(Paragraph("Project Comparison", section_style))
-            variant_rows = [["Project", "Score", "Category"]]
-            for item in variants[:10]:
-                if not isinstance(item, dict):
-                    continue
-                label = str(item.get("label") or "Project").strip() or "Project"
-                if item.get("is_selected"):
-                    label = f"{label} (Selected)"
-                variant_rows.append(
-                    [
-                        _safe_text(label, 80),
-                        _display_value(item.get("jaspen_score")),
-                        _display_value(item.get("score_category")),
-                    ]
-                )
-            if len(variant_rows) == 1:
-                variant_rows.append(["No peer projects recorded.", "N/A", "N/A"])
-            variant_table = Table(
-                variant_rows,
-                colWidths=[3.6 * inch, 1.2 * inch, 1.8 * inch],
-                hAlign="LEFT",
-            )
-            variant_table.setStyle(
-                TableStyle(
-                    [
-                        ("BACKGROUND", (0, 0), (2, 0), ice),
-                        ("TEXTCOLOR", (0, 0), (2, 0), navy),
-                        ("FONTNAME", (0, 0), (2, 0), "Helvetica-Bold"),
-                        ("FONTSIZE", (0, 0), (2, 0), 9),
-                        ("GRID", (0, 0), (2, -1), 0.5, border),
-                        ("FONTNAME", (0, 1), (2, -1), "Helvetica"),
-                        ("FONTSIZE", (0, 1), (2, -1), 8.5),
-                        ("ALIGN", (1, 1), (1, -1), "RIGHT"),
-                        ("ROWBACKGROUNDS", (0, 1), (2, -1), [colors.white, colors.HexColor("#F8FAFC")]),
-                        ("LEFTPADDING", (0, 0), (2, -1), 6),
-                        ("RIGHTPADDING", (0, 0), (2, -1), 6),
-                        ("TOPPADDING", (0, 0), (2, -1), 5),
-                        ("BOTTOMPADDING", (0, 0), (2, -1), 5),
-                    ]
-                )
-            )
-            story.append(variant_table)
-            story.append(Spacer(1, 12))
-
-        story.append(Paragraph("Financial Impact", section_style))
-        fin_rows = [["Metric", "Value"]]
-        for key, value in list(financial_impact.items())[:12]:
-            fin_rows.append([_format_label(key), _display_value(value)])
-        if len(fin_rows) == 1:
-            fin_rows.append(["No financial impact data recorded.", "N/A"])
-        fin_table = Table(fin_rows, colWidths=[4.7 * inch, 2.2 * inch], hAlign="LEFT")
-        fin_table.setStyle(TableStyle(component_style))
-        story.append(fin_table)
-        story.append(Spacer(1, 12))
-
-        story.append(Paragraph("Top Risks", section_style))
-        for item in risks[:8]:
-            story.append(Paragraph(f"• {_safe_text(item, 500)}", bullet_style))
-        story.append(Spacer(1, 10))
-
-        story.append(Paragraph("Recommendations + Next Steps", section_style))
-        for item in recommendations[:8]:
-            story.append(Paragraph(f"• {_safe_text(item, 500)}", bullet_style))
-
-        footer = ParagraphStyle(
-            "Footer",
-            parent=styles["Normal"],
-            fontName="Helvetica-Oblique",
-            fontSize=8,
-            textColor=slate,
-            spaceBefore=14,
+        executive = Paragraph(
+            escape(_safe_text(scorecard.get("executive_summary") or "No executive summary recorded.", 3000)).replace("\n", "<br/>"),
+            body_style,
         )
-        story.append(Spacer(1, 12))
-        story.append(Paragraph("Generated by Jaspen strategic export.", footer))
+        top_grid = Table(
+            [[section_card("Score", score_content), section_card("Executive summary", executive)]],
+            colWidths=[2.55 * inch, 7.15 * inch],
+            hAlign="LEFT",
+        )
+        top_grid.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (0, -1), 10), ("RIGHTPADDING", (1, 0), (1, -1), 0)]))
+        story.extend([top_grid, Spacer(1, 12)])
 
-        doc.build(story)
+        dimension_cells = [[], []]
+        for index, item in enumerate(component_rows):
+            numeric = _safe_float(item.get("value"))
+            normalized = numeric / 10 if numeric is not None and numeric > 10 else numeric
+            score_label = f"{normalized:.1f}/10" if normalized is not None else "N/A"
+            heading = Table(
+                [[Paragraph(escape(_safe_text(item.get("label"), 180)), body_style), Paragraph(score_label, small_style)]],
+                colWidths=[3.75 * inch, 0.55 * inch],
+            )
+            heading.setStyle(TableStyle([("ALIGN", (1, 0), (1, 0), "RIGHT"), ("VALIGN", (0, 0), (-1, -1), "BOTTOM"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
+            bar_color = colors.HexColor("#F59E0B") if item.get("is_risk") else navy
+            cell = [heading, ScoreBar(item.get("value"), 4.3 * inch, bar_color), Spacer(1, 10)]
+            dimension_cells[index % 2].extend(cell)
+        if not component_rows:
+            dimension_cells[0].append(Paragraph("No dimension scores recorded.", body_style))
+        dimensions_grid = Table([dimension_cells], colWidths=[4.55 * inch, 4.55 * inch], hAlign="LEFT")
+        dimensions_grid.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (0, -1), 14), ("RIGHTPADDING", (1, 0), (1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
+        story.extend([section_card("Dimensions", dimensions_grid), Spacer(1, 12)])
+
+        cards = []
+        if any(risks):
+            risk_content = [Paragraph(f"• {escape(_safe_text(item, 700))}", bullet_style) for item in risks[:8] if item]
+            cards.append(section_card("Top risks", risk_content))
+        if recommended:
+            cards.append(section_card("Recommended scenario", Paragraph(escape(recommended).replace("\n", "<br/>"), body_style), left_accent=True))
+        for block in custom_blocks:
+            cards.append(section_card(block["heading"], Paragraph(escape(block["body"]).replace("\n", "<br/>"), body_style), left_accent=block.get("type") == "callout"))
+
+        for index in range(0, len(cards), 2):
+            row = cards[index:index + 2]
+            if len(row) == 1:
+                row.append("")
+            grid = Table([row], colWidths=[4.85 * inch, 4.85 * inch], hAlign="LEFT")
+            grid.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (0, -1), 10), ("RIGHTPADDING", (1, 0), (1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
+            story.extend([KeepTogether(grid), Spacer(1, 12)])
+
+        def paint_page(canvas, _doc):
+            canvas.saveState()
+            canvas.setFillColor(page_bg)
+            canvas.rect(0, 0, landscape(letter)[0], landscape(letter)[1], fill=1, stroke=0)
+            canvas.restoreState()
+
+        doc.build(story, onFirstPage=paint_page, onLaterPages=paint_page)
         buffer.seek(0)
         return buffer.read()
     except Exception:
@@ -798,24 +822,10 @@ def _pptx_bytes(scorecard, *, org=None):
     generated_at = scorecard.get("updated_at") or _iso_now()
     workspace_name = org.name if org else "Personal Workspace"
     category = scorecard.get("score_category") or "Not categorized"
-    component_scores = scorecard.get("component_scores") if isinstance(scorecard.get("component_scores"), dict) else {}
-    dimensions = scorecard.get("dimensions") if isinstance(scorecard.get("dimensions"), dict) else {}
-    criteria = ((scorecard.get("rubric") or {}).get("criteria") or []) if isinstance(scorecard.get("rubric"), dict) else []
-    criterion_by_key = {
-        str(item.get("key")): item for item in criteria
-        if isinstance(item, dict) and item.get("key")
-    }
-    component_keys = [str(item.get("key")) for item in criteria if isinstance(item, dict) and item.get("key")]
-    component_keys.extend(str(key) for key in component_scores if str(key) not in component_keys)
-    component_keys.extend(str(key) for key in dimensions if str(key) not in component_keys)
-    component_rows = []
-    for key in component_keys:
-        dim = dimensions.get(key) if isinstance(dimensions.get(key), dict) else {}
-        criterion = criterion_by_key.get(key) or {}
-        value = dim.get("score") if dim.get("score") is not None else component_scores.get(key)
-        label = dim.get("label") or criterion.get("label") or _format_label(key)
-        rationale = dim.get("rationale") or ""
-        component_rows.append((label, value, rationale))
+    component_rows = [
+        (row.get("label"), row.get("value"), row.get("rationale"))
+        for row in _scorecard_component_rows(scorecard)
+    ]
     if not component_rows:
         component_rows = [("No component scores recorded", None, "")]
 
@@ -841,7 +851,7 @@ def _pptx_bytes(scorecard, *, org=None):
     executive_summary = scorecard.get("executive_summary") or "No executive summary recorded."
     add_text(slide, executive_summary, 4.25, 2.65, 8.25, 2.0, size=18)
     add_text(slide, "Decision signal", 4.25, 5.05, 8.25, 0.38, size=14, color=gray, bold=True)
-    decision_signal = (scorecard.get("recommendations") or [None])[0]
+    decision_signal = scorecard.get("recommended_scenario") or (scorecard.get("recommendations") or [None])[0]
     if isinstance(decision_signal, dict):
         decision_signal = decision_signal.get("text") or decision_signal.get("action")
     add_text(slide, decision_signal or "Review the score, evidence, and risks before committing resources.", 4.25, 5.48, 8.25, 1.0, size=18, color=magenta, bold=True)
@@ -868,22 +878,49 @@ def _pptx_bytes(scorecard, *, org=None):
                 add_text(slide, rationale, 0.7, y + 0.52, 11.9, 0.24, size=10.5, color=gray)
             add_rule(slide, 0.7, y + 0.78, 11.9, height=0.01)
 
-    # Final slide: evidence customers need to act on the scorecard.
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
-    add_header(slide, "Decision details", "Risks, financial impact, and recommended next steps")
-    add_text(slide, "Top risks", 0.7, 1.75, 5.65, 0.38, size=18, bold=True)
-    add_rule(slide, 0.7, 2.2, 5.65)
-    add_list(slide, scorecard.get("risks"), 0.7, 2.45, 5.65, 2.25, fallback="No key risks recorded.")
-    add_text(slide, "Financial impact", 0.7, 5.05, 5.65, 0.38, size=18, bold=True)
-    add_rule(slide, 0.7, 5.5, 5.65)
-    financial_items = [
-        f"{_format_label(key)}: {_display_value(value)}"
-        for key, value in (scorecard.get("financial_impact") or {}).items()
-    ]
-    add_list(slide, financial_items, 0.7, 5.72, 5.65, 1.05, size=13, fallback="No financial impact data recorded.")
-    add_text(slide, "Recommendations + next steps", 6.95, 1.75, 5.65, 0.38, size=18, bold=True)
-    add_rule(slide, 6.95, 2.2, 5.65, color=magenta)
-    add_list(slide, scorecard.get("recommendations"), 6.95, 2.45, 5.65, 4.3, fallback="No recommendations recorded.")
+    # Decision narrative: include only meaningful saved sections. Custom
+    # Workspace blocks (for example, Mitigation) are first-class deck content.
+    detail_sections = []
+    risk_items = _list_text_items(scorecard.get("risks"), fallback="")
+    if any(risk_items):
+        detail_sections.append({"title": "Top risks", "items": risk_items})
+
+    recommended = _safe_text(scorecard.get("recommended_scenario"), 2400)
+    if not recommended:
+        rec_items = _list_text_items(scorecard.get("recommendations"), fallback="")
+        if any(rec_items):
+            detail_sections.append({"title": "Recommendations + next steps", "items": rec_items, "accent": True})
+    else:
+        detail_sections.append({"title": "Recommended scenario", "body": recommended, "accent": True})
+
+    for block in _scorecard_custom_blocks(scorecard):
+        detail_sections.append({
+            "title": block.get("heading") or "Additional context",
+            "body": block.get("body") or "",
+            "accent": block.get("type") == "callout",
+        })
+
+    financial_items = _meaningful_financial_items(scorecard)
+    if financial_items:
+        detail_sections.append({"title": "Financial impact", "items": financial_items})
+
+    if not detail_sections:
+        detail_sections.append({"title": "Decision details", "body": "No additional decision details recorded."})
+
+    for section_index in range(0, len(detail_sections), 2):
+        pair = detail_sections[section_index:section_index + 2]
+        slide = prs.slides.add_slide(prs.slide_layouts[6])
+        title = "Decision details" if section_index == 0 else "Additional context"
+        subtitle = "Saved scorecard narrative and supporting context"
+        add_header(slide, title, subtitle)
+        for column, section in enumerate(pair):
+            left = 0.7 if column == 0 else 6.95
+            add_text(slide, section["title"], left, 1.78, 5.65, 0.52, size=18, bold=True)
+            add_rule(slide, left, 2.3, 5.65, color=magenta if section.get("accent") else border)
+            if section.get("items"):
+                add_list(slide, section["items"], left, 2.58, 5.65, 3.95, fallback="")
+            else:
+                add_text(slide, section.get("body") or "", left, 2.58, 5.65, 3.95, size=16)
 
     buffer = io.BytesIO()
     prs.save(buffer)

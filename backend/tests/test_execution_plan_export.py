@@ -266,3 +266,84 @@ def test_free_user_can_download_scorecard_pdf_and_editable_powerpoint(
     assert b"Launch Program" in slide_xml
     assert b"Score breakdown" in slide_xml
     assert media_names == []
+
+
+def test_scorecard_exports_use_saved_overrides_and_one_authoritative_rubric(export_routes):
+    session = {
+        "session_id": "thread-1",
+        "name": "Old thread name",
+        "result": {
+            "analysis_id": "idea-1",
+            "project_name": "Original title",
+            "jaspen_score": 75,
+            "score_category": "Good",
+            # Legacy fields can remain on upgraded records. They must not create
+            # an extra score-breakdown slide when modern dimensions exist.
+            "component_scores": {
+                "financial_health": 0,
+                "operational_efficiency": 0,
+                "market_position": 0,
+                "execution_readiness": 0,
+            },
+            "dimensions": {
+                "deployment": {"label": "Deployment readiness", "score": 75},
+                "relationship": {"label": "Existing relationship", "score": 75},
+                "customer": {"label": "Customer readiness", "score": 75},
+                "market": {"label": "Market economics", "score": 75},
+                "repeatability": {"label": "Repeatability", "score": 75},
+            },
+            "rubric": {
+                "criteria": [
+                    {"key": "deployment", "label": "Deployment readiness"},
+                    {"key": "relationship", "label": "Existing relationship"},
+                    {"key": "customer", "label": "Customer readiness"},
+                    {"key": "market", "label": "Market economics"},
+                    {"key": "repeatability", "label": "Repeatability"},
+                ]
+            },
+            "financial_impact": {
+                "ebitda_at_risk": None,
+                "numeric": {"ebitda_at_risk": None},
+            },
+            "top_risks": ["Original risk"],
+            "recommendations": [],
+            "executive_summary": "Original summary",
+            "display_overrides": {
+                "title": "Saved customer-facing title",
+                "executive_summary": "Saved customer-facing summary",
+                "top_risks": ["Saved customer-facing risk"],
+                "custom_blocks": [
+                    {
+                        "id": "blk_mitigation",
+                        "type": "text",
+                        "heading": "Mitigation",
+                        "body": "Partner with the Zone J team before launch.",
+                    }
+                ],
+            },
+        },
+    }
+
+    scorecard, error = export_routes._scorecard_record_for_export(
+        session, "thread-1", scorecard_id="idea-1"
+    )
+    assert error is None
+    assert scorecard["project_name"] == "Saved customer-facing title"
+    assert scorecard["executive_summary"] == "Saved customer-facing summary"
+    assert scorecard["risks"] == ["Saved customer-facing risk"]
+    assert scorecard["custom_blocks"][0]["heading"] == "Mitigation"
+
+    pptx = export_routes._pptx_bytes(scorecard)
+    with zipfile.ZipFile(io.BytesIO(pptx)) as archive:
+        slide_names = sorted(
+            name for name in archive.namelist()
+            if name.startswith("ppt/slides/slide") and name.endswith(".xml")
+        )
+        slide_xml = b"".join(archive.read(name) for name in slide_names)
+
+    assert len(slide_names) == 3
+    assert b"Mitigation" in slide_xml
+    assert b"Partner with the Zone J team before launch." in slide_xml
+    assert b"Deployment readiness" in slide_xml
+    assert b"Financial Health" not in slide_xml
+    assert b"Numeric" not in slide_xml
