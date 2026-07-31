@@ -28,7 +28,7 @@ import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
 import JaspenExecutionCanvas from './JaspenExecutionCanvas';
 import { userMessageWhitespaceStyle } from './messageFormatting';
-import { downloadRenderedScorecardPdf } from './scorecardPdf';
+import { downloadRenderedWorkspacePdf } from './scorecardPdf';
 
 // Custom scorecard blocks live on a true 12-col grid: drag the handle to move,
 // drag the corner to resize to ANY size (not 4 fixed widths). WidthProvider makes
@@ -241,6 +241,7 @@ export default function JaspenWorkspace() {
   const chatComposerRef = useRef(null);
   const chatAbortRef = useRef(null);
   const scorecardExportRef = useRef(null);
+  const tradeoffExportRef = useRef(null);
   useEffect(() => {
     const el = chatComposerRef.current;
     if (el) { el.style.height = 'auto'; el.style.height = `${Math.min(el.scrollHeight, 140)}px`; }
@@ -805,7 +806,11 @@ export default function JaspenWorkspace() {
     setExportError(null);
     try {
       if (format === 'pdf') {
-        await downloadRenderedScorecardPdf(scorecardExportRef.current, displayTitle);
+        await downloadRenderedWorkspacePdf(
+          isTradeoff ? tradeoffExportRef.current : scorecardExportRef.current,
+          displayTitle,
+          { kind: isTradeoff ? 'tradeoff' : 'scorecard' },
+        );
         return;
       }
       const url = `${API_BASE}/api/v1/export/threads/${encodeURIComponent(threadId)}/scorecard/${format}?scorecard_id=${encodeURIComponent(scorecardId)}`;
@@ -1573,6 +1578,16 @@ export default function JaspenWorkspace() {
                 <FontAwesomeIcon icon={executionExporting ? faSpinner : faDownload} spin={executionExporting} />
                 {executionExporting ? 'Downloading…' : 'Download Excel'}
               </button>
+            ) : isTradeoff ? (
+              <button
+                type="button"
+                onClick={() => { void downloadExport('pdf', 'pdf', 'PDF'); }}
+                disabled={Boolean(scorecardExporting)}
+                style={{ padding:'8px 14px', borderRadius:8, border:'none', background:'#0f172a', color:'#fff', cursor: scorecardExporting ? 'wait' : 'pointer', fontSize:13, fontWeight:500, display:'flex', alignItems:'center', gap:6, opacity: scorecardExporting ? 0.72 : 1 }}
+              >
+                <FontAwesomeIcon icon={scorecardExporting ? faSpinner : faDownload} spin={Boolean(scorecardExporting)} />
+                {scorecardExporting ? 'Downloading…' : 'Download PDF'}
+              </button>
             ) : isScorecard ? (
             <div style={{ position:'relative' }}>
               <button
@@ -1636,7 +1651,7 @@ export default function JaspenWorkspace() {
             // older threads `bundle.scorecard_snapshots` may be empty even
             // when a baseline exists — TradeoffView's empty state would then
             // hide a comparison that actually has data to show.
-            <div style={{ display:'flex', flexDirection:'column' }}>
+            <div ref={tradeoffExportRef} data-tradeoff-export style={{ display:'flex', flexDirection:'column' }}>
               {(() => {
                 // Use the shared `tradeoffIdeas` memo so the canvas and the
                 // sidebar chat's view_context render the exact same set of

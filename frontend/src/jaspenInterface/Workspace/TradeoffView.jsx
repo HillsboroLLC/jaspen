@@ -230,6 +230,7 @@ const PortfolioRow = ({ d, alt, onSelect, selected, onToggleInclude, onBuildPlan
   const excluded = !d.included;
   return (
   <div
+    data-workspace-pdf-break
     onClick={() => onSelect(d)}
     style={{
       display: 'grid',
@@ -675,7 +676,7 @@ const TradeoffView = ({
       <div style={{ flex:1, display:'flex', flexDirection:'column', padding:'20px 24px', gap:14, minWidth:0, ...(flow ? {} : { overflow:'auto' }) }}>
 
         {/* Hero + quadrant */}
-        <div style={{ display:'grid', gridTemplateColumns:'1fr 390px', gap:14 }}>
+        <div data-workspace-pdf-break style={{ display:'grid', gridTemplateColumns:'1fr 390px', gap:14 }}>
           <div style={{ background:'#fff', border:`1px solid ${LINE}`, borderRadius:12, padding:'18px 20px' }}>
             <div style={{ display:'flex', alignItems:'baseline', gap:10, marginBottom:16 }}>
               <div style={{ fontSize:16, fontWeight:600, color:NAVY, letterSpacing:'-0.01em' }}>Portfolio</div>
@@ -700,7 +701,7 @@ const TradeoffView = ({
         </div>
 
         {(tradeoffInsights.keyDifferentiator || tradeoffInsights.perOption.some((p) => p.bestLabel)) && (
-          <div style={{ background:'#fff', border:`1px solid ${LINE}`, borderRadius:12, padding:'16px 20px' }}>
+          <div data-workspace-pdf-break style={{ background:'#fff', border:`1px solid ${LINE}`, borderRadius:12, padding:'16px 20px' }}>
             <div style={{ fontSize:10.5, fontWeight:600, letterSpacing:'0.06em', color:MUTED, textTransform:'uppercase', fontFamily:'JetBrains Mono,monospace', marginBottom:10 }}>
               What separates them
             </div>
@@ -720,7 +721,7 @@ const TradeoffView = ({
         )}
 
         {heterogeneousRubrics && (
-          <div style={{ background:'#fff8e8', border:'1px solid #f1d59b', borderRadius:10, padding:'11px 14px', color:NAVY, fontSize:12.5 }}>
+          <div data-workspace-pdf-break style={{ background:'#fff8e8', border:'1px solid #f1d59b', borderRadius:10, padding:'11px 14px', color:NAVY, fontSize:12.5 }}>
             These projects use different rubrics. Overall Jaspen score and evidence quality are comparable; detailed criteria are project-specific. Missing criteria are not treated as zero. Open a project to inspect its rubric.
           </div>
         )}
