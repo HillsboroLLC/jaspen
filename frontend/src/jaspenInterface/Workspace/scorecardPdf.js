@@ -79,6 +79,44 @@ function makeScrollableContentVisible(root) {
   });
 }
 
+/**
+ * html2canvas makes its own DOM copy. Flex children with overflow:auto can
+ * collapse during that second copy even though their parent grid cards retain
+ * the right border dimensions. Pin each visible scroll body's pixel box from
+ * the live Workspace and convert it to overflow:hidden for the static image.
+ */
+export function stabilizeScorecardContent(originalRoot, clonedRoot) {
+  const originals = Array.from(originalRoot.querySelectorAll('*'));
+  const clones = Array.from(clonedRoot.querySelectorAll('*'));
+  originals.forEach((original, index) => {
+    const clone = clones[index];
+    if (!clone) return;
+
+    if ('value' in original && 'value' in clone) clone.value = original.value;
+
+    const computed = window.getComputedStyle(original);
+    const isScrollable = original.style.overflow === 'auto'
+      || original.style.overflowY === 'auto'
+      || computed.overflow === 'auto'
+      || computed.overflowY === 'auto';
+    if (!isScrollable) return;
+
+    const rect = original.getBoundingClientRect();
+    const width = Math.max(0, rect.width || original.clientWidth);
+    const height = Math.max(0, rect.height || original.clientHeight);
+    if (width > 0) clone.style.width = `${width}px`;
+    if (height > 0) {
+      clone.style.height = `${height}px`;
+      clone.style.flex = `0 0 ${height}px`;
+    }
+    clone.style.minHeight = '0';
+    clone.style.maxHeight = height > 0 ? `${height}px` : 'none';
+    clone.style.overflow = 'hidden';
+    clone.style.overflowX = 'hidden';
+    clone.style.overflowY = 'hidden';
+  });
+}
+
 export function createWorkspacePdfClone(element, kind = 'scorecard') {
   const cssWidth = Math.max(element.scrollWidth, element.offsetWidth);
   const wrapper = document.createElement('div');
@@ -106,6 +144,7 @@ export function createWorkspacePdfClone(element, kind = 'scorecard') {
   // different: their fixed grid geometry is a saved design choice, so retain
   // each card's exact position, height, and overflow behavior from the page.
   if (kind === 'tradeoff') makeScrollableContentVisible(clone);
+  else stabilizeScorecardContent(element, clone);
 
   wrapper.appendChild(clone);
   document.body.appendChild(wrapper);

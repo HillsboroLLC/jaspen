@@ -3,6 +3,17 @@ jest.mock('jspdf', () => ({ jsPDF: jest.fn() }));
 
 import { createWorkspacePdfClone } from './scorecardPdf';
 
+function setRect(node, { top = 0, left = 0, width = 0, height = 0 }) {
+  node.getBoundingClientRect = () => ({
+    top, left, width, height,
+    right: left + width,
+    bottom: top + height,
+    x: left,
+    y: top,
+    toJSON: () => {},
+  });
+}
+
 function gridItem(label) {
   const item = document.createElement('div');
   item.className = 'react-grid-item';
@@ -41,6 +52,8 @@ test('scorecard export clone preserves saved grid positions, heights, and clippi
 
   Object.defineProperty(root, 'scrollWidth', { value: 900 });
   Object.defineProperty(root, 'offsetWidth', { value: 900 });
+  setRect(score.querySelector('section > div'), { width: 394, height: 248 });
+  setRect(dimensions.querySelector('section > div'), { width: 814, height: 308 });
 
   const { clone, wrapper } = createWorkspacePdfClone(root, 'scorecard');
   const clonedGrid = clone.querySelector('.jw-block-grid');
@@ -57,7 +70,15 @@ test('scorecard export clone preserves saved grid positions, heights, and clippi
   expect(items[1].style.height).toBe('360px');
   expect(items[0].firstElementChild.style.height).toBe('100%');
   expect(items[0].firstElementChild.style.overflow).toBe('hidden');
-  expect(items[0].querySelector('section > div').style.overflow).toBe('auto');
+  const scoreBody = items[0].querySelector('section > div');
+  const dimensionsBody = items[1].querySelector('section > div');
+  expect(scoreBody.style.width).toBe('394px');
+  expect(scoreBody.style.height).toBe('248px');
+  expect(scoreBody.style.flex).toBe('0 0 248px');
+  expect(scoreBody.style.overflow).toBe('hidden');
+  expect(dimensionsBody.style.width).toBe('814px');
+  expect(dimensionsBody.style.height).toBe('308px');
+  expect(dimensionsBody.style.overflow).toBe('hidden');
   wrapper.remove();
 });
 
