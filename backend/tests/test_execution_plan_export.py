@@ -100,6 +100,8 @@ def test_wbs_xlsx_has_overview_and_filterable_task_table(export_routes):
     assert overview["B20"].value == "Discovery"
     assert overview["B21"].value == "Delivery"
     assert "'Tasks'!$B$2:$B$4" in overview["C20"].value
+    assert overview["F20"].value == "2026-08-03 to 2026-08-05"
+    assert overview["F21"].value == "2026-08-06 to 2026-08-14"
     assert "ExecutionTasks[" not in "".join(
         str(overview.cell(row=row, column=column).value or "")
         for row in range(1, overview.max_row + 1)

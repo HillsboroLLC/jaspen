@@ -1,7 +1,7 @@
 import csv
 import io
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from flask import Blueprint, jsonify, request, send_file
 from flask_jwt_extended import get_jwt_identity, jwt_required
@@ -933,6 +933,21 @@ def _wbs_phase_names(project_wbs, tasks):
     return names
 
 
+def _wbs_phase_date_range(tasks, phase_name):
+    phase_tasks = [
+        task
+        for task in tasks
+        if str(task.get("phase") or "Execution").strip() == phase_name
+    ]
+    start_dates = [_xlsx_date(task.get("start_date")) for task in phase_tasks]
+    due_dates = [_xlsx_date(task.get("due_date")) for task in phase_tasks]
+    start_dates = [value for value in start_dates if isinstance(value, date)]
+    due_dates = [value for value in due_dates if isinstance(value, date)]
+    if not start_dates or not due_dates:
+        return ""
+    return f"{min(start_dates):%Y-%m-%d} to {max(due_dates):%Y-%m-%d}"
+
+
 def _wbs_xlsx_bytes(project_wbs, *, project_name=None, workspace_name=None):
     tasks = project_wbs.get("tasks") if isinstance(project_wbs, dict) else []
     tasks = [task for task in tasks if isinstance(task, dict) and str(task.get("title") or "").strip()]
@@ -984,8 +999,6 @@ def _wbs_xlsx_bytes(project_wbs, *, project_name=None, workspace_name=None):
     task_title_range = f"'Tasks'!$C$2:$C${task_data_last_row}"
     task_status_range = f"'Tasks'!$D$2:$D${task_data_last_row}"
     task_priority_range = f"'Tasks'!$E$2:$E${task_data_last_row}"
-    task_start_range = f"'Tasks'!$H$2:$H${task_data_last_row}"
-    task_due_range = f"'Tasks'!$I$2:$I${task_data_last_row}"
 
     # Overview sheet: a compact project snapshot plus phase-level rollup.
     overview.merge_cells("A1:F1")
@@ -1052,16 +1065,7 @@ def _wbs_xlsx_bytes(project_wbs, *, project_name=None, workspace_name=None):
         overview.cell(row=row_idx, column=3, value=f'=COUNTIF({task_phase_range},B{row_idx})')
         overview.cell(row=row_idx, column=4, value=f'=COUNTIFS({task_phase_range},B{row_idx},{task_status_range},"Done")')
         overview.cell(row=row_idx, column=5, value=f'=COUNTIFS({task_phase_range},B{row_idx},{task_priority_range},"High")')
-        overview.cell(
-            row=row_idx,
-            column=6,
-            value=(
-                f'=IF(OR(COUNTIFS({task_phase_range},B{row_idx},{task_start_range},">0")=0,'
-                f'COUNTIFS({task_phase_range},B{row_idx},{task_due_range},">0")=0),"",'
-                f'TEXT(MINIFS({task_start_range},{task_phase_range},B{row_idx}),"yyyy-mm-dd")'
-                f'&" to "&TEXT(MAXIFS({task_due_range},{task_phase_range},B{row_idx}),"yyyy-mm-dd"))'
-            ),
-        )
+        overview.cell(row=row_idx, column=6, value=_wbs_phase_date_range(tasks, phase_name))
         for col_idx in range(1, 7):
             overview.cell(row=row_idx, column=col_idx).border = body_border
         overview.cell(row=row_idx, column=6).alignment = Alignment(wrap_text=True)
