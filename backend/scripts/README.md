@@ -25,6 +25,23 @@ Equivalent direct script:
 ./venv/bin/python scripts/reset_monthly_credits.py
 ```
 
+## Evaluation usage report
+
+After the evaluation-telemetry migration is installed, summarize average and
+median Thinking Power, percentile-based efficient/typical/heavy ranges, models,
+attachments, and plans:
+
+```bash
+cd ~/sekki-platform/backend
+set -a
+[ -f .env ] && source .env
+set +a
+PYTHONPATH=. ./venv/bin/python scripts/report_evaluation_usage.py
+```
+
+Historical usage events without an `evaluation_id` are counted as excluded and
+do not block the report.
+
 ## Monthly feedback digest
 
 Set the recipient in production `.env`:

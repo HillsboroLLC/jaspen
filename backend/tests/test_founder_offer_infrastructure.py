@@ -323,10 +323,11 @@ def test_export_collection_does_not_truncate_portfolios_above_twelve(db, test_us
 
 
 def test_portfolio_limits_gate_creation_but_not_retention(db, test_user):
-    assert scorecard_limit_for(test_user, 'free') == 5
+    assert scorecard_limit_for(test_user, 'free') == 30
+    assert scorecard_limit_for(test_user, 'business') == 30
     grant_founder_offer(test_user, 1, invoice_id='in_founder_capacity')
     db.session.commit()
-    assert scorecard_limit_for(test_user, 'free') == 40
+    assert scorecard_limit_for(test_user, 'free') == 30
 
 
 def _empty_portfolio_session(user_id, thread_id):
@@ -358,7 +359,7 @@ def _mock_batch_accounting(monkeypatch):
     )
 
 
-@pytest.mark.parametrize('requested', [5, 10, 11, 12, 14])
+@pytest.mark.parametrize('requested', [29, 30, 31])
 def test_batch_generation_respects_free_portfolio_boundary_without_silent_discard(
     requested, client, db, test_user, auth_headers, monkeypatch
 ):
@@ -385,7 +386,7 @@ def test_batch_generation_respects_free_portfolio_boundary_without_silent_discar
         json={'ideas': ideas},
     )
     payload = response.get_json()
-    expected = min(requested, 5)
+    expected = min(requested, 30)
 
     assert response.status_code == 200
     assert generated_sizes == [expected]
@@ -394,13 +395,15 @@ def test_batch_generation_respects_free_portfolio_boundary_without_silent_discar
     assert payload['persisted_project_count'] == expected
     assert len(payload['not_persisted_project_names']) == requested - expected
     assert Scorecard.query.filter_by(user_id=str(test_user.id), thread_id=thread_id).count() == expected
-    usage_event = UsageEvent.query.filter_by(thread_id=thread_id, operation_type='score_batch').one()
-    assert usage_event.reserved_credits == 100
-    assert usage_event.settled_credits == 10
-    assert usage_event.raw_provider_cost_usd is not None
-    if requested > 5:
-        assert payload['reason'] == 'portfolio_view_limit_reached'
-        assert 'no project was discarded silently' in payload['message'].lower()
+    usage_events = UsageEvent.query.filter_by(thread_id=thread_id, operation_type='score_batch').all()
+    assert len(usage_events) == expected
+    assert sum(event.reserved_credits for event in usage_events) == 100
+    assert sum(event.settled_credits for event in usage_events) == 10
+    assert len({event.evaluation_id for event in usage_events}) == expected
+    assert all(event.raw_provider_cost_usd is not None for event in usage_events)
+    if requested > 30:
+        assert payload['reason'] == 'comparison_session_limit_reached'
+        assert 'existing scorecards remain saved and accessible' in payload['message'].lower()
 
 
 def test_batch_reports_partial_model_failure(
@@ -477,6 +480,13 @@ def test_execution_plan_generation_is_metered(
     scorecard = _card('wbs-card', 'WBS Project')
     scorecard['executive_summary'] = 'A grounded project ready for planning.'
     assert save_user_sessions(test_user.id, {thread_id: _session_payload(test_user.id, thread_id, [scorecard])})
+    upsert_scorecard(
+        user_id=test_user.id,
+        thread_id=thread_id,
+        payload=scorecard,
+        evaluation_id='11111111-1111-4111-8111-111111111111',
+    )
+    db.session.commit()
     _mock_batch_accounting(monkeypatch)
     monkeypatch.setattr(strategy, 'get_llm_client', lambda: object())
     monkeypatch.setattr(
@@ -508,3 +518,4 @@ def test_execution_plan_generation_is_metered(
     assert event.settled_credits == 10
     assert event.input_tokens == 80
     assert event.output_tokens == 120
+    assert event.evaluation_id == '11111111-1111-4111-8111-111111111111'
