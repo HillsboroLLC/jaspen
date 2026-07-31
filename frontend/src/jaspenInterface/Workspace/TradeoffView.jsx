@@ -37,11 +37,30 @@ function shortLabel(label) {
 // rubric, use the user's criteria (key/label/weight/is_risk, in rubric order).
 // Otherwise fall back to Jaspen's built-in 6 dimensions.
 function resolveDimDefs(snapshots) {
+  const signatures = new Set((Array.isArray(snapshots) ? snapshots : []).map((s) => {
+    const rubric = s?.rubric || s?.scoring_rubric;
+    const criteria = Array.isArray(rubric?.criteria) ? rubric.criteria : [];
+    const definitions = criteria.length
+      ? criteria.map((c) => `${String(c?.key || '').trim()}:${String(c?.label || c?.key || '').trim().toLowerCase()}`).filter(Boolean)
+      : Object.entries(s?.dimensions || {}).map(([key, value]) => `${key}:${String(value?.label || key).trim().toLowerCase()}`);
+    return definitions.sort().join('|');
+  }).filter(Boolean));
+  if (signatures.size > 1) {
+    return [
+      { key: '__evidence', label: 'Evidence quality / confidence', short: 'Evidence', heterogeneous: true },
+      { key: '__strongest', label: 'Strongest project-specific criterion', short: 'Strongest', heterogeneous: true },
+      { key: '__weakest', label: 'Weakest project-specific criterion', short: 'Weakest', heterogeneous: true },
+    ];
+  }
   const withRubric = (Array.isArray(snapshots) ? snapshots : []).find(
-    (s) => Array.isArray(s?.rubric?.criteria) && s.rubric.criteria.length >= 2
+    (s) => {
+      const rubric = s?.rubric || s?.scoring_rubric;
+      return Array.isArray(rubric?.criteria) && rubric.criteria.length >= 2;
+    }
   );
   if (withRubric) {
-    return withRubric.rubric.criteria
+    const rubric = withRubric.rubric || withRubric.scoring_rubric;
+    return rubric.criteria
       .filter((c) => c && c.key)
       .map((c) => ({
         key: c.key,
@@ -75,9 +94,38 @@ function deriveStatus(score) {
 function dimScore(snap, key) {
   const dims = snap?.dimensions || {};
   const comp = snap?.component_scores || snap?.scores || {};
-  const raw = Number(dims[key]?.score ?? comp[key] ?? 0);
+  const entries = Object.values(dims)
+    .filter((value) => value && value.score !== undefined && value.score !== null)
+    .map((value) => Number(value.score))
+    .filter(Number.isFinite);
+  let source;
+  if (key === '__evidence') {
+    source = dims.evidence_quality?.score ?? snap?.data_confidence ?? snap?.confidence;
+    if (typeof source === 'string') {
+      source = ({ high: 8.5, medium: 6.5, low: 4.5, assumed: 3 }[source.trim().toLowerCase()] ?? null);
+    }
+  } else if (key === '__strongest') {
+    source = entries.length ? Math.max(...entries) : null;
+  } else if (key === '__weakest') {
+    source = entries.length ? Math.min(...entries) : null;
+  } else {
+    source = dims[key]?.score ?? comp[key];
+  }
+  const raw = Number(source);
+  if (!Number.isFinite(raw)) return null;
   // scores may be 0-100 or 0-10 — normalise to 0-10
   return raw > 10 ? raw / 10 : raw;
+}
+
+function dimLabel(snap, key) {
+  const dims = snap?.dimensions || {};
+  if (key === '__evidence') return dims.evidence_quality?.label || 'Confidence';
+  const entries = Object.entries(dims)
+    .map(([dimKey, value]) => ({ key: dimKey, label: value?.label || dimKey, score: Number(value?.score) }))
+    .filter((entry) => Number.isFinite(entry.score));
+  if (key === '__strongest' && entries.length) return entries.reduce((a, b) => (b.score > a.score ? b : a)).label;
+  if (key === '__weakest' && entries.length) return entries.reduce((a, b) => (b.score < a.score ? b : a)).label;
+  return dims[key]?.label || '';
 }
 
 // Build the IDEAS array from scorecardSnapshots.
@@ -96,7 +144,11 @@ function deriveIdeas(snapshots, dimDefs = DIM_KEYS) {
   let includedSeen = 0;
   return sorted.map((snap, i) => {
     const score = Math.round(Number(snap.jaspen_score ?? snap.score ?? 0));
-    const dims  = dimDefs.map(({ key }) => Number(dimScore(snap, key).toFixed(1)));
+    const dims  = dimDefs.map(({ key }) => {
+      const value = dimScore(snap, key);
+      return value == null ? null : Number(value.toFixed(1));
+    });
+    const dimLabels = dimDefs.map(({ key }) => dimLabel(snap, key));
     const name  = snap.project_name || snap.name || snap.label || `Idea ${i + 1}`;
     const sub   = snap.recommendations?.[0]
       ? (typeof snap.recommendations[0] === 'string'
@@ -125,6 +177,7 @@ function deriveIdeas(snapshots, dimDefs = DIM_KEYS) {
       score,
       rank,
       dims,
+      dimLabels,
       pick,
       included,
       status: included ? deriveStatus(score) : 'PARKED',
@@ -150,6 +203,7 @@ const StatusLabel = ({ s }) => {
 
 // ── Dimension bar ─────────────────────────────────────────────────────────────
 const DimBar = ({ v, alt }) => {
+  if (v == null) return <div style={{ fontSize:11, color:MUTED, textAlign:'center' }}>Not scored</div>;
   const pct   = Math.min(Math.max(v / 10, 0), 1) * 100;
   const color = v < 6 ? '#eab67b' : NAVY;
   return (
@@ -172,7 +226,7 @@ const DimBar = ({ v, alt }) => {
 // Excluded rows render at 50% opacity, drop the rank/pick badge, and the
 // eye icon flips to eye-slash. Clicking the eye toggles include/exclude
 // (persists via Jaspen.patchScorecardOverrides, fired by the parent).
-const PortfolioRow = ({ d, alt, onSelect, selected, onToggleInclude, onBuildPlan, onOpenWorkspace, buildingPlan, colCount = 6 }) => {
+const PortfolioRow = ({ d, alt, onSelect, selected, onToggleInclude, onBuildPlan, onOpenWorkspace, buildingPlan, colCount = 6, showDimLabels = false }) => {
   const excluded = !d.included;
   return (
   <div
@@ -207,7 +261,12 @@ const PortfolioRow = ({ d, alt, onSelect, selected, onToggleInclude, onBuildPlan
       }}>{d.name}</div>
       <div style={{ fontSize:11, color:MUTED, marginTop:2, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{d.sub}</div>
     </div>
-    {d.dims.map((v, i) => <DimBar key={i} v={v} alt={alt} />)}
+    {d.dims.map((v, i) => (
+      <div key={i} style={{ minWidth:0 }}>
+        {showDimLabels && <div title={d.dimLabels?.[i]} style={{ fontSize:9.5, color:MUTED, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', textAlign:'center', marginBottom:3 }}>{d.dimLabels?.[i] || 'Not scored'}</div>}
+        <DimBar v={v} alt={alt} />
+      </div>
+    ))}
     <div style={{ textAlign:'right' }}>
       <span style={{ fontFamily:'JetBrains Mono,monospace', fontSize: d.pick ? 18 : 16, fontWeight:600, color:NAVY, letterSpacing:'-0.02em' }}>{d.score}</span>
     </div>
@@ -289,7 +348,7 @@ const TradeoffQuadrant = ({ ideas, xDim = 1, yDim = 0, xLabel = 'Cost efficiency
   const W = 340, H = 210, pad = 20;
   const xFor = (v) => pad + ((v - 2) / 8) * (W - pad * 2);
   const yFor = (v) => H - pad - ((v - 2) / 8) * (H - pad * 2);
-  const plotted = ideas.filter((d) => d.included);
+  const plotted = ideas.filter((d) => d.included && Number.isFinite(d.dims?.[xDim]) && Number.isFinite(d.dims?.[yDim]));
 
   return (
     <div style={{ position:'relative', width:W, height:H }}>
@@ -548,6 +607,7 @@ const TradeoffView = ({
   // table render order.
   // Columns: custom rubric criteria when present, else the built-in 6 dimensions.
   const dimDefs = useMemo(() => resolveDimDefs(effectiveSnapshots), [effectiveSnapshots]);
+  const heterogeneousRubrics = dimDefs.some((definition) => definition.heterogeneous);
 
   const ideas = useMemo(() => {
     const all = deriveIdeas(effectiveSnapshots, dimDefs);
@@ -567,6 +627,9 @@ const TradeoffView = ({
   // Quadrant axes: default to the two highest-weighted criteria for a custom
   // rubric (y = highest, x = second). Otherwise keep Strategic fit vs Cost.
   const quadAxes = useMemo(() => {
+    if (heterogeneousRubrics) {
+      return { xDim: 0, yDim: 1, xLabel: 'Evidence quality', yLabel: 'Project-specific strength' };
+    }
     if (dimDefs === DIM_KEYS) {
       return { xDim: 1, yDim: 0, xLabel: 'Cost efficiency', yLabel: 'Strategic fit' };
     }
@@ -581,7 +644,7 @@ const TradeoffView = ({
       xLabel: dimDefs[xIdx]?.label || 'Criterion',
       yLabel: dimDefs[yIdx]?.label || 'Criterion',
     };
-  }, [dimDefs]);
+  }, [dimDefs, heterogeneousRubrics]);
 
   const handleToggleInclude = useCallback((idea, nextIncluded) => {
     const snapId = idea?.snapId;
@@ -656,6 +719,12 @@ const TradeoffView = ({
           </div>
         )}
 
+        {heterogeneousRubrics && (
+          <div style={{ background:'#fff8e8', border:'1px solid #f1d59b', borderRadius:10, padding:'11px 14px', color:NAVY, fontSize:12.5 }}>
+            These projects use different rubrics. Overall Jaspen score and evidence quality are comparable; detailed criteria are project-specific. Missing criteria are not treated as zero. Open a project to inspect its rubric.
+          </div>
+        )}
+
         {/* Ranked table. In `flow` mode it grows to fit ALL rows so the parent
             (workspace canvas) scrolls the whole page; otherwise it's a fixed box
             with its own inner scroll (inline chat). */}
@@ -668,6 +737,7 @@ const TradeoffView = ({
                 d={{ ...d, _isBuilding: buildingPlanId != null && (buildingPlanId === d.snapId || buildingPlanId === d.id) }}
                 alt={i % 2 === 1}
                 colCount={dimDefs.length}
+                showDimLabels={heterogeneousRubrics}
                 onSelect={setSelected}
                 selected={selected?._snap?.id === d._snap?.id}
                 onToggleInclude={handleToggleInclude}

@@ -2225,10 +2225,16 @@ const drainScoreQueue = async (tid, queuedCount = 0) => {
     const r = await Jaspen.scoreBatch(tid);
     const n = (r && typeof r.count === 'number') ? r.count : (Array.isArray(r?.scored) ? r.scored.length : 0);
     await refreshBundle(tid);
-    if (n > 0) showToast(`Scored ${n} option${n === 1 ? '' : 's'}.`, 'success');
+    if (r?.reason || (Array.isArray(r?.not_persisted_project_names) && r.not_persisted_project_names.length > 0)) {
+      showToast(r?.message || `${n} projects were retained. Some projects were not generated or saved; review the portfolio limit.`, 'warning');
+    } else if (n > 0) {
+      showToast(`Scored and retained ${n} option${n === 1 ? '' : 's'}.`, 'success');
+    }
   } catch (err) {
     console.error('[scoreBatch]', err);
-    showToast('Could not score the queued options — try again.', 'error');
+    const payload = err?.data || {};
+    const reset = payload?.cycle_reset_at ? ` Reset: ${new Date(payload.cycle_reset_at).toLocaleString()}.` : '';
+    showToast(payload?.error ? `${payload.error}${reset}` : (err?.message || 'Could not score the queued options — try again.'), 'error');
   } finally {
     scoreDrainingRef.current = false;
     setBatchScoring(null);
@@ -11804,11 +11810,8 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
           sessionId,
         });
     const snapshotOptions = mergedSnapshots.length > 0
-      ? [...mergedSnapshots]
+          ? [...mergedSnapshots]
           .sort((a, b) => {
-            if (Boolean(a?.isBaseline) !== Boolean(b?.isBaseline)) {
-              return a?.isBaseline ? -1 : 1;
-            }
             const aSelected = String(a?.id || '') === String(effectiveSelectedScorecardId || '');
             const bSelected = String(b?.id || '') === String(effectiveSelectedScorecardId || '');
             if (aSelected !== bSelected) return aSelected ? -1 : 1;
@@ -11819,13 +11822,13 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
           .map((snap, idx) => ({
             id: snap.id,
             label: formatScorecardLabel(
-              snap.label,
-              { isBaseline: Boolean(snap?.isBaseline), fallback: `Scorecard ${idx + 1}` }
+              snap.project_name || snap.name || snap.label,
+              { isBaseline: false, fallback: `Scorecard ${idx + 1}` }
             ),
-            isBaseline: Boolean(snap?.isBaseline),
+            isBaseline: false,
             isSelected: String(snap?.id || '') === String(effectiveSelectedScorecardId || ''),
             isActive: String(snap?.id || '') === String(activeSnapshotId || ''),
-            canDelete: !Boolean(snap?.isBaseline),
+            canDelete: true,
           }))
       : [];
     const useSnapshotSelect = snapshotOptions.length > 0;
@@ -12672,10 +12675,8 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                             >
                               {scoreSelectValue === option.id && <FontAwesomeIcon icon={faCheck} />}
                               <span>
-                                {formatScorecardLabel(option.label, { isBaseline: Boolean(option.isBaseline) || option.id === 'baseline' })}
-                                {option.isBaseline
-                                  ? (isBaselineLikeLabel(option.label) ? '' : ` (${BASELINE_DISPLAY_LABEL})`)
-                                  : option.isActive ? ' (Active)' : ''}
+                                {formatScorecardLabel(option.label, { isBaseline: false })}
+                                {option.isActive ? ' (Active)' : ''}
                               </span>
                             </button>
                             {useSnapshotSelect && (
@@ -12695,8 +12696,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                                     <FontAwesomeIcon icon={faCheck} />
                                   </button>
                                 )}
-                                {!option.isBaseline && (
-                                  <button
+                                <button
                                     type="button"
                                     className="jas-select-option-action"
                                     onClick={async (event) => {
@@ -12707,8 +12707,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                                     aria-label={`Rename ${option.label}`}
                                   >
                                     <FontAwesomeIcon icon={faPen} />
-                                  </button>
-                                )}
+                                </button>
                                 {option.canDelete && (
                                   <button
                                     type="button"

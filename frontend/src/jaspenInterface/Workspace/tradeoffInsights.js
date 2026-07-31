@@ -14,16 +14,23 @@ export function computeTradeoffInsights(items) {
     }))
     .filter((r) => r.dims && Object.keys(r.dims).length > 0);
 
-  if (rows.length < 2) return { keyDifferentiator: null, perOption: [] };
+  if (rows.length < 2) return { keyDifferentiator: null, perOption: [], criteriaComparable: false };
 
-  const dimKeys = Object.keys(rows[0].dims);
-  const labelOf = (k) => rows[0].dims[k]?.label || k;
+  const dimKeys = [...new Set(rows.flatMap((r) => Object.keys(r.dims)))];
+  const labelOf = (k) => rows.find((r) => r.dims[k])?.dims[k]?.label || k;
 
   // Key differentiator = the criterion with the widest spread across options.
   let keyDifferentiator = null;
   let bestSpread = -1;
   dimKeys.forEach((k) => {
-    const vals = rows.map((r) => Number(r.dims[k]?.score ?? 0));
+    // A missing criterion is not a zero. Only compare a criterion when every
+    // displayed project was actually scored on it.
+    const vals = rows
+      .map((r) => r.dims[k]?.score)
+      .filter((value) => value !== undefined && value !== null)
+      .map(Number)
+      .filter(Number.isFinite);
+    if (vals.length !== rows.length) return;
     const spread = Math.max(...vals) - Math.min(...vals);
     if (spread > bestSpread) {
       bestSpread = spread;
@@ -34,8 +41,8 @@ export function computeTradeoffInsights(items) {
   // Per option: strongest and weakest criterion.
   const perOption = rows.map((r) => {
     const entries = Object.values(r.dims)
-      .map((v) => ({ label: v?.label || '', score: Number(v?.score ?? 0) }))
-      .filter((e) => e.label);
+      .map((v) => ({ label: v?.label || '', score: Number(v?.score) }))
+      .filter((e) => e.label && Number.isFinite(e.score));
     if (entries.length < 2) return { name: r.name, bestLabel: null, worstLabel: null };
     const best = entries.reduce((a, b) => (b.score > a.score ? b : a));
     const worst = entries.reduce((a, b) => (b.score < a.score ? b : a));
@@ -43,5 +50,5 @@ export function computeTradeoffInsights(items) {
     return { name: r.name, bestLabel: same ? null : best.label, worstLabel: same ? null : worst.label };
   });
 
-  return { keyDifferentiator, perOption };
+  return { keyDifferentiator, perOption, criteriaComparable: Boolean(keyDifferentiator) };
 }
