@@ -1060,7 +1060,7 @@ class UsageEvent(db.Model):
     settled_credits = db.Column(db.Integer, nullable=False, default=0)
     success = db.Column(db.Boolean, nullable=False, default=True, index=True)
     error_code = db.Column(db.String(120), nullable=True)
-    scorecard_id = db.Column(db.String(36), nullable=True, index=True)
+    scorecard_id = db.Column(db.String(255), nullable=True, index=True)
     metadata_json = db.Column(db.JSON, nullable=True, default=dict)
     is_failover = db.Column(db.Boolean, nullable=False, default=False)
     created_at = db.Column(
@@ -1195,7 +1195,9 @@ class Scorecard(db.Model):
 
     __tablename__ = 'scorecards'
 
-    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    # Legacy scorecards can carry stable IDs with suffixes such as ``__edited``.
+    # Keep those identifiers intact so migrated links and selections still resolve.
+    id = db.Column(db.String(255), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = db.Column(
         db.String(36),
         db.ForeignKey('users.id', ondelete='CASCADE'),

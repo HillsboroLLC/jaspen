@@ -17,7 +17,7 @@ from app.founder_entitlements import (
 )
 from app.models import AccountEntitlement, PersistentCreditGrant, Scorecard, StripeWebhookEvent, UsageEvent, UserSession
 from app.routes.sessions import save_user_sessions
-from app.scorecards import collect_peer_scorecards, scorecard_limit_for, upsert_scorecard
+from app.scorecards import backfill_legacy_scorecards, collect_peer_scorecards, scorecard_limit_for, upsert_scorecard
 
 
 def _card(card_id, name, score=70, rubric_key='value'):
@@ -212,6 +212,31 @@ def test_peer_collection_merges_native_and_legacy_without_baseline(db, test_user
     assert {item['id'] for item in peers} == {'legacy-1', 'native-1'}
     assert all(item['isBaseline'] is False for item in peers)
     assert all('delta_vs_baseline' not in item for item in peers)
+
+
+def test_backfill_preserves_long_legacy_scorecard_ids_idempotently(db, test_user):
+    thread_id = 'legacy-edited-thread'
+    legacy_id = '7bd32f48-e851-4ed9-87f2-682687e7d6cc__edited'
+    legacy = _card(legacy_id, 'Edited legacy scorecard')
+    session = _session_payload(test_user.id, thread_id, [legacy])
+
+    created = backfill_legacy_scorecards(
+        user_id=test_user.id,
+        thread_id=thread_id,
+        legacy_session=session,
+    )
+    db.session.commit()
+    created_again = backfill_legacy_scorecards(
+        user_id=test_user.id,
+        thread_id=thread_id,
+        legacy_session=session,
+    )
+
+    assert Scorecard.__table__.c.id.type.length == 255
+    assert UsageEvent.__table__.c.scorecard_id.type.length == 255
+    assert created == 1
+    assert created_again == 0
+    assert Scorecard.query.get(legacy_id).data['id'] == legacy_id
 
 
 def test_deleting_first_middle_and_last_scorecard_keeps_session(
