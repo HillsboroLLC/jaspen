@@ -1,6 +1,10 @@
 import React, { useState } from 'react';
 import { createAnalytics } from '../../tools/shared/createAnalytics';
 import EnterpriseInvestmentCalculator from './EnterpriseInvestmentCalculator';
+import {
+  THINKING_POWER_PROJECT_ESTIMATES,
+  THINKING_POWER_VARIABILITY_NOTE,
+} from '../../shared/billing/thinkingPowerEstimates';
 import './PricingVariantB.css';
 
 const analytics = createAnalytics('homepage_pricing');
@@ -12,6 +16,8 @@ const PLANS = [
     monthly: 0,
     annual: 0,
     seats: '1 seat',
+    allowance: '300 credits/month',
+    projectEstimate: THINKING_POWER_PROJECT_ESTIMATES.free,
     tagline: 'Test Jaspen on a real decision.',
     cta: 'Sign up',
     href: '/?auth=1',
@@ -23,6 +29,8 @@ const PLANS = [
     monthly: 7,
     annual: 6,
     seats: '1 seat',
+    allowance: '1,000 credits/month',
+    projectEstimate: THINKING_POWER_PROJECT_ESTIMATES.starter,
     tagline: 'Keep going with light personal use.',
     cta: 'Start free',
     href: '/?auth=1',
@@ -34,6 +42,8 @@ const PLANS = [
     monthly: 39,
     annual: 32,
     seats: '1 seat',
+    allowance: '7,000 credits/month',
+    projectEstimate: THINKING_POWER_PROJECT_ESTIMATES.essential,
     tagline: 'When the decision has real consequences, Essential is built for you.',
     cta: 'Start Free',
     href: '/?auth=1',
@@ -45,6 +55,8 @@ const PLANS = [
     monthly: 129,
     annual: 107,
     seats: '3 seats included',
+    allowance: '29,000 shared credits/month',
+    projectEstimate: THINKING_POWER_PROJECT_ESTIMATES.team,
     tagline: 'Align your team, execute with clarity.',
     cta: 'Start free',
     href: '/?auth=1',
@@ -56,6 +68,8 @@ const PLANS = [
     monthly: 299,
     annual: 249,
     seats: '5 seats included',
+    allowance: '80,000 shared credits/month',
+    projectEstimate: THINKING_POWER_PROJECT_ESTIMATES.business,
     tagline: 'Bring a team together around clearer decisions, stronger execution, and reasoning that does not disappear when work changes hands.',
     cta: 'Start with Business',
     href: '/?auth=1',
@@ -68,6 +82,7 @@ const FEATURES = [
     category: 'Credits & capacity',
     rows: [
       { label: 'Monthly credits',            sub: 'Resets each billing cycle',         free: '300',     starter: '1,000',   essential: '7,000',  team: '29,000',      business: '80,000'    },
+      { label: 'Approximate project evaluations', sub: 'Varies with each evaluation',  free: THINKING_POWER_PROJECT_ESTIMATES.free, starter: THINKING_POWER_PROJECT_ESTIMATES.starter, essential: THINKING_POWER_PROJECT_ESTIMATES.essential, team: THINKING_POWER_PROJECT_ESTIMATES.team, business: THINKING_POWER_PROJECT_ESTIMATES.business },
       { label: 'Credits shared across team', sub: 'Pool drawn from one balance',        free: false,     starter: false,     essential: false,    team: true,          business: true        },
       { label: 'Buy additional credits',     sub: 'Top up any time mid-cycle',          free: true,      starter: true,      essential: true,     team: true,          business: true        },
     ],
@@ -210,6 +225,10 @@ export default function PricingVariantB({ onOpenModal }) {
                 <p className="pvb-billed-note">{plan.seats}</p>
               )}
               <p className="pvb-card-tagline">{plan.tagline}</p>
+              <p className="pvb-card-tagline">
+                <strong>{plan.allowance}</strong><br />
+                {plan.projectEstimate}
+              </p>
               {plan.key === 'business' && (
                 <p className="pvb-business-seat-note">
                   Five seats are included. The organization owner can add up to five more from Account Billing, for a maximum of 10 total users.
@@ -242,6 +261,8 @@ export default function PricingVariantB({ onOpenModal }) {
           <button type="button" className="jaspen-btn jaspen-btn-outline" onClick={() => { analytics.track('contact_sales_clicked', { placement: 'business_card' }); document.getElementById('eic-title')?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}>Contact Sales</button>
         </aside>}
       </div>
+
+      <p className="pvb-plan-note">Estimates are approximate, not guaranteed. {THINKING_POWER_VARIABILITY_NOTE}</p>
 
       {isBusinessAudience && <div className="pvb-enterprise-calculator-section">
         <EnterpriseInvestmentCalculator billing={isAnnual ? 'annual' : 'monthly'} onOpenModal={onOpenModal} />
