@@ -805,11 +805,16 @@ export default function JaspenWorkspace() {
     setScorecardExporting(format);
     setExportError(null);
     try {
-      if (format === 'pdf') {
+      // Trade-off PDFs are generated from the comparison surface because
+      // there is no server-side trade-off document. Scorecard PDFs use the
+      // deterministic server renderer: browser DOM screenshots can preserve
+      // the card borders while silently dropping text inside flex/scroll
+      // regions (notably in Safari).
+      if (format === 'pdf' && isTradeoff) {
         await downloadRenderedWorkspacePdf(
-          isTradeoff ? tradeoffExportRef.current : scorecardExportRef.current,
+          tradeoffExportRef.current,
           displayTitle,
-          { kind: isTradeoff ? 'tradeoff' : 'scorecard' },
+          { kind: 'tradeoff' },
         );
         return;
       }
