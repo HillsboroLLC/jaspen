@@ -36,10 +36,11 @@ from app.billing_config import (
 )
 from app.connector_store import get_all_connector_settings
 from app.founder_entitlements import (
-    founder_credit_balance,
-    grant_founder_offer,
-    has_founder_entitlement,
-    reverse_founder_credits,
+    ADVANTAGE_CREDIT_SOURCE,
+    advantage_credit_balance,
+    grant_advantage_offer,
+    has_advantage_entitlement,
+    reverse_advantage_credits,
 )
 from app.tool_registry import get_context_budget, get_tool_entitlements
 
@@ -248,6 +249,7 @@ def get_billing_status():
             db.session.commit()
 
     plan_key = to_public_plan(user.subscription_plan)
+    access_plan_key = plan_key if admin_override else effective_plan_key(user, current_app.config)
     plan_catalog = get_plan_catalog(current_app.config)
     current_plan = plan_catalog.get(plan_key) or {}
     usage_state = get_usage_meter_state(user, current_app.config)
@@ -259,9 +261,9 @@ def get_billing_status():
     credits_used = tokens_to_credits(tokens_used, precision=1)
     if admin_override:
         credits_used = 0
-    allowed_model_types = get_allowed_model_types(plan_key, current_app.config)
-    default_model_type = get_default_model_type(plan_key, current_app.config)
-    tool_entitlements = get_tool_entitlements(plan_key)
+    allowed_model_types = get_allowed_model_types(access_plan_key, current_app.config)
+    default_model_type = get_default_model_type(access_plan_key, current_app.config)
+    tool_entitlements = get_tool_entitlements(access_plan_key)
     connector_settings = get_all_connector_settings(user.id)
     for tool in tool_entitlements:
         if str(tool.get('type') or '').lower() != 'connector':
@@ -319,8 +321,12 @@ def get_billing_status():
         'current_period_end': current_period_end,
         'scheduled_plan_change': scheduled_plan_change,
         'billing_interval': billing_interval,
-        'access_restricted': (not admin_override) and (effective_plan_key(user, current_app.config) != plan_key),
-        'effective_plan_key': plan_key if admin_override else effective_plan_key(user, current_app.config),
+        'access_restricted': (
+            (not admin_override)
+            and plan_key != 'free'
+            and access_plan_key == 'free'
+        ),
+        'effective_plan_key': access_plan_key,
         'credits_remaining': credits_remaining,
         'monthly_credit_limit': tokens_to_credits(monthly_limit, precision=0),
         'credits_used': credits_used,
@@ -329,15 +335,18 @@ def get_billing_status():
         'cycle_reset_at': usage_state.get('reset_at').isoformat() if usage_state.get('reset_at') else None,
         'purchased_credits_this_cycle': tokens_to_credits(usage_state.get('overage_tokens'), precision=0),
         'persistent_credits': tokens_to_credits(usage_state.get('persistent_credits'), precision=1),
-        'founder_credits_remaining': tokens_to_credits(founder_credit_balance(user), precision=1),
-        'is_founder': has_founder_entitlement(user),
+        'advantage_credits_remaining': tokens_to_credits(advantage_credit_balance(user), precision=1),
+        'has_jaspen_advantage': has_advantage_entitlement(user),
+        # Backward-compatible fields for clients deployed before the offer rename.
+        'founder_credits_remaining': tokens_to_credits(advantage_credit_balance(user), precision=1),
+        'is_founder': has_advantage_entitlement(user),
         # Backward-compatible alias for older clients.
         'overage_credits_this_cycle': tokens_to_credits(usage_state.get('overage_tokens'), precision=0),
         'credit_soft_stop_limit': tokens_to_credits(cycle_limit, precision=0),
         'credit_block_limit': tokens_to_credits(None if cycle_limit is None else int(math.floor(int(cycle_limit) * 1.05)), precision=0),
         'allowed_model_types': allowed_model_types,
         'default_model_type': default_model_type,
-        'context_budget': get_context_budget(plan_key),
+        'context_budget': get_context_budget(access_plan_key),
         'tool_entitlements': tool_entitlements,
         'stripe_customer_id': user.stripe_customer_id,
         'stripe_subscription_id': user.stripe_subscription_id,
@@ -371,6 +380,26 @@ def _credit_pack_tokens_from_metadata(metadata):
         return tokens
     credits = int(metadata.get('credits') or 0)
     return credits * 1000 if credits > 0 else 0
+
+
+def _is_advantage_charge(user, charge):
+    if user is None:
+        return False
+    metadata = charge.get('metadata') if isinstance(charge.get('metadata'), dict) else {}
+    if str(metadata.get('checkout_type') or '').strip() == JASPEN_ADVANTAGE_CHECKOUT_TYPE:
+        return True
+    payment_intent_id = str(charge.get('payment_intent') or '').strip()
+    if not payment_intent_id:
+        return False
+    grants = PersistentCreditGrant.query.filter_by(
+        user_id=str(user.id),
+        source=ADVANTAGE_CREDIT_SOURCE,
+    ).all()
+    return any(
+        str((grant.grant_metadata or {}).get('stripe_payment_intent_id') or '').strip()
+        == payment_intent_id
+        for grant in grants
+    )
 
 
 def _fulfill_credit_pack_payment_intent(intent, expected_user=None):
@@ -432,39 +461,6 @@ def _fulfill_credit_pack_payment_intent(intent, expected_user=None):
         tokens, user.id,
     )
     return {'granted': True, 'tokens': tokens, 'user_id': str(user.id)}
-
-
-def _maybe_grant_thinking_power_bonus(inv, sub, user):
-    """Idempotently grant permanent Founder status and persistent credits."""
-    if user is None or sub is None:
-        return
-    meta = sub.get('metadata') or {}
-    if str(meta.get('checkout_type') or '').strip() != THINKING_POWER_CHECKOUT_TYPE:
-        return
-    # Only the first subscription invoice carries the one-time pack line.
-    if str(inv.get('billing_reason') or '').strip() != 'subscription_create':
-        return
-    tokens = int(meta.get('bonus_tokens') or 0)
-    if tokens <= 0:
-        return
-
-    _entitlement, _grant, created = grant_founder_offer(
-        user,
-        tokens,
-        invoice_id=inv.get('id'),
-        checkout_id=meta.get('checkout_session_id'),
-        metadata={
-            'stripe_subscription_id': sub.get('id'),
-            'billing_reason': inv.get('billing_reason'),
-        },
-    )
-    # Refresh the compatibility balance without merging this non-expiring lot
-    # into the monthly meter that subscription renewals reset.
-    get_usage_meter_state(user, current_app.config)
-    current_app.logger.info(
-        "invoice.payment_succeeded: Founder grant created=%s amount=%s user=%s invoice=%s",
-        created, tokens, user.id, inv.get('id'),
-    )
 
 
 @billing_bp.route('/create-credit-pack-payment-intent', methods=['POST'])
@@ -848,112 +844,63 @@ def create_subscription_embedded():
     }), 200
 
 
-# —— 300K Thinking Power Pack bundle (/thinking-power landing page) ———————————
-#
-# One combined embedded checkout that, on a single first invoice:
-#   • charges the configured Founder price  (add_invoice_items → one-time line)
-#   • starts an Essential subscription        (items → recurring line)
-#   • makes the first month of Essential free (promotion code, Essential-only, once)
-# so the one-time pack is due today and Essential recurs after its included month.
-#
-# The 300K bonus credits are NOT granted here — they are granted webhook-side on the
-# first paid invoice (see stripe_webhook / _maybe_grant_thinking_power_bonus), so a
-# card that never completes payment never yields credits.
-THINKING_POWER_CHECKOUT_TYPE = 'thinking_power_bundle'
+# —— The Jaspen Advantage one-time checkout (/thinking-power landing pages) ————
+JASPEN_ADVANTAGE_CHECKOUT_TYPE = 'jaspen_advantage'
 
 
-def _resolve_promotion_code_id(code):
-    """Return the Stripe PromotionCode id for a human code, or None."""
-    code = str(code or '').strip()
-    if not code:
-        return None
-    try:
-        matches = stripe.PromotionCode.list(code=code, active=True, limit=1)
-        promotion = (matches.get('data') or [None])[0]
-        return promotion.id if promotion else None
-    except stripe.error.StripeError as exc:
-        current_app.logger.warning('thinking-power: promo lookup failed for %s: %s', code, exc)
-        return None
-
-
-@billing_bp.route('/create-thinking-power-checkout', methods=['POST'])
+@billing_bp.route('/create-jaspen-advantage-checkout', methods=['POST'])
 @jwt_required()
-def create_thinking_power_checkout():
-    """Start the combined 300K pack + Essential-subscription embedded checkout."""
+def create_jaspen_advantage_checkout():
+    """Create a standalone one-time Checkout Session for The Jaspen Advantage."""
     user = User.query.get(get_jwt_identity())
     if not user:
         return jsonify({'msg': 'User not found'}), 404
 
     data = request.get_json() or {}
-    billing_interval = _normalize_billing_interval(data.get('billing_interval'))
+    price_id = current_app.config.get('STRIPE_JASPEN_ADVANTAGE_PRICE_ID')
+    if not price_id:
+        return jsonify({'msg': 'The Jaspen Advantage price is not configured yet.'}), 503
+    credit_tokens = int(current_app.config.get('JASPEN_ADVANTAGE_CREDIT_TOKENS') or 0)
+    if credit_tokens <= 0:
+        return jsonify({'msg': 'The Jaspen Advantage credit amount is not configured.'}), 503
 
-    # Essential recurring line (monthly or annual).
-    essential_price_id = _price_id_for_plan('essential', billing_interval, current_app.config)
-    if not essential_price_id:
-        return jsonify({'msg': f"No {billing_interval} Stripe price configured for Essential."}), 400
-
-    # One-time pack line — configured through PRICE_ID_THINKING_POWER_300K.
-    pack_price_id = current_app.config.get('STRIPE_THINKING_POWER_PACK_PRICE_ID')
-    if not pack_price_id:
-        return jsonify({'msg': 'The 300K pack price is not configured yet.'}), 400
-
-    # First-month-free promo. Prefer a request-provided code, else the configured
-    # default. If a code string exists but does not resolve, fail loudly (misconfig);
-    # if none is configured at all, proceed without the discount.
-    requested_code = str(data.get('coupon_code') or '').strip()
-    promo_code = requested_code or current_app.config.get('STRIPE_THINKING_POWER_PROMO_CODE') or ''
-    discounts = []
-    if promo_code:
-        promo_id = _resolve_promotion_code_id(promo_code)
-        if not promo_id:
-            return jsonify({'msg': 'The first-month promo code is not active. Please try again later.'}), 400
-        discounts = [{'promotion_code': promo_id}]
-
-    bonus_tokens = int(current_app.config.get('THINKING_POWER_BONUS_TOKENS') or 0)
+    return_path = str(data.get('return_path') or '/thinking-power').strip()
+    allowed_return_paths = {
+        '/thinking-power',
+        '/thinking-power/portfolio',
+        '/thinking-power/strategic-planning',
+    }
+    if return_path not in allowed_return_paths:
+        return jsonify({'msg': 'Invalid campaign return path.'}), 400
+    success_url = _frontend_url(
+        f'{return_path}?advantage_checkout=success&session_id={{CHECKOUT_SESSION_ID}}'
+    )
+    cancel_url = _frontend_url(f'{return_path}?advantage_checkout=cancel')
     customer_id = _ensure_customer_for_user(user)
-
+    metadata = {
+        'user_id': str(user.id),
+        'checkout_type': JASPEN_ADVANTAGE_CHECKOUT_TYPE,
+        'tokens': str(credit_tokens),
+        'campaign_id': str(data.get('campaign_id') or '').strip()[:80],
+    }
     try:
-        subscription_args = {
-            'customer': customer_id,
-            'items': [{'price': essential_price_id}],
-            # One-time pack, billed on the first (subscription_create) invoice.
-            'add_invoice_items': [{'price': pack_price_id}],
-            'payment_behavior': 'default_incomplete',
-            'payment_settings': {
-                'save_default_payment_method': 'on_subscription',
-                'payment_method_types': ['card'],
-            },
-            'metadata': {
-                'user_id': str(user.id),
-                'plan_key': 'essential',
-                'billing_interval': billing_interval,
-                'checkout_type': THINKING_POWER_CHECKOUT_TYPE,
-                'bonus_tokens': str(bonus_tokens),
-            },
-        }
-        if discounts:
-            subscription_args['discounts'] = discounts
-        subscription = stripe.Subscription.create(**subscription_args)
-    except stripe.error.StripeError as exc:
-        current_app.logger.exception('create-thinking-power-checkout failed')
-        return jsonify({'msg': str(getattr(exc, 'user_message', None) or 'Could not start checkout.')}), 400
-
-    client_secret = _subscription_payment_client_secret(subscription)
-    if not client_secret:
-        current_app.logger.error(
-            'create-thinking-power-checkout: no client_secret (sub=%s status=%s)',
-            getattr(subscription, 'id', '?'), subscription.get('status'),
+        session = stripe.checkout.Session.create(
+            mode='payment',
+            payment_method_types=['card'],
+            customer=customer_id,
+            line_items=[{'price': price_id, 'quantity': 1}],
+            metadata=metadata,
+            payment_intent_data={'metadata': metadata},
+            success_url=success_url,
+            cancel_url=cancel_url,
+            allow_promotion_codes=False,
         )
-        return jsonify({'msg': 'Could not initialize payment.'}), 400
-
-    return jsonify({
-        'subscription_id': subscription.id,
-        'client_secret': client_secret,
-        'plan_key': 'essential',
-        'billing_interval': billing_interval,
-        'first_month_free': bool(discounts),
-        'publishable_key': current_app.config.get('STRIPE_PUBLISHABLE_KEY') or '',
-    }), 200
+    except stripe.error.StripeError as exc:
+        current_app.logger.exception('create-jaspen-advantage-checkout failed')
+        return jsonify({'msg': str(getattr(exc, 'user_message', None) or 'Could not start checkout.')}), 400
+    session_id = session.get('id') if hasattr(session, 'get') else getattr(session, 'id', None)
+    session_url = session.get('url') if hasattr(session, 'get') else getattr(session, 'url', None)
+    return jsonify({'session_id': session_id, 'url': session_url}), 200
 
 
 @billing_bp.route('/sync-embedded-subscription', methods=['POST'])
@@ -1569,6 +1516,25 @@ def stripe_webhook():
                     "checkout.session.completed: added %s credit-pack tokens for user=%s",
                     tokens, user_id,
                 )
+            elif checkout_type == JASPEN_ADVANTAGE_CHECKOUT_TYPE:
+                tokens = int(metadata.get('tokens') or 0)
+                _entitlement, _grant, created = grant_advantage_offer(
+                    user,
+                    tokens,
+                    payment_reference=sess.get('payment_intent') or sess.get('id'),
+                    checkout_id=sess.get('id'),
+                    metadata={
+                        'campaign_id': metadata.get('campaign_id'),
+                        'stripe_payment_intent_id': sess.get('payment_intent'),
+                    },
+                )
+                if sess.get('customer'):
+                    user.stripe_customer_id = sess.get('customer')
+                get_usage_meter_state(user, current_app.config)
+                current_app.logger.info(
+                    "checkout.session.completed: Jaspen Advantage grant created=%s amount=%s user=%s",
+                    created, tokens, user_id,
+                )
             else:
                 plan_key = normalize_plan_key(metadata.get('plan_key'))
                 apply_plan_to_user(user, plan_key, current_app.config, reset_credits=True)
@@ -1655,9 +1621,6 @@ def stripe_webhook():
                     "invoice.payment_succeeded: reset credits for user=%s (no plan resolved)", user.id,
                 )
 
-            # Grant the 300K bonus on top of the Essential allotment, first invoice only.
-            _maybe_grant_thinking_power_bonus(inv, sub, user)
-
             user.subscription_status = 'active'
 
     elif event_type == 'invoice.payment_failed':
@@ -1724,16 +1687,9 @@ def stripe_webhook():
                 user.credits_remaining = max(0, int(user.credits_remaining or 0) - refund_credits)
             elif refund_credits > 0 and user.credits_remaining is None:
                 consume_credits(user, refund_credits)
-        founder_invoice = str(charge.get('invoice') or '').strip()
-        founder_charge = bool(
-            user and founder_invoice and PersistentCreditGrant.query.filter_by(
-                user_id=str(user.id),
-                stripe_invoice_id=founder_invoice,
-                source='founder_offer',
-            ).first()
-        )
-        if user and founder_charge:
-            reverse_founder_credits(
+        advantage_charge = _is_advantage_charge(user, charge)
+        if user and advantage_charge:
+            reverse_advantage_credits(
                 user,
                 reason='stripe_refund',
                 external_reference=event_id,
@@ -1743,16 +1699,9 @@ def stripe_webhook():
     elif event_type == 'charge.dispute.created':
         charge = event['data']['object']
         user = _find_user_for_billing_event(customer_id=charge.get('customer'))
-        founder_invoice = str(charge.get('invoice') or '').strip()
-        founder_charge = bool(
-            user and founder_invoice and PersistentCreditGrant.query.filter_by(
-                user_id=str(user.id),
-                stripe_invoice_id=founder_invoice,
-                source='founder_offer',
-            ).first()
-        )
-        if user and founder_charge:
-            reverse_founder_credits(
+        advantage_charge = _is_advantage_charge(user, charge)
+        if user and advantage_charge:
+            reverse_advantage_credits(
                 user,
                 reason='stripe_chargeback',
                 external_reference=event_id,

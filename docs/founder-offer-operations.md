@@ -1,38 +1,37 @@
-# Founder Offer Operations and Product Contract
+# The Jaspen Advantage Operations and Product Contract
 
 ## Durable account state
 
-Founder status is an `account_entitlements` record keyed to the purchasing
+The Jaspen Advantage is an `account_entitlements` record keyed to the purchasing
 account. It is independent of subscription plan, Stripe subscription status,
 request counters, and credit balance. Duplicate webhook delivery cannot create a
-second entitlement or Founder credit lot.
+second entitlement or promotional credit lot.
 
 The 300,000-credit benefit is a `persistent_credit_grants` lot with an
-append-only `persistent_credit_transactions` audit trail. A normal Essential
-renewal resets only monthly credits. Downgrade, cancellation, failed payment,
-and monthly reset do not erase the persistent balance or Founder identity.
+append-only `persistent_credit_transactions` audit trail. Plan changes and
+monthly resets do not erase the personal promotional balance or entitlement.
 
 Consumption order is:
 
 1. monthly plan credits and normal expiring top-ups;
-2. persistent Founder credits;
+2. persistent Jaspen Advantage credits;
 3. the existing small soft-stop grace, only after paid balances are empty.
 
-Refunds and chargebacks tied to the Founder invoice reverse the unused persistent
-balance and retain the entitlement/grant records for audit. Founder identity is
+Refunds and chargebacks tied to the one-time payment reverse the unused persistent
+balance and retain the entitlement/grant records for audit. The entitlement is
 not silently deleted. Account deletion follows the existing user cascade and is
 the only account-level destructive action.
 
 ## Limits and limit messages
 
-While Founder credits remain, the account receives 100 Claude-powered requests
+While Jaspen Advantage credits remain, the account receives 100 Claude-powered requests
 per hour and 300 per day. When the persistent balance reaches zero, the existing
 active-plan limits apply automatically. The same shared account counters cover
 chat, score-next, score-batch, and AI execution-plan generation. Rate-limit
 responses must include `Retry-After`; Thinking Power exhaustion includes the
 monthly reset timestamp.
 
-Every plan, including Founder, supports up to 30 peer projects in one comparison
+Every plan, including The Jaspen Advantage, supports up to 30 peer projects in one comparison
 session. This is a comparison-session creation guard, not an account storage or
 retention cap. Reaching the limit is checked before Claude is invoked. The
 response lists requested, generated, and persisted counts plus every name not
@@ -93,11 +92,10 @@ should refine these provisional ranges over time.
 | Essential (7,000) | ~17–29 typical project evaluations |
 | Team (29,000 shared credits) | ~57–96 typical project evaluations across the shared allowance |
 | Business (80,000 shared credits) | ~133–222 typical project evaluations across the shared allowance |
-| Founder gift (300,000 persistent credits) | ~750–1,200 typical project evaluations over the life of the gift; available until used |
+| The Jaspen Advantage (300,000 persistent credits) | ~750–1,200 typical project evaluations over the life of the credit balance; available until used |
 
-Suitable external wording: “300,000 persistent credits, available until used,
-support approximately ~750–1,200 typical project evaluations over the life of
-the gift.” Follow it with the variability explanation above. Never describe
+Suitable external wording: “300,000 non-expiring usage credits support an estimated
+750–1,200 typical project evaluations over the life of the credit balance.” Follow it with the variability explanation above. Never describe
 Thinking Power credits as tokens and never promise an exact project count.
 
 ## Margin decision note
@@ -112,16 +110,14 @@ could imply `raw cost ÷ budget`. Repository history resolves intent: commit
 and described this as preserving margin. The formula remains unchanged; the
 contradictory comment must be treated as documentation debt.
 
-At the default Essential values (budget $13, multiplier 3×):
+At the default Essential metering values (budget $13, multiplier 3×):
 
-| Interpretation | Raw provider value of 300,000 credits | Margin at $450 | Margin at $499 |
-|---|---:|---:|---:|
-| Code/history: cost × 3 before debit | $185.71 | 58.7% | 62.8% |
-| Comment-only: raw cost ÷ budget | $557.14 | -23.8% | -11.7% |
+| Interpretation | Raw provider value of 300,000 credits | Margin at $999 |
+|---|---:|---:|
+| Code/history: cost × 3 before debit | $185.71 | 81.4% |
+| Comment-only: raw cost ÷ budget | $557.14 | 44.2% |
 
-The included $39 Essential month lowers the first-cycle headline margins to
-about 50.0% at $450 and 55.0% at $499 before payment fees and other operating
-costs. Metered scorecards and execution plans now consume the purchased balance
+No Essential month or recurring subscription is bundled. Metered scorecards and execution plans consume the purchased balance
 instead of creating untracked cost; the ranges above include provisional 15- and
 48-credit equivalents for those operations.
 
@@ -130,15 +126,10 @@ values, Anthropic model routing/prices, and real usage before campaign claims.
 
 ## Stripe and environment checklist
 
-- `PRICE_ID_THINKING_POWER_300K`: one-time Founder offer price ($450 or $499,
-  product-owner decision required).
-- Essential monthly and annual price ids.
-- First-month promotion code: active, duration `once`, scoped only to the
-  Essential recurring product so it cannot discount the one-time line.
-- Webhook secret and delivery for invoice success, refund, and dispute events.
+- `PRICE_ID_JASPEN_ADVANTAGE`: one-time $999 Stripe Price. The product must not be recurring.
+- Webhook secret and delivery for Checkout completion, refund, and dispute events.
 - Redis-backed `RATELIMIT_STORAGE_URI` in production.
 - Apply the database migration and run the scorecard backfill before traffic.
 
-Remaining decisions: final $450 versus $499 price, whether a partial refund
-should reverse credits pro rata instead of reversing the unused lot, and whether
+Remaining decisions: whether a partial refund should reverse credits pro rata instead of reversing the unused lot, and whether
 the provisional per-plan portfolio-view ladder should change after scale tests.

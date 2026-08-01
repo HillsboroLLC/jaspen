@@ -26,26 +26,26 @@ describe('Founder campaign content', () => {
     expect(new Set(campaigns.map((campaign) => campaign.seo.title)).size).toBe(3);
     expect(new Set(campaigns.map((campaign) => campaign.seo.description)).size).toBe(3);
     expect(campaigns.map((campaign) => campaign.id)).toEqual([
-      'founder_consultants',
-      'founder_pmo',
-      'founder_strategic_planning_aop',
+      'advantage_consultants',
+      'advantage_pmo',
+      'advantage_strategic_planning_aop',
     ]);
   });
 
-  it('keeps the Founder values and limitations consistent across every variant', () => {
-    expect(FOUNDER_PRICE).toBe(599);
+  it('keeps The Jaspen Advantage values and limitations consistent across every variant', () => {
+    expect(FOUNDER_PRICE).toBe(999);
     expect(FOUNDER_CREDITS).toBe('300,000');
-    expect(FOUNDER_PROJECT_ESTIMATE).toBe('~750–1,200 typical project evaluations over the life of the gift');
+    expect(FOUNDER_PROJECT_ESTIMATE).toBe('~750–1,200 typical project evaluations over the life of the credit balance');
     expect(FOUNDER_VARIABILITY_NOTE).toContain('Actual usage varies');
     expect(SHARED_OFFER_ITEMS.map((item) => `${item.value} ${item.label} ${item.detail}`).join(' ')).toContain(
       'Compare up to 30 projects in one focused session. Continue evaluating and retaining additional projects across sessions.',
     );
 
     const disclosures = SHARED_OFFER_DISCLOSURES.join(' ');
-    expect(disclosures).toContain('enrolls you in Essential');
-    expect(disclosures).toContain('billing begins after the included month');
+    expect(disclosures).toContain('does not require an Essential subscription');
+    expect(disclosures).toContain('do not renew or replenish each month');
     expect(disclosures).toContain('remain available until used');
-    expect(disclosures).toContain('does not delete scorecards');
+    expect(disclosures).toContain('cannot be transferred');
     expect(disclosures).toContain('No consulting service');
   });
 
@@ -121,14 +121,14 @@ describe('Founder campaign content', () => {
     expect(css).not.toMatch(/gradient/i);
   });
 
-  it('pulls renewal prices from the public billing catalog instead of campaign copy', () => {
+  it('uses a standalone one-time checkout instead of an Essential subscription', () => {
     const checkout = fs.readFileSync(
       path.join(process.cwd(), 'src/pages/Marketing/ThinkingPowerCheckout.jsx'),
       'utf8',
     );
-    expect(checkout).toContain('/api/v1/billing/catalog');
-    expect(checkout).toContain('monthly_price_usd');
-    expect(checkout).toContain('annual_monthly_price_usd');
-    expect(checkout).not.toContain('then $39/month');
+    expect(checkout).toContain('/api/v1/billing/create-jaspen-advantage-checkout');
+    expect(checkout).toContain("planKey: 'jaspen_advantage'");
+    expect(checkout).not.toContain('/api/v1/billing/catalog');
+    expect(checkout).not.toContain('Essential renews');
   });
 });

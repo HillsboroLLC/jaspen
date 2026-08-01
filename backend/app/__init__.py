@@ -257,21 +257,15 @@ def create_app():
     # Backward-compatible alias used by legacy code paths.
     app.config['STRIPE_OVERAGE_PACK_PRICE_IDS'] = app.config['STRIPE_CREDIT_PACK_PRICE_IDS']
 
-    # —— 300K Thinking Power Pack promo (/thinking-power landing page) —— #
-    # One-time Founder-offer price. Create this in Stripe as a one-time price
-    # on a "300K Thinking Power Pack" product, then set PRICE_ID_THINKING_POWER_300K.
-    app.config['STRIPE_THINKING_POWER_PACK_PRICE_ID'] = _stripe_price_id_from_env('PRICE_ID_THINKING_POWER_300K')
-    # Promotion code that makes the FIRST month of Essential free. IMPORTANT: back it
-    # with a coupon whose duration is 'once' AND whose applies_to.products is the
-    # Essential product only — so it discounts just the Essential line on the first
-    # invoice and never the one-time pack line. Leave unset until the code exists; the
-    # bundle checkout then runs without the free-month discount.
-    app.config['STRIPE_THINKING_POWER_PROMO_CODE'] = str(
-        os.getenv('THINKING_POWER_FIRST_MONTH_PROMO_CODE') or ''
-    ).strip()
-    # 300,000 persistent Founder credits granted on the first paid invoice,
-    # stored in internal units (TOKENS_PER_CREDIT = 1000). Webhook-side only.
-    app.config['THINKING_POWER_BONUS_TOKENS'] = 300_000_000
+    # —— The Jaspen Advantage (/thinking-power landing pages) —— #
+    # Configure this as a one-time $999 Stripe Price. The offer is intentionally
+    # independent of every recurring plan and does not start an Essential subscription.
+    app.config['STRIPE_JASPEN_ADVANTAGE_PRICE_ID'] = _stripe_price_id_from_env(
+        'PRICE_ID_JASPEN_ADVANTAGE'
+    )
+    # 300,000 non-expiring usage credits, stored in internal units
+    # (TOKENS_PER_CREDIT = 1000). Granted only after Stripe confirms payment.
+    app.config['JASPEN_ADVANTAGE_CREDIT_TOKENS'] = 300_000_000
 
     required_stripe_values = {
         'PRICE_ID_ESSENTIAL': app.config['STRIPE_PRICE_IDS'].get('essential'),
@@ -284,6 +278,7 @@ def create_app():
         'PRICE_ID_STARTER': app.config['STRIPE_PRICE_IDS'].get('starter'),
         'PRICE_ID_TEAM': app.config['STRIPE_PRICE_IDS'].get('team'),
         'PRICE_ID_BUSINESS': app.config['STRIPE_PRICE_IDS'].get('business'),
+        'PRICE_ID_JASPEN_ADVANTAGE': app.config.get('STRIPE_JASPEN_ADVANTAGE_PRICE_ID'),
     }
     missing_required_stripe = [key for key, value in required_stripe_values.items() if not str(value or '').strip()]
     missing_optional_stripe = [key for key, value in optional_stripe_values.items() if not str(value or '').strip()]

@@ -46,9 +46,9 @@ describe.each(Object.values(FOUNDER_CAMPAIGNS))('$id campaign page', (campaign) 
     expect(screen.getByRole('navigation', { name: 'Campaign navigation' })).toBeInTheDocument();
     expect(screen.getByRole('main')).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 2, name: '300,000 Thinking Power credits' })).toBeInTheDocument();
-    expect(screen.getAllByText('One-time Founder price').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText(/\$999 once\. No subscription required\./).length).toBeGreaterThanOrEqual(2);
     expect(
-      screen.getAllByRole('button', { name: `${campaign.primaryCta} · $599` }).length
+      screen.getAllByRole('button', { name: `${campaign.primaryCta} · $999` }).length
     ).toBeGreaterThanOrEqual(2);
     expect(screen.getAllByText(/300,000 Thinking Power credits/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Approximately ~750–1,200 typical project evaluations/).length).toBeGreaterThan(0);
@@ -62,13 +62,13 @@ describe.each(Object.values(FOUNDER_CAMPAIGNS))('$id campaign page', (campaign) 
     expect(screen.getByTestId('seo')).toHaveAttribute('data-title', campaign.seo.title);
     expect(screen.getByTestId('seo')).toHaveAttribute('data-description', campaign.seo.description);
     expect(screen.getByTestId('seo')).toHaveAttribute('data-canonical', campaign.path);
-    expect(mockTrack).toHaveBeenCalledWith('founder_campaign_viewed', {
+    expect(mockTrack).toHaveBeenCalledWith('advantage_campaign_viewed', {
       campaign_id: campaign.id,
       route: campaign.path,
     });
   });
 
-  it('sends its primary CTA to the shared Founder checkout with campaign attribution', () => {
+  it('sends its primary CTA to the shared Advantage checkout with campaign attribution', () => {
     render(
       <MemoryRouter initialEntries={[campaign.path]}>
         <FounderCampaignPage campaignKey={campaign.key} />
@@ -77,16 +77,14 @@ describe.each(Object.values(FOUNDER_CAMPAIGNS))('$id campaign page', (campaign) 
 
     fireEvent.click(screen.getAllByRole('button', { name: new RegExp(campaign.primaryCta) })[0]);
     expect(screen.getByRole('dialog')).toHaveAttribute('data-return-path', campaign.path);
-    expect(mockTrack).toHaveBeenCalledWith('founder_primary_cta_clicked', {
+    expect(mockTrack).toHaveBeenCalledWith('advantage_primary_cta_clicked', {
       campaign_id: campaign.id,
       route: campaign.path,
     });
-    expect(mockTrack).toHaveBeenCalledWith('founder_checkout_started', {
+    expect(mockTrack).toHaveBeenCalledWith('advantage_checkout_started', {
       campaign_id: campaign.id,
       resumed: false,
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Complete purchase' }));
-    expect(mockTrack).toHaveBeenCalledWith('founder_purchase_completed', { campaign_id: campaign.id });
   });
 });

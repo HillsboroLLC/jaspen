@@ -190,6 +190,7 @@ export default function AppMenu() {
   const plans = useMemo(() => billingCatalog?.plans || {}, [billingCatalog?.plans]);
   const currentPlanKey = String(billingStatus?.plan_key || 'free').toLowerCase();
   const effectivePlanKey = highestPlanKey(
+    billingStatus?.effective_plan_key,
     currentPlanKey,
     user?.active_organization_plan_key,
     user?.subscription_plan,

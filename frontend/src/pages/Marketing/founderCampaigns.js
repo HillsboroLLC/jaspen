@@ -3,15 +3,15 @@ import {
   THINKING_POWER_VARIABILITY_NOTE,
 } from '../../shared/billing/thinkingPowerEstimates';
 
-export const FOUNDER_PRICE = 599;
-export const FOUNDER_CREDITS = '300,000';
-export const FOUNDER_PROJECT_ESTIMATE = THINKING_POWER_PROJECT_ESTIMATES.founder;
-export const FOUNDER_VARIABILITY_NOTE = THINKING_POWER_VARIABILITY_NOTE;
+export const ADVANTAGE_PRICE = 999;
+export const ADVANTAGE_CREDITS = '300,000';
+export const ADVANTAGE_PROJECT_ESTIMATE = THINKING_POWER_PROJECT_ESTIMATES.advantage;
+export const ADVANTAGE_VARIABILITY_NOTE = THINKING_POWER_VARIABILITY_NOTE;
 
-export const FOUNDER_TECHNICAL_GUARANTEE =
+export const ADVANTAGE_TECHNICAL_GUARANTEE =
   'If a technical issue prevents you from completing the advertised workflow and our team cannot resolve it, we’ll refund your purchase.';
 
-export const FOUNDER_GUARANTEE_QUALIFIER =
+export const ADVANTAGE_GUARANTEE_QUALIFIER =
   'This guarantee covers unresolved product failures. The quality and usefulness of the results depend on the information, evidence, assumptions, criteria, and decisions provided by the user.';
 
 export const SHARED_WORKFLOW = [
@@ -47,14 +47,14 @@ export const SHARED_DECISION_RECORD = [
 
 export const SHARED_OFFER_ITEMS = [
   {
-    value: FOUNDER_CREDITS,
-    label: 'Thinking Power credits',
-    detail: 'A persistent Founder gift that remains available until used.',
+    value: ADVANTAGE_CREDITS,
+    label: 'non-expiring usage credits',
+    detail: 'A personal balance that remains available until used.',
   },
   {
-    value: `Approximately ${FOUNDER_PROJECT_ESTIMATE}`,
-    label: 'over the life of the gift',
-    detail: 'An estimate of typical project evaluations, not a guaranteed quantity.',
+    value: `Approximately ${ADVANTAGE_PROJECT_ESTIMATE}`,
+    label: 'over the life of the credit balance',
+    detail: 'A planning estimate based on typical evaluations, not a guaranteed quantity.',
   },
   {
     value: '30 projects',
@@ -62,31 +62,58 @@ export const SHARED_OFFER_ITEMS = [
     detail: 'Compare up to 30 projects in one focused session. Continue evaluating and retaining additional projects across sessions.',
   },
   {
-    value: `$${FOUNDER_PRICE}`,
-    label: 'one-time Founder price',
-    detail: 'Your first month of Essential is included.',
+    value: `$${ADVANTAGE_PRICE} once`,
+    label: 'with no subscription required',
+    detail: 'No monthly renewal, automatic replenishment, or recurring charge.',
   },
 ];
 
 export const SHARED_OFFER_DISCLOSURES = [
-  'The Founder purchase enrolls you in Essential. You choose and accept the recurring billing option at checkout, and Essential billing begins after the included month.',
-  'The 300,000 Founder Thinking Power credits remain available until used.',
-  'Canceling or changing the subscription does not delete scorecards or decision work you already created.',
-  'You complete the work independently with Jaspen and its AI. No consulting service, facilitated workshop, done-for-you analysis, or Founder involvement is part of the purchase.',
+  'The Jaspen Advantage is for individual use and does not require an Essential subscription.',
+  'The 300,000 usage credits do not expire, remain available until used, and do not renew or replenish each month.',
+  'The purchase and credits are personal to the buyer. They cannot be transferred, assigned, pooled, or shared with another user or workspace.',
+  'If you later join a Team, Business, or Enterprise workspace, this promotional balance remains personal to your account.',
+  'When the credits are used, you can continue through Jaspen’s normal paid plans and credit options.',
+  'You complete the work independently with Jaspen and its AI. No consulting service, facilitated workshop, or done-for-you analysis is included.',
+];
+
+export const SHARED_FAQ = [
+  {
+    q: 'What is The Jaspen Advantage?',
+    a: 'It is a limited launch offer for an individual Jaspen account with 300,000 non-expiring usage credits for $999 once. It is not a subscription or a separate product.',
+  },
+  {
+    q: 'What are usage credits?',
+    a: 'Usage credits meter the AI-powered analysis Jaspen performs. Deeper analysis, larger inputs, attachments, and revisions generally use more credits.',
+  },
+  {
+    q: 'How was the 750–1,200 estimate calculated?',
+    a: 'It is based on reasonable estimates for a typical evaluation that includes framing the project, refining a rubric, reviewing evidence, generating a scorecard, reviewing the recommendation, and creating an initial execution plan. Actual usage varies.',
+  },
+  { q: 'Do the 300,000 credits expire?', a: 'No. They remain available to the purchaser until used, subject to the current Jaspen terms and account status.' },
+  { q: 'Is a subscription required?', a: 'No. The Jaspen Advantage is a one-time purchase and does not enroll you in Essential or another recurring plan.' },
+  { q: 'Do the credits renew every month?', a: 'No. The balance does not renew or replenish, and there is no automatic renewal.' },
+  { q: 'Can the credits be shared with a team?', a: 'No. The purchase and promotional credits are personal to the buyer and cannot be transferred, pooled, or shared.' },
+  { q: 'What happens if I later upgrade to Team, Business, or Enterprise?', a: 'Your promotional balance remains personal to your account. Team or organization allowances remain governed by that plan.' },
+  { q: 'What happens when the credits are used?', a: 'You can continue through Jaspen’s normal paid plans and available credit options.' },
+  { q: 'How many options can I compare at one time?', a: 'You can compare up to 30 projects or options in one focused session and retain more work across additional sessions.' },
+  { q: 'Does Jaspen make the final decision?', a: 'No. Jaspen helps structure the comparison, surface tradeoffs, and explain the order. The decision remains yours.' },
+  { q: 'What information should I provide for the strongest analysis?', a: 'Provide a clear objective, the options in scope, relevant constraints, evidence, assumptions, and the criteria that matter. Better context creates sharper guidance.' },
+  { q: 'What outputs can I retain or download?', a: 'You can retain scorecards and decision work, review tradeoffs, create an initial execution plan, and use the downloadable decision assets currently supported in Jaspen.' },
 ];
 
 const consultantCampaign = {
-  id: 'founder_consultants',
+  id: 'advantage_consultants',
   key: 'consultants',
   path: '/thinking-power',
   theme: 'consultants',
   eyebrow: 'For independent consultants & fractional executives',
-  heroTitle: 'Turn scattered client inputs into a clear direction and a practical next step.',
+  heroTitle: 'Give clients more than a recommendation. Show them why.',
   heroBody:
     'Build the right rubric, compare the options against real evidence, and turn the result into clear decision assets and an initial execution plan.',
   heroCallout:
     'Walk into the client room ready to show what should move forward, what should wait, and why.',
-  primaryCta: 'Build the client recommendation',
+  primaryCta: 'Strengthen your next recommendation',
   momentTitle: 'The client meeting is set. The recommendation still has to hold up.',
   momentBody:
     'You have client inputs, competing options, and a deadline. Jaspen helps you turn that material into a clear recommendation whose logic, evidence, assumptions, and tradeoffs can withstand the questions in the room.',
@@ -137,17 +164,17 @@ const consultantCampaign = {
 };
 
 const portfolioCampaign = {
-  id: 'founder_pmo',
+  id: 'advantage_pmo',
   key: 'portfolio',
   path: '/thinking-power/portfolio',
   theme: 'portfolio',
   eyebrow: 'For PMO, portfolio & transformation leaders',
-  heroTitle: 'Turn a pile of ideas into a prioritized plan, and know what drove the order.',
+  heroTitle: 'Rank the work before you resource it.',
   heroBody:
     'Compare up to 30 projects with consistent criteria, real evidence, and visible tradeoffs. Then turn the result into an initial execution plan.',
   heroCallout:
     'Show leadership what should move forward, what should wait, and why each project landed where it did.',
-  primaryCta: 'Evaluate your projects',
+  primaryCta: 'Rank your project list',
   momentTitle: 'Every sponsor believes their project is important.',
   momentBody:
     'When more projects exist than the organization can execute, gut feeling and sponsor influence are not enough. You need a consistent view of what gets funded, deferred, combined, or stopped, plus a clear explanation leadership can follow.',
@@ -213,17 +240,17 @@ const portfolioCampaign = {
 };
 
 const strategyCampaign = {
-  id: 'founder_strategic_planning_aop',
+  id: 'advantage_strategic_planning_aop',
   key: 'strategic-planning',
   path: '/thinking-power/strategic-planning',
   theme: 'strategy',
   eyebrow: 'For strategy and planning leaders',
-  heroTitle: 'Decide what deserves attention based on more than gut feel.',
+  heroTitle: 'Turn the planning list into a clear order.',
   heroBody:
     'Use Jaspen for Strategic Planning and Annual Operating Planning (AOP) to compare initiatives against the criteria, evidence, assumptions, and tradeoffs that determine what actually makes the plan.',
   heroCallout:
     'Walk into the planning room ready to show what should move forward, what should wait, and why.',
-  primaryCta: 'Prioritize the strategic initiatives',
+  primaryCta: 'Rank your strategic priorities',
   momentTitle: 'The ambition is clear. The funded work is not.',
   momentBody:
     'Functions have submitted more initiatives than the business can fund or execute. Jaspen helps the planning team decide which work deserves capacity and executive attention before commitments are locked in.',
@@ -294,3 +321,11 @@ export const FOUNDER_CAMPAIGNS = Object.freeze({
 export function getFounderCampaign(key) {
   return FOUNDER_CAMPAIGNS[key] || consultantCampaign;
 }
+
+// Backward-compatible export names while older imports are retired.
+export const FOUNDER_PRICE = ADVANTAGE_PRICE;
+export const FOUNDER_CREDITS = ADVANTAGE_CREDITS;
+export const FOUNDER_PROJECT_ESTIMATE = ADVANTAGE_PROJECT_ESTIMATE;
+export const FOUNDER_VARIABILITY_NOTE = ADVANTAGE_VARIABILITY_NOTE;
+export const FOUNDER_TECHNICAL_GUARANTEE = ADVANTAGE_TECHNICAL_GUARANTEE;
+export const FOUNDER_GUARANTEE_QUALIFIER = ADVANTAGE_GUARANTEE_QUALIFIER;
