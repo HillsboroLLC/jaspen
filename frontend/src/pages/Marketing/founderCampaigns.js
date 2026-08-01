@@ -33,6 +33,18 @@ export const SHARED_WORKFLOW = [
   },
 ];
 
+export const SHARED_DECISION_RECORD = [
+  'What was being decided',
+  'What options were considered',
+  'What mattered',
+  'What evidence was available',
+  'What assumptions were made',
+  'What was selected',
+  'Why it was selected',
+  'What happened afterward',
+  'What the company learned',
+];
+
 export const SHARED_OFFER_ITEMS = [
   {
     value: FOUNDER_CREDITS,
@@ -69,7 +81,7 @@ const consultantCampaign = {
   path: '/thinking-power',
   theme: 'consultants',
   eyebrow: 'For independent consultants & fractional executives',
-  heroTitle: 'Help clients make decisions with more than a gut feeling.',
+  heroTitle: 'Turn scattered client inputs into a clear direction and a practical next step.',
   heroBody:
     'Build the right rubric, compare the options against real evidence, and turn the result into clear decision assets and an initial execution plan.',
   heroCallout:
@@ -130,7 +142,7 @@ const portfolioCampaign = {
   path: '/thinking-power/portfolio',
   theme: 'portfolio',
   eyebrow: 'For PMO, portfolio & transformation leaders',
-  heroTitle: 'Portfolio review coming up? Walk into the room ready.',
+  heroTitle: 'Turn a pile of ideas into a prioritized plan—and know what drove the order.',
   heroBody:
     'Compare up to 30 projects with consistent criteria, real evidence, and visible tradeoffs—then turn the result into an initial execution plan.',
   heroCallout:
@@ -206,9 +218,9 @@ const strategyCampaign = {
   path: '/thinking-power/strategic-planning',
   theme: 'strategy',
   eyebrow: 'For strategy and planning leaders',
-  heroTitle: 'Make Strategic Planning and Annual Operating Planning (AOP) decisions with more than a gut feeling.',
+  heroTitle: 'Decide what deserves attention based on more than gut feel.',
   heroBody:
-    'Compare strategic initiatives against the criteria, evidence, assumptions, and tradeoffs that determine what actually makes the plan.',
+    'Use Jaspen for Strategic Planning and Annual Operating Planning (AOP) to compare initiatives against the criteria, evidence, assumptions, and tradeoffs that determine what actually makes the plan.',
   heroCallout:
     'Walk into the planning room ready to show what should move forward, what should wait, and why.',
   primaryCta: 'Prioritize the strategic initiatives',
@@ -262,7 +274,7 @@ const strategyCampaign = {
   seo: {
     title: 'Strategic Planning and Annual Operating Planning (AOP)',
     description:
-      'Make Strategic Planning and Annual Operating Planning decisions with more than gut feeling by comparing initiatives, evidence, assumptions, and tradeoffs.',
+      'Decide what deserves attention during Strategic Planning and Annual Operating Planning (AOP) by comparing initiatives, evidence, assumptions, and tradeoffs.',
     keywords: [
       'strategic initiative prioritization',
       'AOP initiative planning',

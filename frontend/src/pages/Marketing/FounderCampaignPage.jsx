@@ -14,6 +14,7 @@ import {
   FOUNDER_VARIABILITY_NOTE,
   SHARED_OFFER_DISCLOSURES,
   SHARED_OFFER_ITEMS,
+  SHARED_DECISION_RECORD,
   SHARED_WORKFLOW,
   getFounderCampaign,
 } from './founderCampaigns';
@@ -176,6 +177,27 @@ function Criteria({ campaign }) {
         </div>
         <ul className="fc-chip-list">
           {campaign.criteria.map((criterion) => <li key={criterion}>{criterion}</li>)}
+        </ul>
+      </div>
+    </section>
+  );
+}
+
+function DecisionRecord() {
+  return (
+    <section className="fc-section fc-decision-record">
+      <div className="fc-container fc-decision-record__inner">
+        <div>
+          <p className="fc-kicker">Decision memory</p>
+          <h2>What Jaspen becomes</h2>
+          <p>
+            Every time someone uses Jaspen, they create a structured record of how the decision was made—not just the final answer.
+          </p>
+        </div>
+        <ul>
+          {SHARED_DECISION_RECORD.map((item) => (
+            <li key={item}><CheckIcon /><span>{item}</span></li>
+          ))}
         </ul>
       </div>
     </section>
@@ -365,6 +387,7 @@ export default function FounderCampaignPage({ campaignKey = 'consultants' }) {
         <Hero campaign={campaign} onCta={openCheckout} />
         <MomentAndOutcome campaign={campaign} />
         <Workflow campaign={campaign} />
+        <DecisionRecord />
         <Criteria campaign={campaign} />
         <UsesAndAssets campaign={campaign} />
         <FounderOffer campaign={campaign} onCta={openCheckout} />

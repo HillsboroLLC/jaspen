@@ -10,6 +10,7 @@ import {
   FOUNDER_VARIABILITY_NOTE,
   SHARED_OFFER_DISCLOSURES,
   SHARED_OFFER_ITEMS,
+  SHARED_DECISION_RECORD,
 } from './founderCampaigns';
 
 const campaigns = Object.values(FOUNDER_CAMPAIGNS);
@@ -88,8 +89,22 @@ describe('Founder campaign content', () => {
   it('uses the complete planning terms prominently for search and visitors', () => {
     const campaign = FOUNDER_CAMPAIGNS['strategic-planning'];
     const completePhrase = 'Strategic Planning and Annual Operating Planning (AOP)';
-    expect(campaign.heroTitle).toContain(completePhrase);
+    expect(`${campaign.heroTitle} ${campaign.heroBody}`).toContain(completePhrase);
     expect(campaign.seo.title).toContain(completePhrase);
+  });
+
+  it('preserves the complete structured decision record', () => {
+    expect(SHARED_DECISION_RECORD).toEqual([
+      'What was being decided',
+      'What options were considered',
+      'What mattered',
+      'What evidence was available',
+      'What assumptions were made',
+      'What was selected',
+      'Why it was selected',
+      'What happened afterward',
+      'What the company learned',
+    ]);
   });
 
   it('registers all campaign routes for routing, sitemap-driven prerendering, and responsive CSS', () => {

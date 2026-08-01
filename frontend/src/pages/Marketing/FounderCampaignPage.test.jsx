@@ -53,6 +53,8 @@ describe.each(Object.values(FOUNDER_CAMPAIGNS))('$id campaign page', (campaign) 
       screen.getAllByText(/Compare up to 30 projects in one focused session/).length
     ).toBeGreaterThan(0);
     expect(screen.getAllByText(/downloadable decision assets/i).length).toBeGreaterThan(0);
+    expect(screen.getByRole('heading', { name: 'What Jaspen becomes' })).toBeInTheDocument();
+    expect(screen.getByText('What the company learned')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: FOUNDER_TECHNICAL_GUARANTEE })).toBeInTheDocument();
     expect(screen.getByTestId('seo')).toHaveAttribute('data-title', campaign.seo.title);
     expect(screen.getByTestId('seo')).toHaveAttribute('data-description', campaign.seo.description);
