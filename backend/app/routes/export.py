@@ -325,6 +325,15 @@ def _meaningful_financial_items(scorecard):
     return items
 
 
+def _grid_int(source, key, default):
+    """Read one react-grid-layout coordinate, tolerating strings and junk."""
+    try:
+        value = int(source.get(key))
+    except (TypeError, ValueError, AttributeError):
+        return default
+    return value
+
+
 def _scorecard_custom_blocks(scorecard):
     raw = scorecard.get("custom_blocks") if isinstance(scorecard.get("custom_blocks"), list) else []
     blocks = []
@@ -334,8 +343,85 @@ def _scorecard_custom_blocks(scorecard):
         heading = _safe_text(item.get("heading") or item.get("title") or f"Additional context {index + 1}", 160)
         body = _safe_text(item.get("body") or item.get("text"), 5000)
         if heading or body:
-            blocks.append({"heading": heading or "Additional context", "body": body, "type": item.get("type") or "text"})
+            blocks.append({
+                "heading": heading or "Additional context",
+                "body": body,
+                "type": item.get("type") or "text",
+                # Canvas position, so exports can place blocks where the user put
+                # them rather than appending them all at the end.
+                "x": _grid_int(item, "x", 0),
+                "y": _grid_int(item, "y", 900 + index),
+                "w": max(1, min(12, _grid_int(item, "w", 6))),
+            })
     return blocks
+
+
+# Fallback arrangement used when a card has no saved section_layout. Matches the
+# long-standing export look (score beside the summary) so existing scorecards
+# keep exporting the way they always have.
+_DEFAULT_EXPORT_SECTION_LAYOUT = [
+    {"key": "score", "x": 0, "y": 0, "w": 3},
+    {"key": "executive", "x": 3, "y": 0, "w": 9},
+    {"key": "dimensions", "x": 0, "y": 1, "w": 12},
+    {"key": "risks", "x": 0, "y": 2, "w": 6},
+    {"key": "scenario", "x": 6, "y": 2, "w": 6},
+]
+
+
+def _scorecard_section_layout(scorecard):
+    """The user's canvas arrangement for the built-in sections, keyed by section.
+
+    Falls back to the historical export arrangement when the card predates
+    layout persistence (or the user never rearranged anything).
+    """
+    raw = scorecard.get("display_overrides") if isinstance(scorecard.get("display_overrides"), dict) else {}
+    saved = raw.get("section_layout") if isinstance(raw.get("section_layout"), list) else []
+    rows = [row for row in saved if isinstance(row, dict) and row.get("key")]
+    is_fallback = not rows
+    if is_fallback:
+        rows = _DEFAULT_EXPORT_SECTION_LAYOUT
+    # Marks a layout the user never saved. Custom blocks carry real canvas row
+    # numbers, which don't share a coordinate space with the fallback above, so
+    # callers append blocks at the end rather than trying to interleave them.
+    layout = {"_fallback": is_fallback}
+    for index, row in enumerate(rows):
+        layout[str(row.get("key"))] = {
+            "x": _grid_int(row, "x", 0),
+            "y": _grid_int(row, "y", index),
+            "w": max(1, min(12, _grid_int(row, "w", 12))),
+            "collapsed": bool(row.get("collapsed")),
+            "dim_cols": max(1, min(2, _grid_int(row, "dimCols", 2))),
+        }
+    return layout
+
+
+def _pack_layout_rows(placed):
+    """Group positioned cards into visual rows the way the canvas grid reads.
+
+    `placed` is a list of {y, x, w, flowable}. Cards are sorted top-to-bottom
+    then left-to-right and packed into rows of at most 12 grid columns; a card
+    that starts below the current row's band opens a new row. This reproduces
+    side-by-side vs stacked arrangement without trying to replicate pixel
+    heights — reportlab still flows each card's content naturally.
+    """
+    ordered = sorted(placed, key=lambda item: (item["y"], item["x"]))
+    rows = []
+    current = []
+    current_width = 0
+    current_y = None
+    for item in ordered:
+        starts_new_band = current_y is not None and item["y"] > current_y
+        if current and (current_width + item["w"] > 12 or starts_new_band):
+            rows.append(current)
+            current = []
+            current_width = 0
+            current_y = None
+        current.append(item)
+        current_width += item["w"]
+        current_y = item["y"] if current_y is None else current_y
+    if current:
+        rows.append(current)
+    return rows
 
 
 def _scorecard_variants_for_export(session, thread_id, selected_scorecard_id=None, user_id=None):
@@ -595,49 +681,101 @@ def _scorecard_pdf_bytes(scorecard, *, org=None):
             escape(_safe_text(scorecard.get("executive_summary") or "No executive summary recorded.", 3000)).replace("\n", "<br/>"),
             body_style,
         )
-        top_grid = Table(
-            [[section_card("Score", score_content), section_card("Executive summary", executive)]],
-            colWidths=[2.55 * inch, 7.15 * inch],
-            hAlign="LEFT",
-        )
-        top_grid.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (0, -1), 10), ("RIGHTPADDING", (1, 0), (1, -1), 0)]))
-        story.extend([top_grid, Spacer(1, 12)])
 
-        dimension_cells = [[], []]
+        # The canvas arrangement the user dragged into place. Everything below is
+        # positioned from this rather than a fixed order, so the PDF matches the
+        # page instead of guessing.
+        layout = _scorecard_section_layout(scorecard)
+        dim_cols = (layout.get("dimensions") or {}).get("dim_cols", 2)
+
+        # Dimension columns have to fit INSIDE the Dimensions card, which is
+        # itself only as wide as the user made it. Deriving the width instead of
+        # hard-coding it keeps the inner grid from overflowing its cell — an
+        # overflow makes reportlab mis-measure the row and bump later cards onto
+        # a mostly-empty next page.
+        content_width = 9.7 * inch
+        dim_gutter = 14
+        dim_card_width = content_width * (((layout.get("dimensions") or {}).get("w", 12)) / 12) - 24
+        dim_col_width = max(1.5 * inch, (dim_card_width - (dim_gutter if dim_cols == 2 else 0)) / dim_cols)
+        score_label_width = 0.55 * inch
+
+        dimension_cells = [[]] if dim_cols == 1 else [[], []]
         for index, item in enumerate(component_rows):
             numeric = _safe_float(item.get("value"))
             normalized = numeric / 10 if numeric is not None and numeric > 10 else numeric
             score_label = f"{normalized:.1f}/10" if normalized is not None else "N/A"
             heading = Table(
                 [[Paragraph(escape(_safe_text(item.get("label"), 180)), body_style), Paragraph(score_label, small_style)]],
-                colWidths=[3.75 * inch, 0.55 * inch],
+                colWidths=[dim_col_width - score_label_width, score_label_width],
             )
             heading.setStyle(TableStyle([("ALIGN", (1, 0), (1, 0), "RIGHT"), ("VALIGN", (0, 0), (-1, -1), "BOTTOM"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
             bar_color = colors.HexColor("#F59E0B") if item.get("is_risk") else navy
-            cell = [heading, ScoreBar(item.get("value"), 4.3 * inch, bar_color), Spacer(1, 10)]
-            dimension_cells[index % 2].extend(cell)
+            cell = [heading, ScoreBar(item.get("value"), dim_col_width, bar_color), Spacer(1, 10)]
+            dimension_cells[index % len(dimension_cells)].extend(cell)
         if not component_rows:
             dimension_cells[0].append(Paragraph("No dimension scores recorded.", body_style))
-        dimensions_grid = Table([dimension_cells], colWidths=[4.55 * inch, 4.55 * inch], hAlign="LEFT")
-        dimensions_grid.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (0, -1), 14), ("RIGHTPADDING", (1, 0), (1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
-        story.extend([section_card("Dimensions", dimensions_grid), Spacer(1, 12)])
+        dimensions_grid = Table([dimension_cells], colWidths=[dim_col_width] * len(dimension_cells), hAlign="LEFT")
+        dimensions_grid.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (0, -1), dim_gutter), ("RIGHTPADDING", (-1, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
 
-        cards = []
+        # Every card the canvas shows, tagged with where the user put it.
+        def _place(key, flowable, fallback_y):
+            spec = layout.get(key)
+            # A saved layout lists every section the canvas shows. If the user's
+            # layout doesn't mention this one it isn't on their canvas, so leave
+            # it out rather than guessing a position for it.
+            if spec is None and not layout.get("_fallback"):
+                return
+            if spec and spec.get("collapsed"):
+                return
+            placed.append({
+                "y": spec.get("y", fallback_y) if spec else fallback_y,
+                "x": spec.get("x", 0) if spec else 0,
+                "w": spec.get("w", 12) if spec else 12,
+                "flowable": flowable,
+            })
+
+        placed = []
+        _place("score", section_card("Score", score_content), 0)
+        _place("executive", section_card("Executive summary", executive), 0)
+        _place("dimensions", section_card("Dimensions", dimensions_grid), 1)
         if any(risks):
             risk_content = [Paragraph(f"• {escape(_safe_text(item, 700))}", bullet_style) for item in risks[:8] if item]
-            cards.append(section_card("Top risks", risk_content))
+            _place("risks", section_card("Top risks", risk_content), 2)
         if recommended:
-            cards.append(section_card("Recommended scenario", Paragraph(escape(recommended).replace("\n", "<br/>"), body_style), left_accent=True))
-        for block in custom_blocks:
-            cards.append(section_card(block["heading"], Paragraph(escape(block["body"]).replace("\n", "<br/>"), body_style), left_accent=block.get("type") == "callout"))
+            _place(
+                "scenario",
+                section_card("Recommended scenario", Paragraph(escape(recommended).replace("\n", "<br/>"), body_style), left_accent=True),
+                2,
+            )
+        for block_index, block in enumerate(custom_blocks):
+            placed.append({
+                # With no saved layout there is no shared coordinate space, so
+                # keep the historical behaviour: blocks follow the built-ins.
+                "y": 900 + block_index if layout.get("_fallback") else block.get("y", 900),
+                "x": block.get("x", 0),
+                "w": block.get("w", 6),
+                "flowable": section_card(
+                    block["heading"],
+                    Paragraph(escape(block["body"]).replace("\n", "<br/>"), body_style),
+                    left_accent=block.get("type") == "callout",
+                ),
+            })
 
-        for index in range(0, len(cards), 2):
-            row = cards[index:index + 2]
-            if len(row) == 1:
-                row.append("")
-            grid = Table([row], colWidths=[4.85 * inch, 4.85 * inch], hAlign="LEFT")
-            grid.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (0, -1), 10), ("RIGHTPADDING", (1, 0), (1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
-            story.extend([KeepTogether(grid), Spacer(1, 12)])
+        gutter = 10
+        for row in _pack_layout_rows(placed):
+            # Always divide by the full 12-column grid, never by the row's own
+            # total: a lone half-width card should stay half width, exactly as
+            # it sits on the canvas, rather than stretching across the page.
+            widths = [content_width * (item["w"] / 12) - (gutter if index < len(row) - 1 else 0)
+                      for index, item in enumerate(row)]
+            grid = Table([[item["flowable"] for item in row]], colWidths=widths, hAlign="LEFT")
+            # The gutter is already subtracted from each width, so zero the cell
+            # padding rather than adding it twice.
+            grid.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
+            # KeepTogether only where it earns its keep — holding side-by-side
+            # cards on one page. Wrapping a lone full-width card (a long
+            # Dimensions grid) risks a block taller than the page.
+            story.extend([KeepTogether(grid) if len(row) > 1 else grid, Spacer(1, 12)])
 
         def paint_page(canvas, _doc):
             canvas.saveState()

@@ -8459,7 +8459,15 @@ _ALLOWED_OVERRIDE_KEYS = {
     # element picker). list[{id,type,heading,body,cols}]. Without this in the
     # whitelist the PATCH silently dropped them → blocks vanished on refresh.
     'custom_blocks',
+    # Where the BUILT-IN sections sit on the canvas grid. Previously browser-only
+    # (localStorage 'jw-layout-*'), which meant the arrangement never reached the
+    # server and exports could not reproduce it. list[{key,x,y,w,h,...}].
+    'section_layout',
 }
+
+# Built-in canvas sections whose arrangement we persist. Anything else is
+# ignored so a stale or hand-crafted payload can't inject unknown sections.
+_SECTION_LAYOUT_KEYS = {'score', 'executive', 'dimensions', 'risks', 'scenario'}
 
 
 def _coerce_override_value(key, value):
@@ -8492,6 +8500,37 @@ def _coerce_override_value(key, value):
         if s.startswith('#') and len(s) in (4, 7):
             return s
         return None
+    if key == 'section_layout':
+        if not isinstance(value, (list, tuple)):
+            return None
+        cleaned = []
+        seen = set()
+        for entry in value:
+            if not isinstance(entry, dict):
+                continue
+            section_key = str(entry.get('key') or '').strip()
+            if section_key not in _SECTION_LAYOUT_KEYS or section_key in seen:
+                continue
+            seen.add(section_key)
+            row = {'key': section_key}
+            for fld, lo, hi in (('x', 0, 11), ('y', 0, 999), ('w', 1, 12), ('h', 1, 999),
+                                ('cols', 1, 4), ('dimCols', 1, 4)):
+                try:
+                    val = int(entry.get(fld))
+                except (TypeError, ValueError):
+                    continue
+                row[fld] = max(lo, min(hi, val))
+            if isinstance(entry.get('collapsed'), bool):
+                row['collapsed'] = entry['collapsed']
+            # dimOrder is a user-chosen ordering of dimension keys; keep it as a
+            # list of plain strings or drop it.
+            dim_order = entry.get('dimOrder')
+            if isinstance(dim_order, (list, tuple)):
+                order = [str(k).strip()[:120] for k in dim_order if str(k or '').strip()]
+                if order:
+                    row['dimOrder'] = order[:40]
+            cleaned.append(row)
+        return cleaned if cleaned else None
     if key == 'custom_blocks':
         if not isinstance(value, (list, tuple)):
             return None

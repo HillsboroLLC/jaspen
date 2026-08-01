@@ -66,6 +66,42 @@ const DEFAULT_SCORECARD_SECTIONS = [
   { key: 'scenario',   label: 'Recommended Scenario', cols: 2, locked: true,  x: 6, y: 17, w: 6,  h: 6 },
 ];
 
+// The canvas arrangement the user drags into place. Persisted in TWO places on
+// purpose: localStorage paints the saved layout on first frame without waiting
+// for the bundle, and display_overrides.section_layout is the durable copy that
+// follows the user across devices AND lets server-side exports lay the PDF out
+// the way the user actually arranged it. localStorage alone is why exported
+// layout used to diverge from the screen.
+const _SECTION_LAYOUT_FIELDS = ['x', 'y', 'w', 'h', 'cols', 'dimCols', 'dimOrder', 'collapsed'];
+
+/** Merge a saved layout onto the defaults, keyed by section. Unknown/missing
+ *  sections fall back to their default so an older saved layout still opens. */
+function _mergeSectionLayout(saved) {
+  const rows = Array.isArray(saved) ? saved : [];
+  return DEFAULT_SCORECARD_SECTIONS.map((d) => {
+    const found = rows.find((p) => p && p.key === d.key);
+    return found ? { ...d, ...found } : { ...d, collapsed: false };
+  });
+}
+
+/** Strip the layout down to the persisted fields — labels and `locked` come
+ *  from the defaults, so storing them would just bloat every save. */
+function _serializeSectionLayout(layout) {
+  return (Array.isArray(layout) ? layout : []).map((s) => {
+    const row = { key: s.key };
+    _SECTION_LAYOUT_FIELDS.forEach((f) => {
+      if (s[f] !== undefined) row[f] = s[f];
+    });
+    return row;
+  });
+}
+
+function _sectionLayoutEqual(a, b) {
+  try {
+    return JSON.stringify(_serializeSectionLayout(a)) === JSON.stringify(_serializeSectionLayout(b));
+  } catch { return false; }
+}
+
 function _pickMeaningful(...candidates) {
   for (const c of candidates) {
     const v = String(c || '').trim();
@@ -253,16 +289,13 @@ export default function JaspenWorkspace() {
   const [sectionLayout, setSectionLayout] = useState(() => {
     try {
       const saved = localStorage.getItem(`jw-layout-${threadId}-${scorecardId}`);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        return DEFAULT_SCORECARD_SECTIONS.map((d) => {
-          const found = parsed.find((p) => p.key === d.key);
-          return found ? { ...d, ...found } : { ...d, collapsed: false };
-        });
-      }
+      if (saved) return _mergeSectionLayout(JSON.parse(saved));
     } catch {}
     return DEFAULT_SCORECARD_SECTIONS.map((s) => ({ ...s, collapsed: false }));
   });
+  // Guards the one-time adoption of the server-side layout per loaded artifact.
+  // Without it the adopt effect and the persist effect would ping-pong.
+  const layoutAdoptedRef = useRef(false);
   const dragSectionRef = useRef(null);
   const dragBlockRef = useRef(null);
 
@@ -528,6 +561,9 @@ export default function JaspenWorkspace() {
 
       setSnapshot(target);
       skipNextSaveRef.current = true;
+      // A freshly loaded artifact may carry a server-side layout; let the adopt
+      // effect below run once for it.
+      layoutAdoptedRef.current = false;
       setOverrides(ov || {});
 
       if (isScorecard && !target) {
@@ -680,12 +716,42 @@ export default function JaspenWorkspace() {
     return () => { if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current); };
   }, [overrides, threadId, scorecardId]);
 
+  // Adopt the server-side layout once per loaded artifact. The server copy wins
+  // over localStorage because it is the one that followed the user here from
+  // another browser or device.
+  useEffect(() => {
+    if (layoutAdoptedRef.current) return;
+    const saved = overrides?.section_layout;
+    if (!Array.isArray(saved) || saved.length === 0) return;
+    layoutAdoptedRef.current = true;
+    setSectionLayout((prev) => {
+      const next = _mergeSectionLayout(saved);
+      return _sectionLayoutEqual(prev, next) ? prev : next;
+    });
+  }, [overrides]);
+
+  // Persist the arrangement to BOTH stores. localStorage is the instant-paint
+  // cache; display_overrides.section_layout rides the existing debounced
+  // override auto-save and is what exports read.
   useEffect(() => {
     if (!threadId || !scorecardId) return;
     try {
       localStorage.setItem(`jw-layout-${threadId}-${scorecardId}`, JSON.stringify(sectionLayout));
     } catch {}
-  }, [sectionLayout, threadId, scorecardId]);
+    // Wait for the bundle before touching overrides. Otherwise the debounced
+    // save could PATCH a layout derived from localStorage over the server's
+    // copy before that copy has even arrived.
+    if (loading) return;
+    setOverrides((prev) => {
+      const current = prev && typeof prev === 'object' ? prev : {};
+      if (_sectionLayoutEqual(current.section_layout, sectionLayout)) return current;
+      return { ...current, section_layout: _serializeSectionLayout(sectionLayout) };
+    });
+    // `loading` belongs here: when it flips false this re-runs once and lifts a
+    // browser-only layout up to the server for cards saved before layout was
+    // persisted. If the layout already matches, the merge no-ops and no PATCH
+    // is issued.
+  }, [sectionLayout, threadId, scorecardId, loading]);
 
   const rendered = useMemo(() => applyOverrides(snapshot, overrides), [snapshot, overrides]);
 
@@ -797,6 +863,16 @@ export default function JaspenWorkspace() {
     return null;
   })();
 
+  // Pixel-exact copy: hand the canvas to the browser's own print pipeline and
+  // let the user save it as PDF. This is the one path that renders the REAL
+  // DOM — no html2canvas clone, so it can't lose text inside flex/scroll
+  // regions the way the screenshot exporter did in Safari (see 34a13f26).
+  // The @media print rules below do the work, so a plain Cmd/Ctrl+P produces
+  // the same result as this menu item.
+  function printScorecard() {
+    window.print();
+  }
+
   // Set or remove a single cosmetic override. Auto-save fires from the
   // useEffect above on the next tick (debounced).
   // Download the current scorecard in the two supported customer formats.
@@ -887,9 +963,9 @@ export default function JaspenWorkspace() {
     if (!ok) return;
     skipNextSaveRef.current = true; // we'll do the save ourselves to clear remote
     setOverrides({});
-    // Also reset the built-in section layout (sizes / order / collapse), which lives
-    // in localStorage separately from display_overrides — this is the "formatting"
-    // that a plain overrides-clear used to leave behind.
+    // Also reset the built-in section layout (sizes / order / collapse). It is
+    // cached in localStorage for instant paint, so clear both copies.
+    layoutAdoptedRef.current = true; // don't re-adopt the layout we're clearing
     setSectionLayout(DEFAULT_SCORECARD_SECTIONS.map((s) => ({ ...s, collapsed: false })));
     try { localStorage.removeItem(`jw-layout-${threadId}-${scorecardId}`); } catch {}
     try {
@@ -900,7 +976,7 @@ export default function JaspenWorkspace() {
         title: null, subtitle: null, executive_summary: null,
         accent_color: null, theme: null, narrative: null,
         top_risks: null, recommended_scenario: null,
-        custom_blocks: null,
+        custom_blocks: null, section_layout: null,
       });
     } catch (e) {
       setSaveError(String(e?.message || e || 'Failed to reset'));
@@ -1182,12 +1258,26 @@ export default function JaspenWorkspace() {
         .jw-block-grid .react-resizable-handle { opacity: 0.55; }
         .jw-block-grid .react-grid-item:hover .react-resizable-handle { opacity: 1; }
         @media print {
+          @page { margin: 12mm; }
           * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
           [data-ws-sidebar] { display: none !important; }
           [data-ws-topbar] { display: none !important; }
           [data-ws-root] { display: block !important; height: auto !important; }
           [data-ws-main] { width: 100% !important; overflow: visible !important; }
           [data-ws-canvas] { overflow: visible !important; padding: 0 !important; }
+          /* Editing affordances are screen-only — they'd print as stray dots and
+             handles over the user's layout. */
+          [data-workspace-export-hide],
+          [data-scorecard-export-hide],
+          .blk-drag-handle,
+          .react-resizable-handle { display: none !important; }
+          /* Cards use inner scroll bodies on screen. Paper doesn't scroll, so
+             show the text rather than clipping it — this is exactly the content
+             the screenshot exporter used to drop. Heights are left alone: an
+             under-sized card spills visibly instead of losing text silently. */
+          [data-ws-canvas] [style*="overflow"] { overflow: visible !important; }
+          /* Keep a card whole on one sheet where the browser can manage it. */
+          .jw-block-grid .react-grid-item { break-inside: avoid; page-break-inside: avoid; }
         }
       `}</style>
 
@@ -1611,6 +1701,7 @@ export default function JaspenWorkspace() {
                   <div style={{ position:'absolute', top:'calc(100% + 6px)', right:0, zIndex:41, background:'#fff', border:'1px solid #e6eaf2', borderRadius:10, boxShadow:'0 8px 24px rgba(22,31,59,0.12)', minWidth:210, padding:6, display:'flex', flexDirection:'column' }}>
                     {[
                       { label:'Download PDF', act:() => downloadExport('pdf','pdf','PDF') },
+                      { label:'Print / Save as PDF', act:() => printScorecard() },
                       { label:'Download PowerPoint', act:() => downloadExport('pptx','pptx','PowerPoint') },
                     ].map((it, i) => (
                       <React.Fragment key={i}>
