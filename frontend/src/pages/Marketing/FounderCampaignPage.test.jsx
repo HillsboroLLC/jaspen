@@ -46,7 +46,10 @@ describe.each(Object.values(FOUNDER_CAMPAIGNS))('$id campaign page', (campaign) 
     expect(screen.getByRole('navigation', { name: 'Campaign navigation' })).toBeInTheDocument();
     expect(screen.getByRole('main')).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 2, name: '300,000 Thinking Power credits' })).toBeInTheDocument();
-    expect(screen.getByText('$599 one-time Founder price')).toBeInTheDocument();
+    expect(screen.getAllByText('One-time Founder price').length).toBeGreaterThanOrEqual(2);
+    expect(
+      screen.getAllByRole('button', { name: `${campaign.primaryCta} · $599` }).length
+    ).toBeGreaterThanOrEqual(2);
     expect(screen.getAllByText(/300,000 Thinking Power credits/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Approximately ~750–1,200 typical project evaluations/).length).toBeGreaterThan(0);
     expect(

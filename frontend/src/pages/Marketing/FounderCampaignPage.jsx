@@ -44,7 +44,7 @@ function CheckIcon() {
   return <span className="fc-check" aria-hidden="true">✓</span>;
 }
 
-function PrimaryButton({ campaign, onClick, variant = 'primary' }) {
+function PrimaryButton({ campaign, onClick, variant = 'primary', showPrice = false }) {
   return (
     <button
       type="button"
@@ -53,7 +53,7 @@ function PrimaryButton({ campaign, onClick, variant = 'primary' }) {
       data-cta="founder-checkout"
       onClick={onClick}
     >
-      {campaign.primaryCta} <ArrowIcon />
+      {campaign.primaryCta}{showPrice ? ` · $${FOUNDER_PRICE}` : ''} <ArrowIcon />
     </button>
   );
 }
@@ -85,18 +85,16 @@ function Hero({ campaign, onCta }) {
           <p className="fc-hero__body">{campaign.heroBody}</p>
           <p className="fc-hero__callout">{campaign.heroCallout}</p>
           <div className="fc-hero__actions">
-            <PrimaryButton campaign={campaign} onClick={onCta} />
-            <span>$599 one-time Founder price</span>
+            <div className="fc-hero__cta-stack">
+              <PrimaryButton campaign={campaign} onClick={onCta} showPrice />
+              <span>One-time Founder price</span>
+            </div>
           </div>
         </div>
 
         <aside className="fc-hero-offer" aria-labelledby="fc-hero-offer-title">
           <p className="fc-hero-offer__eyebrow">Jaspen Founder offer</p>
           <h2 id="fc-hero-offer-title">300,000 Thinking Power credits</h2>
-          <div className="fc-hero-offer__price">
-            <strong>${FOUNDER_PRICE}</strong>
-            <span>one time</span>
-          </div>
           <ul>
             <li><CheckIcon /><span>Approximately {FOUNDER_PROJECT_ESTIMATE}</span></li>
             <li><CheckIcon /><span>First month of Essential included</span></li>
@@ -104,7 +102,8 @@ function Hero({ campaign, onCta }) {
             <li><CheckIcon /><span>Founder credits remain available until used</span></li>
             <li><CheckIcon /><span>Downloadable decision assets</span></li>
           </ul>
-          <PrimaryButton campaign={campaign} onClick={onCta} />
+          <PrimaryButton campaign={campaign} onClick={onCta} showPrice />
+          <p className="fc-hero-offer__price-note">One-time Founder price</p>
           <p className="fc-hero-offer__disclosure">
             Essential recurring billing begins after the included month under the option accepted at checkout.
           </p>
@@ -191,7 +190,7 @@ function DecisionRecord() {
           <p className="fc-kicker">Decision memory</p>
           <h2>What Jaspen becomes</h2>
           <p>
-            Every time someone uses Jaspen, they create a structured record of how the decision was made—not just the final answer.
+            Every time someone uses Jaspen, they create a structured record of how the decision was made, not just the final answer.
           </p>
         </div>
         <ul>

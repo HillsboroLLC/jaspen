@@ -21,7 +21,7 @@ export const SHARED_WORKFLOW = [
   },
   {
     title: 'Build and refine the rubric',
-    detail: 'Use Jaspen to establish the right criteria and relative importance for this decision—not a generic template.',
+    detail: 'Use Jaspen to establish the right criteria and relative importance for this decision, not a generic template.',
   },
   {
     title: 'Evaluate the evidence',
@@ -142,15 +142,15 @@ const portfolioCampaign = {
   path: '/thinking-power/portfolio',
   theme: 'portfolio',
   eyebrow: 'For PMO, portfolio & transformation leaders',
-  heroTitle: 'Turn a pile of ideas into a prioritized plan—and know what drove the order.',
+  heroTitle: 'Turn a pile of ideas into a prioritized plan, and know what drove the order.',
   heroBody:
-    'Compare up to 30 projects with consistent criteria, real evidence, and visible tradeoffs—then turn the result into an initial execution plan.',
+    'Compare up to 30 projects with consistent criteria, real evidence, and visible tradeoffs. Then turn the result into an initial execution plan.',
   heroCallout:
     'Show leadership what should move forward, what should wait, and why each project landed where it did.',
   primaryCta: 'Evaluate your projects',
   momentTitle: 'Every sponsor believes their project is important.',
   momentBody:
-    'When more projects exist than the organization can execute, gut feeling and sponsor influence are not enough. You need a consistent view of what gets funded, deferred, combined, or stopped—and a clear explanation leadership can follow.',
+    'When more projects exist than the organization can execute, gut feeling and sponsor influence are not enough. You need a consistent view of what gets funded, deferred, combined, or stopped, plus a clear explanation leadership can follow.',
   outcomeTitle: 'Move from reporting the portfolio to improving it.',
   outcomeBody:
     'Jaspen helps you identify weak evidence before leadership does, separate strategic value from sponsor influence, document the rationale, and retain the intelligence behind every prioritization decision.',
@@ -229,7 +229,7 @@ const strategyCampaign = {
     'Functions have submitted more initiatives than the business can fund or execute. Jaspen helps the planning team decide which work deserves capacity and executive attention before commitments are locked in.',
   outcomeTitle: 'Create a clear bridge from strategy to execution.',
   outcomeBody:
-    'Expose unsupported assumptions, connect priorities to resource allocation, and document why initiatives were funded, deferred, combined, or declined—without claiming to create the complete strategy, budget, financial plan, or annual operating plan.',
+    'Expose unsupported assumptions, connect priorities to resource allocation, and document why initiatives were funded, deferred, combined, or declined. Jaspen does not claim to create the complete strategy, budget, financial plan, or annual operating plan.',
   workflow: [
     'Define the decision and desired outcome.',
     'Establish the criteria and relative importance.',

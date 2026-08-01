@@ -82,6 +82,7 @@ describe('Founder campaign content', () => {
     ];
     forbiddenTerms.forEach((term) => expect(copy).not.toMatch(term));
     expect(copy).not.toMatch(/\bSTRAT\b/);
+    expect(copy).not.toContain('—');
     expect(copy).not.toMatch(/recommendation you can defend|defensible recommendation/i);
     expect(copy).toContain('downloadable decision assets');
   });

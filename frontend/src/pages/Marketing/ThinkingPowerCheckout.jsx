@@ -10,8 +10,8 @@ import { FOUNDER_CREDITS, FOUNDER_PRICE } from './founderCampaigns';
 // StrategyAccessCard (which only creates an account and then redirects to the
 // workspace), this card keeps the visitor on the offer and carries the Stripe
 // Payment Element itself:
-//   Step 1 (only when logged out) — create account / sign in, INLINE (no redirect).
-//   Step 2 — pay $599 today + start Essential (first month free) via the embedded
+//   Step 1 (only when logged out): create account / sign in, INLINE (no redirect).
+//   Step 2: pay $599 today + start Essential (first month free) via the embedded
 //            Payment Element (POST /api/v1/billing/create-thinking-power-checkout).
 // The 300K bonus is granted webhook-side only, never here.
 const NAVY = '#161f3b';
@@ -50,10 +50,10 @@ const labelStyle = { display: 'block', fontSize: 12, fontWeight: 700, color: '#4
 const errorBox = { marginTop: 4, marginBottom: 12, fontSize: 13, color: '#dc2626', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '8px 10px' };
 const noticeBox = { fontSize: 13, color: '#0f172a', background: '#f8f5f0', border: '1px solid #ecdcc9', borderRadius: 8, padding: '12px 14px', lineHeight: 1.5 };
 
-// ————————————————————————————————————————————————————————————————————————
-// Step 1 — account (create / sign in), inline. Sets the auth cookie + context
+// ------------------------------------------------------------------------
+// Step 1: account (create / sign in), inline. Sets the auth cookie + context
 // user; the parent then re-renders straight into the payment step.
-// ————————————————————————————————————————————————————————————————————————
+// ------------------------------------------------------------------------
 function AccountStep({ returnPath }) {
   const { login, signup } = useAuth();
   const [mode, setMode] = useState('signup'); // 'signup' | 'signin'
@@ -207,15 +207,15 @@ function AccountStep({ returnPath }) {
       </form>
 
       <p style={{ margin: '12px 0 0', fontSize: 11.5, color: '#94a3b8', textAlign: 'center', lineHeight: 1.5 }}>
-        Step 1 of 2 — next you’ll enter payment. No charge until you confirm.
+        Step 1 of 2. Next you’ll enter payment. No charge until you confirm.
       </p>
     </div>
   );
 }
 
-// ————————————————————————————————————————————————————————————————————————
-// Step 2 — payment (embedded Stripe Payment Element).
-// ————————————————————————————————————————————————————————————————————————
+// ------------------------------------------------------------------------
+// Step 2: payment (embedded Stripe Payment Element).
+// ------------------------------------------------------------------------
 function PaymentForm({ billingInterval, onSuccess, renewalNote }) {
   const stripe = useStripe();
   const elements = useElements();
@@ -450,7 +450,7 @@ export default function ThinkingPowerCheckout({ onSuccess, onClose, returnPath =
 
   const headerSub = user
     ? 'First month of Essential free, then it renews after month one.'
-    : 'Create your account, then pay — first month of Essential is free.';
+    : 'Create your account, then pay. The first month of Essential is free.';
 
   return (
     <div
