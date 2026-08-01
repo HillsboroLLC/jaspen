@@ -106,4 +106,3 @@ describe('Founder campaign content', () => {
     expect(checkout).not.toContain('then $39/month');
   });
 });
-

@@ -282,4 +282,3 @@ export const FOUNDER_CAMPAIGNS = Object.freeze({
 export function getFounderCampaign(key) {
   return FOUNDER_CAMPAIGNS[key] || consultantCampaign;
 }
-

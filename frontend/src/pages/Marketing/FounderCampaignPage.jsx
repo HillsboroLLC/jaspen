@@ -385,4 +385,3 @@ export default function FounderCampaignPage({ campaignKey = 'consultants' }) {
 }
 
 export { FOUNDER_CAMPAIGNS };
-
