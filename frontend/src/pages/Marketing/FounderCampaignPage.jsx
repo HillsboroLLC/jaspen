@@ -89,23 +89,24 @@ function Hero({ campaign, onCta }) {
           </div>
         </div>
 
-        <aside className="fc-decision-card" aria-label="Decision workflow at a glance">
-          <div className="fc-decision-card__top">
-            <span>Jaspen decision workflow</span>
-            <span className="fc-decision-card__status">Ready for review</span>
+        <aside className="fc-hero-offer" aria-labelledby="fc-hero-offer-title">
+          <p className="fc-hero-offer__eyebrow">Jaspen Founder offer</p>
+          <h2 id="fc-hero-offer-title">300,000 Thinking Power credits</h2>
+          <div className="fc-hero-offer__price">
+            <strong>${FOUNDER_PRICE}</strong>
+            <span>one time</span>
           </div>
-          <div className="fc-decision-card__question">What should move forward?</div>
-          <div className="fc-decision-card__bars" aria-hidden="true">
-            <span style={{ '--bar': '88%' }} />
-            <span style={{ '--bar': '67%' }} />
-            <span style={{ '--bar': '43%' }} />
-          </div>
-          <dl className="fc-decision-card__results">
-            <div><dt>Move</dt><dd>Evidence supports action</dd></div>
-            <div><dt>Wait</dt><dd>Resolve key assumptions</dd></div>
-            <div><dt>Revisit</dt><dd>Track clear triggers</dd></div>
-          </dl>
-          <p>Build the rubric. Evaluate the work. Defend the recommendation. Leave with a plan.</p>
+          <ul>
+            <li><CheckIcon /><span>Approximately {FOUNDER_PROJECT_ESTIMATE}</span></li>
+            <li><CheckIcon /><span>First month of Essential included</span></li>
+            <li><CheckIcon /><span>Compare up to 30 projects in one focused session</span></li>
+            <li><CheckIcon /><span>Founder credits remain available until used</span></li>
+            <li><CheckIcon /><span>Downloadable decision assets</span></li>
+          </ul>
+          <PrimaryButton campaign={campaign} onClick={onCta} />
+          <p className="fc-hero-offer__disclosure">
+            Essential recurring billing begins after the included month under the option accepted at checkout.
+          </p>
         </aside>
       </div>
     </section>
@@ -138,7 +139,7 @@ function Workflow({ campaign }) {
       <div className="fc-container">
         <div className="fc-section-heading">
           <p className="fc-kicker">How it works</p>
-          <h2>From inputs to a recommendation the room can follow.</h2>
+          <h2>From inputs to a decision the room can follow.</h2>
           <p>Jaspen supports the judgment process without taking ownership of the decision away from you.</p>
         </div>
         {campaign.workflow ? (

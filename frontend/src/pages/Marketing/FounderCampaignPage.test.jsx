@@ -45,10 +45,13 @@ describe.each(Object.values(FOUNDER_CAMPAIGNS))('$id campaign page', (campaign) 
     expect(h1s[0]).toHaveTextContent(campaign.heroTitle);
     expect(screen.getByRole('navigation', { name: 'Campaign navigation' })).toBeInTheDocument();
     expect(screen.getByRole('main')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: '300,000 Thinking Power credits' })).toBeInTheDocument();
     expect(screen.getByText('$599 one-time Founder price')).toBeInTheDocument();
     expect(screen.getAllByText(/300,000 Thinking Power credits/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Approximately ~750–1,200 typical project evaluations/).length).toBeGreaterThan(0);
-    expect(screen.getByText(/Compare up to 30 projects in one focused session/)).toBeInTheDocument();
+    expect(
+      screen.getAllByText(/Compare up to 30 projects in one focused session/).length
+    ).toBeGreaterThan(0);
     expect(screen.getAllByText(/downloadable decision assets/i).length).toBeGreaterThan(0);
     expect(screen.getByRole('heading', { name: FOUNDER_TECHNICAL_GUARANTEE })).toBeInTheDocument();
     expect(screen.getByTestId('seo')).toHaveAttribute('data-title', campaign.seo.title);

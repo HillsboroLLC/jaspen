@@ -27,7 +27,7 @@ describe('Founder campaign content', () => {
     expect(campaigns.map((campaign) => campaign.id)).toEqual([
       'founder_consultants',
       'founder_pmo',
-      'founder_strat_aop',
+      'founder_strategic_planning_aop',
     ]);
   });
 
@@ -80,7 +80,16 @@ describe('Founder campaign content', () => {
       /credits expire monthly/i,
     ];
     forbiddenTerms.forEach((term) => expect(copy).not.toMatch(term));
+    expect(copy).not.toMatch(/\bSTRAT\b/);
+    expect(copy).not.toMatch(/recommendation you can defend|defensible recommendation/i);
     expect(copy).toContain('downloadable decision assets');
+  });
+
+  it('uses the complete planning terms prominently for search and visitors', () => {
+    const campaign = FOUNDER_CAMPAIGNS['strategic-planning'];
+    const completePhrase = 'Strategic Planning and Annual Operating Planning (AOP)';
+    expect(campaign.heroTitle).toContain(completePhrase);
+    expect(campaign.seo.title).toContain(completePhrase);
   });
 
   it('registers all campaign routes for routing, sitemap-driven prerendering, and responsive CSS', () => {
@@ -93,6 +102,7 @@ describe('Founder campaign content', () => {
     });
     expect(css).toContain('@media (max-width: 980px)');
     expect(css).toContain('@media (max-width: 720px)');
+    expect(css).not.toMatch(/gradient/i);
   });
 
   it('pulls renewal prices from the public billing catalog instead of campaign copy', () => {

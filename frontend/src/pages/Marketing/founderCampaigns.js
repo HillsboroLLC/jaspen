@@ -69,9 +69,9 @@ const consultantCampaign = {
   path: '/thinking-power',
   theme: 'consultants',
   eyebrow: 'For independent consultants & fractional executives',
-  heroTitle: 'Turn client inputs into a recommendation you can defend.',
+  heroTitle: 'Help clients make decisions with more than a gut feeling.',
   heroBody:
-    'Use Jaspen to build the rubric, evaluate competing options, test the evidence, and create downloadable decision assets with an initial execution plan.',
+    'Build the right rubric, compare the options against real evidence, and turn the result into clear decision assets and an initial execution plan.',
   heroCallout:
     'Walk into the client room ready to show what should move forward, what should wait, and why.',
   primaryCta: 'Build the client recommendation',
@@ -111,9 +111,9 @@ const consultantCampaign = {
     },
   ],
   seo: {
-    title: 'Client Recommendation Tool for Consultants',
+    title: 'Evidence-Based Client Decision Tool for Consultants',
     description:
-      'Build a defensible client recommendation with a tailored rubric, evidence-aware evaluation, clear rationale, and an initial execution plan.',
+      'Help clients make decisions with more than a gut feeling using a tailored rubric, evidence-aware evaluation, clear rationale, and an initial execution plan.',
     keywords: [
       'consultant decision tool',
       'client recommendation tool',
@@ -132,13 +132,13 @@ const portfolioCampaign = {
   eyebrow: 'For PMO, portfolio & transformation leaders',
   heroTitle: 'Portfolio review coming up? Walk into the room ready.',
   heroBody:
-    'Build the rubric, evaluate up to 30 projects in one focused session, and create a defensible recommendation with an initial execution plan.',
+    'Compare up to 30 projects with consistent criteria, real evidence, and visible tradeoffs—then turn the result into an initial execution plan.',
   heroCallout:
     'Show leadership what should move forward, what should wait, and why each project landed where it did.',
   primaryCta: 'Evaluate your projects',
   momentTitle: 'Every sponsor believes their project is important.',
   momentBody:
-    'When more projects exist than the organization can execute, you need a consistent, evidence-aware recommendation for what gets funded, deferred, combined, or stopped—and a transparent explanation that survives governance review.',
+    'When more projects exist than the organization can execute, gut feeling and sponsor influence are not enough. You need a consistent view of what gets funded, deferred, combined, or stopped—and a clear explanation leadership can follow.',
   outcomeTitle: 'Move from reporting the portfolio to improving it.',
   outcomeBody:
     'Jaspen helps you identify weak evidence before leadership does, separate strategic value from sponsor influence, document the rationale, and retain the intelligence behind every prioritization decision.',
@@ -183,7 +183,7 @@ const portfolioCampaign = {
     },
     {
       q: 'Does Jaspen replace the governance decision?',
-      a: 'No. Jaspen helps the team structure the evaluation, challenge evidence and assumptions, and document a defensible recommendation. Leaders still own the decision.',
+      a: 'No. Jaspen helps the team structure the evaluation, challenge evidence and assumptions, and document a clear recommendation grounded in evidence. Leaders still own the decision.',
     },
   ],
   seo: {
@@ -201,21 +201,21 @@ const portfolioCampaign = {
 };
 
 const strategyCampaign = {
-  id: 'founder_strat_aop',
+  id: 'founder_strategic_planning_aop',
   key: 'strategic-planning',
   path: '/thinking-power/strategic-planning',
   theme: 'strategy',
-  eyebrow: 'For STRAT & AOP planning leaders',
-  heroTitle: 'STRAT submissions are in. Now decide what actually makes the plan.',
+  eyebrow: 'For strategy and planning leaders',
+  heroTitle: 'Make Strategic Planning and Annual Operating Planning (AOP) decisions with more than a gut feeling.',
   heroBody:
-    'Use Jaspen to evaluate strategic initiatives, test the evidence, clarify the tradeoffs, and create a defensible recommendation with an initial execution plan.',
+    'Compare strategic initiatives against the criteria, evidence, assumptions, and tradeoffs that determine what actually makes the plan.',
   heroCallout:
     'Walk into the planning room ready to show what should move forward, what should wait, and why.',
   primaryCta: 'Prioritize the strategic initiatives',
   momentTitle: 'The ambition is clear. The funded work is not.',
   momentBody:
     'Functions have submitted more initiatives than the business can fund or execute. Jaspen helps the planning team decide which work deserves capacity and executive attention before commitments are locked in.',
-  outcomeTitle: 'Create a defensible bridge from strategy to execution.',
+  outcomeTitle: 'Create a clear bridge from strategy to execution.',
   outcomeBody:
     'Expose unsupported assumptions, connect priorities to resource allocation, and document why initiatives were funded, deferred, combined, or declined—without claiming to create the complete strategy, budget, financial plan, or annual operating plan.',
   workflow: [
@@ -260,9 +260,9 @@ const strategyCampaign = {
     },
   ],
   seo: {
-    title: 'Strategic Initiative Prioritization for AOP Planning',
+    title: 'Strategic Planning and Annual Operating Planning (AOP)',
     description:
-      'Evaluate strategic initiatives, expose assumptions, clarify tradeoffs, and build a defensible funded-priority recommendation with an initial execution plan.',
+      'Make Strategic Planning and Annual Operating Planning decisions with more than gut feeling by comparing initiatives, evidence, assumptions, and tradeoffs.',
     keywords: [
       'strategic initiative prioritization',
       'AOP initiative planning',

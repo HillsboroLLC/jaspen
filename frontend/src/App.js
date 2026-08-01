@@ -105,7 +105,7 @@ function AnimatedAppRoutes({ withShell }) {
             <Route path="/pages/resources/plugins" element={withShell(<PluginsPage />, { title: 'Plugins', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/thinking-power" element={withShell(<FounderCampaignPage campaignKey="consultants" />, { title: 'Founder offer for consultants', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/thinking-power/portfolio" element={withShell(<FounderCampaignPage campaignKey="portfolio" />, { title: 'Founder offer for portfolio leaders', showHeader: false, fullBleed: true, noPadding: true })} />
-            <Route path="/thinking-power/strategic-planning" element={withShell(<FounderCampaignPage campaignKey="strategic-planning" />, { title: 'Founder offer for strategic planning leaders', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/thinking-power/strategic-planning" element={withShell(<FounderCampaignPage campaignKey="strategic-planning" />, { title: 'Strategic Planning and Annual Operating Planning (AOP)', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/calculators" element={withShell(<CalculatorsHubPage />, { title: 'Free Calculators', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/articles" element={withShell(<ArticleReviewPage />, { title: 'Jaspen Articles', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/articles/:slug" element={withShell(<ArticleReviewPage />, { title: 'Jaspen Articles', showHeader: false, fullBleed: true, noPadding: true })} />
