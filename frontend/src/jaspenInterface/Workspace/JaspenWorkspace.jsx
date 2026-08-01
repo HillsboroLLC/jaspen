@@ -1262,9 +1262,18 @@ export default function JaspenWorkspace() {
           * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
           [data-ws-sidebar] { display: none !important; }
           [data-ws-topbar] { display: none !important; }
+          /* [data-ws-root] -> [data-ws-main] -> [data-ws-canvas] is a flex chain,
+             each level using flex:1 into the one above. Flipping the root's
+             height from 100vh to auto (below) leaves nothing definite for that
+             chain to grow into, so every flex:1 descendant collapses toward
+             ZERO height -- overflow:visible then has nothing to show, since it
+             only stops clipping, it doesn't add height. Print pagination reads
+             box height, not paint, so a collapsed chain prints as a blank page.
+             Breaking display:flex at every level turns the whole thing into
+             ordinary block flow, which paginates on real content height. */
           [data-ws-root] { display: block !important; height: auto !important; }
-          [data-ws-main] { width: 100% !important; overflow: visible !important; }
-          [data-ws-canvas] { overflow: visible !important; padding: 0 !important; }
+          [data-ws-main] { display: block !important; width: 100% !important; height: auto !important; flex: none !important; overflow: visible !important; }
+          [data-ws-canvas] { display: block !important; height: auto !important; flex: none !important; overflow: visible !important; padding: 0 !important; }
           /* Editing affordances are screen-only — they'd print as stray dots and
              handles over the user's layout. */
           [data-workspace-export-hide],
