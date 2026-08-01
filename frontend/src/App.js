@@ -67,6 +67,7 @@ const MortgageCalculatorPage = lazy(() => import('./tools/mortgage/components/Mo
 const RentCalculatorPage = lazy(() => import('./tools/rent/components/RentCalculatorPage'));
 const ReworkCostCalculatorPage = lazy(() => import('./tools/reworkCost/components/ReworkCostCalculatorPage'));
 const ArticleReviewPage = lazy(() => import('./pages/ArticleReview/ArticleReviewPage'));
+const FounderCampaignPage = lazy(() => import('./pages/Marketing/FounderCampaignPage'));
 
 function AnimatedAppRoutes({ withShell }) {
   const location = useLocation();
@@ -102,6 +103,9 @@ function AnimatedAppRoutes({ withShell }) {
             <Route path="/pages/resources/tutorials" element={withShell(<TutorialsPage />, { title: 'Tutorials', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/pages/resources/connectors" element={withShell(<ConnectorsPage />, { title: 'Connectors', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/pages/resources/plugins" element={withShell(<PluginsPage />, { title: 'Plugins', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/thinking-power" element={withShell(<FounderCampaignPage campaignKey="consultants" />, { title: 'Founder offer for consultants', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/thinking-power/portfolio" element={withShell(<FounderCampaignPage campaignKey="portfolio" />, { title: 'Founder offer for portfolio leaders', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/thinking-power/strategic-planning" element={withShell(<FounderCampaignPage campaignKey="strategic-planning" />, { title: 'Founder offer for strategic planning leaders', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/calculators" element={withShell(<CalculatorsHubPage />, { title: 'Free Calculators', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/articles" element={withShell(<ArticleReviewPage />, { title: 'Jaspen Articles', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/articles/:slug" element={withShell(<ArticleReviewPage />, { title: 'Jaspen Articles', showHeader: false, fullBleed: true, noPadding: true })} />
