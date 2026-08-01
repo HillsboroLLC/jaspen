@@ -4,6 +4,7 @@ import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-
 import { useAuth } from '../../shared/auth/AuthContext';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import { API_BASE } from '../../config/apiBase';
+import { FOUNDER_CREDITS, FOUNDER_PRICE } from './founderCampaigns';
 
 // Combined promo checkout card for the 300K Thinking Power Pack. Unlike the generic
 // StrategyAccessCard (which only creates an account and then redirects to the
@@ -296,7 +297,7 @@ function PaymentForm({ billingInterval, onSuccess, renewalNote }) {
         <div style={{ width: 48, height: 48, borderRadius: '50%', background: '#ecfdf3', color: '#0d7a3e', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px', fontSize: 24 }}>✓</div>
         <div style={{ fontSize: 16, fontWeight: 600, color: '#0f172a' }}>You&rsquo;re in.</div>
         <div style={{ fontSize: 13, color: '#64748b', marginTop: 4 }}>
-          Essential is active and your 300K Thinking Power credits are on the way.
+          Essential is active and your {FOUNDER_CREDITS} Thinking Power credits are on the way.
         </div>
       </div>
     );
@@ -307,7 +308,7 @@ function PaymentForm({ billingInterval, onSuccess, renewalNote }) {
       <PaymentElement options={{ layout: 'tabs' }} />
       {error && <div style={{ ...errorBox, marginTop: 12 }}>{error}</div>}
       <div style={{ marginTop: 14, fontSize: 11.5, color: '#64748b', lineHeight: 1.5 }}>
-        You&rsquo;re charged $599 today for the Founder offer and you&rsquo;re enrolling in Essential.
+        You&rsquo;re charged ${FOUNDER_PRICE} today for the Founder offer and you&rsquo;re enrolling in Essential.
         Your first month is included. You accept {billingInterval === 'annual' ? 'annual' : 'monthly'} recurring
         billing at checkout; {renewalNote.toLowerCase()}. Essential renews until you cancel.
       </div>
@@ -321,7 +322,7 @@ function PaymentForm({ billingInterval, onSuccess, renewalNote }) {
           cursor: submitting || !stripe ? 'default' : 'pointer',
         }}
       >
-        {submitting ? 'Confirming payment…' : 'Pay $599 and claim 300K'}
+        {submitting ? 'Confirming payment…' : `Pay $${FOUNDER_PRICE} and claim ${FOUNDER_CREDITS}`}
       </button>
       <div style={{ marginTop: 10, fontSize: 11, color: '#94a3b8', textAlign: 'center' }}>
         Secure payment processing. Cancel anytime.
@@ -469,7 +470,7 @@ export default function ThinkingPowerCheckout({ onSuccess, onClose, returnPath =
             <div style={{ fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#cbd5e1', fontWeight: 600 }}>
               Jaspen Founder offer
             </div>
-            <div id="founder-checkout-title" style={{ fontSize: 18, fontWeight: 700, marginTop: 2 }}>$599 today · Essential included</div>
+            <div id="founder-checkout-title" style={{ fontSize: 18, fontWeight: 700, marginTop: 2 }}>${FOUNDER_PRICE} today · Essential included</div>
             <div style={{ fontSize: 13, color: '#cbd5e1', marginTop: 2 }}>{headerSub}</div>
           </div>
           <button type="button" onClick={onClose} aria-label="Close" style={{ border: 'none', background: 'transparent', color: '#cbd5e1', fontSize: 20, cursor: 'pointer', lineHeight: 1, padding: 2 }}>×</button>
