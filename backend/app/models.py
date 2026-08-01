@@ -1079,6 +1079,50 @@ class UsageEvent(db.Model):
     )
 
 
+class DecisionAssetEmail(db.Model):
+    """Durable, idempotent delivery state for emailed decision artifacts."""
+
+    __tablename__ = 'decision_asset_emails'
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = db.Column(
+        db.String(36),
+        db.ForeignKey('users.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    organization_id = db.Column(
+        db.String(36),
+        db.ForeignKey('organizations.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    thread_id = db.Column(db.String(255), nullable=False, index=True)
+    evaluation_id = db.Column(db.String(36), nullable=True, index=True)
+    scorecard_id = db.Column(db.String(255), nullable=True, index=True)
+    recipient_email = db.Column(db.String(255), nullable=False)
+    idempotency_key = db.Column(db.String(128), nullable=False)
+    output_types = db.Column(db.JSON, nullable=False, default=list)
+    status = db.Column(db.String(24), nullable=False, default='preparing', index=True)
+    attempts = db.Column(db.Integer, nullable=False, default=0)
+    error_category = db.Column(db.String(80), nullable=True)
+    provider = db.Column(db.String(32), nullable=True)
+    provider_response = db.Column(db.String(80), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    updated_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+    sent_at = db.Column(db.DateTime, nullable=True)
+
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'idempotency_key', name='uq_decision_asset_email_user_key'),
+        db.Index('ix_decision_asset_email_user_created', 'user_id', 'created_at'),
+    )
+
+
 class StripeWebhookEvent(db.Model):
     __tablename__ = 'stripe_webhook_events'
 

@@ -82,6 +82,9 @@ export const endpoints = {
     `${API_BASE}/api/v1/export/threads/${encodeURIComponent(threadId)}/wbs/xlsx${scorecardId ? `?scorecard_id=${encodeURIComponent(scorecardId)}` : ''}`,
   exportConversationMarkdown: (threadId) => `${API_BASE}/api/v1/export/threads/${encodeURIComponent(threadId)}/conversation/markdown`,
   exportConversationPdf: (threadId) => `${API_BASE}/api/v1/export/threads/${encodeURIComponent(threadId)}/conversation/pdf`,
+  emailAssetRecipient: `${API_BASE}/api/v1/email-assets/recipient`,
+  requestEmailAssets: (threadId) => `${API_BASE}/api/v1/email-assets/threads/${encodeURIComponent(threadId)}`,
+  emailAssetStatus: (deliveryId) => `${API_BASE}/api/v1/email-assets/${encodeURIComponent(deliveryId)}`,
   scorecardAssistant: (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/scorecard-assistant`,
   executionAssistant: (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/execution-assistant`,
   appendMessages:     (threadId) => `${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(threadId)}/messages`,
@@ -1246,6 +1249,22 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
   downloadConversationPdf: async (threadId) => {
     if (!threadId) throw new Error('threadId is required');
     return downloadBinary(endpoints.exportConversationPdf(threadId));
+  },
+
+  getEmailAssetRecipient: async () => getJSON(endpoints.emailAssetRecipient),
+
+  requestEmailAssets: async (threadId, { scorecardId = null, outputTypes = [], idempotencyKey } = {}) => {
+    if (!threadId) throw new Error('threadId is required');
+    return postJSON(endpoints.requestEmailAssets(threadId), {
+      scorecard_id: scorecardId || null,
+      output_types: outputTypes,
+      idempotency_key: idempotencyKey,
+    });
+  },
+
+  getEmailAssetStatus: async (deliveryId) => {
+    if (!deliveryId) throw new Error('deliveryId is required');
+    return getJSON(endpoints.emailAssetStatus(deliveryId));
   },
 
   analyzeDataFile: async ({ file, thread_id, prompt } = {}) => {

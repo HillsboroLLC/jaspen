@@ -197,6 +197,10 @@ def create_app():
         MAIL_USERNAME                  = os.getenv('MAIL_USERNAME'),
         MAIL_PASSWORD                  = os.getenv('MAIL_PASSWORD'),
         MAIL_DEFAULT_SENDER            = os.getenv('MAIL_DEFAULT_SENDER'),
+        DECISION_ASSET_EMAIL_SENDER_NAME = os.getenv('DECISION_ASSET_EMAIL_SENDER_NAME', 'Jaspen'),
+        DECISION_ASSET_EMAIL_REPLY_TO  = os.getenv('DECISION_ASSET_EMAIL_REPLY_TO'),
+        DECISION_ASSET_EMAIL_MAX_ATTACHMENT_BYTES = int(os.getenv('DECISION_ASSET_EMAIL_MAX_ATTACHMENT_BYTES', str(15 * 1024 * 1024))),
+        DECISION_ASSET_EMAIL_RATE_LIMIT_PER_HOUR = int(os.getenv('DECISION_ASSET_EMAIL_RATE_LIMIT_PER_HOUR', '5')),
         SALES_NOTIFICATION_EMAIL       = os.getenv('SALES_NOTIFICATION_EMAIL', 'sales@jaspen.ai'),
         LEAD_TOOLKIT_LINK_TTL_SECONDS  = int(os.getenv('LEAD_TOOLKIT_LINK_TTL_SECONDS', str(60 * 60 * 24 * 30))),
     )
@@ -524,6 +528,7 @@ def create_app():
     from .routes.insights import insights_bp
     from .routes.activity import activity_bp
     from .routes.export import export_bp
+    from .routes.decision_asset_email import decision_asset_email_bp
     from .routes.reports import reports_bp
     from .routes.starters import starters_bp
     from .routes.team import team_bp
@@ -549,6 +554,7 @@ def create_app():
     app.register_blueprint(insights_bp,  url_prefix='/api/v1/insights')
     app.register_blueprint(activity_bp,  url_prefix='/api/v1/activity')
     app.register_blueprint(export_bp,    url_prefix='/api/v1/export')
+    app.register_blueprint(decision_asset_email_bp, url_prefix='/api/v1/email-assets')
     app.register_blueprint(reports_bp,   url_prefix='/api/v1/reports')
     app.register_blueprint(starters_bp,  url_prefix='/api/v1/starters')
     app.register_blueprint(team_bp, url_prefix='/api/v1/team')

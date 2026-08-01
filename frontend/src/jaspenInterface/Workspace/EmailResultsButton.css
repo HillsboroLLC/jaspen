@@ -1,0 +1,66 @@
+.jas-email-results-trigger {
+  min-height: 36px;
+  padding: 8px 13px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  color: #0f172a;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.jas-email-results-trigger.is-compact { min-height: 32px; padding: 6px 10px; font-weight: 500; }
+.jas-email-results-trigger:hover { background: #f8fafc; border-color: #94a3b8; }
+.jas-email-results-trigger:disabled { cursor: not-allowed; opacity: .5; }
+.jas-email-results-trigger:focus-visible,
+.jas-email-results-dialog button:focus-visible { outline: 3px solid rgba(160, 3, 108, .28); outline-offset: 2px; }
+
+.jas-email-results-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  padding: 20px;
+  background: rgba(15, 23, 42, .48);
+  display: grid;
+  place-items: center;
+}
+
+.jas-email-results-dialog {
+  position: relative;
+  width: min(440px, 100%);
+  box-sizing: border-box;
+  padding: 30px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #fff;
+  color: #0f172a;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, .25);
+  text-align: center;
+}
+
+.jas-email-results-dialog h2 { margin: 12px 0 8px; font-size: 21px; }
+.jas-email-results-dialog p { margin: 0; color: #475569; line-height: 1.5; }
+.jas-email-results-dialog strong { color: #0f172a; }
+.jas-email-results-icon { width: 46px; height: 46px; margin: 0 auto; border-radius: 50%; background: #faf5f9; color: #a0036c; display: grid; place-items: center; }
+.jas-email-results-close { position: absolute; top: 12px; right: 12px; width: 34px; height: 34px; border: 0; border-radius: 7px; background: transparent; color: #64748b; cursor: pointer; }
+.jas-email-results-close:hover { background: #f1f5f9; }
+.jas-email-results-error { color: #b42318 !important; }
+.jas-email-results-actions { margin-top: 24px; display: flex; justify-content: center; gap: 10px; }
+.jas-email-results-actions button { min-height: 38px; padding: 8px 16px; border-radius: 8px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.jas-email-results-actions .secondary { border: 1px solid #cbd5e1; color: #0f172a; background: #fff; }
+.jas-email-results-actions .primary { border: 1px solid #0f172a; color: #fff; background: #0f172a; }
+.jas-email-results-actions button:disabled { cursor: wait; opacity: .72; }
+
+@media (max-width: 640px) {
+  .jas-email-results-backdrop { align-items: end; padding: 12px; }
+  .jas-email-results-dialog { padding: 28px 20px 20px; border-radius: 14px 14px 10px 10px; }
+  .jas-email-results-actions { flex-direction: column-reverse; }
+  .jas-email-results-actions button { width: 100%; }
+}

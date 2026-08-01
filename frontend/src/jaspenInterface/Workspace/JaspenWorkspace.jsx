@@ -29,6 +29,7 @@ import 'react-resizable/css/styles.css';
 import JaspenExecutionCanvas from './JaspenExecutionCanvas';
 import { userMessageWhitespaceStyle } from './messageFormatting';
 import { downloadRenderedWorkspacePdf } from './scorecardPdf';
+import EmailResultsButton from './EmailResultsButton';
 
 // Custom scorecard blocks live on a true 12-col grid: drag the handle to move,
 // drag the corner to resize to ANY size (not 4 fixed widths). WidthProvider makes
@@ -1671,6 +1672,21 @@ export default function JaspenWorkspace() {
                 />
                 {buildingPlan ? 'Building…' : 'Build Execution Plan'}
               </button>
+            )}
+            {(isScorecard || isTradeoff || isExecution) && (
+              <EmailResultsButton
+                threadId={threadId}
+                scorecardId={isScorecard
+                  ? scorecardId
+                  : isExecution
+                    ? (execIdeaId || resolvedExecScorecardId || null)
+                    : null}
+                outputTypes={isTradeoff
+                  ? ['ranked_ideas', 'tradeoff', 'why_this_order', 'evidence_gaps_assumptions_risks', 'what_could_change_order']
+                  : isExecution
+                    ? ['ranked_ideas', 'scorecards', 'why_this_order', 'evidence_gaps_assumptions_risks', 'what_could_change_order', 'starter_execution_plan']
+                    : ['ranked_ideas', 'scorecards', 'why_this_order', 'evidence_gaps_assumptions_risks', 'what_could_change_order']}
+              />
             )}
             {isExecution ? (
               <button
