@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faEnvelope, faSpinner, faXmark } from '@fortawesome/free-solid-svg-icons';
 
@@ -12,13 +12,18 @@ const makeIdempotencyKey = () => {
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
-export default function EmailResultsButton({
+// hideTrigger + the imperative `open()` handle let a parent fold this dialog
+// into its own menu (e.g. an "Export" dropdown) instead of rendering the
+// built-in "Email this to me" button. Existing callers that don't pass
+// hideTrigger or a ref keep the original standalone-button behavior.
+const EmailResultsButton = forwardRef(function EmailResultsButton({
   threadId,
   scorecardId = null,
   outputTypes = [],
   className = '',
   compact = false,
-}) {
+  hideTrigger = false,
+}, ref) {
   const [open, setOpen] = useState(false);
   const [recipient, setRecipient] = useState('');
   const [phase, setPhase] = useState('confirm');
@@ -55,6 +60,8 @@ export default function EmailResultsButton({
       setPhase('failed');
     }
   }, [threadId]);
+
+  useImperativeHandle(ref, () => ({ open: openConfirmation }), [openConfirmation]);
 
   const pollDelivery = useCallback(async (deliveryId) => {
     for (let attempt = 0; attempt < 75; attempt += 1) {
@@ -106,15 +113,17 @@ export default function EmailResultsButton({
   const busy = phase === 'preparing' || phase === 'sending';
   return (
     <>
-      <button
-        type="button"
-        className={`jas-email-results-trigger ${compact ? 'is-compact' : ''} ${className}`.trim()}
-        onClick={openConfirmation}
-        disabled={!threadId}
-      >
-        <FontAwesomeIcon icon={faEnvelope} aria-hidden="true" />
-        Email this to me
-      </button>
+      {!hideTrigger && (
+        <button
+          type="button"
+          className={`jas-email-results-trigger ${compact ? 'is-compact' : ''} ${className}`.trim()}
+          onClick={openConfirmation}
+          disabled={!threadId}
+        >
+          <FontAwesomeIcon icon={faEnvelope} aria-hidden="true" />
+          Email this to me
+        </button>
+      )}
       {open && (
         <div className="jas-email-results-backdrop" role="presentation" onMouseDown={(event) => {
           if (event.target === event.currentTarget) close();
@@ -165,4 +174,6 @@ export default function EmailResultsButton({
       )}
     </>
   );
-}
+});
+
+export default EmailResultsButton;

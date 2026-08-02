@@ -259,6 +259,7 @@ export default function JaspenWorkspace() {
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [executionExporting, setExecutionExporting] = useState(false);
   const [scorecardExporting, setScorecardExporting] = useState(null);
+  const emailResultsRef = useRef(null);
   // Element picker for "+ Add block": choose a block TYPE (text / callout / quote).
   const [addBlockMenuOpen, setAddBlockMenuOpen] = useState(false);
   // Two-step delete confirm for custom blocks (the × shouldn't nuke a section in one click).
@@ -1675,6 +1676,8 @@ export default function JaspenWorkspace() {
             )}
             {(isScorecard || isTradeoff || isExecution) && (
               <EmailResultsButton
+                ref={emailResultsRef}
+                hideTrigger
                 threadId={threadId}
                 scorecardId={isScorecard
                   ? scorecardId
@@ -1685,67 +1688,64 @@ export default function JaspenWorkspace() {
                   ? ['ranked_ideas', 'tradeoff', 'why_this_order', 'evidence_gaps_assumptions_risks', 'what_could_change_order']
                   : isExecution
                     ? ['ranked_ideas', 'scorecards', 'why_this_order', 'evidence_gaps_assumptions_risks', 'what_could_change_order', 'starter_execution_plan']
-                    : ['ranked_ideas', 'scorecards', 'why_this_order', 'evidence_gaps_assumptions_risks', 'what_could_change_order']}
+                    : ['scorecard_detail']}
               />
             )}
-            {isExecution ? (
-              <button
-                type="button"
-                onClick={() => { void downloadExecutionExport(); }}
-                disabled={executionExporting}
-                style={{ padding:'8px 14px', borderRadius:8, border:'none', background:'#0f172a', color:'#fff', cursor: executionExporting ? 'wait' : 'pointer', fontSize:13, fontWeight:500, display:'flex', alignItems:'center', gap:6, opacity: executionExporting ? 0.72 : 1 }}
-              >
-                <FontAwesomeIcon icon={executionExporting ? faSpinner : faDownload} spin={executionExporting} />
-                {executionExporting ? 'Downloading…' : 'Download Excel'}
-              </button>
-            ) : isTradeoff ? (
-              <button
-                type="button"
-                onClick={() => { void downloadExport('pdf', 'pdf', 'PDF'); }}
-                disabled={Boolean(scorecardExporting)}
-                style={{ padding:'8px 14px', borderRadius:8, border:'none', background:'#0f172a', color:'#fff', cursor: scorecardExporting ? 'wait' : 'pointer', fontSize:13, fontWeight:500, display:'flex', alignItems:'center', gap:6, opacity: scorecardExporting ? 0.72 : 1 }}
-              >
-                <FontAwesomeIcon icon={scorecardExporting ? faSpinner : faDownload} spin={Boolean(scorecardExporting)} />
-                {scorecardExporting ? 'Downloading…' : 'Download PDF'}
-              </button>
-            ) : isScorecard ? (
-            <div style={{ position:'relative' }}>
-              <button
-                type="button"
-                onClick={() => setExportMenuOpen((o) => !o)}
-                disabled={Boolean(scorecardExporting)}
-                style={{ padding:'8px 14px', borderRadius:8, border:'none', background:'#0f172a', color:'#fff', cursor: scorecardExporting ? 'wait' : 'pointer', fontSize:13, fontWeight:500, display:'flex', alignItems:'center', gap:6, opacity: scorecardExporting ? 0.72 : 1 }}
-              >
-                <FontAwesomeIcon icon={scorecardExporting ? faSpinner : faDownload} spin={Boolean(scorecardExporting)} />
-                {scorecardExporting ? 'Downloading…' : 'Download'}
-                <span style={{ fontSize:10, opacity:0.8 }}>▾</span>
-              </button>
-              {exportMenuOpen && (
-                <>
-                  <div onClick={() => setExportMenuOpen(false)} style={{ position:'fixed', inset:0, zIndex:40 }} />
-                  <div style={{ position:'absolute', top:'calc(100% + 6px)', right:0, zIndex:41, background:'#fff', border:'1px solid #e6eaf2', borderRadius:10, boxShadow:'0 8px 24px rgba(22,31,59,0.12)', minWidth:210, padding:6, display:'flex', flexDirection:'column' }}>
-                    {[
-                      { label:'Download PDF', act:() => downloadExport('pdf','pdf','PDF') },
-                      { label:'Print / Save as PDF', act:() => printScorecard() },
-                      { label:'Download PowerPoint', act:() => downloadExport('pptx','pptx','PowerPoint') },
-                    ].map((it, i) => (
-                      <React.Fragment key={i}>
-                        <button
-                          type="button"
-                          onClick={() => { it.act(); setExportMenuOpen(false); }}
-                          style={{ textAlign:'left', padding:'8px 10px', border:'none', background:'transparent', color:'#0f172a', cursor:'pointer', fontSize:13, borderRadius:6, display:'flex', justifyContent:'space-between', alignItems:'center', gap:10 }}
-                          onMouseEnter={(e) => { e.currentTarget.style.background = '#f5f7fa'; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                        >
-                          <span>{it.label}</span>
-                        </button>
-                      </React.Fragment>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-            ) : null}
+            {(isScorecard || isTradeoff || isExecution) && (() => {
+              // One "Export" menu everywhere: a single working PDF/file method
+              // (the client print pipeline for scorecards — the only path that
+              // renders the real DOM, see printScorecard() above — or Excel for
+              // execution plans) plus Email, which opens the same dialog the
+              // old standalone "Email this to me" button used.
+              const exporting = isExecution ? executionExporting : Boolean(scorecardExporting);
+              const items = isExecution
+                ? [
+                  { label: 'Excel', act: () => { void downloadExecutionExport(); } },
+                  { label: 'Email', act: () => { emailResultsRef.current?.open(); } },
+                ]
+                : isTradeoff
+                  ? [
+                    { label: 'PDF', act: () => { void downloadExport('pdf', 'pdf', 'PDF'); } },
+                    { label: 'Email', act: () => { emailResultsRef.current?.open(); } },
+                  ]
+                  : [
+                    { label: 'PDF', act: () => printScorecard() },
+                    { label: 'Email', act: () => { emailResultsRef.current?.open(); } },
+                  ];
+              return (
+                <div style={{ position:'relative' }}>
+                  <button
+                    type="button"
+                    onClick={() => setExportMenuOpen((o) => !o)}
+                    disabled={exporting}
+                    style={{ padding:'8px 14px', borderRadius:8, border:'none', background:'#0f172a', color:'#fff', cursor: exporting ? 'wait' : 'pointer', fontSize:13, fontWeight:500, display:'flex', alignItems:'center', gap:6, opacity: exporting ? 0.72 : 1 }}
+                  >
+                    <FontAwesomeIcon icon={exporting ? faSpinner : faDownload} spin={exporting} />
+                    {exporting ? 'Working…' : 'Export'}
+                    <span style={{ fontSize:10, opacity:0.8 }}>▾</span>
+                  </button>
+                  {exportMenuOpen && (
+                    <>
+                      <div onClick={() => setExportMenuOpen(false)} style={{ position:'fixed', inset:0, zIndex:40 }} />
+                      <div style={{ position:'absolute', top:'calc(100% + 6px)', right:0, zIndex:41, background:'#fff', border:'1px solid #e6eaf2', borderRadius:10, boxShadow:'0 8px 24px rgba(22,31,59,0.12)', minWidth:170, padding:6, display:'flex', flexDirection:'column' }}>
+                        {items.map((it, i) => (
+                          <button
+                            key={i}
+                            type="button"
+                            onClick={() => { it.act(); setExportMenuOpen(false); }}
+                            style={{ textAlign:'left', padding:'8px 10px', border:'none', background:'transparent', color:'#0f172a', cursor:'pointer', fontSize:13, borderRadius:6, display:'flex', justifyContent:'space-between', alignItems:'center', gap:10 }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = '#f5f7fa'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                          >
+                            <span>{it.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            })()}
             {/* Single, always-visible Back to Jaspen link, right of the export action —
                 replaces the sidebar + collapsed variants so there's one consistent
                 control across surfaces. Preserves the thread via ?sid. */}

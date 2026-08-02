@@ -15,10 +15,13 @@ from app.routes.export import (
     PDF_MIMETYPE,
     PPTX_MIMETYPE,
     XLSX_MIMETYPE,
+    _accent_hex,
     _pptx_bytes,
     _resolve_export_context,
     _resolve_thread_session,
     _safe_filename_base,
+    _scorecard_component_rows,
+    _scorecard_custom_blocks,
     _scorecard_pdf_bytes,
     _scorecard_record_for_export,
     _wbs_xlsx_bytes,
@@ -36,6 +39,7 @@ SUPPORTED_OUTPUT_TYPES = frozenset({
     "evidence_gaps_assumptions_risks",
     "what_could_change_order",
     "starter_execution_plan",
+    "scorecard_detail",
 })
 
 
@@ -326,6 +330,154 @@ p,li{{font-size:15px}}ol,ul{{padding-left:22px}}.top{{border-left:4px solid #a00
     return text_body, html_body
 
 
+def _build_scorecard_detail_summary(scorecard):
+    """Summary for a single-scorecard email that mirrors the on-screen
+    Workspace card layout (SCORE / EXECUTIVE SUMMARY / DIMENSIONS / TOP RISKS
+    / any custom blocks) - as opposed to the multi-peer "why this order"
+    ranked-comparison shape used for tradeoff/execution deliveries, which
+    doesn't resemble a single scorecard's real on-screen layout at all."""
+    project_name = _text(scorecard.get("project_name"), "Jaspen decision")
+    generated = str(scorecard.get("updated_at") or datetime.utcnow().isoformat())
+    try:
+        score_display = f"{float(scorecard.get('jaspen_score')):g}"
+    except (TypeError, ValueError):
+        score_display = "N/A"
+    category = _text(scorecard.get("score_category"), "").upper()
+    executive_summary = _text(
+        scorecard.get("executive_summary") or scorecard.get("summary"),
+        "No executive summary recorded.",
+    )
+    dimensions = []
+    for row in _scorecard_component_rows(scorecard):
+        try:
+            value = float(row.get("value"))
+        except (TypeError, ValueError):
+            continue
+        dimensions.append({"label": row["label"], "value": value})
+    risks = _items(scorecard.get("top_risks") or scorecard.get("risks"), limit=8)
+    recommended = _text(scorecard.get("recommended_scenario"))
+    if not recommended:
+        recommended_items = _items(scorecard.get("recommendations"), limit=1)
+        recommended = recommended_items[0] if recommended_items else ""
+    custom_blocks = [
+        {"heading": block["heading"], "body": block["body"]}
+        for block in _scorecard_custom_blocks(scorecard)
+        if block.get("body")
+    ]
+    return {
+        "project_name": project_name,
+        "generated": generated,
+        "score_display": score_display,
+        "category": category,
+        "accent_hex": _accent_hex(scorecard),
+        "executive_summary": executive_summary,
+        "dimensions": dimensions,
+        "risks": risks,
+        "recommended": recommended,
+        "custom_blocks": custom_blocks,
+    }
+
+
+def render_scorecard_detail_email(summary):
+    accent = summary["accent_hex"]
+    text_lines = [
+        summary["project_name"],
+        f"Generated: {summary['generated']}",
+        f"Strategy scorecard: {summary['score_display']}" + (f" ({summary['category']})" if summary["category"] else ""),
+        "",
+        "EXECUTIVE SUMMARY",
+        summary["executive_summary"],
+    ]
+    if summary["dimensions"]:
+        text_lines += ["", "DIMENSIONS"]
+        text_lines += [f"- {d['label']}: {d['value']:g}/10" for d in summary["dimensions"]]
+    if summary["risks"]:
+        text_lines += ["", "TOP RISKS"]
+        text_lines += [f"- {risk}" for risk in summary["risks"]]
+    for block in summary["custom_blocks"]:
+        text_lines += ["", block["heading"].upper(), block["body"]]
+    if summary["recommended"]:
+        text_lines += ["", "RECOMMENDATION", summary["recommended"]]
+    text_body = "\n".join(text_lines)
+
+    def bar_row(dim):
+        pct = max(0, min(100, round((dim["value"] / 10) * 100)))
+        return f"""<tr>
+<td style="padding:6px 0;font-size:13px;color:#334155;width:60%">{html.escape(dim['label'])}</td>
+<td style="padding:6px 0;font-size:13px;color:#0f172a;font-weight:700;text-align:right;width:15%">{dim['value']:g}/10</td>
+</tr>
+<tr><td colspan="2" style="padding:0 0 10px">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+<td style="background:{accent};height:6px;border-radius:3px;width:{pct}%"></td>
+<td style="background:#eef2f6;height:6px;border-radius:3px;width:{100 - pct}%"></td>
+</tr></table>
+</td></tr>"""
+
+    dimensions_html = "".join(bar_row(d) for d in summary["dimensions"])
+    dimensions_section = f"""
+<div style="background:#fff;border:1px solid #e6eaf2;border-radius:12px;padding:20px;margin-bottom:16px">
+<div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#64748b;text-transform:uppercase;margin-bottom:10px">Dimensions</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">{dimensions_html}</table>
+</div>""" if summary["dimensions"] else ""
+
+    risks_html = "".join(f"<li style='margin-bottom:6px'>{html.escape(risk)}</li>" for risk in summary["risks"])
+    risks_section = f"""
+<div style="background:#fff;border:1px solid #e6eaf2;border-radius:12px;padding:20px;margin-bottom:16px">
+<div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#64748b;text-transform:uppercase;margin-bottom:10px">Top Risks</div>
+<ul style="margin:0;padding-left:18px;font-size:13.5px;color:#334155">{risks_html}</ul>
+</div>""" if summary["risks"] else ""
+
+    custom_blocks_html = "".join(f"""
+<div style="background:#fff;border:1px solid #e6eaf2;border-radius:12px;padding:20px;margin-bottom:16px">
+<div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#64748b;text-transform:uppercase;margin-bottom:10px">{html.escape(block['heading'])}</div>
+<p style="margin:0;font-size:14px;color:#334155;line-height:1.55">{html.escape(block['body'])}</p>
+</div>""" for block in summary["custom_blocks"])
+
+    recommendation_section = f"""
+<div style="background:#fff;border:1px solid #e6eaf2;border-radius:12px;padding:20px;margin-bottom:16px">
+<div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#64748b;text-transform:uppercase;margin-bottom:10px">Recommendation</div>
+<p style="margin:0;font-size:14px;color:#334155;line-height:1.55">{html.escape(summary['recommended'])}</p>
+</div>""" if summary["recommended"] else ""
+
+    category_badge = f"""<div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:{accent};text-transform:uppercase;margin-bottom:6px">{html.escape(summary['category'])}</div>""" if summary["category"] else ""
+
+    html_body = f"""<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{html.escape(summary['project_name'])}</title>
+</head><body style="margin:0;background:#f5f7fa;color:#161f3b;font-family:Arial,Helvetica,sans-serif;line-height:1.45">
+<div style="max-width:640px;margin:24px auto;background:#f5f7fa">
+  <div style="padding:28px 4px 20px">
+    <div style="font-size:11px;font-weight:700;letter-spacing:.08em;color:#64748b;text-transform:uppercase;margin-bottom:6px">Strategy Scorecard</div>
+    <h1 style="font-size:24px;margin:0 0 4px;color:#161f3b">{html.escape(summary['project_name'])}</h1>
+    <div style="font-size:12px;color:#64748b">Generated {html.escape(summary['generated'])}</div>
+  </div>
+
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:16px">
+    <tr>
+      <td width="34%" valign="top" style="background:#fff;border:1px solid #e6eaf2;border-radius:12px;padding:20px">
+        {category_badge}
+        <div style="font-size:44px;font-weight:800;color:{accent};line-height:1">{html.escape(summary['score_display'])}</div>
+        <div style="font-size:11px;color:#94a3b8;margin-top:4px">Strategy scorecard</div>
+      </td>
+      <td width="3%"></td>
+      <td valign="top" style="background:#fff;border:1px solid #e6eaf2;border-radius:12px;padding:20px">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#64748b;text-transform:uppercase;margin-bottom:10px">Executive Summary</div>
+        <p style="margin:0;font-size:14px;color:#334155;line-height:1.55">{html.escape(summary['executive_summary'])}</p>
+      </td>
+    </tr>
+  </table>
+
+  {dimensions_section}
+  {risks_section}
+  {custom_blocks_html}
+  {recommendation_section}
+
+  <div style="padding:14px 4px;color:#94a3b8;font-size:11px">Sent from Jaspen &middot; jaspen.ai</div>
+</div>
+</body></html>"""
+    return text_body, html_body
+
+
 def load_authorized_context(user, thread_id, scorecard_id=None):
     sessions = load_user_sessions(user.id) or {}
     session = _resolve_thread_session(sessions, thread_id)
@@ -376,6 +528,13 @@ def _build_attachments(context, output_types):
     scorecard = context["scorecard"]
     org = context["organization"]
     base = _safe_filename_base(scorecard.get("project_name"))
+
+    # scorecard_detail deliveries use the HTML-body-matches-the-workspace email
+    # (see render_scorecard_detail_email) instead of file attachments - the
+    # server-rendered PDF/PPTX are a separately hand-built template that can't
+    # reflect the on-screen block layout, so they're not attached here.
+    if "scorecard_detail" in output_types:
+        return attachments
 
     if {"scorecards", "ranked_ideas", "tradeoff"}.intersection(output_types):
         try:
@@ -443,13 +602,20 @@ def process_delivery(delivery_id):
         delivery.scorecard_id = context["scorecard_id"]
         delivery.organization_id = context["organization_id"]
         delivery.evaluation_id = evaluation_id_for_scorecard(user.id, context["scorecard_id"])
-        summary = _build_summary(context["session"], context["scorecard"], context["peers"])
-        text_body, html_body = render_email(summary)
-        attachments = _build_attachments(context, set(delivery.output_types or []))
+        output_types = set(delivery.output_types or [])
+        if "scorecard_detail" in output_types:
+            summary = _build_scorecard_detail_summary(context["scorecard"])
+            text_body, html_body = render_scorecard_detail_email(summary)
+            subject = f"Your Jaspen scorecard: {summary['project_name']}"
+        else:
+            summary = _build_summary(context["session"], context["scorecard"], context["peers"])
+            text_body, html_body = render_email(summary)
+            subject = f"Why this order: {summary['decision_name']}"
+        attachments = _build_attachments(context, output_types)
 
         provider = get_transactional_email_provider()
         result = provider.send(
-            subject=f"Why this order: {summary['decision_name']}",
+            subject=subject,
             recipient=user.email,
             text_body=text_body,
             html_body=html_body,

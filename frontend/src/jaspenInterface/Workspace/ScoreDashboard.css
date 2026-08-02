@@ -196,16 +196,23 @@
   font-weight: 600;
 }
 
+/* Scoped to :has(.score-dashboard-container) so this print pipeline only
+   activates on pages that actually render the chat-embedded ScoreDashboard
+   (see JaspenChat.jsx). Without this guard, `body * { visibility: hidden }`
+   applied globally to every page that merely loads this stylesheet -
+   including the full Workspace view, whose scorecard markup has never used
+   this class - silently hiding its entire print/PDF output regardless of
+   how correct JaspenWorkspace.jsx's own @media print rules were. */
 @media print {
   @page {
     margin: 0.6in 0.55in 0.7in;
   }
 
-  body * {
+  body:has(.score-dashboard-container) * {
     visibility: hidden !important;
   }
 
-  body::after {
+  body:has(.score-dashboard-container)::after {
     content: "Jaspen Strategic Intelligence • jaspen.ai";
     position: fixed;
     left: 0.55in;
