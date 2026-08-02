@@ -1,5 +1,6 @@
 import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import ThinkingPowerCheckout from './ThinkingPowerCheckout';
 
 const mockSignup = jest.fn();
@@ -69,6 +70,24 @@ describe('Limited-time offer checkout acknowledgements', () => {
       terms_accepted: true,
       final_sale_acknowledged: true,
     });
+  });
+
+  it('switches to sign in with a clear instruction when the email is already registered', async () => {
+    const user = userEvent.setup();
+    mockSignup.mockResolvedValue({ success: false, error: 'Email already registered' });
+
+    render(<ThinkingPowerCheckout onClose={() => {}} />);
+
+    await user.type(screen.getByLabelText('Full name'), 'Jane Doe');
+    await user.type(screen.getByLabelText('Email'), 'jane@example.com');
+    await user.type(screen.getByLabelText('Password'), 'password123');
+    await user.type(screen.getByLabelText('Confirm password'), 'password123');
+    await user.click(screen.getByRole('checkbox', { name: /I have read and agree to the Terms of Service/i }));
+    await user.click(screen.getByRole('button', { name: 'Confirm account' }));
+
+    expect(await screen.findByText('This email is already registered. Enter your password to sign in and continue.')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Sign in' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByLabelText('Password')).toHaveValue('');
   });
 
   it('links to all policies from the acknowledgement', () => {

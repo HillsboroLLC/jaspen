@@ -95,6 +95,14 @@ function AccountStep({ returnPath }) {
         setNotice('Your account uses two-step verification. Sign in first, then reopen this offer to complete your purchase.');
       } else if (result?.verificationRequired) {
         setNotice(`Check ${normalizedEmail} for a verification link. Click it to continue straight to payment — no need to come back here.`);
+      } else if (isSignup && /already registered/i.test(String(result?.error || ''))) {
+        // Don't dead-end on a raw error — this email already has an
+        // account, so the actual instruction is to sign in with it.
+        setMode('signin');
+        setPassword('');
+        setConfirm('');
+        setError('');
+        setNotice('This email is already registered. Enter your password to sign in and continue.');
       } else {
         setError(result?.error || (isSignup ? 'Unable to create your account right now.' : 'Incorrect email or password.'));
       }

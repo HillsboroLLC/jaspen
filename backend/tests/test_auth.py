@@ -347,6 +347,47 @@ def test_verify_email_ignores_legacy_paid_pending_plan(client, app, test_user, d
     assert test_user.email_verified is True
 
 
+def test_verify_email_with_next_path_logs_in_and_redirects_to_it(client, app, test_user, db):
+    with app.app_context():
+        serializer = URLSafeTimedSerializer(
+            secret_key=app.config["SECRET_KEY"] or app.config["JWT_SECRET_KEY"],
+            salt="email-verification",
+        )
+        token = serializer.dumps({
+            "user_id": str(test_user.id),
+            "email": str(test_user.email).lower(),
+            "next_path": "/limited-time/strategic-planning?limited_time_checkout=resume",
+        })
+
+    resp = client.get(f"/api/v1/auth/verify-email?token={token}")
+
+    assert resp.status_code == 302
+    location = resp.headers["Location"]
+    assert location.startswith("http://localhost:3000/auth/callback?")
+    assert "next=%2Flimited-time%2Fstrategic-planning%3Flimited_time_checkout%3Dresume" in location
+    assert client.get_cookie(app.config["JWT_ACCESS_COOKIE_NAME"]) is not None
+    db.session.refresh(test_user)
+    assert test_user.email_verified is True
+
+
+def test_verify_email_without_next_path_keeps_prior_homepage_redirect(client, app, test_user, db):
+    with app.app_context():
+        serializer = URLSafeTimedSerializer(
+            secret_key=app.config["SECRET_KEY"] or app.config["JWT_SECRET_KEY"],
+            salt="email-verification",
+        )
+        token = serializer.dumps({
+            "user_id": str(test_user.id),
+            "email": str(test_user.email).lower(),
+        })
+
+    resp = client.get(f"/api/v1/auth/verify-email?token={token}")
+
+    assert resp.status_code == 302
+    assert resp.headers["Location"] == "http://localhost:3000/?auth=1&verified=1"
+    assert client.get_cookie(app.config["JWT_ACCESS_COOKIE_NAME"]) is None
+
+
 def test_forgot_password_sends_reset_email_for_existing_user(client, app, test_user, db, monkeypatch):
     sent_messages = []
 

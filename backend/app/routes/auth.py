@@ -1399,7 +1399,19 @@ def verify_email():
 
     if request.method == 'GET':
         next_path = decoded.get('next_path') if isinstance(decoded, dict) else None
-        return redirect(_verification_result_url('verified', next_path=next_path), code=302)
+        if next_path:
+            # Clicking the verification link is proof of owning the inbox, so
+            # for a flow that has somewhere specific to send them back to
+            # (e.g. resuming a checkout), log them in immediately instead of
+            # dropping them on a page that still doesn't recognize them -
+            # same session-establishment the Google OAuth callback uses.
+            token_str = _create_user_access_token(user)
+            session_changed = _register_auth_session(user, token_str)
+            if session_changed:
+                db.session.commit()
+            resp = redirect(_frontend_callback_url(next_path), code=302)
+            return _attach_auth_cookie(resp, token_str)
+        return redirect(_verification_result_url('verified'), code=302)
     return jsonify(
         message='Email verified successfully.',
         verified=True,
