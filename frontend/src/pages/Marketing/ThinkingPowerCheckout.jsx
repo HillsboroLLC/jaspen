@@ -257,6 +257,9 @@ function PaymentForm({ onSuccess, clientSecret }) {
     <form onSubmit={handleSubmit}>
       <div style={{ marginBottom: 16 }}>
         <label htmlFor="limited-time-coupon" style={labelStyle}>Promo code (optional)</label>
+        <p style={{ margin: '0 0 8px', fontSize: 12, color: '#475569' }}>
+          Apply it before entering card details. If it covers the full price, no card is needed.
+        </p>
         <div style={{ display: 'flex', gap: 8 }}>
           <input
             id="limited-time-coupon"
