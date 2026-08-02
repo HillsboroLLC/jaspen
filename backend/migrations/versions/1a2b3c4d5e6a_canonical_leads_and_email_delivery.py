@@ -54,7 +54,7 @@ def upgrade():
         )
         SELECT canonical.id, l.source, l.first_name, l.last_name, l.company, l.title,
             l.utm_source, l.utm_medium, l.utm_campaign, l.referrer,
-            0, 0, l.created_at
+            false, false, l.created_at
         FROM leads l
         JOIN (
             SELECT id, normalized_email
