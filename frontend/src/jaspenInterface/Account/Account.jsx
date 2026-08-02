@@ -2252,6 +2252,14 @@ export default function Account() {
     return Math.max(0, Math.min(100, Math.round((Math.max(0, remaining) / monthly) * 100)));
   })();
   const thinkingPowerPercentLabel = thinkingPowerPct == null ? 'Unlimited' : `${thinkingPowerPct}%`;
+  // The 300K offer is a standalone non-expiring balance, not a monthly plan
+  // allowance, so a percent-of-monthly figure misreports it (and the plan is
+  // not "Free" just because no subscription is attached).
+  const has300kLimitedTime = Boolean(status?.has_300k_limited_time);
+  const limitedTime300kCredits = Number(status?.['300k_limited_time_credits_remaining'] || 0);
+  const planDisplayLabel = has300kLimitedTime
+    ? '300K Limited-Time'
+    : (plans[currentPlan]?.label || currentPlan).toString();
   // Reset date formatted as "Jun 9, 2026"
   const resetDateLabel = (() => {
     const v = status?.cycle_reset_at;
@@ -2458,15 +2466,19 @@ export default function Account() {
         <div className="account-inline-status">
           <span className="account-status-chip">
             <span className="label">Current plan</span>
-            <strong>{(plans[currentPlan]?.label || currentPlan).toString()}</strong>
+            <strong>{planDisplayLabel}</strong>
           </span>
-          <span className={`account-status-chip${thinkingPowerLow ? ' account-status-chip--warn' : ''}`}>
+          <span className={`account-status-chip${thinkingPowerLow && !has300kLimitedTime ? ' account-status-chip--warn' : ''}`}>
             <span className="label">Thinking power</span>
-            <strong>{thinkingPowerPercentLabel} remaining</strong>
+            <strong>
+              {has300kLimitedTime
+                ? `${limitedTime300kCredits.toLocaleString()} credits`
+                : `${thinkingPowerPercentLabel} remaining`}
+            </strong>
           </span>
           <span className="account-status-chip">
-            <span className="label">Resets</span>
-            <strong>{resetDateLabel}</strong>
+            <span className="label">{has300kLimitedTime ? 'Expires' : 'Resets'}</span>
+            <strong>{has300kLimitedTime ? 'Never' : resetDateLabel}</strong>
           </span>
         </div>
 
@@ -2479,7 +2491,7 @@ export default function Account() {
             {/* Plan card */}
             <article className="account-overview-card">
               <h3>Current plan</h3>
-              <p>{(plans[currentPlan]?.label || currentPlan).toString()}</p>
+              <p>{planDisplayLabel}</p>
               {currentPlan !== 'business' && (
                 <button
                   type="button"

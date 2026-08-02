@@ -204,9 +204,15 @@ export default function AppMenu() {
       ? 'team'
       : 'individual';
 
-  const currentPlanLabel =
-    plans[currentPlanKey]?.label ||
-    (currentPlanKey[0]?.toUpperCase() + currentPlanKey.slice(1));
+  // A 300K Limited-Time balance is a standalone purchase, not a plan tier, so
+  // it is reported separately from whatever monthly plan the account sits on.
+  const has300kLimitedTime = Boolean(billingStatus?.has_300k_limited_time);
+  const limitedTime300kCredits = Number(billingStatus?.['300k_limited_time_credits_remaining'] || 0);
+
+  const currentPlanLabel = has300kLimitedTime
+    ? '300K Limited-Time'
+    : (plans[currentPlanKey]?.label
+      || (currentPlanKey[0]?.toUpperCase() + currentPlanKey.slice(1)));
 
   const footerPlanKey = highestPlanKey(
     user?.active_organization_plan_key,
@@ -258,8 +264,12 @@ export default function AppMenu() {
     const label = formatNextResetDate(value);
     return label || 'Your next billing cycle';
   }, [billingStatus?.cycle_reset_at]);
-  const creditsBadge =
-    monthlyCreditLimit > 0
+  const creditsBadge = has300kLimitedTime
+    // Percent-of-monthly-allowance is meaningless against a non-expiring
+    // balance - dividing 300,000 purchased credits by a 300/mo free limit
+    // rendered "100100% remaining".
+    ? `${limitedTime300kCredits.toLocaleString()} credits`
+    : monthlyCreditLimit > 0
       ? `${Math.max(0, Math.round((Math.max(0, Number(creditsRemaining || 0)) / Number(monthlyCreditLimit || 1)) * 100))}% remaining`
       : 'Usage';
 
@@ -749,15 +759,25 @@ export default function AppMenu() {
                   <div className="jas-ud-usage-stat">
                     <span>Remaining</span>
                     <strong>
-                      {Number(creditsRemaining || 0).toLocaleString()}
+                      {Number(
+                        has300kLimitedTime ? limitedTime300kCredits : (creditsRemaining || 0),
+                      ).toLocaleString()}
                     </strong>
                   </div>
                 </div>
                 <p className="jas-ud-usage-note">Thinking power remaining: {creditsBadge}</p>
-                <p className="jas-ud-usage-note">
-                  Monthly limit: {Number(monthlyCreditLimit || 0).toLocaleString()} credits on {currentPlanLabel}.
-                </p>
-                <p className="jas-ud-usage-note">Resets: {usageResetLabel}</p>
+                {has300kLimitedTime ? (
+                  <p className="jas-ud-usage-note">
+                    {limitedTime300kCredits.toLocaleString()} non-expiring credits. No monthly reset.
+                  </p>
+                ) : (
+                  <>
+                    <p className="jas-ud-usage-note">
+                      Monthly limit: {Number(monthlyCreditLimit || 0).toLocaleString()} credits on {currentPlanLabel}.
+                    </p>
+                    <p className="jas-ud-usage-note">Resets: {usageResetLabel}</p>
+                  </>
+                )}
                 <p className="jas-ud-usage-note">Current plan: {currentPlanLabel}</p>
                 {creditsTone !== 'normal' && (
                   <div className="jas-ud-usage-actions">

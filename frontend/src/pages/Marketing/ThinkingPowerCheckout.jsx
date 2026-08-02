@@ -153,7 +153,7 @@ function AccountStep({ returnPath }) {
   );
 }
 
-function PaymentForm({ onSuccess, clientSecret }) {
+function PaymentForm({ onSuccess, clientSecret, onRepriced }) {
   const stripe = useStripe();
   const elements = useElements();
   const [submitting, setSubmitting] = useState(false);
@@ -181,8 +181,8 @@ function PaymentForm({ onSuccess, clientSecret }) {
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(data?.msg || 'Could not apply that coupon.');
       if (data.free) {
-        // The coupon covers the full price - Stripe won't confirm a $0
-        // charge, so there's nothing left for the card form to do.
+        // Stripe settled the whole invoice with the discount, so there is
+        // nothing left for the card form to charge.
         setAppliedCoupon(code);
         setPriceLabel('$0.00');
         setFreeRedeemed(true);
@@ -190,6 +190,11 @@ function PaymentForm({ onSuccess, clientSecret }) {
       }
       setPriceLabel(data.price_label?.startsWith('$') ? data.price_label : `$${data.price_label}`);
       setAppliedCoupon(code);
+      if (data.client_secret) {
+        // A partial discount moves the charge onto the invoice Stripe priced,
+        // so the card fields have to re-mount against that payment intent.
+        onRepriced?.(data.client_secret);
+      }
     } catch (err) {
       setCouponError(err?.message || 'Could not apply that coupon.');
     } finally {
@@ -353,8 +358,12 @@ function PurchaseStep({ campaignId, returnPath, onSuccess }) {
 
   if (clientSecret && stripePromise) {
     return (
-      <Elements stripe={stripePromise} options={{ clientSecret, appearance: STRIPE_APPEARANCE }}>
-        <PaymentForm onSuccess={onSuccess} clientSecret={clientSecret} />
+      <Elements
+        key={clientSecret}
+        stripe={stripePromise}
+        options={{ clientSecret, appearance: STRIPE_APPEARANCE }}
+      >
+        <PaymentForm onSuccess={onSuccess} clientSecret={clientSecret} onRepriced={setClientSecret} />
       </Elements>
     );
   }

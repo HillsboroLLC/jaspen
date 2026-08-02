@@ -538,23 +538,47 @@ def _fulfill_limited_time_300k_payment_intent(intent, expected_user=None):
     return {'granted': True, 'tokens': tokens, 'user_id': str(user.id)}
 
 
-def _fulfill_limited_time_300k_free_redemption(payment_intent_id, metadata, user):
-    """Grant 300K Limited-Time credits when a coupon covers the full price.
+def _invoice_payment_client_secret(invoice):
+    """Client secret for the PaymentIntent backing a finalized invoice."""
+    secret = _stripe_field(invoice, 'confirmation_secret')
+    if isinstance(secret, str):
+        return secret
+    if secret is not None:
+        nested = _stripe_field(secret, 'client_secret')
+        if nested:
+            return nested
+    payment_intent = _stripe_field(invoice, 'payment_intent')
+    if isinstance(payment_intent, str):
+        try:
+            payment_intent = stripe.PaymentIntent.retrieve(payment_intent)
+        except stripe.error.StripeError:
+            return ''
+    return _stripe_field(payment_intent, 'client_secret', '') or ''
 
-    Stripe won't let a PaymentIntent succeed at $0, so there's no
-    payment_intent.succeeded event to hang fulfillment off of here. This
-    mirrors _fulfill_limited_time_300k_payment_intent's idempotency and
-    grant logic, keyed off the same payment_intent_id, for a coupon that
-    fully covers the price instead of a completed charge.
+
+def _fulfill_limited_time_300k_invoice(invoice, expected_user=None):
+    """Grant 300K credits for an invoice Stripe reports as paid.
+
+    Stripe is the source of truth here: we only grant once it says the invoice
+    is paid, the same way sync_embedded_subscription waits for Stripe to report
+    the subscription active before applying a plan. Idempotent on invoice id.
     """
-    event_id = _limited_time_300k_payment_event_id(payment_intent_id)
+    metadata = _stripe_field(invoice, 'metadata') or {}
+    if _stripe_field(metadata, 'checkout_type') != LIMITED_TIME_300K_CHECKOUT_TYPE:
+        return {'granted': False, 'reason': 'not_limited_time_300k'}
+    status = str(_stripe_field(invoice, 'status') or '').strip().lower()
+    if status != 'paid':
+        return {'granted': False, 'reason': status or 'not_paid'}
+
+    invoice_id = _stripe_field(invoice, 'id')
+    event_id = f'limited_time_300k_invoice:{invoice_id}'
     event_row = StripeWebhookEvent.query.filter_by(stripe_event_id=event_id).first()
     if event_row and bool(event_row.processed):
         return {'granted': False, 'reason': 'already_processed'}
     if event_row is None:
         event_row = StripeWebhookEvent(
             stripe_event_id=event_id,
-            event_type='limited_time_300k.free_redemption',
+            event_type='invoice.paid',
             processed=False,
         )
         db.session.add(event_row)
@@ -568,33 +592,47 @@ def _fulfill_limited_time_300k_free_redemption(payment_intent_id, metadata, user
             if event_row is None:
                 event_row = StripeWebhookEvent(
                     stripe_event_id=event_id,
-                    event_type='limited_time_300k.free_redemption',
+                    event_type='invoice.paid',
                     processed=False,
                 )
                 db.session.add(event_row)
                 db.session.flush()
 
-    tokens = int(metadata.get('tokens') or 0)
+    user_id = _stripe_field(metadata, 'user_id')
+    user = User.query.get(user_id) if user_id else None
+    if not user:
+        user = _find_user_for_billing_event(customer_id=_stripe_field(invoice, 'customer'))
+    if not user:
+        return {'granted': False, 'reason': 'user_not_found'}
+    if expected_user and str(user.id) != str(expected_user.id):
+        return {'granted': False, 'reason': 'wrong_user'}
+
+    tokens = int(_stripe_field(metadata, 'tokens') or 0)
+    if tokens <= 0:
+        tokens = int(current_app.config.get('LIMITED_TIME_300K_CREDIT_TOKENS') or 0)
     if tokens <= 0:
         return {'granted': False, 'reason': 'missing_tokens'}
 
     _entitlement, _grant, created = grant_limited_time_300k_offer(
         user,
         tokens,
-        payment_reference=payment_intent_id,
-        checkout_id=payment_intent_id,
+        payment_reference=invoice_id,
+        checkout_id=invoice_id,
         metadata={
-            'campaign_id': metadata.get('campaign_id'),
-            'stripe_payment_intent_id': payment_intent_id,
-            'fully_covered_by_coupon': 'true',
+            'campaign_id': _stripe_field(metadata, 'campaign_id'),
+            'stripe_invoice_id': invoice_id,
+            'promotion_code': _stripe_field(metadata, 'promotion_code'),
         },
     )
+    customer_id = _stripe_field(invoice, 'customer')
+    if customer_id:
+        user.stripe_customer_id = customer_id
     get_usage_meter_state(user, current_app.config)
     event_row.processed = True
     event_row.processed_at = datetime.utcnow()
     current_app.logger.info(
-        "300K Limited-Time free redemption: grant created=%s tokens=%s user=%s",
-        created, tokens, user.id,
+        'invoice.paid: 300K Limited-Time grant created=%s tokens=%s user=%s invoice=%s',
+        created, tokens, user.id, invoice_id,
     )
     return {'granted': True, 'tokens': tokens, 'user_id': str(user.id)}
 
@@ -1222,39 +1260,79 @@ def apply_300k_limited_time_coupon():
         return jsonify({'msg': 'This payment can no longer be modified.'}), 409
 
     price_id = current_app.config.get('STRIPE_LIMITED_TIME_300K_PRICE_ID')
+    if not price_id:
+        return jsonify({'msg': 'The limited-time offer price is not configured yet.'}), 503
     coupon_code = str(data.get('coupon_code') or '').strip()
+    if not coupon_code:
+        return jsonify({'msg': 'Enter a promo code to apply.'}), 400
     customer_id = _stripe_field(intent, 'customer') or _ensure_customer_for_user(user)
-    amount, _currency, promotion_code_id, error = _resolve_300k_limited_time_amount(
-        price_id, coupon_code, customer_id=customer_id,
-    )
-    if error:
-        return jsonify({'msg': error[0]}), error[1]
 
-    if amount < 50:
-        # Coupon covers the price down to (or below) Stripe's practical
-        # minimum charge for a PaymentIntent, so there's nothing chargeable
-        # left to confirm - waive the remainder rather than reject the coupon.
+    try:
+        matches = stripe.PromotionCode.list(code=coupon_code, active=True, limit=1)
+        promotion = (_stripe_field(matches, 'data') or [None])[0]
+        if not promotion:
+            return jsonify({'msg': 'That coupon code was not found or is no longer active.'}), 400
+        promotion_code_id = _stripe_field(promotion, 'id', '')
+
+        # Hand the discount to Stripe on a real invoice rather than pricing it
+        # here, so Stripe records the redemption and owns the money movement -
+        # the same way create_subscription attaches discounts to the
+        # subscription instead of computing a reduced amount itself.
+        stripe.InvoiceItem.create(customer=customer_id, price=price_id)
+        invoice = stripe.Invoice.create(
+            customer=customer_id,
+            discounts=[{'promotion_code': promotion_code_id}],
+            auto_advance=False,
+            collection_method='charge_automatically',
+            description='Jaspen 300K Limited-Time offer',
+            metadata={
+                'user_id': str(user.id),
+                'checkout_type': LIMITED_TIME_300K_CHECKOUT_TYPE,
+                'tokens': str(intent_metadata.get('tokens') or ''),
+                'campaign_id': str(intent_metadata.get('campaign_id') or ''),
+                'promotion_code': coupon_code,
+            },
+        )
+        invoice = stripe.Invoice.finalize_invoice(_stripe_field(invoice, 'id'))
+    except stripe.error.StripeError as exc:
+        current_app.logger.exception('apply-300k-limited-time-coupon: invoice failed')
+        return jsonify({
+            'msg': str(getattr(exc, 'user_message', None) or 'Could not apply that coupon.'),
+        }), 400
+
+    invoice_id = _stripe_field(invoice, 'id')
+    amount_due = int(_stripe_field(invoice, 'amount_due', 0) or 0)
+    _log_coupon_diagnostics(coupon_code, promotion_code_id, invoice, 'usd', 99900)
+
+    if amount_due <= 0:
+        # Stripe finalizes a fully-discounted invoice straight to paid, so the
+        # redemption is recorded on its side before we grant anything.
+        result = _fulfill_limited_time_300k_invoice(invoice, expected_user=user)
+        if not result.get('granted') and result.get('reason') not in {None, 'already_processed'}:
+            _log_coupon_outcome('free_not_granted', invoice=invoice_id, **result)
+            return jsonify({'msg': 'Could not redeem this offer.', **result}), 409
+        db.session.commit()
         try:
             stripe.PaymentIntent.cancel(payment_intent_id)
         except stripe.error.StripeError:
-            pass  # already canceled or otherwise unusable; fulfillment below is idempotent regardless
-        result = _fulfill_limited_time_300k_free_redemption(payment_intent_id, intent_metadata, user)
-        if not result.get('granted') and result.get('reason') not in {None, 'already_processed'}:
-            return jsonify({'msg': 'Could not redeem this offer for free.', **result}), 409
-        db.session.commit()
-        return jsonify({'free': True, 'price_label': '$0.00', **result}), 200
+            pass  # the invoice already settled this purchase; a stale intent is harmless
+        _log_coupon_outcome('free_granted', invoice=invoice_id, **result)
+        return jsonify({'free': True, 'price_label': '$0.00', 'invoice_id': invoice_id, **result}), 200
 
-    updated_metadata = dict(intent_metadata)
-    if promotion_code_id:
-        updated_metadata['promotion_code'] = coupon_code
-    else:
-        updated_metadata.pop('promotion_code', None)
+    # Partially discounted: Stripe priced it, and the buyer pays that invoice.
+    client_secret = _invoice_payment_client_secret(invoice)
+    if not client_secret:
+        return jsonify({'msg': 'Could not initialize payment for that coupon.'}), 400
     try:
-        stripe.PaymentIntent.modify(payment_intent_id, amount=amount, metadata=updated_metadata)
-    except stripe.error.StripeError as exc:
-        current_app.logger.exception('apply-300k-limited-time-coupon failed')
-        return jsonify({'msg': str(getattr(exc, 'user_message', None) or 'Could not apply that coupon.')}), 400
-    return jsonify({'price_label': _price_label(amount)}), 200
+        stripe.PaymentIntent.cancel(payment_intent_id)
+    except stripe.error.StripeError:
+        pass  # superseded by the invoice's own payment intent
+    _log_coupon_outcome('repriced', invoice=invoice_id, amount_due=amount_due)
+    return jsonify({
+        'price_label': _price_label(amount_due),
+        'invoice_id': invoice_id,
+        'client_secret': client_secret,
+    }), 200
 
 
 @billing_bp.route('/confirm-300k-limited-time-payment', methods=['POST'])
@@ -1937,8 +2015,15 @@ def stripe_webhook():
         _fulfill_credit_pack_payment_intent(intent)
         _fulfill_limited_time_300k_payment_intent(intent)
 
+    elif event_type == 'invoice.paid':
+        # One-time 300K purchases settle as invoices (so Stripe records the
+        # promotion-code redemption); subscription invoices keep using
+        # invoice.payment_succeeded below.
+        _fulfill_limited_time_300k_invoice(event['data']['object'])
+
     elif event_type == 'invoice.payment_succeeded':
         inv = event['data']['object']
+        _fulfill_limited_time_300k_invoice(inv)
         user = _find_user_for_billing_event(
             subscription_id=inv.get('subscription'),
             customer_id=inv.get('customer'),
