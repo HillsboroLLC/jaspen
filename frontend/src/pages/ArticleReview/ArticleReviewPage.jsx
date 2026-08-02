@@ -6,58 +6,8 @@ import { Link, useParams } from 'react-router-dom';
 import MarketingPageLayout from '../Marketing/MarketingPageLayout';
 import Seo from '../../shared/components/Seo';
 import { ARTICLE_MARKDOWN } from '../../content/generatedArticles';
+import { ARTICLES } from './articleCatalog';
 import './ArticleReviewPage.css';
-
-const ARTICLES = [
-  {
-    slug: 'true-cost-of-home-ownership',
-    title: 'What Is the True Monthly Cost of Owning a Home?',
-    eyebrow: 'Personal finance',
-    description: 'Separate the lender payment, the cost of carrying the home, cash to close, and equity—because one headline number cannot answer four different questions.',
-    calculatorPath: '/tools/mortgage-calculator',
-    calculatorLabel: 'Home ownership calculator',
-    readingTime: '7 min read',
-    listeningTime: '11 min listen',
-    audioPath: '/article-review-narration/true-cost-of-home-ownership.mp3',
-    railPoints: ['Required payment', 'True carrying cost', 'Cash to close', 'Equity built'],
-  },
-  {
-    slug: 'true-cost-of-renting',
-    title: 'What Does Rent Actually Cost Each Month?',
-    eyebrow: 'Personal finance',
-    description: 'See past advertised rent to concessions, recurring fees, utilities, move-in cash, and the portion of a deposit that is not automatically a cost.',
-    calculatorPath: '/tools/rent-calculator',
-    calculatorLabel: 'Rent calculator',
-    readingTime: '6 min read',
-    listeningTime: '7 min listen',
-    audioPath: '/article-review-narration/true-cost-of-renting.mp3',
-    railPoints: ['Effective rent', 'Recurring costs', 'Move-in cash', 'Refundable deposits'],
-  },
-  {
-    slug: 'cost-of-employee-turnover',
-    title: 'Employee Turnover Cost: Beyond the Flat Salary Multiple',
-    eyebrow: 'Business operations',
-    description: 'Build the estimate line by line—from recruiting and vacancy through ramp-up, knowledge transfer, and context recovery.',
-    calculatorPath: '/tools/cost-of-turnover',
-    calculatorLabel: 'Turnover cost calculator',
-    readingTime: '8 min read',
-    listeningTime: '9 min listen',
-    audioPath: '/article-review-narration/cost-of-employee-turnover.mp3',
-    railPoints: ['Vacancy', 'Hiring', 'Ramp-up', 'Knowledge loss'],
-  },
-  {
-    slug: 'cost-of-rework',
-    title: 'How to Calculate the Cost of Rework',
-    eyebrow: 'Business operations',
-    description: 'Put a boundary around repeated work, then calculate labor, coordination, documented nonlabor cost, and the portion the organization can reasonably influence.',
-    calculatorPath: '/tools/rework-cost-calculator',
-    calculatorLabel: 'Rework cost calculator',
-    readingTime: '8 min read',
-    listeningTime: '9 min listen',
-    audioPath: '/article-review-narration/cost-of-rework.mp3',
-    railPoints: ['Repeated labor', 'Coordination', 'Nonlabor cost', 'Influenceable share'],
-  },
-];
 
 function slugify(value = '') {
   return value
@@ -169,6 +119,7 @@ function ArticleIndex({ reviewMode = false }) {
               </div>
               <h2>{article.title}</h2>
               <p>{article.description}</p>
+              <p className="article-review-card-author">By {article.author.name}, {article.author.role}</p>
               <div className="article-review-card-footer">
                 <span><Clock3 size={15} aria-hidden="true" /> {article.readingTime}</span>
                 <span className="article-review-open">Read article <ArrowRight size={16} aria-hidden="true" /></span>
@@ -223,6 +174,11 @@ function ArticleDraft({ article, reviewMode = false }) {
     headline: article.title,
     description: article.description,
     mainEntityOfPage: `https://jaspen.ai/articles/${article.slug}`,
+    author: {
+      '@type': 'Person',
+      name: article.author.name,
+      jobTitle: article.author.role,
+    },
     publisher: {
       '@type': 'Organization',
       name: 'Jaspen',
@@ -283,22 +239,12 @@ function ArticleDraft({ article, reviewMode = false }) {
               {article.railPoints.map((point) => <li key={point}>{point}</li>)}
               </ul>
             </div>
-          <div className="article-draft-ad-stack" aria-label="Reserved advertisement placements">
-            {['300 × 600', '300 × 250', '300 × 600'].map((size, index) => (
-              <div className={`article-draft-ad-slot article-draft-ad-slot-${index + 1}`} key={`${size}-${index}`}>
-                <span>Advertisement</span>
-                <div>
-                  <strong>Reserved ad placement</strong>
-                  <small>{size}</small>
-                </div>
-              </div>
-            ))}
-          </div>
         </aside>
         <article className="article-draft-paper">
           <div className="article-draft-byline">
             <div>
               <span>{article.eyebrow}</span>
+              <span>By {article.author.name}, {article.author.role}</span>
               <span><Clock3 size={14} aria-hidden="true" /> {article.readingTime}</span>
             </div>
             {article.audioPath ? (

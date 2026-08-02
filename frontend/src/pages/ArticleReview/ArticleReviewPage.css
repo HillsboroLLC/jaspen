@@ -137,6 +137,14 @@
   line-height: 1.65;
 }
 
+.article-review-card > article > .article-review-card-author {
+  margin-top: 20px;
+  color: #161f3b;
+  font-size: .78rem;
+  font-weight: 750;
+  letter-spacing: .01em;
+}
+
 .article-review-card-footer {
   margin-top: auto;
   padding-top: 34px;
@@ -261,40 +269,6 @@
 .article-draft-rail-summary li { position: relative; padding-left: 13px; }
 .article-draft-rail-summary li::before { position: absolute; top: .5em; left: 0; width: 5px; height: 5px; border-radius: 50%; background: #a0036c; content: ''; }
 
-.article-draft-ad-stack {
-  display: grid;
-  flex: 1;
-  align-content: space-between;
-  gap: 28px;
-  margin-top: 28px;
-  padding-bottom: clamp(260px, 11vw, 460px);
-}
-
-.article-draft-ad-slot {
-  display: grid;
-  grid-template-rows: auto 1fr;
-  min-height: 520px;
-  padding: 13px;
-  border: 1px dashed #b9c5d8;
-  border-radius: 4px;
-  background: rgba(255,255,255,.5);
-  color: #8791a6;
-  text-align: center;
-}
-
-.article-draft-ad-slot-2 { min-height: 250px; }
-
-.article-draft-ad-slot > span {
-  font-size: .58rem;
-  font-weight: 800;
-  letter-spacing: .12em;
-  text-transform: uppercase;
-}
-
-.article-draft-ad-slot > div { display: grid; align-content: center; gap: 4px; }
-.article-draft-ad-slot strong { color: #65728b; font-size: .78rem; }
-.article-draft-ad-slot small { font-size: .68rem; }
-
 .article-draft-paper {
   min-width: 0;
   color: #34425e;
@@ -320,6 +294,7 @@
 .article-draft-byline > div {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 18px;
 }
 
@@ -496,8 +471,6 @@
 
 @media (max-width: 1040px) {
   .article-draft-shell { grid-template-columns: 230px minmax(0, 720px); gap: 38px; }
-  .article-draft-ad-slot { min-height: 440px; }
-  .article-draft-ad-slot-2 { min-height: 220px; }
 }
 
 @media (max-width: 850px) {
