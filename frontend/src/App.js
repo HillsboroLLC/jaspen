@@ -103,9 +103,12 @@ function AnimatedAppRoutes({ withShell }) {
             <Route path="/pages/resources/tutorials" element={withShell(<TutorialsPage />, { title: 'Tutorials', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/pages/resources/connectors" element={withShell(<ConnectorsPage />, { title: 'Connectors', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/pages/resources/plugins" element={withShell(<PluginsPage />, { title: 'Plugins', showHeader: false, fullBleed: true, noPadding: true })} />
-            <Route path="/thinking-power" element={withShell(<FounderCampaignPage campaignKey="consultants" />, { title: 'The Jaspen Advantage for consultants', showHeader: false, fullBleed: true, noPadding: true })} />
-            <Route path="/thinking-power/portfolio" element={withShell(<FounderCampaignPage campaignKey="portfolio" />, { title: 'The Jaspen Advantage for portfolio leaders', showHeader: false, fullBleed: true, noPadding: true })} />
-            <Route path="/thinking-power/strategic-planning" element={withShell(<FounderCampaignPage campaignKey="strategic-planning" />, { title: 'Strategic Planning and Annual Operating Planning (AOP)', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/limited-time/client-decisions" element={withShell(<FounderCampaignPage campaignKey="consultants" />, { title: 'Evidence-Based Client Decision Tool for Consultants', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/limited-time/project-prioritization" element={withShell(<FounderCampaignPage campaignKey="portfolio" />, { title: 'Project Portfolio Prioritization for PMO Leaders', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/limited-time/strategic-planning" element={withShell(<FounderCampaignPage campaignKey="strategic-planning" />, { title: 'Strategic Planning and Annual Operating Planning (AOP)', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/thinking-power" element={<Navigate to="/limited-time/client-decisions" replace />} />
+            <Route path="/thinking-power/portfolio" element={<Navigate to="/limited-time/project-prioritization" replace />} />
+            <Route path="/thinking-power/strategic-planning" element={<Navigate to="/limited-time/strategic-planning" replace />} />
             <Route path="/calculators" element={withShell(<CalculatorsHubPage />, { title: 'Free Calculators', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/articles" element={withShell(<ArticleReviewPage />, { title: 'Jaspen Articles', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/articles/:slug" element={withShell(<ArticleReviewPage />, { title: 'Jaspen Articles', showHeader: false, fullBleed: true, noPadding: true })} />

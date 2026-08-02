@@ -46,12 +46,14 @@ describe.each(Object.values(FOUNDER_CAMPAIGNS))('$id campaign page', (campaign) 
     expect(h1s[0]).toHaveTextContent(campaign.heroTitle);
     expect(screen.getByRole('navigation', { name: 'Campaign navigation' })).toBeInTheDocument();
     expect(screen.getByRole('main')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { level: 2, name: '300,000 Thinking Power credits' })).toBeInTheDocument();
+    expect(screen.getAllByText('Limited-time offer').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByRole('heading', { level: 2, name: '300,000 AI-Powered Usage Credits' })).toBeInTheDocument();
+    expect(screen.getByText('$999 once. No subscription. Credits never expire.')).toBeInTheDocument();
     expect(screen.getAllByText(/\$999 once\. No subscription required\./).length).toBeGreaterThanOrEqual(2);
     expect(
       screen.getAllByRole('button', { name: `${campaign.primaryCta} · $999` }).length
     ).toBeGreaterThanOrEqual(2);
-    expect(screen.getAllByText(/300,000 Thinking Power credits/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/300,000 AI-Powered Usage Credits/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Approximately ~750–1,200 typical project evaluations/).length).toBeGreaterThan(0);
     expect(
       screen.getAllByText(/Compare up to 30 projects in one focused session/).length

@@ -69,7 +69,7 @@ export const SHARED_OFFER_ITEMS = [
 ];
 
 export const SHARED_OFFER_DISCLOSURES = [
-  'The Jaspen Advantage is for individual use and does not require an Essential subscription.',
+  'This limited-time offer is for individual use and does not require an Essential subscription.',
   'The 300,000 usage credits do not expire, remain available until used, and do not renew or replenish each month.',
   'The purchase and credits are personal to the buyer. They cannot be transferred, assigned, pooled, or shared with another user or workspace.',
   'If you later join a Team, Business, or Enterprise workspace, this promotional balance remains personal to your account.',
@@ -79,8 +79,8 @@ export const SHARED_OFFER_DISCLOSURES = [
 
 export const SHARED_FAQ = [
   {
-    q: 'What is The Jaspen Advantage?',
-    a: 'It is a limited launch offer for an individual Jaspen account with 300,000 non-expiring usage credits for $999 once. It is not a subscription or a separate product.',
+    q: 'What is included in the limited-time offer?',
+    a: 'You receive 300,000 non-expiring AI-powered usage credits for your individual Jaspen account for $999 once. No subscription is created.',
   },
   {
     q: 'What are usage credits?',
@@ -91,7 +91,7 @@ export const SHARED_FAQ = [
     a: 'It is based on reasonable estimates for a typical evaluation that includes framing the project, refining a rubric, reviewing evidence, generating a scorecard, reviewing the recommendation, and creating an initial execution plan. Actual usage varies.',
   },
   { q: 'Do the 300,000 credits expire?', a: 'No. They remain available to the purchaser until used, subject to the current Jaspen terms and account status.' },
-  { q: 'Is a subscription required?', a: 'No. The Jaspen Advantage is a one-time purchase and does not enroll you in Essential or another recurring plan.' },
+  { q: 'Is a subscription required?', a: 'No. This is a one-time purchase and does not enroll you in Essential or another recurring plan.' },
   { q: 'Do the credits renew every month?', a: 'No. The balance does not renew or replenish, and there is no automatic renewal.' },
   { q: 'Can the credits be shared with a team?', a: 'No. The purchase and promotional credits are personal to the buyer and cannot be transferred, pooled, or shared.' },
   { q: 'What happens if I later upgrade to Team, Business, or Enterprise?', a: 'Your promotional balance remains personal to your account. Team or organization allowances remain governed by that plan.' },
@@ -105,7 +105,7 @@ export const SHARED_FAQ = [
 const consultantCampaign = {
   id: 'advantage_consultants',
   key: 'consultants',
-  path: '/thinking-power',
+  path: '/limited-time/client-decisions',
   theme: 'consultants',
   eyebrow: 'For independent consultants & fractional executives',
   heroTitle: 'Give clients more than a recommendation. Show them why.',
@@ -174,7 +174,7 @@ const consultantCampaign = {
 const portfolioCampaign = {
   id: 'advantage_pmo',
   key: 'portfolio',
-  path: '/thinking-power/portfolio',
+  path: '/limited-time/project-prioritization',
   theme: 'portfolio',
   eyebrow: 'For PMO, portfolio & transformation leaders',
   heroTitle: 'Rank the work before you resource it.',
@@ -258,7 +258,7 @@ const portfolioCampaign = {
 const strategyCampaign = {
   id: 'advantage_strategic_planning_aop',
   key: 'strategic-planning',
-  path: '/thinking-power/strategic-planning',
+  path: '/limited-time/strategic-planning',
   theme: 'strategy',
   eyebrow: 'For strategy and planning leaders',
   heroTitle: 'Turn the planning list into a clear order.',

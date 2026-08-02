@@ -27,7 +27,7 @@ function structuredData(campaign) {
     {
       '@context': 'https://schema.org',
       '@type': 'Product',
-      name: `The Jaspen Advantage for ${campaign.eyebrow.replace(/^For /, '')}`,
+      name: `300,000 AI-Powered Usage Credits for ${campaign.eyebrow.replace(/^For /, '')}`,
       description: campaign.seo.description,
       brand: { '@type': 'Brand', name: 'Jaspen' },
       offers: {
@@ -81,9 +81,9 @@ function CampaignHeader({ campaign, onCta }) {
         <Link to="/" className="fc-brand" aria-label="Jaspen home">Jaspen</Link>
         <nav className="fc-header__nav" aria-label="Campaign navigation">
           <a href="#workflow">How it works</a>
-          <a href="#jaspen-advantage">The Jaspen Advantage</a>
+          <a href="#limited-time-offer">Limited-time offer</a>
           <button type="button" className="fc-button fc-button--nav" onClick={onCta}>
-            Get The Jaspen Advantage
+            View limited-time offer
           </button>
         </nav>
       </div>
@@ -104,17 +104,16 @@ function Hero({ campaign, onCta }) {
         </div>
 
         <aside className="fc-hero-offer" aria-labelledby="fc-hero-offer-title">
-          <p className="fc-hero-offer__eyebrow">The Jaspen Advantage</p>
-          <h2 id="fc-hero-offer-title">300,000 Thinking Power credits</h2>
+          <p className="fc-hero-offer__eyebrow">Limited-time offer</p>
+          <h2 id="fc-hero-offer-title">300,000 AI-Powered Usage Credits</h2>
+          <p className="fc-hero-offer__lead">$999 once. No subscription. Credits never expire.</p>
           <ul>
             <li><CheckIcon /><span>Approximately {FOUNDER_PROJECT_ESTIMATE}</span></li>
-            <li><CheckIcon /><span>No subscription required</span></li>
             <li><CheckIcon /><span>Compare up to 30 projects in one focused session</span></li>
-            <li><CheckIcon /><span>Personal credits remain available until used</span></li>
+            <li><CheckIcon /><span>Personal, non-transferable credits remain available until used</span></li>
             <li><CheckIcon /><span>Downloadable decision assets</span></li>
           </ul>
           <PrimaryButton campaign={campaign} onClick={onCta} showPrice />
-          <p className="fc-hero-offer__price-note">$999 once. No subscription required.</p>
           <p className="fc-hero-offer__disclosure">
             Individual, non-transferable use. No auto renewal or monthly replenishment.
           </p>
@@ -253,12 +252,12 @@ function UsesAndAssets({ campaign }) {
 
 function FounderOffer({ campaign, onCta }) {
   return (
-    <section className="fc-section fc-offer" id="jaspen-advantage">
+    <section className="fc-section fc-offer" id="limited-time-offer">
       <div className="fc-container">
         <div className="fc-offer__heading">
           <div>
-            <p className="fc-kicker">The Jaspen Advantage</p>
-            <h2>Enough Thinking Power to keep doing the work.</h2>
+            <p className="fc-kicker">Limited-time offer</p>
+            <h2>300,000 AI-Powered Usage Credits for $999 once.</h2>
           </div>
           <p>
             A limited launch offer for individual, self-directed work inside Jaspen. No monthly subscription and no automatic renewal.
@@ -290,7 +289,7 @@ function FounderOffer({ campaign, onCta }) {
           </div>
         </div>
 
-        <div className="fc-disclosures" aria-label="Jaspen Advantage disclosures">
+        <div className="fc-disclosures" aria-label="Limited-time offer disclosures">
           <h3>Before you purchase</h3>
           <ul>
             {SHARED_OFFER_DISCLOSURES.map((item) => <li key={item}>{item}</li>)}
@@ -309,7 +308,7 @@ function CreditComparison() {
           <p className="fc-kicker">Credit capacity comparison</p>
           <h2>About 43 months of Essential credit capacity.</h2>
           <p>
-            Essential currently includes 7,000 monthly credits. The Jaspen Advantage gives
+            Essential currently includes 7,000 monthly credits. This limited-time offer gives
             you 300,000 non-expiring credits for $999 once. This comparison is credit
             capacity only. Plan features differ.
           </p>

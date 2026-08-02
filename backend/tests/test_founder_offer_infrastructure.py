@@ -172,7 +172,7 @@ def test_advantage_checkout_uses_one_time_price_without_subscription(
     response = client.post(
         '/api/v1/billing/create-jaspen-advantage-checkout',
         headers=auth_headers,
-        json={'campaign_id': 'advantage_pmo', 'return_path': '/thinking-power/portfolio'},
+        json={'campaign_id': 'advantage_pmo', 'return_path': '/limited-time/project-prioritization'},
     )
 
     assert response.status_code == 200

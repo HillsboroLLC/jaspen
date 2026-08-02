@@ -844,14 +844,14 @@ def create_subscription_embedded():
     }), 200
 
 
-# —— The Jaspen Advantage one-time checkout (/thinking-power landing pages) ————
+# —— Standalone limited-time credit checkout ————
 JASPEN_ADVANTAGE_CHECKOUT_TYPE = 'jaspen_advantage'
 
 
 @billing_bp.route('/create-jaspen-advantage-checkout', methods=['POST'])
 @jwt_required()
 def create_jaspen_advantage_checkout():
-    """Create a standalone one-time Checkout Session for The Jaspen Advantage."""
+    """Create a standalone one-time Checkout Session for the limited-time credit offer."""
     user = User.query.get(get_jwt_identity())
     if not user:
         return jsonify({'msg': 'User not found'}), 404
@@ -859,16 +859,16 @@ def create_jaspen_advantage_checkout():
     data = request.get_json() or {}
     price_id = current_app.config.get('STRIPE_JASPEN_ADVANTAGE_PRICE_ID')
     if not price_id:
-        return jsonify({'msg': 'The Jaspen Advantage price is not configured yet.'}), 503
+        return jsonify({'msg': 'The limited-time offer price is not configured yet.'}), 503
     credit_tokens = int(current_app.config.get('JASPEN_ADVANTAGE_CREDIT_TOKENS') or 0)
     if credit_tokens <= 0:
-        return jsonify({'msg': 'The Jaspen Advantage credit amount is not configured.'}), 503
+        return jsonify({'msg': 'The limited-time offer credit amount is not configured.'}), 503
 
-    return_path = str(data.get('return_path') or '/thinking-power').strip()
+    return_path = str(data.get('return_path') or '/limited-time/client-decisions').strip()
     allowed_return_paths = {
-        '/thinking-power',
-        '/thinking-power/portfolio',
-        '/thinking-power/strategic-planning',
+        '/limited-time/client-decisions',
+        '/limited-time/project-prioritization',
+        '/limited-time/strategic-planning',
     }
     if return_path not in allowed_return_paths:
         return jsonify({'msg': 'Invalid campaign return path.'}), 400

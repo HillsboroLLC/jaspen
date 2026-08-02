@@ -18,9 +18,9 @@ const campaigns = Object.values(FOUNDER_CAMPAIGNS);
 describe('Founder campaign content', () => {
   it('defines three distinct audience routes, metadata records, and analytics identifiers', () => {
     expect(campaigns.map((campaign) => campaign.path)).toEqual([
-      '/thinking-power',
-      '/thinking-power/portfolio',
-      '/thinking-power/strategic-planning',
+      '/limited-time/client-decisions',
+      '/limited-time/project-prioritization',
+      '/limited-time/strategic-planning',
     ]);
     expect(new Set(campaigns.map((campaign) => campaign.id)).size).toBe(3);
     expect(new Set(campaigns.map((campaign) => campaign.seo.title)).size).toBe(3);
@@ -32,7 +32,7 @@ describe('Founder campaign content', () => {
     ]);
   });
 
-  it('keeps The Jaspen Advantage values and limitations consistent across every variant', () => {
+  it('keeps the limited-time offer values and limitations consistent across every variant', () => {
     expect(FOUNDER_PRICE).toBe(999);
     expect(FOUNDER_CREDITS).toBe('300,000');
     expect(FOUNDER_PROJECT_ESTIMATE).toBe('~750–1,200 typical project evaluations over the life of the credit balance');
@@ -84,6 +84,7 @@ describe('Founder campaign content', () => {
     expect(copy).not.toMatch(/\bSTRAT\b/);
     expect(copy).not.toContain('—');
     expect(copy).not.toMatch(/recommendation you can defend|defensible recommendation/i);
+    expect(copy).not.toMatch(/The Jaspen Advantage/i);
     expect(copy).toContain('downloadable decision assets');
   });
 

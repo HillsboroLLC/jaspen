@@ -533,7 +533,15 @@
   font-size: 28px;
   letter-spacing: -0.035em;
   line-height: 1.08;
-  margin-bottom: 22px;
+  margin-bottom: 12px;
+}
+
+.fc-hero-offer__lead {
+  color: var(--fc-ink);
+  font-size: 15px;
+  font-weight: 760;
+  line-height: 1.45;
+  margin: 0 0 22px;
 }
 
 .fc-hero-offer ul {
@@ -562,14 +570,6 @@
 
 .fc-hero-offer .fc-button {
   width: 100%;
-}
-
-.fc-hero-offer__price-note {
-  color: var(--fc-muted);
-  font-size: 12px;
-  font-weight: 650;
-  margin: 9px 0 0;
-  text-align: center;
 }
 
 .fc-hero-offer__disclosure {

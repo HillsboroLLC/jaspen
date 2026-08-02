@@ -135,7 +135,7 @@ function PurchaseStep({ campaignId, returnPath }) {
   );
 }
 
-export default function ThinkingPowerCheckout({ onClose, campaignId = '', returnPath = '/thinking-power' }) {
+export default function ThinkingPowerCheckout({ onClose, campaignId = '', returnPath = '/limited-time/client-decisions' }) {
   const { user } = useAuth();
   const closeRef = useRef(null);
 
@@ -151,7 +151,7 @@ export default function ThinkingPowerCheckout({ onClose, campaignId = '', return
       <div role="dialog" aria-modal="true" aria-labelledby="advantage-checkout-title" className="fc-checkout-dialog">
         <div className="fc-checkout-header">
           <div>
-            <span>The Jaspen Advantage</span>
+            <span>Limited-time offer</span>
             <h2 id="advantage-checkout-title">${ADVANTAGE_PRICE} once. No subscription.</h2>
             <p>{user ? 'Review the offer, then continue to Stripe.' : 'Create or sign in to your personal Jaspen account.'}</p>
           </div>

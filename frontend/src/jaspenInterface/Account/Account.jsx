@@ -2522,7 +2522,7 @@ export default function Account() {
               </p>
               {(status?.has_jaspen_advantage || status?.is_founder) && (
                 <p style={{ fontSize: '0.8rem', color: '#475569', margin: '8px 0 0' }}>
-                  The Jaspen Advantage: {ADVANTAGE_THINKING_POWER_SUMMARY}
+                  Limited-time credit balance: {ADVANTAGE_THINKING_POWER_SUMMARY}
                 </p>
               )}
               <p style={{ fontSize: '0.72rem', color: '#64748b', margin: '8px 0 0' }}>
