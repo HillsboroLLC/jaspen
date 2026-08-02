@@ -242,10 +242,12 @@ function ArticleDraft({ article, reviewMode = false }) {
         </aside>
         <article className="article-draft-paper">
           <div className="article-draft-byline">
-            <div>
-              <span>{article.eyebrow}</span>
-              <span>By {article.author.name}, {article.author.role}</span>
-              <span><Clock3 size={14} aria-hidden="true" /> {article.readingTime}</span>
+            <div className="article-draft-meta">
+              <div className="article-draft-credit">
+                <span className="article-draft-category">{article.eyebrow}</span>
+                <span className="article-draft-author">By {article.author.name}, {article.author.role}</span>
+              </div>
+              <span className="article-draft-reading-time"><Clock3 size={14} aria-hidden="true" /> {article.readingTime}</span>
             </div>
             {article.audioPath ? (
               <>

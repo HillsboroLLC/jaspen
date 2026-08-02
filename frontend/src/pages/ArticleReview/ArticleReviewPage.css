@@ -291,11 +291,15 @@
   text-transform: uppercase;
 }
 
-.article-draft-byline > div {
+.article-draft-meta {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
   gap: 18px;
+}
+
+.article-draft-credit {
+  display: grid;
+  gap: 4px;
 }
 
 .article-draft-byline span {
@@ -304,7 +308,8 @@
   gap: 6px;
 }
 
-.article-draft-byline > div span:first-child { color: #a0036c; }
+.article-draft-category { color: #a0036c; }
+.article-draft-author { letter-spacing: .055em; }
 
 .article-draft-byline button {
   display: inline-flex;
