@@ -350,6 +350,53 @@ def test_apply_300k_limited_time_coupon_fully_covered_grants_credits_for_free(
     assert entitlement is not None
 
 
+def test_apply_300k_limited_time_coupon_rejects_a_code_that_does_not_discount(
+    client, app, auth_headers, test_user, monkeypatch
+):
+    """A code Stripe knows but that carries no usable discount must not read as success."""
+    from app.routes import billing
+
+    app.config['STRIPE_LIMITED_TIME_300K_PRICE_ID'] = 'price_limited_time_300k_999'
+    monkeypatch.setattr(
+        billing.stripe.PaymentIntent, 'retrieve',
+        lambda payment_intent_id: {
+            'id': payment_intent_id,
+            'status': 'requires_payment_method',
+            'metadata': {
+                'user_id': str(test_user.id),
+                'checkout_type': billing.LIMITED_TIME_300K_CHECKOUT_TYPE,
+                'tokens': '300000000',
+            },
+        },
+    )
+    monkeypatch.setattr(
+        billing.stripe.Price, 'retrieve',
+        lambda price_id: {'id': price_id, 'unit_amount': 99900, 'currency': 'usd'},
+    )
+    # A coupon with neither percent_off nor a usable amount_off (mismatched currency).
+    monkeypatch.setattr(
+        billing.stripe.PromotionCode, 'list',
+        lambda code, active, limit: {'data': [{
+            'id': 'promo_nodiscount',
+            'coupon': {'valid': True, 'percent_off': None, 'amount_off': 5000, 'currency': 'eur'},
+        }]},
+    )
+
+    def fail_modify(payment_intent_id, **kwargs):
+        raise AssertionError('should not re-price when the coupon yields no discount')
+
+    monkeypatch.setattr(billing.stripe.PaymentIntent, 'modify', fail_modify)
+
+    response = client.post(
+        '/api/v1/billing/apply-300k-limited-time-coupon',
+        headers=auth_headers,
+        json={'payment_intent_id': 'pi_limited_time_300k_abc', 'coupon_code': 'NODISCOUNT'},
+    )
+
+    assert response.status_code == 400
+    assert 'does not reduce the price' in response.get_json()['msg']
+
+
 def test_apply_300k_limited_time_coupon_rejects_unknown_code(
     client, app, auth_headers, test_user, monkeypatch
 ):

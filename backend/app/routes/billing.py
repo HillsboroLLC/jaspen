@@ -988,6 +988,28 @@ def _price_label(amount):
     return f"${amount // 100}" if amount % 100 == 0 else f"${amount / 100:.2f}"
 
 
+def _log_coupon_diagnostics(coupon_code, promotion_code_id, coupon, currency, base_amount):
+    """TEMPORARY: record how Stripe actually described a promo code.
+
+    Journald needs root here, so this also appends to a file the app user can
+    read while we track down a promo code that applies without discounting.
+    Remove once the 300K coupon flow is confirmed working in production.
+    """
+    detail = (
+        f"code={coupon_code} promo={promotion_code_id} "
+        f"percent_off={coupon.get('percent_off')!r} amount_off={coupon.get('amount_off')!r} "
+        f"coupon_currency={coupon.get('currency')!r} price_currency={currency!r} "
+        f"valid={coupon.get('valid')!r} base_amount={base_amount} "
+        f"keys={sorted([str(k) for k in coupon.keys()])[:20]}"
+    )
+    current_app.logger.info('300k-limited-time coupon resolve: %s', detail)
+    try:
+        with open('/tmp/jaspen-coupon-debug.log', 'a') as handle:
+            handle.write(f"{datetime.utcnow().isoformat()}Z {detail}\n")
+    except Exception:
+        pass
+
+
 def _resolve_300k_limited_time_amount(price_id, coupon_code):
     """Returns (amount, currency, promotion_code_id, error_response).
 
@@ -1018,11 +1040,20 @@ def _resolve_300k_limited_time_amount(price_id, coupon_code):
             if not coupon.get('valid', True):
                 return None, None, None, ('That coupon code is no longer valid.', 400)
             promotion_code_id = promotion.get('id')
+            _log_coupon_diagnostics(coupon_code, promotion_code_id, coupon, currency, amount)
+            base_amount = amount
             if coupon.get('percent_off'):
                 amount = round(amount * (1 - float(coupon['percent_off']) / 100))
             elif coupon.get('amount_off') and (coupon.get('currency') or currency) == currency:
                 amount = amount - int(coupon['amount_off'])
             amount = max(0, amount)
+            if amount == base_amount:
+                # The code exists but produced no discount (no percent_off /
+                # amount_off, or a mismatched currency). Say so rather than
+                # silently re-quoting full price, which reads as a broken Apply.
+                return None, None, None, (
+                    'That code was found but does not reduce the price of this offer.', 400,
+                )
         except stripe.error.StripeError as exc:
             current_app.logger.warning('300k-limited-time: coupon lookup failed: %s', exc)
             return None, None, None, ('Could not validate that coupon code. Please try again.', 400)
