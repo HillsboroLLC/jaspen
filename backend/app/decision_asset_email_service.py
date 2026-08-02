@@ -330,7 +330,7 @@ p,li{{font-size:15px}}ol,ul{{padding-left:22px}}.top{{border-left:4px solid #a00
     return text_body, html_body
 
 
-def _build_scorecard_detail_summary(scorecard):
+def _build_scorecard_detail_summary(scorecard, *, workspace_url=None):
     """Summary for a single-scorecard email that mirrors the on-screen
     Workspace card layout (SCORE / EXECUTIVE SUMMARY / DIMENSIONS / TOP RISKS
     / any custom blocks) - as opposed to the multi-peer "why this order"
@@ -380,6 +380,7 @@ def _build_scorecard_detail_summary(scorecard):
         "risks": risks,
         "recommended": recommended,
         "custom_blocks": custom_blocks,
+        "workspace_url": workspace_url,
     }
 
 
@@ -403,6 +404,8 @@ def render_scorecard_detail_email(summary):
         text_lines += ["", block["heading"].upper(), block["body"]]
     if summary["recommended"]:
         text_lines += ["", "RECOMMENDATION", summary["recommended"]]
+    if summary.get("workspace_url"):
+        text_lines += ["", f"Open in Jaspen (view, edit, or download PowerPoint): {summary['workspace_url']}"]
     text_body = "\n".join(text_lines)
 
     def bar_row(dim):
@@ -446,6 +449,13 @@ def render_scorecard_detail_email(summary):
 
     category_badge = f"""<div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:{accent};text-transform:uppercase;margin-bottom:6px">{html.escape(summary['category'])}</div>""" if summary["category"] else ""
 
+    workspace_url = summary.get("workspace_url")
+    workspace_cta = f"""
+<div style="text-align:center;margin-bottom:16px">
+<a href="{html.escape(workspace_url)}" style="display:inline-block;background:{accent};color:#fff;text-decoration:none;font-size:14px;font-weight:700;padding:12px 24px;border-radius:8px">Open in Jaspen</a>
+<div style="font-size:11px;color:#94a3b8;margin-top:8px">View, edit, or download PowerPoint</div>
+</div>""" if workspace_url else ""
+
     html_body = f"""<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{html.escape(summary['project_name'])}</title>
@@ -476,6 +486,7 @@ def render_scorecard_detail_email(summary):
   {risks_section}
   {custom_blocks_html}
   {recommendation_section}
+  {workspace_cta}
 
   <div style="padding:14px 4px;color:#94a3b8;font-size:11px">Sent from Jaspen &middot; jaspen.ai</div>
 </div>
@@ -535,23 +546,15 @@ def _build_attachments(context, output_types):
     base = _safe_filename_base(scorecard.get("project_name"))
 
     # scorecard_detail deliveries use the HTML-body-matches-the-workspace email
-    # (see render_scorecard_detail_email) plus a PowerPoint attachment so the
-    # recipient has something presentation-ready. The server-rendered PDF is a
-    # separately hand-built template that doesn't reflect the on-screen block
-    # layout (and the client print/PDF path isn't reliable either), so no PDF
-    # is attached here.
+    # (see render_scorecard_detail_email) with a link back into Jaspen for the
+    # PowerPoint download rather than a raw attachment. A ~30-40KB base64
+    # attachment embedded in the same message pushes many scorecards over
+    # Gmail's ~102KB clip threshold, which collapses the visible body behind
+    # a "..." the recipient has to click to expand - the friction this is
+    # avoiding. The server-rendered PDF is a separately hand-built template
+    # that doesn't reflect the on-screen block layout (and the client
+    # print/PDF path isn't reliable either), so no PDF is attached here.
     if "scorecard_detail" in output_types:
-        try:
-            pptx = _pptx_bytes(scorecard, org=org)
-        except Exception as exc:
-            raise DeliveryError("artifact_generation_failed") from exc
-        if not pptx:
-            raise DeliveryError("artifact_generation_failed")
-        attachments.append(EmailAttachment(
-            f"{base}-scorecard.pptx",
-            PPTX_MIMETYPE,
-            pptx,
-        ))
         return attachments
 
     if {"scorecards", "ranked_ideas", "tradeoff"}.intersection(output_types):
@@ -622,7 +625,9 @@ def process_delivery(delivery_id):
         delivery.evaluation_id = evaluation_id_for_scorecard(user.id, context["scorecard_id"])
         output_types = set(delivery.output_types or [])
         if "scorecard_detail" in output_types:
-            summary = _build_scorecard_detail_summary(context["scorecard"])
+            frontend_base = (current_app.config.get("FRONTEND_BASE_URL") or "https://jaspen.ai").rstrip("/")
+            workspace_url = f"{frontend_base}/workspace/{delivery.thread_id}/{context['scorecard_id']}"
+            summary = _build_scorecard_detail_summary(context["scorecard"], workspace_url=workspace_url)
             text_body, html_body = render_scorecard_detail_email(summary)
             subject = f"Your Jaspen scorecard: {summary['project_name']}"
         else:
