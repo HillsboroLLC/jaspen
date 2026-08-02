@@ -370,7 +370,18 @@ def _google_callback_url():
     return f"{request.url_root.rstrip('/')}/api/v1/auth/google/callback"
 
 
-def _verification_result_url(status):
+def _verification_result_url(status, next_path=None):
+    if status == 'verified' and next_path:
+        # Return the user to wherever they started (e.g. a limited-time offer
+        # checkout, which reopens the payment step via ?limited_time_checkout=
+        # resume) instead of the generic homepage, with verified=1 merged into
+        # whatever query string that path already carries.
+        safe_path = _safe_next_path(next_path)
+        parsed = urlparse(safe_path)
+        query = parse_qs(parsed.query)
+        query['verified'] = ['1']
+        rebuilt_query = urlencode(query, doseq=True)
+        return f"{_frontend_base_url()}{parsed.path}{'?' + rebuilt_query if rebuilt_query else ''}"
     params = {'auth': '1'}
     if status == 'verified':
         params['verified'] = '1'
@@ -387,13 +398,15 @@ def _password_reset_ttl_seconds():
     return int(current_app.config.get('PASSWORD_RESET_TOKEN_TTL_SECONDS') or 3600)
 
 
-def _build_email_verification_token(user, *, pending_plan=None):
+def _build_email_verification_token(user, *, pending_plan=None, next_path=None):
     payload = {
         'user_id': str(user.id),
         'email': str(user.email or '').strip().lower(),
     }
     if pending_plan:
         payload['pending_plan'] = normalize_plan_key(pending_plan)
+    if next_path:
+        payload['next_path'] = _safe_next_path(next_path)
     return _email_verification_serializer().dumps(payload)
 
 
@@ -571,8 +584,8 @@ def _mark_user_email_verified(user):
     return changed
 
 
-def _send_email_verification_email(user, url_root=None, *, pending_plan=None):
-    token = _build_email_verification_token(user, pending_plan=pending_plan)
+def _send_email_verification_email(user, url_root=None, *, pending_plan=None, next_path=None):
+    token = _build_email_verification_token(user, pending_plan=pending_plan, next_path=next_path)
     verification_link = _email_verification_link(token, url_root=url_root)
     ttl_hours = _email_verification_ttl_seconds() // 3600
     msg = Message(
@@ -788,6 +801,7 @@ def signup():
     email = data.get('email', '').strip().lower()
     password = data.get('password', '')
     requested_plan = 'free'
+    next_path = str(data.get('next_path') or '').strip() or None
     referral_code = _normalize_referral_code(
         data.get('referral_code') or data.get('invite_code')
     )
@@ -858,6 +872,7 @@ def signup():
                         _send_email_verification_email(
                             target_user,
                             url_root=captured_url_root,
+                            next_path=next_path,
                         )
                         db.session.commit()
                 except Exception:
@@ -1383,7 +1398,8 @@ def verify_email():
     db.session.commit()
 
     if request.method == 'GET':
-        return redirect(_verification_result_url('verified'), code=302)
+        next_path = decoded.get('next_path') if isinstance(decoded, dict) else None
+        return redirect(_verification_result_url('verified', next_path=next_path), code=302)
     return jsonify(
         message='Email verified successfully.',
         verified=True,

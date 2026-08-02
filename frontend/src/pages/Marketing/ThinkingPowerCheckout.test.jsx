@@ -27,7 +27,7 @@ describe('Limited-time offer checkout acknowledgements', () => {
   it('requires the terms acknowledgement before account creation', () => {
     render(<ThinkingPowerCheckout onClose={() => {}} />);
 
-    const createButton = screen.getByRole('button', { name: 'Create account and continue' });
+    const createButton = screen.getByRole('button', { name: 'Confirm account' });
     const googleButton = screen.getByRole('button', { name: 'Continue with Google' });
     const terms = screen.getByRole('checkbox', { name: /I have read and agree to the Terms of Service/i });
 

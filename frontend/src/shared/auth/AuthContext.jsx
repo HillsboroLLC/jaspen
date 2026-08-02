@@ -713,6 +713,7 @@ export function AuthProvider({ children }) {
             plan_key: options?.planKey || options?.plan,
           } : {}),
           ...(referralCode ? { referral_code: referralCode } : {}),
+          ...(options?.nextPath ? { next_path: options.nextPath } : {}),
         })
       });
 

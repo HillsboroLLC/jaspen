@@ -85,13 +85,16 @@ function AccountStep({ returnPath }) {
     setSubmitting(true);
     try {
       const result = isSignup
-        ? await signup(normalizedEmail, password, String(name).trim(), { planKey: '300k_limited_time' })
+        ? await signup(normalizedEmail, password, String(name).trim(), {
+          planKey: '300k_limited_time',
+          nextPath: `${returnPath}?limited_time_checkout=resume`,
+        })
         : await login(normalizedEmail, password);
       if (result?.success) return;
       if (result?.mfaRequired) {
         setNotice('Your account uses two-step verification. Sign in first, then reopen this offer to complete your purchase.');
       } else if (result?.verificationRequired) {
-        setNotice(`Check ${normalizedEmail} to verify your account, then reopen this offer to complete payment.`);
+        setNotice(`Check ${normalizedEmail} for a verification link. Click it to continue straight to payment — no need to come back here.`);
       } else {
         setError(result?.error || (isSignup ? 'Unable to create your account right now.' : 'Incorrect email or password.'));
       }
@@ -134,7 +137,7 @@ function AccountStep({ returnPath }) {
           </div>
         )}
         <button type="submit" className="fc-checkout-primary" disabled={submitting || (isSignup && !termsAccepted)}>
-          {submitting ? 'One moment...' : isSignup ? 'Create account and continue' : 'Sign in and continue'}
+          {submitting ? 'One moment...' : isSignup ? 'Confirm account' : 'Sign in and continue'}
         </button>
       </form>
       <p className="fc-checkout-footnote">Next, you'll review and complete the one-time purchase. No subscription is created.</p>
