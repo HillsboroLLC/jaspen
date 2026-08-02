@@ -141,6 +141,36 @@ describe('Limited-time offer checkout acknowledgements', () => {
     expect(screen.getByRole('button', { name: /Pay \$799\.20/ })).toBeInTheDocument();
   });
 
+  it('completes the purchase immediately when a coupon covers the full price', async () => {
+    const user = userEvent.setup();
+    const onSuccess = jest.fn();
+    mockUser = { id: 'user_1', email: 'owner@example.com' };
+    mockAuthFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          client_secret: 'pi_limited_time_300k_abc_secret_xyz',
+          publishable_key: 'pk_test_123',
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ free: true, price_label: '$0.00', granted: true, tokens: 300000000 }),
+      });
+
+    render(<ThinkingPowerCheckout onClose={() => {}} onSuccess={onSuccess} campaignId="limited_time_300k_pmo" returnPath="/limited-time/project-prioritization" />);
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /I have read and agree to the Terms of Service/i }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /all sales are final except for a qualifying Covered Technical Failure/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue to pay $999' }));
+
+    const couponInput = await screen.findByLabelText('Promo code (optional)');
+    await user.type(couponInput, '300KTest');
+    await user.click(screen.getByRole('button', { name: 'Apply' }));
+
+    await waitFor(() => expect(onSuccess).toHaveBeenCalledTimes(1));
+  });
+
   it('links to all policies from the acknowledgement', () => {
     render(<ThinkingPowerCheckout onClose={() => {}} />);
 

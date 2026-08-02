@@ -179,6 +179,14 @@ function PaymentForm({ onSuccess, clientSecret }) {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(data?.msg || 'Could not apply that coupon.');
+      if (data.free) {
+        // The coupon covers the full price - Stripe won't confirm a $0
+        // charge, so there's nothing left for the card form to do.
+        setAppliedCoupon(code);
+        setPriceLabel('$0.00');
+        onSuccess?.();
+        return;
+      }
       setPriceLabel(data.price_label?.startsWith('$') ? data.price_label : `$${data.price_label}`);
       setAppliedCoupon(code);
     } catch (err) {

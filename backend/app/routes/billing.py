@@ -538,6 +538,67 @@ def _fulfill_limited_time_300k_payment_intent(intent, expected_user=None):
     return {'granted': True, 'tokens': tokens, 'user_id': str(user.id)}
 
 
+def _fulfill_limited_time_300k_free_redemption(payment_intent_id, metadata, user):
+    """Grant 300K Limited-Time credits when a coupon covers the full price.
+
+    Stripe won't let a PaymentIntent succeed at $0, so there's no
+    payment_intent.succeeded event to hang fulfillment off of here. This
+    mirrors _fulfill_limited_time_300k_payment_intent's idempotency and
+    grant logic, keyed off the same payment_intent_id, for a coupon that
+    fully covers the price instead of a completed charge.
+    """
+    event_id = _limited_time_300k_payment_event_id(payment_intent_id)
+    event_row = StripeWebhookEvent.query.filter_by(stripe_event_id=event_id).first()
+    if event_row and bool(event_row.processed):
+        return {'granted': False, 'reason': 'already_processed'}
+    if event_row is None:
+        event_row = StripeWebhookEvent(
+            stripe_event_id=event_id,
+            event_type='limited_time_300k.free_redemption',
+            processed=False,
+        )
+        db.session.add(event_row)
+        try:
+            db.session.flush()
+        except IntegrityError:
+            db.session.rollback()
+            event_row = StripeWebhookEvent.query.filter_by(stripe_event_id=event_id).first()
+            if event_row and bool(event_row.processed):
+                return {'granted': False, 'reason': 'already_processed'}
+            if event_row is None:
+                event_row = StripeWebhookEvent(
+                    stripe_event_id=event_id,
+                    event_type='limited_time_300k.free_redemption',
+                    processed=False,
+                )
+                db.session.add(event_row)
+                db.session.flush()
+
+    tokens = int(metadata.get('tokens') or 0)
+    if tokens <= 0:
+        return {'granted': False, 'reason': 'missing_tokens'}
+
+    _entitlement, _grant, created = grant_limited_time_300k_offer(
+        user,
+        tokens,
+        payment_reference=payment_intent_id,
+        checkout_id=payment_intent_id,
+        metadata={
+            'campaign_id': metadata.get('campaign_id'),
+            'stripe_payment_intent_id': payment_intent_id,
+            'fully_covered_by_coupon': 'true',
+        },
+    )
+    get_usage_meter_state(user, current_app.config)
+    event_row.processed = True
+    event_row.processed_at = datetime.utcnow()
+    current_app.logger.info(
+        "300K Limited-Time free redemption: grant created=%s tokens=%s user=%s",
+        created, tokens, user.id,
+    )
+    return {'granted': True, 'tokens': tokens, 'user_id': str(user.id)}
+
+
 @billing_bp.route('/create-credit-pack-payment-intent', methods=['POST'])
 @jwt_required()
 def create_credit_pack_payment_intent():
@@ -961,7 +1022,7 @@ def _resolve_300k_limited_time_amount(price_id, coupon_code):
                 amount = round(amount * (1 - float(coupon['percent_off']) / 100))
             elif coupon.get('amount_off') and (coupon.get('currency') or currency) == currency:
                 amount = amount - int(coupon['amount_off'])
-            amount = max(50, amount)  # Stripe's practical minimum charge for USD-like currencies.
+            amount = max(0, amount)
         except stripe.error.StripeError as exc:
             current_app.logger.warning('300k-limited-time: coupon lookup failed: %s', exc)
             return None, None, None, ('Could not validate that coupon code. Please try again.', 400)
@@ -1072,6 +1133,20 @@ def apply_300k_limited_time_coupon():
     amount, _currency, promotion_code_id, error = _resolve_300k_limited_time_amount(price_id, coupon_code)
     if error:
         return jsonify({'msg': error[0]}), error[1]
+
+    if amount < 50:
+        # Coupon covers the price down to (or below) Stripe's practical
+        # minimum charge for a PaymentIntent, so there's nothing chargeable
+        # left to confirm - waive the remainder rather than reject the coupon.
+        try:
+            stripe.PaymentIntent.cancel(payment_intent_id)
+        except stripe.error.StripeError:
+            pass  # already canceled or otherwise unusable; fulfillment below is idempotent regardless
+        result = _fulfill_limited_time_300k_free_redemption(payment_intent_id, intent_metadata, user)
+        if not result.get('granted') and result.get('reason') not in {None, 'already_processed'}:
+            return jsonify({'msg': 'Could not redeem this offer for free.', **result}), 409
+        db.session.commit()
+        return jsonify({'free': True, 'price_label': '$0.00', **result}), 200
 
     updated_metadata = dict(intent_metadata)
     if promotion_code_id:

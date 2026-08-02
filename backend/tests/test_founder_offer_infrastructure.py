@@ -289,6 +289,67 @@ def test_apply_300k_limited_time_coupon_reprices_the_existing_intent(
     assert modified['metadata']['promotion_code'] == 'LAUNCH20'
 
 
+def test_apply_300k_limited_time_coupon_fully_covered_grants_credits_for_free(
+    client, app, auth_headers, test_user, monkeypatch
+):
+    from app.routes import billing
+
+    app.config['STRIPE_LIMITED_TIME_300K_PRICE_ID'] = 'price_limited_time_300k_999'
+    canceled = {}
+
+    monkeypatch.setattr(
+        billing.stripe.PaymentIntent, 'retrieve',
+        lambda payment_intent_id: {
+            'id': payment_intent_id,
+            'status': 'requires_payment_method',
+            'metadata': {
+                'user_id': str(test_user.id),
+                'checkout_type': billing.LIMITED_TIME_300K_CHECKOUT_TYPE,
+                'tokens': '300000000',
+                'campaign_id': 'limited_time_300k_pmo',
+            },
+        },
+    )
+    monkeypatch.setattr(
+        billing.stripe.Price, 'retrieve',
+        lambda price_id: {'id': price_id, 'unit_amount': 99900, 'currency': 'usd'},
+    )
+    monkeypatch.setattr(
+        billing.stripe.PromotionCode, 'list',
+        lambda code, active, limit: {'data': [{
+            'id': 'promo_300ktest',
+            'coupon': {'valid': True, 'percent_off': 100},
+        }]},
+    )
+
+    def fake_cancel(payment_intent_id):
+        canceled['id'] = payment_intent_id
+
+    monkeypatch.setattr(billing.stripe.PaymentIntent, 'cancel', fake_cancel)
+
+    def fail_modify(payment_intent_id, **kwargs):
+        raise AssertionError('should not modify a payment intent that is fully covered by a coupon')
+
+    monkeypatch.setattr(billing.stripe.PaymentIntent, 'modify', fail_modify)
+
+    response = client.post(
+        '/api/v1/billing/apply-300k-limited-time-coupon',
+        headers=auth_headers,
+        json={'payment_intent_id': 'pi_limited_time_300k_free', 'coupon_code': '300KTest'},
+    )
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body['free'] is True
+    assert body['price_label'] == '$0.00'
+    assert body['granted'] is True
+    assert body['tokens'] == 300_000_000
+    assert canceled['id'] == 'pi_limited_time_300k_free'
+
+    entitlement = AccountEntitlement.query.filter_by(user_id=test_user.id, entitlement_key='300k_limited_time').first()
+    assert entitlement is not None
+
+
 def test_apply_300k_limited_time_coupon_rejects_unknown_code(
     client, app, auth_headers, test_user, monkeypatch
 ):
