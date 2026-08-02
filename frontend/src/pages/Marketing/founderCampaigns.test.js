@@ -26,9 +26,9 @@ describe('Founder campaign content', () => {
     expect(new Set(campaigns.map((campaign) => campaign.seo.title)).size).toBe(3);
     expect(new Set(campaigns.map((campaign) => campaign.seo.description)).size).toBe(3);
     expect(campaigns.map((campaign) => campaign.id)).toEqual([
-      'advantage_consultants',
-      'advantage_pmo',
-      'advantage_strategic_planning_aop',
+      'limited_time_300k_consultants',
+      'limited_time_300k_pmo',
+      'limited_time_300k_strategic_planning_aop',
     ]);
   });
 
@@ -152,8 +152,8 @@ describe('Founder campaign content', () => {
       path.join(process.cwd(), 'src/pages/Marketing/ThinkingPowerCheckout.jsx'),
       'utf8',
     );
-    expect(checkout).toContain('/api/v1/billing/create-jaspen-advantage-checkout');
-    expect(checkout).toContain("planKey: 'jaspen_advantage'");
+    expect(checkout).toContain('/api/v1/billing/create-300k-limited-time-checkout');
+    expect(checkout).toContain("planKey: '300k_limited_time'");
     expect(checkout).not.toContain('/api/v1/billing/catalog');
     expect(checkout).not.toContain('Essential renews');
     expect(checkout).toContain('I have read and agree to the');

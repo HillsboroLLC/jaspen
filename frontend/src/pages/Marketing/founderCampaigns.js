@@ -3,15 +3,15 @@ import {
   THINKING_POWER_VARIABILITY_NOTE,
 } from '../../shared/billing/thinkingPowerEstimates';
 
-export const ADVANTAGE_PRICE = 999;
-export const ADVANTAGE_CREDITS = '300,000';
-export const ADVANTAGE_PROJECT_ESTIMATE = THINKING_POWER_PROJECT_ESTIMATES.advantage;
-export const ADVANTAGE_VARIABILITY_NOTE = THINKING_POWER_VARIABILITY_NOTE;
+export const LIMITED_TIME_300K_PRICE = 999;
+export const LIMITED_TIME_300K_CREDITS = '300,000';
+export const LIMITED_TIME_300K_PROJECT_ESTIMATE = THINKING_POWER_PROJECT_ESTIMATES.limited_time_300k;
+export const LIMITED_TIME_300K_VARIABILITY_NOTE = THINKING_POWER_VARIABILITY_NOTE;
 
-export const ADVANTAGE_TECHNICAL_GUARANTEE =
+export const LIMITED_TIME_300K_TECHNICAL_GUARANTEE =
   'We’ll resolve the technical issue or give you your money back.';
 
-export const ADVANTAGE_GUARANTEE_QUALIFIER =
+export const LIMITED_TIME_300K_GUARANTEE_QUALIFIER =
   'If a technical issue prevents you from completing the advertised workflow, contact Jaspen support. If our team cannot resolve the issue, we will refund the full purchase price. The quality and usefulness of the results still depend on the information, evidence, assumptions, criteria, and decisions you provide.';
 
 export const SHARED_WORKFLOW = [
@@ -47,7 +47,7 @@ export const SHARED_DECISION_RECORD = [
 
 export const SHARED_OFFER_ITEMS = [
   {
-    value: ADVANTAGE_CREDITS,
+    value: LIMITED_TIME_300K_CREDITS,
     label: 'non-expiring usage credits',
     detail: 'A personal balance that remains available until used.',
   },
@@ -62,7 +62,7 @@ export const SHARED_OFFER_ITEMS = [
     detail: 'Compare up to 30 projects in one focused session. Continue evaluating and retaining additional projects across sessions.',
   },
   {
-    value: `$${ADVANTAGE_PRICE} once`,
+    value: `$${LIMITED_TIME_300K_PRICE} once`,
     label: 'with no subscription required',
     detail: 'No monthly renewal or recurring charge. Fair use still applies.',
   },
@@ -103,7 +103,7 @@ export const SHARED_FAQ = [
 ];
 
 const consultantCampaign = {
-  id: 'advantage_consultants',
+  id: 'limited_time_300k_consultants',
   key: 'consultants',
   path: '/limited-time/client-decisions',
   theme: 'consultants',
@@ -172,7 +172,7 @@ const consultantCampaign = {
 };
 
 const portfolioCampaign = {
-  id: 'advantage_pmo',
+  id: 'limited_time_300k_pmo',
   key: 'portfolio',
   path: '/limited-time/project-prioritization',
   theme: 'portfolio',
@@ -256,7 +256,7 @@ const portfolioCampaign = {
 };
 
 const strategyCampaign = {
-  id: 'advantage_strategic_planning_aop',
+  id: 'limited_time_300k_strategic_planning_aop',
   key: 'strategic-planning',
   path: '/limited-time/strategic-planning',
   theme: 'strategy',
@@ -347,9 +347,9 @@ export function getFounderCampaign(key) {
 }
 
 // Backward-compatible export names while older imports are retired.
-export const FOUNDER_PRICE = ADVANTAGE_PRICE;
-export const FOUNDER_CREDITS = ADVANTAGE_CREDITS;
-export const FOUNDER_PROJECT_ESTIMATE = ADVANTAGE_PROJECT_ESTIMATE;
-export const FOUNDER_VARIABILITY_NOTE = ADVANTAGE_VARIABILITY_NOTE;
-export const FOUNDER_TECHNICAL_GUARANTEE = ADVANTAGE_TECHNICAL_GUARANTEE;
-export const FOUNDER_GUARANTEE_QUALIFIER = ADVANTAGE_GUARANTEE_QUALIFIER;
+export const FOUNDER_PRICE = LIMITED_TIME_300K_PRICE;
+export const FOUNDER_CREDITS = LIMITED_TIME_300K_CREDITS;
+export const FOUNDER_PROJECT_ESTIMATE = LIMITED_TIME_300K_PROJECT_ESTIMATE;
+export const FOUNDER_VARIABILITY_NOTE = LIMITED_TIME_300K_VARIABILITY_NOTE;
+export const FOUNDER_TECHNICAL_GUARANTEE = LIMITED_TIME_300K_TECHNICAL_GUARANTEE;
+export const FOUNDER_GUARANTEE_QUALIFIER = LIMITED_TIME_300K_GUARANTEE_QUALIFIER;

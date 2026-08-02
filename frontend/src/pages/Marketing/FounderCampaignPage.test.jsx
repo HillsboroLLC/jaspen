@@ -69,13 +69,13 @@ describe.each(Object.values(FOUNDER_CAMPAIGNS))('$id campaign page', (campaign) 
     expect(screen.getByTestId('seo')).toHaveAttribute('data-title', campaign.seo.title);
     expect(screen.getByTestId('seo')).toHaveAttribute('data-description', campaign.seo.description);
     expect(screen.getByTestId('seo')).toHaveAttribute('data-canonical', campaign.path);
-    expect(mockTrack).toHaveBeenCalledWith('advantage_campaign_viewed', {
+    expect(mockTrack).toHaveBeenCalledWith('limited_time_300k_campaign_viewed', {
       campaign_id: campaign.id,
       route: campaign.path,
     });
   });
 
-  it('sends its primary CTA to the shared Advantage checkout with campaign attribution', () => {
+  it('sends its primary CTA to the shared 300K Limited-Time checkout with campaign attribution', () => {
     render(
       <MemoryRouter initialEntries={[campaign.path]}>
         <FounderCampaignPage campaignKey={campaign.key} />
@@ -84,11 +84,11 @@ describe.each(Object.values(FOUNDER_CAMPAIGNS))('$id campaign page', (campaign) 
 
     fireEvent.click(screen.getAllByRole('button', { name: new RegExp(campaign.primaryCta) })[0]);
     expect(screen.getByRole('dialog')).toHaveAttribute('data-return-path', campaign.path);
-    expect(mockTrack).toHaveBeenCalledWith('advantage_primary_cta_clicked', {
+    expect(mockTrack).toHaveBeenCalledWith('limited_time_300k_primary_cta_clicked', {
       campaign_id: campaign.id,
       route: campaign.path,
     });
-    expect(mockTrack).toHaveBeenCalledWith('advantage_checkout_started', {
+    expect(mockTrack).toHaveBeenCalledWith('limited_time_300k_checkout_started', {
       campaign_id: campaign.id,
       resumed: false,
     });

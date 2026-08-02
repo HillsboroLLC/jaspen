@@ -261,15 +261,15 @@ def create_app():
     # Backward-compatible alias used by legacy code paths.
     app.config['STRIPE_OVERAGE_PACK_PRICE_IDS'] = app.config['STRIPE_CREDIT_PACK_PRICE_IDS']
 
-    # —— The Jaspen Advantage (/thinking-power landing pages) —— #
+    # —— The 300K Limited-Time offer (/limited-time landing pages) —— #
     # Configure this as a one-time $999 Stripe Price. The offer is intentionally
     # independent of every recurring plan and does not start an Essential subscription.
-    app.config['STRIPE_JASPEN_ADVANTAGE_PRICE_ID'] = _stripe_price_id_from_env(
-        'PRICE_ID_JASPEN_ADVANTAGE'
+    app.config['STRIPE_LIMITED_TIME_300K_PRICE_ID'] = _stripe_price_id_from_env(
+        'PRICE_ID_300K_LIMITED_TIME'
     )
     # 300,000 non-expiring usage credits, stored in internal units
     # (TOKENS_PER_CREDIT = 1000). Granted only after Stripe confirms payment.
-    app.config['JASPEN_ADVANTAGE_CREDIT_TOKENS'] = 300_000_000
+    app.config['LIMITED_TIME_300K_CREDIT_TOKENS'] = 300_000_000
 
     required_stripe_values = {
         'PRICE_ID_ESSENTIAL': app.config['STRIPE_PRICE_IDS'].get('essential'),
@@ -282,7 +282,7 @@ def create_app():
         'PRICE_ID_STARTER': app.config['STRIPE_PRICE_IDS'].get('starter'),
         'PRICE_ID_TEAM': app.config['STRIPE_PRICE_IDS'].get('team'),
         'PRICE_ID_BUSINESS': app.config['STRIPE_PRICE_IDS'].get('business'),
-        'PRICE_ID_JASPEN_ADVANTAGE': app.config.get('STRIPE_JASPEN_ADVANTAGE_PRICE_ID'),
+        'PRICE_ID_300K_LIMITED_TIME': app.config.get('STRIPE_LIMITED_TIME_300K_PRICE_ID'),
     }
     missing_required_stripe = [key for key, value in required_stripe_values.items() if not str(value or '').strip()]
     missing_optional_stripe = [key for key, value in optional_stripe_values.items() if not str(value or '').strip()]

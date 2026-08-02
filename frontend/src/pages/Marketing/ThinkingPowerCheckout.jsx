@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../../shared/auth/AuthContext';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import { API_BASE } from '../../config/apiBase';
-import { ADVANTAGE_CREDITS, ADVANTAGE_PRICE } from './founderCampaigns';
+import { LIMITED_TIME_300K_CREDITS, LIMITED_TIME_300K_PRICE } from './founderCampaigns';
 
 const inputStyle = {
   width: '100%', padding: '11px 12px', border: '1px solid #e6eaf2', borderRadius: 8,
@@ -45,7 +45,7 @@ function AccountStep({ returnPath }) {
       setError('Review and accept the terms before creating your account.');
       return;
     }
-    const next = `${returnPath}?advantage_checkout=resume`;
+    const next = `${returnPath}?limited_time_checkout=resume`;
     window.location.href = `${API_BASE}/api/v1/auth/google/start?next=${encodeURIComponent(next)}`;
   };
 
@@ -63,7 +63,7 @@ function AccountStep({ returnPath }) {
     setSubmitting(true);
     try {
       const result = isSignup
-        ? await signup(normalizedEmail, password, String(name).trim(), { planKey: 'jaspen_advantage' })
+        ? await signup(normalizedEmail, password, String(name).trim(), { planKey: '300k_limited_time' })
         : await login(normalizedEmail, password);
       if (result?.success) return;
       if (result?.mfaRequired) {
@@ -98,17 +98,17 @@ function AccountStep({ returnPath }) {
       <button type="button" className="fc-checkout-google" disabled={isSignup && !termsAccepted} onClick={handleGoogle}>Continue with Google</button>
       <div className="fc-checkout-divider"><span />OR<span /></div>
       <form onSubmit={handleSubmit}>
-        {isSignup && <><label htmlFor="advantage-name" style={labelStyle}>Full name</label><input id="advantage-name" value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" style={inputStyle} /></>}
-        <label htmlFor="advantage-email" style={labelStyle}>Email</label>
-        <input id="advantage-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" style={inputStyle} />
-        <label htmlFor="advantage-password" style={labelStyle}>Password</label>
-        <input id="advantage-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete={isSignup ? 'new-password' : 'current-password'} style={inputStyle} />
-        {isSignup && <><label htmlFor="advantage-confirm" style={labelStyle}>Confirm password</label><input id="advantage-confirm" type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" style={inputStyle} /></>}
+        {isSignup && <><label htmlFor="limited-time-name" style={labelStyle}>Full name</label><input id="limited-time-name" value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" style={inputStyle} /></>}
+        <label htmlFor="limited-time-email" style={labelStyle}>Email</label>
+        <input id="limited-time-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" style={inputStyle} />
+        <label htmlFor="limited-time-password" style={labelStyle}>Password</label>
+        <input id="limited-time-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete={isSignup ? 'new-password' : 'current-password'} style={inputStyle} />
+        {isSignup && <><label htmlFor="limited-time-confirm" style={labelStyle}>Confirm password</label><input id="limited-time-confirm" type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" style={inputStyle} /></>}
         {error && <div role="alert" style={errorBox}>{error}</div>}
         {notice && <div role="status" style={{ ...noticeBox, marginBottom: 12 }}>{notice}</div>}
         {isSignup && (
           <div className="fc-checkout-acknowledgements">
-            <TermsAcknowledgement id="advantage-signup-terms" checked={termsAccepted} onChange={setTermsAccepted} />
+            <TermsAcknowledgement id="limited-time-signup-terms" checked={termsAccepted} onChange={setTermsAccepted} />
           </div>
         )}
         <button type="submit" className="fc-checkout-primary" disabled={submitting || (isSignup && !termsAccepted)}>
@@ -136,7 +136,7 @@ function PurchaseStep({ campaignId, returnPath }) {
     setSubmitting(true);
     setError('');
     try {
-      const response = await authFetch(`${API_BASE}/api/v1/billing/create-jaspen-advantage-checkout`, {
+      const response = await authFetch(`${API_BASE}/api/v1/billing/create-300k-limited-time-checkout`, {
         method: 'POST',
         headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
         credentials: 'include',
@@ -159,20 +159,20 @@ function PurchaseStep({ campaignId, returnPath }) {
   return (
     <div>
       <ul className="fc-checkout-summary">
-        <li><strong>{ADVANTAGE_CREDITS}</strong><span>non-expiring usage credits</span></li>
-        <li><strong>${ADVANTAGE_PRICE} once</strong><span>no subscription or recurring charge</span></li>
+        <li><strong>{LIMITED_TIME_300K_CREDITS}</strong><span>non-expiring usage credits</span></li>
+        <li><strong>${LIMITED_TIME_300K_PRICE} once</strong><span>no subscription or recurring charge</span></li>
         <li><strong>Personal account</strong><span>non-transferable and not shared</span></li>
       </ul>
       {error && <div role="alert" style={errorBox}>{error}</div>}
       <div className="fc-checkout-acknowledgements">
-        <TermsAcknowledgement id="advantage-purchase-terms" checked={termsAccepted} onChange={setTermsAccepted} />
-        <label className="fc-checkout-acknowledgement" htmlFor="advantage-final-sale">
-          <input id="advantage-final-sale" type="checkbox" checked={finalSaleAccepted} onChange={(event) => setFinalSaleAccepted(event.target.checked)} />
+        <TermsAcknowledgement id="limited-time-purchase-terms" checked={termsAccepted} onChange={setTermsAccepted} />
+        <label className="fc-checkout-acknowledgement" htmlFor="limited-time-final-sale">
+          <input id="limited-time-final-sale" type="checkbox" checked={finalSaleAccepted} onChange={(event) => setFinalSaleAccepted(event.target.checked)} />
           <span>I understand that AI-generated outputs may contain errors and that all sales are final except for a qualifying Covered Technical Failure or where a refund is required by law.</span>
         </label>
       </div>
       <button type="button" className="fc-checkout-primary" disabled={submitting || !acknowledgementsComplete} onClick={startCheckout}>
-        {submitting ? 'Opening secure checkout...' : `Continue to pay $${ADVANTAGE_PRICE}`}
+        {submitting ? 'Opening secure checkout...' : `Continue to pay $${LIMITED_TIME_300K_PRICE}`}
       </button>
       <p className="fc-checkout-footnote">Stripe securely processes the one-time payment. Your credits are granted after payment is confirmed.</p>
     </div>
@@ -192,11 +192,11 @@ export default function ThinkingPowerCheckout({ onClose, campaignId = '', return
 
   return (
     <div className="fc-checkout-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose?.(); }}>
-      <div role="dialog" aria-modal="true" aria-labelledby="advantage-checkout-title" className="fc-checkout-dialog">
+      <div role="dialog" aria-modal="true" aria-labelledby="limited-time-checkout-title" className="fc-checkout-dialog">
         <div className="fc-checkout-header">
           <div>
             <span>Limited-time offer</span>
-            <h2 id="advantage-checkout-title">${ADVANTAGE_PRICE} once. No subscription.</h2>
+            <h2 id="limited-time-checkout-title">${LIMITED_TIME_300K_PRICE} once. No subscription.</h2>
             <p>{user ? 'Review the offer, then continue to Stripe.' : 'Create or sign in to your personal Jaspen account.'}</p>
           </div>
           <button ref={closeRef} type="button" onClick={onClose} aria-label="Close checkout">×</button>

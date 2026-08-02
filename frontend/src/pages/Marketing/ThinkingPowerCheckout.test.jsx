@@ -46,7 +46,7 @@ describe('Limited-time offer checkout acknowledgements', () => {
       json: async () => ({ msg: 'Test stopped before redirect.' }),
     });
 
-    render(<ThinkingPowerCheckout onClose={() => {}} campaignId="advantage_pmo" returnPath="/limited-time/project-prioritization" />);
+    render(<ThinkingPowerCheckout onClose={() => {}} campaignId="limited_time_300k_pmo" returnPath="/limited-time/project-prioritization" />);
 
     const terms = screen.getByRole('checkbox', { name: /I have read and agree to the Terms of Service/i });
     const finalSale = screen.getByRole('checkbox', { name: /all sales are final except for a qualifying Covered Technical Failure/i });
@@ -64,7 +64,7 @@ describe('Limited-time offer checkout acknowledgements', () => {
     await waitFor(() => expect(mockAuthFetch).toHaveBeenCalledTimes(1));
     const [, request] = mockAuthFetch.mock.calls[0];
     expect(JSON.parse(request.body)).toEqual({
-      campaign_id: 'advantage_pmo',
+      campaign_id: 'limited_time_300k_pmo',
       return_path: '/limited-time/project-prioritization',
       terms_accepted: true,
       final_sale_acknowledged: true,

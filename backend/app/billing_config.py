@@ -1034,20 +1034,20 @@ def effective_plan_key(user, app_config=None):
     else:
         subscription_access = 'free'
 
-    # Jaspen Advantage is a standalone, one-time entitlement. It is not an
-    # Essential subscription, but it includes the individual output
+    # The 300K Limited-Time offer is a standalone, one-time entitlement. It is
+    # not an Essential subscription, but it includes the individual output
     # capabilities needed to use the purchased Thinking Power. Keep the
     # persisted subscription_plan unchanged so billing and renewal UI remain
     # accurate while entitlement checks receive Essential-equivalent access.
     try:
-        from .founder_entitlements import has_advantage_entitlement
+        from .founder_entitlements import has_limited_time_300k_entitlement
 
-        has_advantage = has_advantage_entitlement(user)
+        has_limited_time_300k = has_limited_time_300k_entitlement(user)
     except (RuntimeError, TypeError):
         # Some pure unit-test helpers call this function without an active DB
         # context. In that case, preserve normal subscription behavior.
-        has_advantage = False
+        has_limited_time_300k = False
 
-    if has_advantage and PLAN_RANK.get(subscription_access, 0) < PLAN_RANK['essential']:
+    if has_limited_time_300k and PLAN_RANK.get(subscription_access, 0) < PLAN_RANK['essential']:
         return 'essential'
     return subscription_access

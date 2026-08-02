@@ -36,11 +36,11 @@ from app.billing_config import (
 )
 from app.connector_store import get_all_connector_settings
 from app.founder_entitlements import (
-    ADVANTAGE_CREDIT_SOURCE,
-    advantage_credit_balance,
-    grant_advantage_offer,
-    has_advantage_entitlement,
-    reverse_advantage_credits,
+    LIMITED_TIME_300K_CREDIT_SOURCE,
+    limited_time_300k_credit_balance,
+    grant_limited_time_300k_offer,
+    has_limited_time_300k_entitlement,
+    reverse_limited_time_300k_credits,
 )
 from app.tool_registry import get_context_budget, get_tool_entitlements
 
@@ -335,11 +335,11 @@ def get_billing_status():
         'cycle_reset_at': usage_state.get('reset_at').isoformat() if usage_state.get('reset_at') else None,
         'purchased_credits_this_cycle': tokens_to_credits(usage_state.get('overage_tokens'), precision=0),
         'persistent_credits': tokens_to_credits(usage_state.get('persistent_credits'), precision=1),
-        'advantage_credits_remaining': tokens_to_credits(advantage_credit_balance(user), precision=1),
-        'has_jaspen_advantage': has_advantage_entitlement(user),
+        '300k_limited_time_credits_remaining': tokens_to_credits(limited_time_300k_credit_balance(user), precision=1),
+        'has_300k_limited_time': has_limited_time_300k_entitlement(user),
         # Backward-compatible fields for clients deployed before the offer rename.
-        'founder_credits_remaining': tokens_to_credits(advantage_credit_balance(user), precision=1),
-        'is_founder': has_advantage_entitlement(user),
+        'founder_credits_remaining': tokens_to_credits(limited_time_300k_credit_balance(user), precision=1),
+        'is_founder': has_limited_time_300k_entitlement(user),
         # Backward-compatible alias for older clients.
         'overage_credits_this_cycle': tokens_to_credits(usage_state.get('overage_tokens'), precision=0),
         'credit_soft_stop_limit': tokens_to_credits(cycle_limit, precision=0),
@@ -382,18 +382,18 @@ def _credit_pack_tokens_from_metadata(metadata):
     return credits * 1000 if credits > 0 else 0
 
 
-def _is_advantage_charge(user, charge):
+def _is_limited_time_300k_charge(user, charge):
     if user is None:
         return False
     metadata = charge.get('metadata') if isinstance(charge.get('metadata'), dict) else {}
-    if str(metadata.get('checkout_type') or '').strip() == JASPEN_ADVANTAGE_CHECKOUT_TYPE:
+    if str(metadata.get('checkout_type') or '').strip() == LIMITED_TIME_300K_CHECKOUT_TYPE:
         return True
     payment_intent_id = str(charge.get('payment_intent') or '').strip()
     if not payment_intent_id:
         return False
     grants = PersistentCreditGrant.query.filter_by(
         user_id=str(user.id),
-        source=ADVANTAGE_CREDIT_SOURCE,
+        source=LIMITED_TIME_300K_CREDIT_SOURCE,
     ).all()
     return any(
         str((grant.grant_metadata or {}).get('stripe_payment_intent_id') or '').strip()
@@ -845,12 +845,12 @@ def create_subscription_embedded():
 
 
 # —— Standalone limited-time credit checkout ————
-JASPEN_ADVANTAGE_CHECKOUT_TYPE = 'jaspen_advantage'
+LIMITED_TIME_300K_CHECKOUT_TYPE = '300k_limited_time'
 
 
-@billing_bp.route('/create-jaspen-advantage-checkout', methods=['POST'])
+@billing_bp.route('/create-300k-limited-time-checkout', methods=['POST'])
 @jwt_required()
-def create_jaspen_advantage_checkout():
+def create_300k_limited_time_checkout():
     """Create a standalone one-time Checkout Session for the limited-time credit offer."""
     user = User.query.get(get_jwt_identity())
     if not user:
@@ -859,10 +859,10 @@ def create_jaspen_advantage_checkout():
     data = request.get_json() or {}
     if data.get('terms_accepted') is not True or data.get('final_sale_acknowledged') is not True:
         return jsonify({'msg': 'Accept both purchase acknowledgements before continuing.'}), 400
-    price_id = current_app.config.get('STRIPE_JASPEN_ADVANTAGE_PRICE_ID')
+    price_id = current_app.config.get('STRIPE_LIMITED_TIME_300K_PRICE_ID')
     if not price_id:
         return jsonify({'msg': 'The limited-time offer price is not configured yet.'}), 503
-    credit_tokens = int(current_app.config.get('JASPEN_ADVANTAGE_CREDIT_TOKENS') or 0)
+    credit_tokens = int(current_app.config.get('LIMITED_TIME_300K_CREDIT_TOKENS') or 0)
     if credit_tokens <= 0:
         return jsonify({'msg': 'The limited-time offer credit amount is not configured.'}), 503
 
@@ -875,13 +875,13 @@ def create_jaspen_advantage_checkout():
     if return_path not in allowed_return_paths:
         return jsonify({'msg': 'Invalid campaign return path.'}), 400
     success_url = _frontend_url(
-        f'{return_path}?advantage_checkout=success&session_id={{CHECKOUT_SESSION_ID}}'
+        f'{return_path}?limited_time_checkout=success&session_id={{CHECKOUT_SESSION_ID}}'
     )
-    cancel_url = _frontend_url(f'{return_path}?advantage_checkout=cancel')
+    cancel_url = _frontend_url(f'{return_path}?limited_time_checkout=cancel')
     customer_id = _ensure_customer_for_user(user)
     metadata = {
         'user_id': str(user.id),
-        'checkout_type': JASPEN_ADVANTAGE_CHECKOUT_TYPE,
+        'checkout_type': LIMITED_TIME_300K_CHECKOUT_TYPE,
         'tokens': str(credit_tokens),
         'campaign_id': str(data.get('campaign_id') or '').strip()[:80],
         'terms_accepted': 'true',
@@ -901,7 +901,7 @@ def create_jaspen_advantage_checkout():
             allow_promotion_codes=False,
         )
     except stripe.error.StripeError as exc:
-        current_app.logger.exception('create-jaspen-advantage-checkout failed')
+        current_app.logger.exception('create-300k-limited-time-checkout failed')
         return jsonify({'msg': str(getattr(exc, 'user_message', None) or 'Could not start checkout.')}), 400
     session_id = session.get('id') if hasattr(session, 'get') else getattr(session, 'id', None)
     session_url = session.get('url') if hasattr(session, 'get') else getattr(session, 'url', None)
@@ -1521,9 +1521,9 @@ def stripe_webhook():
                     "checkout.session.completed: added %s credit-pack tokens for user=%s",
                     tokens, user_id,
                 )
-            elif checkout_type == JASPEN_ADVANTAGE_CHECKOUT_TYPE:
+            elif checkout_type == LIMITED_TIME_300K_CHECKOUT_TYPE:
                 tokens = int(metadata.get('tokens') or 0)
-                _entitlement, _grant, created = grant_advantage_offer(
+                _entitlement, _grant, created = grant_limited_time_300k_offer(
                     user,
                     tokens,
                     payment_reference=sess.get('payment_intent') or sess.get('id'),
@@ -1537,7 +1537,7 @@ def stripe_webhook():
                     user.stripe_customer_id = sess.get('customer')
                 get_usage_meter_state(user, current_app.config)
                 current_app.logger.info(
-                    "checkout.session.completed: Jaspen Advantage grant created=%s amount=%s user=%s",
+                    "checkout.session.completed: 300K Limited-Time grant created=%s amount=%s user=%s",
                     created, tokens, user_id,
                 )
             else:
@@ -1692,9 +1692,9 @@ def stripe_webhook():
                 user.credits_remaining = max(0, int(user.credits_remaining or 0) - refund_credits)
             elif refund_credits > 0 and user.credits_remaining is None:
                 consume_credits(user, refund_credits)
-        advantage_charge = _is_advantage_charge(user, charge)
-        if user and advantage_charge:
-            reverse_advantage_credits(
+        limited_time_300k_charge = _is_limited_time_300k_charge(user, charge)
+        if user and limited_time_300k_charge:
+            reverse_limited_time_300k_credits(
                 user,
                 reason='stripe_refund',
                 external_reference=event_id,
@@ -1704,9 +1704,9 @@ def stripe_webhook():
     elif event_type == 'charge.dispute.created':
         charge = event['data']['object']
         user = _find_user_for_billing_event(customer_id=charge.get('customer'))
-        advantage_charge = _is_advantage_charge(user, charge)
-        if user and advantage_charge:
-            reverse_advantage_credits(
+        limited_time_300k_charge = _is_limited_time_300k_charge(user, charge)
+        if user and limited_time_300k_charge:
+            reverse_limited_time_300k_credits(
                 user,
                 reason='stripe_chargeback',
                 external_reference=event_id,

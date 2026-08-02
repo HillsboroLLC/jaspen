@@ -66,7 +66,7 @@ function PrimaryButton({ campaign, onClick, variant = 'primary', showPrice = fal
       type="button"
       className={`fc-button fc-button--${variant}`}
       data-campaign={campaign.id}
-      data-cta="jaspen-advantage-checkout"
+      data-cta="300k-limited-time-checkout"
       onClick={onClick}
     >
       {campaign.primaryCta}{showPrice ? ` · $${FOUNDER_PRICE}` : ''} <ArrowIcon />
@@ -416,34 +416,34 @@ export default function FounderCampaignPage({ campaignKey = 'consultants' }) {
   const analytics = useMemo(() => createAnalytics(campaign.id), [campaign.id]);
 
   useEffect(() => {
-    analytics.track('advantage_campaign_viewed', { campaign_id: campaign.id, route: campaign.path });
+    analytics.track('limited_time_300k_campaign_viewed', { campaign_id: campaign.id, route: campaign.path });
   }, [analytics, campaign.id, campaign.path]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search || '');
-    const checkoutState = params.get('advantage_checkout');
+    const checkoutState = params.get('limited_time_checkout');
     if (!checkoutState) return;
     if (checkoutState === 'resume' && user) {
-      analytics.track('advantage_checkout_started', { campaign_id: campaign.id, resumed: true });
+      analytics.track('limited_time_300k_checkout_started', { campaign_id: campaign.id, resumed: true });
       setCheckoutOpen(true);
     }
     if (checkoutState === 'success') {
-      analytics.track('advantage_purchase_completed', { campaign_id: campaign.id });
+      analytics.track('limited_time_300k_purchase_completed', { campaign_id: campaign.id });
       setCheckoutNotice('Payment received. Your credits will appear as soon as Stripe confirms the payment.');
     }
     if (checkoutState === 'cancel') {
       setCheckoutNotice('Checkout was canceled. No charge was made.');
     }
-    params.delete('advantage_checkout');
+    params.delete('limited_time_checkout');
     params.delete('session_id');
     const query = params.toString();
     window.history.replaceState({}, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash || ''}`);
   }, [analytics, campaign.id, user]);
 
   const openCheckout = () => {
-    analytics.track('advantage_primary_cta_clicked', { campaign_id: campaign.id, route: campaign.path });
-    analytics.track('advantage_checkout_started', { campaign_id: campaign.id, resumed: false });
+    analytics.track('limited_time_300k_primary_cta_clicked', { campaign_id: campaign.id, route: campaign.path });
+    analytics.track('limited_time_300k_checkout_started', { campaign_id: campaign.id, resumed: false });
     setCheckoutOpen(true);
   };
 

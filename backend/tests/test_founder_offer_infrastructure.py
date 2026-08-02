@@ -11,11 +11,11 @@ from app.billing_config import (
     reset_user_monthly_credits,
 )
 from app.founder_entitlements import (
-    advantage_credit_balance,
-    advantage_limits_active,
-    grant_advantage_offer,
-    has_advantage_entitlement,
-    reverse_advantage_credits,
+    limited_time_300k_credit_balance,
+    limited_time_300k_limits_active,
+    grant_limited_time_300k_offer,
+    has_limited_time_300k_entitlement,
+    reverse_limited_time_300k_credits,
 )
 from app.models import AccountEntitlement, PersistentCreditGrant, Scorecard, StripeWebhookEvent, UsageEvent, UserSession
 from app.routes.sessions import save_user_sessions
@@ -56,17 +56,17 @@ def _session_payload(user_id, thread_id, cards):
     }
 
 
-def test_advantage_grant_is_idempotent_and_independent_of_plan(app, db, test_user):
+def test_limited_time_300k_grant_is_idempotent_and_independent_of_plan(app, db, test_user):
     apply_plan_to_user(test_user, 'free', app.config, reset_credits=True)
-    _, first_grant, created = grant_advantage_offer(
+    _, first_grant, created = grant_limited_time_300k_offer(
         test_user,
         300_000_000,
-        payment_reference='pi_advantage_1',
+        payment_reference='pi_limited_time_300k_1',
     )
-    _, second_grant, created_again = grant_advantage_offer(
+    _, second_grant, created_again = grant_limited_time_300k_offer(
         test_user,
         300_000_000,
-        payment_reference='pi_advantage_1',
+        payment_reference='pi_limited_time_300k_1',
     )
     db.session.commit()
 
@@ -75,16 +75,16 @@ def test_advantage_grant_is_idempotent_and_independent_of_plan(app, db, test_use
     assert first_grant.id == second_grant.id
     assert AccountEntitlement.query.count() == 1
     assert PersistentCreditGrant.query.count() == 1
-    assert has_advantage_entitlement(test_user)
-    assert advantage_credit_balance(test_user) == 300_000_000
+    assert has_limited_time_300k_entitlement(test_user)
+    assert limited_time_300k_credit_balance(test_user) == 300_000_000
     assert test_user.subscription_plan == 'free'
 
 
-def test_advantage_is_standalone_billing_with_individual_output_access(
+def test_limited_time_300k_is_standalone_billing_with_individual_output_access(
     client, app, db, test_user, auth_headers
 ):
     apply_plan_to_user(test_user, 'free', app.config, reset_credits=True)
-    grant_advantage_offer(test_user, 300_000_000, payment_reference='pi_advantage_access')
+    grant_limited_time_300k_offer(test_user, 300_000_000, payment_reference='pi_limited_time_300k_access')
     db.session.commit()
 
     response = client.get('/api/v1/billing/status', headers=auth_headers)
@@ -94,17 +94,17 @@ def test_advantage_is_standalone_billing_with_individual_output_access(
     assert test_user.subscription_plan == 'free'
     assert payload['plan_key'] == 'free'
     assert payload['effective_plan_key'] == 'essential'
-    assert payload['has_jaspen_advantage'] is True
+    assert payload['has_300k_limited_time'] is True
     assert payload['access_restricted'] is False
     assert effective_plan_key(test_user, app.config) == 'essential'
 
 
-def test_advantage_refund_revokes_standalone_output_access(app, db, test_user):
+def test_limited_time_300k_refund_revokes_standalone_output_access(app, db, test_user):
     apply_plan_to_user(test_user, 'free', app.config, reset_credits=True)
-    grant_advantage_offer(test_user, 300_000_000, payment_reference='pi_advantage_refund')
+    grant_limited_time_300k_offer(test_user, 300_000_000, payment_reference='pi_limited_time_300k_refund')
     db.session.commit()
 
-    reversed_amount = reverse_advantage_credits(
+    reversed_amount = reverse_limited_time_300k_credits(
         test_user,
         reason='refund',
         external_reference='re_test',
@@ -112,32 +112,32 @@ def test_advantage_refund_revokes_standalone_output_access(app, db, test_user):
     db.session.commit()
 
     assert reversed_amount == 300_000_000
-    assert advantage_credit_balance(test_user) == 0
-    assert has_advantage_entitlement(test_user) is False
+    assert limited_time_300k_credit_balance(test_user) == 0
+    assert has_limited_time_300k_entitlement(test_user) is False
     assert effective_plan_key(test_user, app.config) == 'free'
 
 
-def test_duplicate_advantage_checkout_webhook_does_not_duplicate_grant(
+def test_duplicate_limited_time_300k_checkout_webhook_does_not_duplicate_grant(
     client, app, db, test_user, monkeypatch
 ):
     from app.routes import billing
 
     app.config['STRIPE_WEBHOOK_SECRET'] = 'whsec_founder_test'
-    test_user.stripe_customer_id = 'cus_advantage'
+    test_user.stripe_customer_id = 'cus_limited_time_300k'
     db.session.commit()
     session = {
-        'id': 'cs_advantage',
-        'payment_intent': 'pi_advantage',
-        'customer': 'cus_advantage',
+        'id': 'cs_limited_time_300k',
+        'payment_intent': 'pi_limited_time_300k',
+        'customer': 'cus_limited_time_300k',
         'metadata': {
             'user_id': str(test_user.id),
-            'checkout_type': billing.JASPEN_ADVANTAGE_CHECKOUT_TYPE,
+            'checkout_type': billing.LIMITED_TIME_300K_CHECKOUT_TYPE,
             'tokens': '300000000',
-            'campaign_id': 'advantage_pmo',
+            'campaign_id': 'limited_time_300k_pmo',
         },
     }
     event = {
-        'id': 'evt_advantage_checkout',
+        'id': 'evt_limited_time_300k_checkout',
         'type': 'checkout.session.completed',
         'data': {'object': session},
     }
@@ -150,30 +150,30 @@ def test_duplicate_advantage_checkout_webhook_does_not_duplicate_grant(
     assert second.status_code == 200
     assert PersistentCreditGrant.query.filter_by(user_id=str(test_user.id)).count() == 1
     assert AccountEntitlement.query.filter_by(user_id=str(test_user.id)).count() == 1
-    assert StripeWebhookEvent.query.filter_by(stripe_event_id='evt_advantage_checkout', processed=True).count() == 1
+    assert StripeWebhookEvent.query.filter_by(stripe_event_id='evt_limited_time_300k_checkout', processed=True).count() == 1
     assert test_user.subscription_plan == 'free'
 
 
-def test_advantage_checkout_uses_one_time_price_without_subscription(
+def test_limited_time_300k_checkout_uses_one_time_price_without_subscription(
     client, app, auth_headers, monkeypatch
 ):
     from app.routes import billing
 
-    app.config['STRIPE_JASPEN_ADVANTAGE_PRICE_ID'] = 'price_advantage_999'
-    app.config['JASPEN_ADVANTAGE_CREDIT_TOKENS'] = 300_000_000
+    app.config['STRIPE_LIMITED_TIME_300K_PRICE_ID'] = 'price_limited_time_300k_999'
+    app.config['LIMITED_TIME_300K_CREDIT_TOKENS'] = 300_000_000
     captured = {}
 
     def fake_create(**kwargs):
         captured.update(kwargs)
-        return {'id': 'cs_advantage', 'url': 'https://checkout.stripe.test/advantage'}
+        return {'id': 'cs_limited_time_300k', 'url': 'https://checkout.stripe.test/limited-time-300k'}
 
-    monkeypatch.setattr(billing, '_ensure_customer_for_user', lambda _user: 'cus_advantage')
+    monkeypatch.setattr(billing, '_ensure_customer_for_user', lambda _user: 'cus_limited_time_300k')
     monkeypatch.setattr(billing.stripe.checkout.Session, 'create', fake_create)
     response = client.post(
-        '/api/v1/billing/create-jaspen-advantage-checkout',
+        '/api/v1/billing/create-300k-limited-time-checkout',
         headers=auth_headers,
         json={
-            'campaign_id': 'advantage_pmo',
+            'campaign_id': 'limited_time_300k_pmo',
             'return_path': '/limited-time/project-prioritization',
             'terms_accepted': True,
             'final_sale_acknowledged': True,
@@ -181,10 +181,10 @@ def test_advantage_checkout_uses_one_time_price_without_subscription(
     )
 
     assert response.status_code == 200
-    assert response.get_json()['url'] == 'https://checkout.stripe.test/advantage'
+    assert response.get_json()['url'] == 'https://checkout.stripe.test/limited-time-300k'
     assert captured['mode'] == 'payment'
-    assert captured['line_items'] == [{'price': 'price_advantage_999', 'quantity': 1}]
-    assert captured['metadata']['checkout_type'] == billing.JASPEN_ADVANTAGE_CHECKOUT_TYPE
+    assert captured['line_items'] == [{'price': 'price_limited_time_300k_999', 'quantity': 1}]
+    assert captured['metadata']['checkout_type'] == billing.LIMITED_TIME_300K_CHECKOUT_TYPE
     assert captured['metadata']['tokens'] == '300000000'
     assert captured['metadata']['terms_accepted'] == 'true'
     assert captured['metadata']['final_sale_acknowledged'] == 'true'
@@ -192,9 +192,9 @@ def test_advantage_checkout_uses_one_time_price_without_subscription(
     assert 'subscription_data' not in captured
 
 
-def test_advantage_checkout_requires_both_purchase_acknowledgements(client, auth_headers):
+def test_limited_time_300k_checkout_requires_both_purchase_acknowledgements(client, auth_headers):
     response = client.post(
-        '/api/v1/billing/create-jaspen-advantage-checkout',
+        '/api/v1/billing/create-300k-limited-time-checkout',
         headers=auth_headers,
         json={'terms_accepted': True, 'final_sale_acknowledged': False},
     )
@@ -205,7 +205,7 @@ def test_advantage_checkout_requires_both_purchase_acknowledgements(client, auth
 
 def test_founder_credits_survive_renewal_downgrade_and_reset(app, db, test_user):
     apply_plan_to_user(test_user, 'essential', app.config, reset_credits=True)
-    grant_advantage_offer(test_user, 300_000_000, payment_reference='pi_advantage_reset')
+    grant_limited_time_300k_offer(test_user, 300_000_000, payment_reference='pi_limited_time_300k_reset')
     db.session.commit()
 
     test_user.credits_reset_at = datetime.utcnow() - timedelta(days=35)
@@ -214,15 +214,15 @@ def test_founder_credits_survive_renewal_downgrade_and_reset(app, db, test_user)
     state = get_usage_meter_state(test_user, app.config)
     db.session.commit()
 
-    assert has_advantage_entitlement(test_user)
-    assert advantage_credit_balance(test_user) == 300_000_000
+    assert has_limited_time_300k_entitlement(test_user)
+    assert limited_time_300k_credit_balance(test_user) == 300_000_000
     assert state['remaining'] == 300_300_000
     assert state['founder_credits'] == 300_000_000
 
 
 def test_monthly_credits_are_consumed_before_founder_credits(app, db, test_user):
     apply_plan_to_user(test_user, 'essential', app.config, reset_credits=True)
-    grant_advantage_offer(test_user, 1_000, payment_reference='pi_advantage_order')
+    grant_limited_time_300k_offer(test_user, 1_000, payment_reference='pi_limited_time_300k_order')
     db.session.commit()
 
     ok, remaining = consume_credits(test_user, 7_000_100)
@@ -230,36 +230,36 @@ def test_monthly_credits_are_consumed_before_founder_credits(app, db, test_user)
 
     assert ok is True
     assert remaining == 900
-    assert advantage_credit_balance(test_user) == 900
+    assert limited_time_300k_credit_balance(test_user) == 900
 
 
 def test_reservation_release_restores_only_the_current_debit_sources(app, db, test_user):
     apply_plan_to_user(test_user, 'essential', app.config, reset_credits=True)
-    grant_advantage_offer(test_user, 1_000, payment_reference='pi_advantage_release')
+    grant_limited_time_300k_offer(test_user, 1_000, payment_reference='pi_limited_time_300k_release')
     db.session.commit()
 
     consume_credits(test_user, 7_000_100)
-    assert advantage_credit_balance(test_user) == 900
+    assert limited_time_300k_credit_balance(test_user) == 900
     release_consumed_credits(test_user, 50)
     state = get_usage_meter_state(test_user, app.config)
     db.session.commit()
 
-    assert advantage_credit_balance(test_user) == 950
+    assert limited_time_300k_credit_balance(test_user) == 950
     assert state['monthly_remaining'] == 0
     assert state['remaining'] == 950
 
 
 def test_founder_limits_end_automatically_at_zero_balance(app, db, test_user):
     apply_plan_to_user(test_user, 'essential', app.config, reset_credits=True)
-    grant_advantage_offer(test_user, 10, payment_reference='pi_advantage_limits')
+    grant_limited_time_300k_offer(test_user, 10, payment_reference='pi_limited_time_300k_limits')
     db.session.commit()
-    assert advantage_limits_active(test_user) is True
+    assert limited_time_300k_limits_active(test_user) is True
 
     consume_credits(test_user, 7_000_010)
     db.session.commit()
-    assert advantage_credit_balance(test_user) == 0
-    assert advantage_limits_active(test_user) is False
-    assert has_advantage_entitlement(test_user) is True
+    assert limited_time_300k_credit_balance(test_user) == 0
+    assert limited_time_300k_limits_active(test_user) is False
+    assert has_limited_time_300k_entitlement(test_user) is True
 
 
 def test_founder_balance_remains_usable_after_upgrade_to_shared_team_pool(app, db, test_user):
@@ -267,7 +267,7 @@ def test_founder_balance_remains_usable_after_upgrade_to_shared_team_pool(app, d
 
     ensure_default_organization_for_user(test_user)
     apply_plan_to_user(test_user, 'team', app.config, reset_credits=True)
-    grant_advantage_offer(test_user, 1_000, payment_reference='pi_advantage_team')
+    grant_limited_time_300k_offer(test_user, 1_000, payment_reference='pi_limited_time_300k_team')
     db.session.commit()
 
     ok, remaining = consume_credits(test_user, 29_000_100)
@@ -275,9 +275,9 @@ def test_founder_balance_remains_usable_after_upgrade_to_shared_team_pool(app, d
 
     assert ok is True
     assert remaining == 900
-    assert advantage_credit_balance(test_user) == 900
+    assert limited_time_300k_credit_balance(test_user) == 900
     reset_user_monthly_credits(test_user, app.config, force=True)
-    assert advantage_credit_balance(test_user) == 900
+    assert limited_time_300k_credit_balance(test_user) == 900
     assert get_usage_meter_state(test_user, app.config)['remaining'] == 29_000_900
 
 
@@ -410,7 +410,7 @@ def test_export_collection_does_not_truncate_portfolios_above_twelve(db, test_us
 def test_portfolio_limits_gate_creation_but_not_retention(db, test_user):
     assert scorecard_limit_for(test_user, 'free') == 30
     assert scorecard_limit_for(test_user, 'business') == 30
-    grant_advantage_offer(test_user, 1, payment_reference='pi_advantage_capacity')
+    grant_limited_time_300k_offer(test_user, 1, payment_reference='pi_limited_time_300k_capacity')
     db.session.commit()
     assert scorecard_limit_for(test_user, 'free') == 30
 

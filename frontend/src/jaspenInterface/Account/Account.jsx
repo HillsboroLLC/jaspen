@@ -5,7 +5,7 @@ import StripeCheckout from './StripeCheckout';
 import { API_BASE } from '../../config/apiBase';
 import { getPlanConnectorSentence } from '../../shared/billing/planConnectors';
 import {
-  ADVANTAGE_THINKING_POWER_SUMMARY,
+  LIMITED_TIME_300K_THINKING_POWER_SUMMARY,
   THINKING_POWER_VARIABILITY_NOTE,
   projectEstimateForPlan,
 } from '../../shared/billing/thinkingPowerEstimates';
@@ -2520,9 +2520,9 @@ export default function Account() {
               <p style={{ fontSize: '0.8rem', color: '#475569', margin: '8px 0 0' }}>
                 {projectEstimateForPlan(currentPlan, plans[currentPlan])}
               </p>
-              {(status?.has_jaspen_advantage || status?.is_founder) && (
+              {status?.has_300k_limited_time && (
                 <p style={{ fontSize: '0.8rem', color: '#475569', margin: '8px 0 0' }}>
-                  Limited-time credit balance: {ADVANTAGE_THINKING_POWER_SUMMARY}
+                  Limited-time credit balance: {LIMITED_TIME_300K_THINKING_POWER_SUMMARY}
                 </p>
               )}
               <p style={{ fontSize: '0.72rem', color: '#64748b', margin: '8px 0 0' }}>

@@ -1,8 +1,8 @@
-# The Jaspen Advantage Operations and Product Contract
+# 300K Limited-Time Offer Operations and Product Contract
 
 ## Durable account state
 
-The Jaspen Advantage is an `account_entitlements` record keyed to the purchasing
+The 300K Limited-Time offer is an `account_entitlements` record keyed to the purchasing
 account. It is independent of subscription plan, Stripe subscription status,
 request counters, and credit balance. Duplicate webhook delivery cannot create a
 second entitlement or promotional credit lot.
@@ -14,7 +14,7 @@ monthly resets do not erase the personal promotional balance or entitlement.
 Consumption order is:
 
 1. monthly plan credits and normal expiring top-ups;
-2. persistent Jaspen Advantage credits;
+2. persistent 300K Limited-Time credits;
 3. the existing small soft-stop grace, only after paid balances are empty.
 
 Refunds and chargebacks tied to the one-time payment reverse the unused persistent
@@ -24,14 +24,14 @@ the only account-level destructive action.
 
 ## Limits and limit messages
 
-While Jaspen Advantage credits remain, the account receives 100 Claude-powered requests
+While 300K Limited-Time credits remain, the account receives 100 Claude-powered requests
 per hour and 300 per day. When the persistent balance reaches zero, the existing
 active-plan limits apply automatically. The same shared account counters cover
 chat, score-next, score-batch, and AI execution-plan generation. Rate-limit
 responses must include `Retry-After`; Thinking Power exhaustion includes the
 monthly reset timestamp.
 
-Every plan, including The Jaspen Advantage, supports up to 30 peer projects in one comparison
+Every plan, including the 300K Limited-Time offer, supports up to 30 peer projects in one comparison
 session. This is a comparison-session creation guard, not an account storage or
 retention cap. Reaching the limit is checked before Claude is invoked. The
 response lists requested, generated, and persisted counts plus every name not
@@ -92,7 +92,7 @@ should refine these provisional ranges over time.
 | Essential (7,000) | ~17–29 typical project evaluations |
 | Team (29,000 shared credits) | ~57–96 typical project evaluations across the shared allowance |
 | Business (80,000 shared credits) | ~133–222 typical project evaluations across the shared allowance |
-| The Jaspen Advantage (300,000 persistent credits) | ~750–1,200 typical project evaluations over the life of the credit balance; available until used |
+| The 300K Limited-Time offer (300,000 persistent credits) | ~750–1,200 typical project evaluations over the life of the credit balance; available until used |
 
 Suitable external wording: “300,000 non-expiring usage credits support an estimated
 750–1,200 typical project evaluations over the life of the credit balance.” Follow it with the variability explanation above. Never describe
@@ -126,7 +126,7 @@ values, Anthropic model routing/prices, and real usage before campaign claims.
 
 ## Stripe and environment checklist
 
-- `PRICE_ID_JASPEN_ADVANTAGE`: one-time $999 Stripe Price. The product must not be recurring.
+- `PRICE_ID_300K_LIMITED_TIME`: one-time $999 Stripe Price. The product must not be recurring.
 - Webhook secret and delivery for Checkout completion, refund, and dispute events.
 - Redis-backed `RATELIMIT_STORAGE_URI` in production.
 - Apply the database migration and run the scorecard backfill before traffic.
