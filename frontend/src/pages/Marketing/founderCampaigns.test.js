@@ -48,10 +48,13 @@ describe('Founder campaign content', () => {
 
     const disclosures = SHARED_OFFER_DISCLOSURES.join(' ');
     expect(disclosures).toContain('does not require an Essential subscription');
-    expect(disclosures).toContain('do not renew or replenish each month');
+    expect(disclosures).toContain('not refilled each month');
     expect(disclosures).toContain('remain available until used');
     expect(disclosures).toContain('cannot be transferred');
     expect(disclosures).toContain('No consulting service');
+    expect(SHARED_OFFER_ITEMS[3].detail).toBe(
+      'No monthly renewal or recurring charge. Fair use still applies.',
+    );
   });
 
   it('uses the approved technical-failure guarantee exactly', () => {

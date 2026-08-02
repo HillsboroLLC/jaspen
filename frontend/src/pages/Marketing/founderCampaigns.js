@@ -64,13 +64,13 @@ export const SHARED_OFFER_ITEMS = [
   {
     value: `$${ADVANTAGE_PRICE} once`,
     label: 'with no subscription required',
-    detail: 'No monthly renewal, automatic replenishment, or recurring charge.',
+    detail: 'No monthly renewal or recurring charge. Fair use still applies.',
   },
 ];
 
 export const SHARED_OFFER_DISCLOSURES = [
   'This limited-time offer is for individual use and does not require an Essential subscription.',
-  'The 300,000 usage credits do not expire, remain available until used, and do not renew or replenish each month.',
+  'The 300,000 usage credits do not expire and remain available until used. The balance is not refilled each month.',
   'The purchase and credits are personal to the buyer. They cannot be transferred, assigned, pooled, or shared with another user or workspace.',
   'If you later join a Team, Business, or Enterprise workspace, this promotional balance remains personal to your account.',
   'When the credits are used, you can continue through Jaspen’s normal paid plans and credit options.',
@@ -92,7 +92,7 @@ export const SHARED_FAQ = [
   },
   { q: 'Do the 300,000 credits expire?', a: 'No. They remain available to the purchaser until used, subject to the current Jaspen terms and account status.' },
   { q: 'Is a subscription required?', a: 'No. This is a one-time purchase and does not enroll you in Essential or another recurring plan.' },
-  { q: 'Do the credits renew every month?', a: 'No. The balance does not renew or replenish, and there is no automatic renewal.' },
+  { q: 'Do the credits renew every month?', a: 'No. This is a single 300,000-credit balance. It is not refilled each month, and there is no recurring charge.' },
   { q: 'Can the credits be shared with a team?', a: 'No. The purchase and promotional credits are personal to the buyer and cannot be transferred, pooled, or shared.' },
   { q: 'What happens if I later upgrade to Team, Business, or Enterprise?', a: 'Your promotional balance remains personal to your account. Team or organization allowances remain governed by that plan.' },
   { q: 'What happens when the credits are used?', a: 'You can continue through Jaspen’s normal paid plans and available credit options.' },

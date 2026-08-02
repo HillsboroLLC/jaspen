@@ -123,7 +123,7 @@ function PurchaseStep({ campaignId, returnPath }) {
     <div>
       <ul className="fc-checkout-summary">
         <li><strong>{ADVANTAGE_CREDITS}</strong><span>non-expiring usage credits</span></li>
-        <li><strong>${ADVANTAGE_PRICE} once</strong><span>no subscription or auto renewal</span></li>
+        <li><strong>${ADVANTAGE_PRICE} once</strong><span>no subscription or recurring charge</span></li>
         <li><strong>Personal account</strong><span>non-transferable and not shared</span></li>
       </ul>
       {error && <div role="alert" style={errorBox}>{error}</div>}

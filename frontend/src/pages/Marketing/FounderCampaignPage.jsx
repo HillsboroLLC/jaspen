@@ -115,7 +115,7 @@ function Hero({ campaign, onCta }) {
           </ul>
           <PrimaryButton campaign={campaign} onClick={onCta} showPrice />
           <p className="fc-hero-offer__disclosure">
-            Individual, non-transferable use. No auto renewal or monthly replenishment.
+            Individual, non-transferable use. No monthly renewal or recurring charge. Fair use still applies.
           </p>
         </aside>
       </div>
@@ -260,7 +260,7 @@ function FounderOffer({ campaign, onCta }) {
             <h2>300,000 AI-Powered Usage Credits for $999 once.</h2>
           </div>
           <p>
-            A limited launch offer for individual, self-directed work inside Jaspen. No monthly subscription and no automatic renewal.
+            A limited launch offer for individual, self-directed work inside Jaspen. No monthly renewal or recurring charge. Fair use still applies.
           </p>
         </div>
 
