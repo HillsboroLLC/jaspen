@@ -17,6 +17,10 @@ function slugify(value = '') {
     .replace(/\s+/g, '-');
 }
 
+function formatAuthorByline(author) {
+  return `By ${author.name}${author.role ? `, ${author.role}` : ''}`;
+}
+
 function internalHref(href = '') {
   if (href.startsWith('https://jaspen.ai/')) return href.replace('https://jaspen.ai', '');
   return href;
@@ -119,7 +123,7 @@ function ArticleIndex({ reviewMode = false }) {
               </div>
               <h2>{article.title}</h2>
               <p>{article.description}</p>
-              <p className="article-review-card-author">By {article.author.name}, {article.author.role}</p>
+              <p className="article-review-card-author">{formatAuthorByline(article.author)}</p>
               <div className="article-review-card-footer">
                 <span><Clock3 size={15} aria-hidden="true" /> {article.readingTime}</span>
                 <span className="article-review-open">Read article <ArrowRight size={16} aria-hidden="true" /></span>
@@ -177,7 +181,7 @@ function ArticleDraft({ article, reviewMode = false }) {
     author: {
       '@type': 'Person',
       name: article.author.name,
-      jobTitle: article.author.role,
+      ...(article.author.role ? { jobTitle: article.author.role } : {}),
     },
     publisher: {
       '@type': 'Organization',
@@ -245,7 +249,7 @@ function ArticleDraft({ article, reviewMode = false }) {
             <div className="article-draft-meta">
               <div className="article-draft-credit">
                 <span className="article-draft-category">{article.eyebrow}</span>
-                <span className="article-draft-author">By {article.author.name}, {article.author.role}</span>
+                <span className="article-draft-author">{formatAuthorByline(article.author)}</span>
                 <span className="article-draft-reading-time"><Clock3 size={14} aria-hidden="true" /> {article.readingTime}</span>
               </div>
             </div>

@@ -9,8 +9,8 @@ describe('published article authors and layout', () => {
     );
 
     expect(authorsBySlug).toEqual({
-      'true-cost-of-home-ownership': { name: 'Grant Ellis', role: 'Sr. Account Executive' },
-      'true-cost-of-renting': { name: 'Grant Ellis', role: 'Sr. Account Executive' },
+      'true-cost-of-home-ownership': { name: 'Morgan Ellis' },
+      'true-cost-of-renting': { name: 'Morgan Ellis' },
       'cost-of-employee-turnover': { name: 'L.Bailey', role: 'Founder' },
       'cost-of-rework': { name: 'L.Bailey', role: 'Founder' },
     });
