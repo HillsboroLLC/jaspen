@@ -406,46 +406,55 @@ def _is_limited_time_300k_charge(user, charge):
     )
 
 
-def _fulfill_credit_pack_payment_intent(intent, expected_user=None):
-    metadata = intent.get('metadata') or {}
-    checkout_type = str(metadata.get('checkout_type') or '').strip()
+def _fulfill_credit_pack_purchase(
+    reference, metadata, *, event_type, customer_id=None, expected_user=None,
+):
+    """Add credit-pack tokens once per purchase, whatever event carries it.
+
+    Stripe announces one hosted-checkout purchase twice, as
+    checkout.session.completed and again as payment_intent.succeeded, under two
+    different event ids - so the webhook's own event ledger cannot see that
+    they are the same sale. The claim is keyed on the PaymentIntent instead,
+    which is the one id both events agree on, and the unique index on
+    stripe_webhook_events.stripe_event_id is what actually settles who grants.
+
+    Mirrors _fulfill_limited_time_300k_payment_intent. The difference is that
+    credit packs add to a counter rather than writing a grant row, so there is
+    no second unique constraint underneath this one to catch a duplicate - this
+    claim has to be right on its own.
+    """
+    checkout_type = str(_stripe_field(metadata, 'checkout_type') or '').strip()
     if checkout_type not in {'credit_pack', 'overage_pack'}:
         return {'granted': False, 'reason': 'not_credit_pack'}
-    if intent.get('status') != 'succeeded':
-        return {'granted': False, 'reason': intent.get('status') or 'not_succeeded'}
+    reference = str(reference or '').strip()
+    if not reference:
+        return {'granted': False, 'reason': 'missing_reference'}
 
-    payment_intent_id = intent.get('id')
-    event_id = _credit_pack_payment_event_id(payment_intent_id)
+    event_id = _credit_pack_payment_event_id(reference)
     event_row = StripeWebhookEvent.query.filter_by(stripe_event_id=event_id).first()
     if event_row and bool(event_row.processed):
         return {'granted': False, 'reason': 'already_processed'}
     if event_row is None:
         event_row = StripeWebhookEvent(
             stripe_event_id=event_id,
-            event_type='payment_intent.succeeded',
+            event_type=event_type,
             processed=False,
         )
         db.session.add(event_row)
         try:
             db.session.flush()
         except IntegrityError:
+            # Another delivery of this same purchase claimed it between our
+            # read and our write. The unique index decides, not the read, and
+            # the other worker is mid-grant - so stand down rather than add the
+            # tokens a second time. Stripe redelivers if that worker fails.
             db.session.rollback()
-            event_row = StripeWebhookEvent.query.filter_by(stripe_event_id=event_id).first()
-            if event_row and bool(event_row.processed):
-                return {'granted': False, 'reason': 'already_processed'}
-            if event_row is None:
-                event_row = StripeWebhookEvent(
-                    stripe_event_id=event_id,
-                    event_type='payment_intent.succeeded',
-                    processed=False,
-                )
-                db.session.add(event_row)
-                db.session.flush()
+            return {'granted': False, 'reason': 'in_flight'}
 
-    user_id = metadata.get('user_id')
+    user_id = _stripe_field(metadata, 'user_id')
     user = User.query.get(user_id) if user_id else None
     if not user:
-        user = _find_user_for_billing_event(customer_id=intent.get('customer'))
+        user = _find_user_for_billing_event(customer_id=customer_id)
     if not user:
         return {'granted': False, 'reason': 'user_not_found'}
     if expected_user and str(user.id) != str(expected_user.id):
@@ -456,15 +465,48 @@ def _fulfill_credit_pack_payment_intent(intent, expected_user=None):
         return {'granted': False, 'reason': 'missing_tokens'}
 
     add_credits(user, tokens)
-    if intent.get('customer'):
-        user.stripe_customer_id = intent.get('customer')
+    if customer_id:
+        user.stripe_customer_id = customer_id
     event_row.processed = True
     event_row.processed_at = datetime.utcnow()
     current_app.logger.info(
-        "payment_intent.succeeded: added %s credit-pack tokens for user=%s",
-        tokens, user.id,
+        "%s: added %s credit-pack tokens for user=%s (purchase=%s)",
+        event_type, tokens, user.id, reference,
     )
     return {'granted': True, 'tokens': tokens, 'user_id': str(user.id)}
+
+
+def _fulfill_credit_pack_payment_intent(intent, expected_user=None):
+    metadata = intent.get('metadata') or {}
+    if intent.get('status') != 'succeeded':
+        checkout_type = str(metadata.get('checkout_type') or '').strip()
+        if checkout_type not in {'credit_pack', 'overage_pack'}:
+            return {'granted': False, 'reason': 'not_credit_pack'}
+        return {'granted': False, 'reason': intent.get('status') or 'not_succeeded'}
+    return _fulfill_credit_pack_purchase(
+        intent.get('id'),
+        metadata,
+        event_type='payment_intent.succeeded',
+        customer_id=intent.get('customer'),
+        expected_user=expected_user,
+    )
+
+
+def _fulfill_credit_pack_checkout_session(session, expected_user=None):
+    """Fulfil a hosted-checkout credit pack, claiming it as the same purchase.
+
+    The session's payment_intent is what ties this to the payment_intent.succeeded
+    delivery of the same sale; the session id is only a fallback for a session
+    that has not been paid through an intent.
+    """
+    metadata = session.get('metadata') or {}
+    return _fulfill_credit_pack_purchase(
+        session.get('payment_intent') or session.get('id'),
+        metadata,
+        event_type='checkout.session.completed',
+        customer_id=session.get('customer'),
+        expected_user=expected_user,
+    )
 
 
 def _fulfill_limited_time_300k_payment_intent(intent, expected_user=None):
@@ -2100,14 +2142,14 @@ def stripe_webhook():
         if user:
             checkout_type = metadata.get('checkout_type')
             if checkout_type in {'credit_pack', 'overage_pack'}:
-                tokens = int(metadata.get('tokens') or metadata.get('credits') or 0)
-                add_credits(user, tokens)
-                if sess.get('customer'):
-                    user.stripe_customer_id = sess.get('customer')
-                current_app.logger.info(
-                    "checkout.session.completed: added %s credit-pack tokens for user=%s",
-                    tokens, user_id,
-                )
+                # Claimed against the PaymentIntent, so the payment_intent.succeeded
+                # delivery of this same purchase cannot add the tokens again.
+                result = _fulfill_credit_pack_checkout_session(sess)
+                if not result.get('granted'):
+                    current_app.logger.info(
+                        "checkout.session.completed: no credit-pack grant for user=%s (%s)",
+                        user_id, result.get('reason'),
+                    )
             elif checkout_type == LIMITED_TIME_300K_CHECKOUT_TYPE:
                 tokens = int(metadata.get('tokens') or 0)
                 _entitlement, _grant, created = grant_limited_time_300k_offer(
