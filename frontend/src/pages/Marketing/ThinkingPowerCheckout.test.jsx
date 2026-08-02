@@ -137,7 +137,7 @@ describe('Limited-time offer checkout acknowledgements', () => {
       payment_intent_id: 'pi_limited_time_300k_abc',
       coupon_code: 'LAUNCH20',
     });
-    expect(await screen.findByText("Promo code applied — you'll pay $799.20 instead of $999.")).toBeInTheDocument();
+    expect(await screen.findByText((_, element) => element.textContent === 'Promo code applied: your new price is $799.20 $999')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Pay \$799\.20/ })).toBeInTheDocument();
   });
 

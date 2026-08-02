@@ -260,7 +260,9 @@ function PaymentForm({ onSuccess, clientSecret }) {
           </button>
         </div>
         {discounted && !couponError && (
-          <div style={{ marginTop: 6, fontSize: 12, color: '#0d7a3e' }}>Promo code applied — you'll pay {priceLabel} instead of {fullPriceLabel}.</div>
+          <div style={{ marginTop: 8, padding: '10px 12px', borderRadius: 8, background: '#e9f9ee', border: '1px solid #0d7a3e', fontSize: 14, fontWeight: 700, color: '#0d7a3e' }}>
+            Promo code applied: your new price is {priceLabel} <span style={{ textDecoration: 'line-through', fontWeight: 400, opacity: 0.7, marginLeft: 4 }}>{fullPriceLabel}</span>
+          </div>
         )}
         {couponError && (
           <div style={{ marginTop: 6, fontSize: 12, color: '#b42318' }}>{couponError}</div>
@@ -272,7 +274,7 @@ function PaymentForm({ onSuccess, clientSecret }) {
         {submitting
           ? 'Confirming payment...'
           : discounted
-            ? <>Pay {priceLabel} <span style={{ textDecoration: 'line-through', opacity: 0.65, marginLeft: 4 }}>{fullPriceLabel}</span></>
+            ? <>Pay {priceLabel} <span style={{ textDecoration: 'line-through', opacity: 0.7, marginLeft: 6, fontWeight: 400 }}>(was {fullPriceLabel})</span></>
             : `Pay ${priceLabel}`}
       </button>
       <p className="fc-checkout-footnote">Payment is processed securely. Your credits are granted after payment is confirmed.</p>
