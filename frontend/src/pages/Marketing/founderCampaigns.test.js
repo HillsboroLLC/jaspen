@@ -40,6 +40,11 @@ describe('Founder campaign content', () => {
     expect(SHARED_OFFER_ITEMS.map((item) => `${item.value} ${item.label} ${item.detail}`).join(' ')).toContain(
       'Compare up to 30 projects in one focused session. Continue evaluating and retaining additional projects across sessions.',
     );
+    expect(SHARED_OFFER_ITEMS[1]).toEqual({
+      value: '~750-1,200',
+      label: 'Average number of projects',
+      detail: 'A planning estimate based on typical evaluations, not a guaranteed quantity.',
+    });
 
     const disclosures = SHARED_OFFER_DISCLOSURES.join(' ');
     expect(disclosures).toContain('does not require an Essential subscription');
@@ -51,10 +56,10 @@ describe('Founder campaign content', () => {
 
   it('uses the approved technical-failure guarantee exactly', () => {
     expect(FOUNDER_TECHNICAL_GUARANTEE).toBe(
-      'If a technical issue prevents you from completing the advertised workflow and our team cannot resolve it, we’ll refund your purchase.',
+      'We’ll resolve the technical issue or give you your money back.',
     );
     expect(FOUNDER_GUARANTEE_QUALIFIER).toBe(
-      'This guarantee covers unresolved product failures. The quality and usefulness of the results depend on the information, evidence, assumptions, criteria, and decisions provided by the user.',
+      'If a technical issue prevents you from completing the advertised workflow, contact Jaspen support. If our team cannot resolve the issue, we will refund the full purchase price. The quality and usefulness of the results still depend on the information, evidence, assumptions, criteria, and decisions you provide.',
     );
   });
 
