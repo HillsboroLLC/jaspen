@@ -200,7 +200,7 @@ def test_limited_time_300k_payment_intent_uses_one_time_price_without_subscripti
     assert 'subscription_data' not in captured
 
 
-def test_limited_time_300k_payment_intent_applies_percent_off_coupon(
+def test_limited_time_300k_payment_intent_is_created_at_full_price(
     client, app, auth_headers, monkeypatch
 ):
     from app.routes import billing
@@ -214,17 +214,10 @@ def test_limited_time_300k_payment_intent_applies_percent_off_coupon(
         billing.stripe.Price, 'retrieve',
         lambda price_id: {'id': price_id, 'unit_amount': 99900, 'currency': 'usd'},
     )
-    monkeypatch.setattr(
-        billing.stripe.PromotionCode, 'list',
-        lambda code, active, limit: {'data': [{
-            'id': 'promo_launch20',
-            'coupon': {'valid': True, 'percent_off': 20},
-        }]},
-    )
 
     def fake_create(**kwargs):
         captured.update(kwargs)
-        return type('Intent', (), {'client_secret': 'pi_limited_time_300k_secret_discounted'})()
+        return type('Intent', (), {'client_secret': 'pi_limited_time_300k_secret_abc'})()
 
     monkeypatch.setattr(billing, '_ensure_customer_for_user', lambda _user: 'cus_limited_time_300k')
     monkeypatch.setattr(billing.stripe.PaymentIntent, 'create', fake_create)
@@ -236,22 +229,83 @@ def test_limited_time_300k_payment_intent_applies_percent_off_coupon(
             'return_path': '/limited-time/project-prioritization',
             'terms_accepted': True,
             'final_sale_acknowledged': True,
-            'coupon_code': 'LAUNCH20',
         },
     )
 
     assert response.status_code == 200
     body = response.get_json()
-    assert body['price_label'] == '$799.20'
-    assert captured['amount'] == 79920  # 999.00 * 0.8
-    assert captured['metadata']['promotion_code'] == 'LAUNCH20'
+    assert body['price_label'] == '$999'
+    assert captured['amount'] == 99900
+    assert 'promotion_code' not in captured['metadata']
 
 
-def test_limited_time_300k_payment_intent_rejects_unknown_coupon(client, app, auth_headers, monkeypatch):
+def test_apply_300k_limited_time_coupon_reprices_the_existing_intent(
+    client, app, auth_headers, test_user, monkeypatch
+):
     from app.routes import billing
 
     app.config['STRIPE_LIMITED_TIME_300K_PRICE_ID'] = 'price_limited_time_300k_999'
-    app.config['LIMITED_TIME_300K_CREDIT_TOKENS'] = 300_000_000
+    modified = {}
+
+    monkeypatch.setattr(
+        billing.stripe.PaymentIntent, 'retrieve',
+        lambda payment_intent_id: {
+            'id': payment_intent_id,
+            'status': 'requires_payment_method',
+            'metadata': {
+                'user_id': str(test_user.id),
+                'checkout_type': billing.LIMITED_TIME_300K_CHECKOUT_TYPE,
+                'tokens': '300000000',
+            },
+        },
+    )
+    monkeypatch.setattr(
+        billing.stripe.Price, 'retrieve',
+        lambda price_id: {'id': price_id, 'unit_amount': 99900, 'currency': 'usd'},
+    )
+    monkeypatch.setattr(
+        billing.stripe.PromotionCode, 'list',
+        lambda code, active, limit: {'data': [{
+            'id': 'promo_launch20',
+            'coupon': {'valid': True, 'percent_off': 20},
+        }]},
+    )
+
+    def fake_modify(payment_intent_id, **kwargs):
+        modified['id'] = payment_intent_id
+        modified.update(kwargs)
+
+    monkeypatch.setattr(billing.stripe.PaymentIntent, 'modify', fake_modify)
+    response = client.post(
+        '/api/v1/billing/apply-300k-limited-time-coupon',
+        headers=auth_headers,
+        json={'payment_intent_id': 'pi_limited_time_300k_abc', 'coupon_code': 'LAUNCH20'},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()['price_label'] == '$799.20'
+    assert modified['id'] == 'pi_limited_time_300k_abc'
+    assert modified['amount'] == 79920  # 999.00 * 0.8
+    assert modified['metadata']['promotion_code'] == 'LAUNCH20'
+
+
+def test_apply_300k_limited_time_coupon_rejects_unknown_code(
+    client, app, auth_headers, test_user, monkeypatch
+):
+    from app.routes import billing
+
+    app.config['STRIPE_LIMITED_TIME_300K_PRICE_ID'] = 'price_limited_time_300k_999'
+    monkeypatch.setattr(
+        billing.stripe.PaymentIntent, 'retrieve',
+        lambda payment_intent_id: {
+            'id': payment_intent_id,
+            'status': 'requires_payment_method',
+            'metadata': {
+                'user_id': str(test_user.id),
+                'checkout_type': billing.LIMITED_TIME_300K_CHECKOUT_TYPE,
+            },
+        },
+    )
     monkeypatch.setattr(
         billing.stripe.Price, 'retrieve',
         lambda price_id: {'id': price_id, 'unit_amount': 99900, 'currency': 'usd'},
@@ -259,18 +313,39 @@ def test_limited_time_300k_payment_intent_rejects_unknown_coupon(client, app, au
     monkeypatch.setattr(billing.stripe.PromotionCode, 'list', lambda code, active, limit: {'data': []})
 
     response = client.post(
-        '/api/v1/billing/create-300k-limited-time-payment-intent',
+        '/api/v1/billing/apply-300k-limited-time-coupon',
         headers=auth_headers,
-        json={
-            'return_path': '/limited-time/project-prioritization',
-            'terms_accepted': True,
-            'final_sale_acknowledged': True,
-            'coupon_code': 'NOTREAL',
-        },
+        json={'payment_intent_id': 'pi_limited_time_300k_abc', 'coupon_code': 'NOTREAL'},
     )
 
     assert response.status_code == 400
     assert 'not found' in response.get_json()['msg'].lower()
+
+
+def test_apply_300k_limited_time_coupon_rejects_other_users_intent(
+    client, app, auth_headers, monkeypatch
+):
+    from app.routes import billing
+
+    monkeypatch.setattr(
+        billing.stripe.PaymentIntent, 'retrieve',
+        lambda payment_intent_id: {
+            'id': payment_intent_id,
+            'status': 'requires_payment_method',
+            'metadata': {
+                'user_id': 'someone-else',
+                'checkout_type': billing.LIMITED_TIME_300K_CHECKOUT_TYPE,
+            },
+        },
+    )
+
+    response = client.post(
+        '/api/v1/billing/apply-300k-limited-time-coupon',
+        headers=auth_headers,
+        json={'payment_intent_id': 'pi_limited_time_300k_abc', 'coupon_code': ''},
+    )
+
+    assert response.status_code == 403
 
 
 def test_limited_time_300k_payment_intent_requires_both_purchase_acknowledgements(client, auth_headers):

@@ -923,13 +923,61 @@ def create_subscription_embedded():
 LIMITED_TIME_300K_CHECKOUT_TYPE = '300k_limited_time'
 
 
+def _price_label(amount):
+    return f"${amount // 100}" if amount % 100 == 0 else f"${amount / 100:.2f}"
+
+
+def _resolve_300k_limited_time_amount(price_id, coupon_code):
+    """Returns (amount, currency, promotion_code_id, error_response).
+
+    Shared by intent creation and coupon application - PaymentIntents have no
+    native "discounts" parameter (unlike Subscriptions and Checkout Sessions),
+    so a promotion code has to be resolved and its discount applied to the
+    amount ourselves.
+    """
+    try:
+        price = stripe.Price.retrieve(price_id)
+    except stripe.error.StripeError as exc:
+        current_app.logger.exception('300k-limited-time: could not retrieve price')
+        return None, None, None, (str(getattr(exc, 'user_message', None) or 'Could not start checkout.'), 400)
+    amount = int(price.get('unit_amount') or 0)
+    currency = price.get('currency') or 'usd'
+    if amount <= 0:
+        return None, None, None, ('The limited-time offer price is not configured correctly.', 503)
+
+    coupon_code = str(coupon_code or '').strip()
+    promotion_code_id = ''
+    if coupon_code:
+        try:
+            matches = stripe.PromotionCode.list(code=coupon_code, active=True, limit=1)
+            promotion = (matches.get('data') or [None])[0]
+            if not promotion:
+                return None, None, None, ('That coupon code was not found or is no longer active.', 400)
+            coupon = promotion.get('coupon') or {}
+            if not coupon.get('valid', True):
+                return None, None, None, ('That coupon code is no longer valid.', 400)
+            promotion_code_id = promotion.get('id')
+            if coupon.get('percent_off'):
+                amount = round(amount * (1 - float(coupon['percent_off']) / 100))
+            elif coupon.get('amount_off') and (coupon.get('currency') or currency) == currency:
+                amount = amount - int(coupon['amount_off'])
+            amount = max(50, amount)  # Stripe's practical minimum charge for USD-like currencies.
+        except stripe.error.StripeError as exc:
+            current_app.logger.warning('300k-limited-time: coupon lookup failed: %s', exc)
+            return None, None, None, ('Could not validate that coupon code. Please try again.', 400)
+
+    return amount, currency, promotion_code_id, None
+
+
 @billing_bp.route('/create-300k-limited-time-payment-intent', methods=['POST'])
 @jwt_required()
 def create_300k_limited_time_payment_intent():
     """Create an in-page PaymentIntent for the standalone limited-time credit offer.
 
     Embedded (Stripe Elements) rather than a redirect to Stripe's hosted
-    Checkout page, so the buyer never leaves jaspen.ai.
+    Checkout page, so the buyer never leaves jaspen.ai. Created at full
+    price - a promo code is applied afterward, on the payment screen itself,
+    via apply_300k_limited_time_coupon below.
     """
     user = User.query.get(get_jwt_identity())
     if not user:
@@ -954,39 +1002,9 @@ def create_300k_limited_time_payment_intent():
     if return_path not in allowed_return_paths:
         return jsonify({'msg': 'Invalid campaign return path.'}), 400
 
-    try:
-        price = stripe.Price.retrieve(price_id)
-    except stripe.error.StripeError as exc:
-        current_app.logger.exception('create-300k-limited-time-payment-intent: could not retrieve price')
-        return jsonify({'msg': str(getattr(exc, 'user_message', None) or 'Could not start checkout.')}), 400
-    amount = int(price.get('unit_amount') or 0)
-    currency = price.get('currency') or 'usd'
-    if amount <= 0:
-        return jsonify({'msg': 'The limited-time offer price is not configured correctly.'}), 503
-
-    # PaymentIntents have no native "discounts" parameter (unlike Subscriptions
-    # and Checkout Sessions), so a promotion code has to be resolved and its
-    # discount applied to the amount ourselves.
-    coupon_code = str(data.get('coupon_code') or '').strip()
-    promotion_code_id = ''
-    if coupon_code:
-        try:
-            matches = stripe.PromotionCode.list(code=coupon_code, active=True, limit=1)
-            promotion = (matches.get('data') or [None])[0]
-            if not promotion:
-                return jsonify({'msg': 'That coupon code was not found or is no longer active.'}), 400
-            coupon = promotion.get('coupon') or {}
-            if not coupon.get('valid', True):
-                return jsonify({'msg': 'That coupon code is no longer valid.'}), 400
-            promotion_code_id = promotion.get('id')
-            if coupon.get('percent_off'):
-                amount = round(amount * (1 - float(coupon['percent_off']) / 100))
-            elif coupon.get('amount_off') and (coupon.get('currency') or currency) == currency:
-                amount = amount - int(coupon['amount_off'])
-            amount = max(50, amount)  # Stripe's practical minimum charge for USD-like currencies.
-        except stripe.error.StripeError as exc:
-            current_app.logger.warning('create-300k-limited-time-payment-intent: coupon lookup failed: %s', exc)
-            return jsonify({'msg': 'Could not validate that coupon code. Please try again.'}), 400
+    amount, currency, _promotion_code_id, error = _resolve_300k_limited_time_amount(price_id, None)
+    if error:
+        return jsonify({'msg': error[0]}), error[1]
 
     customer_id = _ensure_customer_for_user(user)
     metadata = {
@@ -998,8 +1016,6 @@ def create_300k_limited_time_payment_intent():
         'final_sale_acknowledged': 'true',
         'acknowledged_at': datetime.utcnow().replace(microsecond=0).isoformat() + 'Z',
     }
-    if promotion_code_id:
-        metadata['promotion_code'] = coupon_code
     try:
         intent = stripe.PaymentIntent.create(
             amount=amount,
@@ -1015,8 +1031,59 @@ def create_300k_limited_time_payment_intent():
     return jsonify({
         'client_secret': intent.client_secret,
         'publishable_key': current_app.config.get('STRIPE_PUBLISHABLE_KEY') or '',
-        'price_label': f"${amount // 100}" if amount % 100 == 0 else f"${amount / 100:.2f}",
+        'price_label': _price_label(amount),
     }), 200
+
+
+@billing_bp.route('/apply-300k-limited-time-coupon', methods=['POST'])
+@jwt_required()
+def apply_300k_limited_time_coupon():
+    """Re-price an existing, not-yet-confirmed 300K Limited-Time PaymentIntent.
+
+    Called from the payment screen itself (where the card fields already are)
+    so the buyer sees the reduced price before paying, rather than needing to
+    guess on an earlier acknowledgements screen. An empty coupon_code resets
+    back to full price.
+    """
+    user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({'msg': 'User not found'}), 404
+
+    data = request.get_json() or {}
+    payment_intent_id = str(data.get('payment_intent_id') or '').strip()
+    if not payment_intent_id:
+        return jsonify({'msg': 'Missing payment_intent_id'}), 400
+
+    try:
+        intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+    except stripe.error.StripeError as exc:
+        return jsonify({'msg': str(exc)}), 400
+
+    intent_metadata = intent.get('metadata') or {}
+    if intent_metadata.get('checkout_type') != LIMITED_TIME_300K_CHECKOUT_TYPE:
+        return jsonify({'msg': 'Payment not found'}), 404
+    if intent_metadata.get('user_id') != str(user.id):
+        return jsonify({'msg': 'Payment does not belong to this user'}), 403
+    if intent.get('status') not in {'requires_payment_method', 'requires_confirmation'}:
+        return jsonify({'msg': 'This payment can no longer be modified.'}), 409
+
+    price_id = current_app.config.get('STRIPE_LIMITED_TIME_300K_PRICE_ID')
+    coupon_code = str(data.get('coupon_code') or '').strip()
+    amount, _currency, promotion_code_id, error = _resolve_300k_limited_time_amount(price_id, coupon_code)
+    if error:
+        return jsonify({'msg': error[0]}), error[1]
+
+    updated_metadata = dict(intent_metadata)
+    if promotion_code_id:
+        updated_metadata['promotion_code'] = coupon_code
+    else:
+        updated_metadata.pop('promotion_code', None)
+    try:
+        stripe.PaymentIntent.modify(payment_intent_id, amount=amount, metadata=updated_metadata)
+    except stripe.error.StripeError as exc:
+        current_app.logger.exception('apply-300k-limited-time-coupon failed')
+        return jsonify({'msg': str(getattr(exc, 'user_message', None) or 'Could not apply that coupon.')}), 400
+    return jsonify({'price_label': _price_label(amount)}), 200
 
 
 @billing_bp.route('/confirm-300k-limited-time-payment', methods=['POST'])

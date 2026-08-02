@@ -153,11 +153,40 @@ function AccountStep({ returnPath }) {
   );
 }
 
-function PaymentForm({ onSuccess, priceLabel }) {
+function PaymentForm({ onSuccess, clientSecret }) {
   const stripe = useStripe();
   const elements = useElements();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [priceLabel, setPriceLabel] = useState(`$${LIMITED_TIME_300K_PRICE}`);
+  const [appliedCoupon, setAppliedCoupon] = useState('');
+  const [couponInput, setCouponInput] = useState('');
+  const [couponError, setCouponError] = useState('');
+  const [applyingCoupon, setApplyingCoupon] = useState(false);
+  const paymentIntentId = String(clientSecret || '').split('_secret_')[0];
+
+  const applyCoupon = async () => {
+    const code = couponInput.trim();
+    if (applyingCoupon || code === appliedCoupon) return;
+    setApplyingCoupon(true);
+    setCouponError('');
+    try {
+      const resp = await authFetch(`${API_BASE}/api/v1/billing/apply-300k-limited-time-coupon`, {
+        method: 'POST',
+        headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
+        credentials: 'include',
+        body: JSON.stringify({ payment_intent_id: paymentIntentId, coupon_code: code }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data?.msg || 'Could not apply that coupon.');
+      setPriceLabel(data.price_label?.startsWith('$') ? data.price_label : `$${data.price_label}`);
+      setAppliedCoupon(code);
+    } catch (err) {
+      setCouponError(err?.message || 'Could not apply that coupon.');
+    } finally {
+      setApplyingCoupon(false);
+    }
+  };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -196,12 +225,55 @@ function PaymentForm({ onSuccess, priceLabel }) {
     setSubmitting(false);
   };
 
+  const fullPriceLabel = `$${LIMITED_TIME_300K_PRICE}`;
+  const discounted = appliedCoupon && priceLabel !== fullPriceLabel;
+
   return (
     <form onSubmit={handleSubmit}>
+      <div style={{ marginBottom: 16 }}>
+        <label htmlFor="limited-time-coupon" style={labelStyle}>Promo code (optional)</label>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input
+            id="limited-time-coupon"
+            name="jaspen-promo-code"
+            type="text"
+            value={couponInput}
+            onChange={(e) => { setCouponInput(e.target.value); setCouponError(''); }}
+            placeholder="Enter promo code"
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck="false"
+            data-1p-ignore="true"
+            data-lpignore="true"
+            data-bwignore="true"
+            data-form-type="other"
+            style={{ ...inputStyle, marginBottom: 0, flex: 1 }}
+          />
+          <button
+            type="button"
+            onClick={applyCoupon}
+            disabled={applyingCoupon || couponInput.trim() === appliedCoupon}
+            style={{ border: '1px solid #dbe3ef', borderRadius: 8, background: '#fff', color: '#0f172a', padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+          >
+            {applyingCoupon ? 'Applying…' : 'Apply'}
+          </button>
+        </div>
+        {discounted && !couponError && (
+          <div style={{ marginTop: 6, fontSize: 12, color: '#0d7a3e' }}>Promo code applied — you'll pay {priceLabel} instead of {fullPriceLabel}.</div>
+        )}
+        {couponError && (
+          <div style={{ marginTop: 6, fontSize: 12, color: '#b42318' }}>{couponError}</div>
+        )}
+      </div>
       <PaymentElement options={{ layout: 'tabs' }} />
       {error && <div role="alert" style={{ ...errorBox, marginTop: 12 }}>{error}</div>}
       <button type="submit" className="fc-checkout-primary" disabled={!stripe || submitting} style={{ marginTop: 16 }}>
-        {submitting ? 'Confirming payment...' : `Pay ${priceLabel}`}
+        {submitting
+          ? 'Confirming payment...'
+          : discounted
+            ? <>Pay {priceLabel} <span style={{ textDecoration: 'line-through', opacity: 0.65, marginLeft: 4 }}>{fullPriceLabel}</span></>
+            : `Pay ${priceLabel}`}
       </button>
       <p className="fc-checkout-footnote">Payment is processed securely. Your credits are granted after payment is confirmed.</p>
     </form>
@@ -215,10 +287,6 @@ function PurchaseStep({ campaignId, returnPath, onSuccess }) {
   const [finalSaleAccepted, setFinalSaleAccepted] = useState(false);
   const [clientSecret, setClientSecret] = useState('');
   const [stripePromise, setStripePromise] = useState(null);
-  const [priceLabel, setPriceLabel] = useState(`$${LIMITED_TIME_300K_PRICE}`);
-  const [couponInput, setCouponInput] = useState('');
-  const [appliedCoupon, setAppliedCoupon] = useState('');
-  const [couponError, setCouponError] = useState('');
   const acknowledgementsComplete = termsAccepted && finalSaleAccepted;
 
   const startCheckout = async () => {
@@ -229,7 +297,6 @@ function PurchaseStep({ campaignId, returnPath, onSuccess }) {
     }
     setSubmitting(true);
     setError('');
-    setCouponError('');
     try {
       const response = await authFetch(`${API_BASE}/api/v1/billing/create-300k-limited-time-payment-intent`, {
         method: 'POST',
@@ -240,21 +307,11 @@ function PurchaseStep({ campaignId, returnPath, onSuccess }) {
           return_path: returnPath,
           terms_accepted: true,
           final_sale_acknowledged: true,
-          ...(appliedCoupon ? { coupon_code: appliedCoupon } : {}),
         }),
       });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok || !data?.client_secret) {
-        if (appliedCoupon) {
-          // A bad/expired coupon shouldn't dead-end the whole purchase —
-          // surface it next to the coupon field and let them retry or clear it.
-          setCouponError(data?.msg || 'Could not apply that coupon.');
-          return;
-        }
-        throw new Error(data?.msg || 'Could not start secure checkout.');
-      }
+      if (!response.ok || !data?.client_secret) throw new Error(data?.msg || 'Could not start secure checkout.');
       if (!data.publishable_key) throw new Error('Payments are not configured yet.');
-      if (data.price_label) setPriceLabel(data.price_label.startsWith('$') ? data.price_label : `$${data.price_label}`);
       setStripePromise((prev) => prev || loadStripe(data.publishable_key));
       setClientSecret(data.client_secret);
     } catch (err) {
@@ -267,7 +324,7 @@ function PurchaseStep({ campaignId, returnPath, onSuccess }) {
   if (clientSecret && stripePromise) {
     return (
       <Elements stripe={stripePromise} options={{ clientSecret, appearance: STRIPE_APPEARANCE }}>
-        <PaymentForm onSuccess={onSuccess} priceLabel={priceLabel} />
+        <PaymentForm onSuccess={onSuccess} clientSecret={clientSecret} />
       </Elements>
     );
   }
@@ -277,34 +334,6 @@ function PurchaseStep({ campaignId, returnPath, onSuccess }) {
       <ul className="fc-checkout-summary">
         <li><strong>Personal account</strong><span>non-transferable and not shared</span></li>
       </ul>
-      <div style={{ marginBottom: 16 }}>
-        <label htmlFor="limited-time-coupon" style={labelStyle}>Promo code (optional)</label>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <input
-            id="limited-time-coupon"
-            type="text"
-            value={couponInput}
-            onChange={(e) => { setCouponInput(e.target.value); setCouponError(''); }}
-            placeholder="Enter promo code"
-            autoComplete="off"
-            style={{ ...inputStyle, marginBottom: 0, flex: 1 }}
-          />
-          <button
-            type="button"
-            onClick={() => { setAppliedCoupon(couponInput.trim()); setCouponError(''); }}
-            disabled={couponInput.trim() === appliedCoupon}
-            style={{ border: '1px solid #dbe3ef', borderRadius: 8, background: '#fff', color: '#0f172a', padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
-          >
-            Apply
-          </button>
-        </div>
-        {appliedCoupon && !couponError && (
-          <div style={{ marginTop: 6, fontSize: 12, color: '#0d7a3e' }}>Promo code applied: {appliedCoupon}</div>
-        )}
-        {couponError && (
-          <div style={{ marginTop: 6, fontSize: 12, color: '#b42318' }}>{couponError}</div>
-        )}
-      </div>
       {error && <div role="alert" style={errorBox}>{error}</div>}
       <div className="fc-checkout-acknowledgements">
         <TermsAcknowledgement id="limited-time-purchase-terms" checked={termsAccepted} onChange={setTermsAccepted} />
@@ -314,9 +343,9 @@ function PurchaseStep({ campaignId, returnPath, onSuccess }) {
         </label>
       </div>
       <button type="button" className="fc-checkout-primary" disabled={submitting || !acknowledgementsComplete} onClick={startCheckout}>
-        {submitting ? 'Loading payment…' : `Continue to pay ${priceLabel}`}
+        {submitting ? 'Loading payment…' : `Continue to pay $${LIMITED_TIME_300K_PRICE}`}
       </button>
-      <p className="fc-checkout-footnote">Payment is processed securely. Your credits are granted after payment is confirmed.</p>
+      <p className="fc-checkout-footnote">A promo code field is on the next screen, next to payment. Payment is processed securely. Your credits are granted after payment is confirmed.</p>
     </div>
   );
 }
