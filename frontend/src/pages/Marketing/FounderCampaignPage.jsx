@@ -85,12 +85,7 @@ function Hero({ campaign, onCta }) {
           <h1>{campaign.heroTitle}</h1>
           <p className="fc-hero__body">{campaign.heroBody}</p>
           <p className="fc-hero__callout">{campaign.heroCallout}</p>
-          <div className="fc-hero__actions">
-            <div className="fc-hero__cta-stack">
-              <PrimaryButton campaign={campaign} onClick={onCta} showPrice />
-              <span>$999 once. No subscription required.</span>
-            </div>
-          </div>
+          <a className="fc-hero__text-link" href="#workflow">See how the decision process works <ArrowIcon /></a>
         </div>
 
         <aside className="fc-hero-offer" aria-labelledby="fc-hero-offer-title">
@@ -114,30 +109,30 @@ function Hero({ campaign, onCta }) {
   );
 }
 
-function UrgencyBar() {
+function TrustBar({ campaign }) {
   return (
-    <section className="fc-urgency" aria-label="Campaign message">
-      <div className="fc-container fc-urgency__inner">
-        <strong>RANK THEM.</strong>
-        <span>Before you fund it, rank it.</span>
-        <span>Bring the possibilities. Leave with an order.</span>
-      </div>
+    <section className="fc-trust-bar" aria-label="What Jaspen supports">
+      <ul className="fc-container fc-trust-bar__inner">
+        {campaign.trustPoints.map((point) => (
+          <li key={point}><CheckIcon /><span>{point}</span></li>
+        ))}
+      </ul>
     </section>
   );
 }
 
 function MomentAndOutcome({ campaign }) {
   return (
-    <section className="fc-section fc-section--moment">
-      <div className="fc-container fc-two-up">
-        <article className="fc-copy-panel">
+    <section className="fc-section fc-section--story">
+      <div className="fc-container fc-story">
+        <article className="fc-story__problem">
           <p className="fc-kicker">The decision moment</p>
           <h2>{campaign.momentTitle}</h2>
           <p>{campaign.momentBody}</p>
         </article>
-        <article className="fc-copy-panel fc-copy-panel--accent">
-          <p className="fc-kicker">The outcome</p>
-          <h2>{campaign.outcomeTitle}</h2>
+        <article className="fc-story__outcome">
+          <p className="fc-kicker">What changes</p>
+          <h3>{campaign.outcomeTitle}</h3>
           <p>{campaign.outcomeBody}</p>
         </article>
       </div>
@@ -222,14 +217,14 @@ function UsesAndAssets({ campaign }) {
       <div className="fc-container fc-two-up fc-two-up--lists">
         <div>
           <p className="fc-kicker">Use it for</p>
-          <h2>Real decisions with competing claims on attention and resources.</h2>
+          <h2>{campaign.useCasesTitle}</h2>
           <ul className="fc-use-grid">
             {campaign.useCases.map((item) => <li key={item}>{item}</li>)}
           </ul>
         </div>
         <div className="fc-leave-card">
-          <p className="fc-kicker">What you leave with</p>
-          <h2>Decision intelligence you can present, retain, and revisit.</h2>
+          <p className="fc-kicker">{campaign.outputsLabel}</p>
+          <h2>{campaign.outputsTitle}</h2>
           <ul>
             {campaign.leaveWith.map((item) => (
               <li key={item}><CheckIcon /><span>{item}</span></li>
@@ -268,17 +263,16 @@ function FounderOffer({ campaign, onCta }) {
         <p className="fc-estimate-note">{FOUNDER_VARIABILITY_NOTE}</p>
 
         <div className="fc-offer__checkout">
-          <div>
-            <span className="fc-offer__price">${FOUNDER_PRICE}</span>
-            <span className="fc-offer__price-label">one-time Jaspen Advantage price</span>
-          </div>
           <ul>
             <li>{FOUNDER_CREDITS} non-expiring usage credits</li>
             <li>Approximately {FOUNDER_PROJECT_ESTIMATE}</li>
             <li>No Essential subscription required</li>
             <li>Downloadable decision assets</li>
           </ul>
-          <PrimaryButton campaign={campaign} onClick={onCta} variant="invert" />
+          <div className="fc-purchase-cta">
+            <PrimaryButton campaign={campaign} onClick={onCta} variant="invert" showPrice />
+            <span>$999 once. No subscription required.</span>
+          </div>
         </div>
 
         <div className="fc-disclosures" aria-label="Jaspen Advantage disclosures">
@@ -298,18 +292,17 @@ function CreditComparison() {
       <div className="fc-container fc-comparison">
         <div>
           <p className="fc-kicker">Credit capacity comparison</p>
-          <h2>More room to evaluate without a monthly clock.</h2>
+          <h2>About 43 months of Essential credit capacity.</h2>
           <p>
-            Essential currently includes 7,000 monthly credits for $39. At that allowance,
-            300,000 credits is about 42.9 months of credit capacity, or $1,671 at current
-            monthly pricing. The Jaspen Advantage is $999 once, about $672 less for the
-            credit capacity alone, before considering differences in plan features.
+            Essential currently includes 7,000 monthly credits. The Jaspen Advantage gives
+            you 300,000 non-expiring credits for $999 once. This comparison is credit
+            capacity only. Plan features differ.
           </p>
         </div>
         <div className="fc-comparison__facts" aria-label="Credit comparison facts">
           <span><strong>300,000</strong> non-expiring credits</span>
-          <span><strong>~42.9</strong> Essential monthly allowances</span>
-          <span><strong>~40%</strong> lower credit-capacity cost</span>
+          <span><strong>About 43 months</strong> of Essential credit capacity</span>
+          <span><strong>$999 once</strong> with no subscription required</span>
         </div>
       </div>
     </section>
@@ -375,7 +368,10 @@ function CampaignFooter({ campaign, onCta }) {
             <p className="fc-kicker">Be ready for the room</p>
             <h2>{campaign.heroCallout}</h2>
           </div>
-          <PrimaryButton campaign={campaign} onClick={onCta} variant="light" />
+          <div className="fc-purchase-cta">
+            <PrimaryButton campaign={campaign} onClick={onCta} variant="light" showPrice />
+            <span>$999 once. No subscription required.</span>
+          </div>
         </div>
       </section>
       <footer className="fc-footer">
@@ -444,7 +440,7 @@ export default function FounderCampaignPage({ campaignKey = 'consultants' }) {
       {checkoutNotice && <div className="fc-checkout-notice" role="status">{checkoutNotice}</div>}
       <main>
         <Hero campaign={campaign} onCta={openCheckout} />
-        <UrgencyBar />
+        <TrustBar campaign={campaign} />
         <MomentAndOutcome campaign={campaign} />
         <Workflow campaign={campaign} />
         <DecisionRecord />

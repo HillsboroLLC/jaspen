@@ -114,12 +114,18 @@ const consultantCampaign = {
   heroCallout:
     'Walk into the client room ready to show what should move forward, what should wait, and why.',
   primaryCta: 'Strengthen your next recommendation',
+  trustPoints: [
+    'A rubric built for the client decision',
+    'Evidence gaps and assumptions made visible',
+    'Client-ready decision assets',
+  ],
   momentTitle: 'The client meeting is set. The recommendation still has to hold up.',
   momentBody:
     'You have client inputs, competing options, and a deadline. Jaspen helps you turn that material into a clear recommendation whose logic, evidence, assumptions, and tradeoffs can withstand the questions in the room.',
   outcomeTitle: 'Strengthen the deliverable without building analysis infrastructure.',
   outcomeBody:
-    'Structure and challenge the work with Jaspen while you retain professional judgment. Preserve the decision intelligence for follow-up work and leave with client-ready rationale, reconsideration triggers, and a practical starting plan.',
+    'Structure and challenge the work with Jaspen while you retain professional judgment. Preserve the decision intelligence for follow-up work, with client-ready rationale, reconsideration triggers, and a practical starting plan.',
+  useCasesTitle: 'Give consequential client choices a clear evaluation process.',
   useCases: [
     'Prioritizing transformation initiatives',
     'Recommending an operating-model option',
@@ -135,6 +141,8 @@ const consultantCampaign = {
     'An initial execution plan and downloadable decision assets',
     'Retained scorecards and decision work for follow-up',
   ],
+  outputsLabel: 'What the client can see',
+  outputsTitle: 'The reasoning, the tradeoffs, and the next step in one clear body of work.',
   faq: [
     {
       q: 'Does Jaspen make the recommendation for me?',
@@ -175,6 +183,11 @@ const portfolioCampaign = {
   heroCallout:
     'Show leadership what should move forward, what should wait, and why each project landed where it did.',
   primaryCta: 'Rank your project list',
+  trustPoints: [
+    'Compare up to 30 projects per session',
+    'Apply consistent criteria across the portfolio',
+    'Retain the rationale behind the ranking',
+  ],
   momentTitle: 'Every sponsor believes their project is important.',
   momentBody:
     'When more projects exist than the organization can execute, gut feeling and sponsor influence are not enough. You need a consistent view of what gets funded, deferred, combined, or stopped, plus a clear explanation leadership can follow.',
@@ -194,6 +207,7 @@ const portfolioCampaign = {
     'Evidence quality',
     'Confidence in underlying assumptions',
   ],
+  useCasesTitle: 'Prioritize the work competing for the same people, funding, and attention.',
   useCases: [
     'Technology project prioritization',
     'Transformation roadmaps',
@@ -211,6 +225,8 @@ const portfolioCampaign = {
     'An initial execution plan and downloadable decision assets',
     'Retained scorecards for governance follow-up',
   ],
+  outputsLabel: 'What leadership gets',
+  outputsTitle: 'A prioritized portfolio with visible logic behind every position.',
   faq: [
     {
       q: 'Is 30 the maximum size of our portfolio?',
@@ -251,6 +267,11 @@ const strategyCampaign = {
   heroCallout:
     'Walk into the planning room ready to show what should move forward, what should wait, and why.',
   primaryCta: 'Rank your strategic priorities',
+  trustPoints: [
+    'Built for Strategic Planning and AOP',
+    'Tradeoffs and unsupported assumptions surfaced',
+    'Selected initiatives connected to a starting plan',
+  ],
   momentTitle: 'The ambition is clear. The funded work is not.',
   momentBody:
     'Functions have submitted more initiatives than the business can fund or execute. Jaspen helps the planning team decide which work deserves capacity and executive attention before commitments are locked in.',
@@ -266,6 +287,7 @@ const strategyCampaign = {
     'Create the recommendation and initial execution plan.',
     'Download and retain the resulting assets.',
   ],
+  useCasesTitle: 'Decide which initiatives deserve capacity in the plan.',
   useCases: [
     'Strategic initiatives',
     'Growth opportunities',
@@ -284,6 +306,8 @@ const strategyCampaign = {
     'An initial execution plan and downloadable decision assets',
     'Retained decision intelligence for the next planning cycle',
   ],
+  outputsLabel: 'What the planning team gets',
+  outputsTitle: 'A clear link from strategic priorities to resource choices and action.',
   faq: [
     {
       q: 'Does Jaspen create the complete annual operating plan?',

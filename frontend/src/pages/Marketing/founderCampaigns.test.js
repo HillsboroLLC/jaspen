@@ -121,6 +121,23 @@ describe('Founder campaign content', () => {
     expect(css).not.toMatch(/gradient/i);
   });
 
+  it('uses the Manus Jaspen palette and keeps the campaign message audience-specific', () => {
+    const css = fs.readFileSync(path.join(process.cwd(), 'src/pages/Marketing/FounderCampaignPage.css'), 'utf8');
+    const page = fs.readFileSync(path.join(process.cwd(), 'src/pages/Marketing/FounderCampaignPage.jsx'), 'utf8');
+    ['#a0036c', '#8a0359', '#161f3b', '#eff9fc', '#e9b57b', '#ffffff', '#6b7280', '#e5e7eb']
+      .forEach((color) => expect(css.toLowerCase()).toContain(color));
+    expect(css.toLowerCase()).not.toContain('#315caa');
+    expect(css.toLowerCase()).not.toContain('#7650a5');
+    expect(page).not.toContain('RANK THEM.');
+    expect(page).not.toContain('Leave with an order.');
+    expect(page).toContain('About 43 months of Essential credit capacity.');
+    campaigns.forEach((campaign) => {
+      expect(campaign.trustPoints).toHaveLength(3);
+      expect(campaign.outputsLabel).toBeTruthy();
+      expect(campaign.outputsTitle).toBeTruthy();
+    });
+  });
+
   it('uses a standalone one-time checkout instead of an Essential subscription', () => {
     const checkout = fs.readFileSync(
       path.join(process.cwd(), 'src/pages/Marketing/ThinkingPowerCheckout.jsx'),
