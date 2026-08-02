@@ -964,6 +964,30 @@ def create_300k_limited_time_payment_intent():
     if amount <= 0:
         return jsonify({'msg': 'The limited-time offer price is not configured correctly.'}), 503
 
+    # PaymentIntents have no native "discounts" parameter (unlike Subscriptions
+    # and Checkout Sessions), so a promotion code has to be resolved and its
+    # discount applied to the amount ourselves.
+    coupon_code = str(data.get('coupon_code') or '').strip()
+    promotion_code_id = ''
+    if coupon_code:
+        try:
+            matches = stripe.PromotionCode.list(code=coupon_code, active=True, limit=1)
+            promotion = (matches.get('data') or [None])[0]
+            if not promotion:
+                return jsonify({'msg': 'That coupon code was not found or is no longer active.'}), 400
+            coupon = promotion.get('coupon') or {}
+            if not coupon.get('valid', True):
+                return jsonify({'msg': 'That coupon code is no longer valid.'}), 400
+            promotion_code_id = promotion.get('id')
+            if coupon.get('percent_off'):
+                amount = round(amount * (1 - float(coupon['percent_off']) / 100))
+            elif coupon.get('amount_off') and (coupon.get('currency') or currency) == currency:
+                amount = amount - int(coupon['amount_off'])
+            amount = max(50, amount)  # Stripe's practical minimum charge for USD-like currencies.
+        except stripe.error.StripeError as exc:
+            current_app.logger.warning('create-300k-limited-time-payment-intent: coupon lookup failed: %s', exc)
+            return jsonify({'msg': 'Could not validate that coupon code. Please try again.'}), 400
+
     customer_id = _ensure_customer_for_user(user)
     metadata = {
         'user_id': str(user.id),
@@ -974,6 +998,8 @@ def create_300k_limited_time_payment_intent():
         'final_sale_acknowledged': 'true',
         'acknowledged_at': datetime.utcnow().replace(microsecond=0).isoformat() + 'Z',
     }
+    if promotion_code_id:
+        metadata['promotion_code'] = coupon_code
     try:
         intent = stripe.PaymentIntent.create(
             amount=amount,
@@ -989,7 +1015,7 @@ def create_300k_limited_time_payment_intent():
     return jsonify({
         'client_secret': intent.client_secret,
         'publishable_key': current_app.config.get('STRIPE_PUBLISHABLE_KEY') or '',
-        'price_label': f"${amount / 100:.0f}",
+        'price_label': f"${amount // 100}" if amount % 100 == 0 else f"${amount / 100:.2f}",
     }), 200
 
 

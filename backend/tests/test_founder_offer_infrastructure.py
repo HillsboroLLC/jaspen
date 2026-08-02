@@ -200,6 +200,79 @@ def test_limited_time_300k_payment_intent_uses_one_time_price_without_subscripti
     assert 'subscription_data' not in captured
 
 
+def test_limited_time_300k_payment_intent_applies_percent_off_coupon(
+    client, app, auth_headers, monkeypatch
+):
+    from app.routes import billing
+
+    app.config['STRIPE_LIMITED_TIME_300K_PRICE_ID'] = 'price_limited_time_300k_999'
+    app.config['LIMITED_TIME_300K_CREDIT_TOKENS'] = 300_000_000
+    app.config['STRIPE_PUBLISHABLE_KEY'] = 'pk_test_limited_time_300k'
+    captured = {}
+
+    monkeypatch.setattr(
+        billing.stripe.Price, 'retrieve',
+        lambda price_id: {'id': price_id, 'unit_amount': 99900, 'currency': 'usd'},
+    )
+    monkeypatch.setattr(
+        billing.stripe.PromotionCode, 'list',
+        lambda code, active, limit: {'data': [{
+            'id': 'promo_launch20',
+            'coupon': {'valid': True, 'percent_off': 20},
+        }]},
+    )
+
+    def fake_create(**kwargs):
+        captured.update(kwargs)
+        return type('Intent', (), {'client_secret': 'pi_limited_time_300k_secret_discounted'})()
+
+    monkeypatch.setattr(billing, '_ensure_customer_for_user', lambda _user: 'cus_limited_time_300k')
+    monkeypatch.setattr(billing.stripe.PaymentIntent, 'create', fake_create)
+    response = client.post(
+        '/api/v1/billing/create-300k-limited-time-payment-intent',
+        headers=auth_headers,
+        json={
+            'campaign_id': 'limited_time_300k_pmo',
+            'return_path': '/limited-time/project-prioritization',
+            'terms_accepted': True,
+            'final_sale_acknowledged': True,
+            'coupon_code': 'LAUNCH20',
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body['price_label'] == '$799.20'
+    assert captured['amount'] == 79920  # 999.00 * 0.8
+    assert captured['metadata']['promotion_code'] == 'LAUNCH20'
+
+
+def test_limited_time_300k_payment_intent_rejects_unknown_coupon(client, app, auth_headers, monkeypatch):
+    from app.routes import billing
+
+    app.config['STRIPE_LIMITED_TIME_300K_PRICE_ID'] = 'price_limited_time_300k_999'
+    app.config['LIMITED_TIME_300K_CREDIT_TOKENS'] = 300_000_000
+    monkeypatch.setattr(
+        billing.stripe.Price, 'retrieve',
+        lambda price_id: {'id': price_id, 'unit_amount': 99900, 'currency': 'usd'},
+    )
+    monkeypatch.setattr(billing.stripe.PromotionCode, 'list', lambda code, active, limit: {'data': []})
+
+    response = client.post(
+        '/api/v1/billing/create-300k-limited-time-payment-intent',
+        headers=auth_headers,
+        json={
+            'return_path': '/limited-time/project-prioritization',
+            'terms_accepted': True,
+            'final_sale_acknowledged': True,
+            'coupon_code': 'NOTREAL',
+        },
+    )
+
+    assert response.status_code == 400
+    assert 'not found' in response.get_json()['msg'].lower()
+
+
 def test_limited_time_300k_payment_intent_requires_both_purchase_acknowledgements(client, auth_headers):
     response = client.post(
         '/api/v1/billing/create-300k-limited-time-payment-intent',
