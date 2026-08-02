@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import FounderCampaignPage from './FounderCampaignPage';
 import {
   FOUNDER_CAMPAIGNS,
+  SHARED_FAQ,
   FOUNDER_TECHNICAL_GUARANTEE,
 } from './founderCampaigns';
 
@@ -59,6 +60,10 @@ describe.each(Object.values(FOUNDER_CAMPAIGNS))('$id campaign page', (campaign) 
     expect(screen.getByRole('heading', { name: 'What Jaspen becomes' })).toBeInTheDocument();
     expect(screen.getByText('What the company learned')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: FOUNDER_TECHNICAL_GUARANTEE })).toBeInTheDocument();
+    const faqItems = [...campaign.faq, ...SHARED_FAQ];
+    expect(document.querySelectorAll('.fc-faq-item')).toHaveLength(faqItems.length);
+    expect(document.querySelector('.fc-faq-item')).toHaveAttribute('open');
+    expect(screen.getByText(faqItems[0].q).closest('summary')).toBeInTheDocument();
     expect(screen.getByTestId('seo')).toHaveAttribute('data-title', campaign.seo.title);
     expect(screen.getByTestId('seo')).toHaveAttribute('data-description', campaign.seo.description);
     expect(screen.getByTestId('seo')).toHaveAttribute('data-canonical', campaign.path);

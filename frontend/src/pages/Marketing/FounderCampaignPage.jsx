@@ -22,19 +22,34 @@ import {
 import './FounderCampaignPage.css';
 
 function structuredData(campaign) {
-  return {
-    '@context': 'https://schema.org',
-    '@type': 'Product',
-    name: `The Jaspen Advantage for ${campaign.eyebrow.replace(/^For /, '')}`,
-    description: campaign.seo.description,
-    brand: { '@type': 'Brand', name: 'Jaspen' },
-    offers: {
-      '@type': 'Offer',
-      price: String(FOUNDER_PRICE),
-      priceCurrency: 'USD',
-      url: `https://jaspen.ai${campaign.path}`,
+  const faqItems = [...campaign.faq, ...SHARED_FAQ];
+  return [
+    {
+      '@context': 'https://schema.org',
+      '@type': 'Product',
+      name: `The Jaspen Advantage for ${campaign.eyebrow.replace(/^For /, '')}`,
+      description: campaign.seo.description,
+      brand: { '@type': 'Brand', name: 'Jaspen' },
+      offers: {
+        '@type': 'Offer',
+        price: String(FOUNDER_PRICE),
+        priceCurrency: 'USD',
+        url: `https://jaspen.ai${campaign.path}`,
+      },
     },
-  };
+    {
+      '@context': 'https://schema.org',
+      '@type': 'FAQPage',
+      mainEntity: faqItems.map((item) => ({
+        '@type': 'Question',
+        name: item.q,
+        acceptedAnswer: {
+          '@type': 'Answer',
+          text: item.a,
+        },
+      })),
+    },
+  ];
 }
 
 function ArrowIcon() {
@@ -339,19 +354,23 @@ function Guarantee() {
 }
 
 function Faq({ campaign }) {
+  const faqItems = [...campaign.faq, ...SHARED_FAQ];
   return (
-    <section className="fc-section fc-section--tint">
-      <div className="fc-container">
-        <div className="fc-section-heading">
-          <p className="fc-kicker">Questions</p>
+    <section className="fc-section fc-section--tint" id="faq">
+      <div className="fc-container fc-faq-layout">
+        <div className="fc-faq-intro">
+          <p className="fc-kicker">Frequently asked questions</p>
           <h2>What to know before you start.</h2>
+          <p>Straight answers about the workflow, credits, downloads, and one-time purchase.</p>
         </div>
-        <div className="fc-faq-grid">
-          {[...campaign.faq, ...SHARED_FAQ].map((item) => (
-            <article key={item.q}>
-              <h3>{item.q}</h3>
-              <p>{item.a}</p>
-            </article>
+        <div className="fc-faq-list">
+          {faqItems.map((item, index) => (
+            <details className="fc-faq-item" key={item.q} open={index === 0}>
+              <summary>{item.q}</summary>
+              <div className="fc-faq-answer">
+                <p>{item.a}</p>
+              </div>
+            </details>
           ))}
         </div>
       </div>
