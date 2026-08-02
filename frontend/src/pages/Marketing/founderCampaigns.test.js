@@ -152,7 +152,7 @@ describe('Founder campaign content', () => {
       path.join(process.cwd(), 'src/pages/Marketing/ThinkingPowerCheckout.jsx'),
       'utf8',
     );
-    expect(checkout).toContain('/api/v1/billing/create-300k-limited-time-checkout');
+    expect(checkout).toContain('/api/v1/billing/create-300k-limited-time-payment-intent');
     expect(checkout).toContain("planKey: '300k_limited_time'");
     expect(checkout).not.toContain('/api/v1/billing/catalog');
     expect(checkout).not.toContain('Essential renews');

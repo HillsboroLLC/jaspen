@@ -1,8 +1,30 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { loadStripe } from '@stripe/stripe-js';
+import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import { useAuth } from '../../shared/auth/AuthContext';
 import { authFetch, buildAuthHeaders } from '../../shared/auth/http';
 import { API_BASE } from '../../config/apiBase';
 import { LIMITED_TIME_300K_CREDITS, LIMITED_TIME_300K_PRICE } from './founderCampaigns';
+
+const MAGENTA = '#a0036c';
+const STRIPE_APPEARANCE = {
+  theme: 'flat',
+  variables: {
+    colorPrimary: MAGENTA,
+    colorText: '#0f172a',
+    colorTextSecondary: '#64748b',
+    colorBackground: '#ffffff',
+    colorDanger: '#dc2626',
+    fontFamily: "'Inter', 'Inter Tight', system-ui, sans-serif",
+    borderRadius: '8px',
+    spacingUnit: '4px',
+  },
+  rules: {
+    '.Input': { border: '1px solid #e6eaf2', boxShadow: 'none', padding: '10px 12px' },
+    '.Input:focus': { border: `1px solid ${MAGENTA}`, boxShadow: `0 0 0 1px ${MAGENTA}` },
+    '.Label': { fontWeight: '600', color: '#475569' },
+  },
+};
 
 const inputStyle = {
   width: '100%', padding: '11px 12px', border: '1px solid #e6eaf2', borderRadius: 8,
@@ -120,11 +142,68 @@ function AccountStep({ returnPath }) {
   );
 }
 
-function PurchaseStep({ campaignId, returnPath }) {
+function PaymentForm({ onSuccess }) {
+  const stripe = useStripe();
+  const elements = useElements();
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    if (!stripe || !elements || submitting) return;
+    setSubmitting(true);
+    setError('');
+    const { error: confirmError, paymentIntent } = await stripe.confirmPayment({
+      elements,
+      redirect: 'if_required',
+      confirmParams: { return_url: window.location.href },
+    });
+    if (confirmError) {
+      setError(confirmError.message || 'Your payment could not be completed.');
+      setSubmitting(false);
+      return;
+    }
+    if (paymentIntent && (paymentIntent.status === 'succeeded' || paymentIntent.status === 'processing')) {
+      try {
+        const resp = await authFetch(`${API_BASE}/api/v1/billing/confirm-300k-limited-time-payment`, {
+          method: 'POST',
+          headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
+          credentials: 'include',
+          body: JSON.stringify({ payment_intent_id: paymentIntent.id }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data?.msg || 'Payment completed, but credits could not be finalized.');
+      } catch (err) {
+        setError(err?.message || 'Payment completed, but credits could not be finalized.');
+        setSubmitting(false);
+        return;
+      }
+      onSuccess?.();
+      return;
+    }
+    setError('Payment did not complete. Please try again.');
+    setSubmitting(false);
+  };
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <PaymentElement options={{ layout: 'tabs' }} />
+      {error && <div role="alert" style={{ ...errorBox, marginTop: 12 }}>{error}</div>}
+      <button type="submit" className="fc-checkout-primary" disabled={!stripe || submitting} style={{ marginTop: 16 }}>
+        {submitting ? 'Confirming payment...' : `Pay $${LIMITED_TIME_300K_PRICE}`}
+      </button>
+      <p className="fc-checkout-footnote">Payment is processed securely. Your credits are granted after payment is confirmed.</p>
+    </form>
+  );
+}
+
+function PurchaseStep({ campaignId, returnPath, onSuccess }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [finalSaleAccepted, setFinalSaleAccepted] = useState(false);
+  const [clientSecret, setClientSecret] = useState('');
+  const [stripePromise, setStripePromise] = useState(null);
   const acknowledgementsComplete = termsAccepted && finalSaleAccepted;
 
   const startCheckout = async () => {
@@ -136,7 +215,7 @@ function PurchaseStep({ campaignId, returnPath }) {
     setSubmitting(true);
     setError('');
     try {
-      const response = await authFetch(`${API_BASE}/api/v1/billing/create-300k-limited-time-checkout`, {
+      const response = await authFetch(`${API_BASE}/api/v1/billing/create-300k-limited-time-payment-intent`, {
         method: 'POST',
         headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
         credentials: 'include',
@@ -148,13 +227,24 @@ function PurchaseStep({ campaignId, returnPath }) {
         }),
       });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok || !data?.url) throw new Error(data?.msg || 'Could not start secure checkout.');
-      window.location.assign(data.url);
+      if (!response.ok || !data?.client_secret) throw new Error(data?.msg || 'Could not start secure checkout.');
+      if (!data.publishable_key) throw new Error('Payments are not configured yet.');
+      setStripePromise((prev) => prev || loadStripe(data.publishable_key));
+      setClientSecret(data.client_secret);
     } catch (err) {
       setError(err?.message || 'Could not start secure checkout.');
+    } finally {
       setSubmitting(false);
     }
   };
+
+  if (clientSecret && stripePromise) {
+    return (
+      <Elements stripe={stripePromise} options={{ clientSecret, appearance: STRIPE_APPEARANCE }}>
+        <PaymentForm onSuccess={onSuccess} />
+      </Elements>
+    );
+  }
 
   return (
     <div>
@@ -170,14 +260,14 @@ function PurchaseStep({ campaignId, returnPath }) {
         </label>
       </div>
       <button type="button" className="fc-checkout-primary" disabled={submitting || !acknowledgementsComplete} onClick={startCheckout}>
-        {submitting ? 'Opening secure checkout...' : `Continue to pay $${LIMITED_TIME_300K_PRICE}`}
+        {submitting ? 'Loading payment…' : `Continue to pay $${LIMITED_TIME_300K_PRICE}`}
       </button>
       <p className="fc-checkout-footnote">Payment is processed securely. Your credits are granted after payment is confirmed.</p>
     </div>
   );
 }
 
-export default function ThinkingPowerCheckout({ onClose, campaignId = '', returnPath = '/limited-time/client-decisions' }) {
+export default function ThinkingPowerCheckout({ onClose, onSuccess, campaignId = '', returnPath = '/limited-time/client-decisions' }) {
   const { user } = useAuth();
   const closeRef = useRef(null);
 
@@ -201,7 +291,7 @@ export default function ThinkingPowerCheckout({ onClose, campaignId = '', return
           <button ref={closeRef} type="button" onClick={onClose} aria-label="Close checkout">×</button>
         </div>
         <div className="fc-checkout-body">
-          {user ? <PurchaseStep campaignId={campaignId} returnPath={returnPath} /> : <AccountStep returnPath={returnPath} />}
+          {user ? <PurchaseStep campaignId={campaignId} returnPath={returnPath} onSuccess={onSuccess} /> : <AccountStep returnPath={returnPath} />}
         </div>
       </div>
     </div>

@@ -447,6 +447,12 @@ export default function FounderCampaignPage({ campaignKey = 'consultants' }) {
     setCheckoutOpen(true);
   };
 
+  const handleCheckoutSuccess = () => {
+    analytics.track('limited_time_300k_purchase_completed', { campaign_id: campaign.id });
+    setCheckoutOpen(false);
+    setCheckoutNotice('Payment received. Your credits are ready.');
+  };
+
   return (
     <div className={`fc-page fc-page--${campaign.theme}`} data-campaign-id={campaign.id}>
       <Seo
@@ -478,6 +484,7 @@ export default function FounderCampaignPage({ campaignKey = 'consultants' }) {
           campaignId={campaign.id}
           returnPath={campaign.path}
           onClose={() => setCheckoutOpen(false)}
+          onSuccess={handleCheckoutSuccess}
         />
       )}
     </div>

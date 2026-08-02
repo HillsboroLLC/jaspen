@@ -374,6 +374,10 @@ def _credit_pack_payment_event_id(payment_intent_id):
     return f"credit_pack_payment:{payment_intent_id}"
 
 
+def _limited_time_300k_payment_event_id(payment_intent_id):
+    return f"limited_time_300k_payment:{payment_intent_id}"
+
+
 def _credit_pack_tokens_from_metadata(metadata):
     tokens = int(metadata.get('tokens') or 0)
     if tokens > 0:
@@ -459,6 +463,77 @@ def _fulfill_credit_pack_payment_intent(intent, expected_user=None):
     current_app.logger.info(
         "payment_intent.succeeded: added %s credit-pack tokens for user=%s",
         tokens, user.id,
+    )
+    return {'granted': True, 'tokens': tokens, 'user_id': str(user.id)}
+
+
+def _fulfill_limited_time_300k_payment_intent(intent, expected_user=None):
+    metadata = intent.get('metadata') or {}
+    checkout_type = str(metadata.get('checkout_type') or '').strip()
+    if checkout_type != LIMITED_TIME_300K_CHECKOUT_TYPE:
+        return {'granted': False, 'reason': 'not_limited_time_300k'}
+    if intent.get('status') != 'succeeded':
+        return {'granted': False, 'reason': intent.get('status') or 'not_succeeded'}
+
+    payment_intent_id = intent.get('id')
+    event_id = _limited_time_300k_payment_event_id(payment_intent_id)
+    event_row = StripeWebhookEvent.query.filter_by(stripe_event_id=event_id).first()
+    if event_row and bool(event_row.processed):
+        return {'granted': False, 'reason': 'already_processed'}
+    if event_row is None:
+        event_row = StripeWebhookEvent(
+            stripe_event_id=event_id,
+            event_type='payment_intent.succeeded',
+            processed=False,
+        )
+        db.session.add(event_row)
+        try:
+            db.session.flush()
+        except IntegrityError:
+            db.session.rollback()
+            event_row = StripeWebhookEvent.query.filter_by(stripe_event_id=event_id).first()
+            if event_row and bool(event_row.processed):
+                return {'granted': False, 'reason': 'already_processed'}
+            if event_row is None:
+                event_row = StripeWebhookEvent(
+                    stripe_event_id=event_id,
+                    event_type='payment_intent.succeeded',
+                    processed=False,
+                )
+                db.session.add(event_row)
+                db.session.flush()
+
+    user_id = metadata.get('user_id')
+    user = User.query.get(user_id) if user_id else None
+    if not user:
+        user = _find_user_for_billing_event(customer_id=intent.get('customer'))
+    if not user:
+        return {'granted': False, 'reason': 'user_not_found'}
+    if expected_user and str(user.id) != str(expected_user.id):
+        return {'granted': False, 'reason': 'wrong_user'}
+
+    tokens = int(metadata.get('tokens') or 0)
+    if tokens <= 0:
+        return {'granted': False, 'reason': 'missing_tokens'}
+
+    _entitlement, _grant, created = grant_limited_time_300k_offer(
+        user,
+        tokens,
+        payment_reference=payment_intent_id,
+        checkout_id=payment_intent_id,
+        metadata={
+            'campaign_id': metadata.get('campaign_id'),
+            'stripe_payment_intent_id': payment_intent_id,
+        },
+    )
+    if intent.get('customer'):
+        user.stripe_customer_id = intent.get('customer')
+    get_usage_meter_state(user, current_app.config)
+    event_row.processed = True
+    event_row.processed_at = datetime.utcnow()
+    current_app.logger.info(
+        "payment_intent.succeeded: 300K Limited-Time grant created=%s tokens=%s user=%s",
+        created, tokens, user.id,
     )
     return {'granted': True, 'tokens': tokens, 'user_id': str(user.id)}
 
@@ -848,10 +923,14 @@ def create_subscription_embedded():
 LIMITED_TIME_300K_CHECKOUT_TYPE = '300k_limited_time'
 
 
-@billing_bp.route('/create-300k-limited-time-checkout', methods=['POST'])
+@billing_bp.route('/create-300k-limited-time-payment-intent', methods=['POST'])
 @jwt_required()
-def create_300k_limited_time_checkout():
-    """Create a standalone one-time Checkout Session for the limited-time credit offer."""
+def create_300k_limited_time_payment_intent():
+    """Create an in-page PaymentIntent for the standalone limited-time credit offer.
+
+    Embedded (Stripe Elements) rather than a redirect to Stripe's hosted
+    Checkout page, so the buyer never leaves jaspen.ai.
+    """
     user = User.query.get(get_jwt_identity())
     if not user:
         return jsonify({'msg': 'User not found'}), 404
@@ -874,10 +953,17 @@ def create_300k_limited_time_checkout():
     }
     if return_path not in allowed_return_paths:
         return jsonify({'msg': 'Invalid campaign return path.'}), 400
-    success_url = _frontend_url(
-        f'{return_path}?limited_time_checkout=success&session_id={{CHECKOUT_SESSION_ID}}'
-    )
-    cancel_url = _frontend_url(f'{return_path}?limited_time_checkout=cancel')
+
+    try:
+        price = stripe.Price.retrieve(price_id)
+    except stripe.error.StripeError as exc:
+        current_app.logger.exception('create-300k-limited-time-payment-intent: could not retrieve price')
+        return jsonify({'msg': str(getattr(exc, 'user_message', None) or 'Could not start checkout.')}), 400
+    amount = int(price.get('unit_amount') or 0)
+    currency = price.get('currency') or 'usd'
+    if amount <= 0:
+        return jsonify({'msg': 'The limited-time offer price is not configured correctly.'}), 503
+
     customer_id = _ensure_customer_for_user(user)
     metadata = {
         'user_id': str(user.id),
@@ -889,23 +975,54 @@ def create_300k_limited_time_checkout():
         'acknowledged_at': datetime.utcnow().replace(microsecond=0).isoformat() + 'Z',
     }
     try:
-        session = stripe.checkout.Session.create(
-            mode='payment',
-            payment_method_types=['card'],
+        intent = stripe.PaymentIntent.create(
+            amount=amount,
+            currency=currency,
             customer=customer_id,
-            line_items=[{'price': price_id, 'quantity': 1}],
+            payment_method_types=['card'],
+            description='Jaspen 300K Limited-Time offer',
             metadata=metadata,
-            payment_intent_data={'metadata': metadata},
-            success_url=success_url,
-            cancel_url=cancel_url,
-            allow_promotion_codes=False,
         )
     except stripe.error.StripeError as exc:
-        current_app.logger.exception('create-300k-limited-time-checkout failed')
+        current_app.logger.exception('create-300k-limited-time-payment-intent failed')
         return jsonify({'msg': str(getattr(exc, 'user_message', None) or 'Could not start checkout.')}), 400
-    session_id = session.get('id') if hasattr(session, 'get') else getattr(session, 'id', None)
-    session_url = session.get('url') if hasattr(session, 'get') else getattr(session, 'url', None)
-    return jsonify({'session_id': session_id, 'url': session_url}), 200
+    return jsonify({
+        'client_secret': intent.client_secret,
+        'publishable_key': current_app.config.get('STRIPE_PUBLISHABLE_KEY') or '',
+        'price_label': f"${amount / 100:.0f}",
+    }), 200
+
+
+@billing_bp.route('/confirm-300k-limited-time-payment', methods=['POST'])
+@jwt_required()
+def confirm_300k_limited_time_payment():
+    """Finalize a completed in-page 300K Limited-Time payment immediately.
+
+    A safety net alongside the payment_intent.succeeded webhook - both paths
+    are idempotent (see _fulfill_limited_time_300k_payment_intent), so
+    whichever arrives first grants the credits.
+    """
+    user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({'msg': 'User not found'}), 404
+
+    data = request.get_json() or {}
+    payment_intent_id = str(data.get('payment_intent_id') or '').strip()
+    if not payment_intent_id:
+        return jsonify({'msg': 'Missing payment_intent_id'}), 400
+
+    try:
+        intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+    except stripe.error.StripeError as exc:
+        return jsonify({'msg': str(exc)}), 400
+
+    result = _fulfill_limited_time_300k_payment_intent(intent, expected_user=user)
+    if result.get('reason') == 'wrong_user':
+        return jsonify({'msg': 'Payment does not belong to this user'}), 403
+    if result.get('reason') not in {None, 'already_processed'} and not result.get('granted'):
+        return jsonify({'msg': 'Payment is not ready yet', **result}), 409
+    db.session.commit()
+    return jsonify({'success': True, **result}), 200
 
 
 @billing_bp.route('/sync-embedded-subscription', methods=['POST'])
@@ -1554,6 +1671,7 @@ def stripe_webhook():
     elif event_type == 'payment_intent.succeeded':
         intent = event['data']['object']
         _fulfill_credit_pack_payment_intent(intent)
+        _fulfill_limited_time_300k_payment_intent(intent)
 
     elif event_type == 'invoice.payment_succeeded':
         inv = event['data']['object']

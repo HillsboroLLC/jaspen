@@ -154,23 +154,29 @@ def test_duplicate_limited_time_300k_checkout_webhook_does_not_duplicate_grant(
     assert test_user.subscription_plan == 'free'
 
 
-def test_limited_time_300k_checkout_uses_one_time_price_without_subscription(
+def test_limited_time_300k_payment_intent_uses_one_time_price_without_subscription(
     client, app, auth_headers, monkeypatch
 ):
     from app.routes import billing
 
     app.config['STRIPE_LIMITED_TIME_300K_PRICE_ID'] = 'price_limited_time_300k_999'
     app.config['LIMITED_TIME_300K_CREDIT_TOKENS'] = 300_000_000
+    app.config['STRIPE_PUBLISHABLE_KEY'] = 'pk_test_limited_time_300k'
     captured = {}
+
+    monkeypatch.setattr(
+        billing.stripe.Price, 'retrieve',
+        lambda price_id: {'id': price_id, 'unit_amount': 99900, 'currency': 'usd'},
+    )
 
     def fake_create(**kwargs):
         captured.update(kwargs)
-        return {'id': 'cs_limited_time_300k', 'url': 'https://checkout.stripe.test/limited-time-300k'}
+        return type('Intent', (), {'client_secret': 'pi_limited_time_300k_secret_abc'})()
 
     monkeypatch.setattr(billing, '_ensure_customer_for_user', lambda _user: 'cus_limited_time_300k')
-    monkeypatch.setattr(billing.stripe.checkout.Session, 'create', fake_create)
+    monkeypatch.setattr(billing.stripe.PaymentIntent, 'create', fake_create)
     response = client.post(
-        '/api/v1/billing/create-300k-limited-time-checkout',
+        '/api/v1/billing/create-300k-limited-time-payment-intent',
         headers=auth_headers,
         json={
             'campaign_id': 'limited_time_300k_pmo',
@@ -181,9 +187,11 @@ def test_limited_time_300k_checkout_uses_one_time_price_without_subscription(
     )
 
     assert response.status_code == 200
-    assert response.get_json()['url'] == 'https://checkout.stripe.test/limited-time-300k'
-    assert captured['mode'] == 'payment'
-    assert captured['line_items'] == [{'price': 'price_limited_time_300k_999', 'quantity': 1}]
+    body = response.get_json()
+    assert body['client_secret'] == 'pi_limited_time_300k_secret_abc'
+    assert body['publishable_key'] == 'pk_test_limited_time_300k'
+    assert captured['amount'] == 99900
+    assert captured['currency'] == 'usd'
     assert captured['metadata']['checkout_type'] == billing.LIMITED_TIME_300K_CHECKOUT_TYPE
     assert captured['metadata']['tokens'] == '300000000'
     assert captured['metadata']['terms_accepted'] == 'true'
@@ -192,9 +200,9 @@ def test_limited_time_300k_checkout_uses_one_time_price_without_subscription(
     assert 'subscription_data' not in captured
 
 
-def test_limited_time_300k_checkout_requires_both_purchase_acknowledgements(client, auth_headers):
+def test_limited_time_300k_payment_intent_requires_both_purchase_acknowledgements(client, auth_headers):
     response = client.post(
-        '/api/v1/billing/create-300k-limited-time-checkout',
+        '/api/v1/billing/create-300k-limited-time-payment-intent',
         headers=auth_headers,
         json={'terms_accepted': True, 'final_sale_acknowledged': False},
     )
