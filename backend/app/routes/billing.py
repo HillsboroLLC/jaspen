@@ -988,6 +988,55 @@ def _price_label(amount):
     return f"${amount // 100}" if amount % 100 == 0 else f"${amount / 100:.2f}"
 
 
+def _stripe_field(obj, name, default=None):
+    """Read a field from a Stripe object whether it behaves as an object or a dict.
+
+    stripe-python returns StripeObjects that expose fields as attributes; plain
+    dicts show up in tests and in partially-populated nested payloads. Reading
+    only one way silently yields None for the other.
+    """
+    if obj is None:
+        return default
+    value = getattr(obj, name, None)
+    if value is None and hasattr(obj, 'get'):
+        try:
+            value = obj.get(name)
+        except Exception:
+            value = None
+    return default if value is None else value
+
+
+def _coupon_for_promotion(promotion):
+    """Return the Coupon carrying the actual discount for a promotion code.
+
+    The nested coupon on a PromotionCode.list() result has come back empty in
+    production (no percent_off/amount_off, no keys at all), which made every
+    code look like it applied while never reducing the price. So fall back to
+    fetching the coupon directly whenever the nested copy is unusable.
+    """
+    coupon = _stripe_field(promotion, 'coupon')
+    if isinstance(coupon, str):
+        return stripe.Coupon.retrieve(coupon)
+    has_discount = (
+        _stripe_field(coupon, 'percent_off') is not None
+        or _stripe_field(coupon, 'amount_off') is not None
+    )
+    if has_discount:
+        return coupon
+    coupon_id = _stripe_field(coupon, 'id')
+    if coupon_id:
+        return stripe.Coupon.retrieve(coupon_id)
+    promotion_id = _stripe_field(promotion, 'id')
+    if promotion_id:
+        full = stripe.PromotionCode.retrieve(promotion_id, expand=['coupon'])
+        nested = _stripe_field(full, 'coupon')
+        if isinstance(nested, str):
+            return stripe.Coupon.retrieve(nested)
+        if nested is not None:
+            return nested
+    return coupon if coupon is not None else {}
+
+
 def _log_coupon_diagnostics(coupon_code, promotion_code_id, coupon, currency, base_amount):
     """TEMPORARY: record how Stripe actually described a promo code.
 
@@ -995,12 +1044,16 @@ def _log_coupon_diagnostics(coupon_code, promotion_code_id, coupon, currency, ba
     read while we track down a promo code that applies without discounting.
     Remove once the 300K coupon flow is confirmed working in production.
     """
+    try:
+        keys = sorted([str(k) for k in coupon.keys()])[:20]
+    except Exception:
+        keys = '<no keys>'
     detail = (
-        f"code={coupon_code} promo={promotion_code_id} "
-        f"percent_off={coupon.get('percent_off')!r} amount_off={coupon.get('amount_off')!r} "
-        f"coupon_currency={coupon.get('currency')!r} price_currency={currency!r} "
-        f"valid={coupon.get('valid')!r} base_amount={base_amount} "
-        f"keys={sorted([str(k) for k in coupon.keys()])[:20]}"
+        f"code={coupon_code} promo={promotion_code_id} type={type(coupon).__name__} "
+        f"percent_off={_stripe_field(coupon, 'percent_off')!r} "
+        f"amount_off={_stripe_field(coupon, 'amount_off')!r} "
+        f"coupon_currency={_stripe_field(coupon, 'currency')!r} price_currency={currency!r} "
+        f"valid={_stripe_field(coupon, 'valid')!r} base_amount={base_amount} keys={keys}"
     )
     current_app.logger.info('300k-limited-time coupon resolve: %s', detail)
     try:
@@ -1023,8 +1076,8 @@ def _resolve_300k_limited_time_amount(price_id, coupon_code):
     except stripe.error.StripeError as exc:
         current_app.logger.exception('300k-limited-time: could not retrieve price')
         return None, None, None, (str(getattr(exc, 'user_message', None) or 'Could not start checkout.'), 400)
-    amount = int(price.get('unit_amount') or 0)
-    currency = price.get('currency') or 'usd'
+    amount = int(_stripe_field(price, 'unit_amount', 0) or 0)
+    currency = _stripe_field(price, 'currency') or 'usd'
     if amount <= 0:
         return None, None, None, ('The limited-time offer price is not configured correctly.', 503)
 
@@ -1033,19 +1086,21 @@ def _resolve_300k_limited_time_amount(price_id, coupon_code):
     if coupon_code:
         try:
             matches = stripe.PromotionCode.list(code=coupon_code, active=True, limit=1)
-            promotion = (matches.get('data') or [None])[0]
+            promotion = (_stripe_field(matches, 'data') or [None])[0]
             if not promotion:
                 return None, None, None, ('That coupon code was not found or is no longer active.', 400)
-            coupon = promotion.get('coupon') or {}
-            if not coupon.get('valid', True):
+            coupon = _coupon_for_promotion(promotion)
+            if not _stripe_field(coupon, 'valid', True):
                 return None, None, None, ('That coupon code is no longer valid.', 400)
-            promotion_code_id = promotion.get('id')
+            promotion_code_id = _stripe_field(promotion, 'id', '')
             _log_coupon_diagnostics(coupon_code, promotion_code_id, coupon, currency, amount)
             base_amount = amount
-            if coupon.get('percent_off'):
-                amount = round(amount * (1 - float(coupon['percent_off']) / 100))
-            elif coupon.get('amount_off') and (coupon.get('currency') or currency) == currency:
-                amount = amount - int(coupon['amount_off'])
+            percent_off = _stripe_field(coupon, 'percent_off')
+            amount_off = _stripe_field(coupon, 'amount_off')
+            if percent_off:
+                amount = round(amount * (1 - float(percent_off) / 100))
+            elif amount_off and _stripe_field(coupon, 'currency', currency) == currency:
+                amount = amount - int(amount_off)
             amount = max(0, amount)
             if amount == base_amount:
                 # The code exists but produced no discount (no percent_off /

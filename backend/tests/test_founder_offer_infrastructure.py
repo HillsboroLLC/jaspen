@@ -350,6 +350,79 @@ def test_apply_300k_limited_time_coupon_fully_covered_grants_credits_for_free(
     assert entitlement is not None
 
 
+def test_apply_300k_limited_time_coupon_handles_stripe_object_style_responses(
+    client, app, auth_headers, test_user, monkeypatch
+):
+    """Production regression: PromotionCode.list() returned an EMPTY nested coupon.
+
+    Fields were only reachable as attributes, and the nested copy carried no
+    discount at all, so every code applied without ever reducing the price.
+    """
+    from app.routes import billing
+
+    app.config['STRIPE_LIMITED_TIME_300K_PRICE_ID'] = 'price_limited_time_300k_999'
+    modified = {}
+    retrieved = {}
+
+    class StripeObj:
+        """Attribute-style access, like stripe-python returns."""
+
+        def __init__(self, **fields):
+            self.__dict__.update(fields)
+
+        def keys(self):
+            return self.__dict__.keys()
+
+    # The nested coupon comes back empty - exactly what production logged.
+    empty_nested = StripeObj()
+    promotion = StripeObj(id='promo_300ktest', coupon=empty_nested)
+
+    monkeypatch.setattr(
+        billing.stripe.PaymentIntent, 'retrieve',
+        lambda payment_intent_id: {
+            'id': payment_intent_id,
+            'status': 'requires_payment_method',
+            'metadata': {
+                'user_id': str(test_user.id),
+                'checkout_type': billing.LIMITED_TIME_300K_CHECKOUT_TYPE,
+                'tokens': '300000000',
+                'campaign_id': 'limited_time_300k_strategic_planning_aop',
+            },
+        },
+    )
+    monkeypatch.setattr(
+        billing.stripe.Price, 'retrieve',
+        lambda price_id: StripeObj(id=price_id, unit_amount=99900, currency='usd'),
+    )
+    monkeypatch.setattr(
+        billing.stripe.PromotionCode, 'list',
+        lambda code, active, limit: StripeObj(data=[promotion]),
+    )
+
+    def fake_promo_retrieve(promotion_id, **kwargs):
+        retrieved['promotion_id'] = promotion_id
+        return StripeObj(
+            id=promotion_id,
+            coupon=StripeObj(id='coupon_100', valid=True, percent_off=100, amount_off=None),
+        )
+
+    monkeypatch.setattr(billing.stripe.PromotionCode, 'retrieve', fake_promo_retrieve)
+    monkeypatch.setattr(billing.stripe.PaymentIntent, 'cancel', lambda pid: modified.update(canceled=pid))
+
+    response = client.post(
+        '/api/v1/billing/apply-300k-limited-time-coupon',
+        headers=auth_headers,
+        json={'payment_intent_id': 'pi_limited_time_300k_obj', 'coupon_code': '300KTest'},
+    )
+
+    assert response.status_code == 200, response.get_json()
+    body = response.get_json()
+    assert body['free'] is True
+    assert body['price_label'] == '$0.00'
+    assert retrieved['promotion_id'] == 'promo_300ktest'
+    assert modified['canceled'] == 'pi_limited_time_300k_obj'
+
+
 def test_apply_300k_limited_time_coupon_rejects_a_code_that_does_not_discount(
     client, app, auth_headers, test_user, monkeypatch
 ):
