@@ -857,6 +857,8 @@ def create_jaspen_advantage_checkout():
         return jsonify({'msg': 'User not found'}), 404
 
     data = request.get_json() or {}
+    if data.get('terms_accepted') is not True or data.get('final_sale_acknowledged') is not True:
+        return jsonify({'msg': 'Accept both purchase acknowledgements before continuing.'}), 400
     price_id = current_app.config.get('STRIPE_JASPEN_ADVANTAGE_PRICE_ID')
     if not price_id:
         return jsonify({'msg': 'The limited-time offer price is not configured yet.'}), 503
@@ -882,6 +884,9 @@ def create_jaspen_advantage_checkout():
         'checkout_type': JASPEN_ADVANTAGE_CHECKOUT_TYPE,
         'tokens': str(credit_tokens),
         'campaign_id': str(data.get('campaign_id') or '').strip()[:80],
+        'terms_accepted': 'true',
+        'final_sale_acknowledged': 'true',
+        'acknowledged_at': datetime.utcnow().replace(microsecond=0).isoformat() + 'Z',
     }
     try:
         session = stripe.checkout.Session.create(

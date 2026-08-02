@@ -68,6 +68,7 @@ const RentCalculatorPage = lazy(() => import('./tools/rent/components/RentCalcul
 const ReworkCostCalculatorPage = lazy(() => import('./tools/reworkCost/components/ReworkCostCalculatorPage'));
 const ArticleReviewPage = lazy(() => import('./pages/ArticleReview/ArticleReviewPage'));
 const FounderCampaignPage = lazy(() => import('./pages/Marketing/FounderCampaignPage'));
+const LimitedTimeTerms = lazy(() => import('./pages/Marketing/LimitedTimeTerms'));
 
 function AnimatedAppRoutes({ withShell }) {
   const location = useLocation();
@@ -106,6 +107,7 @@ function AnimatedAppRoutes({ withShell }) {
             <Route path="/limited-time/client-decisions" element={withShell(<FounderCampaignPage campaignKey="consultants" />, { title: 'Evidence-Based Client Decision Tool for Consultants', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/limited-time/project-prioritization" element={withShell(<FounderCampaignPage campaignKey="portfolio" />, { title: 'Project Portfolio Prioritization for PMO Leaders', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/limited-time/strategic-planning" element={withShell(<FounderCampaignPage campaignKey="strategic-planning" />, { title: 'Strategic Planning and Annual Operating Planning (AOP)', showHeader: false, fullBleed: true, noPadding: true })} />
+            <Route path="/limited-time/terms-and-conditions" element={withShell(<LimitedTimeTerms />, { title: 'Limited-Time Offer Terms and Conditions', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/thinking-power" element={<Navigate to="/limited-time/client-decisions" replace />} />
             <Route path="/thinking-power/portfolio" element={<Navigate to="/limited-time/project-prioritization" replace />} />
             <Route path="/thinking-power/strategic-planning" element={<Navigate to="/limited-time/strategic-planning" replace />} />

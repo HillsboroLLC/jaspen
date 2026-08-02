@@ -399,6 +399,7 @@ function CampaignFooter({ campaign, onCta }) {
             <Link to="/pages/jaspen">About Jaspen</Link>
             <Link to="/pages/privacy">Privacy</Link>
             <Link to="/pages/terms">Terms</Link>
+            <Link to="/limited-time/terms-and-conditions">Offer terms</Link>
             <Link to="/pages/support">Support</Link>
           </nav>
         </div>

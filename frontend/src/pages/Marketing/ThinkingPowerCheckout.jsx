@@ -13,6 +13,20 @@ const labelStyle = { display: 'block', fontSize: 12, fontWeight: 700, color: '#4
 const errorBox = { marginTop: 4, marginBottom: 12, fontSize: 13, color: '#b42318', background: '#fef3f2', border: '1px solid #fecdca', borderRadius: 8, padding: '9px 11px' };
 const noticeBox = { fontSize: 13, color: '#0f172a', background: '#f8f5f0', border: '1px solid #ecdcc9', borderRadius: 8, padding: '12px 14px', lineHeight: 1.5 };
 
+function TermsAcknowledgement({ id, checked, onChange }) {
+  return (
+    <label className="fc-checkout-acknowledgement" htmlFor={id}>
+      <input id={id} type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
+      <span>
+        I have read and agree to the{' '}
+        <a href="/pages/terms" target="_blank" rel="noopener noreferrer">Terms of Service</a> and{' '}
+        <a href="/pages/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a>, including the{' '}
+        <a href="/limited-time/terms-and-conditions" target="_blank" rel="noopener noreferrer">AI limitations and refund terms</a>.
+      </span>
+    </label>
+  );
+}
+
 function AccountStep({ returnPath }) {
   const { login, signup } = useAuth();
   const [mode, setMode] = useState('signup');
@@ -23,9 +37,14 @@ function AccountStep({ returnPath }) {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const isSignup = mode === 'signup';
 
   const handleGoogle = () => {
+    if (isSignup && !termsAccepted) {
+      setError('Review and accept the terms before creating your account.');
+      return;
+    }
     const next = `${returnPath}?advantage_checkout=resume`;
     window.location.href = `${API_BASE}/api/v1/auth/google/start?next=${encodeURIComponent(next)}`;
   };
@@ -39,6 +58,7 @@ function AccountStep({ returnPath }) {
     if (!normalizedEmail || !password) return setError('Enter your email and password.');
     if (isSignup && !String(name).trim()) return setError('Enter your name.');
     if (isSignup && password !== confirm) return setError('Those passwords do not match.');
+    if (isSignup && !termsAccepted) return setError('Review and accept the terms before creating your account.');
 
     setSubmitting(true);
     try {
@@ -69,13 +89,13 @@ function AccountStep({ returnPath }) {
             type="button"
             role="tab"
             aria-selected={mode === key}
-            onClick={() => { setMode(key); setError(''); setNotice(''); }}
+            onClick={() => { setMode(key); setTermsAccepted(false); setError(''); setNotice(''); }}
           >
             {text}
           </button>
         ))}
       </div>
-      <button type="button" className="fc-checkout-google" onClick={handleGoogle}>Continue with Google</button>
+      <button type="button" className="fc-checkout-google" disabled={isSignup && !termsAccepted} onClick={handleGoogle}>Continue with Google</button>
       <div className="fc-checkout-divider"><span />OR<span /></div>
       <form onSubmit={handleSubmit}>
         {isSignup && <><label htmlFor="advantage-name" style={labelStyle}>Full name</label><input id="advantage-name" value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" style={inputStyle} /></>}
@@ -86,7 +106,12 @@ function AccountStep({ returnPath }) {
         {isSignup && <><label htmlFor="advantage-confirm" style={labelStyle}>Confirm password</label><input id="advantage-confirm" type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" style={inputStyle} /></>}
         {error && <div role="alert" style={errorBox}>{error}</div>}
         {notice && <div role="status" style={{ ...noticeBox, marginBottom: 12 }}>{notice}</div>}
-        <button type="submit" className="fc-checkout-primary" disabled={submitting}>
+        {isSignup && (
+          <div className="fc-checkout-acknowledgements">
+            <TermsAcknowledgement id="advantage-signup-terms" checked={termsAccepted} onChange={setTermsAccepted} />
+          </div>
+        )}
+        <button type="submit" className="fc-checkout-primary" disabled={submitting || (isSignup && !termsAccepted)}>
           {submitting ? 'One moment...' : isSignup ? 'Create account and continue' : 'Sign in and continue'}
         </button>
       </form>
@@ -98,9 +123,16 @@ function AccountStep({ returnPath }) {
 function PurchaseStep({ campaignId, returnPath }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [termsAccepted, setTermsAccepted] = useState(false);
+  const [finalSaleAccepted, setFinalSaleAccepted] = useState(false);
+  const acknowledgementsComplete = termsAccepted && finalSaleAccepted;
 
   const startCheckout = async () => {
     if (submitting) return;
+    if (!acknowledgementsComplete) {
+      setError('Accept both acknowledgements before continuing to payment.');
+      return;
+    }
     setSubmitting(true);
     setError('');
     try {
@@ -108,7 +140,12 @@ function PurchaseStep({ campaignId, returnPath }) {
         method: 'POST',
         headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
         credentials: 'include',
-        body: JSON.stringify({ campaign_id: campaignId, return_path: returnPath }),
+        body: JSON.stringify({
+          campaign_id: campaignId,
+          return_path: returnPath,
+          terms_accepted: true,
+          final_sale_acknowledged: true,
+        }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data?.url) throw new Error(data?.msg || 'Could not start secure checkout.');
@@ -127,7 +164,14 @@ function PurchaseStep({ campaignId, returnPath }) {
         <li><strong>Personal account</strong><span>non-transferable and not shared</span></li>
       </ul>
       {error && <div role="alert" style={errorBox}>{error}</div>}
-      <button type="button" className="fc-checkout-primary" disabled={submitting} onClick={startCheckout}>
+      <div className="fc-checkout-acknowledgements">
+        <TermsAcknowledgement id="advantage-purchase-terms" checked={termsAccepted} onChange={setTermsAccepted} />
+        <label className="fc-checkout-acknowledgement" htmlFor="advantage-final-sale">
+          <input id="advantage-final-sale" type="checkbox" checked={finalSaleAccepted} onChange={(event) => setFinalSaleAccepted(event.target.checked)} />
+          <span>I understand that AI-generated outputs may contain errors and that all sales are final except for a qualifying Covered Technical Failure or where a refund is required by law.</span>
+        </label>
+      </div>
+      <button type="button" className="fc-checkout-primary" disabled={submitting || !acknowledgementsComplete} onClick={startCheckout}>
         {submitting ? 'Opening secure checkout...' : `Continue to pay $${ADVANTAGE_PRICE}`}
       </button>
       <p className="fc-checkout-footnote">Stripe securely processes the one-time payment. Your credits are granted after payment is confirmed.</p>

@@ -172,7 +172,12 @@ def test_advantage_checkout_uses_one_time_price_without_subscription(
     response = client.post(
         '/api/v1/billing/create-jaspen-advantage-checkout',
         headers=auth_headers,
-        json={'campaign_id': 'advantage_pmo', 'return_path': '/limited-time/project-prioritization'},
+        json={
+            'campaign_id': 'advantage_pmo',
+            'return_path': '/limited-time/project-prioritization',
+            'terms_accepted': True,
+            'final_sale_acknowledged': True,
+        },
     )
 
     assert response.status_code == 200
@@ -181,7 +186,21 @@ def test_advantage_checkout_uses_one_time_price_without_subscription(
     assert captured['line_items'] == [{'price': 'price_advantage_999', 'quantity': 1}]
     assert captured['metadata']['checkout_type'] == billing.JASPEN_ADVANTAGE_CHECKOUT_TYPE
     assert captured['metadata']['tokens'] == '300000000'
+    assert captured['metadata']['terms_accepted'] == 'true'
+    assert captured['metadata']['final_sale_acknowledged'] == 'true'
+    assert captured['metadata']['acknowledged_at'].endswith('Z')
     assert 'subscription_data' not in captured
+
+
+def test_advantage_checkout_requires_both_purchase_acknowledgements(client, auth_headers):
+    response = client.post(
+        '/api/v1/billing/create-jaspen-advantage-checkout',
+        headers=auth_headers,
+        json={'terms_accepted': True, 'final_sale_acknowledged': False},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()['msg'] == 'Accept both purchase acknowledgements before continuing.'
 
 
 def test_founder_credits_survive_renewal_downgrade_and_reset(app, db, test_user):

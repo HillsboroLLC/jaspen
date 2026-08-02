@@ -156,5 +156,24 @@ describe('Founder campaign content', () => {
     expect(checkout).toContain("planKey: 'jaspen_advantage'");
     expect(checkout).not.toContain('/api/v1/billing/catalog');
     expect(checkout).not.toContain('Essential renews');
+    expect(checkout).toContain('I have read and agree to the');
+    expect(checkout).toContain('all sales are final except for a qualifying Covered Technical Failure');
+    expect(checkout).toContain('final_sale_acknowledged: true');
+  });
+
+  it('publishes the limited-time AI limitations and refund terms at a dedicated path', () => {
+    const page = fs.readFileSync(
+      path.join(process.cwd(), 'src/pages/Marketing/LimitedTimeTerms.jsx'),
+      'utf8',
+    );
+    expect(page).toContain('AI-Generated Outputs and Scoring');
+    expect(page).toContain('User Responsibility and Decision-Making');
+    expect(page).toContain('Covered Technical Failure');
+    expect(page).toContain('No Satisfaction or Outcome-Based Refunds');
+    expect(page).toContain('Disclaimer of Warranties');
+    expect(page).toContain('Limitation of Liability');
+    expect(page).toContain('support@jaspen.ai');
+    const sitemap = fs.readFileSync(path.join(process.cwd(), 'public/sitemap.xml'), 'utf8');
+    expect(sitemap).toContain('https://jaspen.ai/limited-time/terms-and-conditions');
   });
 });
