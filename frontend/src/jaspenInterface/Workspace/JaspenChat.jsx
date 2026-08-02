@@ -45,6 +45,7 @@ import {
 
 // Data / storage
 import { Jaspen, storage } from './JaspenClient';
+import EmailResultsButton from './EmailResultsButton';
 
 // Tab components
 import ScoreDashboard   from './ScoreDashboard';
@@ -2945,6 +2946,14 @@ const renderScorecardCard = (result, opts = {}) => {
             >
               {opts.exportBusyType === 'pptx' ? 'Downloading PowerPoint…' : 'Download PowerPoint'}
             </button>
+          )}
+          {opts.threadId && (
+            <EmailResultsButton
+              threadId={opts.threadId}
+              scorecardId={result?.id || result?.analysis_id || null}
+              outputTypes={['ranked_ideas', 'scorecards', 'why_this_order', 'evidence_gaps_assumptions_risks', 'what_could_change_order']}
+              compact
+            />
           )}
           {opts.onOpenWorkspaceScorecard && (
             <button
