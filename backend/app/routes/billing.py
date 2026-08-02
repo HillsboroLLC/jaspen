@@ -1027,28 +1027,36 @@ def _trace_coupon(label, obj):
         pass
 
 
-def _log_coupon_diagnostics(coupon_code, promotion_code_id, coupon, currency, base_amount):
-    """TEMPORARY: record how Stripe actually described a promo code.
+def _log_coupon_diagnostics(coupon_code, promotion_code_id, preview, currency, base_amount):
+    """TEMPORARY: record what Stripe priced a promo code at.
 
     Journald needs root here, so this also appends to a file the app user can
-    read while we track down a promo code that applies without discounting.
-    Remove once the 300K coupon flow is confirmed working in production.
+    read while confirming the 300K coupon flow in production. Remove once the
+    flow is verified end to end.
     """
-    try:
-        keys = sorted([str(k) for k in coupon.keys()])[:20]
-    except Exception:
-        keys = '<no keys>'
     detail = (
-        f"code={coupon_code} promo={promotion_code_id} type={type(coupon).__name__} "
-        f"percent_off={_stripe_field(coupon, 'percent_off')!r} "
-        f"amount_off={_stripe_field(coupon, 'amount_off')!r} "
-        f"coupon_currency={_stripe_field(coupon, 'currency')!r} price_currency={currency!r} "
-        f"valid={_stripe_field(coupon, 'valid')!r} base_amount={base_amount} keys={keys}"
+        f"code={coupon_code} promo={promotion_code_id} type={type(preview).__name__} "
+        f"base_amount={base_amount} currency={currency!r} "
+        f"amount_due={_stripe_field(preview, 'amount_due')!r} "
+        f"total={_stripe_field(preview, 'total')!r} "
+        f"subtotal={_stripe_field(preview, 'subtotal')!r} "
+        f"total_discount_amounts={_stripe_field(preview, 'total_discount_amounts')!r}"
     )
     current_app.logger.info('300k-limited-time coupon resolve: %s', detail)
     try:
         with open('/tmp/jaspen-coupon-debug.log', 'a') as handle:
             handle.write(f"{datetime.utcnow().isoformat()}Z {detail}\n")
+    except Exception:
+        pass
+
+
+def _log_coupon_outcome(outcome, **fields):
+    """TEMPORARY: record the branch the coupon flow ended on."""
+    detail = ' '.join(f'{k}={v!r}' for k, v in fields.items())
+    current_app.logger.info('300k-limited-time coupon outcome=%s %s', outcome, detail)
+    try:
+        with open('/tmp/jaspen-coupon-debug.log', 'a') as handle:
+            handle.write(f'{datetime.utcnow().isoformat()}Z OUTCOME={outcome} {detail}\n')
     except Exception:
         pass
 

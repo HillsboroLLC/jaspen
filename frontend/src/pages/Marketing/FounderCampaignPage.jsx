@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import Seo from '../../shared/components/Seo';
 import { useAuth } from '../../shared/auth/AuthContext';
 import { createAnalytics } from '../../tools/shared/createAnalytics';
@@ -411,6 +411,7 @@ function CampaignFooter({ campaign, onCta }) {
 export default function FounderCampaignPage({ campaignKey = 'consultants' }) {
   const campaign = getFounderCampaign(campaignKey);
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [checkoutNotice, setCheckoutNotice] = useState('');
   const analytics = useMemo(() => createAnalytics(campaign.id), [campaign.id]);
@@ -451,6 +452,9 @@ export default function FounderCampaignPage({ campaignKey = 'consultants' }) {
     analytics.track('limited_time_300k_purchase_completed', { campaign_id: campaign.id });
     setCheckoutOpen(false);
     setCheckoutNotice('Payment received. Your credits are ready.');
+    // The buyer is already signed in at this point, so drop them straight into
+    // Jaspen rather than leaving them on the marketing page they bought from.
+    navigate('/new');
   };
 
   return (

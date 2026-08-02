@@ -1,6 +1,6 @@
 import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import FounderCampaignPage from './FounderCampaignPage';
 import {
   FOUNDER_CAMPAIGNS,
@@ -93,5 +93,24 @@ describe.each(Object.values(FOUNDER_CAMPAIGNS))('$id campaign page', (campaign) 
       resumed: false,
     });
 
+  });
+
+  it('drops the buyer into Jaspen after purchase instead of leaving them on the campaign page', () => {
+    render(
+      <MemoryRouter initialEntries={[campaign.path]}>
+        <Routes>
+          <Route path={campaign.path} element={<FounderCampaignPage campaignKey={campaign.key} />} />
+          <Route path="/new" element={<div>Jaspen workspace</div>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getAllByRole('button', { name: new RegExp(campaign.primaryCta) })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Complete purchase' }));
+
+    expect(screen.getByText('Jaspen workspace')).toBeInTheDocument();
+    expect(mockTrack).toHaveBeenCalledWith('limited_time_300k_purchase_completed', {
+      campaign_id: campaign.id,
+    });
   });
 });
