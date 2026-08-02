@@ -115,7 +115,7 @@ function AccountStep({ returnPath }) {
           {submitting ? 'One moment...' : isSignup ? 'Create account and continue' : 'Sign in and continue'}
         </button>
       </form>
-      <p className="fc-checkout-footnote">Next, Stripe will show the one-time purchase for your review. No subscription is created.</p>
+      <p className="fc-checkout-footnote">Next, you'll review and complete the one-time purchase. No subscription is created.</p>
     </div>
   );
 }
@@ -159,8 +159,6 @@ function PurchaseStep({ campaignId, returnPath }) {
   return (
     <div>
       <ul className="fc-checkout-summary">
-        <li><strong>{LIMITED_TIME_300K_CREDITS}</strong><span>non-expiring usage credits</span></li>
-        <li><strong>${LIMITED_TIME_300K_PRICE} once</strong><span>no subscription or recurring charge</span></li>
         <li><strong>Personal account</strong><span>non-transferable and not shared</span></li>
       </ul>
       {error && <div role="alert" style={errorBox}>{error}</div>}
@@ -174,7 +172,7 @@ function PurchaseStep({ campaignId, returnPath }) {
       <button type="button" className="fc-checkout-primary" disabled={submitting || !acknowledgementsComplete} onClick={startCheckout}>
         {submitting ? 'Opening secure checkout...' : `Continue to pay $${LIMITED_TIME_300K_PRICE}`}
       </button>
-      <p className="fc-checkout-footnote">Stripe securely processes the one-time payment. Your credits are granted after payment is confirmed.</p>
+      <p className="fc-checkout-footnote">Payment is processed securely. Your credits are granted after payment is confirmed.</p>
     </div>
   );
 }
@@ -196,8 +194,9 @@ export default function ThinkingPowerCheckout({ onClose, campaignId = '', return
         <div className="fc-checkout-header">
           <div>
             <span>Limited-time offer</span>
-            <h2 id="limited-time-checkout-title">${LIMITED_TIME_300K_PRICE} once. No subscription.</h2>
-            <p>{user ? 'Review the offer, then continue to Stripe.' : 'Create or sign in to your personal Jaspen account.'}</p>
+            <h2 id="limited-time-checkout-title">{LIMITED_TIME_300K_CREDITS} usage credits</h2>
+            <p>${LIMITED_TIME_300K_PRICE} once. No subscription. Non-expiring.</p>
+            <p>{user ? 'Review the offer, then continue to payment.' : 'Create or sign in to your personal Jaspen account.'}</p>
           </div>
           <button ref={closeRef} type="button" onClick={onClose} aria-label="Close checkout">×</button>
         </div>

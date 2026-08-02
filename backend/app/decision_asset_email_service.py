@@ -546,15 +546,23 @@ def _build_attachments(context, output_types):
     base = _safe_filename_base(scorecard.get("project_name"))
 
     # scorecard_detail deliveries use the HTML-body-matches-the-workspace email
-    # (see render_scorecard_detail_email) with a link back into Jaspen for the
-    # PowerPoint download rather than a raw attachment. A ~30-40KB base64
-    # attachment embedded in the same message pushes many scorecards over
-    # Gmail's ~102KB clip threshold, which collapses the visible body behind
-    # a "..." the recipient has to click to expand - the friction this is
-    # avoiding. The server-rendered PDF is a separately hand-built template
-    # that doesn't reflect the on-screen block layout (and the client
-    # print/PDF path isn't reliable either), so no PDF is attached here.
+    # (see render_scorecard_detail_email) with both a PowerPoint attachment
+    # and an "Open in Jaspen" link back to the workspace. The server-rendered
+    # PDF is a separately hand-built template that doesn't reflect the
+    # on-screen block layout (and the client print/PDF path isn't reliable
+    # either), so no PDF is attached here.
     if "scorecard_detail" in output_types:
+        try:
+            pptx = _pptx_bytes(scorecard, org=org)
+        except Exception as exc:
+            raise DeliveryError("artifact_generation_failed") from exc
+        if not pptx:
+            raise DeliveryError("artifact_generation_failed")
+        attachments.append(EmailAttachment(
+            f"{base}-scorecard.pptx",
+            PPTX_MIMETYPE,
+            pptx,
+        ))
         return attachments
 
     if {"scorecards", "ranked_ideas", "tradeoff"}.intersection(output_types):

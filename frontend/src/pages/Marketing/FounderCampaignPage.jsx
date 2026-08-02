@@ -430,7 +430,7 @@ export default function FounderCampaignPage({ campaignKey = 'consultants' }) {
     }
     if (checkoutState === 'success') {
       analytics.track('limited_time_300k_purchase_completed', { campaign_id: campaign.id });
-      setCheckoutNotice('Payment received. Your credits will appear as soon as Stripe confirms the payment.');
+      setCheckoutNotice('Payment received. Your credits will appear as soon as the payment is confirmed.');
     }
     if (checkoutState === 'cancel') {
       setCheckoutNotice('Checkout was canceled. No charge was made.');
