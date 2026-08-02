@@ -17,7 +17,15 @@ from app.founder_entitlements import (
     has_limited_time_300k_entitlement,
     reverse_limited_time_300k_credits,
 )
-from app.models import AccountEntitlement, PersistentCreditGrant, Scorecard, StripeWebhookEvent, UsageEvent, UserSession
+from app.models import (
+    AccountEntitlement,
+    PersistentCreditGrant,
+    PersistentCreditTransaction,
+    Scorecard,
+    StripeWebhookEvent,
+    UsageEvent,
+    UserSession,
+)
 from app.routes.sessions import save_user_sessions
 from app.scorecards import backfill_legacy_scorecards, collect_peer_scorecards, scorecard_limit_for, upsert_scorecard
 
@@ -681,6 +689,137 @@ def test_limited_time_300k_invoice_webhook_is_idempotent(
 
     assert first.status_code == 200
     assert second.status_code == 200
+    assert PersistentCreditGrant.query.filter_by(user_id=str(test_user.id)).count() == 1
+    assert AccountEntitlement.query.filter_by(user_id=str(test_user.id)).count() == 1
+
+
+def _post_webhook(client, billing, monkeypatch, event):
+    monkeypatch.setattr(billing.stripe.Webhook, 'construct_event', lambda *_args: event)
+    return client.post('/api/v1/billing/webhook', data=b'{}', headers={'Stripe-Signature': 'test'})
+
+
+def test_one_300k_purchase_delivered_as_two_event_types_grants_once(
+    client, app, db, test_user, monkeypatch
+):
+    """The event-id ledger cannot catch this: one purchase, two event ids.
+
+    Stripe sends both invoice.paid and invoice.payment_succeeded for the same
+    invoice, and both are wired to the 300K fulfilment. Deduplication has to
+    key on the invoice, not on the event.
+    """
+    from app.routes import billing
+
+    app.config['STRIPE_WEBHOOK_SECRET'] = 'whsec_founder_test'
+    invoice = {
+        'id': 'in_limited_time_300k_twice',
+        'status': 'paid',
+        'amount_due': 0,
+        'customer': 'cus_limited_time_300k',
+        'metadata': {
+            'user_id': str(test_user.id),
+            'checkout_type': billing.LIMITED_TIME_300K_CHECKOUT_TYPE,
+            'tokens': '300000000',
+        },
+    }
+
+    paid = _post_webhook(client, billing, monkeypatch, {
+        'id': 'evt_invoice_paid', 'type': 'invoice.paid', 'data': {'object': invoice},
+    })
+    succeeded = _post_webhook(client, billing, monkeypatch, {
+        'id': 'evt_invoice_payment_succeeded',
+        'type': 'invoice.payment_succeeded',
+        'data': {'object': invoice},
+    })
+
+    assert paid.status_code == 200
+    assert succeeded.status_code == 200
+    grants = PersistentCreditGrant.query.filter_by(user_id=str(test_user.id)).all()
+    assert len(grants) == 1
+    assert grants[0].original_amount == 300_000_000
+    assert AccountEntitlement.query.filter_by(user_id=str(test_user.id)).count() == 1
+    assert PersistentCreditTransaction.query.filter_by(
+        user_id=str(test_user.id), transaction_type='grant'
+    ).count() == 1
+
+
+def test_300k_checkout_session_and_payment_intent_events_grant_once(
+    client, app, db, test_user, monkeypatch
+):
+    """A hosted-checkout purchase fires both events, carrying different ids.
+
+    checkout.session.completed keys the grant on the session, and
+    payment_intent.succeeded keys it on the intent, so only the account-level
+    guard stops the second one.
+    """
+    from app.routes import billing
+
+    app.config['STRIPE_WEBHOOK_SECRET'] = 'whsec_founder_test'
+    metadata = {
+        'user_id': str(test_user.id),
+        'checkout_type': billing.LIMITED_TIME_300K_CHECKOUT_TYPE,
+        'tokens': '300000000',
+        'campaign_id': 'limited_time_300k_pmo',
+    }
+
+    session_event = _post_webhook(client, billing, monkeypatch, {
+        'id': 'evt_session_completed',
+        'type': 'checkout.session.completed',
+        'data': {'object': {
+            'id': 'cs_300k_both',
+            'payment_intent': 'pi_300k_both',
+            'customer': 'cus_limited_time_300k',
+            'metadata': metadata,
+        }},
+    })
+    intent_event = _post_webhook(client, billing, monkeypatch, {
+        'id': 'evt_payment_intent_succeeded',
+        'type': 'payment_intent.succeeded',
+        'data': {'object': {
+            'id': 'pi_300k_both',
+            'status': 'succeeded',
+            'customer': 'cus_limited_time_300k',
+            'metadata': metadata,
+        }},
+    })
+
+    assert session_event.status_code == 200
+    assert intent_event.status_code == 200
+    assert PersistentCreditGrant.query.filter_by(user_id=str(test_user.id)).count() == 1
+    assert AccountEntitlement.query.filter_by(user_id=str(test_user.id)).count() == 1
+
+
+def test_300k_browser_confirmation_racing_the_webhook_grants_once(
+    client, app, db, test_user, auth_headers, monkeypatch
+):
+    """The checkout page confirms the purchase itself and Stripe also delivers it."""
+    from app.routes import billing
+
+    app.config['STRIPE_WEBHOOK_SECRET'] = 'whsec_founder_test'
+    intent = {
+        'id': 'pi_300k_race',
+        'status': 'succeeded',
+        'customer': 'cus_limited_time_300k',
+        'metadata': {
+            'user_id': str(test_user.id),
+            'checkout_type': billing.LIMITED_TIME_300K_CHECKOUT_TYPE,
+            'tokens': '300000000',
+        },
+    }
+    monkeypatch.setattr(billing.stripe.PaymentIntent, 'retrieve', lambda payment_intent_id: intent)
+
+    confirmed = client.post(
+        '/api/v1/billing/confirm-300k-limited-time-payment',
+        headers=auth_headers,
+        json={'payment_intent_id': 'pi_300k_race'},
+    )
+    delivered = _post_webhook(client, billing, monkeypatch, {
+        'id': 'evt_race_payment_intent',
+        'type': 'payment_intent.succeeded',
+        'data': {'object': intent},
+    })
+
+    assert confirmed.status_code == 200, confirmed.get_json()
+    assert delivered.status_code == 200
     assert PersistentCreditGrant.query.filter_by(user_id=str(test_user.id)).count() == 1
     assert AccountEntitlement.query.filter_by(user_id=str(test_user.id)).count() == 1
 
