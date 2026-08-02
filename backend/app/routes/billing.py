@@ -1006,6 +1006,27 @@ def _stripe_field(obj, name, default=None):
     return default if value is None else value
 
 
+def _trace_coupon(label, obj):
+    """TEMPORARY: dump how Stripe shaped an object while tracking down a
+    promo code whose nested coupon arrives empty. Remove with the rest of
+    the 300K coupon diagnostics."""
+    try:
+        if isinstance(obj, str):
+            detail = f'{label}: str={obj[:80]}'
+        else:
+            try:
+                keys = sorted([str(k) for k in obj.keys()])[:25]
+            except Exception:
+                keys = '<no keys>'
+            attrs = [a for a in ('id', 'coupon', 'percent_off', 'amount_off', 'valid', 'object')
+                     if getattr(obj, a, None) is not None]
+            detail = f'{label}: type={type(obj).__name__} keys={keys} attrs_present={attrs}'
+        with open('/tmp/jaspen-coupon-debug.log', 'a') as handle:
+            handle.write(f'{datetime.utcnow().isoformat()}Z TRACE {detail}\n')
+    except Exception:
+        pass
+
+
 def _coupon_for_promotion(promotion):
     """Return the Coupon carrying the actual discount for a promotion code.
 
@@ -1014,7 +1035,9 @@ def _coupon_for_promotion(promotion):
     code look like it applied while never reducing the price. So fall back to
     fetching the coupon directly whenever the nested copy is unusable.
     """
+    _trace_coupon('promotion', promotion)
     coupon = _stripe_field(promotion, 'coupon')
+    _trace_coupon('nested-coupon', coupon)
     if isinstance(coupon, str):
         return stripe.Coupon.retrieve(coupon)
     has_discount = (
@@ -1025,15 +1048,22 @@ def _coupon_for_promotion(promotion):
         return coupon
     coupon_id = _stripe_field(coupon, 'id')
     if coupon_id:
-        return stripe.Coupon.retrieve(coupon_id)
+        fetched = stripe.Coupon.retrieve(coupon_id)
+        _trace_coupon('by-coupon-id', fetched)
+        return fetched
     promotion_id = _stripe_field(promotion, 'id')
     if promotion_id:
-        full = stripe.PromotionCode.retrieve(promotion_id, expand=['coupon'])
-        nested = _stripe_field(full, 'coupon')
-        if isinstance(nested, str):
-            return stripe.Coupon.retrieve(nested)
-        if nested is not None:
-            return nested
+        try:
+            full = stripe.PromotionCode.retrieve(promotion_id)
+            _trace_coupon('promo-retrieve', full)
+            nested = _stripe_field(full, 'coupon')
+            _trace_coupon('promo-retrieve.coupon', nested)
+            if isinstance(nested, str):
+                return stripe.Coupon.retrieve(nested)
+            if nested is not None:
+                return nested
+        except Exception as exc:  # pragma: no cover - diagnostic path
+            _trace_coupon('promo-retrieve-failed', repr(exc))
     return coupon if coupon is not None else {}
 
 
