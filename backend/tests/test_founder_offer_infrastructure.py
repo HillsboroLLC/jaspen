@@ -239,25 +239,34 @@ def test_limited_time_300k_payment_intent_is_created_at_full_price(
     assert 'promotion_code' not in captured['metadata']
 
 
-def test_apply_300k_limited_time_coupon_reprices_the_existing_intent(
-    client, app, auth_headers, test_user, monkeypatch
-):
-    from app.routes import billing
+def _limited_time_intent(test_user, billing, **overrides):
+    metadata = {
+        'user_id': str(test_user.id),
+        'checkout_type': billing.LIMITED_TIME_300K_CHECKOUT_TYPE,
+        'tokens': '300000000',
+        'campaign_id': 'limited_time_300k_pmo',
+    }
+    metadata.update(overrides.pop('metadata', {}))
+    intent = {
+        'id': 'pi_limited_time_300k_abc',
+        'status': 'requires_payment_method',
+        'customer': 'cus_limited_time_300k',
+        'metadata': metadata,
+    }
+    intent.update(overrides)
+    return intent
 
-    app.config['STRIPE_LIMITED_TIME_300K_PRICE_ID'] = 'price_limited_time_300k_999'
-    modified = {}
 
+def _stub_limited_time_coupon_stripe(monkeypatch, billing, test_user, preview, **overrides):
+    """Wire up the Stripe calls the coupon endpoint makes.
+
+    Deliberately gives PromotionCode.list() an EMPTY nested coupon, which is
+    what production actually returns - the discount must come from the invoice
+    preview Stripe prices, never from reading percent_off here.
+    """
     monkeypatch.setattr(
         billing.stripe.PaymentIntent, 'retrieve',
-        lambda payment_intent_id: {
-            'id': payment_intent_id,
-            'status': 'requires_payment_method',
-            'metadata': {
-                'user_id': str(test_user.id),
-                'checkout_type': billing.LIMITED_TIME_300K_CHECKOUT_TYPE,
-                'tokens': '300000000',
-            },
-        },
+        lambda payment_intent_id: _limited_time_intent(test_user, billing, **overrides),
     )
     monkeypatch.setattr(
         billing.stripe.Price, 'retrieve',
@@ -265,10 +274,28 @@ def test_apply_300k_limited_time_coupon_reprices_the_existing_intent(
     )
     monkeypatch.setattr(
         billing.stripe.PromotionCode, 'list',
-        lambda code, active, limit: {'data': [{
-            'id': 'promo_launch20',
-            'coupon': {'valid': True, 'percent_off': 20},
-        }]},
+        lambda code, active, limit: {'data': [{'id': 'promo_300ktest', 'coupon': {}}]},
+    )
+    monkeypatch.setattr(billing, '_ensure_customer_for_user', lambda _user: 'cus_limited_time_300k')
+    captured = {}
+
+    def fake_preview(**kwargs):
+        captured.update(kwargs)
+        return preview
+
+    monkeypatch.setattr(billing.stripe.Invoice, 'create_preview', fake_preview)
+    return captured
+
+
+def test_apply_300k_limited_time_coupon_reprices_the_existing_intent(
+    client, app, auth_headers, test_user, monkeypatch
+):
+    from app.routes import billing
+
+    app.config['STRIPE_LIMITED_TIME_300K_PRICE_ID'] = 'price_limited_time_300k_999'
+    modified = {}
+    captured = _stub_limited_time_coupon_stripe(
+        monkeypatch, billing, test_user, preview={'amount_due': 79920, 'total': 79920},
     )
 
     def fake_modify(payment_intent_id, **kwargs):
@@ -282,11 +309,13 @@ def test_apply_300k_limited_time_coupon_reprices_the_existing_intent(
         json={'payment_intent_id': 'pi_limited_time_300k_abc', 'coupon_code': 'LAUNCH20'},
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 200, response.get_json()
     assert response.get_json()['price_label'] == '$799.20'
-    assert modified['id'] == 'pi_limited_time_300k_abc'
-    assert modified['amount'] == 79920  # 999.00 * 0.8
+    assert modified['amount'] == 79920
     assert modified['metadata']['promotion_code'] == 'LAUNCH20'
+    # Stripe must be the one applying the discount.
+    assert captured['discounts'] == [{'promotion_code': 'promo_300ktest'}]
+    assert captured['customer'] == 'cus_limited_time_300k'
 
 
 def test_apply_300k_limited_time_coupon_fully_covered_grants_credits_for_free(
@@ -296,163 +325,78 @@ def test_apply_300k_limited_time_coupon_fully_covered_grants_credits_for_free(
 
     app.config['STRIPE_LIMITED_TIME_300K_PRICE_ID'] = 'price_limited_time_300k_999'
     canceled = {}
-
-    monkeypatch.setattr(
-        billing.stripe.PaymentIntent, 'retrieve',
-        lambda payment_intent_id: {
-            'id': payment_intent_id,
-            'status': 'requires_payment_method',
-            'metadata': {
-                'user_id': str(test_user.id),
-                'checkout_type': billing.LIMITED_TIME_300K_CHECKOUT_TYPE,
-                'tokens': '300000000',
-                'campaign_id': 'limited_time_300k_pmo',
-            },
-        },
+    _stub_limited_time_coupon_stripe(
+        monkeypatch, billing, test_user, preview={'amount_due': 0, 'total': 0},
     )
     monkeypatch.setattr(
-        billing.stripe.Price, 'retrieve',
-        lambda price_id: {'id': price_id, 'unit_amount': 99900, 'currency': 'usd'},
+        billing.stripe.PaymentIntent, 'cancel',
+        lambda payment_intent_id: canceled.update(id=payment_intent_id),
     )
-    monkeypatch.setattr(
-        billing.stripe.PromotionCode, 'list',
-        lambda code, active, limit: {'data': [{
-            'id': 'promo_300ktest',
-            'coupon': {'valid': True, 'percent_off': 100},
-        }]},
-    )
-
-    def fake_cancel(payment_intent_id):
-        canceled['id'] = payment_intent_id
-
-    monkeypatch.setattr(billing.stripe.PaymentIntent, 'cancel', fake_cancel)
 
     def fail_modify(payment_intent_id, **kwargs):
-        raise AssertionError('should not modify a payment intent that is fully covered by a coupon')
+        raise AssertionError('a fully covered offer must not be re-priced for payment')
 
     monkeypatch.setattr(billing.stripe.PaymentIntent, 'modify', fail_modify)
 
     response = client.post(
         '/api/v1/billing/apply-300k-limited-time-coupon',
         headers=auth_headers,
-        json={'payment_intent_id': 'pi_limited_time_300k_free', 'coupon_code': '300KTest'},
-    )
-
-    assert response.status_code == 200
-    body = response.get_json()
-    assert body['free'] is True
-    assert body['price_label'] == '$0.00'
-    assert body['granted'] is True
-    assert body['tokens'] == 300_000_000
-    assert canceled['id'] == 'pi_limited_time_300k_free'
-
-    entitlement = AccountEntitlement.query.filter_by(user_id=test_user.id, entitlement_key='300k_limited_time').first()
-    assert entitlement is not None
-
-
-def test_apply_300k_limited_time_coupon_handles_stripe_object_style_responses(
-    client, app, auth_headers, test_user, monkeypatch
-):
-    """Production regression: PromotionCode.list() returned an EMPTY nested coupon.
-
-    Fields were only reachable as attributes, and the nested copy carried no
-    discount at all, so every code applied without ever reducing the price.
-    """
-    from app.routes import billing
-
-    app.config['STRIPE_LIMITED_TIME_300K_PRICE_ID'] = 'price_limited_time_300k_999'
-    modified = {}
-    retrieved = {}
-
-    class StripeObj:
-        """Attribute-style access, like stripe-python returns."""
-
-        def __init__(self, **fields):
-            self.__dict__.update(fields)
-
-        def keys(self):
-            return self.__dict__.keys()
-
-    # The nested coupon comes back empty - exactly what production logged.
-    empty_nested = StripeObj()
-    promotion = StripeObj(id='promo_300ktest', coupon=empty_nested)
-
-    monkeypatch.setattr(
-        billing.stripe.PaymentIntent, 'retrieve',
-        lambda payment_intent_id: {
-            'id': payment_intent_id,
-            'status': 'requires_payment_method',
-            'metadata': {
-                'user_id': str(test_user.id),
-                'checkout_type': billing.LIMITED_TIME_300K_CHECKOUT_TYPE,
-                'tokens': '300000000',
-                'campaign_id': 'limited_time_300k_strategic_planning_aop',
-            },
-        },
-    )
-    monkeypatch.setattr(
-        billing.stripe.Price, 'retrieve',
-        lambda price_id: StripeObj(id=price_id, unit_amount=99900, currency='usd'),
-    )
-    monkeypatch.setattr(
-        billing.stripe.PromotionCode, 'list',
-        lambda code, active, limit: StripeObj(data=[promotion]),
-    )
-
-    def fake_promo_retrieve(promotion_id, **kwargs):
-        retrieved['promotion_id'] = promotion_id
-        return StripeObj(
-            id=promotion_id,
-            coupon=StripeObj(id='coupon_100', valid=True, percent_off=100, amount_off=None),
-        )
-
-    monkeypatch.setattr(billing.stripe.PromotionCode, 'retrieve', fake_promo_retrieve)
-    monkeypatch.setattr(billing.stripe.PaymentIntent, 'cancel', lambda pid: modified.update(canceled=pid))
-
-    response = client.post(
-        '/api/v1/billing/apply-300k-limited-time-coupon',
-        headers=auth_headers,
-        json={'payment_intent_id': 'pi_limited_time_300k_obj', 'coupon_code': '300KTest'},
+        json={'payment_intent_id': 'pi_limited_time_300k_abc', 'coupon_code': '300KTest'},
     )
 
     assert response.status_code == 200, response.get_json()
     body = response.get_json()
     assert body['free'] is True
     assert body['price_label'] == '$0.00'
-    assert retrieved['promotion_id'] == 'promo_300ktest'
-    assert modified['canceled'] == 'pi_limited_time_300k_obj'
+    assert body['granted'] is True
+    assert body['tokens'] == 300_000_000
+    assert canceled['id'] == 'pi_limited_time_300k_abc'
+
+    entitlement = AccountEntitlement.query.filter_by(
+        user_id=test_user.id, entitlement_key='300k_limited_time'
+    ).first()
+    assert entitlement is not None
+
+
+def test_apply_300k_limited_time_coupon_ignores_the_empty_nested_coupon(
+    client, app, auth_headers, test_user, monkeypatch
+):
+    """Production regression: PromotionCode.list() returned an empty nested coupon.
+
+    Reading percent_off from it yielded no discount, so every code "applied"
+    while the price stayed at $999. Pricing must come from Stripe instead.
+    """
+    from app.routes import billing
+
+    app.config['STRIPE_LIMITED_TIME_300K_PRICE_ID'] = 'price_limited_time_300k_999'
+    canceled = {}
+    captured = _stub_limited_time_coupon_stripe(
+        monkeypatch, billing, test_user, preview={'amount_due': 0, 'total': 0},
+    )
+    monkeypatch.setattr(
+        billing.stripe.PaymentIntent, 'cancel',
+        lambda payment_intent_id: canceled.update(id=payment_intent_id),
+    )
+
+    response = client.post(
+        '/api/v1/billing/apply-300k-limited-time-coupon',
+        headers=auth_headers,
+        json={'payment_intent_id': 'pi_limited_time_300k_abc', 'coupon_code': '300KTest'},
+    )
+
+    assert response.status_code == 200, response.get_json()
+    assert response.get_json()['free'] is True
+    assert captured['discounts'] == [{'promotion_code': 'promo_300ktest'}]
 
 
 def test_apply_300k_limited_time_coupon_rejects_a_code_that_does_not_discount(
     client, app, auth_headers, test_user, monkeypatch
 ):
-    """A code Stripe knows but that carries no usable discount must not read as success."""
     from app.routes import billing
 
     app.config['STRIPE_LIMITED_TIME_300K_PRICE_ID'] = 'price_limited_time_300k_999'
-    monkeypatch.setattr(
-        billing.stripe.PaymentIntent, 'retrieve',
-        lambda payment_intent_id: {
-            'id': payment_intent_id,
-            'status': 'requires_payment_method',
-            'metadata': {
-                'user_id': str(test_user.id),
-                'checkout_type': billing.LIMITED_TIME_300K_CHECKOUT_TYPE,
-                'tokens': '300000000',
-            },
-        },
-    )
-    monkeypatch.setattr(
-        billing.stripe.Price, 'retrieve',
-        lambda price_id: {'id': price_id, 'unit_amount': 99900, 'currency': 'usd'},
-    )
-    # A coupon with neither percent_off nor a usable amount_off (mismatched currency).
-    monkeypatch.setattr(
-        billing.stripe.PromotionCode, 'list',
-        lambda code, active, limit: {'data': [{
-            'id': 'promo_nodiscount',
-            'coupon': {'valid': True, 'percent_off': None, 'amount_off': 5000, 'currency': 'eur'},
-        }]},
+    _stub_limited_time_coupon_stripe(
+        monkeypatch, billing, test_user, preview={'amount_due': 99900, 'total': 99900},
     )
 
     def fail_modify(payment_intent_id, **kwargs):
@@ -476,20 +420,8 @@ def test_apply_300k_limited_time_coupon_rejects_unknown_code(
     from app.routes import billing
 
     app.config['STRIPE_LIMITED_TIME_300K_PRICE_ID'] = 'price_limited_time_300k_999'
-    monkeypatch.setattr(
-        billing.stripe.PaymentIntent, 'retrieve',
-        lambda payment_intent_id: {
-            'id': payment_intent_id,
-            'status': 'requires_payment_method',
-            'metadata': {
-                'user_id': str(test_user.id),
-                'checkout_type': billing.LIMITED_TIME_300K_CHECKOUT_TYPE,
-            },
-        },
-    )
-    monkeypatch.setattr(
-        billing.stripe.Price, 'retrieve',
-        lambda price_id: {'id': price_id, 'unit_amount': 99900, 'currency': 'usd'},
+    _stub_limited_time_coupon_stripe(
+        monkeypatch, billing, test_user, preview={'amount_due': 0, 'total': 0},
     )
     monkeypatch.setattr(billing.stripe.PromotionCode, 'list', lambda code, active, limit: {'data': []})
 

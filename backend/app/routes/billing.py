@@ -1027,46 +1027,6 @@ def _trace_coupon(label, obj):
         pass
 
 
-def _coupon_for_promotion(promotion):
-    """Return the Coupon carrying the actual discount for a promotion code.
-
-    The nested coupon on a PromotionCode.list() result has come back empty in
-    production (no percent_off/amount_off, no keys at all), which made every
-    code look like it applied while never reducing the price. So fall back to
-    fetching the coupon directly whenever the nested copy is unusable.
-    """
-    _trace_coupon('promotion', promotion)
-    coupon = _stripe_field(promotion, 'coupon')
-    _trace_coupon('nested-coupon', coupon)
-    if isinstance(coupon, str):
-        return stripe.Coupon.retrieve(coupon)
-    has_discount = (
-        _stripe_field(coupon, 'percent_off') is not None
-        or _stripe_field(coupon, 'amount_off') is not None
-    )
-    if has_discount:
-        return coupon
-    coupon_id = _stripe_field(coupon, 'id')
-    if coupon_id:
-        fetched = stripe.Coupon.retrieve(coupon_id)
-        _trace_coupon('by-coupon-id', fetched)
-        return fetched
-    promotion_id = _stripe_field(promotion, 'id')
-    if promotion_id:
-        try:
-            full = stripe.PromotionCode.retrieve(promotion_id)
-            _trace_coupon('promo-retrieve', full)
-            nested = _stripe_field(full, 'coupon')
-            _trace_coupon('promo-retrieve.coupon', nested)
-            if isinstance(nested, str):
-                return stripe.Coupon.retrieve(nested)
-            if nested is not None:
-                return nested
-        except Exception as exc:  # pragma: no cover - diagnostic path
-            _trace_coupon('promo-retrieve-failed', repr(exc))
-    return coupon if coupon is not None else {}
-
-
 def _log_coupon_diagnostics(coupon_code, promotion_code_id, coupon, currency, base_amount):
     """TEMPORARY: record how Stripe actually described a promo code.
 
@@ -1093,13 +1053,15 @@ def _log_coupon_diagnostics(coupon_code, promotion_code_id, coupon, currency, ba
         pass
 
 
-def _resolve_300k_limited_time_amount(price_id, coupon_code):
+def _resolve_300k_limited_time_amount(price_id, coupon_code, customer_id=None):
     """Returns (amount, currency, promotion_code_id, error_response).
 
-    Shared by intent creation and coupon application - PaymentIntents have no
-    native "discounts" parameter (unlike Subscriptions and Checkout Sessions),
-    so a promotion code has to be resolved and its discount applied to the
-    amount ourselves.
+    The discount math is Stripe's, not ours. The subscription flow above hands
+    Stripe a promotion_code and lets it price the result; reading percent_off
+    off the promotion code here instead produced no discount at all, because
+    the nested coupon on a PromotionCode.list() result comes back empty. So
+    price a throwaway invoice preview with the same promotion_code and use the
+    total Stripe computes.
     """
     try:
         price = stripe.Price.retrieve(price_id)
@@ -1113,35 +1075,42 @@ def _resolve_300k_limited_time_amount(price_id, coupon_code):
 
     coupon_code = str(coupon_code or '').strip()
     promotion_code_id = ''
-    if coupon_code:
-        try:
-            matches = stripe.PromotionCode.list(code=coupon_code, active=True, limit=1)
-            promotion = (_stripe_field(matches, 'data') or [None])[0]
-            if not promotion:
-                return None, None, None, ('That coupon code was not found or is no longer active.', 400)
-            coupon = _coupon_for_promotion(promotion)
-            if not _stripe_field(coupon, 'valid', True):
-                return None, None, None, ('That coupon code is no longer valid.', 400)
-            promotion_code_id = _stripe_field(promotion, 'id', '')
-            _log_coupon_diagnostics(coupon_code, promotion_code_id, coupon, currency, amount)
-            base_amount = amount
-            percent_off = _stripe_field(coupon, 'percent_off')
-            amount_off = _stripe_field(coupon, 'amount_off')
-            if percent_off:
-                amount = round(amount * (1 - float(percent_off) / 100))
-            elif amount_off and _stripe_field(coupon, 'currency', currency) == currency:
-                amount = amount - int(amount_off)
-            amount = max(0, amount)
-            if amount == base_amount:
-                # The code exists but produced no discount (no percent_off /
-                # amount_off, or a mismatched currency). Say so rather than
-                # silently re-quoting full price, which reads as a broken Apply.
-                return None, None, None, (
-                    'That code was found but does not reduce the price of this offer.', 400,
-                )
-        except stripe.error.StripeError as exc:
-            current_app.logger.warning('300k-limited-time: coupon lookup failed: %s', exc)
-            return None, None, None, ('Could not validate that coupon code. Please try again.', 400)
+    if not coupon_code:
+        return amount, currency, promotion_code_id, None
+    if not customer_id:
+        return None, None, None, ('Could not apply that coupon to this account.', 400)
+
+    try:
+        matches = stripe.PromotionCode.list(code=coupon_code, active=True, limit=1)
+        promotion = (_stripe_field(matches, 'data') or [None])[0]
+        if not promotion:
+            return None, None, None, ('That coupon code was not found or is no longer active.', 400)
+        promotion_code_id = _stripe_field(promotion, 'id', '')
+
+        preview = stripe.Invoice.create_preview(
+            customer=customer_id,
+            invoice_items=[{'price': price_id}],
+            discounts=[{'promotion_code': promotion_code_id}],
+        )
+        discounted = _stripe_field(preview, 'amount_due')
+        if discounted is None:
+            discounted = _stripe_field(preview, 'total')
+        _log_coupon_diagnostics(coupon_code, promotion_code_id, preview, currency, amount)
+        if discounted is None:
+            return None, None, None, ('Could not price that coupon code. Please try again.', 400)
+        discounted = max(0, int(discounted))
+        if discounted >= amount:
+            return None, None, None, (
+                'That code was found but does not reduce the price of this offer.', 400,
+            )
+        amount = discounted
+    except stripe.error.StripeError as exc:
+        current_app.logger.warning('300k-limited-time: coupon pricing failed: %s', exc)
+        _trace_coupon('preview-failed', repr(exc))
+        return None, None, None, (
+            str(getattr(exc, 'user_message', None) or 'Could not validate that coupon code. Please try again.'),
+            400,
+        )
 
     return amount, currency, promotion_code_id, None
 
@@ -1246,7 +1215,10 @@ def apply_300k_limited_time_coupon():
 
     price_id = current_app.config.get('STRIPE_LIMITED_TIME_300K_PRICE_ID')
     coupon_code = str(data.get('coupon_code') or '').strip()
-    amount, _currency, promotion_code_id, error = _resolve_300k_limited_time_amount(price_id, coupon_code)
+    customer_id = _stripe_field(intent, 'customer') or _ensure_customer_for_user(user)
+    amount, _currency, promotion_code_id, error = _resolve_300k_limited_time_amount(
+        price_id, coupon_code, customer_id=customer_id,
+    )
     if error:
         return jsonify({'msg': error[0]}), error[1]
 
