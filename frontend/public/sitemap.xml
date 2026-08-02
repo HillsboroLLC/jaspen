@@ -3,6 +3,10 @@
   <url><loc>https://jaspen.ai/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>
   <url><loc>https://jaspen.ai/pages/jaspen-score</loc><changefreq>monthly</changefreq><priority>0.9</priority></url>
   <url><loc>https://jaspen.ai/pages/jaspen</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://jaspen.ai/limited-time/client-decisions</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://jaspen.ai/limited-time/project-prioritization</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://jaspen.ai/limited-time/strategic-planning</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://jaspen.ai/limited-time/terms-and-conditions</loc><changefreq>yearly</changefreq><priority>0.2</priority></url>
   <url><loc>https://jaspen.ai/calculators</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
   <url><loc>https://jaspen.ai/articles</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://jaspen.ai/articles/true-cost-of-home-ownership</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>

@@ -3901,6 +3901,7 @@ useEffect(() => {
     setFreeTierWelcomeHidden(Boolean(user?.ui_preferences?.free_tier_welcome_dismissed));
   }, [user?.ui_preferences?.free_tier_welcome_dismissed]);
   const effectivePlanKey = adminWorkspacePreviewPlan || highestPlanKey(
+    billingStatus?.effective_plan_key,
     currentPlanKey,
     user?.active_organization_plan_key,
     user?.subscription_plan,
@@ -4006,9 +4007,9 @@ useEffect(() => {
     // Fallback while status payload is loading or if backend omits entitlement data.
     const minPlan = fallbackMinPlanByTool[String(toolId || '').trim()];
     const minRank = PLAN_RANK[minPlan] ?? Number.MAX_SAFE_INTEGER;
-    const curRank = PLAN_RANK[currentPlanKey] ?? 0;
+    const curRank = PLAN_RANK[effectivePlanKey] ?? 0;
     return curRank >= minRank;
-  }, [toolEntitlementById, fallbackMinPlanByTool, currentPlanKey]);
+  }, [toolEntitlementById, fallbackMinPlanByTool, effectivePlanKey]);
   const canUseScenarios = canUseTool('scenario_create', 'write');
   const canUseWbsWrite = canUseTool('wbs_write', 'write');
 

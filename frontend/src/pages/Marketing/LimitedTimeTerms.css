@@ -1,0 +1,120 @@
+.lt-terms {
+  background: #eff9fc;
+  color: #161f3b;
+  font-family: "Inter Tight", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  min-height: 100vh;
+  padding: 64px 24px 96px;
+}
+
+.lt-terms__content {
+  background: #ffffff;
+  border: 1px solid #dbe7ec;
+  border-radius: 18px;
+  box-shadow: 0 20px 54px rgba(22, 31, 59, 0.09);
+  margin: 0 auto;
+  max-width: 920px;
+  padding: clamp(30px, 6vw, 72px);
+}
+
+.lt-terms__header {
+  border-bottom: 2px solid #161f3b;
+  margin-bottom: 42px;
+  padding-bottom: 30px;
+}
+
+.lt-terms__header > p {
+  color: #a0036c;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  margin: 0 0 12px;
+  text-transform: uppercase;
+}
+
+.lt-terms__header h1 {
+  font-size: clamp(2.4rem, 6vw, 4.8rem);
+  letter-spacing: -0.045em;
+  line-height: 0.98;
+  margin: 0 0 18px;
+}
+
+.lt-terms__header > span {
+  color: #6b7280;
+  display: block;
+  font-size: 0.9rem;
+}
+
+.lt-terms__policy-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin-top: 20px;
+}
+
+.lt-terms a {
+  color: #8a0359;
+  font-weight: 750;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.lt-terms section {
+  border-bottom: 1px solid #e5e7eb;
+  margin-bottom: 38px;
+  padding-bottom: 30px;
+}
+
+.lt-terms section:last-child {
+  border-bottom: 0;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.lt-terms h2 {
+  font-size: clamp(1.45rem, 3vw, 2rem);
+  letter-spacing: -0.025em;
+  line-height: 1.15;
+  margin: 0 0 18px;
+}
+
+.lt-terms p,
+.lt-terms li {
+  color: #475569;
+  font-size: 1rem;
+  line-height: 1.72;
+}
+
+.lt-terms p {
+  margin: 0 0 16px;
+}
+
+.lt-terms ol,
+.lt-terms ul {
+  margin: 0 0 20px;
+  padding-left: 24px;
+}
+
+.lt-terms li + li {
+  margin-top: 8px;
+}
+
+.lt-terms a:focus-visible {
+  outline: 3px solid rgba(160, 3, 108, 0.38);
+  outline-offset: 4px;
+}
+
+@media (max-width: 640px) {
+  .lt-terms {
+    padding: 28px 12px 56px;
+  }
+
+  .lt-terms__content {
+    border-radius: 12px;
+    padding: 28px 20px;
+  }
+
+  .lt-terms p,
+  .lt-terms li {
+    font-size: 0.95rem;
+  }
+}

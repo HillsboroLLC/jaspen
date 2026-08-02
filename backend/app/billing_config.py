@@ -1026,9 +1026,28 @@ def effective_plan_key(user, app_config=None):
     """
     plan_key = normalize_plan_key(getattr(user, 'subscription_plan', None))
     if plan_key == 'free':
-        return 'free'
-    if subscription_in_good_standing(getattr(user, 'subscription_status', None)):
-        return plan_key
-    if app_config is not None and is_sales_only_plan(plan_key, app_config):
-        return plan_key
-    return 'free'
+        subscription_access = 'free'
+    elif subscription_in_good_standing(getattr(user, 'subscription_status', None)):
+        subscription_access = plan_key
+    elif app_config is not None and is_sales_only_plan(plan_key, app_config):
+        subscription_access = plan_key
+    else:
+        subscription_access = 'free'
+
+    # Jaspen Advantage is a standalone, one-time entitlement. It is not an
+    # Essential subscription, but it includes the individual output
+    # capabilities needed to use the purchased Thinking Power. Keep the
+    # persisted subscription_plan unchanged so billing and renewal UI remain
+    # accurate while entitlement checks receive Essential-equivalent access.
+    try:
+        from .founder_entitlements import has_advantage_entitlement
+
+        has_advantage = has_advantage_entitlement(user)
+    except (RuntimeError, TypeError):
+        # Some pure unit-test helpers call this function without an active DB
+        # context. In that case, preserve normal subscription behavior.
+        has_advantage = False
+
+    if has_advantage and PLAN_RANK.get(subscription_access, 0) < PLAN_RANK['essential']:
+        return 'essential'
+    return subscription_access
